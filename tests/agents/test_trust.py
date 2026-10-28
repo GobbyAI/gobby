@@ -229,6 +229,141 @@ class TestCodexTrust:
         parsed = tomllib.loads(config_file.read_text())
         assert parsed["projects"][clone_dir]["trust_level"] == "trusted"
 
+    def test_codex_seed_writes_first_run_tui_keys_before_launch(self, tmp_path: Path) -> None:
+        """Codex's first launch rewrites config.toml; the seed writes that key up front."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
+            pre_approve_directory("codex", workspace)
+
+        parsed = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text())
+        assert parsed["tui"]["screen_reader_detection_done"] is True
+        assert parsed["tui"]["model_availability_nux"]["gpt-6.1-sol"] == 4
+
+    def test_codex_seed_adds_tui_keys_to_already_trusted_workspace(self, tmp_path: Path) -> None:
+        """A workspace trusted by an earlier run still gets the first-run keys."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        config_file = codex_home / "config.toml"
+        config_file.write_text(
+            f'[projects.{json.dumps(str(workspace))}]\ntrust_level = "trusted"\n',
+            encoding="utf-8",
+        )
+
+        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
+            pre_approve_directory("codex", workspace)
+
+        parsed = tomllib.loads(config_file.read_text(encoding="utf-8"))
+        assert parsed["tui"]["screen_reader_detection_done"] is True
+        assert parsed["tui"]["model_availability_nux"]["gpt-6.1-sol"] == 4
+
+    def test_codex_seed_keeps_inline_projects_when_adding_trust(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        config_file = codex_home / "config.toml"
+        other = "/opt/other-project"
+        config_file.write_text(
+            f'projects = {{ {json.dumps(other)} = {{ trust_level = "trusted" }} }}\n',
+            encoding="utf-8",
+        )
+
+        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
+            pre_approve_directory("codex", workspace)
+
+        parsed = tomllib.loads(config_file.read_text(encoding="utf-8"))
+        assert parsed["projects"][other]["trust_level"] == "trusted"
+        assert parsed["projects"][str(workspace)]["trust_level"] == "trusted"
+
+    def test_codex_seed_keeps_user_tui_keys_and_is_idempotent(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        config_file = codex_home / "config.toml"
+        config_file.write_text('[tui]\ntheme = "dark"\n', encoding="utf-8")
+
+        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
+            pre_approve_directory("codex", workspace)
+            first = config_file.read_text(encoding="utf-8")
+            pre_approve_directory("codex", workspace)
+
+        parsed = tomllib.loads(config_file.read_text(encoding="utf-8"))
+        assert parsed["tui"]["theme"] == "dark"
+        assert parsed["tui"]["screen_reader_detection_done"] is True
+        assert parsed["tui"]["model_availability_nux"]["gpt-6.1-sol"] == 4
+        assert config_file.read_text(encoding="utf-8") == first
+
+    def test_codex_seed_keeps_operator_first_run_values(self, tmp_path: Path) -> None:
+        """A screen-reader choice the operator recorded stays as written."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        config_file = codex_home / "config.toml"
+        config_file.write_text(
+            "[tui]\nscreen_reader_detection_done = false\n\n"
+            '[tui.model_availability_nux]\n"gpt-6.1-sol" = 4\n',
+            encoding="utf-8",
+        )
+
+        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
+            pre_approve_directory("codex", workspace)
+
+        parsed = tomllib.loads(config_file.read_text(encoding="utf-8"))
+        assert parsed["tui"]["screen_reader_detection_done"] is False
+        assert parsed["tui"]["model_availability_nux"]["gpt-6.1-sol"] == 4
+        assert parsed["projects"][str(workspace)]["trust_level"] == "trusted"
+
+    @pytest.mark.parametrize(
+        ("present", "expected"),
+        [(1, 4), (3, 4), (4, 4), (7, 7), (True, True)],
+    )
+    def test_codex_seed_floors_exposure_count_at_seed(
+        self, tmp_path: Path, present: int, expected: int
+    ) -> None:
+        """A first-run exposure count below the seed is raised; a count at or above it is kept."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        config_file = codex_home / "config.toml"
+        config_file.write_text(
+            f'[tui.model_availability_nux]\n"gpt-6.1-sol" = {json.dumps(present)}\n',
+            encoding="utf-8",
+        )
+
+        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
+            pre_approve_directory("codex", workspace)
+
+        parsed = tomllib.loads(config_file.read_text(encoding="utf-8"))
+        assert parsed["tui"]["model_availability_nux"]["gpt-6.1-sol"] == expected
+        assert parsed["tui"]["screen_reader_detection_done"] is True
+        assert parsed["projects"][str(workspace)]["trust_level"] == "trusted"
+
+    def test_codex_seed_leaves_trusted_config_bytes_unchanged(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        config_file = codex_home / "config.toml"
+        config_file.write_text(
+            f'[projects.{json.dumps(str(workspace))}]\ntrust_level = "trusted"\n\n'
+            "[tui]\nscreen_reader_detection_done = false\n\n"
+            '[tui.model_availability_nux]\n"gpt-6.1-sol" = 4\n',
+            encoding="utf-8",
+        )
+        before = config_file.read_bytes()
+
+        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
+            pre_approve_directory("codex", workspace)
+
+        assert config_file.read_bytes() == before
+
     def test_install_trust_writes_codex_toml_projects(self, tmp_path: Path) -> None:
         codex_home = tmp_path / ".codex"
         codex_home.mkdir()

@@ -3,7 +3,8 @@ type: pipeline
 version: "1.0"
 description: |
   Support runbook: launches the standing support seats into one Support tab in the shared
-  checkout. Seats: release-manager, triage, archivist, recovery-steward and consolidator.
+  checkout. Seats: release-manager, triage, archivist, security-reviewer, recovery-steward and
+  consolidator.
 
   Re-runnable: the guard skips each seat whose agent already runs live in this project on
   this machine, so a re-run launches only the missing seats and never duplicates one. The
@@ -23,8 +24,8 @@ inputs:
     description: "Shared project checkout; no worktree is created"
   seats:
     type: string
-    default: release-manager,triage,archivist,recovery-steward,consolidator
-    description: "Comma-separated seats: release-manager, triage, archivist, recovery-steward, consolidator"
+    default: release-manager,triage,archivist,security-reviewer,recovery-steward,consolidator
+    description: "Comma-separated seats: release-manager, triage, archivist, security-reviewer, recovery-steward, consolidator"
   report_to:
     type: string
     required: true
@@ -62,6 +63,18 @@ inputs:
     default: null
     description: "Seat model; override to change the default"
   archivist_reasoning_effort:
+    type: string
+    default: null
+    description: "Seat reasoning effort; override to change the default"
+  security_reviewer_provider:
+    type: string
+    default: null
+    description: "Seat provider; override to change the default"
+  security_reviewer_model:
+    type: string
+    default: null
+    description: "Seat model; override to change the default"
+  security_reviewer_reasoning_effort:
     type: string
     default: null
     description: "Seat reasoning effort; override to change the default"
@@ -112,6 +125,9 @@ steps:
           - name: archivist
             title: Archivist
             agent: archivist
+          - name: security-reviewer
+            title: Security Reviewer
+            agent: security-reviewer
           - name: recovery-steward
             title: Recovery Steward
             agent: recovery-steward
@@ -183,6 +199,28 @@ steps:
           or 'triage' in steps.guard.output.launch
           else {'tab': {'workspace': inputs.workspace, 'title': 'Support'}} }}
 
+  - id: security-reviewer
+    condition: "${{ 'security-reviewer' in steps.guard.output.launch }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: security-reviewer
+        provider: "${{ inputs.security_reviewer_provider }}"
+        model: "${{ inputs.security_reviewer_model }}"
+        reasoning_effort: "${{ inputs.security_reviewer_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the security reviewer seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'workspace': inputs.workspace, 'tab_title': 'Support',
+          'axis': 'right', 'title': 'Security Reviewer'}}
+          if steps.guard.output.tab_exists or 'release-manager' in steps.guard.output.launch
+          or 'triage' in steps.guard.output.launch or 'archivist' in steps.guard.output.launch
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Support'}} }}
+
   - id: recovery-steward
     condition: "${{ 'recovery-steward' in steps.guard.output.launch }}"
     mcp:
@@ -197,12 +235,13 @@ steps:
         checkout_mode: none
         project_path: "${{ inputs.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the recovery steward seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the recovery steward seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true, timeout=600). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'workspace': inputs.workspace, 'tab_title': 'Support',
           'axis': 'right', 'title': 'Recovery Steward'}}
           if steps.guard.output.tab_exists or 'release-manager' in steps.guard.output.launch
           or 'triage' in steps.guard.output.launch or 'archivist' in steps.guard.output.launch
+          or 'security-reviewer' in steps.guard.output.launch
           else {'tab': {'workspace': inputs.workspace, 'title': 'Support'}} }}
 
   - id: consolidator
@@ -226,6 +265,7 @@ steps:
           if steps.guard.output.tab_exists or 'release-manager' in steps.guard.output.launch
           or 'triage' in steps.guard.output.launch or 'archivist' in steps.guard.output.launch
           or 'recovery-steward' in steps.guard.output.launch
+          or 'security-reviewer' in steps.guard.output.launch
           else {'tab': {'workspace': inputs.workspace, 'title': 'Support'}} }}
 
   # Tiles the Support tab once the launched seats have joined it, on a first run or a re-run.

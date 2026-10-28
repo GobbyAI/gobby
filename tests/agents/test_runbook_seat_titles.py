@@ -106,6 +106,7 @@ def _placement_titles(placement: dict[str, Any]) -> tuple[str | None, str]:
         ("support", "release-manager", "Release Manager"),
         ("support", "triage", "Triage"),
         ("support", "archivist", "Archivist"),
+        ("support", "security-reviewer", "Security Reviewer"),
         ("support", "recovery-steward", "Recovery Steward"),
         ("support", "consolidator", "Consolidator"),
         ("team-planning", "plan-writer", "Plan Writer"),

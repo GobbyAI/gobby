@@ -527,6 +527,58 @@ async def test_interactive_grok_seat_waits_then_wakes_on_owner_message(
 
 
 @pytest.mark.asyncio
+async def test_timed_out_reply_wait_wakes_a_codex_seat(harness: CoordinationHarness) -> None:
+    """A Codex Recovery Steward re-arms on a 600s reply wait; its timeout wakes the pane."""
+    harness.db.execute(
+        "UPDATE sessions SET source = 'codex', status = 'paused' WHERE id = %s",
+        (harness.waiter,),
+    )
+    LocalAgentRunManager(harness.db).create(
+        parent_session_id=harness.owner,
+        child_session_id=harness.waiter,
+        provider="codex",
+        agent_name="recovery-steward",
+        prompt="Patrol live seats",
+        resume_metadata_json={"execution_mode": "interactive", "provider_cli_mode": "terminal"},
+    )
+    wait = harness.wait(reply=True, timeout=600)
+    assert wait["outcome"] == "waiting"
+    harness.db.execute(
+        "UPDATE coordination_waits SET expires_at = clock_timestamp() - interval '1 second' "
+        "WHERE id = %s",
+        (wait["id"],),
+    )
+    terminal = replace(make_memory_terminal(backend="native"), session_id=harness.waiter)
+    terminals = MagicMock()
+    terminals.resolve_live_for_session.return_value = terminal
+    sender = AsyncMock(return_value=utc_now())
+    dispatcher = WakeDispatcher(
+        session_manager=SessionManager(harness.db),
+        ism_manager=harness.messages,
+        terminal_manager=terminals,
+        tmux_sender=sender,
+    )
+    service = CoordinationWaitService(
+        harness.manager,
+        CompletionEventRegistry(wake_callback=dispatcher.wake),
+        require_machine_id(),
+        lambda: connection_for(harness),
+    )
+    await service.process(wait["id"])
+
+    row = harness.row(wait["id"])
+    assert row["outcome"] == "timeout"
+    assert row["delivered_at"] is not None
+    sender.assert_awaited_once_with(
+        terminal.id,
+        CONTINUE_WAKE_MESSAGE,
+        submit=True,
+        clear_before_submit=True,
+        cli_source="codex",
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "guidance_source",
     [

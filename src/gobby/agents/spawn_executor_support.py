@@ -463,9 +463,15 @@ async def _deliver_codex_prompt(
                             code="codex_terminal_exited_before_composer",
                             detail=(
                                 "Codex terminal exited before its composer rendered; "
-                                "no startup pane snapshot was captured"
-                                if last_pane is None
-                                else "Codex terminal exited before its composer rendered"
+                                + (
+                                    "no startup pane snapshot was captured"
+                                    if last_pane is None
+                                    else "a startup pane snapshot was captured"
+                                )
+                                + f"; captures={captures} snapshot_errors={snapshot_errors} "
+                                f"last_snapshot_error={last_snapshot_error} "
+                                f"liveness_errors={liveness_errors} "
+                                f"last_liveness_error={last_liveness_error}"
                             ),
                         ),
                         cleanup_agent=cleanup_agent,

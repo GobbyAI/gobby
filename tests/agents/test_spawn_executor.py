@@ -2800,6 +2800,8 @@ class TestCodexPromptDelivery:
         error = run_manager.fail_uninitialized_prompt_delivery.call_args.kwargs["error"]
         assert error.startswith("codex_terminal_exited_before_composer:")
         assert "no startup pane snapshot was captured" in error
+        assert "captures=0 snapshot_errors=1 last_snapshot_error=RuntimeError" in error
+        assert "liveness_errors=0 last_liveness_error=None" in error
         assert error.endswith("Pane output:\n<unavailable>")
         assert terminal.id in runtime.killed_ids
 

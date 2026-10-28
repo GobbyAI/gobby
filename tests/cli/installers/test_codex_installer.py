@@ -84,7 +84,7 @@ def _assert_gobby_trust_state(config_data: dict[str, Any], hooks_path: Path) -> 
     state = hooks["state"]
     assert isinstance(state, dict)
 
-    hooks_prefix = f"{hooks_path.resolve()}:"
+    hooks_prefix = f"{hooks_path.absolute()}:"
     gobby_entries = {
         key: value
         for key, value in state.items()
@@ -249,7 +249,7 @@ def test_codex_hook_trust_state_prunes_stale_gobby_positions(tmp_path: Path) -> 
         ),
         encoding="utf-8",
     )
-    hooks_prefix = str(hooks_path.resolve())
+    hooks_prefix = str(hooks_path.absolute())
     config = _load_toml_config(
         f"""
 [hooks.state."{hooks_prefix}:pre_tool_use:0:0"]
@@ -308,7 +308,7 @@ def test_codex_hook_trust_state_reenables_disabled_gobby_hooks(tmp_path: Path) -
         ),
         encoding="utf-8",
     )
-    hooks_prefix = str(hooks_path.resolve())
+    hooks_prefix = str(hooks_path.absolute())
     config = _load_toml_config(
         f"""
 [hooks.state."{hooks_prefix}:post_tool_use:0:0"]
@@ -451,6 +451,29 @@ class TestInstallCodex:
         _assert_stable_hooks_feature(config_data)
         _assert_gobby_trust_state(config_data, hooks_path)
         assert config_data["projects"][os.environ["GOBBY_HOME"]]["trust_level"] == "trusted"
+
+    def test_trust_keys_name_the_hooks_file_codex_loads_through_a_symlinked_codex_home(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+        mock_shared_content: Any,
+        mock_mcp_configure: Any,
+    ) -> None:
+        """Codex keys hook trust on the path it loads; a symlinked ~/.codex must not resolve it."""
+        from gobby.cli.installers.codex import install_codex
+
+        providers = mock_home / "providers" / "codex"
+        providers.mkdir(parents=True)
+        (mock_home / ".codex").symlink_to(providers, target_is_directory=True)
+
+        result = install_codex(mock_home)
+
+        assert result["success"] is True
+        loaded = mock_home / ".codex" / "hooks.json"
+        state = _load_toml_file(mock_home / ".codex" / "config.toml")["hooks"]["state"]
+        hook_keys = [key for key in state if "hooks.json:" in key]
+        assert hook_keys
+        assert all(key.startswith(f"{loaded}:") for key in hook_keys)
 
     def test_install_hooks_installed_list(
         self,
@@ -1027,7 +1050,7 @@ class TestInstallCodexProjectHooks:
         live_hooks = worktrees / "live" / ".codex" / "hooks.json"
         live_hooks.parent.mkdir(parents=True)
         live_hooks.write_text("{}", encoding="utf-8")
-        live_key = f"{live_hooks.resolve()}:pre_tool_use:0:0"
+        live_key = f"{live_hooks.absolute()}:pre_tool_use:0:0"
         dead_hooks = worktrees / "deleted" / ".codex" / "hooks.json"
         dead_keys = [
             f"{dead_hooks}:pre_tool_use:0:0",
@@ -1197,7 +1220,7 @@ class TestUninstallCodex:
 
         # Set up config.toml with feature flags and hook trust state
         config_path = codex_dir / "config.toml"
-        hooks_prefix = str(hooks_path.resolve())
+        hooks_prefix = str(hooks_path.absolute())
         config_path.write_text(
             f"""model = "gpt-4"
 

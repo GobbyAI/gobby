@@ -41,23 +41,24 @@ rules:
             "critical_paths": [
               "Story B"
             ],
-            "role_guidance": {"reporter":"Reporter cadence: status-report runs every 1800 seconds (30 minutes). UTC minute 00-29 selects full; minute 30-59 selects delta. Explicit launch mode wins. Reports include ROADMAP progress and the Story B critical path from task dependencies.","consolidator":"Consolidator first job: #23378 Everything else and its open direct children and subtrees. Route Rust proposals to #22801 Rust. Check stale candidates #23668, #23700 and #23143 against current evidence before retirement proposals. Exclude #22978 triage and its whole subtree, including #22360 post-1.0 deferrals, and all plan-expanded epic subtrees."},
+            "role_guidance": {"reporter":"Reporter cadence: status-report runs every 1800 seconds (30 minutes). UTC minute 00-29 selects full; minute 30-59 selects delta. Explicit launch mode wins. Reports include ROADMAP progress and the Story B critical path from task dependencies.","consolidator":"Consolidator first job: the open backlog under the current roots #24818 Runbooks and task system, #24820 Code index, #24821 Terminal and client, #24822 Gobby Annotate and #21542 Gobby 1.0. Route Rust proposals to their Rust root, #24820, #24821 or #21542. Leave #24819 Rust port candidates unworked unless Josh says otherwise. Check stale candidates against current evidence before retirement proposals. Exclude #22978 triage and its whole subtree, including #22360 post-1.0 deferrals, and all plan-expanded epic subtrees.","orchestrator":"1.0 path reference (Josh-approved #25237): .gobby/plans/research/stepwise-path-to-1.0-25237.md; hub-node task list: .gobby/plans/research/hub-node-live-task-list-25236.md. Read by reference; do not paste.","archivist":"1.0 path reference (Josh-approved #25237): .gobby/plans/research/stepwise-path-to-1.0-25237.md; hub-node task list: .gobby/plans/research/hub-node-live-task-list-25236.md. Read by reference; do not paste.","assistant":"1.0 path reference (Josh-approved #25237): .gobby/plans/research/stepwise-path-to-1.0-25237.md; hub-node task list: .gobby/plans/research/hub-node-live-task-list-25236.md. Read by reference; do not paste."},
             "release_guidance": "Crate releases. Every crate binary release bumps that crate's `Cargo.toml` patch version by +0.0.1 and carries the `Cargo.lock` update in the release commit. A gcode or gdaemon release updates its pin in `MANAGED_BIN_VERSION_PINS` (`src/gobby/install/version_pins.py`); the gcode floors in `src/gobby/code_index/gcode_versions.py`, including `MIN_GCODE_PRUNE_BUDGET_VERSION`, derive from the gcode pin.",
             "handoff_reason_template": "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator decision. The Dev Manager closes after landing.",
             "workspace_layout": {
               "admin": "The operator's tab holds the Assistant and Orchestrator panes only. Never place another seat in it.",
               "support": "One tab titled Support holds the support runbook's seats.",
               "devteam": "Each DevTeam has one tab titled 'Dev Team - #<task>', holding its seats. Each pane is titled with its seat's agent definition name only.",
-              "planning": "Each planning run's writer opens a tab titled 'Team Planning - #<task>'; the other planning seats split that tab."
+              "planning": "Each planning run's writer opens a tab titled 'Team Planning - #<task>'; the other planning seats split that tab.",
+              "research": "Each research run opens one tab titled 'Research - #<task>' holding its Researcher and Research Reviewer."
             },
             "launch_defaults": {
               "devteam": {
                 "developer_provider": "claude",
                 "developer_model": "claude-haiku-5-5",
                 "developer_reasoning_effort": "xhigh",
-                "test_writer_provider": "claude",
-                "test_writer_model": "claude-haiku-5-5",
-                "test_writer_reasoning_effort": "xhigh",
+                "test_writer_provider": "codex",
+                "test_writer_model": "gpt-6.1-sol",
+                "test_writer_reasoning_effort": "medium",
                 "reviewer_provider": "codex",
                 "reviewer_model": "gpt-6.1-sol",
                 "reviewer_reasoning_effort": "medium",
@@ -78,23 +79,23 @@ rules:
                 "archivist_provider": "claude",
                 "archivist_model": "claude-opus-5-5",
                 "archivist_reasoning_effort": "medium",
-                "recovery_steward_provider": "claude",
-                "recovery_steward_model": "claude-opus-5-5",
-                "recovery_steward_reasoning_effort": "high",
+                "security_reviewer_provider": "codex",
+                "security_reviewer_model": "gpt-6.1-sol",
+                "security_reviewer_reasoning_effort": "xhigh",
+                "recovery_steward_provider": "codex",
+                "recovery_steward_model": "gpt-6.1-terra",
+                "recovery_steward_reasoning_effort": "medium",
                 "consolidator_provider": "claude",
                 "consolidator_model": "claude-opus-5-5",
                 "consolidator_reasoning_effort": "medium"
               },
-              "planning": {
-                "writer_provider": "claude",
-                "writer_model": "claude-opus-5-5",
-                "writer_reasoning_effort": "xhigh",
-                "enhancer_provider": "codex",
-                "enhancer_model": "gpt-5.6-sol",
-                "enhancer_reasoning_effort": "xhigh",
-                "adversary_provider": "codex",
-                "adversary_model": "gpt-6.1-sol",
-                "adversary_reasoning_effort": "medium"
+              "research": {
+                "researcher_provider": "codex",
+                "researcher_model": "gpt-6.1-sol",
+                "researcher_reasoning_effort": "medium",
+                "research_reviewer_provider": "claude",
+                "research_reviewer_model": "claude-opus-5-5",
+                "research_reviewer_reasoning_effort": "xhigh"
               },
               "team-planning": {
                 "plan_writer_provider": "claude",
@@ -151,6 +152,11 @@ rules:
                 "provider": "codex",
                 "model": "gpt-5.6-sol",
                 "reasoning_effort": "medium"
+              },
+              "research-reviewer": {
+                "provider": "claude",
+                "model": "claude-opus-5-5",
+                "reasoning_effort": "xhigh"
               },
               "researcher": {
                 "provider": "codex",

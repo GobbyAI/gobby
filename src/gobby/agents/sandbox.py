@@ -283,6 +283,7 @@ async def compute_sandbox_paths(
         default_write_paths,
         deny_paths,
         gcode_runtime_write_exceptions,
+        linked_auth_home_entries,
         provider_credential_read_exceptions,
         provider_read_exceptions,
         provider_write_exceptions,
@@ -332,6 +333,7 @@ async def compute_sandbox_paths(
         ],
         base=workspace,
     )
+    read_paths.extend(linked_auth_home_entries(provider) if provider else [])
     deny_read_paths = deny_paths(
         [
             *sensitive_roots(),

@@ -10,19 +10,24 @@ CLIs are inert stand-ins on a curated PATH that holds no real provider.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
+import tomllib
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
+from unittest import mock
 from uuid import uuid4
 
 import httpx
@@ -30,6 +35,9 @@ import psutil
 import pytest
 
 import tests.e2e.conftest as e2e_fixtures
+from gobby.agents.sync import sync_bundled_agents
+from gobby.agents.trust import seed_cli_trust
+from gobby.cli.installers.codex import install_codex
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.definitions import AgentDefinitionManager, PipelineDefinitionManager
 from gobby.storage.definitions._shared import decode_json_object
@@ -46,6 +54,7 @@ from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_executor import step_invocation_id
 from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+from tests.e2e.composer_proof import link_existing_auth
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
@@ -127,6 +136,26 @@ SEAT_RUNTIMES = {
 }
 # team-planning splits every later seat right of the Writer's pane, or opens the team tab.
 SPLIT_AXES = {"right": "horizontal"}
+_INPUT_REF = re.compile(r"\$\{\{\s*inputs\.(\w+)\s*\}\}")
+_PANE_SOURCE = re.compile(r"steps\.(\w+)\.output\.pane_ref")
+STEWARD_PIPELINE = "support"
+STEWARD_SEAT = "recovery-steward"
+# The steward's runtime, as the Orchestrator's launch_defaults.support gives it.
+STEWARD_PROVIDER, STEWARD_MODEL, STEWARD_EFFORT = "codex", "gpt-6.1-terra", "medium"
+# Triage's wait is the patrol cadence: each timeout wakes the steward for one patrol.
+STEWARD_CADENCE_SECONDS = 600
+STEWARD_TOLERANCE_SECONDS = 60
+STEWARD_TIMEOUT_PATROLS = 2
+CLAUDE_ONLY_SCHEDULERS = ("CronList", "CronCreate", "CronDelete")
+# Codex state kept for diagnosis of a seat that dies at startup. The auth file is never listed.
+CODEX_STATE_FILES = ("logs_2.sqlite", "logs_2.sqlite-wal", "logs_2.sqlite-shm", "history.jsonl")
+# Codex's debug text log, kept in the evidence log tree: a seat that dies should show its cause there.
+CODEX_RUST_LOG = "codex_core=debug,codex_tui=debug"
+# The steward's terminal is read this often while its run is live, so a death message is kept.
+LIVE_OUTPUT_POLL_SECONDS = 0.5
+_EXCERPT_HEADER = re.compile(r"^--- Last \d+ lines of terminal output ---\s*$", re.MULTILINE)
+# Pages of a run's stored capture kept as evidence; the bound stops a runaway offset loop.
+_CAPTURE_PAGE_LIMIT = 200
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -584,14 +613,11 @@ def _workspace(live: Live, name: str) -> Place:
     return place
 
 
-def _launch(live: Live, place: Place, seats: str = FULL_SEATS) -> str:
-    resolved = _inputs(live, place, seats)
-    # Null inputs take the runbook's own defaults, so only the set ones are sent.
-    inputs = {key: value for key, value in resolved.items() if value is not None}
+def _start(live: Live, pipeline: str, inputs: dict[str, Any]) -> str:
     started = live.client.post(
         "/api/pipelines/run",
         json={
-            "name": PIPELINE,
+            "name": pipeline,
             "inputs": inputs,
             "project_id": PROJECT_ID,
             "background": True,
@@ -601,6 +627,13 @@ def _launch(live: Live, place: Place, seats: str = FULL_SEATS) -> str:
     execution_id = str(started.json()["execution_id"])
     live.executions.append(execution_id)
     return execution_id
+
+
+def _launch(live: Live, place: Place, seats: str = FULL_SEATS) -> str:
+    resolved = _inputs(live, place, seats)
+    # Null inputs take the runbook's own defaults, so only the set ones are sent.
+    inputs = {key: value for key, value in resolved.items() if value is not None}
+    return _start(live, PIPELINE, inputs)
 
 
 def _execution(live: Live, execution_id: str) -> dict[str, Any]:
@@ -690,7 +723,7 @@ def _row(db: HubDatabase, sql: str, key: str) -> dict[str, Any] | None:
 def _run(db: HubDatabase, run_id: str) -> dict[str, Any] | None:
     return _row(
         db,
-        "SELECT id, status, started_at, terminal_id, agent_name, parent_session_id "
+        "SELECT id, status, error, started_at, terminal_id, agent_name, parent_session_id "
         "FROM agent_runs WHERE id = %s",
         run_id,
     )
@@ -1248,3 +1281,746 @@ def test_live_partial_redeploy(live: Live, failing: str) -> None:
         "kills": _kill(live, second),
     }
     _assert_live(live, retained + repaired)
+
+
+def _startup_ready(client: httpx.Client) -> bool:
+    response = client.get("/api/admin/startup-progress")
+    response.raise_for_status()
+    progress = response.json()
+    return progress.get("done") is True and progress.get("restart_recovery_pending") is False
+
+
+def _support_runbook(db: HubDatabase) -> PipelineDefinition:
+    row = PipelineDefinitionManager(db).get_by_name(STEWARD_PIPELINE)
+    assert row is not None and row.enabled, "the bundled support runbook is not installed"
+    definition = asyncio.run(PipelineLoader(db).load_pipeline(STEWARD_PIPELINE))
+    assert definition is not None, STEWARD_PIPELINE
+    assert "runbook" in definition.tags
+    return definition
+
+
+def _link_codex_auth(home: Path) -> None:
+    """Link the operator's existing codex login into the isolated home. Nothing is read."""
+    providers = home / "providers"
+    providers.mkdir(mode=0o700)
+    source = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")) / "auth.json"
+    link_existing_auth(providers, "codex", source)
+    (home / ".codex").symlink_to(providers / "codex", target_is_directory=True)
+
+
+def _install_codex_hooks(home: Path, project: Path) -> dict[str, Any]:
+    """Install Gobby's Codex hooks into the isolated home with production's installer.
+
+    The installer names the ghook it resolves first: the home's bin, where the rig staged it.
+    Its writes land in the isolated home and a scratch project only.
+    """
+    project.mkdir(exist_ok=True)
+    overrides = {"HOME": str(home), "GOBBY_HOME": str(home), NATIVE_BIN_DIR_ENV: str(home / "bin")}
+    with mock.patch.dict(os.environ, overrides):
+        result = install_codex(project)
+    assert result["success"], result
+    # Codex loads hooks from <home>/.codex/hooks.json; a trust key naming any other file
+    # reads as a new hook to Codex, which then waits on its review screen.
+    loaded = str(home / ".codex" / "hooks.json")
+    config = tomllib.loads((home / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    hook_keys = [key for key in config["hooks"]["state"] if "hooks.json:" in key]
+    assert hook_keys and all(key.startswith(f"{loaded}:") for key in hook_keys), hook_keys
+    return {key: result[key] for key in ("success", "hooks_installed", "config_updated")}
+
+
+def _hook_registered(db: HubDatabase, evidence: dict[str, Any]) -> dict[str, str]:
+    """The steward's child session once a Codex hook has replaced its Gobby id as external_id.
+
+    A pre-created child carries its Gobby id as external_id until SessionStart registers the
+    provider's id, so an unchanged external_id means no hook reached the daemon.
+    """
+    session = _steward_session(db, evidence)
+    assert session is not None, "the steward's run bound no child session"
+    row = _row(db, "SELECT id, external_id FROM sessions WHERE id = %s", session)
+    assert row is not None, session
+    assert row["external_id"] and str(row["external_id"]) != str(row["id"]), row
+    return {"id": str(row["id"]), "external_id": str(row["external_id"])}
+
+
+def _trust_codex_checkout(home: Path, checkout: Path) -> dict[str, Any]:
+    """Seed the steward checkout's codex trust through production's seeder, in the isolated home.
+
+    Codex rewrites config.toml to trust an untrusted checkout, and the policy denies that
+    rewrite on purpose. Seeding the entry first leaves codex nothing to rewrite.
+    """
+    with mock.patch.dict(os.environ, {"HOME": str(home)}):
+        result = seed_cli_trust("codex", checkout)
+    assert result.success, result.as_dict()
+    return result.as_dict()
+
+
+def _unlink_codex_auth(home: Path) -> dict[str, bool]:
+    """Remove the links _link_codex_auth made; each entry says whether that link survived."""
+    links = {"codex_home": home / ".codex", "auth": home / "providers" / "codex" / "auth.json"}
+    for link in links.values():
+        link.unlink(missing_ok=True)
+    for directory in (home / "providers" / "codex", home / "providers"):
+        with contextlib.suppress(OSError):
+            directory.rmdir()
+    return {name: link.is_symlink() for name, link in links.items()}
+
+
+def _with_codex_debug_log(env: dict[str, str]) -> dict[str, str]:
+    """The terminal host's env with Codex's debug log on. The input is not changed."""
+    return {**env, "RUST_LOG": CODEX_RUST_LOG}
+
+
+def _has_terminal_text(text: str) -> bool:
+    """A live-output read carries terminal text beyond its header line."""
+    return bool(_EXCERPT_HEADER.sub("", text).strip())
+
+
+class _LiveReader(Protocol):
+    """The two calls a live-output poll makes on its own MCP client."""
+
+    def call_tool(self, server: str, tool: str, arguments: dict[str, Any], /) -> Any: ...
+
+    def close(self) -> None: ...
+
+
+def _own_client(daemon_url: str, token: str, session_id: str) -> MCPTestClient:
+    """A client for the poll thread. The test thread's client is never shared across threads."""
+    client = MCPTestClient(daemon_url, token)
+    client.session_id = session_id
+    return client
+
+
+def _steward_session(db: HubDatabase, evidence: dict[str, Any]) -> str | None:
+    """The Recovery Steward's child session once its run has bound one, else None."""
+    run = evidence.get("recovery_steward", {}).get("run")
+    if not run:
+        return None
+    row = _row(db, "SELECT child_session_id FROM agent_runs WHERE id = %s", str(run))
+    if row is None or row["child_session_id"] is None:
+        return None
+    return str(row["child_session_id"])
+
+
+class _LiveOutputPoller:
+    """Reads the steward's live terminal while its run is live and keeps the last read with text.
+
+    The post-exit capture is always empty, so this poll is the only copy of a death message.
+    """
+
+    def __init__(
+        self,
+        open_client: Callable[[], _LiveReader],
+        session_of: Callable[[], str | None],
+        stop_event: threading.Event,
+        interval: float = LIVE_OUTPUT_POLL_SECONDS,
+    ) -> None:
+        self.open_client = open_client
+        self.session_of = session_of
+        self.stop_event = stop_event
+        self.interval = interval
+        self.polls = 0
+        self.last_nonempty: str | None = None
+        self.error: str | None = None
+        self.thread = threading.Thread(target=self._run, name="steward-live-output", daemon=True)
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        if self.thread.ident is not None:
+            self.thread.join(timeout=10)
+
+    def record(self) -> dict[str, Any]:
+        return {
+            "polls": self.polls,
+            "last_nonempty": self.last_nonempty,
+            "error": self.error,
+            "stopped": not self.thread.is_alive(),
+        }
+
+    def _run(self) -> None:
+        reader = self.open_client()
+        try:
+            while not self.stop_event.wait(self.interval):
+                session = self.session_of()
+                if session is None:
+                    continue
+                try:
+                    reply = reader.call_tool(
+                        "gobby-sessions", "capture_output", {"session_id": session}
+                    )
+                except Exception as exc:
+                    # A refused read is evidence too, and the next poll still runs.
+                    self.error = f"{type(exc).__name__}: {exc}"
+                    continue
+                self.polls += 1
+                result = reply.get("result") if isinstance(reply, dict) else None
+                text = result.get("output") if isinstance(result, dict) else None
+                if isinstance(text, str) and _has_terminal_text(text):
+                    self.last_nonempty = text
+        finally:
+            reader.close()
+
+
+def _grant_files(home: Path) -> list[str]:
+    """Every grant.json under GOBBY_HOME, by path: its existence is recorded, never its contents."""
+    return sorted(path.relative_to(home).as_posix() for path in home.rglob("grant.json"))
+
+
+def _stage_home_bin(home: Path, native_bin: Path, names: tuple[str, ...]) -> dict[str, str]:
+    """Copy installed native binaries into the home's bin, where the steward's config points.
+
+    gmcp is the steward's gobby MCP command, and ghook is the hook command the Codex install
+    writes. Returns each staged copy's hash, recorded with the other native binaries.
+    """
+    staged_dir = home / "bin"
+    staged_dir.mkdir(exist_ok=True)
+    hashes: dict[str, str] = {}
+    for name in names:
+        staged = staged_dir / native_bin_name(name)
+        shutil.copy2(native_bin / native_bin_name(name), staged)
+        hashes[name] = sha256_file(staged)
+    return hashes
+
+
+@pytest.fixture
+def steward_rig(
+    postgres_db: HubDatabase,
+    e2e_config: tuple[Path, int, int],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Rig]:
+    """The Recovery Steward's rig: the real codex on PATH, with no provider stand-ins."""
+    home = e2e_config[0].parent
+    root = tmp_path / "steward-rig"
+    root.mkdir()
+    # Resolved before the curated PATH replaces the search path.
+    codex = shutil.which("codex")
+    assert codex is not None, "the Recovery Steward needs the real codex on PATH"
+    assert not sync_bundled_pipelines(postgres_db)["errors"]
+    assert not sync_bundled_agents(postgres_db)["errors"]
+    seed_seat_catalog(postgres_db, [(STEWARD_PROVIDER, STEWARD_MODEL)])
+    path, _ = curated_path(root, [])
+    codex_dir = root / "codex"
+    codex_dir.mkdir()
+    (codex_dir / "codex").symlink_to(codex)
+    path = os.pathsep.join([str(codex_dir), path])
+    monkeypatch.setenv("PATH", path)
+    barrier = Barrier(root / "barrier")
+    barrier.directory.mkdir()
+    monkeypatch.setenv(BARRIER_DIR_ENV, str(barrier.directory))
+    pythonpath = [str(CHECKOUT_ROOT), *filter(None, [os.environ.get("PYTHONPATH")])]
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(pythonpath))
+    srt = stage_real_srt(home)
+    with host_socket_dir() as socket_dir:
+        for directory in (home, home / ".gobby", socket_dir):
+            directory.mkdir(exist_ok=True)
+            copy_daemon_api_key(home, directory)
+        control_token_path(socket_dir).write_text(uuid4().hex)
+        control_token_path(socket_dir).chmod(0o600)
+        (home / ".gobby" / "build.yaml").write_text("max_active_agents: 8\n")
+        mutations = ConfigMutations(postgres_db)
+        mutations.patch_internal(
+            expected_revision=mutations.repository.current_revision(),
+            patch=ConfigPatch(
+                values={
+                    "terminal_host.socket_dir": str(socket_dir),
+                    "tmux.init_timeout_seconds": 600,
+                }
+            ),
+            source="placed-runbook-live",
+        )
+        env = _with_codex_debug_log(prepare_daemon_env(home_dir=home))
+        env.update(GOBBY_CONFIG=str(e2e_config[0]), GOBBY_HOME=str(home))
+        native_bin = Path(env[NATIVE_BIN_DIR_ENV])
+        binaries = {
+            name: sha256_file(native_bin / native_bin_name(name)) for name in ("gdaemon", "gterm")
+        }
+        binaries.update(_stage_home_bin(home, native_bin, ("gmcp", "ghook")))
+        with fixture_host(native_bin / native_bin_name("gterm"), socket_dir, env) as host:
+            yield Rig(barrier, {}, {}, path, host, srt, binaries)
+
+
+@pytest.fixture
+def steward_daemon(
+    e2e_project_dir: Path, e2e_config: tuple[Path, int, int], steward_rig: Rig
+) -> Iterator[DaemonInstance]:
+    yield from e2e_fixtures.spawn_daemon_instance(
+        e2e_project_dir, e2e_config, runner_module=RUNNER_MODULE
+    )
+
+
+@pytest.fixture
+def steward_live(
+    steward_daemon: DaemonInstance,
+    postgres_db: HubDatabase,
+    steward_rig: Rig,
+    e2e_config: tuple[Path, int, int],
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> Iterator[Live]:
+    home = e2e_config[0].parent
+    # Seats work in a clone outside the daemon project, which holds GOBBY_HOME.
+    checkout = (tmp_path / "steward-checkout").resolve()
+    subprocess.run(
+        ["git", "clone", "--quiet", str(steward_daemon.project_dir), str(checkout)],
+        check=True,
+        capture_output=True,
+    )
+    write_project_marker(checkout, project_id=PROJECT_ID, name="E2E Test Project")
+    LocalProjectCheckoutManager(postgres_db).rebind(MACHINE_ID, PROJECT_ID, str(checkout))
+    machine = LocalMachineManager(postgres_db).upsert_seen(MACHINE_ID, TEST_USER_ID)
+    assert machine.ref is not None
+    token = daemon_token(steward_daemon.gobby_home)
+    events = CLIEventSimulator(steward_daemon.http_url, token)
+    # The coordinator stands in for Triage: the steward's wait owner and report_to.
+    coordinator = events.register_session(
+        f"steward-coordinator-{uuid4().hex}", project_id=PROJECT_ID, cwd=str(checkout)
+    )
+    events.close()
+    mcp = MCPTestClient(steward_daemon.http_url, token)
+    mcp.session_id = str(coordinator["id"])
+    client = httpx.Client(
+        base_url=steward_daemon.http_url,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=60.0,
+    )
+    evidence: dict[str, Any] = {
+        "test": request.node.name,
+        "srt": steward_rig.srt,
+        "native_sha256": steward_rig.binaries,
+        "checkout": str(checkout),
+        "home": str(home),
+        "coordinator": str(coordinator["id"]),
+        # Diagnostic: the CODEX_HOME the daemon and its terminal host inherit.
+        "codex_home_env": os.environ.get("CODEX_HOME"),
+        # Diagnostic: the Codex debug log level the terminal host was started with.
+        "codex_rust_log": CODEX_RUST_LOG,
+        # Orchestrator ruling, relayed by the Dev Manager (37976ed8): option (a).
+        "codex_auth": {"ruling": "option (a): link the existing login; no sign-in"},
+    }
+    state = Live(
+        steward_daemon,
+        postgres_db,
+        steward_rig,
+        client,
+        mcp,
+        machine.ref,
+        _support_runbook(postgres_db),
+        evidence,
+        checkout,
+        "Recovery steward patrol",
+        str(coordinator["id"]),
+        "Support",
+    )
+    evidence_dir = _evidence_dir(tmp_path)
+    poll_stop = threading.Event()
+    poller = _LiveOutputPoller(
+        partial(_own_client, steward_daemon.http_url, token, str(coordinator["id"])),
+        partial(_steward_session, postgres_db, evidence),
+        poll_stop,
+    )
+    try:
+        _link_codex_auth(home)
+        state.evidence["codex_hooks"] = _install_codex_hooks(home, tmp_path / "codex-project")
+        state.evidence["codex_trust"] = _trust_codex_checkout(home, checkout)
+        # Before any seat spawns: the config Codex reads, as the rig seeded it.
+        before = _snapshot_codex_config(home, evidence_dir, request.node.name, "before")
+        state.evidence["codex_config"] = {"before": before}
+        _until(lambda: _startup_ready(client), 120, "initial daemon recovery")
+        state.evidence["checkout_mode"] = _assert_isolated(state)
+        state.evidence["host"] = _assert_adopted(state)
+        poller.start()
+        yield state
+    finally:
+        # Stopped before any copy, so the last reads come from a terminal that still exists.
+        poller.stop()
+        state.evidence["steward_live_output"] = poller.record()
+        cleanup: dict[str, Any] = {}
+        state.evidence["cleanup"] = cleanup
+        try:
+            # Each copy is kept on its own: one failed copy is recorded and the rest still run.
+            # Captured before teardown closes the steward terminal and removes its run state.
+            state.evidence["steward_screen"] = _kept(
+                lambda: _preserve_steward_screen(state, evidence_dir, request.node.name)
+            )
+            state.evidence["srt_network"] = _kept(
+                lambda: _preserve_srt_network(home, evidence_dir, request.node.name)
+            )
+            state.evidence["codex_state"] = _kept(
+                lambda: _preserve_codex_state(home, evidence_dir, request.node.name)
+            )
+            # Copied before teardown, so a failed run keeps its transcript as well.
+            state.evidence["codex_rollout"] = _kept(
+                lambda: _preserve_rollout(home, evidence_dir, request.node.name)
+            )
+            state.evidence["daemon_logs"] = _kept(
+                lambda: _preserve_logs(home, evidence_dir, request.node.name)
+            )
+            state.evidence["steward_grants"] = _kept(lambda: _grant_files(home))
+            state.evidence["codex_log"] = _kept(
+                lambda: _preserve_tree(
+                    home / "providers" / "codex" / "log",
+                    evidence_dir / f"{request.node.name}.codex-log",
+                )
+            )
+            # After the run: whatever Codex left in the config it read.
+            after = _kept(
+                lambda: _snapshot_codex_config(home, evidence_dir, request.node.name, "after")
+            )
+            codex_config = state.evidence.setdefault("codex_config", {})
+            codex_config["after"] = after
+            before_sha = codex_config.get("before", {}).get("sha256")
+            if "sha256" in after:
+                codex_config["changed"] = before_sha != after["sha256"]
+        finally:
+            try:
+                _cleanup(state, cleanup)
+            finally:
+                state.evidence["codex_auth"]["unlinked"] = _unlink_codex_auth(home)
+                write_evidence(evidence_dir, request.node.name, state.evidence)
+                client.close()
+                mcp.close()
+
+
+def _steward_run(live: Live, execution_id: str) -> dict[str, Any]:
+    run_id = step_invocation_id(execution_id, STEWARD_SEAT)
+
+    def started() -> dict[str, Any] | None:
+        run = _run(live.db, run_id)
+        if run is None or run["started_at"] is None or not run["terminal_id"]:
+            return None
+        return run
+
+    return _until(
+        _steward_watch(live, run_id, started),
+        240,
+        f"the {STEWARD_SEAT} run to start",
+        lambda: _diagnosis(live, _steps(_execution(live, execution_id))),
+    )
+
+
+def _reply_waits(db: HubDatabase, owner: str) -> list[dict[str, Any]]:
+    """Every reply wait this owner has received, oldest first."""
+    rows = db.fetchall(
+        "SELECT id, waiter_session_id, condition_key, outcome, created_at, expires_at, "
+        "delivered_at FROM coordination_waits WHERE owner_session_id = %s AND reply "
+        "ORDER BY created_at",
+        (owner,),
+    )
+    return [dict(row) for row in rows]
+
+
+def _registered_waits(db: HubDatabase, owner: str, count: int) -> list[dict[str, Any]] | None:
+    waits = _reply_waits(db, owner)
+    return waits if len(waits) >= count else None
+
+
+def _steward_watch[T](
+    live: Live, run_id: str, probe: Callable[[], T | None]
+) -> Callable[[], T | None]:
+    """Wrap ``probe`` so a steward run that ends before the probe holds fails at once.
+
+    A seat whose Codex exits during startup goes terminal within seconds; waiting out the
+    probe's timeout would bury that under an unrelated wait failure. The run's error and the
+    daemon logs go into the failure message.
+    """
+
+    def watched() -> T | None:
+        value = probe()
+        if value:
+            return value
+        run = _run(live.db, run_id)
+        if run is not None and run["status"] not in ACTIVE_RUNS:
+            raise AssertionError(
+                f"the {STEWARD_SEAT} run ended as {run['status']} before the probe held: "
+                f"{_diagnosis(live, run)}"
+            )
+        return None
+
+    return watched
+
+
+def _timed_out_waits(db: HubDatabase, owner: str, index: int) -> list[dict[str, Any]] | None:
+    """Waits once wait ``index`` has completed by its timeout and the daemon delivered it."""
+    waits = _reply_waits(db, owner)
+    timed_out = (
+        len(waits) > index
+        and waits[index]["outcome"] == "timeout"
+        and waits[index]["delivered_at"] is not None
+    )
+    return waits if timed_out else None
+
+
+def _patrol_state(live: Live, owner: str) -> str:
+    waits = [
+        {key: str(value) for key, value in wait.items()} for wait in _reply_waits(live.db, owner)
+    ]
+    return _diagnosis(live, {"waits": waits})
+
+
+def _evidence_dir(tmp_path: Path) -> Path:
+    return Path(os.environ.get("GOBBY_E2E_EVIDENCE_DIR") or tmp_path / "evidence")
+
+
+def _rollouts(home: Path) -> list[Path]:
+    return sorted((home / ".codex" / "sessions").glob("**/rollout-*.jsonl"))
+
+
+def _codex_rollout(home: Path) -> Path:
+    """The steward's Codex rollout: the only one in the isolated home, reached through ~/.codex."""
+    matches = _rollouts(home)
+    assert len(matches) == 1, matches
+    return matches[0]
+
+
+def _codex_calls(rollout: Path) -> list[str]:
+    """Each tool call in the rollout as JSON; Codex records every call as a response item."""
+    calls: list[str] = []
+    for line in rollout.read_text().splitlines():
+        event = json.loads(line)
+        payload = event.get("payload")
+        if event.get("type") != "response_item" or not isinstance(payload, dict):
+            continue
+        if str(payload.get("type", "")).endswith("_call"):
+            calls.append(json.dumps(payload, sort_keys=True))
+    return calls
+
+
+def _preserve_tree(source: Path, copy: Path) -> str | None:
+    """Copy a directory tree into the evidence directory; None when the source is absent."""
+    if not source.is_dir():
+        return None
+    try:
+        shutil.copytree(source, copy, dirs_exist_ok=True)
+    except OSError as exc:
+        return f"copy failed: {exc}"
+    return str(copy)
+
+
+def _preserve_logs(home: Path, evidence_dir: Path, test_name: str) -> str | None:
+    """Copy the isolated daemon's logs into the evidence directory before teardown removes them."""
+    return _preserve_tree(home / "logs", evidence_dir / f"{test_name}.logs")
+
+
+def _kept(produce: Callable[[], Any]) -> Any:
+    """Teardown evidence: a failed copy is recorded in place, so the next copy still runs."""
+    try:
+        return produce()
+    except Exception as exc:  # the failure is the evidence; teardown keeps copying
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _read(live: Live, tool: str, **arguments: Any) -> Any:
+    """A daemon read as the daemon answered it, text or structured; a refusal is recorded."""
+    try:
+        return live.mcp.call_tool("gobby-agents", tool, arguments)
+    except Exception as exc:  # recorded in place, so the other reads still run
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _capture_pages(live: Live, run: str) -> list[Any]:
+    """Every page of the run's stored terminal capture, following the daemon's offsets."""
+    pages: list[Any] = []
+    offset = 0
+    for _ in range(_CAPTURE_PAGE_LIMIT):
+        page = _read(live, "get_agent_capture", run_id=run, offset=offset)
+        pages.append(page)
+        body = page.get("result") if isinstance(page, dict) else None
+        next_offset = body.get("next_offset") if isinstance(body, dict) else None
+        if not isinstance(next_offset, int):
+            break
+        offset = next_offset
+    return pages
+
+
+def _preserve_steward_screen(live: Live, evidence_dir: Path, test_name: str) -> dict[str, Any]:
+    """Save the steward's terminal read, run result and stored capture before teardown closes them.
+
+    The live read can come back as text once the terminal has exited, so every read is kept
+    as the daemon answered it. The stored capture is read by run id, page by page.
+    """
+    run = live.evidence.get("recovery_steward", {}).get("run")
+    if run is None:
+        return {"missing": "the steward run was never registered"}
+    record = {
+        "get_agent_live_output": _read(live, "get_agent_live_output", run_id=str(run)),
+        "get_agent_result": _read(live, "get_agent_result", run_id=str(run)),
+        "capture": _capture_pages(live, str(run)),
+    }
+    copy = evidence_dir / f"{test_name}.steward-screen.json"
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    copy.write_text(json.dumps(record, indent=2, default=str), encoding="utf-8")
+    return {"copy": str(copy), "run": str(run)}
+
+
+def _preserve_srt_network(home: Path, evidence_dir: Path, test_name: str) -> dict[str, Any]:
+    """Record the SRT network allowlist of each run's settings file, and copy that file.
+
+    Settings live in the managed-execution tree under the isolated home, so the search stays there.
+    """
+    root = home / "runtime" / "managed-executions"
+    sources = sorted(path for path in root.rglob("settings.json") if path.parent.name == "assets")
+    if not sources:
+        return {"missing": True, "searched": str(root)}
+    settings: list[dict[str, Any]] = []
+    for index, source in enumerate(sources):
+        copy = evidence_dir / f"{test_name}.srt-settings-{index}.json"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, copy)
+        document = json.loads(source.read_text(encoding="utf-8"))
+        network = document.get("network")
+        settings.append({"copy": str(copy), "network": network})
+    return {"settings": settings}
+
+
+def _preserve_codex_state(home: Path, evidence_dir: Path, test_name: str) -> dict[str, str | None]:
+    """Copy the Codex state files the steward left; the auth file is not among them."""
+    root = home / "providers" / "codex"
+    copies: dict[str, str | None] = {}
+    for name in CODEX_STATE_FILES:
+        source = root / name
+        if not source.is_file():
+            copies[name] = None
+            continue
+        copy = evidence_dir / f"{test_name}.{name}"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, copy)
+        copies[name] = str(copy)
+    return copies
+
+
+def _snapshot_codex_config(
+    home: Path, evidence_dir: Path, test_name: str, label: str
+) -> dict[str, Any]:
+    """Copy the config.toml Codex reads, named by when it was taken. Auth is never opened."""
+    config = home / "providers" / "codex" / "config.toml"
+    if not config.is_file():
+        return {"missing": True}
+    copy = evidence_dir / f"{test_name}-config-{label}.toml"
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(config, copy)
+    return {"copy": str(copy), "sha256": sha256_file(copy)}
+
+
+def _preserve_rollout(home: Path, evidence_dir: Path, test_name: str) -> dict[str, Any]:
+    """Copy the steward's rollout into the evidence directory and count its tool calls.
+
+    A seat that exits before Codex writes a rollout has nothing to copy. The record says so
+    instead of raising, so teardown cannot replace the seat's own failure.
+    """
+    matches = _rollouts(home)
+    if len(matches) != 1:
+        return {
+            "missing": True,
+            "searched": str(home / ".codex" / "sessions"),
+            "matches": len(matches),
+        }
+    rollout = matches[0]
+    calls = _codex_calls(rollout)
+    copy = evidence_dir / f"{test_name}.codex-rollout.jsonl"
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(rollout, copy)
+    schedulers = [name for name in CLAUDE_ONLY_SCHEDULERS if any(name in c for c in calls)]
+    return {
+        "copy": str(copy),
+        "calls": len(calls),
+        "wait_for_coordination": sum("wait_for_coordination" in call for call in calls),
+        "claude_only_schedulers": schedulers,
+    }
+
+
+def test_codex_recovery_steward_patrols_every_ten_minutes(steward_live: Live) -> None:
+    """Criterion 3: the codex Recovery Steward re-arms its timed wait after every timeout.
+
+    The launch patrol registers wait 1. Each timeout wakes the steward, which patrols and
+    registers the next wait, so STEWARD_TIMEOUT_PATROLS timeouts leave one wait more than
+    there are timeouts. The steward's only wake is its own wait, so no scheduler is involved.
+    """
+    live = steward_live
+    owner = str(live.evidence["coordinator"])
+    place = _workspace(live, "steward")
+    launch = _start(
+        live,
+        STEWARD_PIPELINE,
+        {
+            "workspace": place.ref,
+            "project_path": str(live.evidence["checkout"]),
+            "seats": STEWARD_SEAT,
+            "report_to": owner,
+            "recovery_steward_provider": STEWARD_PROVIDER,
+            "recovery_steward_model": STEWARD_MODEL,
+            "recovery_steward_reasoning_effort": STEWARD_EFFORT,
+        },
+    )
+    execution = _completed(live, launch)["id"]
+    # Recorded before the wait, so a run that dies during startup still has its terminal captured.
+    live.evidence["recovery_steward"] = {
+        "execution": execution,
+        "run": step_invocation_id(execution, STEWARD_SEAT),
+    }
+    run = _steward_run(live, execution)
+    assert run["agent_name"] == STEWARD_SEAT, run
+    run_id = str(run["id"])
+
+    explain = partial(_patrol_state, live, owner)
+    waits = _until(
+        _steward_watch(live, run_id, partial(_registered_waits, live.db, owner, 1)),
+        900,
+        "the first reply wait",
+        explain,
+    )
+    first = waits[0]
+    assert first["condition_key"] == "[null,null]", first
+    armed = (first["expires_at"] - first["created_at"]).total_seconds()
+    assert abs(armed - STEWARD_CADENCE_SECONDS) <= 2, first
+    waiter = first["waiter_session_id"]
+    # Minute one: the child must have a Codex hook registration, or the daemon kills it at 600s.
+    live.evidence["recovery_steward"]["child"] = _hook_registered(live.db, live.evidence)
+
+    for index in range(STEWARD_TIMEOUT_PATROLS):
+        waits = _until(
+            _steward_watch(live, run_id, partial(_timed_out_waits, live.db, owner, index)),
+            STEWARD_CADENCE_SECONDS + 300,
+            f"reply wait {index + 1} to time out and be delivered",
+            explain,
+        )
+        timed = waits[index]
+        assert timed["waiter_session_id"] == waiter, timed
+        gap = (timed["delivered_at"] - timed["created_at"]).total_seconds()
+        assert abs(gap - STEWARD_CADENCE_SECONDS) <= STEWARD_TOLERANCE_SECONDS, timed
+        waits = _until(
+            _steward_watch(live, run_id, partial(_registered_waits, live.db, owner, index + 2)),
+            600,
+            f"the steward's patrol {index + 2} to re-arm its wait",
+            explain,
+        )
+        renewed = waits[index + 1]
+        assert renewed["waiter_session_id"] == waiter, renewed
+        assert renewed["condition_key"] == timed["condition_key"], renewed
+        assert renewed["created_at"] >= timed["delivered_at"], (timed, renewed)
+        # A patrol turn adds its own time to the cadence, so the spacing gets a wider bound.
+        spacing = (renewed["created_at"] - timed["created_at"]).total_seconds()
+        assert (
+            STEWARD_CADENCE_SECONDS - STEWARD_TOLERANCE_SECONDS
+            <= spacing
+            <= STEWARD_CADENCE_SECONDS + 3 * STEWARD_TOLERANCE_SECONDS
+        ), (timed, renewed)
+
+    waits = _reply_waits(live.db, owner)
+    assert len(waits) == STEWARD_TIMEOUT_PATROLS + 1, waits
+    assert {wait["waiter_session_id"] for wait in waits} == {waiter}, waits
+    assert waits[-1]["outcome"] == "waiting", waits[-1]
+    # The steward patrolled without rewriting the config it read: the seeded keys were enough.
+    config = Path(str(live.evidence["home"])) / "providers" / "codex" / "config.toml"
+    before = live.evidence["codex_config"]["before"]
+    assert "sha256" in before, before
+    assert sha256_file(config) == before["sha256"], "the steward rewrote its Codex config"
+    live.evidence["recovery_steward"]["waits"] = [
+        {key: str(value) for key, value in wait.items()} for wait in waits
+    ]
+    calls = _codex_calls(_codex_rollout(Path(str(live.evidence["home"]))))
+    wait_calls = [call for call in calls if "wait_for_coordination" in call]
+    assert len(wait_calls) >= STEWARD_TIMEOUT_PATROLS + 1, len(wait_calls)
+    assert [name for name in CLAUDE_ONLY_SCHEDULERS if any(name in c for c in calls)] == []
