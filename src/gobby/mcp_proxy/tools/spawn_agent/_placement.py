@@ -95,8 +95,8 @@ async def preflight_placement(
     wait = placement_wait_seconds(spawn_timeout)
     deadline = asyncio.timeout(wait)
     try:
-        # Session reads take the default bound; the spawn's own timeout bounds only the
-        # reserver's resolution, which runs after them.
+        # Session reads take the default bound. The spawn's own timeout starts at
+        # ``deadline``'s creation, so it bounds the session reads and the resolution together.
         async with asyncio.timeout(PLACEMENT_WAIT_SECONDS):
             # Only a team manager's own-team seat may place from an autonomous caller: a
             # resume, or a fresh seat into its epic team's tab.

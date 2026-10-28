@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.spawn_agent._seat_adoption import (
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     RUNBOOK_RESUME_REFUSED,
     _background_tasks_by_execution,
+    cancel_pipeline,
     resume_interrupted_pipelines,
     resume_pipeline,
     run_pipeline,
@@ -566,6 +567,54 @@ async def test_restart_reconciles_real_reserved_run(temp_db: HubDatabase, starte
     assert finished is not None
     assert finished.status == (ExecutionStatus.COMPLETED if started else ExecutionStatus.FAILED)
     assert all(spawn["reserved_run_id"] != run_id for spawn in after.spawns())
+
+
+class HoldingProxy(RunbookAgentsProxy):
+    """Holds one seat's spawn open so a cancel lands mid-step."""
+
+    def __init__(self, hold_agent: str) -> None:
+        super().__init__()
+        self.hold_agent = hold_agent
+        self.held = asyncio.Event()
+
+    async def call_tool(
+        self,
+        server: str,
+        tool: str,
+        arguments: dict[str, Any],
+        *,
+        session_id: str | None,
+        enforce_workflow: bool,
+    ) -> dict[str, Any]:
+        if arguments.get("agent") == self.hold_agent:
+            self.held.set()
+            await asyncio.Event().wait()
+        return await super().call_tool(
+            server, tool, arguments, session_id=session_id, enforce_workflow=enforce_workflow
+        )
+
+
+async def test_operator_cancel_closes_resumable_child(temp_db: HubDatabase) -> None:
+    pipeline = await _team_planning(temp_db)
+    assert pipeline.resume_on_restart is True
+    proxy = HoldingProxy("plan-adversary")
+    started = await run_pipeline(
+        PipelineLoader(temp_db), _executor(temp_db, proxy), "team-planning", RUN_INPUTS, PROJECT_ID
+    )
+    execution_id = started["execution_id"]
+    await asyncio.wait_for(proxy.held.wait(), timeout=10)
+    manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
+
+    result = await cancel_pipeline(manager, execution_id)
+
+    assert result["success"] is True, result
+    cancelled = manager.get_execution(execution_id)
+    assert cancelled is not None and cancelled.status == ExecutionStatus.CANCELLED
+    child = SessionManager(temp_db).find_by_external_id(
+        external_id=f"pipeline-{execution_id}", project_id=PROJECT_ID, source="pipeline"
+    )
+    assert child is not None
+    assert child.status == "deleted"
 
 
 def _assert_child_parent(

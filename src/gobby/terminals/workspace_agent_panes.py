@@ -50,6 +50,8 @@ AgentPlacementErrorCode = Literal[
 logger = logging.getLogger(__name__)
 # Bound on each placement wait (preflight, workspace lock, row lock) when a spawn sets no timeout.
 PLACEMENT_WAIT_SECONDS = 30.0
+# PostgreSQL's largest timeout setting (signed 32-bit milliseconds).
+_MAX_TIMEOUT_MS = 2**31 - 1
 
 # Placement's split directions, mapped to the layout's storage axis.
 _SPLIT_AXES = {"right": "horizontal", "down": "vertical", "balanced": "balanced"}
@@ -404,11 +406,12 @@ class AgentPaneReserver:
         ``timeout`` fails the write as a logged timeout instead of parking the placement.
         """
         try:
-            with self._workspaces.db.transaction() as conn:
-                conn.execute(
-                    "SELECT set_config('lock_timeout', %s, true)",
-                    (f"{max(1, round(timeout * 1000))}ms",),
-                )
+            # Only row-lock waits are bounded; the statement cap is PostgreSQL's largest
+            # setting, so the write's own work is never cut short.
+            with self._workspaces.db.bounded_transaction(
+                statement_timeout_ms=_MAX_TIMEOUT_MS,
+                lock_timeout_ms=max(1, round(timeout * 1000)),
+            ):
                 yield
         except LockNotAvailable as exc:
             raise _timed_out(

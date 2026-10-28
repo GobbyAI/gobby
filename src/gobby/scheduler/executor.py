@@ -672,6 +672,9 @@ class CronExecutor:
             status=ExecutionStatus.FAILED,
             outputs_json=json.dumps({"error": error}),
         )
+        # A timed-out resumable pipeline keeps its child through the cancel; a failed
+        # execution never resumes, so close it.
+        execution_manager.close_pipeline_child_session(execution_id)
 
     def _record_pipeline_run_failure(
         self,

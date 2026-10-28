@@ -100,6 +100,7 @@ class PipelineExecutionManager(Protocol):
     ) -> PipelineExecution | None: ...
 
     def claim_failed_execution_for_resume(self, execution_id: str) -> PipelineExecution | None: ...
+    def close_pipeline_child_session(self, execution_id: str) -> None: ...
     def update_step_execution(
         self,
         step_execution_id: int,
@@ -340,6 +341,9 @@ async def cancel_pipeline(
 
     if background_task and background_task is not asyncio.current_task():
         await asyncio.gather(background_task, return_exceptions=True)
+    # A resumable pipeline keeps its child through a task cancel for restart recovery;
+    # a cancelled execution never resumes, so close it here.
+    execution_manager.close_pipeline_child_session(execution_id)
 
     # Kill only the runs snapshotted from the pipeline child session. Never fall back
     # to execution.session_id: an early cancellation may still hold the caller there.
