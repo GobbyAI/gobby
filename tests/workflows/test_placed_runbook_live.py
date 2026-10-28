@@ -15,6 +15,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -34,6 +35,7 @@ import psutil
 import pytest
 
 import tests.e2e.conftest as e2e_fixtures
+from gobby.agents.spawn_executor_support import _codex_runtime_config_overrides
 from gobby.agents.sync import sync_bundled_agents
 from gobby.agents.trust import seed_cli_trust
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
@@ -149,6 +151,14 @@ CLAUDE_ONLY_SCHEDULERS = ("CronList", "CronCreate", "CronDelete")
 CODEX_STATE_FILES = ("logs_2.sqlite", "logs_2.sqlite-wal", "logs_2.sqlite-shm", "history.jsonl")
 # Codex's debug text log, kept in the evidence log tree: a seat that dies should show its cause there.
 CODEX_RUST_LOG = "codex_core=debug,codex_tui=debug"
+# Diagnostic run: added after the seat's argv, so these overrides apply last.
+STEWARD_CODEX_FLAGS = ("-c", "mcp_servers.gobby.required=false")
+# The steward codex wrapper writes its record into Codex's log directory, so the log copy keeps it.
+STEWARD_LAUNCH_RECORD = "steward-launch.txt"
+# The Codex composer marker, and the pause between the reads that check the screen.
+CODEX_COMPOSER = "›"
+MCP_STATUS_LATER_SECONDS = 2
+MCP_STATUS_IDLE_SECONDS = 240
 # The steward's terminal is read this often while its run is live, so a death message is kept.
 LIVE_OUTPUT_POLL_SECONDS = 0.5
 _EXCERPT_HEADER = re.compile(r"^--- Last \d+ lines of terminal output ---\s*$", re.MULTILINE)
@@ -1427,6 +1437,113 @@ class _LiveOutputPoller:
             reader.close()
 
 
+def _codex_argv_wrapper(codex: str, flags: tuple[str, ...], record: Path) -> str:
+    """A shell script that records what its codex inherits, then runs codex with the flags last.
+
+    The record holds override names, GOBBY_ variable names and the non-secret values only, so
+    the script never writes a credential.
+    """
+    trailing = " ".join(shlex.quote(flag) for flag in flags)
+    return (
+        "#!/bin/sh\n"
+        "{\n"
+        f'  for arg in "$@" {trailing}; do\n'
+        '    case "$arg" in *=*) ;; *) continue ;; esac\n'
+        '    key="${arg%%=*}"\n'
+        '    case "$key" in *[!A-Za-z0-9_.]*|"") ;; *) echo "arg $key" ;; esac\n'
+        "  done\n"
+        "  env | cut -d= -f1 | grep -E '^GOBBY_[A-Z0-9_]*$' | sed 's/^/env /'\n"
+        "  for name in GOBBY_HOME GOBBY_DAEMON_URL GOBBY_MACHINE_ID TMPDIR; do\n"
+        '    eval "value=\\${$name-}"\n'
+        '    echo "value $name=$value"\n'
+        "  done\n"
+        f"}} >> {shlex.quote(str(record))} 2>/dev/null || true\n"
+        f'exec {shlex.quote(codex)} "$@" {trailing}\n'
+    )
+
+
+def _production_override_keys(env_names: set[str], has_temp_dir: bool) -> set[str]:
+    """The override keys the daemon's spawn builder gives a seat with these environment names."""
+    identity = dict.fromkeys(env_names, "set")
+    temp_dir = "set" if has_temp_dir else None
+    return {item.partition("=")[0] for item in _codex_runtime_config_overrides(temp_dir, identity)}
+
+
+def _launch_record(home: Path) -> dict[str, Any]:
+    """The steward codex's record, compared with the keys the daemon's spawn builder gives.
+
+    A key in ``production_overrides_missing`` is one the steward's codex did not inherit.
+    """
+    path = home / "providers" / "codex" / "log" / STEWARD_LAUNCH_RECORD
+    if not path.exists():
+        return {"missing": str(path)}
+    overrides: set[str] = set()
+    names: set[str] = set()
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        kind, _, rest = line.partition(" ")
+        if kind == "arg":
+            overrides.add(rest)
+        elif kind == "env":
+            names.add(rest)
+        elif kind == "value":
+            name, _, value = rest.partition("=")
+            values[name] = value
+    expected = _production_override_keys(names, bool(values.get("TMPDIR")))
+    return {
+        "overrides": sorted(overrides),
+        "env_names": sorted(names),
+        "values": values,
+        "production_overrides_missing": sorted(expected - overrides),
+    }
+
+
+def _grant_files(home: Path) -> list[str]:
+    """Every grant.json under GOBBY_HOME, by path: its existence is recorded, never its contents."""
+    return sorted(path.relative_to(home).as_posix() for path in home.rglob("grant.json"))
+
+
+def _screen(live: Live, session: str) -> str:
+    """The session's terminal text now, from the daemon's one-shot snapshot."""
+    output = _tool(live, "gobby-sessions", "capture_output", session_id=session).get("output")
+    return output if isinstance(output, str) else ""
+
+
+def _settled_screen(
+    live: Live, session: str, pause: float = MCP_STATUS_LATER_SECONDS
+) -> str | None:
+    """The screen once its composer shows and two reads ``pause`` seconds apart agree."""
+    first = _screen(live, session)
+    time.sleep(pause)
+    second = _screen(live, session)
+    return second if CODEX_COMPOSER in second and first == second else None
+
+
+def _mcp_status(live: Live, run_id: str) -> dict[str, Any]:
+    """The steward's /mcp screen, read at once and again two seconds later.
+
+    The daemon types the seat's prompt once the composer shows, so the composer is idle only
+    after the launch turn ends. A read before the prompt is not reachable from here.
+    """
+    session = _until(
+        _steward_watch(live, run_id, partial(_steward_session, live.db, live.evidence)),
+        120,
+        "the steward's child session",
+    )
+    settled = _until(
+        _steward_watch(live, run_id, partial(_settled_screen, live, session)),
+        MCP_STATUS_IDLE_SECONDS,
+        "the steward's composer to settle",
+    )
+    _tool(live, "gobby-sessions", "send_keys", session_id=session, keys="/mcp\n")
+    right_after = _screen(live, session)
+    time.sleep(MCP_STATUS_LATER_SECONDS)
+    later = _screen(live, session)
+    # Closes the overlay, so the steward's next patrol turn reaches its composer.
+    _tool(live, "gobby-sessions", "send_keys", session_id=session, keys="Escape", literal=False)
+    return {"settled": settled, "right_after": right_after, "two_seconds_later": later}
+
+
 @pytest.fixture
 def steward_rig(
     postgres_db: HubDatabase,
@@ -1447,7 +1564,14 @@ def steward_rig(
     path, _ = curated_path(root, [])
     codex_dir = root / "codex"
     codex_dir.mkdir()
-    (codex_dir / "codex").symlink_to(codex)
+    launch_record = home / "providers" / "codex" / "log" / STEWARD_LAUNCH_RECORD
+    launch_record.parent.mkdir(parents=True, exist_ok=True)
+    # The real codex behind a wrapper that records its inheritance and adds STEWARD_CODEX_FLAGS last.
+    wrapper = codex_dir / "codex"
+    wrapper.write_text(
+        _codex_argv_wrapper(codex, STEWARD_CODEX_FLAGS, launch_record), encoding="utf-8"
+    )
+    wrapper.chmod(0o755)
     path = os.pathsep.join([str(codex_dir), path])
     monkeypatch.setenv("PATH", path)
     barrier = Barrier(root / "barrier")
@@ -1539,6 +1663,8 @@ def steward_live(
         "codex_home_env": os.environ.get("CODEX_HOME"),
         # Diagnostic: the Codex debug log level the terminal host was started with.
         "codex_rust_log": CODEX_RUST_LOG,
+        # Diagnostic: the overrides the steward's codex wrapper appends after the seat's argv.
+        "steward_flags": list(STEWARD_CODEX_FLAGS),
         # Orchestrator ruling, relayed by the Dev Manager (37976ed8): option (a).
         "codex_auth": {"ruling": "option (a): link the existing login; no sign-in"},
     }
@@ -1599,6 +1725,9 @@ def steward_live(
             state.evidence["daemon_logs"] = _kept(
                 lambda: _preserve_logs(home, evidence_dir, request.node.name)
             )
+            # What the steward's codex inherited, against the spawn builder, and each grant file.
+            state.evidence["steward_launch"] = _kept(lambda: _launch_record(home))
+            state.evidence["steward_grants"] = _kept(lambda: _grant_files(home))
             state.evidence["codex_log"] = _kept(
                 lambda: _preserve_tree(
                     home / "providers" / "codex" / "log",
@@ -1903,6 +2032,8 @@ def test_codex_recovery_steward_patrols_every_ten_minutes(steward_live: Live) ->
     run = _steward_run(live, execution)
     assert run["agent_name"] == STEWARD_SEAT, run
     run_id = str(run["id"])
+    # Diagnostic, before the patrol waits: a steward that idles at its prompt still shows /mcp.
+    live.evidence["steward_mcp"] = _kept(lambda: _mcp_status(live, run_id))
 
     explain = partial(_patrol_state, live, owner)
     waits = _until(
