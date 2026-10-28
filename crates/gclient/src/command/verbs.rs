@@ -385,8 +385,12 @@ impl Action {
             "arrange" => {
                 let tab = required(args.position().or_else(|| env.tab_id.clone()), "TAB_REF")?;
                 let layout = arrange_layout(&required(args.take("--layout"), "--layout")?)?;
+                let workspace = args
+                    .take("--workspace")
+                    .or_else(|| numeric_prefix(&tab, 2))
+                    .or_else(|| env.workspace_id.clone());
                 Self::Arrange {
-                    target: ref_target(&tab, &mut args, env, Rows::Tabs)?,
+                    target: Target::tab(&tab, workspace),
                     tab,
                     layout,
                 }
@@ -709,8 +713,9 @@ async fn resolve_ref(daemon: &LiveDaemon, named: NamedRef) -> Result<String, Com
 }
 
 /// Lay out `tab` with the GUI's Arrange plan: its ops in order, stopping at
-/// the first refusal. Without a workspace it is looked up in the daemon's
-/// default scratch, so a tab outside that needs `--workspace`.
+/// the first refusal. Its workspace is the `--workspace` flag, else the one a
+/// numeric REF names, else the pane's own. With none of those it is looked up
+/// in the daemon's default scratch.
 async fn arrange(
     daemon: &LiveDaemon,
     tab: String,
@@ -725,14 +730,9 @@ async fn arrange(
         )
         .await
         .map_err(daemon_error)?;
-    let tab = match target
-        .as_ref()
-        .map(|target| target.resolve(&snapshot))
-        .transpose()?
-        .flatten()
-    {
-        Some(refs::Row::Tab { id }) => id,
-        _ => tab,
+    let tab = match target {
+        Some(target) => target.tab_id(&snapshot)?,
+        None => tab,
     };
     let row = snapshot
         .tabs

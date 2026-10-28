@@ -90,11 +90,23 @@ async fn tab_outside_the_explicit_workspace_is_refused_with_no_layout_ops() {
     for reference in [other.tab.as_str(), other.reference.as_str()] {
         let output = invoke(
             &daemon,
-            &["arrange", reference, "--layout", "tiled", "--workspace", "default"],
+            &[
+                "arrange",
+                reference,
+                "--layout",
+                "tiled",
+                "--workspace",
+                "default",
+            ],
             &[],
         )
         .await;
-        assert_eq!(output.status.code(), Some(2), "{reference}: {}", stderr(&output));
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{reference}: {}",
+            stderr(&output)
+        );
         assert_eq!(
             stderr(&output),
             format!("gclient arrange: {reference} is not in workspace default\n")
@@ -109,7 +121,10 @@ async fn tab_outside_the_explicit_workspace_is_refused_with_no_layout_ops() {
 async fn seed_other(daemon: &MockDaemon) -> Other {
     daemon.seed_workspace(PROJECT, &[(&["home"], "home")]);
     let home = listing(daemon, "default").await;
-    let home_id = home["workspace"]["id"].as_str().expect("home id").to_owned();
+    let home_id = home["workspace"]["id"]
+        .as_str()
+        .expect("home id")
+        .to_owned();
     let workspace = daemon.seed_other_workspace(OTHER_PROJECT, &[(TERMINALS, "a")]);
     let listed = listing(daemon, &workspace).await;
     let tab = listed["tabs"][0]["id"].as_str().expect("tab id").to_owned();
