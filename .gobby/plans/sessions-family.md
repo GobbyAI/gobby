@@ -2758,76 +2758,194 @@ protected Python prefix; scoped Ruff and mypy; the version-pin test; the
 release build and Orchestrator-directed cutover. These are execution gates,
 not drafting results.
 
-### 7.3 Python CLI forwarding and dropped surfaces [category: code] (depends: 7.2)
+### 7.3 Delete Sessions-owned Python [category: code] (depends: 7.2)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/cli/__init__.py::*` — scope-reason: point the lazy sessions registration at the forwarding module
-- `src/gobby/cli/sessions_forwarding.py`
-- `src/gobby/cli/sessions.py::*` — operation: delete — scope-reason: retire the Python sessions CLI implementation, which the forwarding group replaces
-- `src/gobby/cli/sessions_dirty_paths.py::*` — operation: delete — scope-reason: retire the Python dirty-path approval command, which gclient serves
+- `src/gobby/servers/routes/sessions/analytics.py::*` — operation: delete — scope-reason: its update-summary, generate-summary and stop rows are native from 7.2
+- `src/gobby/servers/routes/sessions/changes.py::*` — operation: delete — scope-reason: the changes and diff rows are native from 7.2
+- `src/gobby/servers/routes/sessions/messages.py::*` — operation: delete — scope-reason: the messages, transcript, transcript-status and restore rows are native from 7.2
+- `src/gobby/servers/routes/sessions/variables.py::*` — operation: delete — scope-reason: both variables rows are native from 7.2, agent tokens included (7.1)
+- `src/gobby/servers/routes/sessions/dirty_paths.py::*` — operation: delete — scope-reason: the operator dirty-path approval row is native from 7.2 (2.5)
+- `src/gobby/servers/routes/sessions/terminal_binding.py::*` — operation: delete — scope-reason: the break-glass terminal attach row is native from 7.2 (2.5)
+- `src/gobby/servers/routes/sessions/core.py::*` — scope-reason: delete the web-chat, register, usage and token-events routes; keep the list route with `_bind_worktrees`, `_compute_resumability` and `_get_commit_count` until 8.5
+- `src/gobby/servers/routes/sessions/lifecycle.py::*` — scope-reason: keep only the release-composer route (#25276); delete every other route, the retired statusline guard and `_get_session_stats`
+- `src/gobby/servers/routes/sessions/__init__.py::*` — scope-reason: drop the deleted modules' registrations and re-exports
+- `src/gobby/servers/auth_service.py::_AGENT_CAPABILITY_MATRIX`
+- `src/gobby/cli/sessions.py::*` — operation: delete-lines — base-blob: f929cb811a8ccc08ebdbadc756f339fe1335c96b — lines: 5-8, 10, 16-18, 20-26, 89-202, 209-211, 222-886 — scope-reason: keep only the sessions group, terminate-terminal, the session-tool caller, its error type and their imports (#21565); delete the eight verbs, renumber, backfill-context-windows, their helpers and imports
+- `src/gobby/cli/sessions_dirty_paths.py::*` — operation: delete — scope-reason: `gclient sessions approve-dirty-paths` (6.1) replaces it
+- `src/gobby/install/shared/workflows/rules/task-enforcement/block-dirty-path-approval-cli.yaml::*` — scope-reason: change only the dirty-path rule's relay text and list exemption to gclient
 - `src/gobby/storage/sessions/_renumber.py::*` — operation: delete — scope-reason: drop renumbering (B1)
 - `src/gobby/storage/sessions/_manager.py::*` — scope-reason: drop the renumber mixin from SessionManager's bases
 - `src/gobby/sessions/context_usage.py::backfill_session_context_windows`
 - `src/gobby/sessions/context_usage.py::ContextWindowBackfillResult`
-- `tests/cli/test_cli_sessions.py::*` — operation: delete — scope-reason: callback tests of the retired module, rehomed to 0.1's corpus and 6.1
-- `tests/cli/test_cli_sessions_coverage.py::*` — operation: delete — scope-reason: callback coverage tests of the retired module
-- `tests/cli/test_sessions_coverage.py::*` — operation: delete — scope-reason: callback coverage tests of the retired module
-- `tests/cli/test_cli_sessions_termination.py::*` — scope-reason: import terminate-terminal from the forwarding module
+- `src/gobby/sessions/lifecycle.py::*` — scope-reason: delete the transcript-processing loop, the Sessions-owned expiry steps and 7.2's selection branch; keep the three foreign expiry pieces, the other sweeps, the knowledge-graph queue and prompt-file cleanup
+- `src/gobby/sessions/transcript_processing.py::*` — operation: delete — scope-reason: 4.2's native processing job replaces the mixin
+- `src/gobby/storage/session_lifecycle.py::*` — scope-reason: delete the six Sessions expiry functions, reduce `cleanup_expired_session_state` to its `pending_interactions` update (#21592) and keep `prune_stale_compact_workflow_instances`, `rebind_agent_run` and `session_has_retained_references`
+- `src/gobby/storage/sessions/_lifecycle_delegate.py::*` — scope-reason: delete the delegates of the deleted functions and keep the two foreign delegates
+- `src/gobby/storage/sessions/_transcript.py::_TranscriptMixin.get_pending_transcript_sessions`
+- `src/gobby/storage/sessions/_transcript.py::_TranscriptMixin.mark_transcript_processed`
+- `src/gobby/storage/sessions/_transcript.py::_TranscriptMixin.record_transcript_processing_failure`
+- `tests/sessions/test_python_retirement.py`
+- `tests/sessions/test_lifecycle_native_owner.py` — edit the file created by 7.2 to assert the foreign pieces run and no Sessions step exists in any selection
+- `tests/e2e/test_sessions_native.py` — edit the file created by 7.2 to verify the rows after the Python deletion
+- `tests/servers/routes/test_servers_routes_sessions_routes.py::*` — scope-reason: keep only the list and release-composer cases; delete the cases of the deleted routes and `_get_session_stats`
+- `tests/servers/routes/test_session_changes_routes.py::*` — operation: delete — scope-reason: 1.3's native tests cover the deleted changes routes
+- `tests/servers/routes/test_session_variables.py::*` — operation: delete — scope-reason: 2.4's native tests cover the deleted variables routes
+- `tests/servers/routes/test_statusline_endpoint.py::*` — operation: delete — scope-reason: tests only the deleted retired-route guard
+- `tests/servers/routes/test_dirty_path_approval_routes.py::*` — operation: delete — scope-reason: 2.5's native tests cover the deleted approval route
+- `tests/servers/routes/test_session_termination.py::*` — operation: delete — scope-reason: both cases drive the deleted expire route, which 2.2's native tests cover
+- `tests/servers/test_servers_sessions_routes.py::*` — scope-reason: keep only the list cases until 8.5
+- `tests/servers/test_session_endpoints.py::*` — scope-reason: keep only the list cases until 8.5
+- `tests/servers/test_sessions_rendered_messages.py::*` — operation: delete — scope-reason: every case drives the deleted messages and transcript-status routes
+- `tests/servers/test_project_endpoints.py::*` — operation: delete — scope-reason: every case drives the deleted register, find_current and detail routes
+- `tests/servers/test_managed_clear_identity.py::test_successor_hook_and_variables_follow_run`
+- `tests/servers/test_auth_service.py::test_agent_capability_matrix`
+- `tests/servers/test_auth_service.py::test_agent_capability_survives_ref_spelled_path_segment`
+- `tests/config/test_live_policy_consumers.py::test_voice_and_route_consumers_use_runtime`
+- `tests/mcp_proxy/tools/sessions/test_registration_terminal_binding.py::*` — scope-reason: drop the deleted terminal-binding route case
 - `tests/mcp_proxy/tools/test_session_reporting.py::test_cli_session_reads_hydrate_claims`
-- `tests/sessions/test_machine_scoped_consumers.py::test_session_filesystem_surfaces_refuse_remote_owner`
-- `tests/storage/sessions/test_storage_sessions_lifecycle.py::TestSessionManagerLifecycle.test_renumber_project_sessions_dry_run_leaves_rows_unchanged`
-- `tests/storage/sessions/test_storage_sessions_lifecycle.py::TestSessionManagerLifecycle.test_renumber_project_sessions_apply_is_project_scoped_and_tails_deleted`
-- `tests/storage/test_sessions_import.py::EXPECTED_PUBLIC_METHOD_SIGNATURES`
-- `tests/sessions/test_context_usage.py::test_backfill_bumps_under_counted_windows_and_recomputes_ratio`
-- `tests/sessions/test_context_usage.py::test_backfill_dry_run_writes_nothing`
+- `tests/workflows/rules/test_dirty_path_approval_rule.py::*` — scope-reason: add gclient spellings and the gclient relay text
+- `tests/cli/test_cli_sessions.py::*` — operation: delete — scope-reason: callback tests of the deleted verbs, rehomed to 0.1's corpus and 6.1
+- `tests/cli/test_cli_sessions_coverage.py::*` — operation: delete — scope-reason: callback coverage tests of the deleted verbs
+- `tests/cli/test_sessions_coverage.py::*` — operation: delete — scope-reason: callback coverage tests of the deleted verbs
 - `tests/workflows/test_dirty_edit_grants.py::test_approve_dirty_paths_cli_refuses_without_an_operator_key`
 - `tests/workflows/test_dirty_edit_grants.py::test_approve_dirty_paths_cli_ignores_managed_credentials_without_an_operator_key`
 - `tests/workflows/test_dirty_edit_grants.py::test_approve_dirty_paths_cli_sends_only_the_operator_key`
 - `tests/workflows/test_dirty_edit_grants.py::test_approve_dirty_paths_cli_reports_the_daemon_refusal`
-- `tests/cli/test_sessions_forwarding.py`
+- `tests/sessions/test_context_usage.py::test_backfill_bumps_under_counted_windows_and_recomputes_ratio`
+- `tests/sessions/test_context_usage.py::test_backfill_dry_run_writes_nothing`
+- `tests/sessions/test_machine_scoped_consumers.py::*` — scope-reason: drop the deleted route and CLI surfaces and keep the rest
+- `tests/sessions/test_sessions_lifecycle.py::*` — scope-reason: drop the cases of the deleted loop, steps and storage functions and keep the foreign pieces' cases
+- `tests/sessions/test_sessions_manager.py::*` — scope-reason: drop the deleted delegate and transcript methods
+- `tests/sessions/test_sessions_processor_unit.py::*` — scope-reason: drop the `mark_transcript_processed` fixture use
+- `tests/sessions/test_summary_retries.py::*` — scope-reason: drop the cases of the deleted processing loop
+- `tests/sessions/test_token_tracker_attribution.py::*` — scope-reason: drop fixtures that call the deleted processing loop
+- `tests/sessions/test_token_usage.py::*` — scope-reason: drop fixtures that call the deleted processing loop
+- `tests/communications/test_communications_manager.py::*` — scope-reason: drop fixtures that call the deleted expiry functions
+- `tests/config/test_runtime_loop_consumers.py::*` — scope-reason: drop the deleted loops' runtime-snapshot cases
+- `tests/hooks/test_session_activation_reconciliation.py::*` — scope-reason: drop fixtures that call the deleted expiry functions
+- `tests/storage/sessions/test_delete_guard.py::*` — scope-reason: drop the `prune_empty_sessions` case
+- `tests/storage/sessions/test_edge_cases.py::*` — scope-reason: drop the cases of the deleted storage functions
+- `tests/storage/sessions/test_lifecycle_expiry.py::*` — scope-reason: drop the cases of the deleted expiry steps
+- `tests/storage/sessions/test_pruning.py::*` — scope-reason: drop the cases of the deleted storage functions and keep the workflow-instance and `pending_interactions` cases
+- `tests/storage/sessions/test_storage_sessions_lifecycle.py::*` — scope-reason: drop the renumber and deleted expiry cases
+- `tests/storage/sessions/test_storage_sessions_registration.py::*` — scope-reason: drop the cases of the deleted storage functions
+- `tests/storage/tasks/test_operator_claim_hold.py::*` — scope-reason: drop fixtures that call the deleted expiry functions
+- `tests/storage/tasks/test_sweep_stale_claims.py::*` — scope-reason: drop fixtures that call the deleted expiry functions
+- `tests/storage/test_sessions_import.py::*` — scope-reason: drop the deleted methods from the public-surface expectations
+- `tests/storage/test_token_event_retention.py::*` — scope-reason: drop fixtures that call the deleted expiry functions
+- `docs/contracts/sessions-native.md`
+
+Consumers unchanged:
+- `src/gobby/cli/__init__.py` — no-edit-reason: lazily registers the kept `sessions` group.
+- `src/gobby/servers/routes/__init__.py` — no-edit-reason: imports only `create_sessions_router`.
+- `src/gobby/mcp_proxy/stdio_proxy.py` — no-edit-reason: calls the variables rows over HTTP; 7.1 admits its agent tokens natively.
+- `src/gobby/servers/routes/admin/_config.py` — no-edit-reason: advertises paths the native family still serves.
+- `src/gobby/workflows/approval_brace_guard.py` — no-edit-reason: guards the `approve-dirty-paths` command word under any launcher.
+- `tests/cli/test_cli_sessions_termination.py` — no-edit-reason: drives the kept group and `terminate-terminal`.
+- `tests/servers/test_auth_middleware.py` — no-edit-reason: asserts unauthenticated refusal through a catch-all app, independent of route registration.
+- `tests/servers/test_http_middleware.py` — no-edit-reason: asserts path protection independent of route registration.
+- `tests/servers/routes/test_runtime_handshake.py` — no-edit-reason: asserts only the runtime handshake entry of the agent matrix, which stays.
+- `tests/servers/routes/test_session_composer_release.py` — no-edit-reason: the release-composer route stays (#25276).
+- `tests/servers/routes/test_sessions_acp_routes.py` — no-edit-reason: the ACP routes stay until 8.4.
+- `tests/worktrees/test_containment.py` — no-edit-reason: exercises `core._bind_worktrees`, which stays until 8.5.
+- `tests/e2e/conftest.py` — no-edit-reason: drives the isolated gdaemon supervisor, which serves the rows natively.
 
 **Research context:**
-- Decision Record item 3: `src/gobby/cli/sessions_forwarding.py` is a Click
-  group with one subcommand per kept verb (`list`, `show`, `messages`,
-  `delete`, `stats`, `summarize`, `restore`, `approve-dirty-paths`), so
-  `generate_parity_ledger` keeps each CLI key. Each subcommand disables
-  option parsing and runs `gclient sessions <verb>` with literal arguments,
-  the working directory and inherited streams, resolved through
-  `src/gobby/utils/native_bin.py::resolve_native_bin`, and exits with the
-  native status; a missing binary keeps the existing diagnostic.
-  `terminate-terminal` moves into the group unchanged with its
-  `_call_session_tool` callback (#21565 owns it).
-- Drops (Debt B1, B2): `renumber` and `backfill-context-windows` have no
-  forwarding subcommand. The renumber mixin, the backfill function and its
-  result type, and their tests are deleted with no data migration. Consumers
-  are listed in `## Constraints`; `_coerce_positive_int` stays.
-- The four dirty-path CLI tests move to 6.1.9. The CLI claim-hydration test
-  is deleted because 1.1's corpus covers hydration through the routes. The
-  remote-owner test drops the retired CLI surfaces and keeps the rest.
+- Precondition: 7.2's activation evidence shows all 26 rows active natively
+  for API keys, cookies and agent tokens, with the Security approvals for
+  2.5 and 7.1. This leaf does not start while any of them stays proxied.
+- Model: Cron 4.2 (`.gobby/plans/gdaemon-cron-family.md`). No Python HTTP
+  route, CLI verb, loop or rollback branch survives for a switched row.
+  Rollback before this leaf uses the same binaries and the
+  `front_door.routes` edit; after it, rollback means the prior coherent
+  release (Decision 15), and `sessions-native.md` says a Proxy or Compare
+  selection for `sessions` is unsupported.
+- Routes: `src/gobby/servers/routes/sessions/` keeps only the list route in
+  `core.py` (8.5), `acp.py` (8.4) and the release-composer route in
+  `lifecycle.py` (#25276). The front door still proxies those unclaimed
+  pairs. The retired `POST /statusline` guard goes with the module's other
+  routes; an unclaimed path now reaches no Python route.
+- Agent tokens: the two variables rows are the only Sessions entries in
+  `_AGENT_CAPABILITY_MATRIX`; this leaf removes them, because no Python
+  route serves those paths. `test_agent_capability_matrix` keeps its other
+  rows; the ref-spelled path case moves to 7.1.6.
+- CLI (Decision Record item 3): `gclient sessions <verb>` (6.1) serves the
+  eight kept verbs; the Python group keeps only `terminate-terminal`, which
+  #21565 owns, so `generate_parity_ledger` keeps the group key. `renumber`
+  and `backfill-context-windows` (Debt B1, B2) are deleted with their
+  storage mixin, function, result type and tests; no data migration.
+  `_coerce_positive_int` stays. The four dirty-path CLI tests are covered
+  by 6.1.9; the CLI claim-hydration test is covered by 1.1's corpus.
+- `src/gobby/cli/sessions.py` has 886 lines, so its change is a typed
+  pure deletion bound to the current blob. The kept lines are the module
+  docstring, the `JSONDecodeError`, `typing`, `click`, `httpx`,
+  `get_daemon_url`, `json_dumps` and `daemon_auth_headers` imports, the
+  timeout constant, `SessionToolError`, `_call_session_tool`, the group
+  and `terminate-terminal`. If an upstream landing changes the file,
+  re-resolve the same ranges and refresh the proof before execution; a
+  stale proof never authorizes a different deletion.
+- Dirty-path rule: `block-dirty-path-approval-cli` already matches
+  `sessions approve-dirty-paths` under any launcher. Its reason relays
+  `gclient sessions approve-dirty-paths ...` and its list exemption names
+  `gclient sessions list`. The bundled template syncs to the rule registry
+  on install.
+- Loops: `SessionLifecycleManager` loses the `TranscriptProcessingMixin`
+  base, `_process_loop` and the Sessions steps of `_expire_stale_sessions`.
+  The three foreign expiry pieces (Decision 5) keep running in every mode.
+  `_TranscriptMixin.reset_transcript_processed` and
+  `reset_transcript_processing_failures` stay; the hooks and summary paths
+  call them. No production module outside the deleted set calls the six
+  deleted storage functions or the three deleted transcript methods.
+- Remaining Python after this leaf: the MCP tools, set_handoff, and the
+  delivery and continuation modules (8.8); the list route (8.5); the ACP
+  routes (8.4); the WS stop handler (8.7). Other families' Python modules
+  that import `src/gobby/storage/sessions/` keep it until their own ports.
+  `sessions-native.md` lists each importer by path with its removal owner:
+  agents (#21564), Workflows, rules and pipelines (#21567), hooks (#24151),
+  web-chat (#21592), terminals (#21565), communications (#21583), tasks
+  (#21560), CLI and MCP (#21571, #21570), and the runner (Stage 3).
 - Cross-plan edge: `node-mode 2.7` (`.gobby/plans/node-mode.md` at
-  `cbafbe253f`) owns the CLI inventory; the Orchestrator converts the edge at
-  expansion.
+  `cbafbe253f`) owns the CLI inventory; the Orchestrator converts the edge
+  at expansion.
 
-**Granularity:** One ownership switch: the forwarding group replaces the
-Python implementation, and the deletions are that switch's cleanup.
+**Granularity:** One retirement switch for one Python owner: routes, CLI
+verbs, loops and their storage functions are deleted together, because a
+split would leave broken imports and registrations between commits. Native
+behavior already has its own tests in P1–P7; this leaf proves absence, the
+kept boundaries and the post-deletion rows.
 
 **Acceptance:**
 
-- 7.3.1 - Each kept verb forwards literal arguments, the working directory
-  and the exit status to the resolved `gclient`, and the group imports no
-  Sessions storage or business module.
-  test: `tests/cli/test_sessions_forwarding.py::test_verbs_forward_to_gclient`.
-- 7.3.2 - `gobby sessions renumber` and `gobby sessions backfill-context-windows`
-  no longer exist, and no production import names the deleted modules or
-  functions. test: `tests/cli/test_sessions_forwarding.py::test_dropped_surfaces_are_gone`.
-- 7.3.3 - `terminate-terminal` keeps its Python behavior.
-  test: `tests/cli/test_cli_sessions_termination.py::test_terminate_terminal_calls_session_tool`.
+- 7.3.1 - The deleted route, CLI, loop and storage modules and functions
+  are absent, and no production import names them.
+  test: `tests/sessions/test_python_retirement.py::test_removed_sessions_python_has_no_readers`.
+- 7.3.2 - The Python sessions router registers only the list, ACP and
+  release-composer routes.
+  test: `tests/sessions/test_python_retirement.py::test_python_router_keeps_only_unported_rows`.
+- 7.3.3 - The Python lifecycle runs the three foreign expiry pieces and its
+  other sweeps, with no transcript processing or Sessions expiry step in any
+  selection. test: `tests/sessions/test_lifecycle_native_owner.py::test_python_runs_only_foreign_expiry_pieces`.
+- 7.3.4 - The Python CLI group holds only `terminate-terminal`, and
+  `renumber` and `backfill-context-windows` no longer exist.
+  test: `tests/sessions/test_python_retirement.py::test_cli_group_keeps_only_terminate_terminal`.
+- 7.3.5 - `_AGENT_CAPABILITY_MATRIX` names no Sessions row.
+  test: `tests/sessions/test_python_retirement.py::test_agent_matrix_has_no_sessions_rows`.
+- 7.3.6 - The dirty-path rule blocks `gclient sessions approve-dirty-paths`
+  and relays the `gclient` command.
+  test: `tests/workflows/rules/test_dirty_path_approval_rule.py::test_gclient_approval_is_blocked_and_relayed`.
+- 7.3.7 - The 26 rows and the eight verbs work on a hub and a standalone
+  daemon after the deletion, with no proxy fallback.
+  test: `tests/e2e/test_sessions_native.py::test_retired_python_is_unnecessary`.
+- 7.3.8 - `sessions-native.md` lists each remaining importer of the Python
+  Sessions storage layer with its removal owner, and states the
+  post-deletion rollback. behavior: "Remaining Python importers" in `docs/contracts/sessions-native.md`.
 
 Planned verification: the changed Python tests with
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest`,
-scoped Ruff and mypy, and a changed-test type audit. Nothing has run during
-drafting.
+the e2e test, scoped Ruff, `uv run mypy src/` and a changed-test type audit.
+No full pytest suite. Nothing has run during drafting.
 
 ### 7.4 Publish Sessions parity ownership [category: docs] (depends: 7.3)
 `kind: deliverable`
