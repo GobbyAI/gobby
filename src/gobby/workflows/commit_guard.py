@@ -34,7 +34,6 @@ from gobby.workflows.dirty_edit_grants import (
     checkout_path_owners,
     claimed_task_carriers,
     content_recorded_paths,
-    dirty_path_approval_command,
 )
 from gobby.workflows.git_commit_parsing import (
     GitCommitInvocation,
@@ -59,6 +58,7 @@ from gobby.workflows.task_claim_state import (
     task_selection_events,
 )
 from gobby.workflows.task_dirty_state import task_dirty_paths_async
+from gobby.workflows.worktree_shell_attribution import overlapped_worktree_paths
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -299,7 +299,7 @@ async def foreign_dirty_edit_conflict(
                 roots.setdefault(root, set()).add(rel)
         conflicts: set[ForeignPathOwner] = set()
         unowned: set[str] = set()
-        approval_commands: list[str] = []
+        overlapped: set[str] = set()
         for root, rels in roots.items():
             rels = await asyncio.to_thread(_git_backed_targets, root, rels)
             if not rels:
@@ -311,8 +311,12 @@ async def foreign_dirty_edit_conflict(
                 root,
                 session_dirty_file_set_for_checkout(variables, root),
             )
+            # An overlapped path stays foreign even when this session's own record matches it.
+            overlapped_here = overlapped_worktree_paths(variables, root)
             candidates = {
-                rel for rel in rels if not any(task_edit_path_covers(p, rel) for p in own)
+                rel
+                for rel in rels
+                if rel in overlapped_here or not any(task_edit_path_covers(p, rel) for p in own)
             }
             if not candidates:
                 continue
@@ -344,8 +348,14 @@ async def foreign_dirty_edit_conflict(
             )
             approved = await asyncio.to_thread(approved_dirty_paths, variables, root)
             root_unowned: set[str] = set()
+            root_overlapped: set[str] = set()
             for path in dirty:
-                if path in operation_paths or any(task_edit_path_covers(p, path) for p in own):
+                # An overlapping Bash call changed this dirt, so no single writer owns it: the
+                # task's and the carriers' claims do not exempt it.
+                overlapped_path = path in overlapped_here
+                if path in operation_paths or (
+                    not overlapped_path and any(task_edit_path_covers(p, path) for p in own)
+                ):
                     continue
                 overlapping = [
                     owner
@@ -360,20 +370,20 @@ async def foreign_dirty_edit_conflict(
                 ]
                 if holders:
                     conflicts.update(replace(owner, path=path) for owner in holders)
+                elif overlapped_path:
+                    if path not in approved:
+                        root_overlapped.add(path)
                 elif not (
                     overlapping
                     or path in approved
                     or any(task_edit_path_covers(carrier, path) for carrier in carriers)
                 ):
                     root_unowned.add(path)
-            if root_unowned:
-                unowned |= root_unowned
-                approval_commands.append(
-                    dirty_path_approval_command(session_id, root, root_unowned)
-                )
-        if not (conflicts or unowned):
+            unowned |= root_unowned
+            overlapped |= root_overlapped
+        if not (conflicts or unowned or overlapped):
             return ""
-        return format_dirty_edit_reason(conflicts, unowned, approval_commands)
+        return format_dirty_edit_reason(conflicts, unowned, overlapped)
     except (psycopg.OperationalError, PoolTimeout) as exc:
         return (
             f"Edit blocked: Gobby could not verify dirty-path ownership "
@@ -473,6 +483,16 @@ async def _operation_paths(checkout_root: str) -> set[str]:
             checkout_root, "diff", "--name-only", "-z", "--diff-filter=U"
         )
     return paths
+
+
+def live_session_held_paths(
+    db: HubDatabase, *, checkout_root: str, paths: AbstractSet[str], exclude_session_id: str
+) -> frozenset[str]:
+    """The paths among ``paths`` that a live session other than the caller holds dirty."""
+    owners = _live_path_owners(
+        db, checkout_root=checkout_root, paths=paths, exclude_session_id=exclude_session_id
+    )
+    return frozenset(owners)
 
 
 def _live_path_owners(

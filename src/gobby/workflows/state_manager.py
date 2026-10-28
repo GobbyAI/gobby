@@ -1,6 +1,5 @@
 import json
 import logging
-import re
 import threading
 import time
 import weakref
@@ -29,6 +28,12 @@ from gobby.workflows.session_edit_ledger import SessionEditLedger
 from gobby.workflows.variable_defaults import (
     load_variable_defaults,
     resolve_session_project_id,
+)
+from gobby.workflows.worktree_shell_attribution import (
+    OVERLAPS_VARIABLE,
+    WorktreeShellCallRegistry,
+    background_output_state,
+    overlapped_worktree_paths,
 )
 
 __all__ = [
@@ -118,29 +123,7 @@ def _clear_variable_defaults_caches() -> None:
 register_revision_listener("variables", _clear_variable_defaults_caches)
 
 
-_BACKGROUND_TAIL_BYTES = 512
-_BACKGROUND_END_LINE = re.compile(r"\[(?:exited with code -?\d+|killed)\]")
-
-
-def _background_output_state(output_path: str) -> str:
-    """Return ``running``, ``finished`` or ``missing`` for a background call's output file.
-
-    The CLI ends the file with an ``[exited with code N]`` or ``[killed]`` line when the
-    process stops.
-    """
-    path = Path(output_path)
-    try:
-        size = path.stat().st_size
-        with path.open("rb") as handle:
-            handle.seek(max(0, size - _BACKGROUND_TAIL_BYTES))
-            tail = handle.read().decode("utf-8", "replace")
-    except OSError:
-        return "missing"
-    lines = [line.strip() for line in tail.splitlines() if line.strip()]
-    return "finished" if lines and _BACKGROUND_END_LINE.fullmatch(lines[-1]) else "running"
-
-
-class SessionVariableManager(SessionEditLedger):
+class SessionVariableManager(SessionEditLedger, WorktreeShellCallRegistry):
     """Manages session-scoped shared variables (visible to all workflows).
 
     Variable resolution layers definition defaults under session overrides,
@@ -380,7 +363,7 @@ class SessionVariableManager(SessionEditLedger):
         for call_id, entry in self._pending_shell_calls(session_id).items():
             if not isinstance(entry, dict) or not entry.get("output_path"):
                 continue
-            state = _background_output_state(str(entry["output_path"]))
+            state = background_output_state(str(entry["output_path"]))
             if state == "finished":
                 self.adopt_claimed_shell_edits(session_id, call_id)
             elif state == "missing":
@@ -437,14 +420,20 @@ class SessionVariableManager(SessionEditLedger):
             else:
                 entries[call_id] = {**entry, "owned": kept, "output_path": output_path}
             variables["claimed_shell_snapshots"] = entries or None
+            # A path an overlapping call changed stays foreign, so the task does not adopt it.
+            overlapped = overlapped_worktree_paths(variables, root)
             for task_id, digests in changed.items():
-                record_task_content_hashes(variables, task_id, root, digests)
+                adopted = {
+                    path: digest for path, digest in digests.items() if path not in overlapped
+                }
+                if adopted:
+                    record_task_content_hashes(variables, task_id, root, adopted)
             return None, True
 
         self._mutate_variables(
             session_id,
             mutate,
-            keys=("claimed_shell_snapshots", "task_edited_checkout_hashes"),
+            keys=("claimed_shell_snapshots", "task_edited_checkout_hashes", OVERLAPS_VARIABLE),
             apply_defaults=False,
         )
 

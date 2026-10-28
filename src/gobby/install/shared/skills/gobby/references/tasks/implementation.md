@@ -27,15 +27,33 @@ writes with resolved targets, such as literal-path redirections or `sed -i`.
 `block-unresolved-scope-shell-write` refuses shell writes whose target scope
 cannot be resolved; use Edit/Write when that happens.
 
-Interpreter script files, including `uv run python <script.py>`, are for read-only
-probes. Running a script does not attribute its writes. An opaque write to a
-repository file leaves it unowned even when your own session made the change,
-so `block-cross-session-foreign-dirty-edit` locks you out of later edits.
-A before/after dirty diff cannot prove who wrote the file.
+An interpreter script, such as `uv run python <script.py>`, can write any file, so its
+writes cannot be named from the command text. Gobby attributes them by the checkout the
+call ran in:
 
-If locked out, ask the operator through Triage/Assistant to revert the change or
-run the refusal's `gobby sessions approve-dirty-paths` command in their own shell.
-Then redo the intended change with Edit/Write. Agents cannot approve dirty paths.
+- In a linked task worktree that a claimed task sanctions for your session, every path
+  the Bash call made dirty, changed, or deleted belongs to your session. This covers
+  writes by a script, a formatter, or a literal write, including deleting a clean tracked
+  file. A failed call keeps the changes it made. You may then Edit, `git restore`,
+  `git checkout --`, or `rm` those paths like any file you wrote. A background call is
+  attributed when its process ends, at your next tool call. If its output file is gone,
+  its paths stay foreign.
+- If another session's call overlapped yours in the same worktree and changed a path,
+  that path stays foreign to every session, including yours, for as long as it stays
+  dirty. This holds even when your task already owns the path: an overlapping rewrite of
+  it is refused too. A structured Edit or Write in flight counts as overlap for a Bash
+  call, so a Bash call that overlaps it does not attribute the paths it changed. The other
+  call finishing does not release the path; only its return to a clean state does, which
+  Triage arranges as below.
+- In the main or a shared checkout, script writes stay unattributed and nothing changes.
+  `block-cross-session-foreign-dirty-edit` refuses later edits to those paths with the
+  reason "no live session owns it".
+
+An unowned path is not routine recovery. Do not revert it or approve it to clear an
+edit lock. Send Triage the path and the command that wrote it with
+`gobby-agents:send_message`, then redo the intended change with Edit/Write once the path
+is clear. Agents do not approve dirty paths, and `block-dirty-path-approval-cli` keeps
+the operator-only approval command away from every seat.
 
 ## Findings and final validation
 
@@ -68,4 +86,4 @@ prior evidence stale; committing does not.
 Guides: [Git and Validation](../../../../../../../../docs/guides/tasks.md#git-and-validation),
 [Tests-first Development](../../../../../../../../docs/guides/tdd-enforcement.md).
 
-_Last verified: 2026-10-24_
+_Last verified: 2026-10-27_
