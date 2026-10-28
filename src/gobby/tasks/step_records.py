@@ -260,6 +260,9 @@ def task_step_requirements(
         task_type=task.task_type,
         category=task.category,
     )
+    if closer_definition == "researcher":
+        # The Orchestrator's review gates a researcher's own spike under every policy.
+        required = tuple(step for step in TASK_STEPS if step in {*required, "review"})
     if not required:
         return StepRequirements((), ())
     records = list_task_step_records(db, task.id)
