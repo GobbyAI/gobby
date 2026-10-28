@@ -1031,6 +1031,7 @@ Targets:
 - `src/gobby/sessions/turn_lifecycle.py::*` — scope-reason: drop FOR UPDATE, apply the bounded CAS and fenced status write in _apply and block_provider_failure, and repair status on duplicate replay
 - `src/gobby/runner_init/orchestration.py::*` — scope-reason: move attention client construction into the split module and delete both publisher closures
 - `src/gobby/runner_init/attention_clients.py`
+- `src/gobby/runner.py::*` — scope-reason: call init_attention_clients before init_orchestration in both runner init paths
 - `src/gobby/cli/daemon_preflight.py::*` — scope-reason: add attention_route_override_refusal and call it from restart_start_refusal
 - `src/gobby/cli/daemon_start.py::_start_dependency_errors`
 - `src/gobby/runner_init/servers.py::*` — scope-reason: remove the configure_attention_ordering and configure_attention_metadata wiring
@@ -1159,8 +1160,11 @@ then A's fenced write, and asserts that B's status stands.
 **5. Wiring.** Move the attention client construction out of
 `src/gobby/runner_init/orchestration.py` and into the new split module
 `src/gobby/runner_init/attention_clients.py`, as `init_attention_clients(runner)`.
-It sets `runner.attention_manager` and `runner.attention_metadata_store` before
-their consumers: the `attention_manager=` argument to the `WakeDispatcher`
+`GobbyRunner._initialize_post_database_services` and
+`GobbyRunner._initialize_runtime_services` call it immediately before
+`init_orchestration`. The call sits in `runner.py`, so 4.5 can remove it
+without touching orchestration.py. It sets `runner.attention_manager` and
+`runner.attention_metadata_store` before their consumers: the `attention_manager=` argument to the `WakeDispatcher`
 construction, and the `attention_manager=` and `attention_metadata_store=`
 arguments to the lifecycle monitor construction. The
 `publish_attention_event` and `publish_attention_metadata` closures are deleted.
@@ -1294,11 +1298,10 @@ Targets:
 - `src/gobby/agents/attention_metadata.py::*` — operation: delete — scope-reason: the metadata client has no Python caller left
 - `src/gobby/storage/attention_client.py` — delete the file created by 4.2; its last callers are gone
 - `src/gobby/runner_init/attention_clients.py` — delete the file created by 4.3
-- `src/gobby/runner_init/orchestration.py::*` — scope-reason: remove the init_attention_clients call that 4.3 added
-- `src/gobby/runner_init/servers.py::init_servers`
-- `src/gobby/runner.py::*` — scope-reason: remove the attention_manager and attention_metadata_store attributes and their imports
+- `src/gobby/runner_init/servers.py::*` — scope-reason: stop passing the attention services into the app context in init_servers
+- `src/gobby/runner.py::*` — scope-reason: remove the two init_attention_clients calls that 4.3 added, the attention_manager and attention_metadata_store attributes and their imports
 - `src/gobby/app_context.py::*` — scope-reason: remove the two attention service fields and the metadata store import
-- `src/gobby/servers/_app_lifecycle.py::create_lifespan`
+- `src/gobby/servers/_app_lifecycle.py::*` — scope-reason: remove the event-handler attention metadata store binding in create_lifespan
 - `src/gobby/hooks/event_handlers/__init__.py::*` — scope-reason: remove the attention metadata store parameter, field, setter and import
 - `crates/gagents/src/internal.rs` — delete the file created by 2.3; no loopback client remains
 - `crates/gagents/src/lib.rs` — edit the file created by 2.1 to drop the internal module
