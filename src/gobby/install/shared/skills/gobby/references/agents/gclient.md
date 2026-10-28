@@ -39,11 +39,14 @@ the agent starts. Use one of three forms:
 12 rows when they fit, else tiles the tab evenly; a viewport too small for
 either refuses. `title` names the agent's tab or pane.
 
-A refusal carries `placement_error` and changes nothing: `invalid_placement` for
+A refusal carries `placement_error`: `invalid_placement` for
 a malformed shape, `invalid_ref` or `not_found` for a ref that names nothing
-usable, `forbidden` for another project's pane or a caller out of scope, and
-`busy` while another spawn into that pane is still in flight. Fix the input
-and spawn again.
+usable, `forbidden` for another project's pane or a caller out of scope,
+`busy` while another spawn into that pane is still in flight, and `timeout`
+when the placement or its workspace stays blocked past the spawn's timeout (30
+seconds at most). Preflight refusals change nothing. A later timeout cleans up
+the reservation; if a row lock also blocks cleanup, the unbound pane remains
+for the next sweep. Fix the input or clear the blocked resource and spawn again.
 
 ## Keep operator tabs clear
 
