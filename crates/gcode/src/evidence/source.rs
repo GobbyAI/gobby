@@ -105,6 +105,28 @@ impl EvidenceLibrary {
         self.bound_blobs(&paths);
     }
 
+    /// Checks every path in a commit-bound search scope against its bound blob before the
+    /// search decides completeness. A path whose indexed hash differs from the bound commit
+    /// fails `stale_range`, so a live-index miss cannot read as a complete empty result.
+    /// Working-tree reads verify each file as they read it, so this is a no-op there.
+    pub(super) fn verify_bound_scope(
+        &self,
+        paths: &std::collections::BTreeSet<String>,
+    ) -> Result<()> {
+        if self.working_tree {
+            return Ok(());
+        }
+        let paths = paths
+            .iter()
+            .map(|path| validate_repo_path(path).map(|()| path.as_str()))
+            .collect::<Result<Vec<_>>>()?;
+        for (&path, blob) in paths.iter().zip(self.bound_blobs(&paths)) {
+            let bytes = blob?;
+            self.verify_source_hash(path, &self.entry(path)?.content_hash, &bytes)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn read_file(&self, path: &str) -> Result<Vec<u8>> {
         validate_repo_path(path)?;
         if !self.working_tree {

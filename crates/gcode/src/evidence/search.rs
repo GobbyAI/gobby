@@ -12,6 +12,7 @@ use super::{EvidenceError, EvidenceLibrary, QueryResult, Result};
 pub(super) fn execute(library: &EvidenceLibrary, selector: &SearchSelector) -> Result<QueryResult> {
     validate_selector(selector)?;
     let eligible = scoped_files(library, selector);
+    library.verify_bound_scope(&eligible)?;
     let (mut items, truncated, hybrid) = match selector.lane {
         SearchLane::Symbol | SearchLane::LexicalSymbol => {
             let page = symbol_search(library, selector)?;
