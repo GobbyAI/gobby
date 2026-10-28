@@ -88,9 +88,11 @@ covers macOS and Linux; Windows is #25249. No latency budget gates anything.
      carries Decision 6's seam.
    - The Rust hub inbox drain (3.5) sends each envelope through the front
      door's route table in process, so it follows the `hooks` route value and
-     rollback to proxy needs no Python loop. 7.15 starts it and deletes the
-     Python periodic drain and quarantine-retention loops, so two periodic
-     drains never run together. The Python startup barrier
+     rollback to proxy needs no Python loop. 7.13 starts it and unschedules
+     the Python periodic drain and quarantine-retention loops while `hooks` is
+     still proxy or compare, so the compare soak covers the Rust drain before
+     the 7.15 flip and two periodic drains never run together. 7.17 deletes
+     the dormant Python modules. The Python startup barrier
      (`src/gobby/runner_hook_replay.py`) stays and posts through the front door;
      per-file claims are exclusive.
 6. **Compare soak for a mutating route.** For non-GET methods the front door
@@ -117,11 +119,22 @@ covers macOS and Linux; Windows is #25249. No latency budget gates anything.
     `gobby_codeindex::jobs::trigger::EditTrigger::notify_file_changed` through
     `HubJobs::edit_trigger()` for the hub's own checkouts. 5.8 calls the
     seam, and 7.10 binds it (depends: #21586, #24705). Node events skip it (Site row 16).
-11. **Bundled YAML conformance.** Every bundled rule, agent, workflow and
-    pipeline body must load in the Rust loader: schema parse, condition parse,
-    template compile and pattern compile. The engine corpus (1.1) uses synthetic
-    rule bodies that exercise engine features; it never asserts per-rule
-    behavior.
+11. **Bundled YAML conformance.** Every bundled YAML body must load in the
+    Rust loader that owns its family: schema parse, condition parse, template
+    compile and pattern compile. Bundled bodies are validated against the
+    engine schema and loader only, with no per-rule tests (Josh). The engine
+    corpus (1.1) uses synthetic rule bodies that exercise engine features; it
+    never asserts per-rule behavior. Ownership by family under
+    `src/gobby/install/shared/workflows/`:
+    - **Rules (`rules/`).** Every body parses (2.1.5) and compiles into a cache
+      entry (2.13.3) here.
+    - **Agents (`agents/`).** Rule selectors and step workflows parse here
+      (2.1.5), and their conditions and templates compile (2.13.3). The rest of
+      the definition schema stays with Python's sync until #21567; #21564 reads
+      the synced rows.
+    - **Variables (`variables/`).** Every body parses here (2.1.5).
+    - **Pipelines (`pipelines/` and the root `review.yaml`).** #21567's loader
+      owns their conformance; this plan loads none.
 12. **Carried decisions DR1-DR8** from rust-rule-evaluation, minus its latency
     gate. Its flip gates D2.1-D2.9 land in P7, except D2.7, a py-spy GIL-share
     capture that the no-latency ruling drops; D2.8's tests prove single
@@ -147,7 +160,7 @@ row names the Python behaviour, its evidence and the disposition.
 | --- | --- | --- |
 | One hub-wide `.stop_replay_epoch` file | node-halves Constraints | Drop: one epoch per machine (Decision 5) |
 | Two envelope ledgers (Python `envelope_dedupe.py`, Rust node `Ledger`) | `src/gobby/hooks/envelope_dedupe.py`, `crates/gdaemon/src/nodes/hooks/ledger.rs` | Drop: one shared ledger (Decision 5) |
-| Python drain loop POSTs envelopes back through the front door over HTTP | `src/gobby/hooks/inbox.py::_post_envelope`, `src/gobby/hooks/inbox_maintenance.py::drain_hook_inbox_loop` | Drop: the Rust drain dispatches through the route table in process, and 7.15 deletes the loop (Decision 5) |
+| Python drain loop POSTs envelopes back through the front door over HTTP | `src/gobby/hooks/inbox.py::_post_envelope`, `src/gobby/hooks/inbox_maintenance.py::drain_hook_inbox_loop` | Drop: the Rust drain dispatches through the route table in process; 7.13 unschedules the loop and 7.17 deletes its module (Decision 5) |
 | An 862-line route module | `src/gobby/servers/routes/mcp/hooks.py` | Drop: one Rust module per concern (P3) |
 | Provider inferred from inner payload fields | memory a39d0411, #17173 | Keep the fix: `source` alone selects the adapter (4.1) |
 | Seven `RuleEffect` types no bundled rule uses: `set_display_content`, `rewrite_input`, `set_permission_response`, `set_retry`, `set_watch_paths`, `set_worktree_path`, `set_elicitation` | `src/gobby/workflows/definitions.py::RuleEffect` (F2) | Keep: they are the rule-authoring schema, adapters already translate each field, and synthetic corpus cases pin them (2.12) |
@@ -194,7 +207,7 @@ sets the edges this plan cannot express in a heading at expansion.
 | #25046 Reusable native admission | blocks | 7.12 |
 | #25068 Agent-token and runtime-grant admission | blocks | 7.12 |
 | #24149 S2.7 hub, leaf 4.1 (delegated rows survive Python removal) | blocks | 7.17; the Orchestrator binds the 4.1 leaf at expansion |
-| #21567 Workflows | blocked by P2 under B | set by the Orchestrator at expansion |
+| #21567 Workflows | blocked by P2 under B | set by the Orchestrator at expansion; #21567 also owns bundled pipeline conformance, including the root `review.yaml` (Decision 11) |
 | #24884 Native MCP gateway | blocked by #24151 | unchanged; consumes `gobby-workflows` |
 | #24713 Code-index 9.7 | blocked by #24151 | unchanged |
 | #21569 S2.11 holder | blocked by #24151 | unchanged |
@@ -603,8 +616,9 @@ Add `crates/gworkflows` (package `gobby-workflows`) to the root members with
   defaults and the `{{ gobby_bin }}` substitution, and parses each body. It also
   parses the rule selectors and step workflows of every file under
   `src/gobby/install/shared/workflows/agents/` and every body under
-  `src/gobby/install/shared/workflows/variables/`. Pipelines belong to #21567's
-  loader. 2.13 extends this test to compilation.
+  `src/gobby/install/shared/workflows/variables/`. Pipelines, including the
+  root `workflows/review.yaml`, belong to #21567's loader. 2.13 extends this
+  test to compilation.
 
 **Granularity:** one leaf with eight production files, counting both
 `Cargo.toml` files, and six acceptance items. The manifest, body, repository
@@ -790,8 +804,9 @@ inline scripts with `ast.parse`. rust-rule-evaluation decided
 `rustpython-parser`; it is not yet in `Cargo.lock`.
 
 `python_source.rs` wraps `rustpython-parser`, pinned at its newest release that
-is at least two weeks old when 2.6 starts. Both this classifier and 2.8's
-launch guard consume it.
+is at least two weeks old when 2.6 starts. This classifier, 2.8's launch guard
+and 2.9's condition parser consume it, so it exposes module and expression
+parsing.
 - Rejected: a hand-written statement parser, which needs the full statement
   grammar.
 - Rejected: treating unparsed inline Python as not read-only, which diverges
@@ -950,11 +965,14 @@ Targets:
   unanswered returns `False`, so the write is outside scope.
 
 Build `condition`:
-- **Parser.** A hand-written parser for exactly the accepted subset, including
-  Python string literal forms, reproducing
-  `SafeExpressionEvaluator._normalize_expr` and rejecting every other node,
-  f-strings and lambdas included. Rejected: a full Python parser crate for a
-  subset of about 20 nodes.
+- **Parser.** `condition::parse` reproduces
+  `SafeExpressionEvaluator._normalize_expr`, parses the result in expression
+  mode through 2.6's `normalize::python_source` wrapper over
+  `rustpython-parser`, and converts only the accepted nodes into the
+  evaluator's tree. Every other node is rejected at parse time, f-strings and
+  lambdas included. Python's evaluator also parses with `ast`, so string literal
+  forms and precedence match without a second grammar. Rejected: a
+  hand-written expression parser, which would duplicate 2.6's grammar.
 - **Values.** A dynamic `Value` with Python truthiness, comparison, membership,
   indexing and the `Mod` and `FloorDiv` semantics the vectors pin.
 - **Evaluator.** Applies DR5's per-rule rule for deterministic errors.
@@ -1155,7 +1173,7 @@ compiled cache entry (Decision 11).
 **Acceptance:**
 - 2.13.1 - Every template the 1.1 cases render produces Python's output byte for byte. test: `crates/gworkflows/tests/template_corpus.rs::template_vectors_render_equal`.
 - 2.13.2 - The three custom filters match Python on quoting, regex groups and no-match input, and an undefined variable renders as `TemplateEngine` renders it. test: `crates/gworkflows/src/template/tests.rs::filters_and_undefined_match_python`.
-- 2.13.3 - Every bundled rule body compiles into a cache entry: conditions parse, patterns compile and templates compile. test: `crates/gworkflows/tests/bundled_conformance.rs::every_bundled_body_compiles_into_a_cache_entry`.
+- 2.13.3 - Every bundled rule body compiles into a cache entry, and every condition and template in a bundled agent step workflow compiles: conditions parse, patterns compile and templates compile. test: `crates/gworkflows/tests/bundled_conformance.rs::every_bundled_body_compiles_into_a_cache_entry`.
 
 **Verification:** the shared P2 commands.
 
@@ -1646,6 +1664,9 @@ Targets:
 - `crates/gingress/src/receipts/staging.rs`
 - `crates/gingress/src/receipts/tests.rs`
 - `crates/gingress/src/execute.rs`
+- `crates/gingress/src/seams.rs`
+- `crates/gingress/src/seams/scripted.rs`
+- `crates/gingress/src/seams/tests.rs`
 - `crates/gingress/tests/envelope_corpus.rs`
 
 **Research context:**
@@ -1663,13 +1684,21 @@ Targets:
   write of a receipted response releases the receipt for redelivery. ghook
   replaces the envelope file with a `delivery-receipt` acknowledgement
   (`docs/contracts/hook-ingress.md`, "Receipt acknowledgement file").
-- **Storage.** Receipts and staged effects are session rows; reads and writes
-  go through 5.1's `Sessions` seam, scripted here.
+- **Storage.** Receipts and staged effects are session rows owned by
+  Sessions (#21562).
 
 Port them as `receipts`: attach a receipt to a response carrying staged
 `on_receipt` effects, release it when the response body fails to write,
 consume pending acknowledgement files before execution, and apply an
-acknowledged receipt's staged effects once.
+acknowledged receipt's staged effects once. Receipt reads and writes go through
+a `seams::Sessions` trait that this leaf creates with only the receipt and
+staged-effect methods, each returning `Result<_, SeamUnavailable>`.
+`seams::scripted` gives it a scripted implementation that replays a recorded
+script and fails on an unscripted call. 5.1 adds the remaining Sessions methods
+and the other seam groups to the same module.
+
+**Granularity:** one leaf with seven production files. The receipt seam is
+defined here because receipts are its first caller.
 
 **Acceptance:**
 - 3.4.1 - The 1.2 receipt round trip replays equal: the response carries `_gobby_delivery_receipt`, and the acknowledgement applies the staged effects once. test: `crates/gingress/tests/envelope_corpus.rs::receipt_round_trip_replays_equal`.
@@ -1702,13 +1731,13 @@ Targets:
 - **Quarantine rule.** A spooled envelope answered 403 `hook_machine_mismatch`
   is quarantined and never replayed.
 - **Barrier user.** `src/gobby/runner_hook_replay.py` calls
-  `drain_hook_inbox_barrier` before agent restart classification; 7.15 keeps
+  `drain_hook_inbox_barrier` before agent restart classification; 7.13 keeps
   that barrier working.
 
 Port them as `inbox`. The drain claims each inbox file atomically, passes the
 envelope's headers and body to a dispatch closure the caller supplies, settles
 or quarantines the file by the response, and prunes processed markers and
-quarantine by age. It is built here; 7.15 starts it with a closure over the
+quarantine by age. It is built here; 7.13 starts it with a closure over the
 front door's route table.
 
 **Acceptance:**
@@ -1902,7 +1931,7 @@ replaying the 1.4 corpus, then compose envelope, adapters and pipeline into
 the route's execution step.
 
 Shared rules for every P5 deliverable:
-- Every call to another family goes through a 5.1 seam; P7 implements each
+- Every call to another family goes through a `seams` trait (3.4, 5.1); P7 implements each
   seam over the owning family's native API.
 - A Python module over 850 lines is split into two Rust files up front.
 - Verification for every P5 deliverable:
@@ -1925,8 +1954,8 @@ Targets:
 by owning family:
 - **Sessions (#21562):** session rows, lookup and status, platform session
   binding, deferred activation, materialization, clear-run lineage, the
-  message processor and transcripts, receipts and staged effects (3.4), and
-  node session registration (Decision 8).
+  message processor and transcripts, and node session registration
+  (Decision 8). The receipt and staged-effect methods already exist from 3.4.
 - **Tasks (#21560):** task reads and writes, session-task links, commit
   auto-link.
 - **Agents (#21564):** agent runs and their lifecycle
@@ -1946,10 +1975,11 @@ by owning family:
 - **Broadcast:** UI event fan-out (`src/gobby/hooks/broadcaster.py`), served by
   gdaemon's native WS transport (#21558, closed).
 
-Define one trait per group, each call returning `Result<_, SeamUnavailable>`,
-and a scripted implementation that replays a 1.4 case's collaborator script
-and fails on an unscripted call. The engine's own seams stay in
-`gobby-workflows`.
+Extend 3.4's `seams::Sessions` trait with the remaining Sessions methods and
+define one trait per other group, each call returning
+`Result<_, SeamUnavailable>`. Extend 3.4's scripted implementation so it
+replays a 1.4 case's collaborator script and fails on an unscripted call. The
+engine's own seams stay in `gobby-workflows`.
 
 **Acceptance:**
 - 5.1.1 - Every collaborator call in the 1.4 corpus maps to exactly one seam method. test: `crates/gingress/src/seams/tests.rs::every_recorded_collaborator_maps_to_a_seam`.
@@ -2446,6 +2476,9 @@ Shared rules for every P7 deliverable:
 - Verification: `GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo nextest run -p gobby-daemon -p gobby-ingress`,
   `cargo clippy -p gobby-daemon -p gobby-ingress --all-targets -- -D warnings`
   and `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/install/test_version_pins.py`.
+- A leaf that edits Python also runs
+  `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest <each surviving test file in its Targets and acceptance> -v`,
+  `uv run ruff check src/` and `uv run mypy src/`.
 
 ### 7.1 Compose the `hooks` family in gdaemon [category: code] (depends: 6.3)
 `kind: deliverable`
@@ -2489,7 +2522,7 @@ Three are bound here:
 `hooks::dispatch::LocalDispatch` sends a request through `FrontDoor::handle`
 with a loopback peer and the local operator credential
 (`gobby_core::local_token::read_api_key`), set once after the door is built.
-7.7 and 7.15 use it so their requests reach whichever backend serves the route.
+7.7 and 7.13 use it so their requests reach whichever backend serves the route.
 
 Until 7.12 binds admission, `HooksFamily::claims` returns false. Every request
 then stays proxied, whatever the route value, while seam groups are unbound.
@@ -2515,7 +2548,7 @@ Targets:
 - `crates/gdaemon/src/hooks/seams/sessions/tests.rs`
 - `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
 
-**Research context:** 5.1's Sessions group (session rows, lookup and status,
+**Research context:** the Sessions group from 3.4 and 5.1 (session rows, lookup and status,
 platform binding, deferred activation, materialization, clear-run lineage,
 messages and transcripts, receipts and staged effects, and node session
 registration from 5.4 and Decision 8). Engine seams: `SessionQueries` targets,
@@ -2759,7 +2792,7 @@ implementation SHA; a later change needs renewed approval.
 - 7.12.4 - The contract records the persisted `security-review` label, the pre-dispatch check and the approved step for the exact SHA. behavior: "hooks admission security gate" in `docs/contracts/hook-ingress.md`.
 - 7.12.5 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 7.13 Compare mode for the hook routes [category: code] (depends: 7.12)
+### 7.13 Compare mode and the Rust drain handover [category: code] (depends: 7.12)
 `kind: deliverable`
 
 Targets:
@@ -2768,6 +2801,23 @@ Targets:
 - `crates/gingress/src/compare.rs`
 - `crates/gingress/src/compare/record.rs`
 - `crates/gingress/src/compare/tests.rs`
+- `crates/gdaemon/src/hooks.rs`
+- `crates/gdaemon/tests/hooks_drain.rs`
+- `src/gobby/runner_maintenance/messaging.py::drain_hook_inbox_loop`
+- `src/gobby/runner_maintenance/messaging.py::hook_quarantine_retention_loop`
+- `src/gobby/runner_maintenance/__init__.py::*` — scope-reason: drop the two loop re-exports
+- `src/gobby/runner_lifecycle_periodic.py::_default_loops`
+- `src/gobby/runner_lifecycle_periodic.py::start_periodic_tasks`
+- `src/gobby/runner_lifecycle.py::run_daemon`
+- `src/gobby/runner.py::*` — scope-reason: drop the two hook task attribute annotations from `GobbyRunner`
+- `src/gobby/runner_init/storage.py::open_storage_and_config`
+- `src/gobby/runner_lifecycle_shutdown.py::_cancel_periodic_tasks`
+- `src/gobby/runner_lifecycle_shutdown.py::stop_restart_recovery`
+- `src/gobby/runner_periodic_task_attrs.py`
+- `tests/hooks/test_inbox.py::*` — scope-reason: add the barrier and Rust drain coexistence case
+- `tests/test_runner_bin_freshness.py::*` — scope-reason: drop the drain loop argument
+- `tests/test_runner_maintenance_startup.py::*` — scope-reason: remove the quarantine-loop scheduling test
+- `tests/test_runner_shutdown.py::*` — scope-reason: drop the quarantine task attribute from the shutdown fixture
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
@@ -2784,6 +2834,17 @@ Targets:
   reason, injected context or staged receipt fields), D2.5 (DR8 counters per
   route) and D2.6 (allow-audit lines keep `record_rule_evaluation`'s schema in
   `rule-allow-audit.jsonl`).
+- **Python loops.** `runner_lifecycle_periodic.py::start_periodic_tasks` spawns
+  `hook-inbox-drain` (`runner._hook_inbox_task`) and `hook-quarantine-retention`.
+  `runner_lifecycle.py::run_daemon` passes `drain_hook_inbox_loop`.
+  `runner_init/storage.py` initializes both task attributes, and
+  `runner_lifecycle_shutdown.py` cancels them. Only
+  `runner_maintenance/messaging.py` imports `inbox_maintenance` and
+  `quarantine_retention`.
+- **Barrier.** `src/gobby/runner_hook_replay.py` calls
+  `inbox.drain_hook_inbox_barrier`, which posts through the front door. It stays.
+  Per-file claims are exclusive (3.5.2), and a timeout fences unresolved
+  sessions.
 
 `HooksFamily` overrides both methods:
 - **Execute.** `prepare_proxied` runs 5.12's execution on pre-state in record
@@ -2810,15 +2871,52 @@ In native mode the family appends each pass's audit records to
 #24963 waiver in `docs/contracts/parity-waivers.json`, such as 5.4's
 `hooks.node-session.register`.
 
-**Granularity:** one leaf with four production files and four acceptance
-items. Record mode, the per-route checks and the outcome log are one compare
-step that the soak reads together.
+Drain handover: `hooks::compose` starts 3.5's drain and retention with a
+closure that sends each envelope through `LocalDispatch`. The drain follows the
+route value, so under `proxy` and `compare` it delivers to Python through the
+front door, and the compare soak covers it before the 7.15 flip. In the same
+commit Python stops scheduling its drain and quarantine-retention loops:
+`messaging.py` loses both loop functions and their imports, and the runner
+wiring drops them. `inbox_maintenance.py` and `quarantine_retention.py` stay
+dormant with no importer, so reverting this commit restores the Python drain;
+7.17 deletes them.
+
+`runner_lifecycle_shutdown.py` has 916 lines, so this deliverable makes one
+split: the attribute-name tuple in `_cancel_periodic_tasks` is the move to
+`src/gobby/runner_periodic_task_attrs.py` as `PERIODIC_TASK_ATTRS`, without the
+two hook loop names, and `stop_restart_recovery` drops `_hook_inbox_task` from
+its tuple.
+
+**Granularity:** one leaf with 15 production files and six acceptance items.
+Record mode, the per-route checks and the outcome log are one compare step that
+the soak reads together. The drain handover lands with them so the same soak
+covers the Rust drain while proxy rollback still reaches Python, and so
+exactly one periodic drain runs.
+
+Consumers unchanged:
+- `tests/test_runner_lifecycle_periodic.py` — no-edit-reason: It names no hook loop, and the remaining loops keep their keys and spawn order.
+- `tests/test_runner_skill_maintenance.py` — no-edit-reason: It names no hook loop, and the remaining loops keep their keys.
+- `tests/test_runner_workflow_audit_maintenance.py` — no-edit-reason: It names no hook loop, and the remaining loops keep their keys.
+- `tests/test_runner_approval_timeout.py` — no-edit-reason: It names no hook loop, and `start_periodic_tasks` keeps its signature.
+- `tests/test_runner_resource_monitor.py` — no-edit-reason: It names no hook loop, and `start_periodic_tasks` keeps its signature.
+- `tests/test_runner_lifecycle.py` — no-edit-reason: It names no hook loop or hook task, and both called functions keep their signatures.
+- `tests/test_runner_pid_file.py` — no-edit-reason: It names no hook loop, and `run_daemon` keeps its signature.
+- `src/gobby/runner_init/__init__.py` — no-edit-reason: It re-exports `open_storage_and_config`, whose signature is unchanged.
+- `tests/config/test_restart_config_consumers.py` — no-edit-reason: It reads no hook task attribute.
+- `tests/runner_init/test_config_runtime_startup.py` — no-edit-reason: It reads no hook task attribute.
+- `tests/runner_init/test_runner_init_storage.py` — no-edit-reason: It reads no hook task attribute.
+- `tests/test_runner_project_recovery.py` — no-edit-reason: It reads no hook task attribute.
+- `tests/test_asgi_chat_shutdown.py` — no-edit-reason: It patches `_cancel_periodic_tasks` by name, which stays.
+- `tests/test_runner_model_metadata_refresh.py` — no-edit-reason: It cancels a task that stays in `PERIODIC_TASK_ATTRS`.
+- `src/gobby/runner_rollback.py` — no-edit-reason: It awaits `stop_restart_recovery(runner)`, whose signature is unchanged.
 
 **Acceptance:**
 - 7.13.1 - A record-mode execute writes nothing and runs no external effect, and its response fields compare equal to Python's on every 1.2 and 1.4 case. test: `crates/gingress/src/compare/tests.rs::record_mode_execute_matches_python_without_effects`.
 - 7.13.2 - An `mcp_call`-dependent pass compares up to the call and is logged as partial, and a changed decision reports a JSON pointer mismatch. test: `crates/gingress/src/compare/tests.rs::partial_and_mismatch_are_reported`.
 - 7.13.3 - Replay, receipt and webhook-test checks verify Python's responses and report a planted divergence; every execute line carries its DR8 class, and native audit lines parse with `record_rule_evaluation`'s schema. test: `crates/gingress/src/compare/tests.rs::post_route_checks_and_outcome_lines`.
 - 7.13.4 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 7.13.5 - Under `proxy` and `compare` the Rust drain delivers each spooled envelope once through `LocalDispatch` to Python, settles or quarantines it by the response, and a compare-mode delivery writes a `hooks-compare.jsonl` line with its envelope id. test: `crates/gdaemon/tests/hooks_drain.rs::drain_delivers_through_the_route_table`.
+- 7.13.6 - The Rust drain and the Python barrier never deliver one file twice, and Python schedules no drain or quarantine loop. test: `tests/hooks/test_inbox.py::test_barrier_coexists_with_the_rust_drain`.
 
 ### 7.14 DR6 pass endpoint and the Python proxy forward [category: code] (depends: 7.13)
 `kind: deliverable`
@@ -2882,33 +2980,13 @@ Consumers unchanged:
 - 7.14.4 - The first committed Rust pass of a session sets the ownership marker once. test: `crates/gingress/src/pipeline/tests.rs::first_rust_pass_marks_ownership`.
 - 7.14.5 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 7.15 Native default and the Rust drain [category: code] (depends: 7.14)
+### 7.15 Native default [category: code] (depends: 7.14)
 `kind: deliverable`
 
 Targets:
 - `crates/gingress/src/family.rs`
-- `crates/gdaemon/src/hooks.rs`
 - `crates/gdaemon/tests/hooks_flip.rs`
 - `src/gobby/mcp_proxy/services/rule_pass_forward.py`
-- `src/gobby/hooks/inbox_maintenance.py::*` — operation: delete — scope-reason: the Rust hub drain replaces the Python drain loop and inbox pruning
-- `src/gobby/hooks/quarantine_retention.py::*` — operation: delete — scope-reason: the Rust hub drain owns quarantine retention
-- `src/gobby/runner_maintenance/messaging.py::drain_hook_inbox_loop`
-- `src/gobby/runner_maintenance/messaging.py::hook_quarantine_retention_loop`
-- `src/gobby/runner_maintenance/__init__.py::*` — scope-reason: drop the two loop re-exports
-- `src/gobby/runner_lifecycle_periodic.py::_default_loops`
-- `src/gobby/runner_lifecycle_periodic.py::start_periodic_tasks`
-- `src/gobby/runner_lifecycle.py::run_daemon`
-- `src/gobby/runner.py::*` — scope-reason: drop the two hook task attribute annotations from `GobbyRunner`
-- `src/gobby/runner_init/storage.py::open_storage_and_config`
-- `src/gobby/runner_lifecycle_shutdown.py::_cancel_periodic_tasks`
-- `src/gobby/runner_lifecycle_shutdown.py::stop_restart_recovery`
-- `src/gobby/runner_periodic_task_attrs.py`
-- `tests/hooks/test_inbox_temp_reaper.py::*` — operation: delete — scope-reason: its subject, inbox_maintenance, is deleted
-- `tests/hooks/test_envelope_marker_retention.py::*` — scope-reason: drop the cases that import inbox_maintenance
-- `tests/hooks/test_inbox.py::*` — scope-reason: drop the maintenance and quarantine-retention cases and keep the barrier cases
-- `tests/test_runner_bin_freshness.py::*` — scope-reason: drop the drain loop argument
-- `tests/test_runner_maintenance_startup.py::*` — scope-reason: remove the quarantine-loop scheduling test
-- `tests/test_runner_shutdown.py::*` — scope-reason: drop the quarantine task attribute from the shutdown fixture
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
@@ -2923,60 +3001,25 @@ Targets:
   The window is the runtime family's operator rule
   (`.gobby/plans/gdaemon-runtime-family.md` Q2): at least 24 hours, measured
   once from the cutover that starts compare. The window also needs at least one
-  execute from each of the five CLIs and one request on each node and webhook
-  row. No restart resets the clock. If a CLI cannot run on this machine at flip
-  time, the soak evidence names it and the flip waits for Josh's waiver; the
-  CLI is never skipped silently (Orchestrator, 2026-10-28).
-- **Python loops.** `runner_lifecycle_periodic.py::start_periodic_tasks` spawns
-  `hook-inbox-drain` (`runner._hook_inbox_task`) and `hook-quarantine-retention`.
-  `runner_lifecycle.py::run_daemon` passes `drain_hook_inbox_loop`.
-  `runner_init/storage.py` initializes both task attributes, and
-  `runner_lifecycle_shutdown.py` cancels them. Only
-  `runner_maintenance/messaging.py` imports `inbox_maintenance` and
-  `quarantine_retention`.
-- **Barrier.** `src/gobby/runner_hook_replay.py` calls
-  `inbox.drain_hook_inbox_barrier`, which posts through the front door. It stays.
-  Per-file claims are exclusive (3.5.2), and a timeout fences unresolved
-  sessions.
+  execute from each of the five CLIs, one request on each node and webhook row,
+  and one inbox envelope the Rust drain delivered, shown by its processed
+  marker and a `hooks-compare.jsonl` line with the same envelope id. No restart
+  resets the clock. If a CLI cannot run on this machine at flip time, the soak
+  evidence names it and the flip waits for Josh's waiver; the CLI is never
+  skipped silently (Orchestrator, 2026-10-28).
+- **Platforms.** The soak and cutover evidence run on macOS only. Linux CI
+  evidence (E1) does not gate this leaf (Josh, 2026-09-14).
 
 `HooksFamily::default_backend` returns `Native`, and `HOOKS_ROUTE_DEFAULT`
-becomes `"native"` in the same commit. `hooks::compose` starts 3.5's drain and
-retention with a closure that sends each envelope through `LocalDispatch`, so
-the drain follows the route value and rollback needs no Python loop. The Python
-drain and quarantine-retention loops and their modules go.
-`runner_lifecycle_shutdown.py` has 916 lines, so this deliverable makes one
-split: the attribute-name tuple in `_cancel_periodic_tasks` is the move to
-`src/gobby/runner_periodic_task_attrs.py` as `PERIODIC_TASK_ATTRS`, without the
-two hook loop names, and
-`stop_restart_recovery` drops `_hook_inbox_task` from its tuple.
-
-**Granularity:** one leaf with 15 production files and five acceptance items.
-The default flip, the Rust drain start and the Python loop removal must land
-together so exactly one periodic drain runs.
-
-Consumers unchanged:
-- `tests/test_runner_lifecycle_periodic.py` — no-edit-reason: It names no hook loop, and the remaining loops keep their keys and spawn order.
-- `tests/test_runner_skill_maintenance.py` — no-edit-reason: It names no hook loop, and the remaining loops keep their keys.
-- `tests/test_runner_workflow_audit_maintenance.py` — no-edit-reason: It names no hook loop, and the remaining loops keep their keys.
-- `tests/test_runner_approval_timeout.py` — no-edit-reason: It names no hook loop, and `start_periodic_tasks` keeps its signature.
-- `tests/test_runner_resource_monitor.py` — no-edit-reason: It names no hook loop, and `start_periodic_tasks` keeps its signature.
-- `tests/test_runner_lifecycle.py` — no-edit-reason: It names no hook loop or hook task, and both called functions keep their signatures.
-- `tests/test_runner_pid_file.py` — no-edit-reason: It names no hook loop, and `run_daemon` keeps its signature.
-- `src/gobby/runner_init/__init__.py` — no-edit-reason: It re-exports `open_storage_and_config`, whose signature is unchanged.
-- `tests/config/test_restart_config_consumers.py` — no-edit-reason: It reads no hook task attribute.
-- `tests/runner_init/test_config_runtime_startup.py` — no-edit-reason: It reads no hook task attribute.
-- `tests/runner_init/test_runner_init_storage.py` — no-edit-reason: It reads no hook task attribute.
-- `tests/test_runner_project_recovery.py` — no-edit-reason: It reads no hook task attribute.
-- `tests/test_asgi_chat_shutdown.py` — no-edit-reason: It patches `_cancel_periodic_tasks` by name, which stays.
-- `tests/test_runner_model_metadata_refresh.py` — no-edit-reason: It cancels a task that stays in `PERIODIC_TASK_ATTRS`.
-- `src/gobby/runner_rollback.py` — no-edit-reason: It awaits `stop_restart_recovery(runner)`, whose signature is unchanged.
+becomes `"native"` in the same commit. The Rust drain has run since 7.13 and
+follows the new default through `LocalDispatch`, so `hooks: proxy` still rolls
+both the route and the drain's deliveries back to Python.
 
 **Acceptance:**
 - 7.15.1 - D2.1 and D2.9: with no `hooks` entry, every 1.2 envelope and sequence case and every 1.1 hardcoded-behavior and response-field case replays equal through gdaemon. test: `crates/gdaemon/tests/hooks_flip.rs::native_default_replays_the_corpora`.
 - 7.15.2 - D2.2: every 409 and 503 body and DR5's four mappings match through gdaemon. test: `crates/gdaemon/tests/hooks_flip.rs::native_error_paths_match`.
 - 7.15.3 - D2.4: `hooks: proxy` returns the route and the Rust drain's deliveries to Python, and no other family's routing changes. test: `crates/gdaemon/tests/hooks_flip.rs::proxy_setting_rolls_back_route_and_drain`.
-- 7.15.4 - The Rust drain and the Python barrier never deliver one file twice, and Python schedules no drain or quarantine loop. test: `tests/hooks/test_inbox.py::test_barrier_coexists_with_the_rust_drain`.
-- 7.15.5 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 7.15.4 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ### 7.16 Parity-ledger rows [category: docs] (depends: 7.15)
 `kind: deliverable`
@@ -3010,6 +3053,11 @@ Targets:
 - `src/gobby/servers/routes/mcp/hook_responses.py::*` — operation: delete — scope-reason: only the deleted route used it
 - `src/gobby/hooks/receipt_redelivery.py::*` — operation: delete — scope-reason: only the deleted route used it
 - `src/gobby/hooks/startup_claim_preflight.py::*` — operation: delete — scope-reason: only the deleted route and receipt_redelivery used it
+- `src/gobby/hooks/inbox_maintenance.py::*` — operation: delete — scope-reason: dormant since 7.13; the Rust hub drain replaces the Python drain loop and inbox pruning
+- `src/gobby/hooks/quarantine_retention.py::*` — operation: delete — scope-reason: dormant since 7.13; the Rust hub drain owns quarantine retention
+- `tests/hooks/test_inbox_temp_reaper.py::*` — operation: delete — scope-reason: its subject, inbox_maintenance, is deleted
+- `tests/hooks/test_envelope_marker_retention.py::*` — scope-reason: drop the cases that import inbox_maintenance
+- `tests/hooks/test_inbox.py::*` — scope-reason: drop the maintenance and quarantine-retention cases and keep the barrier cases
 - `src/gobby/servers/routes/mcp/__init__.py::*` — scope-reason: drop the hooks router export
 - `src/gobby/servers/routes/__init__.py::*` — scope-reason: drop the hooks router re-export
 - `src/gobby/servers/_app_routes.py::register_routes`
@@ -3044,7 +3092,8 @@ Targets:
 `gcode grep -w <symbol> -l -g 'src/**'` per Decision 7. `hooks.py` is imported
 by `routes/mcp/__init__.py`; `hook_hold_open.py`, `hook_responses.py` and
 `receipt_redelivery.py` only by `hooks.py`; and `startup_claim_preflight.py` by
-`hooks.py` and `receipt_redelivery.py`. Kept because they have surviving
+`hooks.py` and `receipt_redelivery.py`. `inbox_maintenance.py` and
+`quarantine_retention.py` have had no importer since 7.13. Kept because they have surviving
 importers: `adapter_execution`
 (`src/gobby/workflows/engine/mcp_injections.py`), `health_gate`,
 `agent_run_ingress`, `runtime_compat`, `envelope_dedupe`, `replay_decision`,
@@ -3110,6 +3159,16 @@ The narrative draft has no M1 and has not run expansion validation. After the
 adversary derives the manifest, run the same base validation and
 `uv run gobby plans validate .gobby/plans/s2-11-hub-hooks-rules.md -p /Users/josh/Projects/gobby --mode expansion`.
 No planned check is claimed as validation evidence.
+
+Platform evidence (Orchestrator, 2026-10-28):
+- **macOS.** Every leaf's focused cargo and pytest commands, the live compare
+  soak and the cutover evidence run on the operator's macOS machine.
+- **Linux.** The same focused commands run on a hosted Linux CI runner as
+  pre-publish evidence under #22360 (Cross-platform CI evidence). The only
+  operator action is approving one exact-SHA push. These are the shared P2,
+  P4, P5 and P7 commands and the commands each P1 and P3 leaf names.
+- Linux evidence never gates a leaf or the 7.15 flip (Josh, 2026-09-14: do not
+  block on Linux or Windows). Windows is #25249. No latency gate applies.
 
 ## V1 Plan Changelog
 `kind: framing`
