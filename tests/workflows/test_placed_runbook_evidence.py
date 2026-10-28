@@ -12,6 +12,7 @@ from typing import Any, cast
 import httpx
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from tests.workflows.test_placed_runbook_live import (
     CODEX_RUST_LOG,
     STEWARD_CODEX_FLAGS,
@@ -21,6 +22,7 @@ from tests.workflows.test_placed_runbook_live import (
     _kept,
     _LiveOutputPoller,
     _preserve_steward_screen,
+    _steward_session,
     _with_codex_debug_log,
 )
 
@@ -147,34 +149,58 @@ class _ScriptedReader:
         self.closed = True
 
 
+def _capture(output: str) -> dict[str, Any]:
+    return {"success": True, "result": {"success": True, "output": output}}
+
+
 def test_live_output_poller_keeps_the_last_read_with_terminal_text() -> None:
-    header = "--- Last 20 lines of terminal output ---"
     stop = threading.Event()
     reader = _ScriptedReader(
         [
-            {"success": True, "result": header},
-            {"success": True, "result": f"{header}\nCodex exited"},
-            {"success": True, "result": header},
+            _capture(""),
+            _capture("Codex exited"),
+            _capture("  \n"),
             RuntimeError("daemon refused the read"),
         ],
         stop,
     )
-    poller = _LiveOutputPoller(lambda: reader, {"recovery_steward": {"run": "run-9"}}, stop, 0)
+    poller = _LiveOutputPoller(lambda: reader, lambda: "child-9", stop, 0)
 
     poller.start()
+    assert stop.wait(timeout=10), "the poller never consumed its script"
     poller.stop()
 
     assert poller.record() == {
         "polls": 3,
-        "last_nonempty": f"{header}\nCodex exited",
+        "last_nonempty": "Codex exited",
         "error": "RuntimeError: daemon refused the read",
         "stopped": True,
     }
-    assert reader.calls[0] == ("gobby-agents", "get_agent_live_output", {"run_id": "run-9"})
+    assert reader.calls[0] == ("gobby-sessions", "capture_output", {"session_id": "child-9"})
     assert reader.closed
 
 
-def test_the_steward_codex_wrapper_runs_the_real_codex_with_its_flags_first(tmp_path: Path) -> None:
+class _FakeHub:
+    """Answers the one steward lookup with its row."""
+
+    def __init__(self, row: dict[str, Any]) -> None:
+        self.row = row
+
+    def fetchone(self, sql: str, params: tuple[Any, ...]) -> dict[str, Any]:
+        return self.row
+
+
+def test_the_steward_session_is_known_once_its_run_binds_a_child() -> None:
+    evidence = {"recovery_steward": {"run": "run-9"}}
+    unbound = cast(HubDatabase, _FakeHub({"child_session_id": None}))
+    bound = cast(HubDatabase, _FakeHub({"child_session_id": "child-9"}))
+
+    assert _steward_session(unbound, evidence) is None
+    assert _steward_session(bound, evidence) == "child-9"
+    assert _steward_session(bound, {}) is None
+
+
+def test_steward_codex_wrapper_runs_real_codex_then_flags(tmp_path: Path) -> None:
     real = tmp_path / "real codex"
     real.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n', encoding="utf-8")
     real.chmod(0o755)
@@ -186,4 +212,4 @@ def test_the_steward_codex_wrapper_runs_the_real_codex_with_its_flags_first(tmp_
         [str(wrapper), "exec", "hello world"], capture_output=True, text=True, check=True
     )
 
-    assert result.stdout.splitlines() == [*STEWARD_CODEX_FLAGS, "exec", "hello world"]
+    assert result.stdout.splitlines() == ["exec", "hello world", *STEWARD_CODEX_FLAGS]

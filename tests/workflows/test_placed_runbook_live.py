@@ -150,13 +150,8 @@ CLAUDE_ONLY_SCHEDULERS = ("CronList", "CronCreate", "CronDelete")
 CODEX_STATE_FILES = ("logs_2.sqlite", "logs_2.sqlite-wal", "logs_2.sqlite-shm", "history.jsonl")
 # Codex's debug text log, kept in the evidence log tree: a seat that dies should show its cause there.
 CODEX_RUST_LOG = "codex_core=debug,codex_tui=debug"
-# Diagnostic run: the steward's codex argv adds these ahead of the seat's own arguments.
-STEWARD_CODEX_FLAGS = (
-    "-c",
-    "features.responses_websockets=false",
-    "-c",
-    "features.responses_websockets_v2=false",
-)
+# Diagnostic run: added after the seat's argv, so these overrides apply last.
+STEWARD_CODEX_FLAGS = ("-c", "mcp_servers.gobby.required=false")
 # The steward's terminal is read this often while its run is live, so a death message is kept.
 LIVE_OUTPUT_POLL_SECONDS = 0.5
 _EXCERPT_HEADER = re.compile(r"^--- Last \d+ lines of terminal output ---\s*$", re.MULTILINE)
@@ -1343,9 +1338,9 @@ def _with_codex_debug_log(env: dict[str, str]) -> dict[str, str]:
 
 
 def _codex_argv_wrapper(codex: str, flags: tuple[str, ...]) -> str:
-    """A shell script that runs the real codex with flags ahead of the caller's own arguments."""
-    leading = " ".join(shlex.quote(flag) for flag in flags)
-    return f'#!/bin/sh\nexec {shlex.quote(codex)} {leading} "$@"\n'
+    """A shell script that runs the real codex with the caller's arguments, then the flags."""
+    trailing = " ".join(shlex.quote(flag) for flag in flags)
+    return f'#!/bin/sh\nexec {shlex.quote(codex)} "$@" {trailing}\n'
 
 
 def _has_terminal_text(text: str) -> bool:
@@ -1368,6 +1363,17 @@ def _own_client(daemon_url: str, token: str, session_id: str) -> MCPTestClient:
     return client
 
 
+def _steward_session(db: HubDatabase, evidence: dict[str, Any]) -> str | None:
+    """The Recovery Steward's child session once its run has bound one, else None."""
+    run = evidence.get("recovery_steward", {}).get("run")
+    if not run:
+        return None
+    row = _row(db, "SELECT child_session_id FROM agent_runs WHERE id = %s", str(run))
+    if row is None or row["child_session_id"] is None:
+        return None
+    return str(row["child_session_id"])
+
+
 class _LiveOutputPoller:
     """Reads the steward's live terminal while its run is live and keeps the last read with text.
 
@@ -1377,12 +1383,12 @@ class _LiveOutputPoller:
     def __init__(
         self,
         open_client: Callable[[], _LiveReader],
-        evidence: dict[str, Any],
+        session_of: Callable[[], str | None],
         stop_event: threading.Event,
         interval: float = LIVE_OUTPUT_POLL_SECONDS,
     ) -> None:
         self.open_client = open_client
-        self.evidence = evidence
+        self.session_of = session_of
         self.stop_event = stop_event
         self.interval = interval
         self.polls = 0
@@ -1410,19 +1416,20 @@ class _LiveOutputPoller:
         reader = self.open_client()
         try:
             while not self.stop_event.wait(self.interval):
-                run = self.evidence.get("recovery_steward", {}).get("run")
-                if not run:
+                session = self.session_of()
+                if session is None:
                     continue
                 try:
                     reply = reader.call_tool(
-                        "gobby-agents", "get_agent_live_output", {"run_id": str(run)}
+                        "gobby-sessions", "capture_output", {"session_id": session}
                     )
                 except Exception as exc:
                     # A refused read is evidence too, and the next poll still runs.
                     self.error = f"{type(exc).__name__}: {exc}"
                     continue
                 self.polls += 1
-                text = reply.get("result") if isinstance(reply, dict) else None
+                result = reply.get("result") if isinstance(reply, dict) else None
+                text = result.get("output") if isinstance(result, dict) else None
                 if isinstance(text, str) and _has_terminal_text(text):
                     self.last_nonempty = text
         finally:
@@ -1449,7 +1456,7 @@ def steward_rig(
     path, _ = curated_path(root, [])
     codex_dir = root / "codex"
     codex_dir.mkdir()
-    # The real codex behind a wrapper that adds STEWARD_CODEX_FLAGS ahead of the seat's argv.
+    # The real codex behind a wrapper that adds STEWARD_CODEX_FLAGS after the seat's argv.
     wrapper = codex_dir / "codex"
     wrapper.write_text(_codex_argv_wrapper(codex, STEWARD_CODEX_FLAGS), encoding="utf-8")
     wrapper.chmod(0o755)
@@ -1567,7 +1574,7 @@ def steward_live(
     poll_stop = threading.Event()
     poller = _LiveOutputPoller(
         partial(_own_client, steward_daemon.http_url, token, str(coordinator["id"])),
-        evidence,
+        partial(_steward_session, postgres_db, evidence),
         poll_stop,
     )
     try:
