@@ -101,6 +101,18 @@ def world(
     return world
 
 
+def tree_of(binding: TeamBinding) -> Path:
+    """The team tree a binding names; these tests always admit a team with one."""
+    assert binding.worktree_path is not None
+    return Path(binding.worktree_path)
+
+
+def tree_id_of(binding: TeamBinding) -> str:
+    """The team tree id a binding names; these tests always admit a team with one."""
+    assert binding.worktree_id is not None
+    return binding.worktree_id
+
+
 def _body(name: str, steps: tuple[str, ...]) -> dict[str, Any]:
     return {
         "name": name,
@@ -426,7 +438,7 @@ async def test_resumed_primary_takes_its_domain_slot(world: TeamWorld) -> None:
     epic = new_task(world, TITLE, epic=True)
     backend = new_task(world, LEAF_TITLE, parent=epic, domain="backend")
     team = await epic_team(world, epic)
-    seat = stored_primary_seat(world, team, backend, team.binding.worktree_id)
+    seat = stored_primary_seat(world, team, backend, tree_id_of(team.binding))
 
     resumed = await team.spawn("developer", resume_session_id=seat)
 
@@ -441,7 +453,7 @@ async def test_resumed_primary_refused_beside_a_live_domain_primary(world: TeamW
     backend = new_task(world, LEAF_TITLE, parent=epic, domain="backend")
     second_backend = new_task(world, "Second backend leaf", parent=epic, domain="backend")
     team = await epic_team(world, epic)
-    tree = team.binding.worktree_id
+    tree = tree_id_of(team.binding)
     seat = stored_primary_seat(world, team, backend, tree)
     live = await team.spawn("developer", task_id=second_backend.id, worktree_id=tree)
     assert live.get("success") is True, live
@@ -490,7 +502,7 @@ async def test_merged_leaf_tree_cleanup(world: TeamWorld) -> None:
     merged_leaf = new_task(world, LEAF_TITLE, parent=epic)
     open_leaf = new_task(world, "Unmerged leaf", parent=epic)
     team = await epic_team(world, epic)
-    epic_tree = Path(team.binding.worktree_path)
+    epic_tree = tree_of(team.binding)
     trees = LocalWorktreeManager(db)
 
     async def sub_tree(leaf: Task) -> tuple[str, Path, str]:

@@ -71,8 +71,20 @@ def world(
     )
 
 
+def tree_of(binding: TeamBinding) -> Path:
+    """The team tree a binding names; these tests always admit a team with one."""
+    assert binding.worktree_path is not None
+    return Path(binding.worktree_path)
+
+
+def tree_id_of(binding: TeamBinding) -> str:
+    """The team tree id a binding names; these tests always admit a team with one."""
+    assert binding.worktree_id is not None
+    return binding.worktree_id
+
+
 def commit(team: Team, name: str) -> str:
-    tree = Path(team.binding.worktree_path)
+    tree = tree_of(team.binding)
     (tree / name).write_text(f"# {name}\n")
     git_in(tree, "add", name)
     git_in(tree, "commit", "-m", f"Add {name}")
@@ -175,7 +187,7 @@ async def test_close_collapses_all_team_seats(
     }, "each seat's tab closes with its run"
     assert {session_status(db, session) for session in seats} == {"expired"}
     assert {session_status(db, session) for session in bystander.seats} == {"active"}
-    assert Path(bystander.binding.worktree_path).is_dir()
+    assert tree_of(bystander.binding).is_dir()
     after = LocalTaskManager(db).get_task(team.task.id)
     assert (after.closed_at, after.commits, after.closed_commit_sha) == (
         closed.closed_at,
@@ -184,8 +196,8 @@ async def test_close_collapses_all_team_seats(
     )
     assert world.case.git("merge-base", "--is-ancestor", sha, "trunk") == ""
     assert teardown(world, team) == {"outcome": "cleaned"}
-    assert not Path(team.binding.worktree_path).exists()
-    assert LocalWorktreeManager(db).get(team.binding.worktree_id) is None
+    assert not tree_of(team.binding).exists()
+    assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is None
     assert not branch_exists(world, team.binding.branch)
     with pytest.raises(TeamAdmissionRefused) as refused:
         check_team_spawn(db, team.runbook, SeatTarget(project_path=team.binding.worktree_path))
@@ -249,7 +261,7 @@ async def test_teardown_recovers_after_restart(
     assert (record["outcome"], record["finding"]) == ("refused", filed.id)
     assert [task.id for task in finding_tasks(world, refused)] == [filed.id]
     assert LocalTaskManager(db).get_task(filed.id).is_escalated
-    assert Path(refused.binding.worktree_path).is_dir()
+    assert tree_of(refused.binding).is_dir()
 
 
 async def test_teardown_converges_after_git_removed_the_tree(
@@ -260,12 +272,12 @@ async def test_teardown_converges_after_git_removed_the_tree(
     team = await admitted_team(world, "Crashed teardown team")
     task = close(world, team, land(world, team, "crash.py"))
     # Git removed the tree, then the daemon stopped before the tree row was deleted.
-    world.case.git("worktree", "remove", "--force", team.binding.worktree_path)
+    world.case.git("worktree", "remove", "--force", str(tree_of(team.binding)))
 
     await teardown_pass(db, daemon(db), closed_at(task) + TEARDOWN_GRACE)
 
     assert teardown(world, team) == {"outcome": "cleaned"}
-    assert LocalWorktreeManager(db).get(team.binding.worktree_id) is None
+    assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is None
     assert not branch_exists(world, team.binding.branch)
     assert finding_tasks(world, team) == []
 
@@ -307,14 +319,14 @@ async def test_cleanup_preserves_unsafe_trees(
         for team in (eligible, dirty, occupied, mismatched)
     }
     shas[unmerged.binding.team_id] = commit(unmerged, "unmerged.py")
-    edited = Path(dirty.binding.worktree_path) / "README.md"
+    edited = tree_of(dirty.binding) / "README.md"
     edited.write_text("edited after landing\n")
     stranger = world.case.session("operator shell")
     db.execute(
         "UPDATE sessions SET workspace_path = %s WHERE id = %s",
         (occupied.binding.worktree_path, stranger),
     )
-    git_in(mismatched.binding.worktree_path, "switch", "-c", "operator-experiment")
+    git_in(tree_of(mismatched.binding), "switch", "-c", "operator-experiment")
     closes = [
         close(world, team, shas[team.binding.team_id])
         for team in (eligible, dirty, occupied, mismatched, unmerged)
@@ -323,7 +335,7 @@ async def test_cleanup_preserves_unsafe_trees(
     await teardown_pass(db, daemon(db), max(map(closed_at, closes)) + TEARDOWN_GRACE)
 
     assert teardown(world, eligible) == {"outcome": "cleaned"}
-    assert not Path(eligible.binding.worktree_path).exists()
+    assert not tree_of(eligible.binding).exists()
     assert not branch_exists(world, eligible.binding.branch)
     refusals = (
         (dirty, "uncommitted_changes"),
@@ -338,12 +350,12 @@ async def test_cleanup_preserves_unsafe_trees(
         assert record["finding"] == finding.id
         assert finding.is_escalated
         assert FINDING_LABEL in (finding.labels or [])
-        assert team.binding.worktree_path in (finding.description or "")
-        assert Path(team.binding.worktree_path).is_dir()
-        assert LocalWorktreeManager(db).get(team.binding.worktree_id) is not None
+        assert str(tree_of(team.binding)) in (finding.description or "")
+        assert tree_of(team.binding).is_dir()
+        assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is not None
         assert branch_exists(world, team.binding.branch)
     assert edited.read_text() == "edited after landing\n"
-    assert git_in(mismatched.binding.worktree_path, "branch", "--show-current") == (
+    assert git_in(tree_of(mismatched.binding), "branch", "--show-current") == (
         "operator-experiment"
     )
     assert session_status(db, stranger) == "active"
@@ -372,8 +384,8 @@ async def test_seat_that_cannot_end_is_a_reported_failure_and_keeps_its_tree(
     assert record["finding"] == finding.id
     assert finding.is_escalated
     assert FINDING_LABEL in (finding.labels or [])
-    assert Path(team.binding.worktree_path).is_dir()
-    assert LocalWorktreeManager(db).get(team.binding.worktree_id) is not None
+    assert tree_of(team.binding).is_dir()
+    assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is not None
     assert branch_exists(world, team.binding.branch)
 
 
@@ -391,8 +403,8 @@ async def test_teardown_deletes_the_tree_a_parked_seat_stopped_occupying(
 
     assert teardown(world, team) == {"outcome": "cleaned"}
     assert finding_tasks(world, team) == []
-    assert not Path(team.binding.worktree_path).exists()
-    assert LocalWorktreeManager(db).get(team.binding.worktree_id) is None
+    assert not tree_of(team.binding).exists()
+    assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is None
     assert not branch_exists(world, team.binding.branch)
     assert {session_status(db, session) for session in team.seats} == {"expired"}
     run = LocalAgentRunManager(db).get(parked.id)
@@ -412,8 +424,8 @@ async def test_delete_ignores_a_parked_seat_whose_run_went_terminal(world: TeamW
     result = await team_tree_deleter(db, None)(team.binding)
 
     assert (result.success, result.error_code, result.error) == (True, None, None)
-    assert not Path(team.binding.worktree_path).exists()
-    assert LocalWorktreeManager(db).get(team.binding.worktree_id) is None
+    assert not tree_of(team.binding).exists()
+    assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is None
 
 
 async def test_teardown_does_not_escalate_when_every_seat_ended_cooperatively(
@@ -451,7 +463,7 @@ async def test_teardown_does_not_escalate_when_every_seat_ended_cooperatively(
 
     assert teardown(world, team) == {"outcome": "cleaned"}
     assert finding_tasks(world, team) == []
-    assert not Path(team.binding.worktree_path).exists()
+    assert not tree_of(team.binding).exists()
     assert not branch_exists(world, team.binding.branch)
     assert session_status(db, team.seats[1]) == "expired"
 
@@ -491,7 +503,7 @@ async def test_team_close_ends_a_dispatched_seat_and_removes_the_tree_without_re
     terminations = Terminations(db)
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
     team = await admitted_team(world, "Close over a dispatched seat")
-    dispatched = dispatched_seat(world, team, team.binding.worktree_path)
+    dispatched = dispatched_seat(world, team, str(tree_of(team.binding)))
     closed = close(world, team, land(world, team, "dispatched.py"))
     later = closed_at(closed) + TEARDOWN_GRACE
 
@@ -504,7 +516,7 @@ async def test_team_close_ends_a_dispatched_seat_and_removes_the_tree_without_re
     assert terminations.ended() == sorted([*team.seats, dispatched])
     assert session_status(db, dispatched) == "expired"
     assert teardown(world, team) == {"outcome": "cleaned"}
-    assert not Path(team.binding.worktree_path).exists()
+    assert not tree_of(team.binding).exists()
     assert finding_tasks(world, team) == []
 
 
@@ -520,19 +532,19 @@ async def test_team_close_retries_while_a_dispatched_seat_is_still_exiting(
 
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", signal_only)
     team = await admitted_team(world, "Close while a seat exits")
-    dispatched = dispatched_seat(world, team, team.binding.worktree_path)
+    dispatched = dispatched_seat(world, team, str(tree_of(team.binding)))
     closed = close(world, team, land(world, team, "exiting.py"))
     later = closed_at(closed) + TEARDOWN_GRACE
 
     await teardown_pass(db, daemon(db), later)
-    assert Path(team.binding.worktree_path).is_dir()
+    assert tree_of(team.binding).is_dir()
     assert teardown(world, team).get("outcome") != "refused"
     assert finding_tasks(world, team) == []
 
     SessionManager(db).update_status(dispatched, "expired")
     await teardown_pass(db, daemon(db), later)
     assert teardown(world, team) == {"outcome": "cleaned"}
-    assert not Path(team.binding.worktree_path).exists()
+    assert not tree_of(team.binding).exists()
     assert finding_tasks(world, team) == []
 
 
