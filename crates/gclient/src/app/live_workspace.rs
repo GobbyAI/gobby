@@ -52,9 +52,11 @@ impl Workspace<LiveDaemon> {
                 let Some(terminal_id) = pane.terminal_id.as_deref() else {
                     continue;
                 };
-                let shown = self
-                    .workspace_model()
-                    .is_some_and(|model| model.pane_ref_for_terminal(terminal_id).is_some());
+                let shown = self.workspace_model().is_some_and(|model| {
+                    model
+                        .panes()
+                        .any(|pane| pane.terminal_id.as_deref() == Some(terminal_id))
+                });
                 let external = self
                     .pane_for_terminal(terminal_id)
                     .is_some_and(|id| self.pane(id).external);
