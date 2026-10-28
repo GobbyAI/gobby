@@ -17,6 +17,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _pipeline_principal() -> None:
+    """A step has no request principal: its tools act for the pipeline's session context."""
+    return None
+
+
 async def execute_mcp_step(
     rendered_step: Any,
     context: dict[str, Any],
@@ -43,6 +48,7 @@ async def execute_mcp_step(
     from gobby.utils.session_context import (
         reset_seeded_contexts,
         resolve_and_seed_contexts,
+        set_request_principal,
     )
 
     pipeline_session_id = context.get("session_id")
@@ -54,6 +60,9 @@ async def execute_mcp_step(
         project_ref_is_fallback=True,
         db=(session_manager.db if session_manager else None),
     )
+    # The run's launch was authorized at run_pipeline. A background run must not inherit the
+    # launching request's principal, so the step acts as the pipeline's own session.
+    tokens.principal_token = set_request_principal(_pipeline_principal)
     # Lightweight executors without a SessionManager cannot canonicalize the
     # already-bound caller ID. Production executors still fail closed when a
     # configured manager cannot resolve the supplied reference.

@@ -223,7 +223,7 @@ checks. The current bundled catalogue is:
 | `log-monitor` | Monitor-only check of daemon health, status and logs every ten minutes; reports to Triage |
 | `metrics-monitor` | Observe-only Prometheus watch of daemon RSS, CPU and uptime; reports to Triage and Log Monitor |
 | `triage` | Receives the reports meant for the Orchestrator and hands it one queued digest every five minutes |
-| `consolidator` | Proposes task bundles, stale-item retirement and epic moves to Triage for the Orchestrator; inspects tasks read-only and excludes protected triage and plan-expanded subtrees |
+| `consolidator` | Proposes task bundles, stale-item retirement and epic moves to Triage for the Orchestrator; applies Orchestrator-directed folds and retirements (`superseded` or `moot` closes, with criteria merged into the survivor), and excludes protected triage and plan-expanded subtrees |
 
 These templates are global installed definitions tagged `gobby` in storage;
 their YAML `seat` tag marks the file-based catalogue. The Assistant and
@@ -265,10 +265,10 @@ compact in place under context pressure. Closing a DevTeam task ends every seat
 of that team; other standing seats outlive the tasks they work on. See
 [runbooks](runbooks.md) for the Support and DevTeam launches.
 
-### Planning Runbook Agents
+### Team Planning Agents
 
 `plan-writer`, `plan-enhancer`, and `plan-adversary` are run-scoped planning
-agents, separate from the standing-seat catalogue. The planning runbook launches
+agents, separate from the standing-seat catalogue. The team-planning runbook launches
 them; they complete their run through `end_agent_run`. Their own definitions
 control provider, lifetime, and workflow choices, so standing-seat invariants
 do not apply to them.

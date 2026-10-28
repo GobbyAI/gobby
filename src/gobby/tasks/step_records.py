@@ -248,18 +248,40 @@ def _project_close_policy(db: HubDatabase, project_id: str) -> TaskClosePolicyCo
     return load_project_task_close_policy(require_root(db, project_id, require_machine_id()))
 
 
-def task_step_requirements(db: HubDatabase, task: Task) -> StepRequirements:
-    """Evaluate policy against the task's present commits, for preview and final close."""
+def task_step_requirements(
+    db: HubDatabase, task: Task, *, closer_definition: str | None = None
+) -> StepRequirements:
+    """Evaluate policy against the task's present commits, for preview and final close.
+
+    A researcher closing its report spike needs the Orchestrator's review of the report SHA.
+    """
     required = required_task_steps(
         _project_close_policy(db, task.project_id),
         task_type=task.task_type,
         category=task.category,
     )
+    if closer_definition == "researcher":
+        # The Orchestrator's review gates a researcher's own spike under every policy.
+        required = tuple(step for step in TASK_STEPS if step in {*required, "review"})
     if not required:
         return StepRequirements((), ())
     records = list_task_step_records(db, task.id)
-    missing = tuple(step for step in required if approved_task_step(task, records, step) is None)
+    missing = tuple(
+        step
+        for step in required
+        if _closing_approval(task, records, step, closer_definition) is None
+    )
     return StepRequirements(required, missing)
+
+
+def _closing_approval(
+    task: Task, records: list[TaskStepRecord], step: TaskStep, closer_definition: str | None
+) -> TaskStepRecord | None:
+    approval = approved_task_step(task, records, step)
+    if step == "review" and closer_definition == "researcher" and approval is not None:
+        # A research report is reviewed by the Orchestrator, never by a DevTeam reviewer.
+        return approval if approval.agent_definition == "orchestrator" else None
+    return approval
 
 
 def _rejected_reviews(records: list[TaskStepRecord], epoch: int) -> list[TaskStepRecord]:

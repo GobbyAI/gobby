@@ -32,6 +32,18 @@ from tests.fixtures.team_case import (
 pytestmark = pytest.mark.unit
 
 
+def tree_of(binding: TeamBinding) -> Path:
+    """The team tree a binding names; these tests always admit a team with one."""
+    assert binding.worktree_path is not None
+    return Path(binding.worktree_path)
+
+
+def tree_id_of(binding: TeamBinding) -> str:
+    """The team tree id a binding names; these tests always admit a team with one."""
+    assert binding.worktree_id is not None
+    return binding.worktree_id
+
+
 @pytest.fixture
 def world(
     temp_db: HubDatabase,
@@ -67,8 +79,8 @@ async def test_idempotent_team_admission(world: TeamWorld) -> None:
         branch,
         "trunk",
     )
-    assert Path(team.worktree_path).name == branch
-    assert git_in(team.worktree_path, "branch", "--show-current") == branch
+    assert tree_of(team).name == branch
+    assert git_in(tree_of(team), "branch", "--show-current") == branch
     assert world.task_branches() == [branch]
     assert world.tree_ids() == [team.worktree_id]
 
@@ -97,7 +109,7 @@ async def test_replacement_stays_in_admitted_team(world: TeamWorld) -> None:
     task = world.case.task(TITLE)
     original = world.child(task)
     team = await world.admit(original, task)
-    tree = Path(team.worktree_path)
+    tree = tree_of(team)
     (tree / "work.txt").write_text("committed by the developer\n")
     git_in(tree, "add", "work.txt")
     git_in(tree, "commit", "-m", "developer work")
@@ -179,7 +191,7 @@ async def test_team_binding_cannot_drift(world: TeamWorld, tmp_path: Path) -> No
     joined = await world.spawn(owner, project_path=team.worktree_path)
     assert joined["success"] is True, joined
     assert world.task_branches() == [team.branch]
-    assert sorted(world.tree_ids()) == sorted([team.worktree_id, elsewhere.id])
+    assert sorted(world.tree_ids()) == sorted([tree_id_of(team), elsewhere.id])
 
 
 async def test_team_tree_is_pinned_for_code_index(
@@ -197,10 +209,10 @@ async def test_team_tree_is_pinned_for_code_index(
     team = await world.admit(world.child(task), task)
 
     # `gcode pin` copies the ancestor's selectors at the marker's base commit.
-    marker = json.loads((Path(team.worktree_path) / ".gobby" / "isolation.json").read_text())
+    marker = json.loads((tree_of(team) / ".gobby" / "isolation.json").read_text())
     assert Path(marker["ancestor_checkout_path"]).resolve() == Path(world.case.repo).resolve()
-    assert marker["base_commit"] == git_in(team.worktree_path, "rev-parse", "HEAD")
-    pin.assert_awaited_once_with(Path(team.worktree_path))
+    assert marker["base_commit"] == git_in(tree_of(team), "rev-parse", "HEAD")
+    pin.assert_awaited_once_with(tree_of(team))
 
 
 async def test_team_tree_pin_failure_still_admits(
@@ -214,7 +226,7 @@ async def test_team_tree_pin_failure_still_admits(
 
     team = await world.admit(world.child(task), task)
 
-    assert git_in(team.worktree_path, "branch", "--show-current") == team.branch
+    assert git_in(tree_of(team), "branch", "--show-current") == team.branch
     assert world.tree_ids() == [team.worktree_id]
 
 
@@ -237,7 +249,7 @@ async def test_short_team_id_resolves_or_names_the_full_uuid(world: TeamWorld) -
 
 async def _land_team_commit(world: TeamWorld, task: Task, team: TeamBinding, name: str) -> str:
     """Commit ``name`` in the team tree and land that commit on ``task``."""
-    tree = Path(team.worktree_path)
+    tree = tree_of(team)
     (tree / name).write_text(f"{name}\n")
     git_in(tree, "add", name)
     git_in(tree, "commit", "-m", f"Add {name}")
@@ -258,7 +270,7 @@ async def test_landed_open_task_keeps_its_team_tree_admissible(world: TeamWorld)
     assert LocalTaskManager(world.case.db).get_task(task.id).closed_at is None
 
     # The team keeps working after the landing, so its HEAD holds a commit the landing lacks.
-    tree = Path(team.worktree_path)
+    tree = tree_of(team)
     (tree / "follow_up.txt").write_text("follow-up after the landing\n")
     git_in(tree, "add", "follow_up.txt")
     git_in(tree, "commit", "-m", "Follow-up after the landing")
@@ -289,3 +301,34 @@ async def test_closed_task_refuses_its_landed_team(world: TeamWorld) -> None:
     with pytest.raises(TeamAdmissionRefused) as refused:
         await world.admit(world.child(task), task, team_id=team.team_id)
     assert refused.value.code == "team_task_closed"
+
+
+async def test_treeless_team_admits_without_a_tree(world: TeamWorld) -> None:
+    """A checkout_mode none team has no tree; it names the main checkout's branch and joins."""
+    task = world.case.task(TITLE)
+    first = world.child(task)
+    team = await world.admit(first, task, checkout_mode="none")
+
+    assert (team.task_id, team.project_id, team.branch, team.base_branch) == (
+        task.id,
+        world.case.project_id,
+        "trunk",
+        "trunk",
+    )
+    assert team.worktree_id is None
+    assert team.worktree_path is not None
+    assert Path(team.worktree_path).is_dir()
+    assert world.task_branches() == []
+    assert world.tree_ids() == []
+
+    # A duplicate launch returns the same team; a second execution for the task joins it.
+    assert await world.admit(first, task, checkout_mode="none") == team
+    second = world.child(task)
+    assert await world.admit(second, task, checkout_mode="none") == team
+    with session_context_for_test(second.id):
+        reply = await world.tools.call(
+            "admit_team", {"task": f"#{task.seq_num}", "checkout_mode": "none"}
+        )
+    assert (reply["success"], reply["team"]) == (True, asdict(team))
+    assert world.task_branches() == []
+    assert world.tree_ids() == []

@@ -92,14 +92,15 @@ def _pipeline_child(
     workspace: str | None = None,
     machine_id: str = AGENT_TEST_MACHINE_ID,
     inputs: dict[str, str] | None = None,
+    runbook: str = RUNBOOK,
 ) -> str:
-    """Start an execution of the runbook in ``workspace`` on ``machine_id``; return its child session.
+    """Start an execution of ``runbook`` in ``workspace`` on ``machine_id``; return its child session.
 
     ``inputs`` adds launch inputs such as a team's ``task`` and ``team_id``.
     """
     executions = LocalPipelineExecutionManager(env.db, env.project_id)
     execution = executions.create_execution(
-        RUNBOOK,
+        runbook,
         inputs_json=json.dumps({"workspace": workspace or env.workspace_id, **(inputs or {})}),
         project_id=env.project_id,
     )
@@ -722,6 +723,84 @@ def test_triage_opens_the_support_tab_and_the_other_seats_report_to_it(env: _Env
     assert (list(second["launch"]), second["tab_exists"]) == (rest, True)
     titles = {entry["name"]: entry["title"] for entry in second["seats"]}
     assert rest_placed == {seat: _split(env, titles[seat]) for seat in rest}
+
+
+RESEARCH_SEATS = ("researcher", "research-reviewer")
+
+
+def _run_research(env: _Env, task: Task) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run the bundled Research runbook's guard for ``task``; return its reply and each placement."""
+    path = get_bundled_pipelines_path() / "research.yaml"
+    assert path.exists(), "the research runbook is not bundled"
+    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
+    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
+    inputs.update(
+        workspace=env.workspace_id,
+        report_to=env.parent_session_id,
+        project_path="/research",
+        task=f"#{task.seq_num}",
+    )
+    context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "research-run"}
+    renderer = StepRenderer(TemplateEngine())
+    guard = definition.steps[0].mcp
+    assert guard is not None and guard.arguments is not None
+    arguments = renderer.render_mcp_arguments(guard.arguments, context, drop_none=True)
+    caller = _pipeline_child(env, runbook="research", inputs={"task": f"#{task.seq_num}"})
+    registry = create_agents_registry(
+        MagicMock(), session_manager=SessionManager(env.db), db=env.db
+    )
+    with session_context_for_test(caller):
+        reply = registry.call_sync("check_runbook_seats", arguments)
+    child = SessionManager(env.db).get(caller)
+    assert child is not None
+    execution_id = child.external_id.removeprefix("pipeline-")
+    LocalPipelineExecutionManager(env.db, env.project_id).update_execution_status(
+        execution_id, ExecutionStatus.COMPLETED
+    )
+    context["steps"]["guard"] = {"output": reply}
+    placements: dict[str, Any] = {}
+    for step in definition.steps[1:]:
+        if (
+            step.mcp is not None
+            and step.mcp.tool == "spawn_agent"
+            and renderer.should_run_step(step, context)
+        ):
+            assert step.mcp.arguments is not None
+            rendered = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
+            placements[step.id] = rendered["placement"]
+            context["steps"][step.id] = {
+                "output": {"pane_ref": f"pane-{step.id}", "tab_ref": "tab-research"}
+            }
+    return reply, placements
+
+
+def test_research_reruns_launch_only_the_missing_seats(env: _Env) -> None:
+    for agent in RESEARCH_SEATS:
+        _install_agent(env.db, agent, env.project_id)
+    task = _team_task(env, "Research spike")
+
+    first, placed = _run_research(env, task)
+    runs = {seat: _seat_session(env, seat) for seat in placed}
+    _support_tab(env, title=first["tab_title"])
+    second, rejoined = _run_research(env, task)
+    _finished_run(env, *runs["researcher"])
+    third, healed = _run_research(env, task)
+
+    assert (first["success"], list(first["launch"]), first["tab_exists"]) == (
+        True,
+        list(RESEARCH_SEATS),
+        False,
+    )
+    assert first["tab_title"] == f"Research - #{task.seq_num}"
+    assert set(placed) == set(RESEARCH_SEATS)
+    assert "tab" in placed["researcher"]
+    assert "split" in placed["research-reviewer"]
+    assert (list(second["launch"]), second["tab_exists"], rejoined) == ([], True, {})
+    assert dict(second["live"]) == {seat: session for seat, (session, _) in runs.items()}
+    assert list(third["launch"]) == ["researcher"]
+    assert third["tab_exists"] is True
+    assert "split" in healed["researcher"]
+    assert "tab" not in healed["researcher"]
 
 
 @pytest.mark.parametrize(

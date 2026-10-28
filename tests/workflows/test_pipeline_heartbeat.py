@@ -442,7 +442,7 @@ async def test_stale_task_scan_recovers_oldest_claim_beyond_default_window(
 
     orphan_task = task_manager.get_task(orphan_task_id)
     assert orphan_task is not None
-    assert projected_task_state(orphan_task) == "ready"
+    assert projected_task_state(orphan_task) == "open"
     assert orphan_task.claimed_by_session_id is None
 
 
@@ -504,7 +504,7 @@ async def test_stale_task_with_terminal_agent_run_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "ready"
+    assert projected_task_state(task) == "open"
     assert task.claimed_by_session_id is None
     assert task.is_escalated is False
 
@@ -597,7 +597,7 @@ async def test_stale_task_with_commits_releases_claim_and_preserves_commits(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "ready"
+    assert projected_task_state(task) == "open"
     assert task.commits == ["abc123de"]
     assert task.claimed_by_session_id is None
 
@@ -627,7 +627,7 @@ async def test_task_with_active_agent_run_not_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "ready"
+    assert projected_task_state(task) == "in_progress"
     assert task.claimed_by_session_id == DEAD_AGENT_SESSION_ID
 
 
@@ -659,7 +659,7 @@ async def test_interactive_session_task_not_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "ready"
+    assert projected_task_state(task) == "in_progress"
     assert task.claimed_by_session_id == SESSION_ID
 
 
@@ -686,7 +686,7 @@ async def test_protected_session_task_not_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "ready"
+    assert projected_task_state(task) == "in_progress"
     assert task.claimed_by_session_id == SESSION_ID
 
 
@@ -696,7 +696,7 @@ async def test_expired_session_task_recovered(
     task_manager: LocalTaskManager,
     temp_db: HubDatabase,
 ) -> None:
-    """In-progress task assigned to an expired session returns to ready."""
+    """In-progress task assigned to an expired session returns to open."""
     _seed_db(temp_db)
     # Mark the session as expired (simulates SessionLivenessMonitor detecting dead PID)
     temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (SESSION_ID,))
@@ -710,7 +710,7 @@ async def test_expired_session_task_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "ready"
+    assert projected_task_state(task) == "open"
     assert task.claimed_by_session_id is None
     assert task.claimed_by_session_id is None
     assert task.is_escalated is False
@@ -722,7 +722,7 @@ async def test_paused_agent_session_task_recovered(
     task_manager: LocalTaskManager,
     temp_db: HubDatabase,
 ) -> None:
-    """In-progress task assigned to a paused agent session (depth > 0) returns to ready."""
+    """In-progress task assigned to a paused agent session (depth > 0) returns to open."""
     _seed_db(temp_db)
     # Mark session as paused with agent_depth > 0 (dead agent session)
     temp_db.execute(
@@ -735,7 +735,7 @@ async def test_paused_agent_session_task_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "ready"
+    assert projected_task_state(task) == "open"
     assert task.claimed_by_session_id is None
     assert task.claimed_by_session_id is None
 
@@ -759,7 +759,7 @@ async def test_paused_interactive_session_task_not_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "ready"
+    assert projected_task_state(task) == "in_progress"
     assert task.claimed_by_session_id == SESSION_ID
 
 
@@ -769,7 +769,7 @@ async def test_inactive_session_task_recovered(
     task_manager: LocalTaskManager,
     temp_db: HubDatabase,
 ) -> None:
-    """In-progress task assigned to an inactive session returns to ready."""
+    """In-progress task assigned to an inactive session returns to open."""
     _seed_db(temp_db)
     task_id = _create_in_progress_task(task_manager, claimed_by_session_id=STOPPED_SESSION_ID)
 
@@ -778,6 +778,6 @@ async def test_inactive_session_task_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert projected_task_state(task) == "ready"
+    assert projected_task_state(task) == "open"
     assert task.claimed_by_session_id is None
     assert task.claimed_by_session_id is None

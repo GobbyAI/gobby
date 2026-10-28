@@ -427,9 +427,10 @@ class TestBlockUnresolvedScopeShellWrite:
     async def test_rule_distinguishes_resolved_rebound_partial_and_opaque_shell_targets(
         self,
         db: HubDatabase,
-        tmp_path: Path,
     ) -> None:
         _sync_bundled(db)
+        # A checkout outside the temp roots; a project under tmp_path reads as a temp write.
+        checkout = "/Users/dev/.gobby/worktrees/gobby/shell-scope-checkout"
         variables = {
             "require_task_before_edit": True,
             "task_claimed": True,
@@ -441,9 +442,9 @@ class TestBlockUnresolvedScopeShellWrite:
             "tool_name": "Bash",
             "tool_input": {
                 "command": 'for f in a.py b.py; do sed -i "s/x/y/" "$f"; done',
-                "cwd": str(tmp_path),
+                "cwd": checkout,
             },
-            "project_path": str(tmp_path),
+            "project_path": checkout,
         }
         normalize_tool_fields(resolved_loop_data)
         resolved_loop_event = HookEvent(
@@ -468,9 +469,9 @@ class TestBlockUnresolvedScopeShellWrite:
             "tool_name": "Bash",
             "tool_input": {
                 "command": ('for f in a.py b.py; do eval \'f="$SRC"\'; sed -i "s/x/y/" "$f"; done'),
-                "cwd": str(tmp_path),
+                "cwd": checkout,
             },
-            "project_path": str(tmp_path),
+            "project_path": checkout,
         }
         normalize_tool_fields(eval_rebound_data)
         eval_rebound_event = HookEvent(
@@ -495,9 +496,9 @@ class TestBlockUnresolvedScopeShellWrite:
             "tool_name": "Bash",
             "tool_input": {
                 "command": 'mv "$SRC" dst.txt',
-                "cwd": str(tmp_path),
+                "cwd": checkout,
             },
-            "project_path": str(tmp_path),
+            "project_path": checkout,
         }
         normalize_tool_fields(partial_data)
         partial_event = HookEvent(
@@ -522,9 +523,9 @@ class TestBlockUnresolvedScopeShellWrite:
             "tool_name": "Bash",
             "tool_input": {
                 "command": 'TARGET=src/generated\nmkdir -p "$TARGET"',
-                "cwd": str(tmp_path),
+                "cwd": checkout,
             },
-            "project_path": str(tmp_path),
+            "project_path": checkout,
         }
         normalize_tool_fields(opaque_data)
         opaque_event = HookEvent(
@@ -549,8 +550,8 @@ class TestBlockUnresolvedScopeShellWrite:
 
         structured_data: dict[str, object] = {
             "tool_name": "Write",
-            "tool_input": {"file_path": str(tmp_path / "src" / "structured.txt")},
-            "project_path": str(tmp_path),
+            "tool_input": {"file_path": str(Path(checkout) / "src" / "structured.txt")},
+            "project_path": checkout,
         }
         normalize_tool_fields(structured_data)
         structured_event = HookEvent(
@@ -958,7 +959,7 @@ class TestRequireTaskBeforeEdit:
         ],
     )
     @pytest.mark.asyncio
-    async def test_external_temp_write_does_not_require_task(
+    async def test_external_temp_write_is_blocked_as_temp_scratch(
         self,
         db: HubDatabase,
         command: str,
@@ -989,11 +990,13 @@ class TestRequireTaskBeforeEdit:
 
         assert data["canonical_tool_kind"] == "write"
         assert data["canonical_repo_mutation"] is False
-        assert response.decision == "allow"
+        # Temp-root writes are blocked for every agent by block-temp-scratchpad-writes (#25218).
+        assert response.decision == "block", response.reason
+        assert "[block-temp-scratchpad-writes]" in (response.reason or "")
 
     @pytest.mark.parametrize("file_name", ["helper.py", "progress.png", "progress.json"])
     @pytest.mark.asyncio
-    async def test_session_scratchpad_artifact_write_does_not_require_task(
+    async def test_session_scratchpad_artifact_write_is_blocked_as_temp_scratch(
         self,
         db: HubDatabase,
         tmp_path: Path,
@@ -1039,7 +1042,10 @@ class TestRequireTaskBeforeEdit:
         )
 
         assert data["canonical_repo_mutation"] is False
-        assert response.decision == "allow", response.reason
+        # The temp-root rule owns this write now: a scratchpad under a temp root is blocked
+        # for every agent, whether or not a task is claimed (#25218).
+        assert response.decision == "block", response.reason
+        assert "[block-temp-scratchpad-writes]" in (response.reason or "")
 
     @pytest.mark.asyncio
     async def test_registered_worktree_write_still_requires_task(

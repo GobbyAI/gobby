@@ -315,6 +315,8 @@ def team_tree_deleter(db: HubDatabase, executor: WorktreeDeleteExecutor | None) 
     """Delete a closed team's tree through the safe deletion transaction."""
 
     async def delete(binding: TeamBinding) -> WorktreeDeletionResult:
+        if binding.worktree_id is None:  # a treeless team has no tree to delete
+            return WorktreeDeletionResult(success=True, found=False)
         request = WorktreeDeletionRequest(
             binding.worktree_id, DeletionSurface.TEARDOWN, merged_into=binding.base_branch
         )

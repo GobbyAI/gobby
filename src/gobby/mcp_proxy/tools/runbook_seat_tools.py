@@ -101,7 +101,9 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "the task has a live team tree. fresh_reviewer=true joins team_id as the review "
             "epoch's one fresh reviewer; it requires exactly two rejected review rounds, "
             "exclude_reviewers (comma-separated session refs) naming every session that "
-            "reviewed in the epoch, and the claim already handed to one of them. Returns the "
+            "reviewed in the epoch, and the claim already handed to one of them. "
+            "checkout_mode=none admits a treeless team with no branch or tree; its seats run "
+            "in the main checkout, and a re-admit for the task joins it. Returns the "
             "team plus task_id, branch, worktree and project_path for the seat steps."
         ),
     )
@@ -111,6 +113,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         fresh_reviewer: bool = False,
         exclude_reviewers: str | None = None,
         reviewer_agent: str | None = None,
+        checkout_mode: str = "worktree",
     ) -> dict[str, Any]:
         caller_ref = ctx.get_current_session_id()
         if ctx.db is None or not caller_ref:
@@ -130,6 +133,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                     ref.strip() for ref in (exclude_reviewers or "").split(",") if ref.strip()
                 ],
                 reviewer_agent=reviewer_agent,
+                checkout_mode=checkout_mode,
             )
         except TeamAdmissionRefused as exc:
             return {"success": False, "error": str(exc), "error_code": exc.code}

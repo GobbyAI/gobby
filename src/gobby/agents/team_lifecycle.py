@@ -59,6 +59,8 @@ _PIPELINE_SOURCE = "pipeline"
 _PIPELINE_PREFIX = "pipeline-"
 _SEAT_DEPTH_LIMIT = 5
 _TREE_FIELDS = frozenset({"worktree_id", "worktree_path"})
+_WORKTREE = "worktree"
+_TREELESS = "none"
 
 
 @dataclass(frozen=True)
@@ -70,8 +72,9 @@ class TeamBinding:
     project_id: str
     branch: str
     base_branch: str
-    worktree_id: str
-    worktree_path: str
+    # None for a treeless team, whose admission records an explicit null for its tree.
+    worktree_id: str | None
+    worktree_path: str | None
     # One entry per reviewer definition the team binds; None until its seat exists.
     reviewers: dict[str, str | None] = field(default_factory=dict)
     # One entry per implementation domain: the live primary that works the team tree.
@@ -121,15 +124,22 @@ async def admit_team(
     fresh_reviewer: bool = False,
     exclude_reviewers: Sequence[str] = (),
     reviewer_agent: str | None = None,
+    checkout_mode: str = _WORKTREE,
 ) -> TeamBinding:
     """Admit the caller execution's team for ``task``, or join team ``team_id``.
 
     A replacement execution joins with ``team_id``. A ``fresh_reviewer`` execution joins only
     after the second rejection handed the claim to a reviewer, as the epoch's one fresh reviewer.
+    ``checkout_mode="none"`` admits a treeless team: no branch or tree, seats in the main
+    checkout. A treeless admission for a task joins the task's live treeless team.
     """
     if fresh_reviewer and team_id is None:
         raise TeamAdmissionRefused(
             "fresh_reviewer_team_required", "a fresh reviewer joins an admitted team: pass team_id"
+        )
+    if checkout_mode not in (_WORKTREE, _TREELESS):
+        raise TeamAdmissionRefused(
+            "checkout_mode_invalid", f"checkout_mode {checkout_mode} is not worktree or none"
         )
     if team_id is not None:
         team_uuid = parse_uuid_reference(team_id)
@@ -148,9 +158,14 @@ async def admit_team(
         own = await asyncio.to_thread(_own_record, caller)
         if own is not None:
             return await _readmit(db, caller, own, target, team_id, reviewer_agent)
+        if team_id is None and checkout_mode == _TREELESS:
+            # A treeless admission for a task joins the task's live treeless team.
+            team_id = await asyncio.to_thread(_live_treeless_team, db, caller.project_id, target.id)
         if team_id is None:
             # Only a team with no record is new; recorded and joined teams keep working.
             await _admissions_open(db, caller.project_id)
+            if checkout_mode == _TREELESS:
+                return await _create_treeless(db, caller, target, reviewer_agent)
             return await _create(db, caller, target, reviewer_agent)
         if fresh_reviewer:
             await asyncio.to_thread(
@@ -192,7 +207,8 @@ def check_team_spawn(db: HubDatabase, caller: Session, target: SeatTarget) -> No
             "team_tree_mismatch", f"team {binding.team_id} works in tree {binding.worktree_id}"
         )
     if target.project_path is not None and (
-        Path(target.project_path).resolve() != Path(binding.worktree_path).resolve()
+        binding.worktree_path is None
+        or Path(target.project_path).resolve() != Path(binding.worktree_path).resolve()
     ):
         raise TeamAdmissionRefused(
             "team_tree_mismatch", f"team {binding.team_id} works in {binding.worktree_path}"
@@ -280,6 +296,9 @@ def _binding(record: dict[str, Any] | None) -> TeamBinding | None:
             # Records admitted before epic mode carry no mode: they are single-task teams.
             values[item.name] = value if isinstance(value, str) and value else SINGLE_MODE
             continue
+        if item.name in ("worktree_id", "worktree_path") and item.name in record and value is None:
+            values[item.name] = None
+            continue
         if not isinstance(value, str) or not value:
             return None
         values[item.name] = value
@@ -315,7 +334,11 @@ async def _readmit(
     reviewer_agent: str | None,
 ) -> TeamBinding:
     """The caller already recorded a team: return it, adopting a tree made before a crash."""
-    if own.get("task_id") != task.id or own.get("team_id") != (team_id or caller.execution_id):
+    named = team_id or caller.execution_id
+    if own.get("checkout_mode") == _TREELESS and team_id is None:
+        # A treeless team is named by its task, so a joined execution re-admits the team it joined.
+        named = str(own.get("team_id"))
+    if own.get("task_id") != task.id or own.get("team_id") != named:
         raise TeamAdmissionRefused(
             "team_binding_drift",
             f"execution {caller.execution_id} is bound to team {own.get('team_id')} "
@@ -324,8 +347,14 @@ async def _readmit(
     _bound_reviewer(own.get("reviewers"), reviewer_agent, str(own.get("team_id")))
     binding = _binding(own)
     if binding is not None:
-        await _verify_tree(db, binding)
+        if own.get("checkout_mode") != _TREELESS:
+            await _verify_tree(db, binding)
         return binding
+    if own.get("checkout_mode") == _TREELESS:
+        # A treeless record is written whole; an incomplete one must not fall through to a tree.
+        raise TeamAdmissionRefused(
+            "team_binding_drift", f"treeless team {own.get('team_id')} has an incomplete record"
+        )
     branch = own.get("branch")
     tree = await asyncio.to_thread(
         LocalWorktreeManager(db).get_by_branch, caller.project_id, str(branch)
@@ -364,10 +393,14 @@ async def _join(
     db: HubDatabase, caller: _Caller, task: Task, team_id: str, reviewer_agent: str | None
 ) -> TeamBinding:
     """A replacement or fresh-reviewer execution joins team ``team_id`` for the same task."""
-    _step, binding = await asyncio.to_thread(_team, caller, task, team_id)
+    step, binding = await asyncio.to_thread(_team, caller, task, team_id)
     _bound_reviewer(binding.reviewers, reviewer_agent, team_id)
-    await _verify_tree(db, binding)
-    await asyncio.to_thread(_record, caller, asdict(binding))
+    # A treeless team has no tree to verify; its joined executions record the same marker.
+    treeless = (_recorded(step) or {}).get("checkout_mode") == _TREELESS
+    if not treeless:
+        await _verify_tree(db, binding)
+    record = {**asdict(binding), "checkout_mode": _TREELESS} if treeless else asdict(binding)
+    await asyncio.to_thread(_record, caller, record)
     return binding
 
 
@@ -513,10 +546,67 @@ async def _create(
     await asyncio.to_thread(_record, caller, asdict(binding))
     # Seats join this tree without the isolation preflight that normally pins it.
     try:
-        await GcodeGateway().pin_project(Path(binding.worktree_path))
+        await GcodeGateway().pin_project(Path(made.cwd))
     except (GcodeGatewayError, OSError) as exc:
-        logger.warning("Failed to pin team code index for %s: %s", binding.worktree_path, exc)
+        logger.warning("Failed to pin team code index for %s: %s", made.cwd, exc)
     return binding
+
+
+async def _create_treeless(
+    db: HubDatabase, caller: _Caller, task: Task, reviewer_agent: str | None
+) -> TeamBinding:
+    """Record a treeless team for ``task``: no branch or tree, its seats work in the main checkout."""
+    existing = await asyncio.to_thread(LocalWorktreeManager(db).get_by_task, task.id)
+    if existing is not None and tree_is_live(existing):
+        raise TeamAdmissionRefused(
+            "team_exists", f"task {task.id} already has team tree {existing.worktree_path}"
+        )
+    mode = await asyncio.to_thread(_admission_mode, db, task)
+    if mode == EPIC_MODE:
+        raise TeamAdmissionRefused(
+            "checkout_mode_epic", f"epic {task.id} needs a team tree; checkout_mode none is single"
+        )
+    try:
+        target = await main_checkout_target(db, caller.project_id)
+    except LandingGitError as exc:
+        raise TeamAdmissionRefused("main_checkout_unavailable", str(exc)) from exc
+    if target is None:
+        raise TeamAdmissionRefused("main_checkout_unavailable", "main checkout is detached")
+    main, branch = target
+    binding = TeamBinding(
+        team_id=caller.execution_id,
+        task_id=task.id,
+        project_id=caller.project_id,
+        branch=branch,
+        base_branch=branch,
+        worktree_id=None,
+        worktree_path=str(main),
+        reviewers={reviewer_agent: None} if reviewer_agent is not None else {},
+        mode=mode,
+    )
+    await asyncio.to_thread(_record, caller, {**asdict(binding), "checkout_mode": _TREELESS})
+    return binding
+
+
+def _live_treeless_team(db: HubDatabase, project_id: str, task_id: str) -> str | None:
+    """The task's treeless team whose teardown has not run yet, or None."""
+    rows = db.fetchall(
+        """
+SELECT * FROM step_executions
+WHERE step_id = %s
+AND output_json #>> '{team,team_id}' = execution_id::text
+AND output_json #>> '{team,task_id}' = %s
+AND output_json #>> '{team,checkout_mode}' = %s
+AND output_json #>> '{teardown,outcome}' IS NULL
+ORDER BY id
+""",
+        (ADMISSION_STEP, task_id, _TREELESS),
+    )
+    for row in rows:
+        binding = _binding(_recorded(StepExecution.from_row(row)))
+        if binding is not None and binding.project_id == project_id:
+            return binding.team_id
+    return None
 
 
 async def _admissions_open(db: HubDatabase, project_id: str) -> None:
@@ -535,6 +625,8 @@ def _admission_mode(db: HubDatabase, task: Task) -> str:
 
 async def _verify_tree(db: HubDatabase, binding: TeamBinding) -> None:
     """The team's tree still exists on its recorded branch."""
+    if binding.worktree_id is None or binding.worktree_path is None:
+        raise TeamAdmissionRefused("team_tree_missing", f"team {binding.team_id} has no tree")
     tree = await asyncio.to_thread(LocalWorktreeManager(db).get, binding.worktree_id)
     if tree is None or not tree_is_live(tree) or tree.branch_name != binding.branch:
         raise TeamAdmissionRefused(

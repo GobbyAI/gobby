@@ -71,11 +71,25 @@ class RunbookAgentsProxy:
             }
         )
         if tool == "check_runbook_seats":
+            return {
+                "success": True,
+                "launch": arguments["requested"].split(","),
+                "live": {},
+                "tab_exists": False,
+                "workspace_id": "ws-1",
+                "tab_title": TAB_TITLE,
+            }
+        if tool == "rebalance_tab":
             return {"success": True}
         if arguments["agent"] in self.fail_agents:
             return {"success": False, "error": "spawn refused"}
         index = len(self.calls)
-        return {"success": True, "run_id": f"run-{index}", "pane_ref": f"pane-{index}"}
+        return {
+            "success": True,
+            "run_id": f"run-{index}",
+            "pane_ref": f"pane-{index}",
+            "tab_ref": f"tab-{index}",
+        }
 
     def spawns(self) -> list[dict[str, Any]]:
         return [call["arguments"] for call in self.calls if call["tool"].endswith("spawn_agent")]
@@ -93,9 +107,9 @@ def _executor(temp_db: HubDatabase, proxy: RunbookAgentsProxy) -> PipelineExecut
     )
 
 
-async def _planning(temp_db: HubDatabase) -> PipelineDefinition:
+async def _team_planning(temp_db: HubDatabase) -> PipelineDefinition:
     sync_bundled_pipelines(temp_db)
-    pipeline = await PipelineLoader(temp_db).load_pipeline("planning")
+    pipeline = await PipelineLoader(temp_db).load_pipeline("team-planning")
     assert pipeline is not None
     return pipeline
 
@@ -104,55 +118,59 @@ def _latest_execution_id(temp_db: HubDatabase) -> str:
     row = temp_db.fetchone(
         "SELECT id FROM pipeline_executions WHERE pipeline_name = %s "
         "ORDER BY created_at DESC LIMIT 1",
-        ("planning",),
+        ("team-planning",),
     )
     assert row is not None
     return str(row["id"])
 
 
-SEAT_AGENTS = {
-    "writer": "plan-writer",
-    "adversary_split": "plan-adversary",
-    "adversary_tab": "plan-adversary",
-    "enhancer_split": "plan-enhancer",
-    "enhancer_tab": "plan-enhancer",
+SEATS = ("plan-writer", "plan-adversary", "plan-enhancer")
+SEATS_INPUT = ",".join(SEATS)
+TAB_TITLE = "Team Planning - #25223"
+RUN_INPUTS = {
+    "workspace": "ws-1",
+    "task": "#25223",
+    "project_path": "/pilot/shared-checkout",
+    "report_to": "gobby#14972",
+    "seats": SEATS_INPUT,
 }
 
 
 async def test_runbook_syncs_bundled_and_tagged(temp_db: HubDatabase) -> None:
     sync_bundled_pipelines(temp_db)
 
-    row = PipelineDefinitionManager(temp_db).get_by_name("planning")
+    row = PipelineDefinitionManager(temp_db).get_by_name("team-planning")
     assert row is not None
     assert {"gobby", "runbook"} <= set(row.tags or [])
 
-    pipeline = await PipelineLoader(temp_db).load_pipeline("planning")
+    pipeline = await PipelineLoader(temp_db).load_pipeline("team-planning")
     assert pipeline is not None
     assert "runbook" in pipeline.tags
     assert pipeline.resume_on_restart is True
     assert set(pipeline.inputs) == {
         "workspace",
-        "writer_title",
-        "enhancer_title",
-        "adversary_title",
+        "task",
+        "seat_pane",
+        "project_path",
         "seats",
-        "writer_provider",
-        "writer_model",
-        "writer_reasoning_effort",
-        "enhancer_provider",
-        "enhancer_model",
-        "enhancer_reasoning_effort",
-        "adversary_provider",
-        "adversary_model",
-        "adversary_reasoning_effort",
+        "report_to",
+        "plan_writer_provider",
+        "plan_writer_model",
+        "plan_writer_reasoning_effort",
+        "plan_adversary_provider",
+        "plan_adversary_model",
+        "plan_adversary_reasoning_effort",
+        "plan_enhancer_provider",
+        "plan_enhancer_model",
+        "plan_enhancer_reasoning_effort",
     }
     steps = {step.id: step for step in pipeline.steps}
-    assert list(steps) == ["guard", *SEAT_AGENTS]
+    assert list(steps) == ["guard", *SEATS, "arrange"]
     guard = steps["guard"].mcp
     assert guard is not None
     assert (guard.server, guard.tool) == ("gobby-agents", "check_runbook_seats")
-    for step_id, agent in SEAT_AGENTS.items():
-        seat = steps[step_id].mcp
+    for agent in SEATS:
+        seat = steps[agent].mcp
         assert seat is not None
         assert (seat.server, seat.tool) == ("gobby-agents", "spawn_agent")
         assert seat.arguments is not None
@@ -163,53 +181,45 @@ async def test_runbook_syncs_bundled_and_tagged(temp_db: HubDatabase) -> None:
 
 
 async def test_partial_deploy_relaunches_missing_seat(temp_db: HubDatabase) -> None:
-    pipeline = await _planning(temp_db)
+    pipeline = await _team_planning(temp_db)
 
     full = RunbookAgentsProxy()
-    deployed = await _executor(temp_db, full).execute(pipeline, {"workspace": "ws-1"}, PROJECT_ID)
+    deployed = await _executor(temp_db, full).execute(pipeline, RUN_INPUTS, PROJECT_ID)
     assert deployed.status == ExecutionStatus.COMPLETED
     guard = full.calls[0]["arguments"]
-    assert guard["requested"] == "writer,enhancer,adversary"
-    assert [seat["agent"] for seat in guard["catalogue"]] == [
-        "plan-writer",
-        "plan-enhancer",
-        "plan-adversary",
-    ]
+    assert guard["requested"] == SEATS_INPUT
+    assert [seat["agent"] for seat in guard["catalogue"]] == list(SEATS)
     writer, adversary, enhancer = full.spawns()
-    assert writer["placement"] == {"tab": {"workspace": "ws-1", "title": "Plan Writer"}}
+    assert writer["placement"] == {"tab": {"workspace": "ws-1", "title": TAB_TITLE}}
     assert adversary["placement"] == {
         "split": {"pane": "pane-2", "axis": "right", "title": "Plan Adversary"}
     }
     assert enhancer["placement"] == {
-        "split": {"pane": "pane-2", "axis": "down", "title": "Plan Enhancer"}
+        "split": {"pane": "pane-2", "axis": "right", "title": "Plan Enhancer"}
     }
-    for spawn, step_id in zip(
-        (writer, adversary, enhancer), ("writer", "adversary_split", "enhancer_split"), strict=True
-    ):
-        assert spawn["reserved_run_id"] == step_invocation_id(deployed.id, step_id)
+    for spawn, agent in zip((writer, adversary, enhancer), SEATS, strict=True):
+        assert spawn["reserved_run_id"] == step_invocation_id(deployed.id, agent)
 
     partial = RunbookAgentsProxy(fail_agents=frozenset({"plan-adversary"}))
-    with pytest.raises(RuntimeError, match="adversary_split"):
-        await _executor(temp_db, partial).execute(pipeline, {"workspace": "ws-1"}, PROJECT_ID)
+    with pytest.raises(RuntimeError, match="plan-adversary"):
+        await _executor(temp_db, partial).execute(pipeline, RUN_INPUTS, PROJECT_ID)
     manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
     steps = {
         step.step_id: step
         for step in manager.get_steps_for_execution(_latest_execution_id(temp_db))
     }
-    assert steps["writer"].status == StepStatus.COMPLETED
-    assert json.loads(steps["writer"].output_json or "null")["run_id"] == "run-2"
-    assert steps["adversary_split"].status == StepStatus.FAILED
+    assert steps["plan-writer"].status == StepStatus.COMPLETED
+    assert json.loads(steps["plan-writer"].output_json or "null")["run_id"] == "run-2"
+    assert steps["plan-adversary"].status == StepStatus.FAILED
 
     relaunch = RunbookAgentsProxy()
     result = await _executor(temp_db, relaunch).execute(
-        pipeline, {"workspace": "ws-1", "seats": "adversary"}, PROJECT_ID
+        pipeline, {**RUN_INPUTS, "seats": "plan-adversary"}, PROJECT_ID
     )
     assert result.status == ExecutionStatus.COMPLETED
-    assert relaunch.calls[0]["arguments"]["requested"] == "adversary"
+    assert relaunch.calls[0]["arguments"]["requested"] == "plan-adversary"
     assert [spawn["agent"] for spawn in relaunch.spawns()] == ["plan-adversary"]
-    assert relaunch.spawns()[0]["placement"] == {
-        "tab": {"workspace": "ws-1", "title": "Plan Adversary"}
-    }
+    assert relaunch.spawns()[0]["placement"] == {"tab": {"workspace": "ws-1", "title": TAB_TITLE}}
 
 
 DEVTEAM_SEATS = ["dev-manager", "test-writer", "developer", "code-reviewer"]
@@ -364,7 +374,7 @@ def _assert_seats_parented(
 
 
 async def test_entrypoint_parent_chain(temp_db: HubDatabase) -> None:
-    await _planning(temp_db)
+    await _team_planning(temp_db)
     caller = SessionManager(temp_db).register(
         external_id="runbook-caller", machine_id=None, source="claude", project_id=PROJECT_ID
     )
@@ -373,8 +383,8 @@ async def test_entrypoint_parent_chain(temp_db: HubDatabase) -> None:
     started = await run_pipeline(
         PipelineLoader(temp_db),
         _executor(temp_db, mcp_proxy),
-        "planning",
-        {"workspace": "ws-1"},
+        "team-planning",
+        RUN_INPUTS,
         PROJECT_ID,
         session_id=caller.id,
     )
@@ -391,7 +401,11 @@ async def test_entrypoint_parent_chain(temp_db: HubDatabase) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/api/pipelines/run",
-            json={"name": "planning", "project_id": PROJECT_ID, "inputs": {"workspace": "ws-2"}},
+            json={
+                "name": "team-planning",
+                "project_id": PROJECT_ID,
+                "inputs": {**RUN_INPUTS, "workspace": "ws-2"},
+            },
         )
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
@@ -434,14 +448,14 @@ class InterruptingProxy(RunbookAgentsProxy):
 async def test_restart_reruns_on_same_child(
     temp_db: HubDatabase, interrupt_agent: str, resumed_agents: list[str]
 ) -> None:
-    pipeline = await _planning(temp_db)
+    pipeline = await _team_planning(temp_db)
     caller = SessionManager(temp_db).register(
         external_id="runbook-caller", machine_id=None, source="claude", project_id=PROJECT_ID
     )
     before = InterruptingProxy(interrupt_agent)
     with pytest.raises(asyncio.CancelledError):
         await _executor(temp_db, before).execute(
-            pipeline, {"workspace": "ws-1"}, PROJECT_ID, session_id=caller.id
+            pipeline, RUN_INPUTS, PROJECT_ID, session_id=caller.id
         )
     execution_id = _latest_execution_id(temp_db)
     interrupted = before.spawns()[-1]
@@ -457,15 +471,17 @@ async def test_restart_reruns_on_same_child(
     finished = manager.get_execution(execution_id)
     assert finished is not None
     assert finished.status == ExecutionStatus.COMPLETED
-    assert [call["tool"] for call in after.calls] == ["gobby-agents:spawn_agent"] * len(
-        resumed_agents
-    )
+    # The arrange step tiles the tab once the resumed seats have launched.
+    assert [call["tool"] for call in after.calls] == [
+        *["gobby-agents:spawn_agent"] * len(resumed_agents),
+        "gobby-workspaces:rebalance_tab",
+    ]
     assert [spawn["agent"] for spawn in after.spawns()] == resumed_agents
     assert after.spawns()[0]["reserved_run_id"] == interrupted["reserved_run_id"]
     assert after.calls[0]["session_id"] == before.calls[-1]["session_id"]
     _assert_child_parent(temp_db, execution_id, caller.id, after.calls[0]["session_id"])
     writer = {step.step_id: step for step in manager.get_steps_for_execution(execution_id)}[
-        "writer"
+        "plan-writer"
     ]
     expected_writer_run = "run-1" if interrupt_agent == "plan-writer" else "run-2"
     assert json.loads(writer.output_json or "null")["run_id"] == expected_writer_run
@@ -484,13 +500,13 @@ def _assert_child_parent(
 
 def _mutate_current_definition(temp_db: HubDatabase, mutation: str) -> None:
     manager = PipelineDefinitionManager(temp_db)
-    row = manager.get_by_name("planning")
+    row = manager.get_by_name("team-planning")
     assert row is not None
     if mutation == "untagged":
         manager.update(row.id, tags=["gobby"])
     elif mutation == "changed":
         replacement = {
-            "name": "planning",
+            "name": "team-planning",
             "type": "pipeline",
             "steps": [{"id": "noop", "exec": "true"}],
         }
@@ -501,11 +517,11 @@ def _mutate_current_definition(temp_db: HubDatabase, mutation: str) -> None:
 
 @pytest.mark.parametrize("mutation", ["unchanged", "untagged", "changed", "deleted"])
 async def test_failed_runbook_resume_refused(temp_db: HubDatabase, mutation: str) -> None:
-    pipeline = await _planning(temp_db)
+    pipeline = await _team_planning(temp_db)
     proxy = RunbookAgentsProxy(fail_agents=frozenset({"plan-adversary"}))
     executor = _executor(temp_db, proxy)
-    with pytest.raises(RuntimeError, match="adversary_split"):
-        await executor.execute(pipeline, {"workspace": "ws-1"}, PROJECT_ID)
+    with pytest.raises(RuntimeError, match="plan-adversary"):
+        await executor.execute(pipeline, RUN_INPUTS, PROJECT_ID)
     execution_id = _latest_execution_id(temp_db)
     manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
 
