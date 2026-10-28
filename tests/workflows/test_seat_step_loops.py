@@ -1591,6 +1591,60 @@ async def test_developer_submit_admits_rust_test_audit_before_candidate(
     assert run.vars["candidate_sent"] is True
 
 
+_ROLE_RULES = (
+    Path(__file__).resolve().parents[2]
+    / "src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml"
+)
+
+
+def _create_bundled_role_rule(run: SeatRun, name: str) -> None:
+    bundle = yaml.safe_load(_ROLE_RULES.read_text())
+    rule = bundle["rules"].get(name)
+    assert rule is not None, f"bundled {name} rule is missing"
+    body = {key: rule[key] for key in ("event", "when", "effects")}
+    run.engine.rule_manager.create(
+        name=name,
+        definition_json=RuleDefinitionBody.model_validate(body).model_dump_json(),
+        enabled=True,
+        priority=rule["priority"],
+        tags=bundle["tags"],
+    )
+
+
+async def test_developer_submit_admits_reads_and_gcode_navigation(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+
+    assert await run.admits_native("Read", {"file_path": str(repo / "src/gobby/red_fix.py")})
+    assert await run.admits_native("Bash", {"command": "gcode outline src/gobby/red_fix.py"})
+
+
+async def test_developer_submit_denies_writes_and_commits(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+    for name in ("developer-submit-write-scope", "developer-submit-commit-scope"):
+        _create_bundled_role_rule(run, name)
+    # The runtime injects current_step for spawned seats (hooks _evaluate_rules); the
+    # harness calls the engine directly, so it carries the same value here.
+    run.session_vars["current_step"] = run.step
+
+    write = {"file_path": str(repo / "notes.md"), "content": "x"}
+    assert not await run.admits_native("Write", write)
+    assert not await run.admits_native("Bash", {"command": 'git commit -m "unlinked"'})
+    commit = f'cd {repo} && git commit -m "unlinked"'
+    assert not await run.admits_native("Bash", {"command": commit})
+    sed = "sed -i '' 's/1/2/' src/gobby/red_fix.py"
+    assert not await run.admits_native("Bash", {"command": sed})
+
+
 async def test_developer_unlinking_the_submitting_commit_returns_to_implement(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

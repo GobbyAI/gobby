@@ -597,6 +597,11 @@ step_workflow:
       mcp_error_policy: stay
       description: "Submit the candidate and wait for the Dev Manager's close"
       status_message: |
+        Before recording, run the test audits this candidate requires with Bash:
+        gobby test-quality audit on the touched tests (Python and Rust), and
+        gobby test-types audit for touched Python tests. Their output must be clean.
+        Read and read-only gcode answer reviewer questions here; edits and commits wait
+        for the verdict.
         Record gobby-tasks:record_implementation_step for the linked SHA, then
         send the CANDIDATE event line for assigned_task_ref to your Dev Manager
         and the assigned Code Reviewer with gobby-agents:send_message, then wait
@@ -624,6 +629,9 @@ step_workflow:
         the reviewer, so candidate_sent re-arms, with the proof result in NOTE.
         Never write flags.
       allowed_tools:
+        # Bash runs audits and read-only gcode; the seat-write-scope rule blocks writes and commits.
+        - Bash
+        - Read
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools

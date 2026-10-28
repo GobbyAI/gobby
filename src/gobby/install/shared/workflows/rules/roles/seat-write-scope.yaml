@@ -57,3 +57,36 @@ rules:
           `<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md`, or its `.tmp.<pid>.<12 lowercase hex>`
           staging sibling, or files in its agent workspace folder (named in your Agent
           Workspace section). Name the target with a literal absolute path.
+
+  developer-submit-write-scope:
+    description: "A Developer in submit writes nothing: its candidate stays frozen until the reviewer verdict"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      variables.get('_agent_type') == 'developer'
+      and variables.get('current_step') == 'submit'
+      and event.data.get('canonical_tool_kind') == 'write'
+    effects:
+      - type: block
+        reason: >-
+          In submit a Developer runs read-only commands and the required test audits only.
+          Edits, writes and commits wait for the reviewer verdict. Report a needed change
+          to your Dev Manager.
+
+  developer-submit-commit-scope:
+    description: "A Developer in submit commits nothing: its candidate stays frozen until the reviewer verdict"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      variables.get('_agent_type') == 'developer'
+      and variables.get('current_step') == 'submit'
+    effects:
+      - type: block
+        tools: [Bash]
+        mask_quoted: true
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+commit\\b"
+        reason: |
+          In submit a Developer commits nothing: the candidate is frozen until the
+          reviewer verdict. Report a needed change to your Dev Manager.
