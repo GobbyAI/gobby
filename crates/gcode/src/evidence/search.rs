@@ -22,9 +22,10 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &SearchSelector) -> R
                 .items
                 .into_iter()
                 .filter(|symbol| {
-                    !exact
-                        || symbol.name == selector.query
-                        || symbol.qualified_name == selector.query
+                    eligible.contains(&symbol.file_path)
+                        && (!exact
+                            || symbol.name == selector.query
+                            || symbol.qualified_name == selector.query)
                 })
                 .collect::<Vec<_>>();
             (symbols_to_items(library, symbols)?, page.truncated, None)
@@ -34,10 +35,10 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &SearchSelector) -> R
             (items, truncated, None)
         }
         SearchLane::Content => {
-            let (items, truncated) = content_search(library, selector)?;
+            let (items, truncated) = content_search(library, selector, &eligible)?;
             (items, truncated, None)
         }
-        SearchLane::Hybrid => hybrid_search(library, selector)?,
+        SearchLane::Hybrid => hybrid_search(library, selector, &eligible)?,
     };
     items.retain(|item| match item {
         EvidenceItem::Source(source) => eligible.contains(&source.path),
@@ -216,6 +217,7 @@ fn symbols_to_items(
 fn content_search(
     library: &EvidenceLibrary,
     selector: &SearchSelector,
+    eligible: &BTreeSet<String>,
 ) -> Result<(Vec<EvidenceItem>, bool)> {
     let mut query = SearchQuery::new(&selector.query, selector.limit);
     query.language.clone_from(&selector.language);
@@ -227,10 +229,15 @@ fn content_search(
             .map_err(|error| EvidenceError::IndexUnavailable {
                 reason: format!("{error:#}"),
             })?;
+    let hits = page
+        .items
+        .into_iter()
+        .filter(|hit| eligible.contains(&hit.path))
+        .collect::<Vec<_>>();
     let mut seen = BTreeSet::new();
     let mut items = Vec::new();
-    library.prefetch_bound_blobs(page.items.iter().map(|hit| hit.path.as_str()));
-    for hit in page.items {
+    library.prefetch_bound_blobs(hits.iter().map(|hit| hit.path.as_str()));
+    for hit in hits {
         if !seen.insert((hit.path.clone(), hit.line_start, hit.line_end)) {
             continue;
         }
@@ -266,10 +273,15 @@ fn grep_search(
         .map_err(|error| EvidenceError::IndexUnavailable {
             reason: format!("{error:#}"),
         })?;
+    let hits = outcome
+        .hits
+        .into_iter()
+        .filter(|hit| eligible.contains(&hit.path))
+        .collect::<Vec<_>>();
     let mut seen = BTreeSet::new();
     let mut items = Vec::new();
-    library.prefetch_bound_blobs(outcome.hits.iter().map(|hit| hit.path.as_str()));
-    for hit in outcome.hits {
+    library.prefetch_bound_blobs(hits.iter().map(|hit| hit.path.as_str()));
+    for hit in hits {
         if !seen.insert((hit.path.clone(), hit.line)) {
             continue;
         }
@@ -283,6 +295,7 @@ fn grep_search(
 fn hybrid_search(
     library: &EvidenceLibrary,
     selector: &SearchSelector,
+    eligible: &BTreeSet<String>,
 ) -> Result<(Vec<EvidenceItem>, bool, Option<super::HybridIdentity>)> {
     let expected = selector
         .hybrid_identity
@@ -349,6 +362,7 @@ fn hybrid_search(
                 .as_ref()
                 .is_none_or(|language| symbol.language == *language)
             && matches_paths(&symbol.file_path, &selector.paths)
+            && eligible.contains(&symbol.file_path)
         {
             symbols.push(symbol);
         }
