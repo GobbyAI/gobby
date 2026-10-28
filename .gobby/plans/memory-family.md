@@ -288,6 +288,21 @@ public surfaces; parity matches their intentional contracts, not accidents.
   Corpus cases for other rows use the bundled templates. Owners 2.4 and 4.3
   for HTTP, 6.2 for MCP and 7.2 for CLI.
 
+**FIX**, with no waiver because no recorded surface outcome changes:
+
+- **Rationale missing from projection identity.**
+  `src/gobby/memory/services/secondary_reconciliation.py::_snapshot_matches`
+  and its conditional `vector_needs_reindex` clear compare content, project,
+  global flag, memory type and liveness, but not `rationale`. The vector
+  embeds content and rationale together (`memory_embedding_text`), and
+  `src/gobby/memory/services/lifecycle.py` reprojects on a rationale-only
+  edit. A projection paused after its embed can therefore clear the flag a
+  newer rationale-only edit set and leave a stale vector marked clean. Native
+  compares rationale null-safely in both. The difference appears only under
+  that interleaving, which 2.2.12 and 2.3.7 prove. A paused Python projection
+  keeps the omission until the family's Python writers retire; Triage has the
+  Python report. Owners 2.2 and 2.3.
+
 **Waiver inventory:**
 
 | ID | Exact ledger surface | Owner |
@@ -921,8 +936,10 @@ its I/O without an idle transaction, as
 `secondary_reconciliation.memory_row_session` does. Before any I/O it re-reads
 the row `FOR SHARE` and stops when the row no longer matches the scheduled
 snapshot (`_load_active_snapshot`). It clears `vector_needs_reindex` only
-through the conditional update that matches content, project, global flag,
-memory type and a live row. Create keeps Python's transaction-scoped advisory
+through the conditional update that matches content, rationale, project,
+global flag, memory type and a live row. The snapshot check and that update
+compare rationale null-safely (`IS NOT DISTINCT FROM`), which Python omits
+(Debt not to port). Create keeps Python's transaction-scoped advisory
 locks over the superseded and final ids. Python runs every post-commit write
 through `_reconcile_active_snapshot`, and native does the same. Handlers are
 `create_memory`, `update_memory`, `delete_memory`, `restore_memory`,
@@ -973,11 +990,13 @@ separate deliverables.
   until a successor lease serves, after which the next write projects
   normally and the earlier row keeps its flag for 2.3's repair.
   test: `crates/gmemory/tests/writes.rs::fenced_write_keeps_repair_intent_until_successor`.
-- 2.2.12 - With projection I/O paused, an update, delete or move of the same
-  memory by native and, separately, by a Python writer leaves the paused
-  stale projection unable to overwrite the newer vector or scope, resurrect a
-  deleted point or clear the newer flag; the final state is the newest
-  row's projection or its durable repair intent.
+- 2.2.12 - With projection I/O paused, an update, a rationale-only update, a
+  delete or a move of the same memory by native and, separately, by a Python
+  writer never lets the paused stale projection clear the newer flag. After
+  the interleave, including a rationale-only update whose own projection then
+  fails or is fenced, the final state is the newest row's projection or its
+  durable repair intent; a stale vector, scope or resurrected point that
+  lands transiently never stays untracked.
   test: `crates/gmemory/tests/writes.rs::stale_projection_loses_to_newer_writes`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test writes`
@@ -1047,9 +1066,11 @@ successor lease keeps serving.
   the flags set and serving continues.
   test: `crates/gmemory/tests/maintenance.rs::projection_repair_clears_flags_after_reacquire`.
 - 2.3.7 - A reconciliation paused after its snapshot check, then raced by a
-  native or Python update, delete or move, neither clears the newer row's
-  flag nor writes a stale vector, graph or crossref state; the newer row
-  stays flagged until its own reconciliation converges.
+  native or Python update, rationale-only update, delete or move, never
+  clears the newer row's flag. Afterwards the final state is the newest
+  row's projection or its durable repair intent, the newer row stays flagged
+  until its own reconciliation converges, and a stale vector, graph or
+  crossref write that lands transiently never stays untracked.
   test: `crates/gmemory/tests/maintenance.rs::stale_reconciliation_keeps_newer_repair_intent`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test maintenance`;
