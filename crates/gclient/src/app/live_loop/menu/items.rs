@@ -1,5 +1,7 @@
 //! Context-menu item definitions.
 
+use std::borrow::Cow;
+
 use crate::app::{ControlState, PaneId};
 use crate::theme::ThemeName;
 use crate::ui::chrome::attention_pane;
@@ -45,6 +47,42 @@ fn arrange_items(target: &ArrangeTarget) -> Vec<MenuItem> {
     ]
 }
 
+/// The Move to tab ▸ row for `pane`, disabled when it has no tab to move to.
+fn move_to_tab_row(chrome: &Chrome, pane: PaneId) -> MenuItem {
+    let enabled = !move_to_tab_items(chrome, pane).is_empty();
+    enabled_if(
+        item(
+            "Move to tab ▸",
+            MenuAction::OpenSubmenu(Submenu::MoveToTab { pane }),
+        ),
+        enabled,
+    )
+}
+
+/// One row per other daemon tab, named by its title. Empty when the pane's
+/// own tab is local or the pane is in no tab.
+fn move_to_tab_items(chrome: &Chrome, pane: PaneId) -> Vec<MenuItem> {
+    let tabs = &chrome.tabs().tabs;
+    let Some(source) = tabs.iter().find(|tab| tab.slot_for(pane).is_some()) else {
+        return Vec::new();
+    };
+    if source.is_local() {
+        return Vec::new();
+    }
+    tabs.iter()
+        .filter(|tab| !tab.is_local() && tab.id != source.id)
+        .map(|tab| {
+            item(
+                tab.title.clone(),
+                MenuAction::MovePane {
+                    pane,
+                    tab: tab.id.clone(),
+                },
+            )
+        })
+        .collect()
+}
+
 /// herdr `ContextMenu::items` for a pane, in its order: rename, clear the
 /// label it has, swap with the focused pane when it is another pane, the
 /// splits, zoom or unzoom by the active tab, the lease item for its control
@@ -80,6 +118,7 @@ pub(super) fn pane_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, pane: PaneId
         tab: tab.id.clone(),
         pane: Some(pane),
     })));
+    items.push(move_to_tab_row(chrome, pane));
     items.push(control_item(state, pane));
     if let Some(entry_id) = blocked_entry(ws, pane) {
         items.push(item("Respond", MenuAction::Respond(entry_id)));
@@ -235,6 +274,7 @@ pub fn attention_id<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<String> 
 pub(super) fn submenu_items(chrome: &Chrome, submenu: &Submenu) -> Vec<MenuItem> {
     match submenu {
         Submenu::Arrange(target) => arrange_items(target),
+        Submenu::MoveToTab { pane } => move_to_tab_items(chrome, *pane),
         Submenu::Appearance => appearance_items(chrome),
         Submenu::Theme => theme_items(chrome),
     }
@@ -430,9 +470,12 @@ pub(in crate::app::live_loop) fn passthrough_label(state: &crate::app::Pane) -> 
     }
 }
 
-pub(in crate::app::live_loop) fn item(label: &'static str, action: MenuAction) -> MenuItem {
+pub(in crate::app::live_loop) fn item(
+    label: impl Into<Cow<'static, str>>,
+    action: MenuAction,
+) -> MenuItem {
     MenuItem {
-        label,
+        label: label.into(),
         action,
         enabled: true,
     }

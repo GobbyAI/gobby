@@ -64,6 +64,16 @@ impl Target {
         }))
     }
 
+    /// The check an arrange TAB_REF needs: its tab is looked up in `workspace`,
+    /// and a REF outside it is refused. The caller picks the workspace.
+    pub fn tab(reference: &str, workspace: Option<String>) -> Option<Self> {
+        workspace.map(|workspace| Self {
+            reference: reference.to_owned(),
+            workspace,
+            rows: Rows::Tabs,
+        })
+    }
+
     /// The row a short ID names, or `None` for a full REF inside the
     /// workspace. Refuses no match, an ambiguous prefix, and a full REF
     /// outside the workspace.
@@ -74,11 +84,42 @@ impl Target {
         if self.contains(snapshot) {
             Ok(None)
         } else {
-            Err(CommandError::usage(format!(
-                "{} is not in workspace {}",
-                self.reference, self.workspace
-            )))
+            Err(self.outside())
         }
+    }
+
+    /// The id of the tab a TAB_REF names in `snapshot`: a short ID by its
+    /// prefix, a numeric `node:workspace:tab` by its tab ref, a full id as
+    /// given. Refuses a REF outside the workspace and a numeric REF that names
+    /// no tab there.
+    pub fn tab_id(&self, snapshot: &WorkspaceSnapshot) -> Result<String, CommandError> {
+        if is_short_id(&self.reference) {
+            let Row::Tab { id } = self.match_prefix(snapshot)? else {
+                unreachable!("a tab REF matches tabs only");
+            };
+            return Ok(id);
+        }
+        if !self.contains(snapshot) {
+            return Err(self.outside());
+        }
+        let parts: Vec<_> = self.reference.split(':').collect();
+        let [_, _, number] = parts.as_slice() else {
+            return Ok(self.reference.clone());
+        };
+        let number = number.parse::<u64>().ok();
+        snapshot
+            .tabs
+            .iter()
+            .find(|tab| Some(tab.reference) == number)
+            .map(|tab| tab.id.clone())
+            .ok_or_else(|| self.outside())
+    }
+
+    fn outside(&self) -> CommandError {
+        CommandError::usage(format!(
+            "{} is not in workspace {}",
+            self.reference, self.workspace
+        ))
     }
 
     fn match_prefix(&self, snapshot: &WorkspaceSnapshot) -> Result<Row, CommandError> {
