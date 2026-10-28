@@ -2581,3 +2581,23 @@ deferral:
 - 2026-10-28 — Initial narrative by Plan Writer gobby#18292 for #25255;
   awaiting enhancement by gobby#18298 and adversarial review by gobby#18295;
   no consensus claimed.
+- 2026-10-28 — Consensus. Plan Writer gobby#18292 and Plan Adversary
+  gobby#18295 agree on this narrative as of a4b54aeee1. The Enhancer
+  gobby#18298's edits were applied as the coordinator dispositioned them.
+  AF-ADV-001 (no owner for coordination-wait delivery) is resolved by the
+  Orchestrator's D-AF-6 ruling: 5.3 ports the delivery worker and 11.2
+  moves ownership in one shipping commit (Decision 9). AF-ADV-002 (native
+  terminal transitions never reach Python's completion waiters) is resolved
+  by the D-AF-7 ruling and its follow-up: 2.0's loopback delivery route
+  acknowledges by rereading durable subscriber rows, gdaemon reposts until
+  acknowledged, the handoff runs whether parent delivery succeeded or
+  failed, and
+  `wait_for_agent` stays proxied until D1 (Decision 15). The machine-owner
+  recovery boundary from `.gobby/plans/completed/gdaemon-run-modes.md`
+  (acceptance 2.2.8) is retained: another machine's run whose handoff is
+  pending across a hub restart waits for its owning machine's startup
+  recovery. AF-ADV-003 (capture barrier untested) is resolved by 0.3.5 and
+  6.1.4. No blocking finding or open decision remains, and base validation
+  passes. The adversary derives `## M1 Task Manifest` from the commit that
+  adds this entry. Consensus is not implementation approval; operator
+  approval precedes expansion.
