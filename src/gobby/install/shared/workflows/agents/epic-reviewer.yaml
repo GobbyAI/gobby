@@ -202,7 +202,6 @@ step_workflow:
         Finish by calling end_agent_run.
       allowed_tools: "all"
       blocked_mcp_tools:
-        - "gobby-tasks:close_task"
         - "gobby-tasks:de_escalate_task"
         - "gobby-agents:spawn_agent"
         - "gobby-agents:kill_agent"

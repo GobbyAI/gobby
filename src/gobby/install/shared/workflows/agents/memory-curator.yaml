@@ -14,7 +14,6 @@ blocked_mcp_tools:
   - "gobby-agents:kill_agent"
   - "gobby-agents:spawn_agent"
   - "gobby-memory:delete_memory"
-  - "gobby-tasks:close_task"
 
 prompts:
   agent: |

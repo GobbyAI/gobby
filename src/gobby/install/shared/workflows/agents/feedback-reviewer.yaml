@@ -16,7 +16,6 @@ blocked_mcp_tools:
   - "gobby-tasks:create_task"
   - "gobby-tasks:claim_task"
   - "gobby-tasks:update_task"
-  - "gobby-tasks:close_task"
 
 prompts:
   agent: |

@@ -32,8 +32,7 @@ from gobby.cli.tasks._utils import (
     sort_tasks_for_tree,
 )
 from gobby.cli.utils import resolve_project_ref
-from gobby.tasks.close_invariants import NO_WORK_CLOSE_REASONS
-from gobby.tasks.state_semantics import TASK_STATES
+from gobby.tasks.state_semantics import NO_WORK_CLOSE_REASONS, TASK_STATES
 from gobby.utils.project_context import get_project_context
 
 

@@ -195,7 +195,10 @@ notes. After closing, call `gobby-memory:review_task_memories` with the task and
 summary.
 
 The close reasons are `done`, `moot`, `superseded`, and `wont_do`.
-The no-work reasons `moot`, `superseded`, and `wont_do` allow only a commitless close.
+The no-work reasons `moot`, `superseded`, and `wont_do` are Orchestrator-only and allow
+only a commitless close. A Dev Manager closes with `done` only, and every other seat is
+refused. A commitless no-work close skips the linked-commit and ancestry gates and the
+step-record gate; the child-closure and attributed-file gates still apply.
 A no-work close with a linked commit fails the ancestry check, so unlink each candidate
 first with a reason. A `superseded` close names its superseder in `superseded_by`.
 No-work reasons do not waive child closure or attributed-file cleanliness. An epic does

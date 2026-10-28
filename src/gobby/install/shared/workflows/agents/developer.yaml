@@ -166,7 +166,6 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-tasks:claim_task"
         - "gobby-tasks:de_escalate_task"
-        - "gobby-tasks:close_task"
         - "gobby-tasks:get_task"
         - "gobby-agents:list_running_agents"
         - "gobby-agents:send_message"
@@ -188,13 +187,6 @@ step_workflow:
         - &handoff_de_escalate_guard
           server: gobby-tasks
           tool: de_escalate_task
-          action: block
-          when: >-
-            tool_input.get('task_id') not in vars.get('_developer_handoff_tasks', [])
-          reason: "Finish only a task this developer handed off."
-        - &handoff_close_guard
-          server: gobby-tasks
-          tool: close_task
           action: block
           when: >-
             tool_input.get('task_id') not in vars.get('_developer_handoff_tasks', [])
@@ -280,19 +272,6 @@ step_workflow:
           when: >-
             (tool_output.get('result') or tool_output).get('closed_at') is not None
             or ((tool_output.get('result') or tool_output).get('state') or {}).get('is_closed') is True
-        # A reclaimed hand-off keeps its entry, so the developer can still
-        # de-escalate it; only its close or an observed close removes it.
-        - &forget_closed_handoff
-          server: gobby-tasks
-          tool: close_task
-          action: set_variable
-          variable: _developer_handoff_tasks
-          value: >-
-            [task_id for task_id in vars.get('_developer_handoff_tasks', [])
-             if task_id != tool_input.get('task_id')]
-          when: >-
-            tool_output.get('closed') is True
-            or (tool_output.get('result') or {}).get('closed') is True
         # Every claim starts a fresh attempt; only link_commit completes it.
         - server: gobby-tasks
           tool: claim_task
@@ -467,7 +446,8 @@ step_workflow:
         If the assigned task is moot and no candidate was sent, send your Dev
         Manager one CANDIDATE with DISPOSITION=moot (or superseded or wont_do)
         in place of COMMIT and the evidence in NOTE. It relays the line to your
-        Code Reviewer, and the approved no-work review lets it close the task.
+        Code Reviewer. After the approved no-work review, your Dev Manager reports
+        the task to Triage, and the Orchestrator closes it with that disposition.
         Existing delivered work follows the normal candidate review flow after
         linking its implementation commit.
         A reply wait ends at the owner's next message. If that message is an
@@ -485,28 +465,6 @@ step_workflow:
       on_mcp_before:
         - *assigned_handoff_guard
         - *handoff_de_escalate_guard
-        # A sent candidate is under review; its bounce returns here for rework.
-        - &candidate_close_guard
-          server: gobby-tasks
-          tool: close_task
-          action: block
-          when: >-
-            tool_input.get('reason') in ['moot', 'superseded', 'wont_do']
-            and vars.get('candidate_sent')
-          reason: >-
-            A candidate was already sent for this task, so it cannot take the
-            no-work shortcut. Fix the bounce, commit, link_commit, and send a
-            new candidate.
-        - <<: *handoff_close_guard
-          when: >-
-            tool_input.get('task_id') not in vars.get('_developer_handoff_tasks', [])
-            and not (
-              not vars.get('candidate_sent')
-              and tool_input.get('commit_sha') is None
-              and tool_input.get('task_id') is not None
-              and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
-              and task_has_no_commits(vars.get('assigned_task_id'))
-            )
       on_mcp_success:
         - *record_land_handoff
         - *release_handoff_binding
@@ -517,78 +475,7 @@ step_workflow:
         - *reset_handoff_bounce
         - *clear_handoff_task_id
         - *clear_handoff_task_ref
-        - *forget_closed_handoff
         - *forget_observed_closed_handoff
-        # Closing the claimed task resets the loop for the next claim. The
-        # first handler matches the task; the rest key off its reset so the
-        # task ids clear last.
-        - &release_closed_binding
-          server: gobby-tasks
-          tool: close_task
-          when: >-
-            tool_input.get('task_id') is not None
-            and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
-            and (
-              tool_output.get('closed') is True
-              or (tool_output.get('result') or {}).get('closed') is True
-            )
-          action: set_variable
-          variable: task_claimed
-          value: false
-        - &reset_closed_completion
-          server: gobby-tasks
-          tool: close_task
-          when: &task_closed >-
-            not vars.get('task_claimed')
-            and (
-              tool_output.get('closed') is True
-              or (tool_output.get('result') or {}).get('closed') is True
-            )
-          action: set_variable
-          variable: implementation_complete
-          value: false
-        - &reset_closed_skills_loaded
-          server: gobby-tasks
-          tool: close_task
-          when: *task_closed
-          action: set_variable
-          variable: additional_skills_loaded
-          value: false
-        - &reset_closed_skills_routed
-          server: gobby-tasks
-          tool: close_task
-          when: *task_closed
-          action: set_variable
-          variable: skills_routed
-          value: false
-        - &reset_closed_candidate
-          server: gobby-tasks
-          tool: close_task
-          when: *task_closed
-          action: set_variable
-          variable: candidate_sent
-          value: false
-        - &reset_closed_bounce
-          server: gobby-tasks
-          tool: close_task
-          when: *task_closed
-          action: set_variable
-          variable: bounced
-          value: false
-        - &clear_closed_task_id
-          server: gobby-tasks
-          tool: close_task
-          when: *task_closed
-          action: set_variable
-          variable: assigned_task_id
-          value: null
-        - &clear_closed_task_ref
-          server: gobby-tasks
-          tool: close_task
-          when: *task_closed
-          action: set_variable
-          variable: assigned_task_ref
-          value: null
         # The Dev Manager closes the task out of band, so reading the closed
         # task drives the same reset.
         # The offload envelope of a large card keeps id and state.
@@ -745,7 +632,6 @@ step_workflow:
         - "gobby-agents:send_message"
         - "gobby-agents:get_inter_session_message"
         - "gobby-agents:wait_for_coordination"
-        - "gobby-tasks:close_task"
         - "gobby-tasks:get_task"
         - "gobby-tasks:link_commit"
         # The implementation record needs the linked tip, so it follows link_commit here.
@@ -755,7 +641,6 @@ step_workflow:
         - "gobby-tasks:escalate_task"
         - "gobby-tasks:de_escalate_task"
       on_mcp_before:
-        - *candidate_close_guard
         - *handoff_de_escalate_guard
         - *assigned_handoff_guard
       on_mcp_success:
@@ -787,7 +672,6 @@ step_workflow:
           action: set_variable
           variable: bounced
           value: false
-        - *forget_closed_handoff
         - *forget_observed_closed_handoff
         - *record_land_handoff
         - *release_handoff_binding
@@ -806,14 +690,6 @@ step_workflow:
           action: set_variable
           variable: candidate_sent
           value: true
-        - *release_closed_binding
-        - *reset_closed_completion
-        - *reset_closed_skills_loaded
-        - *reset_closed_skills_routed
-        - *reset_closed_candidate
-        - *reset_closed_bounce
-        - *clear_closed_task_id
-        - *clear_closed_task_ref
         - *release_observed_closed_binding
         - *reset_observed_closed_completion
         - *reset_observed_closed_skills_loaded
