@@ -10,6 +10,10 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
     resolve_close_worktree_root_async,
     resolve_task_repo_path,
 )
+from gobby.mcp_proxy.tools.tasks._authorization import (
+    CONSOLIDATOR_ROLE,
+    consolidator_close_refusal,
+)
 from gobby.mcp_proxy.tools.tasks._close_context import (
     CloseAttributionLookupError,
     capture_attribution,
@@ -72,12 +76,19 @@ async def _evaluate_close(
         return evaluation.refuse("session_resolution_failed", str(exc))
     evaluation.resolved_session_id = session_id
     # No-work reasons are Orchestrator overrides; an unseated operator session keeps them too.
+    # The Consolidator applies Orchestrator-directed folds and retirements, nothing else.
     closer_role = (
         await asyncio.to_thread(
             ctx.session_var_manager.get_variable_subset, session_id, ("_agent_type",)
         )
     ).get("_agent_type")
-    if reason.casefold() in NO_WORK_CLOSE_REASONS and closer_role not in (
+    if closer_role == CONSOLIDATOR_ROLE:
+        fold_refusal = await asyncio.to_thread(
+            consolidator_close_refusal, ctx.task_manager, task, reason, session_id
+        )
+        if fold_refusal:
+            return evaluation.refuse(*fold_refusal)
+    elif reason.casefold() in NO_WORK_CLOSE_REASONS and closer_role not in (
         None,
         "default",
         "orchestrator",

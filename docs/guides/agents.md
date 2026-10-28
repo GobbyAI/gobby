@@ -223,7 +223,7 @@ checks. The current bundled catalogue is:
 | `log-monitor` | Monitor-only check of daemon health, status and logs every ten minutes; reports to Triage |
 | `metrics-monitor` | Observe-only Prometheus watch of daemon RSS, CPU and uptime; reports to Triage and Log Monitor |
 | `triage` | Receives the reports meant for the Orchestrator and hands it one queued digest every five minutes |
-| `consolidator` | Proposes task bundles, stale-item retirement and epic moves to Triage for the Orchestrator; inspects tasks read-only and excludes protected triage and plan-expanded subtrees |
+| `consolidator` | Proposes task bundles, stale-item retirement and epic moves to Triage for the Orchestrator; applies Orchestrator-directed folds and retirements (`superseded` or `moot` closes, with criteria merged into the survivor), and excludes protected triage and plan-expanded subtrees |
 
 These templates are global installed definitions tagged `gobby` in storage;
 their YAML `seat` tag marks the file-based catalogue. The Assistant and

@@ -136,3 +136,74 @@ def require_claim_authority(
         claimed_by=owner_session_id,
         message=SANCTIONED_PATH,
     )
+
+
+CONSOLIDATOR_ROLE = "consolidator"
+# The Consolidator applies Orchestrator-directed folds (superseded) and retirements (moot) only.
+CONSOLIDATOR_CLOSE_REASONS = frozenset({"moot", "superseded"})
+# Josh's operator subtrees: #22978 Triage, and #22225 Annotate inside it.
+OPERATOR_SUBTREE_SEQ_NUMS = frozenset({22978, 22225})
+
+
+def session_agent_type(db: "HubDatabase", session_id: str) -> str | None:
+    """The ``_agent_type`` the session was launched with, or None."""
+    role = SessionVariableManager(db).get_variable_subset(session_id, ("_agent_type",))
+    return role.get("_agent_type")
+
+
+def _in_operator_subtree(task_manager: "LocalTaskManager", task: "Task") -> bool:
+    """True when the task or one of its ancestors is an operator subtree root."""
+    seen: set[str] = set()
+    node: Task | None = task
+    while node is not None and node.id not in seen:
+        if node.seq_num in OPERATOR_SUBTREE_SEQ_NUMS:
+            return True
+        seen.add(node.id)
+        node = task_manager.get_task(node.parent_task_id) if node.parent_task_id else None
+    return False
+
+
+def consolidator_protection(
+    task_manager: "LocalTaskManager", task: "Task", caller_session_id: str
+) -> str | None:
+    """Why the Consolidator may not edit or close ``task``; None when it may.
+
+    Josh, 2026-10-27: the Consolidator leaves alone tasks another session claims,
+    tasks labeled deferred-by-josh, and the #22978 and #22225 operator subtrees.
+    """
+    ref = f"#{task.seq_num}" if task.seq_num else task.id
+    owner = get_claimed_session_id(task)
+    if owner and owner != caller_session_id:
+        return f"task {ref} is claimed by session '{owner}'"
+    if "deferred-by-josh" in (task.labels or []):
+        return f"task {ref} is labeled deferred-by-josh"
+    if _in_operator_subtree(task_manager, task):
+        return f"task {ref} sits under an operator subtree (#22978 or #22225)"
+    return None
+
+
+def consolidator_close_refusal(
+    task_manager: "LocalTaskManager", task: "Task", reason: str, caller_session_id: str
+) -> tuple[str, str] | None:
+    """The (code, message) refusal when the Consolidator may not close ``task`` as ``reason``."""
+    if reason.casefold() not in CONSOLIDATOR_CLOSE_REASONS:
+        return (
+            "consolidator_close_reason_refused",
+            f"The Consolidator closes a task only as superseded or moot, not {reason}.",
+        )
+    protected = consolidator_protection(task_manager, task, caller_session_id)
+    if protected:
+        return (
+            "consolidator_task_protected",
+            f"The Consolidator may not close this task: {protected}.",
+        )
+    return None
+
+
+def consolidator_update_error(task_manager: "LocalTaskManager", task: "Task") -> str | None:
+    """Refusal text when the calling session is a Consolidator and may not edit ``task``."""
+    caller = get_current_session_id()
+    if not caller or session_agent_type(task_manager.db, caller) != CONSOLIDATOR_ROLE:
+        return None
+    protected = consolidator_protection(task_manager, task, caller)
+    return f"The Consolidator may not update this task: {protected}." if protected else None
