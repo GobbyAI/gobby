@@ -883,6 +883,163 @@ async fn rest_failures_and_lagged_events_warn_with_elapsed_time() {
 }
 
 #[tokio::test]
+async fn a_periodic_roster_that_beats_the_scoped_roster_focuses_the_selected_pane() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("initial workspace");
+    mock.seed_other_workspace("project-2", &[(&["terminal-new"], "terminal-new")]);
+    let project_roster = "/api/terminals?project_id=project-2";
+    let release = mock.enqueue_held("GET", project_roster, 200, roster_items(&["terminal-new"]));
+    mock.enqueue("GET", project_roster, 200, roster_items(&["terminal-new"]));
+    let mut chrome = Chrome::dark();
+    gobby_client::app::focus_project(&mut workspace, &mut chrome, "project-2")
+        .await
+        .expect("select second project");
+    let (backend, _, _) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let mut automatic_control = false;
+    let driver = async {
+        // The scoped job owns the first held request. Only the periodic
+        // relist can answer while that request remains outstanding.
+        wait_within(DRAIN_DEADLINE, "the periodic project roster", || {
+            mock.requests()
+                .iter()
+                .filter(|request| request.target.starts_with(project_roster))
+                .count()
+                == 2
+        })
+        .await;
+        wait_within(DRAIN_DEADLINE, "the installed pane's viewport", || {
+            websocket_requests(&mock, "terminal_set_viewport")
+                .iter()
+                .any(|request| request["terminal_id"] == "terminal-new")
+        })
+        .await;
+        automatic_control = timeout(LIVENESS_DEADLINE, async {
+            while !websocket_requests(&mock, "terminal_take_control")
+                .iter()
+                .any(|request| request["terminal_id"] == "terminal-new")
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .is_ok();
+        release.notify_one();
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(
+        workspace
+            .roster_terminal_ids()
+            .iter()
+            .any(|id| id == "terminal-new"),
+        "the periodic roster installed the newly selected project's terminal"
+    );
+    assert!(automatic_control,
+        "an accepted periodic roster must automatically take control of the selected pane while the scoped roster is held");
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn roster_and_attention_job_failures_warn_with_generation_class_and_elapsed_time() {
+    let (_guard, logs) = capture_logs();
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("initial workspace");
+    let (backend, _, _) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let job_warnings = || {
+        records(&logs, "WARN")
+            .into_iter()
+            .filter(|line| line.contains("refresh failed") && line.contains("operation="))
+            .collect::<Vec<_>>()
+    };
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        mock.enqueue(
+            "GET",
+            "/api/terminals?project_id=project-1",
+            503,
+            json!({"error": "roster job unavailable"}),
+        );
+        mock.enqueue(
+            "GET",
+            "/api/attention/roster",
+            503,
+            json!({"error": "attention job unavailable"}),
+        );
+        // Epoch changes request the actual coalesced jobs, rather than the
+        // sidebar aggregate fetch that has separate failure diagnostics.
+        mock.send_event_and_wait(json!({"type": "terminal_event", "event": "noop",
+            "terminal_id": "terminal-a", "daemon_epoch": "different-epoch", "seq": 2,
+            "timestamp": "2026-01-01T00:00:00Z"}))
+            .await;
+        mock.send_event_and_wait(json!({"type": "agent_event",
+            "event": "attention_metadata_changed", "epoch": "attention-2", "seq": 1,
+            "metadata": {"entry_id": "run:changed"}}))
+            .await;
+        wait_until("both job failure WARNs", || job_warnings().len() == 2).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let warnings = job_warnings();
+    assert_eq!(
+        warnings.len(),
+        2,
+        "one failure WARN from each job: {warnings:?}"
+    );
+    let mut missing = Vec::new();
+    for operation in ["operation=\"roster\"", "operation=\"attention roster\""] {
+        let warning = warnings
+            .iter()
+            .find(|line| line.contains(operation))
+            .unwrap_or_else(|| panic!("missing {operation}: {warnings:?}"));
+        for field in ["generation=", "error_class=", "elapsed_ms="] {
+            if !warning.contains(field) {
+                missing.push(format!("{operation}: missing {field}"));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "job WARN metadata missing: {missing:?}; records: {warnings:?}"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
 async fn receiver_overflow_warns_with_elapsed_time() {
     let (_guard, logs) = capture_logs();
     let mock = MockDaemon::start("local-token").await;
