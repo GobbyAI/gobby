@@ -35,8 +35,13 @@ Each task's reviewer comes from its category. Find the row that matches, and lau
 | code, config, refactor, test | `code-reviewer` |
 | docs, subject is code behavior | `code-reviewer` |
 | docs, any other subject | `docs-reviewer` |
-| research | `research-reviewer` |
+| research, a researcher's report spike | none: the Orchestrator reviews the report SHA |
+| research, other | `research-reviewer` |
 
 A docs task's subject is code behavior when checking it requires reading source. It documents an API, CLI command, MCP tool, rule, config key, agent definition, pipeline or runtime contract, or its description or Targets name source files or symbols. Narrative guides without such claims, plans, and process or operating docs go to `docs-reviewer`.
 
 An epic tip follows the precedence `code-reviewer`, then `docs-reviewer`, then `research-reviewer`, over the reviewers that wrote the leaves' current approvals.
+
+## Research report review
+
+A researcher's report spike launches no DevTeam. When Triage sends its task and linked SHA, check the report against its cited primary evidence, then record `gobby-tasks:record_review_step` for that SHA: `approved`, or `rejected` with feedback the researcher must address. The researcher closes the spike once your approval covers the linked SHA.

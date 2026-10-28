@@ -47,9 +47,10 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
-    # The Orchestrator edits tasks as needed.
+    # The Orchestrator edits tasks as needed and reads seats' report folders to review them.
     exclude:
       - "name:block-update-task"
+      - "name:agent-workspace-read-scope"
   variables:
     _seat_procedure: gobby:references/agents/procedures/orchestrator.md
     _seat_references:

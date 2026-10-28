@@ -750,11 +750,14 @@ def _close_task_names(node: object) -> list[str]:
     return [node] if isinstance(node, str) and node in CLOSE_TASK_NAMES else []
 
 
-def test_only_dev_managers_and_the_orchestrator_are_granted_close_task() -> None:
+def test_only_dev_managers_orchestrator_and_researcher_are_granted_close_task() -> None:
     # Grant lists and workflow steps name the tool as an exact string; prose is not a grant.
     granted = {
         path.stem: _close_task_names(yaml.safe_load(path.read_text()))
         for path in sorted(AGENTS_DIR.glob("*.yaml"))
-        if path.stem not in ("dev-manager", "orchestrator")
+        if path.stem not in ("dev-manager", "orchestrator", "researcher")
     }
     assert {stem: names for stem, names in granted.items() if names} == {}
+    # The researcher closes only its own report spike as done; the MCP close enforces the rest.
+    researcher = yaml.safe_load((AGENTS_DIR / "researcher.yaml").read_text())
+    assert _close_task_names(researcher) == ["gobby-tasks:close_task"]

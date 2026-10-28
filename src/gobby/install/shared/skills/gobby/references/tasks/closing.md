@@ -26,7 +26,7 @@ Finish in this order (closers: the Dev Manager or the Orchestrator):
 
 - The Dev Manager closes delivered work with `reason=done`.
 - The Orchestrator closes no-work dispositions (`moot`, `superseded`, `wont_do`) and may close with `done`.
-- A researcher spike closes with `done` by the Dev Manager of the DevTeam that reviewed it, or by the Orchestrator when no Dev Manager seat exists.
+- A researcher report spike closes with `done` by its researcher, after the Orchestrator's approved review of the linked SHA. Only the Orchestrator closes it with a no-work reason.
 - `preview=true` is open to every seat and changes nothing.
 
 ## Five close gates
