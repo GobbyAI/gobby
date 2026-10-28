@@ -84,12 +84,12 @@ _REHANDSHAKE_TIMEOUT_SECONDS = 10.0
 
 
 def _response_error_code(response: httpx.Response) -> str | None:
-    """Return the typed ``error_code`` a daemon error body carries, if any."""
+    """Return a typed daemon error, including authentication middleware's ``code``."""
     try:
         body = response.json()
     except ValueError:
         return None
-    error_code = body.get("error_code") if isinstance(body, dict) else None
+    error_code = (body.get("error_code") or body.get("code")) if isinstance(body, dict) else None
     return error_code if isinstance(error_code, str) else None
 
 

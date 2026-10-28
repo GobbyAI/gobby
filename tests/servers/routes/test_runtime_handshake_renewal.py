@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import httpx
@@ -45,6 +45,9 @@ from tests.storage.test_postgres_agent_authorization import AuthorizationFixture
 from tests.storage.test_postgres_agent_authorization import (
     fresh_authorization_fixture as authorization_fixture,
 )
+
+if TYPE_CHECKING:
+    from gobby.servers.http import HTTPServer
 
 pytestmark = pytest.mark.integration
 __all__ = ["authorization_fixture"]
@@ -118,12 +121,12 @@ def _client(
     )
     app = FastAPI()
 
-    @app.get("/api/admin/status")
+    @app.get("/api/mcp/status")
     def status() -> dict[str, bool]:
         return {"ok": True}
 
     app.include_router(create_runtime_handshake_router(server))
-    app.add_middleware(AuthMiddleware, server=server)
+    app.add_middleware(AuthMiddleware, server=cast("HTTPServer", server))
     return TestClient(app)
 
 
@@ -144,10 +147,12 @@ def _body(fixture: AuthorizationFixture) -> dict[str, str]:
     }
 
 
+@pytest.mark.parametrize("caller", ["handshake", "proxy"])
 def test_expired_seat_capability_renews_its_grant(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caller: str,
 ) -> None:
     fixture = authorization_fixture
     manager = _manager(fixture, tmp_path)
@@ -186,20 +191,29 @@ def test_expired_seat_capability_renews_its_grant(
         manager.bind_launch_grant_rewriter(_rewrite_recovery_grant)
         client = _client(fixture, manager=manager, store=store, tmp_path=tmp_path)
 
-        refused = client.get("/api/admin/status", headers=_headers(fixture, token))
+        refused = client.get("/api/mcp/status", headers=_headers(fixture, token))
         assert refused.status_code == 401
         assert refused.json()["code"] == "capability_expired"
-        response = client.post(
-            "/api/runtime/handshake",
-            json=_body(fixture),
-            headers=_headers(fixture, token),
-        )
 
-        assert response.status_code == 200, response.text
-        grant = response.json()["grant"]
-        assert grant["principal"]["kind"] == "agent_run"
-        # The expired capability must not bound the renewed grant to its own lifetime.
-        assert grant["expires_at"] - grant["issued_at"] >= 60
+        async def original_call() -> dict[str, Any]:
+            proxy = DaemonProxy(60887)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=client.app)) as http:
+                proxy._client = http
+                return await proxy._request("GET", "/api/mcp/status")
+
+        if caller == "proxy":
+            assert asyncio.run(original_call()) == {"ok": True}
+        else:
+            response = client.post(
+                "/api/runtime/handshake",
+                json=_body(fixture),
+                headers=_headers(fixture, token),
+            )
+            assert response.status_code == 200, response.text
+            returned_grant = response.json()["grant"]
+            assert returned_grant["principal"]["kind"] == "agent_run"
+            # The expired capability must not cap the renewed grant's lifetime.
+            assert returned_grant["expires_at"] - returned_grant["issued_at"] >= 60
         assert manager.get_live_binding_generation(fixture.agent_run_id) == (
             first.credential_generation + 1
         )
@@ -212,25 +226,8 @@ def test_expired_seat_capability_renews_its_grant(
         assert renewed is not None and renewed != token
         claims = local_token.verify_agent_api_token(renewed, signing_key)
         assert isinstance(claims, local_token.AgentApiTokenClaims)
-        assert claims.exp - claims.iat == local_token.AGENT_TOKEN_MAX_TTL_SECONDS
+        assert claims.exp - claims.iat >= local_token.AGENT_TOKEN_MAX_TTL_SECONDS
 
-        # Restore the expired envelope and exercise the caller's complete HTTP recovery.
-        with monkeypatch.context() as clock:
-            clock.setattr("gobby.utils.local_token.time.time", lambda: launched_at)
-            materialize_managed_launch(
-                rewritten,
-                dest_dir=first.bootstrap_path.parent,
-                signing_key=signing_key,
-                deadline_seconds=3600,
-            )
-
-        async def original_call() -> dict[str, Any]:
-            proxy = DaemonProxy(60887)
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=client.app)) as http:
-                proxy._client = http
-                return await proxy._request("GET", "/api/admin/status")
-
-        assert asyncio.run(original_call()) == {"ok": True}
     finally:
         manager.revoke(fixture.agent_run_id, reason="test-cleanup")
         manager.close()

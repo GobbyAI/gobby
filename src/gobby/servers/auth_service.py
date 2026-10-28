@@ -312,6 +312,21 @@ class AuthService:
         if grant_route is None:
             rejection = self._legacy_rejection(request)
             if rejection is not None:
+                # Admit only a verified, live seat's POST handshake renewal.
+                # The route must be reachable through the production middleware
+                # before it can replace the expired capability or report failure.
+                renewal = (
+                    self.expired_renewal_claims(request)
+                    if rejection == "capability_expired"
+                    else None
+                )
+                if renewal is not None:
+                    return AuthDecision(
+                        allowed=True,
+                        user_id=self._machine_owner(renewal),
+                        machine_id=renewal.machine_id,
+                        bearer_claims=renewal,
+                    )
                 return AuthDecision(allowed=False, code=rejection, status_code=401)
             identity = self.verified_front_door_identity(request)
             user_id, break_glass = self._resolved_caller(request)
