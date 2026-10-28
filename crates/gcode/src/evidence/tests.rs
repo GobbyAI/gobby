@@ -1703,6 +1703,50 @@ fn bound_search_with_matching_index_remains_complete() -> anyhow::Result<()> {
 }
 
 #[test]
+fn bound_search_reports_incomplete_for_bound_files_missing_from_the_live_index() -> anyhow::Result<()>
+{
+    let (temporary, binding) = source_repo()?;
+    let mut facts = FakeFacts::for_source(&binding);
+    facts.files.clear();
+    facts.indexed_source = String::new();
+    let library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts))?;
+    for paths in [vec!["src/lib.rs".to_string()], vec!["src".to_string()]] {
+        for lane in [SearchLane::Literal, SearchLane::Regex, SearchLane::Content] {
+            let mut search = search_selector(lane, "beta");
+            search.paths = paths.clone();
+            let response = library.query(request(&binding, EvidenceOperation::Search { search }))?;
+            assert_ne!(response.completeness, Completeness::CompleteEmpty, "{paths:?} {lane:?}");
+            assert!(!response.complete, "{paths:?} {lane:?}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn bound_search_ignores_index_files_absent_from_the_bound_commit() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let mut facts = FakeFacts::for_source(&binding);
+    facts.files.push(FileFact {
+        id: FileId::new("src/added.rs"),
+        path: "src/added.rs".to_string(),
+        language: "rust".to_string(),
+        symbol_count: 0,
+        content_hash: gobby_core::indexing::content_hash(b"fn added() {}\n"),
+    });
+    let library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts))?;
+    for paths in [Vec::new(), vec!["src".to_string()]] {
+        for lane in [SearchLane::Literal, SearchLane::Regex, SearchLane::Content] {
+            let mut search = search_selector(lane, "beta");
+            search.paths = paths.clone();
+            let response = library.query(request(&binding, EvidenceOperation::Search { search }))?;
+            assert_eq!(response.completeness, Completeness::Complete, "{paths:?} {lane:?}");
+            assert_eq!(response.items.len(), 2, "{paths:?} {lane:?}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn source_mode_changes_the_request_fingerprint() -> anyhow::Result<()> {
     let (temporary, binding) = source_repo()?;
     let facts = Arc::new(FakeFacts::for_source(&binding));
