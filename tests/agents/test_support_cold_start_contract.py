@@ -82,13 +82,13 @@ def test_security_reviewer_support_default_is_its_role_default() -> None:
     ) == (role["provider"], role["model"], role["reasoning_effort"])
 
 
-def test_recovery_steward_support_default_is_codex_gpt_6_1_luna_at_medium() -> None:
+def test_recovery_steward_support_default_is_codex_gpt_6_1_sol_at_medium() -> None:
     support = _policy_value()["launch_defaults"]["support"]
     assert (
         support["recovery_steward_provider"],
         support["recovery_steward_model"],
         support["recovery_steward_reasoning_effort"],
-    ) == ("codex", "gpt-6.1-luna", "medium")
+    ) == ("codex", "gpt-6.1-sol", "medium")
 
 
 def test_devteam_test_writer_default_is_codex_gpt_6_1_sol_at_medium() -> None:

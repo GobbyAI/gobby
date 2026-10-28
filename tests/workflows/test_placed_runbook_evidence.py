@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,9 +14,7 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from tests.workflows.test_placed_runbook_live import (
     CODEX_RUST_LOG,
-    STEWARD_CODEX_FLAGS,
     Live,
-    _codex_argv_wrapper,
     _has_terminal_text,
     _kept,
     _LiveOutputPoller,
@@ -198,18 +195,3 @@ def test_the_steward_session_is_known_once_its_run_binds_a_child() -> None:
     assert _steward_session(unbound, evidence) is None
     assert _steward_session(bound, evidence) == "child-9"
     assert _steward_session(bound, {}) is None
-
-
-def test_steward_codex_wrapper_runs_real_codex_then_flags(tmp_path: Path) -> None:
-    real = tmp_path / "real codex"
-    real.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n', encoding="utf-8")
-    real.chmod(0o755)
-    wrapper = tmp_path / "codex"
-    wrapper.write_text(_codex_argv_wrapper(str(real), STEWARD_CODEX_FLAGS), encoding="utf-8")
-    wrapper.chmod(0o755)
-
-    result = subprocess.run(
-        [str(wrapper), "exec", "hello world"], capture_output=True, text=True, check=True
-    )
-
-    assert result.stdout.splitlines() == ["exec", "hello world", *STEWARD_CODEX_FLAGS]

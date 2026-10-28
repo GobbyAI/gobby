@@ -15,7 +15,6 @@ import json
 import math
 import os
 import re
-import shlex
 import shutil
 import signal
 import subprocess
@@ -140,7 +139,7 @@ _PANE_SOURCE = re.compile(r"steps\.(\w+)\.output\.pane_ref")
 STEWARD_PIPELINE = "support"
 STEWARD_SEAT = "recovery-steward"
 # The steward's runtime, as the Orchestrator's launch_defaults.support gives it.
-STEWARD_PROVIDER, STEWARD_MODEL, STEWARD_EFFORT = "codex", "gpt-6.1-luna", "medium"
+STEWARD_PROVIDER, STEWARD_MODEL, STEWARD_EFFORT = "codex", "gpt-6.1-sol", "medium"
 # Triage's wait is the patrol cadence: each timeout wakes the steward for one patrol.
 STEWARD_CADENCE_SECONDS = 600
 STEWARD_TOLERANCE_SECONDS = 60
@@ -150,8 +149,6 @@ CLAUDE_ONLY_SCHEDULERS = ("CronList", "CronCreate", "CronDelete")
 CODEX_STATE_FILES = ("logs_2.sqlite", "logs_2.sqlite-wal", "logs_2.sqlite-shm", "history.jsonl")
 # Codex's debug text log, kept in the evidence log tree: a seat that dies should show its cause there.
 CODEX_RUST_LOG = "codex_core=debug,codex_tui=debug"
-# Diagnostic run: added after the seat's argv, so these overrides apply last.
-STEWARD_CODEX_FLAGS = ("-c", "mcp_servers.gobby.required=false")
 # The steward's terminal is read this often while its run is live, so a death message is kept.
 LIVE_OUTPUT_POLL_SECONDS = 0.5
 _EXCERPT_HEADER = re.compile(r"^--- Last \d+ lines of terminal output ---\s*$", re.MULTILINE)
@@ -1337,12 +1334,6 @@ def _with_codex_debug_log(env: dict[str, str]) -> dict[str, str]:
     return {**env, "RUST_LOG": CODEX_RUST_LOG}
 
 
-def _codex_argv_wrapper(codex: str, flags: tuple[str, ...]) -> str:
-    """A shell script that runs the real codex with the caller's arguments, then the flags."""
-    trailing = " ".join(shlex.quote(flag) for flag in flags)
-    return f'#!/bin/sh\nexec {shlex.quote(codex)} "$@" {trailing}\n'
-
-
 def _has_terminal_text(text: str) -> bool:
     """A live-output read carries terminal text beyond its header line."""
     return bool(_EXCERPT_HEADER.sub("", text).strip())
@@ -1456,10 +1447,7 @@ def steward_rig(
     path, _ = curated_path(root, [])
     codex_dir = root / "codex"
     codex_dir.mkdir()
-    # The real codex behind a wrapper that adds STEWARD_CODEX_FLAGS after the seat's argv.
-    wrapper = codex_dir / "codex"
-    wrapper.write_text(_codex_argv_wrapper(codex, STEWARD_CODEX_FLAGS), encoding="utf-8")
-    wrapper.chmod(0o755)
+    (codex_dir / "codex").symlink_to(codex)
     path = os.pathsep.join([str(codex_dir), path])
     monkeypatch.setenv("PATH", path)
     barrier = Barrier(root / "barrier")
@@ -1551,8 +1539,6 @@ def steward_live(
         "codex_home_env": os.environ.get("CODEX_HOME"),
         # Diagnostic: the Codex debug log level the terminal host was started with.
         "codex_rust_log": CODEX_RUST_LOG,
-        # Diagnostic: the flags the steward's codex wrapper adds ahead of the seat's argv.
-        "codex_flags": list(STEWARD_CODEX_FLAGS),
         # Orchestrator ruling, relayed by the Dev Manager (37976ed8): option (a).
         "codex_auth": {"ruling": "option (a): link the existing login; no sign-in"},
     }
