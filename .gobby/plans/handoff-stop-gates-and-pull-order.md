@@ -18,13 +18,16 @@ Delivered:
    down while a handoff is staged and re-arm at the next session start.
 2. Nothing made an agent pull its handoff before loading skills or doing work. #24421
    fixed this with the `require-handoff-pull-before-tool` gate and pull guards on the
-   turn-start injectors.
+   turn-start injectors the plan named. One turn-start skill directive added outside
+   that list, the plan-mode reference load, still fires ahead of the pull. That residue
+   is deliverable 2.3.
 3. The `auto-task` rule group and `require-epic-tree-close` were dead weight on the
    `task_tree_complete` helper. #24421 retired all of them.
 
 Remaining:
 
-4. One test, `test_manifest_membership_matches_wheel`, runs two full `uv build`
+- The plan-mode skill directive must wait for the pull (2.3).
+- One test, `test_manifest_membership_matches_wheel`, runs two full `uv build`
    invocations on every local pytest run. Bundled-content tamper detection is a
    production concern, served at runtime by `verify_bundled_integrity`; it does not need
    a local test. CI must keep proving that the generated manifest matches the packaged
@@ -43,7 +46,7 @@ by a task that ended `done`. They are recorded here as evidence and are not expa
 | --- | --- | --- |
 | 1.1 Suppress turn-end block gates while a handoff is staged | #22638: `52dca8c848`, `055288e643` | `stage_handoff_attempt` writes `_handoff_turn_end_pending` (`src/gobby/sessions/handoff.py:417`). `EvaluationMixin._run_rule_loop_pass` suppresses turn-end block gates under the pseudo-rule `pending-handoff-delivery` (`src/gobby/workflows/engine/evaluation.py:540`). `rearm-close-gates-on-session-start` clears the marker with no `when` clause. Tests: `tests/workflows/test_stop_gates_rules.py` at `:588` and `:605`, and `tests/hooks/test_stop_handoff_pending.py` at `:265` and `:280`. |
 | 1.2 Retire require-epic-tree-close | #24421: `5f328172bc`, `69aa85a125` | The template is deleted, the installed row is gone, and `test_retired_templates_do_not_reappear_on_sync` pins its absence (`tests/workflows/test_handoff_pull_gate.py:136`). |
-| 2.1 Defer turn-start injections while a pull is pending | #24421: `5f328172bc`; #23854: `dea47c35a4` | Memory surfacing, the remaining plan-reviewer lesson injector, and the brevity and restraint reminders all carry `not variables.get('handoff_pull_pending')`. #23854 deleted the other three lesson injectors. Test: `test_pending_handoff_pull_suppresses_turn_start_reminders` (`tests/workflows/test_reminder_cadence_rules.py:78`). |
+| 2.1 Defer turn-start injections while a pull is pending | #24421: `5f328172bc`; #23854: `dea47c35a4` | Memory surfacing, the remaining plan-reviewer lesson injector, and the brevity and restraint reminders all carry `not variables.get('handoff_pull_pending')`. #23854 deleted the other three lesson injectors. Test: `test_pending_handoff_pull_suppresses_turn_start_reminders` (`tests/workflows/test_reminder_cadence_rules.py:78`). Seat Guidance, Agent Workspace and the proxy-retry notice stay unguarded by operator ruling (see Constraints). The plan-mode skill directive is the open residue, deliverable 2.3. |
 | 2.2 Block tools until the handoff pull runs | #24421: `5f328172bc` | `context-handoff/require-handoff-pull-before-tool.yaml` is a priority-1 before_tool gate written as an inline `when`. The proposed `handoff_conditions.py` helper module was never needed. Tests: `tests/workflows/test_handoff_pull_gate.py` at `:74` and `:88`. |
 | 3.1 Delete the auto-task rules and the tree-completeness helper | #24421: `5f328172bc` | The `auto-task/` directory, `task_tree_complete`, `_is_tree_complete` and the `auto_task_ref` read in `RuleEngine.evaluate` are gone; the installed `auto-task` group has 0 rows. `condition_helpers.py` is now 773 lines and needs no split. `engine/core.py` is 953 lines and was not split. That is not needed: this plan no longer edits it, and it is under the 1,000-line ceiling. |
 
@@ -55,9 +58,22 @@ the same counts.
 ## Constraints
 `kind: framing`
 
-- The remaining work touches one test module, the CI workflow, the pre-push script and
-  one CI-contract test module. It changes no rule template, daemon code or installed
-  binary, so it needs no daemon restart, cutover or quiet window.
+- Resume-turn context requirement (Orchestrator ruling on PA-01, 2026-10-28, Option 1):
+  until the handoff is pulled, the resume turn carries no memory index, no review
+  lessons and no skill-load directives. Three one-shot injections are allowed resume-turn
+  context and named as exemptions: Seat Guidance (`roles/inject-seat-common.yaml`), Agent
+  Workspace (`roles/inject-agent-workspace.yaml`), and the proxy-retry notice
+  (`retry-gobby-tools-after-proxy-connects` in
+  `memory-lifecycle/layered-memory-guidance.yaml`). They carry identity and recovery
+  context, and the seat guidance itself requires `get_handoff` during holds. No
+  turn_start follows the pull until the next prompt, so a guard would leave an autonomous
+  seat without its policy and workspace path for the whole resumed turn. This replaces
+  the original goal wording "no injected payload"; the Orchestrator flags the change to
+  Josh with the stamped plan.
+- 2.3 edits a bundled rule template, which reaches the installed rule table only at
+  daemon start. It is live after a merge and an ordinary daemon restart announced with a
+  `global` `send_message`. It needs no cutover, binary install or quiet window. 4.1
+  touches only tests, the CI workflow and the pre-push script, and needs no restart.
 - CI coverage must not drop. Today the CI `test` job runs the parity test, ungated, on
   both Python matrix entries. After this change the same job must still run it on both.
 - Follow the repository's established opt-in shape. Use a module-level `pytestmark`
@@ -69,17 +85,68 @@ the same counts.
   were not created from this plan and carry no such label. The obligations they met are
   finished and need no owner. The #22643 directive asks for delivered parts to be marked
   as delivered with commit evidence, which the framing table above does.
-- Rejected: adding pull guards to `roles/inject-seat-common.yaml`,
-  `roles/inject-agent-workspace.yaml`, `plan-mode/handle-plan-mode-entry.yaml` and
-  `memory-lifecycle/layered-memory-guidance.yaml`'s
-  `retry-gobby-tools-after-proxy-connects`. They inject on the resume turn, but the
-  priority-1 pull gate refuses every non-exempt tool until `get_handoff` runs, so nothing
-  they say can act first. The seat guidance itself tells the seat to pull the handoff even
-  during a hold. Guarding them would only delay identity context by one turn.
+- Rejected under the same ruling: guarding the three exempt injections, either strictly
+  (they land at the next prompt) or with re-delivery after a successful `get_handoff`
+  (about three more after_tool rules). The first strips seat policy from the resumed
+  turn; the second adds mechanism for context the pull gate already makes harmless.
 - Rejected: moving the parity test into the CI `build` job to reuse its wheel. The test
   builds an sdist and wheel from a copy of the tracked tree on purpose. Reusing another
   job's wheel would mean rewriting the test, and it would drop the sdist-to-wheel path the
   test exists to check.
+
+## P2: The plan-mode skill directive waits for the pull
+`kind: framing`
+
+**Goal**: no skill-load directive reaches the resume turn before the handoff is pulled.
+
+### 2.3 Guard the plan-mode skill directive on a pending pull [category: config]
+`kind: deliverable`
+
+Targets:
+- `src/gobby/install/shared/workflows/rules/plan-mode/handle-plan-mode-entry.yaml::*` — scope-reason: adds the pending-pull clause to the single rule's when
+- `tests/workflows/test_plan_mode_rules.py::*` — scope-reason: adds one pending-pull case to TestHandlePlanModeEntry and the guard assertion to its when-shape test
+
+Research context. `handle-plan-mode-entry` is a turn_start rule at priority 10, scoped to
+`agent_scope: [default]`, with `when: "variables.get('plan_mode') and not
+variables.get('plan_skill_directive_delivered')"`. Its effects are a `load_skill`
+directive for `gobby:references/plan/overview.md` and `set_variable
+plan_skill_directive_delivered: true`, both `delivery: on_receipt`.
+
+How it reaches the resume turn: `context-handoff/preserve-context-on-compact.yaml` and
+`plan-mode/reset-plan-mode-on-session-start.yaml` both reset
+`plan_skill_directive_delivered` to false at the compact boundary. The session-start rule
+also clears `plan_mode`, but turn-start plan-mode resolution (`resolve_plan_mode` in
+`src/gobby/workflows/observer_plan_mode.py`) runs before rule evaluation. It sets
+`plan_mode` again whenever the provider still reports plan mode on the typed continuation
+prompt, and the directive then fires ahead of `get_handoff`. The pull gate refuses the
+skill load itself, but the original requirement excludes skill-load directives from the
+resume turn by name.
+
+Change: put `not variables.get('handoff_pull_pending') and` before the existing clause.
+The guard needs no clean-up. `handoff_pull_pending` is popped inside the `get_handoff`
+transaction, so the directive fires once at the next turn_start, and
+`plan_skill_directive_delivered` stays false until then. Waiting is harmless: plan mode is
+interactive, so the next turn is a user prompt, and plan-artifact writes are already gated
+on loading a plan reference by the skill-discovery group.
+
+Tests. `TestHandlePlanModeEntry.test_fires_on_turn_start_with_plan_mode_guard` checks the
+`when` text; add an assertion that it contains `handoff_pull_pending`.
+`TestHandlePlanModeEntry.test_skill_directive_fires_once_for_default_agent` is the model
+for the new case. It syncs bundled rules, builds a `BEFORE_AGENT` `HookEvent` with
+`variables = {"_agent_type": "default", "plan_mode": True}`, evaluates through
+`RuleEngine`, and checks
+`skill_fetch_directive("gobby:references/plan/overview.md") in first.context`. The new
+case does the same with `handoff_pull_pending: True` added. It asserts no directive and
+`plan_skill_directive_delivered` not set. It then pops `handoff_pull_pending`, evaluates
+again, and asserts the directive arrives once.
+
+Planned check, not yet run: `tests/workflows/test_plan_mode_rules.py` passes against the
+isolated test hub.
+
+**Acceptance:**
+
+- 2.3.1 - The plan-mode entry rule's when starts with `not variables.get('handoff_pull_pending')` and keeps the plan-mode and directive-delivered clauses. file: `src/gobby/install/shared/workflows/rules/plan-mode/handle-plan-mode-entry.yaml`.
+- 2.3.2 - With a pull pending, a plan-mode turn start delivers no plan-reference directive and leaves the delivered flag unset; after the pull marker clears, the next turn start delivers it once. test: `tests/workflows/test_plan_mode_rules.py::TestHandlePlanModeEntry::test_skill_directive_waits_for_pending_handoff_pull`.
 
 ## P4: Gate the wheel-manifest parity test to CI
 `kind: framing`
@@ -176,6 +243,8 @@ is clean.
 
 All commands run against the isolated test hub, from the implementing checkout:
 
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_plan_mode_rules.py tests/workflows/test_handoff_pull_gate.py tests/workflows/test_reminder_cadence_rules.py -q`
+  passes.
 - `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/install/test_bundled_content_manifest.py -rs -q`
   reports 1 skipped, with the reason naming `GOBBY_RUN_WHEEL_MANIFEST_PARITY`, and starts
   no `uv build`.
@@ -191,8 +260,9 @@ All commands run against the isolated test hub, from the implementing checkout:
 - `uv run gobby test-types audit tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py --baseline .gobby/test-types-baseline.json --fail-on-new`
   reports no new findings.
 
-No daemon restart or live probe is needed: nothing here reaches the daemon or the rule
-registry.
+Live check for 2.3, from the main checkout after the merge and an announced daemon
+restart: `gobby-workflows:get_rule(name="handle-plan-mode-entry")` shows the
+pending-pull clause in the installed `when`. 4.1 needs no live check.
 
 ## Task Mapping
 `kind: framing`

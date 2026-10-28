@@ -150,14 +150,17 @@ branch found in this pass.
   `reset-seat-common-on-context-loss` re-arms both after a clear or compact, so they inject
   on the resume turn. They stay unguarded on purpose. They carry seat identity and policy,
   and the seat guidance itself says to call `gobby-sessions:get_handoff` even during a hold.
-  The pull gate at priority 1 refuses every non-exempt tool until the pull runs, so nothing
-  injected can act first. The same goes for `plan-mode/handle-plan-mode-entry.yaml` and
-  `memory-lifecycle/layered-memory-guidance.yaml::retry-gobby-tools-after-proxy-connects`:
-  their directives can only be followed after the pull. Guarding them would just delay
-  identity context by one turn and give no enforcement benefit.
-- **Clean window.** All remaining work is a test module, the CI workflow, the pre-push
-  script and a CI-contract test. It touches no rule template, no daemon code and no
-  installed binary, so no restart or cutover is needed. The `clean-window` rationale in
+  The proxy-retry notice (`retry-gobby-tools-after-proxy-connects`) is exempt for the same
+  reason. The Orchestrator ruled on adversary finding PA-01 on 2026-10-28 (Option 1): all
+  three are allowed resume-turn context, exempted by name.
+  `plan-mode/handle-plan-mode-entry.yaml` is different. It is a skill-load directive, and
+  the original E1 excluded those from the resume turn by name. `preserve-context-on-compact`
+  and `reset-plan-mode-on-session-start` reset `plan_skill_directive_delivered`, so the
+  directive re-fires ahead of the pull whenever turn-start resolution reports plan mode
+  again. It is still needed as the revised plan's deliverable 2.3.
+- **Clean window.** 4.1 touches only tests, the CI workflow and the pre-push script. 2.3
+  edits one bundled rule template, so it needs an ordinary announced daemon restart after
+  the merge, with no cutover and no binary install. The `clean-window` rationale in
   #22643's description no longer applies; that label is the Orchestrator's to edit.
 - **Routing.** The remaining scope is one atomic deliverable. Expansion yields exactly one
   leaf under #22643.
