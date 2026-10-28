@@ -2664,7 +2664,7 @@ normalized name is the path name stripped and lowercased (`normalize_secret_name
 
 1. `existed`: a global row with the normalized name exists.
 2. In one transaction:
-   1. `SELECT pg_advisory_xact_lock(hashtext('gobby.storage.config_mutations.EmbeddingSwitchJournalMutation:EmbeddingSwitchJournalMutation()'))`.
+   1. `SELECT pg_advisory_xact_lock(hashtext('embedding_switch_journal_mutation'))`.
       The key is the one `advisory_lock_keys` derives for
       `EmbeddingSwitchJournalMutation()`, so native and Python deletions and config
       mutations serialize on one lock.
