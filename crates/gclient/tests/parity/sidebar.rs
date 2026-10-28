@@ -1276,7 +1276,7 @@ fn agent_rows_follow_project_and_machine_filter() {
         .items
         .iter()
         .skip(5)
-        .map(|item| (item.label, item.enabled))
+        .map(|item| (item.label.as_ref(), item.enabled))
         .collect();
     assert_eq!(
         items,

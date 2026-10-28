@@ -1,7 +1,10 @@
 use super::refs::{self, Rows, Target};
 use super::{CommandEnv, CommandError, Parsed};
-use crate::daemon::{project_rows, Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceOp};
-use serde_json::Value;
+use crate::app::{plan_arrange, ArrangeLayout};
+use crate::daemon::{
+    project_rows, Daemon, DaemonError, LayoutAxis, LayoutNode, LiveDaemon, WorkspaceOp,
+};
+use serde_json::{json, Value};
 use tokio::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -33,6 +36,16 @@ pub(super) enum Action {
         kind: OutputKind,
         target: Option<Target>,
     },
+    Arrange {
+        tab: String,
+        layout: ArrangeLayout,
+        target: Option<Target>,
+    },
+    MovePane {
+        pane: NamedRef,
+        tab: NamedRef,
+        beside: Option<NamedRef>,
+    },
 }
 
 #[derive(Debug)]
@@ -42,6 +55,38 @@ pub(super) enum OutputKind {
     Wait,
     CreatedTab(Option<String>),
     CreatedPane(Option<String>),
+}
+
+/// A REF a verb names, with the workspace check it needs under `--workspace`.
+#[derive(Debug)]
+pub(super) struct NamedRef {
+    reference: String,
+    target: Option<Target>,
+}
+
+fn named_ref(
+    reference: &str,
+    explicit: Option<String>,
+    default: Option<&String>,
+    rows: Rows,
+) -> Result<NamedRef, CommandError> {
+    Ok(NamedRef {
+        reference: reference.to_owned(),
+        target: Target::new(reference, explicit, default, rows)?,
+    })
+}
+
+fn arrange_layout(name: &str) -> Result<ArrangeLayout, CommandError> {
+    match name {
+        "tiled" => Ok(ArrangeLayout::Tiled),
+        "even-horizontal" => Ok(ArrangeLayout::EvenHorizontal),
+        "even-vertical" => Ok(ArrangeLayout::EvenVertical),
+        "main-horizontal" => Ok(ArrangeLayout::MainHorizontal),
+        "main-vertical" => Ok(ArrangeLayout::MainVertical),
+        _ => Err(CommandError::usage(
+            "--layout requires tiled, even-horizontal, even-vertical, main-horizontal or main-vertical",
+        )),
+    }
 }
 
 fn required(value: Option<String>, name: &str) -> Result<String, CommandError> {
@@ -337,6 +382,30 @@ impl Action {
                     target,
                 }
             }
+            "arrange" => {
+                let tab = required(args.position().or_else(|| env.tab_id.clone()), "TAB_REF")?;
+                let layout = arrange_layout(&required(args.take("--layout"), "--layout")?)?;
+                Self::Arrange {
+                    target: ref_target(&tab, &mut args, env, Rows::Tabs)?,
+                    tab,
+                    layout,
+                }
+            }
+            "move-pane" => {
+                let pane = pane_ref(&mut args, env)?;
+                let tab = required(args.take("--to-tab"), "--to-tab")?;
+                let beside = args.take("--beside");
+                let explicit = args.take("--workspace");
+                let default = env.workspace_id.as_ref();
+                Self::MovePane {
+                    pane: named_ref(&pane, explicit.clone(), default, Rows::Panes)?,
+                    tab: named_ref(&tab, explicit.clone(), default, Rows::Tabs)?,
+                    beside: beside
+                        .as_deref()
+                        .map(|beside| named_ref(beside, explicit, default, Rows::Panes))
+                        .transpose()?,
+                }
+            }
             _ => return Err(CommandError::usage("unknown verb")),
         };
         args.finish()?;
@@ -438,6 +507,24 @@ impl Action {
                     .await?;
                 }
                 output(result, OutputKind::CreatedPane(prefix))
+            }
+            Self::Arrange {
+                tab,
+                layout,
+                target,
+            } => arrange(&daemon, tab, layout, target).await,
+            Self::MovePane { pane, tab, beside } => {
+                let op = WorkspaceOp::PaneMove {
+                    pane: resolve_ref(&daemon, pane).await?,
+                    tab: resolve_ref(&daemon, tab).await?,
+                    beside: match beside {
+                        Some(beside) => Some(resolve_ref(&daemon, beside).await?),
+                        None => None,
+                    },
+                    axis: None,
+                    node: None,
+                };
+                output(run_op(&daemon, op).await?, OutputKind::Json)
             }
             Self::Op { op, kind, .. } => output(run_op(&daemon, op).await?, kind),
         };
@@ -604,6 +691,73 @@ async fn resolve_project(url: &str, token: &str, project: &str) -> Result<String
         .find(|row| row.name == project || row.display_name == project)
         .map(|row| row.id)
         .ok_or_else(|| CommandError::usage(format!("unknown project: {project}")))
+}
+
+/// A named REF with a short ID swapped for the row it names in its workspace.
+async fn resolve_ref(daemon: &LiveDaemon, named: NamedRef) -> Result<String, CommandError> {
+    let Some(target) = named.target else {
+        return Ok(named.reference);
+    };
+    let snapshot = daemon
+        .attach_workspace(None, Some(target.workspace.as_str()), None)
+        .await
+        .map_err(daemon_error)?;
+    Ok(match target.resolve(&snapshot)? {
+        Some(refs::Row::Pane { id, .. } | refs::Row::Tab { id }) => id,
+        None => named.reference,
+    })
+}
+
+/// Lay out `tab` with the GUI's Arrange plan: its ops in order, stopping at
+/// the first refusal. Without a workspace it is looked up in the daemon's
+/// default scratch, so a tab outside that needs `--workspace`.
+async fn arrange(
+    daemon: &LiveDaemon,
+    tab: String,
+    layout: ArrangeLayout,
+    target: Option<Target>,
+) -> Result<CommandOutput, CommandError> {
+    let snapshot = daemon
+        .attach_workspace(
+            None,
+            target.as_ref().map(|target| target.workspace.as_str()),
+            None,
+        )
+        .await
+        .map_err(daemon_error)?;
+    let tab = match target
+        .as_ref()
+        .map(|target| target.resolve(&snapshot))
+        .transpose()?
+        .flatten()
+    {
+        Some(refs::Row::Tab { id }) => id,
+        _ => tab,
+    };
+    let row = snapshot
+        .tabs
+        .iter()
+        .find(|row| row.id == tab)
+        .ok_or_else(|| CommandError::usage(format!("{tab} is not in this workspace")))?;
+    let mut panes = Vec::new();
+    layout_leaves(&row.layout, &mut panes);
+    let ops = plan_arrange(layout, &tab, &panes);
+    let count = ops.len();
+    for op in ops {
+        run_op(daemon, op).await?;
+    }
+    output(json!({ "tab": tab, "ops": count }), OutputKind::Json)
+}
+
+/// A tab's pane ids in layout order: the first child's leaves, then the second's.
+fn layout_leaves(node: &LayoutNode, panes: &mut Vec<String>) {
+    match node {
+        LayoutNode::Pane { pane_id } => panes.push(pane_id.clone()),
+        LayoutNode::Split { children, .. } => {
+            layout_leaves(&children[0], panes);
+            layout_leaves(&children[1], panes);
+        }
+    }
 }
 
 fn daemon_error(error: DaemonError) -> CommandError {

@@ -81,6 +81,21 @@ const VERBS: &[Verb] = &[
         detail: "A node:workspace:tab REF names a tab; pass --kind tab for a tab UUID.",
     },
     Verb {
+        name: "arrange",
+        usage: "arrange [TAB_REF] --layout NAME [--workspace REF]",
+        summary: "Lay out a tab's panes",
+        detail: "NAME is tiled, even-horizontal, even-vertical, main-horizontal or main-vertical, \
+                 the same layouts as the Arrange menu. A tab UUID outside GOBBY_WORKSPACE_ID \
+                 needs --workspace REF.",
+    },
+    Verb {
+        name: "move-pane",
+        usage: "move-pane [REF] --to-tab TAB_REF [--beside REF] [--workspace REF]",
+        summary: "Move a pane to another tab",
+        detail: "--beside places the pane beside that pane. The daemon refuses a tab that \
+                 belongs to another project or machine.",
+    },
+    Verb {
         name: "help",
         usage: "help [VERB]",
         summary: "Show this table, or one verb's help",

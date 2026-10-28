@@ -160,7 +160,7 @@ fn agent_menu_lists_the_nine_actions_in_order() {
         (0, 1),
     );
 
-    let labels: Vec<_> = menu.items.iter().map(|item| item.label).collect();
+    let labels: Vec<_> = menu.items.iter().map(|item| item.label.as_ref()).collect();
     assert_eq!(
         labels,
         [
@@ -186,7 +186,7 @@ fn file_menu_lists_project_actions_and_help_holds_the_alert_log() {
     let labels = |title| {
         build_menu(&workspace, &chrome, ContextMenuKind::MenuBar(title), (0, 1))
             .items
-            .iter()
+            .into_iter()
             .map(|item| item.label)
             .collect::<Vec<_>>()
     };
@@ -234,7 +234,7 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
     let labels = |title| {
         build_menu(&workspace, &chrome, ContextMenuKind::MenuBar(title), (0, 1))
             .items
-            .iter()
+            .into_iter()
             .map(|item| item.label)
             .collect::<Vec<_>>()
     };
@@ -463,7 +463,11 @@ async fn clicking_the_appearance_row_opens_its_choices_and_a_pick_saves_it() {
         .as_ref()
         .expect("appearance choices open");
     assert_eq!(choices.kind, ContextMenuKind::Submenu(Submenu::Appearance));
-    let labels: Vec<&str> = choices.items.iter().map(|item| item.label).collect();
+    let labels: Vec<&str> = choices
+        .items
+        .iter()
+        .map(|item| item.label.as_ref())
+        .collect();
     assert_eq!(labels, ["● Dark", "  Light", "  System"]);
     assert!(
         choices.item_rects[0].x > row.right(),

@@ -102,6 +102,7 @@ pub enum WorkspaceErrorCode {
     NotFound,
     InvalidRef,
     InvalidOp,
+    InvalidMove,
     TerminalFailed,
     Busy,
     Forbidden,
