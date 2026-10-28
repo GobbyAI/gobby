@@ -60,6 +60,9 @@ export const SandboxManager = {
   getSandboxViolationStore: () => store,
   wrapWithSandboxArgv: async command => {
     for (let i = 0; i < RUN_EVENTS; i++) store.addViolation({ line: `v${i}` })
+    for (const line of JSON.parse(process.env.GOBBY_TEST_VIOLATIONS ?? '[]')) {
+      store.addViolation({ line })
+    }
     return { argv: ['/bin/sh', '-c', command], env: {} }
   },
   reset: async () => {},
@@ -123,6 +126,46 @@ def test_runner_records_violations_after_the_ring_wraps(stub_runner: Path) -> No
     assert marker.read_text(encoding="utf-8") == "ran"
     lines = [json.loads(line)["line"] for line in violations.read_text().splitlines()]
     assert lines == [f"v{i}" for i in range(155)]
+
+
+def test_runner_records_reported_network_targets(stub_runner: Path) -> None:
+    root = stub_runner.parent
+    settings = root / "settings.json"
+    settings.write_text("{}", encoding="utf-8")
+    violations = root / "violations.jsonl"
+    violations.write_text("", encoding="utf-8")
+    targets = ["api.example.test:443", "/private/var/run/mDNSResponder", ""]
+    env = {
+        **os.environ,
+        "GOBBY_TEST_VIOLATIONS": json.dumps(
+            [f"Sandbox: claude(123) deny(1) network-outbound {target}" for target in targets]
+        ),
+    }
+    node = shutil.which("node")
+    assert node is not None
+    result = subprocess.run(
+        [
+            node,
+            str(stub_runner),
+            "--settings",
+            str(settings),
+            "--violations",
+            str(violations),
+            "--",
+            "/usr/bin/true",
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    records = [json.loads(line) for line in violations.read_text().splitlines()]
+    network = [record for record in records if "network-outbound" in record["line"]]
+    assert [record.get("target") for record in network] == [*targets[:2], "unknown"]
+    assert all(record.get("operation") == "network-outbound" for record in network)
     assert violations.stat().st_mode & 0o777 == 0o600
 
 
