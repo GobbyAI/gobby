@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import Any
+from unittest import mock
 from uuid import uuid4
 
 import httpx
@@ -32,6 +33,7 @@ import pytest
 
 import tests.e2e.conftest as e2e_fixtures
 from gobby.agents.sync import sync_bundled_agents
+from gobby.agents.trust import seed_cli_trust
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.definitions import AgentDefinitionManager, PipelineDefinitionManager
 from gobby.storage.definitions._shared import decode_json_object
@@ -1144,6 +1146,18 @@ def _link_codex_auth(home: Path) -> None:
     (home / ".codex").symlink_to(providers / "codex", target_is_directory=True)
 
 
+def _trust_codex_checkout(home: Path, checkout: Path) -> dict[str, Any]:
+    """Seed the steward checkout's codex trust through production's seeder, in the isolated home.
+
+    Codex rewrites config.toml to trust an untrusted checkout, and the policy denies that
+    rewrite on purpose. Seeding the entry first leaves codex nothing to rewrite.
+    """
+    with mock.patch.dict(os.environ, {"HOME": str(home)}):
+        result = seed_cli_trust("codex", checkout)
+    assert result.success, result.as_dict()
+    return result.as_dict()
+
+
 def _unlink_codex_auth(home: Path) -> dict[str, bool]:
     """Remove the links _link_codex_auth made; each entry says whether that link survived."""
     links = {"codex_home": home / ".codex", "auth": home / "providers" / "codex" / "auth.json"}
@@ -1278,6 +1292,7 @@ def steward_live(
     )
     try:
         _link_codex_auth(home)
+        state.evidence["codex_trust"] = _trust_codex_checkout(home, checkout)
         _until(lambda: _startup_ready(client), 120, "initial daemon recovery")
         state.evidence["checkout_mode"] = _assert_isolated(state)
         state.evidence["host"] = _assert_adopted(state)
