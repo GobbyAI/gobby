@@ -487,6 +487,8 @@ Targets:
 - `crates/gworkflows/src/definitions/repo.rs`
 - `crates/gworkflows/src/definitions/cache.rs`
 - `crates/gworkflows/src/definitions/tests.rs`
+- `crates/gworkflows/src/event.rs`
+- `crates/gworkflows/src/event/tests.rs`
 - `crates/gworkflows/tests/bundled_conformance.rs`
 - `crates/gworkflows/tests/definitions_repo.rs`
 
@@ -509,6 +511,9 @@ Targets:
   `{{ gobby_bin }}`. Sync itself stays Python until #21567.
 - **YAML crate.** `yaml_serde` 0.10.4 is already in `Cargo.lock` (used by
   gcore and gcode as `serde_yaml`).
+- **Event model.** `src/gobby/hooks/events.py` (461 lines): `HookEvent`,
+  `HookEventType`, `HookResponse` and `SessionSource`. The engine, the
+  adapters and the pipeline all exchange these.
 
 Add `crates/gworkflows` (package `gobby-workflows`) to the root members with
 `gobby-core` (feature `postgres-pool`), `serde`, `serde_json`, `thiserror`,
@@ -520,6 +525,8 @@ Add `crates/gworkflows` (package `gobby-workflows`) to the root members with
   `(priority, trigger_index, name)`. It reads `definition_revisions`.
 - **`definitions::cache`** implements DR7. A parse failure is skipped, logged
   once per row and revision, and counted.
+- **`event`** mirrors `HookEvent`, `HookEventType`, `HookResponse` and
+  `SessionSource` with Python's JSON shape, so `gobby-ingress` reuses them.
 - **Bundled conformance (Decision 11).** `bundled_conformance.rs` reads every
   YAML file under `src/gobby/install/shared/workflows/rules/`, applies the sync
   defaults and the `{{ gobby_bin }}` substitution, and parses each body. It also
@@ -528,9 +535,10 @@ Add `crates/gworkflows` (package `gobby-workflows`) to the root members with
   `src/gobby/install/shared/workflows/variables/`. Pipelines belong to #21567's
   loader. 2.13 extends this test to compilation.
 
-**Granularity:** one leaf with seven production files, counting both
-`Cargo.toml` files. The manifest, body, repository and cache form one loader;
-the cache cannot be tested without the repository it validates.
+**Granularity:** one leaf with eight production files, counting both
+`Cargo.toml` files, and six acceptance items. The manifest, body, repository
+and cache form one loader that the cache cannot be tested without; the event
+model is the type every loaded body is matched against.
 
 **Acceptance:**
 - 2.1.1 - The crate is a workspace member, clippy passes with `-D warnings`, and no other crate depends on it yet. file: `crates/gworkflows/Cargo.toml`.
@@ -538,6 +546,7 @@ the cache cannot be tested without the repository it validates.
 - 2.1.3 - The repository returns global rows plus same-project rows, deduped and ordered, and an event with no project id loads global rows only. test: `crates/gworkflows/tests/definitions_repo.rs::lists_global_and_same_project_rows_in_order`.
 - 2.1.4 - Advancing the `rules` revision makes the next pass reload, and a failed revision read returns `DefinitionsUnavailable` without using the cache. test: `crates/gworkflows/tests/definitions_repo.rs::cache_reloads_on_revision_and_fails_closed`.
 - 2.1.5 - Every bundled rule body, agent selector and step workflow, and variable body parses. test: `crates/gworkflows/tests/bundled_conformance.rs::every_bundled_body_parses`.
+- 2.1.6 - Every 1.1 corpus event and expected response round-trips through `event` to the same JSON. test: `crates/gworkflows/src/event/tests.rs::corpus_events_round_trip`.
 
 **Verification:** the shared P2 commands.
 
@@ -1642,8 +1651,176 @@ quarantine by age. It is built here and started in 7.13.
 ## P4: CLI adapters
 `kind: framing`
 
-Port the hook event model and the Claude, Codex, Grok, Droid and AGY adapters,
-replaying the 1.3 corpus.
+Port the hook payload types, provider capabilities and the Claude, Codex,
+Grok, Droid and AGY adapters, replaying the 1.3 corpus. Adapters normalize
+through `gobby-workflows`' `normalize` and exchange 2.1's `event` types.
+
+Shared rules for every P4 deliverable:
+- An adapter reads a provider spill or transcript file only for a hub-local
+  delivery; a node delivery takes the no-file branch (Site rows 20, 28-30).
+- Helpers an adapter imports from outside `src/gobby/adapters/` are ported into
+  that adapter's module: they are small, local-file parsers used only there.
+- Verification for every P4 deliverable: `cargo nextest run -p gobby-ingress`
+  and `cargo clippy -p gobby-ingress --all-targets -- -D warnings`.
+
+### 4.1 Payload types, capabilities and the adapter trait [category: code] (depends: 3.5)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/Cargo.toml`
+- `Cargo.lock`
+- `crates/gingress/src/lib.rs`
+- `crates/gingress/src/adapters.rs`
+- `crates/gingress/src/adapters/hook_types.rs`
+- `crates/gingress/src/adapters/capabilities.rs`
+- `crates/gingress/src/adapters/degradation.rs`
+- `crates/gingress/src/adapters/tests.rs`
+
+**Research context:**
+- `src/gobby/hooks/hook_types/` (about 1,500 lines: `enums.py`, `mappings.py`,
+  `session.py`, `tool.py`, `lifecycle.py`, `agent.py`, `interactive.py`,
+  `environment.py`, `base.py`) types each provider's payload.
+- `src/gobby/adapters/base.py::BaseAdapter` (`translate_to_hook_event`,
+  `translate_from_hook_response`, `handle_native`, `_hook_event_timestamp`,
+  `_copy_platform_session_metadata`), with `normalize_adapter_response_reason`,
+  `build_first_hook_session_metadata_lines` and
+  `ADAPTER_EMPTY_BLOCK_REASON_SENTINEL`.
+- `src/gobby/adapters/capabilities.py` (575: `get_provider_capabilities`,
+  `supports_permission_neutral_rewrite` and the context channels),
+  `degradation.py` (277) and `src/gobby/hooks/context_limits.py` (65).
+- **Selection.** `source` alone selects the adapter (memory a39d0411, #17173).
+
+Add `gobby-workflows` to the crate's dependencies. Port the payload types,
+capabilities, degradation and context limits, and define the `Adapter` trait
+with the three `BaseAdapter` operations plus `select(source)`. 2.15's
+`proxy_hook` reads capabilities as a pass input from this module.
+
+**Acceptance:**
+- 4.1.1 - Every provider capability and degradation rule matches `get_provider_capabilities` and `degradation.py` for all five sources. test: `crates/gingress/src/adapters/tests.rs::capabilities_match_python`.
+- 4.1.2 - `select` maps each supported `source` to its adapter and nothing else; inner payload field names never change the choice. test: `crates/gingress/src/adapters/tests.rs::source_alone_selects_the_adapter`.
+- 4.1.3 - Shared response-reason normalization, the empty-block sentinel and first-hook session metadata lines match Python. test: `crates/gingress/src/adapters/tests.rs::base_helpers_match_python`.
+
+**Verification:** the shared P4 commands.
+
+### 4.2 Claude Code adapter [category: code] (depends: 4.1)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/adapters.rs`
+- `crates/gingress/src/adapters/claude.rs`
+- `crates/gingress/src/adapters/claude/contract.rs`
+- `crates/gingress/tests/adapters_corpus.rs`
+
+**Research context:** `src/gobby/adapters/claude_code.py` (546:
+`ClaudeCodeAdapter`, `is_action_first_reason`, `_saved_mcp_result`) and
+`claude_contract.py` (286: `ClaudeDecisionStyle` and the hook contract).
+- **Site row 20.** `_saved_mcp_result` reads a provider spill file; a node
+  delivery skips the read and takes the unreadable-file branch.
+
+**Acceptance:**
+- 4.2.1 - Every Claude case in the 1.3 corpus replays equal, inbound and outbound. test: `crates/gingress/tests/adapters_corpus.rs::claude_cases_replay_equal`.
+- 4.2.2 - Site row 20 (Claude): a node delivery reads no spill file and takes the unreadable-file branch. test: `crates/gingress/tests/adapters_corpus.rs::site_row_20_claude_node_skips_spill`.
+
+**Verification:** the shared P4 commands.
+
+### 4.3 Codex hooks adapter [category: code] (depends: 4.2)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/adapters.rs`
+- `crates/gingress/src/adapters/codex.rs`
+- `crates/gingress/src/adapters/codex/items.rs`
+- `crates/gingress/tests/adapters_corpus.rs`
+
+**Research context:** `src/gobby/adapters/codex_impl/hooks_adapter.py` (420:
+`CodexHooksAdapter`, `_command_execution_result`), `lifecycle_events.py` (96)
+and `shared.py` (26), plus
+`src/gobby/sessions/transcripts/codex_items.py::normalize_command_execution`
+(106-line module) and
+`src/gobby/sessions/reasoning_effort.py::observed_reasoning_effort` (41). The
+Codex app-server adapter is Python-owned (Decision 4) and not ported.
+- **Site row 20.** `_command_execution_result` reads a transcript or spill
+  file; a node delivery skips it.
+
+**Acceptance:**
+- 4.3.1 - Every Codex case in the 1.3 corpus replays equal, inbound and outbound. test: `crates/gingress/tests/adapters_corpus.rs::codex_cases_replay_equal`.
+- 4.3.2 - Site row 20 (Codex): a node delivery reads no command-execution file and takes the unreadable-file branch. test: `crates/gingress/tests/adapters_corpus.rs::site_row_20_codex_node_skips_spill`.
+
+**Verification:** the shared P4 commands.
+
+### 4.4 ACP hook base and Grok adapter [category: code] (depends: 4.3)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/adapters.rs`
+- `crates/gingress/src/adapters/acp.rs`
+- `crates/gingress/src/adapters/grok.rs`
+- `crates/gingress/tests/adapters_corpus.rs`
+
+**Research context:** `src/gobby/adapters/acp_hook_adapter.py` (437:
+`ACPHookAdapter`, base of `GrokAdapter` and `AgyAdapter`) with
+`acp_tool_names.py` (53: `normalize_acp_tool_name`), and
+`src/gobby/adapters/grok.py` (298: `GrokAdapter`, `_spilled_mcp_output`).
+In-process ACP sessions stay Python-owned (Decision 4); only the hook
+translation is ported.
+- **Site row 20.** `_spilled_mcp_output` reads a spill file; a node delivery
+  skips it.
+
+**Acceptance:**
+- 4.4.1 - Every Grok case in the 1.3 corpus replays equal, inbound and outbound. test: `crates/gingress/tests/adapters_corpus.rs::grok_cases_replay_equal`.
+- 4.4.2 - Site row 20 (Grok): a node delivery reads no spill file and takes the unreadable-file branch. test: `crates/gingress/tests/adapters_corpus.rs::site_row_20_grok_node_skips_spill`.
+
+**Verification:** the shared P4 commands.
+
+### 4.5 Droid adapter [category: code] (depends: 4.4)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/adapters.rs`
+- `crates/gingress/src/adapters/droid.rs`
+- `crates/gingress/src/adapters/droid/transcript.rs`
+- `crates/gingress/tests/adapters_corpus.rs`
+
+**Research context:** `src/gobby/adapters/droid.py` (453: `DroidAdapter`,
+`_normalize_router_help`) and `droid_contract.py` (118), plus the functions it
+imports from `src/gobby/sessions/transcripts/droid.py`
+(`droid_transcript_has_tool_id`,
+`droid_transcript_confirms_turn_cancellation`).
+- **Site row 28.** The `Notification` wait branch (`permission_prompt`,
+  `ask_user_question` and kin) reads the transcript; a node delivery takes the
+  no-file result, so `wait_kind` stays unset.
+- **Site row 29.** The idle_prompt cancel branch never converts a node
+  delivery to `INTERRUPT` from the transcript.
+
+**Acceptance:**
+- 4.5.1 - Every Droid case in the 1.3 corpus replays equal, inbound and outbound. test: `crates/gingress/tests/adapters_corpus.rs::droid_cases_replay_equal`.
+- 4.5.2 - Site row 28: a node wait notification leaves `wait_kind` unset. test: `crates/gingress/tests/adapters_corpus.rs::site_row_28_droid_node_wait_unset`.
+- 4.5.3 - Site row 29: a node idle_prompt with a cancel reason does not become `INTERRUPT`. test: `crates/gingress/tests/adapters_corpus.rs::site_row_29_droid_node_no_interrupt`.
+
+**Verification:** the shared P4 commands.
+
+### 4.6 AGY adapter [category: code] (depends: 4.5)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/adapters.rs`
+- `crates/gingress/src/adapters/agy.rs`
+- `crates/gingress/src/adapters/agy/contract.rs`
+- `crates/gingress/tests/adapters_corpus.rs`
+
+**Research context:** `src/gobby/adapters/agy.py` (296: `AgyAdapter`,
+`_approval_denied_reason`) and `agy_contract.py` (244: `AgyHookContract`,
+`agy_execution_number`), plus
+`src/gobby/sessions/transcripts/agy.py::read_current_user_prompt` and
+`src/gobby/skills/capability_routing.py::gobby_help_prefix`.
+- **Site row 30.** `BEFORE_AGENT` prompt backfill reads the transcript; a node
+  delivery takes no prompt from it.
+
+**Acceptance:**
+- 4.6.1 - Every AGY case in the 1.3 corpus replays equal, inbound and outbound. test: `crates/gingress/tests/adapters_corpus.rs::agy_cases_replay_equal`.
+- 4.6.2 - Site row 30: a node `BEFORE_AGENT` delivery takes no prompt from the transcript. test: `crates/gingress/tests/adapters_corpus.rs::site_row_30_agy_node_no_backfill`.
+
+**Verification:** the shared P4 commands.
 
 ## P5: Event pipeline and handlers
 `kind: framing`
