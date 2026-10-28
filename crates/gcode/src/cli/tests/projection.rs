@@ -749,16 +749,79 @@ fn seeded_views_still_require_a_seed() {
     }
 }
 
-
 mod pin_recovery {
     use crate::config::{CodeVectorSettings, EmbeddingConfig, QdrantConfig};
     use crate::db;
     use crate::models::Symbol;
-    use crate::projection::sync::tests::serial_db::{FILE,pinned_fixture,respond,seed_version};
-    use crate::vector::code_symbols::{self,tests::read_http_request};
+    use crate::projection::sync::tests::serial_db::{FILE, pinned_fixture, respond, seed_version};
+    use crate::vector::code_symbols::{self, tests::read_http_request};
     use serde_json::json;
-    use std::net::{TcpListener,TcpStream};
+    use std::net::{TcpListener, TcpStream};
     use std::thread;
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn text_search_survives_projection_recovery() {
+        let database_url = crate::test_env::postgres_test_database_url("pinned text recovery");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let (mut ctx, source, _source_cleanup, _overlay_cleanup) =
+            pinned_fixture(&mut conn, &database_url);
+        let symbol_id = Symbol::make_id(&source, FILE, "hash-h", "run", "function", 0);
+        let facts = crate::codewiki_facts::CodewikiFacts::from_context(ctx.clone());
+        let text = facts.search("run", 10).expect("pinned PostgreSQL search");
+        assert_eq!(
+            text.iter()
+                .map(|hit| hit.symbol.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![symbol_id.as_str()]
+        );
+        let bm25 = crate::search::fts::search_symbols_fts_visible(
+            &mut conn,
+            "run",
+            &ctx,
+            None,
+            None,
+            &[],
+            10,
+        )
+        .expect("pinned BM25 search");
+        let bm25_ids = bm25.into_iter().map(|symbol| symbol.id).collect::<Vec<_>>();
+        assert_eq!(bm25_ids, vec![symbol_id]);
+
+        // The source selector moved and the child pin is still unprojected.
+        // Embeddings are unavailable during recovery; text facts remain usable.
+        ctx.embedding = None;
+        let semantic = crate::commands::search::semantic_lane_for_test(&ctx, "run", 10);
+        let assembled = crate::commands::search::assemble_hybrid_sources(
+            vec![],
+            bm25_ids.clone(),
+            semantic,
+            vec![],
+            vec![],
+        );
+        assert!(
+            assembled
+                .sources
+                .iter()
+                .any(|(lane, ids)| *lane == "fts" && ids == &bm25_ids)
+        );
+        assert!(
+            assembled.warnings.iter().any(|warning| {
+                let message = warning.message.to_lowercase();
+                (message.contains("projection") || message.contains("pin"))
+                    && ["pending", "recover", "unavailable", "degraded"]
+                        .iter()
+                        .any(|state| message.contains(state))
+            }),
+            "search must report pending projection degradation: {:?}",
+            assembled.warnings
+        );
+    }
+
     #[test]
     #[serial_test::serial(serial_db)]
     #[cfg_attr(
@@ -901,5 +964,4 @@ mod pin_recovery {
             );
         }
     }
-
 }

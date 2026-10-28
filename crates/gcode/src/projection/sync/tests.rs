@@ -715,7 +715,12 @@ pub(crate) mod serial_db {
     }
 
     /// Writes version `hash` of `FILE` and points this machine's state at it.
-    pub(crate) fn seed_version(conn: &mut postgres::Client, project_id: &str, hash: &str, with_symbol: bool) {
+    pub(crate) fn seed_version(
+        conn: &mut postgres::Client,
+        project_id: &str,
+        hash: &str,
+        with_symbol: bool,
+    ) {
         let machine_id = gobby_core::machine::read_local_machine_id().expect("machine");
         let file = IndexedFile {
             id: IndexedFile::make_id(project_id, FILE, hash),

@@ -472,41 +472,4 @@ mod serial_db {
             "pinned source symbol must be written into child namespace"
         );
     }
-
-    #[test]
-    #[serial_test::serial(serial_db)]
-    #[cfg_attr(
-        not(gcode_postgres_tests),
-        ignore = "requires PostgreSQL test database URL"
-    )]
-    fn text_search_survives_projection_recovery() {
-        let database_url = test_env::postgres_test_database_url("pinned text availability");
-        let mut conn = Client::connect(&database_url, NoTls).expect("test PostgreSQL");
-        let fixture = PinnedCli::new(&mut conn, &database_url);
-        let output = fixture.run(&["search", "indexed"]);
-        assert!(
-            output.status.success(),
-            "search: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let payload: Value = serde_json::from_slice(&output.stdout).expect("search JSON");
-        assert!(
-            payload
-                .to_string()
-                .contains(&row_uuid(&fixture._source_cleanup.project_id, "symbol").to_string()),
-            "pinned PostgreSQL/BM25 hit remains visible: {payload}"
-        );
-        assert!(
-            payload["warnings"]
-                .as_array()
-                .is_some_and(|warnings| warnings.iter().any(|warning| {
-                    let text = warning.to_string().to_lowercase();
-                    (text.contains("projection") || text.contains("pin"))
-                        && ["pending", "recover", "unavailable", "degraded"]
-                            .iter()
-                            .any(|state| text.contains(state))
-                })),
-            "search must report pending projection degradation: {payload}"
-        );
-    }
 }
