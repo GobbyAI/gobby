@@ -1565,6 +1565,11 @@ def test_codex_recovery_steward_patrols_every_ten_minutes(steward_live: Live) ->
     assert len(waits) == STEWARD_TIMEOUT_PATROLS + 1, waits
     assert {wait["waiter_session_id"] for wait in waits} == {waiter}, waits
     assert waits[-1]["outcome"] == "waiting", waits[-1]
+    # The steward patrolled without rewriting the config it read: the seeded keys were enough.
+    config = Path(str(live.evidence["home"])) / "providers" / "codex" / "config.toml"
+    before = live.evidence["codex_config"]["before"]
+    assert "sha256" in before, before
+    assert sha256_file(config) == before["sha256"], "the steward rewrote its Codex config"
     live.evidence["recovery_steward"]["waits"] = [
         {key: str(value) for key, value in wait.items()} for wait in waits
     ]
