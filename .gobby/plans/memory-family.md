@@ -300,8 +300,8 @@ public surfaces; parity matches their intentional contracts, not accidents.
   newer rationale-only edit set and leave a stale vector marked clean. Native
   compares rationale null-safely in both. The difference appears only under
   that interleaving, which 2.2.12 and 2.3.7 prove. A paused Python projection
-  keeps the omission until the family's Python writers retire; Triage has the
-  Python report. Owners 2.2 and 2.3.
+  keeps the omission until the family's Python writers retire or #25272
+  fixes the Python side. Owners 2.2 and 2.3.
 
 **Waiver inventory:**
 
@@ -2205,3 +2205,19 @@ production cutover or task expansion have been performed during planning.
   revert fences (4.1), the search compare effect (8.2.1), and the pinned
   `hdbscan` 0.12.0 with `kdtree` 0.7.0 and Rust 1.88 evidence (Decision 2,
   2.5). Awaiting adversarial review by gobby#18294; no consensus claimed.
+- 2026-10-28 — Plan Writer gobby#18291 and Plan Adversary gobby#18294
+  reached consensus on the narrative at
+  `3a381053249fd63213a45579b1ba6cd35135be34`. MEM-ADV-01: the Orchestrator
+  ruled option A, a gcore `CollectionRebuildSeam` trait that gmemory's
+  `MemoriesRebuildSeam` implements, so `gobby-ai` never depends on
+  `gobby-memory`, and the Orchestrator records the AI 7.4 and 7.6
+  amendments (3.1.4). MEM-ADV-02: eight exact-surface
+  unsupported-prompt-syntax waivers, 64 in all, refuse before any model call
+  or graph-state change and keep Python's metadata-default merge (2.4, 4.2,
+  4.3, 6.2, 7.2). MEM-ADV-03: projection and reconciliation hold Python's
+  per-memory advisory lock and compare rationale in the snapshot check and
+  the conditional clear; Python's rationale omission is recorded under Debt
+  not to port and filed as #25272 (2.2.12, 2.3.7). MEM-ADV-04: 6.3 states
+  its granularity. MEM-ADV-05: compare mode rolls back native surfaced-stat
+  writes through the route backend passed at family construction (1.3.6,
+  8.2.1). No governing decision remains open.
