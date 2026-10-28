@@ -140,7 +140,7 @@ _PANE_SOURCE = re.compile(r"steps\.(\w+)\.output\.pane_ref")
 STEWARD_PIPELINE = "support"
 STEWARD_SEAT = "recovery-steward"
 # The steward's runtime, as the Orchestrator's launch_defaults.support gives it.
-STEWARD_PROVIDER, STEWARD_MODEL, STEWARD_EFFORT = "codex", "gpt-6.1-sol", "medium"
+STEWARD_PROVIDER, STEWARD_MODEL, STEWARD_EFFORT = "codex", "gpt-6.1-terra", "medium"
 # Triage's wait is the patrol cadence: each timeout wakes the steward for one patrol.
 STEWARD_CADENCE_SECONDS = 600
 STEWARD_TOLERANCE_SECONDS = 60
