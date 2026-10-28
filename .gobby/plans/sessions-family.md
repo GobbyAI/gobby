@@ -215,7 +215,10 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
    advisory-lock key from #25262.
 9. **Browser admission and security review (S7).** 7.1 registers the Sessions
    HTTP rows for `Caller::Browser` through #24967's shared verifier and #24964's
-   CORS/preflight boundary. The Orchestrator approved `security-review` on 7.1
+   CORS/preflight boundary. It also binds the two variables rows, the only
+   Sessions entries in `src/gobby/servers/auth_service.py::_AGENT_CAPABILITY_MATRIX`,
+   to #25068's agent-token seam, which every Stage 2 family uses for its
+   agent-token rows. The Orchestrator approved `security-review` on 7.1
    and on 2.5, which ports the two operator-only routes. The Orchestrator
    applies the label after expansion and verifies it before dispatch; cookie
    activation and operator-route activation wait for a Security Reviewer's
@@ -670,7 +673,8 @@ Targets:
   `crates/gdaemon/src/front_door/routes.rs::reports_native_routes_for_families_gdaemon_lacks`
   stay as they are.
 - Claims: the family claims only implemented method/path pairs for API-key
-  callers. Browser-cookie requests stay with the proxy until 7.1.
+  callers. Browser-cookie and agent-token requests stay with the proxy until
+  7.1.
   `GET /api/sessions` is not claimed in any mode until 8.5, because every
   listed row carries the ACP block that
   `src/gobby/sessions/acp_lifecycle.py::attach_acp_block` reads from the live
@@ -1089,7 +1093,8 @@ Targets:
 - `src/gobby/servers/routes/sessions/variables.py::set_variable`,
   `variables.py::get_variable` and `variables.py::_bound_session_id` resolve the
   authenticated caller apart from the path's target session (verified agent
-  claims). `_bound_session_id` follows a run's live binding through
+  claims). Natively the claims are the bound identity in the admitted value
+  that 7.1 receives from #25068. `_bound_session_id` follows a run's live binding through
   `src/gobby/sessions/clear_run_lineage.py::current_run_session_id`, which this
   leaf ports into the new `clear_lineage.rs`; 2.9 adds the rest of that module.
   The routes then call
@@ -2505,21 +2510,22 @@ against `crates/gclient/tests/mock_daemon/mod.rs`, and
 ## P7: Admission, activation and retirement
 `kind: framing`
 
-7.1 admits browser callers through the shared verifier. 7.2 is the family's
+7.1 admits browser callers through the shared verifier and agent-token
+callers through #25068's seam. 7.2 is the family's
 shipping commit: it makes Native the Sessions default, switches the Python
 loops off and releases the binaries. 7.3 deletes Sessions-owned Python: the
 CLI verbs and dropped commands, the routes of the 26 switched rows, and the
 Python expiry and processing loops (Decision Record item 15). 7.4 records the
 ledger and documentation.
 
-### 7.1 Sessions browser admission through the shared verifier [category: code] (depends: 6.1, #24967, #24964)
+### 7.1 Sessions browser and agent-token admission [category: code] (depends: 6.1, #24967, #24964, #25068)
 `kind: deliverable`
 
 Targets:
 - `crates/gsessions/src/family.rs`
 - `crates/gdaemon/src/front_door/sessions.rs`
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: register the Sessions browser-admission predicate in the existing FrontDoor::handle dispatch boundary, keeping the file-wide scope 1.1 uses
-- `crates/gdaemon/tests/sessions_browser.rs`
+- `crates/gdaemon/tests/sessions_admission.rs`
 - `docs/contracts/sessions-native.md`
 
 **Research context:**
@@ -2562,33 +2568,50 @@ Targets:
   `DELETE /api/sessions/{session_id}`, which serves API-key callers only.
   The P8 rows, `GET /api/sessions` among them (8.5), register their own
   browser admission.
+- Agent tokens: `src/gobby/servers/auth_service.py::_AGENT_CAPABILITY_MATRIX`
+  lists exactly two Sessions rows, `POST /api/sessions/*/variables/get` and
+  `POST /api/sessions/*/variables/set`, both with `bind_identity` true; the
+  stdio proxy's `get_variable` and `set_variable`
+  (`src/gobby/mcp_proxy/stdio_proxy.py`) call them. No Sessions row appears
+  in `src/gobby/servers/grant_auth.py::_GRANT_ROUTES`. #25068 owns the one
+  native seam that verifies the token through #24452 and exposes its bound
+  session identity; this leaf declares the two rows' agent-token class and
+  passes that identity to 2.4's caller binding. It writes no verifier.
+  Every other Sessions row refuses agent tokens, as Python does.
 - Until this leaf ships with Security approval of its exact SHA, every
-  Sessions cookie request stays proxied in every switch state. Once
-  admitted, a verifier denial never falls through to a native handler.
+  Sessions cookie request and every agent-token request to the two
+  variables rows stays proxied in every switch state. Once admitted, a
+  verifier denial never falls through to a native handler.
 - Security: the Orchestrator applies `security-review` to this leaf after
-  expansion and checks the label before dispatch. Cookie activation waits
-  for a Security Reviewer's approval of the exact implementation SHA.
+  expansion and checks the label before dispatch. Cookie and agent-token
+  activation wait for a Security Reviewer's approval of the exact
+  implementation SHA.
 
 **Acceptance:**
 
 - 7.1.1 - Ordinary cookies reproduce Python's admission, payloads and errors
   on each of the 24 rows through the shared verifier only.
-  test: `crates/gdaemon/tests/sessions_browser.rs::ordinary_cookie_routes_match_python`.
+  test: `crates/gdaemon/tests/sessions_admission.rs::ordinary_cookie_routes_match_python`.
 - 7.1.2 - Managed cookies keep loopback, live-capability, per-route and
   selector checks, and refused requests reach no Sessions effect.
-  test: `crates/gdaemon/tests/sessions_browser.rs::managed_cookie_authority_matches_python`.
+  test: `crates/gdaemon/tests/sessions_admission.rs::managed_cookie_authority_matches_python`.
 - 7.1.3 - The operator-only routes, the native DELETE and unlisted routes
   gain no cookie authority; API-key callers are unchanged.
-  test: `crates/gdaemon/tests/sessions_browser.rs::browser_admission_is_exact`.
+  test: `crates/gdaemon/tests/sessions_admission.rs::browser_admission_is_exact`.
 - 7.1.4 - Both cookie classes keep the observed credentialed CORS, preflight
   and refusal headers through #24964's boundary.
-  test: `crates/gdaemon/tests/sessions_browser.rs::cors_and_preflight_match_python`.
+  test: `crates/gdaemon/tests/sessions_admission.rs::cors_and_preflight_match_python`.
 - 7.1.5 - The security gate (label, pre-dispatch check, exact-SHA approval)
   is documented. behavior: "Sessions browser admission security gate" in `docs/contracts/sessions-native.md`.
+- 7.1.6 - A valid agent token reaches the two variables rows with its bound
+  identity as the caller binding; forged, revoked, expired and
+  identity-mismatched tokens, and agent tokens on any other Sessions row,
+  are refused before any Sessions effect, matching Python.
+  test: `crates/gdaemon/tests/sessions_admission.rs::agent_token_rows_match_python`.
 
-Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test sessions_browser`
-with isolated session and capability state and a counting Python backend
-stub. Nothing has run during drafting.
+Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test sessions_admission`
+with isolated session, capability and token state and a counting Python
+backend stub. Nothing has run during drafting.
 
 ### 7.2 Sessions activation and coherent release [category: code] (depends: 7.1, #24963)
 `kind: deliverable`
@@ -2681,9 +2704,9 @@ Consumers unchanged:
   Zero-Passed, all-Skipped, unwaived-Skipped, stale or unknown IDs and
   unmatched diffs fail activation. Compare runs safe reads only; mutating
   routes are tested against isolated cloned state.
-- Gates: the two operator-only routes (2.5) and cookie traffic (7.1) activate
-  only with their Security approvals for the exact SHA; until then they stay
-  proxied and the runbook records the remainder.
+- Gates: the two operator-only routes (2.5), cookie traffic and agent-token
+  traffic (7.1) activate only with their Security approvals for the exact
+  SHA; until then they stay proxied and the runbook records the remainder.
 - Release: `src/gobby/install/bin_release_identity.py::workspace_source_identity`
   hashes the root `Cargo.toml` for every managed binary, and 1.1 added a
   workspace member, so gdaemon, gcode and ghook each bump 0.0.1. gclient's
