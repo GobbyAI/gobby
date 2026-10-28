@@ -78,21 +78,56 @@ gobby#17480:
   A loopback call made while holding that row lock would deadlock against the
   native store, which writes on its own connection. The reducer therefore:
   - drops `FOR UPDATE` and reads the row plainly;
-  - sends a compare-and-set (CAS) transition carrying `expected_attention_id`
-    and a new `expected_payload` (an absent row compares as `{}`);
-  - retries at most three times, re-reading the row after each miss;
-  - writes `sessions.status` only after the CAS applies.
+  - sends no transition when the mutation leaves the attention row unchanged
+    (state, reason, kind, fingerprint and payload). A sent transition therefore
+    always changes the row, and a not-applied result always means a conflict,
+    so the store's no-op result and seq rules stay as they are;
+  - otherwise sends a compare-and-set (CAS) transition carrying
+    `expected_attention_id` and a new `expected_payload` (an absent row
+    compares as `{}`);
+  - retries at most three times, re-reading the row after each conflict;
+  - writes `sessions.status` only through the status fence below.
 
   The atomicity this gives up is recorded as waiver
   `attention.get-roster.session-status-repair`.
 
+  **Status fence.** Without a fence, two reducers can apply their CAS calls in
+  one order and their status writes in the other. For example, A opens a turn,
+  B enters a wait and writes `awaiting_input`, and then A writes `active`. So
+  the status write runs in a short local transaction:
+  1. lock the session row (`SELECT ... FROM sessions WHERE id = %s FOR UPDATE`);
+  2. re-read the attention row in a new statement;
+  3. write the status only when the committed `turn_lifecycle` still equals the
+     lifecycle this reducer applied, or read when it sent no transition.
+
+  Otherwise a later transition has superseded this one, so the reducer skips
+  its write and the later reducer's own fenced write sets the status. Every
+  reducer status write takes the session row lock first, and each reducer's
+  CAS commits before its fence starts, so status writes land in CAS order. The
+  fence never locks the attention row and makes no client call, so the native
+  store never waits on Python.
+
   **Crash repair.** A crash between the CAS and the status write leaves the
-  stored `turn_lifecycle` ahead of `sessions.status`. The next non-stale
-  transition for that session repairs it. `_apply` already derives `next_status`
-  from `mutate(current, session_status)` over the stored lifecycle and writes it
-  whenever it differs from the observed status. The duplicate early return also
-  compares `next_status` against the observed status, so replaying the same
-  evidence repairs the status too.
+  stored `turn_lifecycle` ahead of `sessions.status`. The session's next
+  status-writing transition repairs it, because every non-duplicate mutation
+  derives its own status. Replaying the same evidence repairs it through these
+  duplicate paths:
+  - `begin_turn` with the open turn's provider key returns
+    `_status_for_waits(waits)`, or `active` when there are no waits. It does
+    this only while the observed status still equals the lifecycle's
+    `prior_status`, so a status another writer set since then, such as
+    `awaiting_handoff`, stands.
+  - `enter_wait` with a known token already returns `_status_for_waits(waits)`.
+  - `record_provider_failure` for a failure already recorded in this
+    generation returns `paused` when the observed status is `active`.
+  - `end_turn` and `resumed_work` already return their own status on replay.
+  - `resolve_wait` for a token that is already resolved keeps the observed
+    status. From the stored lifecycle it cannot tell a stale awaiting status
+    from one another writer set, so the turn's next status-writing transition
+    repairs it.
+
+  A crash with no later evidence for that session leaves the status stale until
+  such evidence arrives. The waiver records this.
 
   If the three attempts are exhausted, the reducer returns a not-applied result
   with reason `attention_conflict`. It writes no status and adds no fallback
@@ -253,7 +288,9 @@ ordering corrections cite the roster surface, which is where consumers reconcile
   single-transaction attention and status write. Waiver
   `attention.get-roster.session-status-repair`, decision
   `.gobby/plans/s2-7-hub-attention-dispatch.md#4.3`. Replacement: CAS first, then
-  the status write, with crash repair by the next transition.
+  a status write fenced on the committed lifecycle. A crash between them is
+  repaired by the next status-writing transition, or by replay through the
+  duplicate paths the Decision Record names.
 - **Obsolete dispatcher phrase (Q1).** Recorded in the Decision Record. No
   surface.
 
@@ -315,7 +352,7 @@ ordering corrections cite the roster surface, which is where consumers reconcile
 | HTTP GET /api/attention/roster | 3.1.1-3.1.3 |
 | HTTP POST /api/attention/{entry_id}/seen | 3.2.1 |
 | HTTP POST /api/attention/{entry_id}/metadata | 3.2.2 |
-| HTTP POST /api/attention/{entry_id}/respond | 3.4.1-3.4.7 |
+| HTTP POST /api/attention/{entry_id}/respond | 3.4.1-3.4.7, 3.4.9 |
 | CLI gobby nodes | #21571; 4.4 service contract over native /api/machines |
 | CLI gobby nodes list | #21571; 4.4 service contract over native /api/machines |
 
@@ -415,7 +452,7 @@ Planned: isolated pytest of `test_attention_oracle` and HTTP corpus recording.
 - 1.1.1 - Transition vectors reproduce every `_transition_locked` branch and the bounded sweep, and mark the native-only `expected_payload` expectations. test: `tests/contracts/test_attention_oracle.py::test_transition_vectors_match_python`.
 - 1.1.2 - Event vectors pin both agent-event messages byte for byte, including the empty and null fields and the metadata enrichment. test: `tests/contracts/test_attention_oracle.py::test_event_vectors_match_python`.
 - 1.1.3 - Roster vectors reproduce the projection, skip rules, display names, terminal and tmux blocks, metadata and ordering. test: `tests/contracts/test_attention_oracle.py::test_roster_vectors_match_python`.
-- 1.1.4 - Respond vectors cover answer validation, every local and remote error branch with its stage, ownership, and the pane fingerprint vectors. test: `tests/contracts/test_attention_oracle.py::test_respond_vectors_match_python`.
+- 1.1.4 - Respond vectors cover answer validation, every local and remote error branch with its stage, ownership for both local and remote panes, and the pane fingerprint vectors. test: `tests/contracts/test_attention_oracle.py::test_respond_vectors_match_python`.
 - 1.1.5 - The HTTP corpus records the four routes and their error branches with Python origin. file: `tests/contracts/http/attention.json`.
 - 1.1.6 - The shared manifest carries the three attention waivers, each with an exact ledger surface, behaviour, decision and replacement. file: `docs/contracts/parity-waivers.json`.
 
@@ -730,8 +767,11 @@ writes the key kind.
 5. 422 `invalid_option` with the options when the option is not offered.
 6. Resolve the pane: the session's live terminal first, otherwise the run's
    terminal. With no pane, return 502 `injection_failed` at stage `none`.
-7. A pane on another machine goes through remote delivery, after the host's
-   ownership check (403 `machine_not_owned` or `machine_not_found`).
+7. Check machine ownership through the host for every resolved pane, local or
+   remote, before any capture, detection or CAS (403 `machine_not_owned` or
+   `machine_not_found`). This matches Python, which calls `_require_pane_owned`
+   before it branches. A pane on another machine then goes through remote
+   delivery.
 
 **Remote delivery.** Write through the node registry's `terminal.write` command,
 then clear the episode by CAS:
@@ -788,6 +828,7 @@ They are tested with this route because respond is their only consumer.
 - 3.4.6 - Concurrent responds to one entry deliver at most one write. test: `crates/gagents/tests/respond.rs::concurrent_respond_delivers_once`.
 - 3.4.7 - Host adapters capture tmux and native rows, load only the provider's detection manifest, and reproduce Python's pane fingerprint vectors. test: `crates/gdaemon/tests/attention_host.rs::host_adapters_match_python`.
 - 3.4.8 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 3.4.9 - A local pane on a machine the caller does not own, or on a missing machine, gets the 1.1 403 body with no capture, detection, CAS clear or injection. test: `crates/gagents/tests/respond.rs::local_respond_requires_machine_ownership`.
 
 ### 3.5 Side-effect-safe comparison and native corpus replay [category: code] (depends: 3.4, #24963)
 `kind: deliverable`
@@ -924,7 +965,7 @@ Targets:
 - `src/gobby/install/version_pins.py::*` — scope-reason: release pin for the native attention default
 - `src/gobby/storage/attention.py::*` — scope-reason: replace the ordering coordinator, transition core, sweep, roster loader and publisher with client bodies while keeping the direct reads
 - `src/gobby/agents/attention_metadata.py::*` — scope-reason: make set and clear client calls and delete the in-memory store and publisher
-- `src/gobby/sessions/turn_lifecycle.py::*` — scope-reason: drop FOR UPDATE and apply the bounded CAS-then-status order in _apply and block_provider_failure
+- `src/gobby/sessions/turn_lifecycle.py::*` — scope-reason: drop FOR UPDATE, apply the bounded CAS and fenced status write in _apply and block_provider_failure, and repair status on duplicate replay
 - `src/gobby/runner_init/orchestration.py::*` — scope-reason: move attention client construction into the split module and delete both publisher closures
 - `src/gobby/runner_init/attention_clients.py`
 - `src/gobby/runner_init/servers.py::*` — scope-reason: remove the configure_attention_ordering and configure_attention_metadata wiring
@@ -998,15 +1039,21 @@ The former route writer, `src/gobby/servers/routes/attention.py`, is deleted.
 The readers `agent_health.py`, `continuation_retry.py` and
 `src/gobby/cli/sessions.py` use the direct reads and stay unchanged.
 
-**4. Reducer.** Implement the Q3 follow-up order in `TurnLifecycleReducer._apply`
-and `block_provider_failure`:
+**4. Reducer.** Implement the Q3 follow-up order, its status fence and its
+replay repair, as the Decision Record states them, in
+`TurnLifecycleReducer._apply` and `block_provider_failure`:
 1. a plain read of the row;
-2. a CAS carrying `expected_attention_id` and `expected_payload`;
+2. no transition when the attention row is unchanged, and otherwise a CAS
+   carrying `expected_attention_id` and `expected_payload`;
 3. at most three attempts, then `attention_conflict`;
-4. the status write after the CAS applies.
+4. the fenced status write.
 
-The crash-repair test injects a failure between the CAS and the status write,
-then replays the same evidence and asserts the status is repaired.
+`block_provider_failure` writes no status, so it needs only steps 1-3. The
+crash tests inject a failure between the CAS and the status write. They then
+assert repair by the next status-writing transition, and by replay of the same
+`begin_turn`, `enter_wait` and `record_provider_failure` evidence. A
+deterministic interleaving test runs A's CAS, then B's CAS and fenced write,
+then A's fenced write, and asserts that B's status stands.
 
 **5. Wiring.** Move the attention client construction out of
 `src/gobby/runner_init/orchestration.py` and into the new split module
@@ -1073,10 +1120,11 @@ writers and absence.
 **Acceptance:**
 - 4.3.1 - The attention family defaults to native, and gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 - 4.3.2 - Every named Python writer transitions and sets metadata only through the client, and no Python module keeps an attention cursor or publisher. test: `tests/storage/test_attention_client.py::test_python_holds_no_attention_ordering_state`.
-- 4.3.3 - The reducer reads without a row lock, applies its change by CAS within three attempts, writes status only after the CAS applies, and returns `attention_conflict` once the attempts are exhausted. test: `tests/sessions/test_turn_lifecycle_cas.py::test_reducer_writes_status_after_cas`.
-- 4.3.4 - A failure injected between the CAS and the status write is repaired by the next transition, including a replay of the same evidence, asserting `attention.get-roster.session-status-repair`. test: `tests/sessions/test_turn_lifecycle_cas.py::test_crash_between_cas_and_status_is_repaired`.
+- 4.3.3 - The reducer reads without a row lock, sends no transition for an unchanged row, applies a change by CAS within three attempts, writes status only through the fence, and returns `attention_conflict` once the attempts are exhausted. test: `tests/sessions/test_turn_lifecycle_cas.py::test_reducer_writes_status_after_cas`.
+- 4.3.4 - A failure injected between the CAS and the status write is repaired by the next status-writing transition, and by replay of the same `begin_turn`, `enter_wait` and `record_provider_failure` evidence, while a status another writer set after `begin_turn` stands, asserting `attention.get-roster.session-status-repair`. test: `tests/sessions/test_turn_lifecycle_cas.py::test_crash_between_cas_and_status_is_repaired`.
 - 4.3.5 - After deletion, Python writer transitions publish ordered events through the native broker, and the roster serves them with no Python attention route. test: `tests/e2e/test_attention_family.py::test_python_writers_publish_through_native_store`.
 - 4.3.6 - The four attention HTTP rows are delegated with evidence and waiver citations, and the ledger regenerates cleanly. file: `docs/contracts/parity-ledger.md`.
+- 4.3.7 - When reducer A's CAS is followed by reducer B's CAS and fenced status write, A's later fenced write is skipped and B's status stands. test: `tests/sessions/test_turn_lifecycle_cas.py::test_stale_status_write_is_fenced`.
 
 ### 4.4 Attention service contract and nodes CLI handoff [category: docs] (depends: 4.3)
 `kind: deliverable`
@@ -1091,7 +1139,7 @@ Targets:
 - the event messages;
 - the cursor and roster consistency rule;
 - the complete writer list;
-- the reducer CAS order and its crash repair;
+- the reducer CAS order, its status fence and its crash repair;
 - the decision-16 roster exception;
 - the respond error contract;
 - the post-takeover rollback boundary;
