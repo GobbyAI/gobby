@@ -39,6 +39,9 @@ rulings #25261 asks for in the Decision Record: the #23565 storage layout
   claimed task, although rule 3 already treats that predecessor as the
   claimant's past self. Once gate 3 requires that commit, the two would
   deadlock (1.8).
+- A commit without a pathspec records the whole shared index, so it can
+  record another live session's staged path that rule 2 never checked
+  (Decision 23, 1.8).
 - The recorder records every path a successful write call names, whatever
   happened to its bytes. It records nothing for a failed call that changed
   bytes (1.5).
@@ -58,6 +61,9 @@ rulings #25261 asks for in the Decision Record: the #23565 storage layout
   still holds for paths the task no longer owns (1.7).
 - A claimant may commit dirt whose live holder works a task the claimant now
   claims (rule 2), as rule 3 already lets it edit that dirt (1.8).
+- While another live session holds dirt in a checkout, a commit there must
+  name its paths (`git commit -- <path>...`), so it never records that
+  session's staged paths (1.8).
 - A write-kind call records a path only when the call changed its bytes,
   whether the call succeeded or failed (1.5).
 - A shell command publishes the union of its write-kind segments' targets, so
@@ -231,7 +237,7 @@ together. The first is delivered; 1.5 builds the second.
 
 Decisions 1, 3, 7, 9 and 11 to 19 shipped with 1.1 to 1.3, except where a
 refreshed decision says otherwise. Decisions 2, 5, 6, 8, 10, 15 and 16 were
-rewritten, and 20 to 22 added, by the #25261 refresh (2026-10-28). The
+rewritten, and 20 to 23 added, by the #25261 refresh (2026-10-28). The
 refreshed rulings take effect with the Adversary's stamp and Josh's approval
 through the Assistant (#25261 criterion 3).
 
@@ -508,6 +514,35 @@ through the Assistant (#25261 criterion 3).
     follows Decision 4 instead.
     Rejected: V1's untransferred-pair inventory, retired with the transfer
     (Decision 2).
+23. **Whole-index commits in a shared checkout (Orchestrator found work,
+    2026-10-28).** A Plan Writer's `git commit -m` in the main checkout
+    (2068aaf9a0) recorded another live Plan Writer's staged
+    `.gobby/plans/external-mcp-transport-multiplexer.md`, and rule 2 did not
+    refuse it. A commit without a pathspec records the whole shared index.
+    Rule 2 reads `git diff --cached` when the hook runs and the shell commits
+    later, so a path staged in between is never checked, and a path its
+    stager never recorded has no holder (Decision 1). Which of the two
+    happened is not established, because the other session's ledger is not
+    readable from another seat. Rule: rule 2 refuses a commit that records
+    the whole index (no pathspec, or `--include` with pathspecs; `--all`
+    without one is the first) while another live session on the event's
+    machine holds a pair in that checkout that git still reports dirty. The
+    refusal names the holders and prescribes `git commit -m <msg> --
+    <path>...`. A pathspec commit builds a temporary index from only the
+    listed paths and leaves other sessions' staged paths staged, so no later
+    staging can reach it. Concluding an in-progress merge, cherry-pick,
+    revert or rebase is exempt, because git refuses a partial commit there,
+    and rule 2's per-path check still applies to it. This changes the form
+    of a commit rule 2 accepts, not its path scope: a path no live session
+    mutated still commits freely with a pathspec, so Decision 1 holds.
+    Residual: a session with no dirty pair in the checkout that stages a
+    path it never recorded can still be swept by a whole-index commit while
+    no other session holds dirt there; nothing attributes that path to it.
+    Like every refreshed ruling, this takes effect with Josh's approval
+    through the Assistant (#25261 criterion 3). Rejected: refusing only when
+    the hook-time staged set holds a foreign path, which misses a path
+    staged after the check; and rewriting the command into a pathspec
+    commit, which hides the change from the caller.
 
 ## Retired Mechanisms
 `kind: framing`
@@ -601,7 +636,9 @@ V1's edits to `state_manager.py` and `storage/hub/postgres_pool.py`
   `(depends: #N)` on its porting headings, or the Orchestrator sets them at
   that expansion. This plan never waits on the ports.
 - **Large files.** Each targeted production file of 850 or more lines is
-  split by its one section: `workflows/commit_guard.py` (863 lines, 1.8),
+  split by its one section: `workflows/commit_guard.py` (863 lines, 1.8,
+  which moves `_operation_paths`' 57 lines out before adding the
+  whole-index refusal, so the file stays under 1,000 lines),
   `workflows/hooks.py` (909, 1.6) and `workflows/engine/core.py` (953, 1.6).
   `workflows/state_manager.py` (879), `hooks/_normalization_canonical.py`
   (875) and `storage/hub/postgres_pool.py` are no longer targeted. Every
@@ -1608,14 +1645,14 @@ Consumers unchanged:
 - 1.7.10 - Node-recorded pairs at close: node session N, recording inside `checkout_reads.delivery_scope` for its machine, holds T's dirty `p` under root R, and the hub also has a git checkout at R. Case (a): N is T's attribution owner. Case (b): N has ended, and live hub session B owns T. In each case, with the hub's `p` clean, and again with the hub's `p` matching hub session H's content record for task U, gate 3 for T fails with "Git could not inspect all task-attributed files.", never counting `p` clean or dropping it. In (b) it stays so, which is the ceiling #25284 owns. In (a), once N's own ledger reconcile releases `p`, run inside N's delivery with the node's status reporting `p` clean, gate 3 passes, and a linked commit whose paths are dirty in the hub's checkout does not trigger the linked-commit fallback. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_fails_closed_on_held_node_pairs_and_ignores_hub_bytes`.
 - 1.7.11 - `checkout_path_owners` ignores a node-machine session's content record even though it matches the hub's bytes at that root and path. Inside a node-machine `delivery_scope` it answers an empty map even though a hub session's record matches, so `claimed_task_carriers` finds no carrier there. test: `tests/workflows/test_dirty_edit_grants.py::test_checkout_path_owners_is_machine_local`.
 
-### 1.8 Rule 2 lets a claimant commit its claimed task's dirt [category: code] (depends: 1.3, 1.4)
+### 1.8 Rule 2 lets a claimant commit its claimed task's dirt and refuses whole-index commits in a shared checkout [category: code] (depends: 1.3, 1.4)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/workflows/commit_guard.py::*` — scope-reason: rules 2 and 3 skip a holder when its interval task or its content-owner task is one the session claims, testing each field on its own, _live_path_owners takes each holder's task from its live interval whether or not it is claimed, and _operation_paths moves out
+- `src/gobby/workflows/commit_guard.py::*` — scope-reason: rules 2 and 3 skip a holder when its interval task or its content-owner task is one the session claims, testing each field on its own, _live_path_owners takes each holder's task from its live interval whether or not it is claimed, rule 2 refuses a whole-index commit while another live session holds dirt in the checkout, and _operation_paths moves out
 - `src/gobby/workflows/git_operation_paths.py`
 - `src/gobby/workflows/dirty_edit_grants.py::*` — scope-reason: renames _claimed_task_ids to the public claimed_task_ids and updates its two callers
-- `tests/workflows/test_commit_guard.py::*` — scope-reason: adds the rule 2 claimed-task tests
+- `tests/workflows/test_commit_guard.py::*` — scope-reason: adds the rule 2 claimed-task and whole-index tests
 - `tests/workflows/test_git_operation_paths.py`
 
 Split `src/gobby/workflows/commit_guard.py` (863 lines): move `_operation_paths`
@@ -1664,6 +1701,15 @@ import it in both rules.
   `claimed_task_carriers` and `claimed_task_owned_paths` call it.
 - No test references `_operation_paths`; rule 3's merge tests exercise it
   (`tests/workflows/test_commit_guard.py::test_rule3_exempts_merge_set_paths_during_merge`).
+- Rule 2 builds its candidates per `git_commit_parsing.GitCommitInvocation`.
+  A path-scoped invocation (`pathspecs` set) lists its paths with `git
+  ls-files`; one without pathspecs, or with `include_staged`, adds the
+  `git diff --cached` set read when the hook runs; `all_tracked` adds `git
+  diff HEAD`. With no live holder in the checkout (`_live_path_owners`
+  empty) it passes at once. The shell runs the commit after the hook
+  answers, so a path staged in between is never a candidate. Commit
+  2068aaf9a0 (2026-10-28) recorded a path another live session had staged
+  (Decision 23).
 
 **Implementation:**
 - Rename `_claimed_task_ids` to `claimed_task_ids` and update its two
@@ -1686,6 +1732,19 @@ import it in both rules.
 - In `foreign_dirty_edit_conflict`, the past-self exclusion drops a holder
   when its `owner_task_id` is in `own_tasks` or its `ledger_task_id` is in
   `own_tasks`, replacing the `or` fallback (Decision 15).
+- In `foreign_staged_commit_conflict`, an invocation that records the whole
+  index (`not invocation.is_path_scoped or invocation.include_staged`),
+  while no merge, cherry-pick, revert or rebase is in progress (the states
+  `operation_paths` reads), is refused when
+  `_dirty_owned_paths_releasing_clean` over every holder that
+  `_live_path_owners` names for the checkout returns any path. Holders the
+  claimed-task exclusion skips count too, because a pathspec commit is
+  always available to the claimant. The refusal is
+  `format_conflict_reason` over those holders followed by "This commit
+  records the whole index, which can include their staged files. Commit
+  only your own paths: `git commit -m <msg> -- <path>...`." Path-scoped
+  invocations and an operation's conclusion keep the per-path check
+  unchanged (Decision 23).
 - Move `_operation_paths` to `git_operation_paths.operation_paths` unchanged.
 
 **Focused verification (planned):** run `tests/workflows/test_commit_guard.py`,
@@ -1702,6 +1761,8 @@ checkpoint's foreign-owner outcomes.
 - 1.8.2 - `operation_paths` imports from `git_operation_paths` and returns the merge set while `MERGE_HEAD` exists and an empty set when no operation is in progress. test: `tests/workflows/test_git_operation_paths.py::test_operation_paths_lists_merge_set_only_during_merge`.
 - 1.8.3 - Fallback pairs held by a live escalated predecessor: in a temporary git checkout, live session P recorded for T, through the status fallback and so with no content record, a file `p` while it was unreadable and a directory `d` holding an untracked file, then escalated T. After C claims T and `p` is readable again, `_live_path_owners` names T, with T's `#<seq_num>` ref, as P's `owner_task_id` for both pairs while `ledger_task_id` is None. Rule 3 lets C edit `p`. C's Bash `git add p d && git commit -m m` event gets "" from `foreign_staged_commit_conflict` before the commit runs, and the commit then lands. A pair P holds for task U still refuses C's commit, naming U. test: `tests/workflows/test_commit_guard.py::test_claimant_commits_fallback_pairs_held_by_escalated_predecessor`.
 - 1.8.4 - Interval and content owners differ: live session P holds dirty `p` under T's live interval, and ended session Q's content record for U is the newest one matching `p`'s current bytes, so `_live_path_owners` gives P `owner_task_id` T and `ledger_task_id` U. Session C, which claims U, may edit `p` under rule 3 and gets "" from `foreign_staged_commit_conflict` for `git add p && git commit -m m`. Session D, which claims neither T nor U, is refused by both rules, and both texts name T's `#<seq_num>`. test: `tests/workflows/test_commit_guard.py::test_claimed_task_exclusion_tests_interval_and_content_owners_separately`.
+- 1.8.5 - Shared-index sweep, plan files included: in a temporary git checkout, live session P, whose `_agent_type` is `plan-writer`, recorded and staged `.gobby/plans/other.md`. Session C's Bash `git add p && git commit -m m` gets the whole-index refusal naming P before the commit runs, and so do `git commit -a -m m` and `git commit -i -m m -- p`. C's `git commit -m m -- p` gets "", and the commit records only `p` while `.gobby/plans/other.md` stays staged. test: `tests/workflows/test_commit_guard.py::test_rule2_refuses_whole_index_commit_while_another_session_holds_dirt`.
+- 1.8.6 - With no other live holder in the checkout, and again once P's only pair is committed so the stale-holder release clears it, C's `git commit -m m` and `git commit -a -m m` get "". During a merge (`MERGE_HEAD` set), C's `git commit --no-edit` that concludes it passes the whole-index check, while a staged path outside the merge set that P holds dirty still refuses it with the rule 2 text. test: `tests/workflows/test_commit_guard.py::test_rule2_allows_whole_index_commit_alone_and_merge_conclusion`.
 
 ## V1 Plan Changelog
 `kind: verification`
