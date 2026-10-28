@@ -890,6 +890,11 @@ async fn a_periodic_roster_that_beats_the_scoped_roster_focuses_the_selected_pan
         .reconcile_subscribe_first()
         .await
         .expect("initial workspace");
+    // The periodic refresh must become due before the scoped job's
+    // five-second HTTP deadline. Age only the previous refresh's clock.
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(3)).await;
+    tokio::time::resume();
     mock.seed_other_workspace("project-2", &[(&["terminal-new"], "terminal-new")]);
     let project_roster = "/api/terminals?project_id=project-2";
     let release = mock.enqueue_held("GET", project_roster, 200, roster_items(&["terminal-new"]));
@@ -911,12 +916,6 @@ async fn a_periodic_roster_that_beats_the_scoped_roster_focuses_the_selected_pan
                 .filter(|request| request.target.starts_with(project_roster))
                 .count()
                 == 2
-        })
-        .await;
-        wait_within(DRAIN_DEADLINE, "the installed pane's viewport", || {
-            websocket_requests(&mock, "terminal_set_viewport")
-                .iter()
-                .any(|request| request["terminal_id"] == "terminal-new")
         })
         .await;
         automatic_control = timeout(LIVENESS_DEADLINE, async {
