@@ -18,7 +18,6 @@ def test_direct_start_drops_agent_identity(monkeypatch: pytest.MonkeyPatch, tmp_
         "GOBBY_AGENT_RUN_ID": "run",
         "GOBBY_MANAGED_EXECUTION_ID": "execution",
         "GOBBY_AGENT_API_TOKEN": "agent-token",
-        "GOBBY_RELEASE_TOKEN": "release-token",
     }
     for name, value in identity.items():
         monkeypatch.setenv(name, value)

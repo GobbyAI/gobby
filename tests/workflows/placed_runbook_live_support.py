@@ -668,7 +668,12 @@ def main() -> None:
     from gobby.runner import main as run
 
     wrapper = barrier_update(directory, PipelineStepStorageMixin.update_step_execution)
-    with patch.object(PipelineStepStorageMixin, "update_step_execution", wrapper):
+    # The rig runs offline. Startup's model-metadata populate fetches OpenRouter with no
+    # cached data, and a stalled registry read holds daemon readiness past the fixture's budget.
+    with (
+        patch.object(PipelineStepStorageMixin, "update_step_execution", wrapper),
+        patch("gobby.llm.model_registry.fetch_models_sync", return_value=[]),
+    ):
         run(config_path=args.config, verbose=args.verbose)
 
 

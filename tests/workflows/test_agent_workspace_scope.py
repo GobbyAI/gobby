@@ -21,6 +21,7 @@ from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definitio
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.idle_declaration import native_variable_write_error
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -28,6 +29,68 @@ RULES_DIR = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/rule
 PROJECT = "11111111-1111-4111-8111-111111111111"
 SESSION_ID = "33333333-3333-4333-8333-333333333333"
 TEMPLATE = "~/.gobby/agents_workspaces/<project_id>/<definition>/<session>/"
+
+
+def test_orchestrator_definition_excludes_agent_workspace_read_scope() -> None:
+    path = RULES_DIR.parent / "agents" / "orchestrator.yaml"
+    definition = yaml.safe_load(path.read_text())
+    assert "name:agent-workspace-read-scope" in definition["workflows"]["rule_selectors"]["exclude"]
+
+
+@pytest.mark.parametrize("agent_type", ["orchestrator", "developer"])
+@pytest.mark.parametrize("reader", ["native", "shell"])
+async def test_only_orchestrator_reads_another_seats_session_report(
+    engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    agent_type: str,
+    reader: str,
+) -> None:
+    definition = yaml.safe_load((RULES_DIR.parent / "agents" / f"{agent_type}.yaml").read_text())
+    selectors = definition["workflows"]["rule_selectors"]
+    seed_seat(
+        temp_db,
+        agent_type,
+        include=selectors.get("include", []),
+        exclude=selectors.get("exclude", []),
+    )
+    project_id: str = sample_project["id"]
+    anchor = root / project_id
+    variables = _seat(
+        anchor, agent_type, 50, persistent=definition.get("persistent_workspace", False)
+    )
+    caller = _register(
+        temp_db,
+        project_id,
+        seq=50,
+        status="active",
+        agent_type=agent_type,
+        folder=Path(variables["_agent_workspace_dir"]),
+        persistent=definition.get("persistent_workspace", False),
+    )
+    report_folder = anchor / "researcher" / "session-51"
+    _register(
+        temp_db,
+        project_id,
+        seq=51,
+        status="active",
+        agent_type="researcher",
+        folder=report_folder,
+        persistent=False,
+    )
+    report = report_folder / "report.md"
+    report_folder.mkdir(parents=True)
+    report.write_text("# Research report\nPrimary evidence.\n")
+    project = tmp_path / "checkout"
+    project.mkdir()
+    data = _read(report, project) if reader == "native" else _shell(f"cat {report}", project)
+    response = await _decide(engine, data, variables, caller)
+    expected = "allow" if agent_type == "orchestrator" else "block"
+    assert response.decision == expected, response.reason
+    if agent_type != "orchestrator":
+        assert "agent-workspace-read-scope" in (response.reason or "")
 
 
 @pytest.fixture

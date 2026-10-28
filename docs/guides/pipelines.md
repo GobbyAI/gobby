@@ -391,13 +391,14 @@ the existing step kinds and `resume_on_restart`; there is no runbook schema,
 service, table or tool family. Find runbooks with
 `list_pipelines(tag="runbook")` or `gobby pipelines list --tag runbook`.
 
-The bundled `planning` runbook syncs with the `gobby` and `runbook` tags. Its
-inputs are `workspace` (required), `writer_title`, `enhancer_title`,
-`adversary_title` and `seats` (default `writer,enhancer,adversary`). `seats` is
-one comma-separated string, so `gobby pipelines run planning -i
-workspace=<name> -i seats=adversary` hands the executor `adversary` unchanged.
-Every project-specific value is an input, and each seat names a bundled agent
-definition (`plan-writer`, `plan-enhancer`, `plan-adversary`).
+The bundled `team-planning` runbook syncs with the `gobby` and `runbook` tags. Its
+inputs are `workspace`, `task`, `project_path` and `report_to` (required),
+`seat_pane` (optional), and `seats` (default `plan-writer`), plus a provider, model
+and reasoning-effort input for each seat. `seats` is one comma-separated string, so
+`gobby pipelines run team-planning -i workspace=<name> -i task=<#N> -i
+project_path=<path> -i report_to=<ref> -i seats=plan-adversary` hands the executor
+`plan-adversary` unchanged. Every project-specific value is an input, and each seat
+names a bundled agent definition (`plan-writer`, `plan-enhancer`, `plan-adversary`).
 
 **Guard.** The first step calls `gobby-agents:check_runbook_seats(workspace,
 requested, catalogue)`. It refuses an empty, unknown, padded or repeated seat

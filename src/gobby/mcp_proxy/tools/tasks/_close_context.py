@@ -41,11 +41,20 @@ class CloseAttributionSnapshot:
 
 
 async def step_requirements(
-    ctx: RegistryContext, task: Task, commit_shas: Sequence[str]
+    ctx: RegistryContext,
+    task: Task,
+    commit_shas: Sequence[str],
+    *,
+    closer_definition: str | None = None,
 ) -> StepRequirements:
     """Judge step records against the close's prospective commits, as final close will."""
     prospective = replace(task, commits=list(commit_shas))
-    return await asyncio.to_thread(task_step_requirements, ctx.task_manager.db, prospective)
+    return await asyncio.to_thread(
+        task_step_requirements,
+        ctx.task_manager.db,
+        prospective,
+        closer_definition=closer_definition,
+    )
 
 
 def children(ctx: RegistryContext, task_id: str) -> list[Task]:

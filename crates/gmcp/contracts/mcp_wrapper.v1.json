@@ -23,7 +23,6 @@
     ["GOBBY_SESSION_ID", "X-Gobby-Session-Id"],
     ["GOBBY_PROJECT_ID", "X-Gobby-Caller-Project-Id"],
     ["GOBBY_AGENT_RUN_ID", "X-Gobby-Agent-Run-Id"],
-    ["GOBBY_MANAGED_EXECUTION_ID", "X-Gobby-Managed-Execution-Id"],
-    ["GOBBY_RELEASE_TOKEN", "X-Gobby-Release-Token"]
+    ["GOBBY_MANAGED_EXECUTION_ID", "X-Gobby-Managed-Execution-Id"]
   ]
 }

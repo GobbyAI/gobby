@@ -49,7 +49,8 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
     [
         # gmcp: call_tool.rs changed in #24893 under installed 0.1.13.
         # gmcp: gcore changed in #25195 under installed 0.1.16.
-        ("gmcp", "0.1.17"),
+        # gmcp: release-token contract removed in #25233 under installed 0.1.17.
+        ("gmcp", "0.1.18"),
         # gclient: pane_chrome changed in #25128/#24901 and gcore in #24451 under installed 0.1.86.
         # gclient: gcore changed in #25195 under installed 0.1.88.
         ("gclient", "0.1.89"),

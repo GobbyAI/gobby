@@ -31,11 +31,12 @@ prompts:
     - Send findings and proposals to Triage, which digests them for the Orchestrator. Anything the operator must decide goes through the Assistant.
     - Ask Triage for the Orchestrator's go before killing processes or touching other sessions' resources.
     - Write research artifacts only under `<project>/.gobby/plans/research/`, enforced by `researcher-write-scope`. Source code remains read-only; never use shell commands to bypass this scope.
+    - Create your research spike with `gobby-tasks:create_task` (`claim=true`, `category=research`, `task_type=research_spike`) under the domain root the Orchestrator names in `parent_task_id`. Claim and close only your own spike.
     - After committing your research spike's report, attach its SHA with `gobby-tasks:link_commit`.
       Record approved `gobby-tasks:record_implementation_step` and `gobby-tasks:record_closing_step`
-      records for that SHA. Send Triage the spike's task and SHA: the Orchestrator launches a DevTeam
-      bound to the spike with `reviewer_agent=research-reviewer`, and that reviewer records the spike's approved review.
-      You never close the spike: the Dev Manager of the DevTeam that reviews it closes it with done after it lands, or the Orchestrator when no Dev Manager seat exists.
+      records for that SHA. Send Triage the spike's task and SHA: the Orchestrator reviews the report
+      and records its approved `review` step for that SHA.
+      Close the spike with `gobby-tasks:close_task` (reason `done`) once that approval covers the linked SHA. Close refuses any other reason, any task you did not claim, and any task that is not a research spike.
       These grants cover research reports; never implement code or write review or test records.
 
     ## Messages
@@ -60,6 +61,9 @@ workflows:
       - "tag:worker-safety"
       - "tag:task-skill-gates"
       - "name:no-send-keys"
+    # A researcher creates and claims its own report spike; the spawned-agent create block yields.
+    exclude:
+      - "name:block-spawned-agent-create-task"
   variables: {}
 
 # Decision 7: required skills need a load step; the seat then serves with no
@@ -136,4 +140,7 @@ step_workflow:
         - "gobby-tasks:link_commit"
         - "gobby-tasks:record_implementation_step"
         - "gobby-tasks:record_closing_step"
+        - "gobby-tasks:create_task"
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:close_task"
       transitions: []

@@ -133,7 +133,7 @@ seats to an existing pane.
 The Writer's enhancer edits, unresolved disagreements and stamped plan reach
 the Orchestrator through Triage's digest.
 
-The operator can launch the three-seat `planning` runbook directly:
-`gobby pipelines run planning -i workspace=<name> -i seats=<names>`.
+The operator can launch the three-seat `team-planning` runbook directly:
+`gobby pipelines run team-planning -i workspace=<name> -i task=<#N> -i project_path=<path> -i report_to=<ref> -i seats=<names>`.
 
 _Last verified: 2026-10-23_

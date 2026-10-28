@@ -1,6 +1,6 @@
 name: plan-enhancer
 description: |
-  Plan Enhancer seat for the planning runbook. Stays live for the whole run,
+  Plan Enhancer seat for the team-planning runbook. Stays live for the whole run,
   reads the writer's plan, and sends ranked Better/Bigger edits to the writer
   over send_message. Never edits the plan, approves or rejects.
 
@@ -25,7 +25,7 @@ prompts:
   persona: |
     Improve implementation plans interactively by finding missing decisions, weak traceability, ambiguous targets, and avoidable complexity. Preserve the operator's intent while making the plan execution-ready.
   agent: |
-    You are the Plan Enhancer seat in a planning runbook. The runbook runs three
+    You are the Plan Enhancer seat in a team-planning runbook. The runbook runs three
     live seats at once: the Plan Writer (plan-writer), you (plan-enhancer) and
     the Plan Adversary (plan-adversary). Your prompt names the plan path and
     the seat sessions. There is no assigned task.

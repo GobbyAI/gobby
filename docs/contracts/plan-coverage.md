@@ -470,7 +470,7 @@ the user skips adversarial review, the coordinator uses
 `derive_plan_handoff_manifest` and `apply_plan_handoff_manifest`, followed by
 expansion-mode validation. It does not synthesize adversary evidence.
 
-The planning runbook spawns the Plan Writer, Plan Enhancer, and Plan Adversary
+The team-planning runbook spawns the Plan Writer, Plan Enhancer, and Plan Adversary
 as live seats. The interactive flow has no numbered review rounds: the Writer
 drafts and presents the live Enhancer's edits, the Program Director disposes
 each enhancer edit or puts the product decision to

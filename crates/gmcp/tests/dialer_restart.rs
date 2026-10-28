@@ -31,7 +31,6 @@ fn isolated(test: impl FnOnce(&std::path::Path) -> anyhow::Result<()>) -> anyhow
             ("GOBBY_AGENT_RUN_ID", None),
             ("GOBBY_SESSION_ID", None),
             ("GOBBY_PROJECT_ID", None),
-            ("GOBBY_RELEASE_TOKEN", None),
         ],
         || test(home.path()),
     )

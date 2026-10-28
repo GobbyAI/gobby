@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -28,11 +29,22 @@ from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
     assert_task_edit_paths_available,
     effective_tool_cwd,
+    normalize_task_checkout_root,
+    sanctioned_worktree_root,
     task_edited_file_set_for_checkout,
     task_selected_at,
 )
 from gobby.workflows.task_dirty_state import paths_committed_after_async
 from gobby.workflows.task_tool_bindings import TaskToolBindings
+from gobby.workflows.worktree_shell_attribution import (
+    attribute_settled_call,
+    is_registered_worktree,
+    mark_session_had_edits_if_claimed,
+    overlapped_worktree_paths,
+    release_structured_edit_calls,
+    structured_edit_paths,
+    worktree_digests,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
@@ -79,6 +91,13 @@ def _background_output_path(data: dict[str, Any]) -> str | None:
     text = response if isinstance(response, str) else json.dumps(response, default=str)
     match = _BACKGROUND_OUTPUT_RECEIPT.search(text)
     return match.group(1) if match else None
+
+
+def _call_worktree_root(event: HookEvent) -> str | None:
+    """The checkout a Bash call runs in, normalized the way the task ledgers key it."""
+    cwd = effective_tool_cwd(event.cwd, event.data)
+    root = checkout_root(Path(cwd)) if cwd is not None else None
+    return normalize_task_checkout_root(str(root)) if root is not None else None
 
 
 class ToolEventHandlerMixin(EventHandlersBase):
@@ -145,9 +164,11 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 self._assert_edit_path_selection(event, session_id)
                 TaskToolBindings(SessionVariableManager(db), session_id).start(event)
             except ValueError as exc:
+                self._release_worktree_edit_calls(event, session_id)
                 return HookResponse(decision="block", reason=str(exc))
             if tool_name == "Bash":
                 self._snapshot_shell_writes(event, session_id)
+                self._begin_worktree_shell_call(event, session_id, project_id)
 
         return HookResponse(decision="allow")
 
@@ -393,6 +414,11 @@ class ToolEventHandlerMixin(EventHandlersBase):
             )
             is_edit = str(tool_name).lower() in EDIT_TOOLS or is_canonical_edit
 
+            # A Bash call settles its worktree overlap first: the overlap record decides which
+            # paths the literal and claimed-shell recording below may attribute.
+            if tool_name == "Bash" and self._session_manager is not None:
+                self._record_worktree_shell_writes(event, session_id)
+
             if not is_failure and is_edit and self._session_manager:
                 try:
                     self._record_successful_file_mutation(
@@ -406,6 +432,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
             if tool_name == "Bash" and self._session_manager is not None:
                 self._adopt_shell_writes(event, session_id)
+
+            if tool_name != "Bash" and is_edit:
+                self._release_worktree_edit_calls(event, session_id)
 
             db = getattr(self._session_manager, "db", None)
             if db is not None:
@@ -468,6 +497,85 @@ class ToolEventHandlerMixin(EventHandlersBase):
         except Exception:
             self.logger.warning("Failed to adopt shell writes to claimed tasks", exc_info=True)
 
+    def _begin_worktree_shell_call(
+        self, event: HookEvent, session_id: str, project_id: str | None
+    ) -> None:
+        """Register a Bash call run in a linked worktree, so that overlapping calls see each other.
+
+        A failure registers nothing, so the changed paths stay foreign rather than block the call.
+        """
+        try:
+            db = getattr(self._session_manager, "db", None)
+            root = _call_worktree_root(event)
+            if db is None or root is None or event.request_id is None:
+                return
+            if not is_registered_worktree(db, project_id, root):
+                return
+            before = run_coro_blocking(
+                worktree_digests(root), self._event_loop, self.logger, label="worktree_digests"
+            )
+            if before is None:
+                return
+            manager = SessionVariableManager(db)
+            attributable = project_id is not None and sanctioned_worktree_root(
+                db, manager.get_variables(session_id), root, project_id
+            )
+            manager.begin_worktree_shell_call(
+                session_id,
+                root,
+                event.request_id,
+                before=before,
+                attributable=attributable,
+                now=time.time(),
+                task_started_at=TaskToolBindings(manager, session_id).started_at(event),
+            )
+        except Exception:
+            self.logger.warning("Failed to register worktree shell call", exc_info=True)
+
+    def _record_worktree_shell_writes(self, event: HookEvent, session_id: str) -> None:
+        """Attribute what a settled Bash call changed in its linked worktree to the caller.
+
+        A call whose process still runs defers instead: its owner settles it on the next tool
+        call, once the output file shows the process ended.
+        """
+        try:
+            db = getattr(self._session_manager, "db", None)
+            if db is None or event.request_id is None:
+                return
+            manager = SessionVariableManager(db)
+            root = manager.worktree_shell_call_root(session_id, event.request_id)
+            if root is None:
+                return
+            output_path = _background_output_path(event.data)
+            if output_path is not None:
+                manager.defer_worktree_shell_call(
+                    session_id, event.request_id, output_path=output_path
+                )
+                return
+            after = run_coro_blocking(
+                worktree_digests(root), self._event_loop, self.logger, label="worktree_digests"
+            )
+            settled = manager.settle_worktree_shell_call(
+                session_id, root, event.request_id, after=after, now=time.time()
+            )
+            paths = attribute_settled_call(
+                manager, session_id, root, settled, edited_at=event.timestamp.timestamp()
+            )
+            if paths:
+                self._mark_session_had_edits_if_claimed(session_id)
+        except Exception:
+            self.logger.warning("Failed to attribute worktree shell writes", exc_info=True)
+
+    def _release_worktree_edit_calls(self, event: HookEvent, session_id: str) -> None:
+        """Retire this call's structured-edit entries once its write completed or was refused."""
+        db = getattr(self._session_manager, "db", None)
+        if db is None or event.request_id is None:
+            return
+        try:
+            release_structured_edit_calls(SessionVariableManager(db), session_id, event.request_id)
+        except Exception:
+            self.logger.warning("Failed to release structured edit in flight", exc_info=True)
+
     def _record_successful_file_mutation(
         self,
         event: HookEvent,
@@ -477,24 +585,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
     ) -> None:
         """Persist one successful mutation observation and all committable paths."""
         input_data = event.data
-        tool_input = input_data.get("tool_input")
-        legacy_file_path = None
-        if isinstance(tool_input, dict):
-            legacy_file_path = (
-                tool_input.get("file_path")
-                or tool_input.get("target_file")
-                or tool_input.get("path")
-            )
-
-        canonical_paths = input_data.get(
-            "canonical_edit_file_paths", input_data.get("canonical_file_paths")
-        )
-        if is_canonical_edit and isinstance(canonical_paths, list):
-            file_paths = list(
-                dict.fromkeys(path for path in canonical_paths if isinstance(path, str) and path)
-            )
-        else:
-            file_paths = [legacy_file_path] if isinstance(legacy_file_path, str) else []
+        file_paths = structured_edit_paths(input_data, is_canonical=is_canonical_edit)
 
         from gobby.workflows.task_claim_state import resolve_edit_pair
 
@@ -552,6 +643,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
             variables = variable_manager.get_variables(session_id)
             task_id = task_selected_at(variables, started_at) if started_at is not None else None
             for checkout_root, paths in paths_by_checkout.items():
+                # A path an overlapping call changed stays foreign, so this call does not claim it.
+                overlapped = overlapped_worktree_paths(variables, checkout_root)
+                paths = [path for path in paths if path not in overlapped]
                 if task_id is not None:
                     landed = self._paths_landed_before_edit(
                         variables, task_id, checkout_root, paths, edited_at
@@ -632,20 +726,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
             self.logger.debug("Failed to trigger code index update: %s", exc)
 
     def _mark_session_had_edits_if_claimed(self, session_id: str) -> None:
-        session_manager = self._session_manager
-        if self._task_manager is None or session_manager is None:
-            return
-        try:
-            claimed_tasks = self._task_manager.list_tasks(claimed_by_session_id=session_id)
-        except Exception as exc:
-            self.logger.debug(
-                "Failed to check claimed tasks for session %s: %s",
-                session_id,
-                exc,
-            )
-            return
-        if claimed_tasks:
-            session_manager.mark_had_edits(session_id)
+        mark_session_had_edits_if_claimed(
+            self._task_manager, self._session_manager, session_id, self.logger
+        )
 
     def _record_autonomous_tool_progress(
         self, event: HookEvent, session_id: str, tool_name: str

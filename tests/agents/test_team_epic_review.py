@@ -48,6 +48,12 @@ pytestmark = pytest.mark.unit
 _REAL_AGENT_BODY = _factory._load_agent_body
 
 
+def tree_of(binding: TeamBinding) -> Path:
+    """The team tree a binding names; these tests always admit a team with one."""
+    assert binding.worktree_path is not None
+    return Path(binding.worktree_path)
+
+
 @dataclass
 class EpicTeam:
     world: TeamWorld
@@ -75,7 +81,7 @@ class EpicTeam:
 
     def commit(self, task: Task, name: str) -> str:
         """Commit ``name`` in the epic tree and link it as ``task``'s latest commit."""
-        tree = Path(self.binding.worktree_path)
+        tree = tree_of(self.binding)
         (tree / name).write_text(f"# {name}\n")
         git_in(tree, "add", name)
         git_in(tree, "commit", "-m", f"[gobby-#{task.seq_num}] feat: {name}")
@@ -85,7 +91,7 @@ class EpicTeam:
 
     def link_tip(self) -> str:
         """Link the epic tree's tip to the epic, as the Dev Manager does before the epic review."""
-        sha = git_in(self.binding.worktree_path, "rev-parse", "HEAD")
+        sha = git_in(tree_of(self.binding), "rev-parse", "HEAD")
         link(self.db, self.epic, sha)
         return sha
 
@@ -375,7 +381,7 @@ async def test_blocked_leaf_holds_epic(world: TeamWorld) -> None:
     held_leaf = tasks.get_task(leaf.id)
     assert (held_leaf.parent_task_id, held_leaf.closed_at) == (epic.id, None)
     assert tasks.get_task(ready.id).commits == [sha]
-    assert git_in(team.binding.worktree_path, "rev-parse", "HEAD") == sha
+    assert git_in(tree_of(team.binding), "rev-parse", "HEAD") == sha
 
     tasks.close_task(outside.id, reason="done")
     assert not sync_epic_review(team.db, team.binding.team_id).held

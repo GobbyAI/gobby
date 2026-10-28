@@ -36,7 +36,6 @@ fn removed_wait_returns_tool_removed_with_python_contract_text() -> anyhow::Resu
             ("GOBBY_AGENT_RUN_ID", None),
             ("GOBBY_SESSION_ID", None),
             ("GOBBY_PROJECT_ID", None),
-            ("GOBBY_RELEASE_TOKEN", None),
         ],
         || -> anyhow::Result<()> {
             let dialer = Arc::new(Dialer::with_context(home.path(), Map::new())?);

@@ -38,6 +38,7 @@ EXPECTED_TAB = {
     "devteam": f"Dev Team - {TASK_REF}",
     "support": "Support",
     "team-planning": "Team Planning",
+    "research": "Research",
 }
 
 
@@ -110,6 +111,8 @@ def _placement_titles(placement: dict[str, Any]) -> tuple[str | None, str]:
         ("team-planning", "plan-writer", "Plan Writer"),
         ("team-planning", "plan-adversary", "Plan Adversary"),
         ("team-planning", "plan-enhancer", "Plan Enhancer"),
+        ("research", "researcher", "Researcher"),
+        ("research", "research-reviewer", "Research Reviewer"),
     ],
 )
 @pytest.mark.asyncio
