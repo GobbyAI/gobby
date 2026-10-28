@@ -163,9 +163,15 @@ class ReviewTeam:
     candidate: str
 
 
+def tree_of(binding: TeamBinding) -> Path:
+    """The team tree a binding names; these tests always admit a team with one."""
+    assert binding.worktree_path is not None
+    return Path(binding.worktree_path)
+
+
 def commit(db: HubDatabase, binding: TeamBinding, name: str, task: Task | None = None) -> str:
     """Commit ``name`` in the team tree and link it to ``task`` (default: the team's task)."""
-    tree = Path(binding.worktree_path)
+    tree = tree_of(binding)
     (tree / name).write_text(f"# {name}\n")
     git_in(tree, "add", name)
     git_in(tree, "commit", "-m", f"Add {name}")
@@ -416,7 +422,7 @@ async def test_claim_handoff_is_scoped_and_atomic(world: TeamWorld) -> None:
     assert holder() == writer
 
     # Uncommitted task-attributed work keeps the claim with its holder.
-    tree = Path(team.worktree_path)
+    tree = tree_of(team)
     (tree / "test_scroll.py").write_text("def test_scroll() -> None: ...\n")
     SessionVariableManager(db).merge_variables(
         writer,
@@ -557,7 +563,7 @@ async def test_hand_off_dirty_check_runs_off_the_event_loop(
     manager = seat(world, runbook, "dev-manager", manages=task)
     writer, developer = (seat(world, runbook, role) for role in ("test-writer", "developer"))
     tasks.claim_task(task.id, writer, force=True)
-    tree = Path(team.worktree_path)
+    tree = tree_of(team)
     (tree / "test_scroll.py").write_text("def test_scroll() -> None: ...\n")
     SessionVariableManager(world.case.db).merge_variables(
         writer,
@@ -974,7 +980,7 @@ async def test_relayed_candidate_for_unlinked_commit_is_refused(world: TeamWorld
     team = await team_in_review(world)
     reviewer_at_await(world.case.db, team.sol)
     # A real commit in the team tree that the claimant never linked to the task.
-    tree = Path(team.binding.worktree_path)
+    tree = tree_of(team.binding)
     (tree / "unlinked.py").write_text("# unlinked\n")
     git_in(tree, "add", "unlinked.py")
     git_in(tree, "commit", "-m", "Add unlinked")
@@ -997,7 +1003,8 @@ async def test_moot_task_reviewer_records_disposition_and_closes(world: TeamWorl
 
     Contract: ``EVENT=CANDIDATE TASK=#N RUN=run WT=tree DISPOSITION=moot NOTE=...`` stands in
     for ``COMMIT=<sha>`` and routes the reviewer to review. The reviewer records an approved
-    review with disposition moot, and the Dev Manager's closing record lets close_task succeed.
+    review with disposition moot. Only the Orchestrator closes a moot task; the Dev Manager's
+    close is refused.
     """
     team = await team_in_moot_review(world)
     db, task_id = world.case.db, team.task.id
@@ -1038,6 +1045,12 @@ async def test_moot_task_reviewer_records_disposition_and_closes(world: TeamWorl
     submit_moot(db, team.manager, task_id, "closing", 1)
     task_tools = create_task_registry(LocalTaskManager(db))
     with session_context_for_test(team.manager):
+        refused = await task_tools.call("close_task", {"task_id": task_id, "reason": "moot"})
+    assert refused["error"] == "no_work_close_orchestrator_only", refused
+    assert LocalTaskManager(db).get_task(task_id).closed_at is None
+    orchestrator = world.case.session("orchestrator")
+    SessionVariableManager(db).set_variable(orchestrator, "_agent_type", "orchestrator")
+    with session_context_for_test(orchestrator):
         closed = await task_tools.call("close_task", {"task_id": task_id, "reason": "moot"})
     assert closed.get("closed") is True, closed
     assert LocalTaskManager(db).get_task(task_id).closed_reason == "moot"

@@ -40,6 +40,18 @@ def world(
     )
 
 
+def tree_of(binding: TeamBinding) -> Path:
+    """The team tree a binding names; these tests always admit a team with one."""
+    assert binding.worktree_path is not None
+    return Path(binding.worktree_path)
+
+
+def tree_id_of(binding: TeamBinding) -> str:
+    """The team tree id a binding names; these tests always admit a team with one."""
+    assert binding.worktree_id is not None
+    return binding.worktree_id
+
+
 def new_task(
     world: TeamWorld, title: str, *, parent: Task | None = None, epic: bool = False
 ) -> Task:
@@ -74,8 +86,8 @@ async def test_epic_admission_names_and_mode(world: TeamWorld) -> None:
 
     branch = f"epic/{epic.seq_num}/main"
     assert team.branch == branch
-    assert Path(team.worktree_path).name == f"wt-epic-{epic.seq_num}-{SLUG}"
-    assert git_in(team.worktree_path, "branch", "--show-current") == branch
+    assert tree_of(team).name == f"wt-epic-{epic.seq_num}-{SLUG}"
+    assert git_in(tree_of(team), "branch", "--show-current") == branch
     assert team_record(world, runbook)["mode"] == "epic"
     assert world.task_branches() == []
 
@@ -83,7 +95,7 @@ async def test_epic_admission_names_and_mode(world: TeamWorld) -> None:
     bare = new_task(world, "!!! ???", epic=True)
     new_task(world, LEAF_TITLE, parent=bare)
     bare_team = await world.admit(world.child(bare), bare)
-    assert Path(bare_team.worktree_path).name == f"wt-epic-{bare.seq_num}"
+    assert tree_of(bare_team).name == f"wt-epic-{bare.seq_num}"
     assert bare_team.branch == f"epic/{bare.seq_num}/main"
 
     # A leaf under an unadmitted epic, and an epic with no open descendants, stay single-task.
@@ -147,7 +159,7 @@ async def test_overlapping_admissions_refused(world: TeamWorld) -> None:
     assert claimed.id in str(refusal)
 
     # Refusals created nothing: only the two admitted teams own trees.
-    assert sorted(world.tree_ids()) == sorted([leaf_team.worktree_id, epic_team.worktree_id])
+    assert sorted(world.tree_ids()) == sorted([tree_id_of(leaf_team), tree_id_of(epic_team)])
 
 
 @pytest.mark.asyncio

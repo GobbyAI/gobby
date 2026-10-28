@@ -32,6 +32,18 @@ from tests.fixtures.team_case import (
 pytestmark = pytest.mark.unit
 
 
+def tree_of(binding: TeamBinding) -> Path:
+    """The team tree a binding names; these tests always admit a team with one."""
+    assert binding.worktree_path is not None
+    return Path(binding.worktree_path)
+
+
+def tree_id_of(binding: TeamBinding) -> str:
+    """The team tree id a binding names; these tests always admit a team with one."""
+    assert binding.worktree_id is not None
+    return binding.worktree_id
+
+
 @pytest.fixture
 def world(
     temp_db: HubDatabase,
@@ -67,8 +79,8 @@ async def test_idempotent_team_admission(world: TeamWorld) -> None:
         branch,
         "trunk",
     )
-    assert Path(team.worktree_path).name == branch
-    assert git_in(team.worktree_path, "branch", "--show-current") == branch
+    assert tree_of(team).name == branch
+    assert git_in(tree_of(team), "branch", "--show-current") == branch
     assert world.task_branches() == [branch]
     assert world.tree_ids() == [team.worktree_id]
 
@@ -97,7 +109,7 @@ async def test_replacement_stays_in_admitted_team(world: TeamWorld) -> None:
     task = world.case.task(TITLE)
     original = world.child(task)
     team = await world.admit(original, task)
-    tree = Path(team.worktree_path)
+    tree = tree_of(team)
     (tree / "work.txt").write_text("committed by the developer\n")
     git_in(tree, "add", "work.txt")
     git_in(tree, "commit", "-m", "developer work")
@@ -179,7 +191,7 @@ async def test_team_binding_cannot_drift(world: TeamWorld, tmp_path: Path) -> No
     joined = await world.spawn(owner, project_path=team.worktree_path)
     assert joined["success"] is True, joined
     assert world.task_branches() == [team.branch]
-    assert sorted(world.tree_ids()) == sorted([team.worktree_id, elsewhere.id])
+    assert sorted(world.tree_ids()) == sorted([tree_id_of(team), elsewhere.id])
 
 
 async def test_team_tree_is_pinned_for_code_index(
@@ -197,10 +209,10 @@ async def test_team_tree_is_pinned_for_code_index(
     team = await world.admit(world.child(task), task)
 
     # `gcode pin` copies the ancestor's selectors at the marker's base commit.
-    marker = json.loads((Path(team.worktree_path) / ".gobby" / "isolation.json").read_text())
+    marker = json.loads((tree_of(team) / ".gobby" / "isolation.json").read_text())
     assert Path(marker["ancestor_checkout_path"]).resolve() == Path(world.case.repo).resolve()
-    assert marker["base_commit"] == git_in(team.worktree_path, "rev-parse", "HEAD")
-    pin.assert_awaited_once_with(Path(team.worktree_path))
+    assert marker["base_commit"] == git_in(tree_of(team), "rev-parse", "HEAD")
+    pin.assert_awaited_once_with(tree_of(team))
 
 
 async def test_team_tree_pin_failure_still_admits(
@@ -214,7 +226,7 @@ async def test_team_tree_pin_failure_still_admits(
 
     team = await world.admit(world.child(task), task)
 
-    assert git_in(team.worktree_path, "branch", "--show-current") == team.branch
+    assert git_in(tree_of(team), "branch", "--show-current") == team.branch
     assert world.tree_ids() == [team.worktree_id]
 
 
@@ -237,7 +249,7 @@ async def test_short_team_id_resolves_or_names_the_full_uuid(world: TeamWorld) -
 
 async def _land_team_commit(world: TeamWorld, task: Task, team: TeamBinding, name: str) -> str:
     """Commit ``name`` in the team tree and land that commit on ``task``."""
-    tree = Path(team.worktree_path)
+    tree = tree_of(team)
     (tree / name).write_text(f"{name}\n")
     git_in(tree, "add", name)
     git_in(tree, "commit", "-m", f"Add {name}")
@@ -258,7 +270,7 @@ async def test_landed_open_task_keeps_its_team_tree_admissible(world: TeamWorld)
     assert LocalTaskManager(world.case.db).get_task(task.id).closed_at is None
 
     # The team keeps working after the landing, so its HEAD holds a commit the landing lacks.
-    tree = Path(team.worktree_path)
+    tree = tree_of(team)
     (tree / "follow_up.txt").write_text("follow-up after the landing\n")
     git_in(tree, "add", "follow_up.txt")
     git_in(tree, "commit", "-m", "Follow-up after the landing")
