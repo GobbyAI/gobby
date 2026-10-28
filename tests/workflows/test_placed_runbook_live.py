@@ -1469,12 +1469,28 @@ def _production_override_keys(env_names: set[str], has_temp_dir: bool) -> set[st
     return {item.partition("=")[0] for item in _codex_runtime_config_overrides(temp_dir, identity)}
 
 
+def _launch_record_path(home: Path) -> Path:
+    """Where the steward codex wrapper writes its record: inside Codex's log directory."""
+    return home / "providers" / "codex" / "log" / STEWARD_LAUNCH_RECORD
+
+
+def _prepare_launch_record_dir(home: Path) -> Path:
+    """Make the record's directory. Call it after _link_codex_auth, which makes providers/codex.
+
+    No parents are created here: a missing parent means the auth link was skipped, and that
+    must fail at once rather than leave providers with the wrong mode.
+    """
+    path = _launch_record_path(home)
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    return path
+
+
 def _launch_record(home: Path) -> dict[str, Any]:
     """The steward codex's record, compared with the keys the daemon's spawn builder gives.
 
     A key in ``production_overrides_missing`` is one the steward's codex did not inherit.
     """
-    path = home / "providers" / "codex" / "log" / STEWARD_LAUNCH_RECORD
+    path = _launch_record_path(home)
     if not path.exists():
         return {"missing": str(path)}
     overrides: set[str] = set()
@@ -1564,8 +1580,8 @@ def steward_rig(
     path, _ = curated_path(root, [])
     codex_dir = root / "codex"
     codex_dir.mkdir()
-    launch_record = home / "providers" / "codex" / "log" / STEWARD_LAUNCH_RECORD
-    launch_record.parent.mkdir(parents=True, exist_ok=True)
+    # Its directory is made by steward_live, after the auth link has made providers.
+    launch_record = _launch_record_path(home)
     # The real codex behind a wrapper that records its inheritance and adds STEWARD_CODEX_FLAGS last.
     wrapper = codex_dir / "codex"
     wrapper.write_text(
@@ -1691,6 +1707,7 @@ def steward_live(
     )
     try:
         _link_codex_auth(home)
+        _prepare_launch_record_dir(home)
         state.evidence["codex_trust"] = _trust_codex_checkout(home, checkout)
         # Before any seat spawns: the config Codex reads, as the rig seeded it.
         before = _snapshot_codex_config(home, evidence_dir, request.node.name, "before")

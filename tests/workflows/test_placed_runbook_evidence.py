@@ -24,7 +24,9 @@ from tests.workflows.test_placed_runbook_live import (
     _has_terminal_text,
     _kept,
     _launch_record,
+    _link_codex_auth,
     _LiveOutputPoller,
+    _prepare_launch_record_dir,
     _preserve_steward_screen,
     _settled_screen,
     _steward_session,
@@ -297,3 +299,28 @@ def test_the_steward_screen_settles_only_once_the_composer_shows_and_stops_chang
     assert _settled_screen(live, "child-9", pause=0) is None
     assert _settled_screen(live, "child-9", pause=0) == "› ready"
     assert _settled_screen(live, "child-9", pause=0) is None
+
+
+def test_the_launch_record_dir_is_made_after_the_auth_link_and_the_link_still_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A placeholder source, so no operator login is read or copied.
+    source = tmp_path / "codex-source"
+    source.mkdir(mode=0o700)
+    (source / "auth.json").write_text("{}", encoding="utf-8")
+    (source / "auth.json").chmod(0o600)
+    monkeypatch.setenv("CODEX_HOME", str(source))
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+
+    _link_codex_auth(home)
+    record = _prepare_launch_record_dir(home)
+
+    assert record == home / "providers" / "codex" / "log" / STEWARD_LAUNCH_RECORD
+    assert record.parent.is_dir()
+    assert (home / "providers" / "codex" / "auth.json").is_symlink()
+    assert (home / ".codex").is_symlink()
+    assert (home / "providers").stat().st_mode & 0o777 == 0o700
+    # Before the link, providers does not exist: the record dir must fail rather than make it.
+    with pytest.raises(FileNotFoundError):
+        _prepare_launch_record_dir(tmp_path / "unlinked")
