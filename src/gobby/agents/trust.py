@@ -23,11 +23,13 @@ import threading
 import tomllib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import psycopg
 import tomlkit
+import yaml
 from tomlkit.items import Table
 from tomlkit.toml_document import TOMLDocument
 
@@ -349,15 +351,6 @@ def _seed_codex_trust(
     result.add_file_written(config_path)
 
 
-# Codex models Gobby launches by default. They ship with the package, so a fresh Codex
-# home is seeded with no daemon, no checkout and no active policy. The daemon adds the
-# active project policy's models at spawn and resume (``active_codex_launch_models``).
-_PACKAGED_CODEX_LAUNCH_MODELS: tuple[str, ...] = (
-    "gpt-5.6-sol",
-    "gpt-6-luna",
-    "gpt-6.1-sol",
-    "gpt-6.1-terra",
-)
 _PROJECT_POLICY_RULE = "project-operating-policy"
 
 
@@ -377,6 +370,31 @@ def codex_model_ids_in_policy(defaults: Any) -> set[str]:
             provider = defaults.get(str(key).removesuffix("model") + "provider")
             if provider == "codex" or (provider in (None, "inherit") and value.startswith("gpt-")):
                 models.add(value)
+    return models
+
+
+def packaged_codex_launch_models() -> set[str]:
+    """Derive install seeds from shipped launch data and bundled agent definitions.
+
+    The launch data snapshots the project's launch defaults for first-install
+    seeding only. It is outside the rule templates and never syncs into the DB.
+    Runtime policy continues to come from the active project rule.
+    """
+    from gobby.agents.sync import get_bundled_agents_path
+
+    models: set[str] = set()
+    defaults = files("gobby").joinpath("data/codex_launch_defaults.json")
+    try:
+        models.update(codex_model_ids_in_policy(json.loads(defaults.read_text(encoding="utf-8"))))
+    except (OSError, ValueError):
+        logger.warning("Could not read packaged Codex launch defaults", exc_info=True)
+    for path in get_bundled_agents_path().glob("*.yaml"):
+        try:
+            definition = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            logger.warning("Could not read bundled agent defaults from %s", path, exc_info=True)
+            continue
+        models.update(codex_model_ids_in_policy(definition))
     return models
 
 
@@ -419,7 +437,7 @@ def _codex_first_run_tui_pending(
     pending: list[tuple[str, str, Any]] = []
     nux_entries = [
         ("tui.model_availability_nux", model, 4)
-        for model in sorted({*_PACKAGED_CODEX_LAUNCH_MODELS, *codex_models})
+        for model in sorted(packaged_codex_launch_models().union(codex_models))
     ]
     for table, key, value in (*_CODEX_FIRST_RUN_TUI, *nux_entries):
         section: Any = parsed

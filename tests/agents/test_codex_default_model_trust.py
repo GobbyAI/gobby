@@ -63,6 +63,7 @@ def test_launch_defaults_are_in_built_wheel(
         {
             "name": "gobby-data-check",
             "version": "0.0.0",
+            "script_name": "setup.py",
             "packages": ["gobby"],
             "package_dir": {"": "src"},
             "package_data": config["tool"]["setuptools"]["package-data"],
@@ -146,9 +147,11 @@ def test_packaged_codex_models_seed_without_checkout_or_policy_row(
 
     assert result["success"] is True
     config = tomllib.loads((tmp_path / ".codex/config.toml").read_text())
-    assert config["tui"]["model_availability_nux"] == dict.fromkeys(
-        _codex_models(json.loads(_packaged_defaults_path().read_text())), 4
-    )
+    models = _codex_models(json.loads(_packaged_defaults_path().read_text()))
+    agents = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents"
+    for path in agents.glob("*.yaml"):
+        models.update(_codex_models(yaml.safe_load(path.read_text())))
+    assert config["tui"]["model_availability_nux"] == dict.fromkeys(models, 4)
 
 
 def test_new_bundled_agent_model_is_seeded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

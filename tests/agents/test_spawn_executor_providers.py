@@ -357,6 +357,7 @@ async def test_codex_spawn_uses_sandbox_effective_cache_paths(
     result = await prepare_codex_spawn(request)
 
     assert isinstance(result, ProviderSpawnPlan)
+    assert request.run_manager is not None
     live_models.assert_called_once_with(request.run_manager.db, request.project_id)
     seed_trust.assert_called_once_with("codex", request.cwd, ("gpt-future-policy",))
     config = tomllib.loads("\n".join(build_command.call_args.kwargs["config_overrides"]))
