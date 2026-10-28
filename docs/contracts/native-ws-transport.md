@@ -227,9 +227,10 @@ When a publisher is attached:
   mode, because the broker may still have subscribers.
 - `WebSocketServer.stop()` drains terminals before `publisher.stop()`, so no fanout
   starts after the stop.
-- Each publish POST carries at most 1 MiB of encoded operations (`MAX_BATCH_BYTES`), so
-  the body finishes inside the 2 s `REQUEST_TIMEOUT`. The 128 MiB publish limit above is
-  gdaemon's bound.
+- Each publish POST carries at most 1 MiB of encoded operations (`MAX_BATCH_BYTES`). This
+  bounds each request's latency under the 2 s `REQUEST_TIMEOUT`; it is a mitigation, not
+  a demonstrated cause of the timeouts. A failed publish logs its batch size and elapsed
+  time. The 128 MiB publish limit above is gdaemon's bound.
 
 Python-only mode (no publisher) is unchanged.
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import time
 from collections import deque
 from collections.abc import Callable, Coroutine, Iterable, Sequence
 from dataclasses import dataclass
@@ -26,9 +27,9 @@ logger = logging.getLogger(__name__)
 MAX_RETAINED_BYTES = 128 * 1024 * 1024
 MAX_RETAINED_OPS = 65_536
 MAX_WAITING_FUTURES = 65_536
-# REQUEST_TIMEOUT covers the whole POST, body upload included, so a request sized by the
-# retained budget alone can miss it after a stall queued output. Requests stop at this
-# size or the retained budget, whichever is smaller; one operation larger than the limit
+# Mitigation, not a demonstrated root cause of the first publish timeout. REQUEST_TIMEOUT
+# covers the whole POST, body upload included, so a backlog sized by the retained budget
+# can exceed it. Capping each POST bounds its latency; one operation larger than the limit
 # still goes alone.
 MAX_BATCH_BYTES = 1024 * 1024
 
@@ -272,6 +273,7 @@ class NativePublisher:
             logger.warning("Native WS publish has no supervisor write token")
             return False
         body = _request_body(generation, [op.encoded for op in batch])
+        started = time.monotonic()
         try:
             response = await asyncio.wait_for(
                 self._client.post(
@@ -280,7 +282,15 @@ class NativePublisher:
                 REQUEST_TIMEOUT,
             )
         except (httpx.HTTPError, TimeoutError) as exc:
-            logger.warning("Native WS publish failed for generation %s: %r", generation, exc)
+            logger.warning(
+                "Native WS publish failed for generation %s after %.2fs with %d ops and "
+                "%d body bytes: %r",
+                generation,
+                time.monotonic() - started,
+                len(batch),
+                len(body),
+                exc,
+            )
             return False
         if response.status_code != 204:
             logger.warning(
