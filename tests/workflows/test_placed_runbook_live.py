@@ -15,16 +15,18 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from unittest import mock
 from uuid import uuid4
 
@@ -148,6 +150,16 @@ CLAUDE_ONLY_SCHEDULERS = ("CronList", "CronCreate", "CronDelete")
 CODEX_STATE_FILES = ("logs_2.sqlite", "logs_2.sqlite-wal", "logs_2.sqlite-shm", "history.jsonl")
 # Codex's debug text log, kept in the evidence log tree: a seat that dies should show its cause there.
 CODEX_RUST_LOG = "codex_core=debug,codex_tui=debug"
+# Diagnostic run: the steward's codex argv adds these ahead of the seat's own arguments.
+STEWARD_CODEX_FLAGS = (
+    "-c",
+    "features.responses_websockets=false",
+    "-c",
+    "features.responses_websockets_v2=false",
+)
+# The steward's terminal is read this often while its run is live, so a death message is kept.
+LIVE_OUTPUT_POLL_SECONDS = 0.5
+_EXCERPT_HEADER = re.compile(r"^--- Last \d+ lines of terminal output ---\s*$", re.MULTILINE)
 # Pages of a run's stored capture kept as evidence; the bound stops a runaway offset loop.
 _CAPTURE_PAGE_LIMIT = 200
 
@@ -1330,6 +1342,93 @@ def _with_codex_debug_log(env: dict[str, str]) -> dict[str, str]:
     return {**env, "RUST_LOG": CODEX_RUST_LOG}
 
 
+def _codex_argv_wrapper(codex: str, flags: tuple[str, ...]) -> str:
+    """A shell script that runs the real codex with flags ahead of the caller's own arguments."""
+    leading = " ".join(shlex.quote(flag) for flag in flags)
+    return f'#!/bin/sh\nexec {shlex.quote(codex)} {leading} "$@"\n'
+
+
+def _has_terminal_text(text: str) -> bool:
+    """A live-output read carries terminal text beyond its header line."""
+    return bool(_EXCERPT_HEADER.sub("", text).strip())
+
+
+class _LiveReader(Protocol):
+    """The two calls a live-output poll makes on its own MCP client."""
+
+    def call_tool(self, server: str, tool: str, arguments: dict[str, Any], /) -> Any: ...
+
+    def close(self) -> None: ...
+
+
+def _own_client(daemon_url: str, token: str, session_id: str) -> MCPTestClient:
+    """A client for the poll thread. The test thread's client is never shared across threads."""
+    client = MCPTestClient(daemon_url, token)
+    client.session_id = session_id
+    return client
+
+
+class _LiveOutputPoller:
+    """Reads the steward's live terminal while its run is live and keeps the last read with text.
+
+    The post-exit capture is always empty, so this poll is the only copy of a death message.
+    """
+
+    def __init__(
+        self,
+        open_client: Callable[[], _LiveReader],
+        evidence: dict[str, Any],
+        stop_event: threading.Event,
+        interval: float = LIVE_OUTPUT_POLL_SECONDS,
+    ) -> None:
+        self.open_client = open_client
+        self.evidence = evidence
+        self.stop_event = stop_event
+        self.interval = interval
+        self.polls = 0
+        self.last_nonempty: str | None = None
+        self.error: str | None = None
+        self.thread = threading.Thread(target=self._run, name="steward-live-output", daemon=True)
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        if self.thread.ident is not None:
+            self.thread.join(timeout=10)
+
+    def record(self) -> dict[str, Any]:
+        return {
+            "polls": self.polls,
+            "last_nonempty": self.last_nonempty,
+            "error": self.error,
+            "stopped": not self.thread.is_alive(),
+        }
+
+    def _run(self) -> None:
+        reader = self.open_client()
+        try:
+            while not self.stop_event.wait(self.interval):
+                run = self.evidence.get("recovery_steward", {}).get("run")
+                if not run:
+                    continue
+                try:
+                    reply = reader.call_tool(
+                        "gobby-agents", "get_agent_live_output", {"run_id": str(run)}
+                    )
+                except Exception as exc:
+                    # A refused read is evidence too, and the next poll still runs.
+                    self.error = f"{type(exc).__name__}: {exc}"
+                    continue
+                self.polls += 1
+                text = reply.get("result") if isinstance(reply, dict) else None
+                if isinstance(text, str) and _has_terminal_text(text):
+                    self.last_nonempty = text
+        finally:
+            reader.close()
+
+
 @pytest.fixture
 def steward_rig(
     postgres_db: HubDatabase,
@@ -1350,7 +1449,10 @@ def steward_rig(
     path, _ = curated_path(root, [])
     codex_dir = root / "codex"
     codex_dir.mkdir()
-    (codex_dir / "codex").symlink_to(codex)
+    # The real codex behind a wrapper that adds STEWARD_CODEX_FLAGS ahead of the seat's argv.
+    wrapper = codex_dir / "codex"
+    wrapper.write_text(_codex_argv_wrapper(codex, STEWARD_CODEX_FLAGS), encoding="utf-8")
+    wrapper.chmod(0o755)
     path = os.pathsep.join([str(codex_dir), path])
     monkeypatch.setenv("PATH", path)
     barrier = Barrier(root / "barrier")
@@ -1442,6 +1544,8 @@ def steward_live(
         "codex_home_env": os.environ.get("CODEX_HOME"),
         # Diagnostic: the Codex debug log level the terminal host was started with.
         "codex_rust_log": CODEX_RUST_LOG,
+        # Diagnostic: the flags the steward's codex wrapper adds ahead of the seat's argv.
+        "codex_flags": list(STEWARD_CODEX_FLAGS),
         # Orchestrator ruling, relayed by the Dev Manager (37976ed8): option (a).
         "codex_auth": {"ruling": "option (a): link the existing login; no sign-in"},
     }
@@ -1460,6 +1564,12 @@ def steward_live(
         "Support",
     )
     evidence_dir = _evidence_dir(tmp_path)
+    poll_stop = threading.Event()
+    poller = _LiveOutputPoller(
+        partial(_own_client, steward_daemon.http_url, token, str(coordinator["id"])),
+        evidence,
+        poll_stop,
+    )
     try:
         _link_codex_auth(home)
         state.evidence["codex_trust"] = _trust_codex_checkout(home, checkout)
@@ -1469,8 +1579,12 @@ def steward_live(
         _until(lambda: _startup_ready(client), 120, "initial daemon recovery")
         state.evidence["checkout_mode"] = _assert_isolated(state)
         state.evidence["host"] = _assert_adopted(state)
+        poller.start()
         yield state
     finally:
+        # Stopped before any copy, so the last reads come from a terminal that still exists.
+        poller.stop()
+        state.evidence["steward_live_output"] = poller.record()
         cleanup: dict[str, Any] = {}
         state.evidence["cleanup"] = cleanup
         try:

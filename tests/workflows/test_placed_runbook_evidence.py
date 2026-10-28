@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -12,8 +14,12 @@ import pytest
 
 from tests.workflows.test_placed_runbook_live import (
     CODEX_RUST_LOG,
+    STEWARD_CODEX_FLAGS,
     Live,
+    _codex_argv_wrapper,
+    _has_terminal_text,
     _kept,
+    _LiveOutputPoller,
     _preserve_steward_screen,
     _with_codex_debug_log,
 )
@@ -105,3 +111,79 @@ def test_the_steward_host_env_asks_codex_for_its_debug_log() -> None:
 
     assert env == {"PATH": "/bin", "RUST_LOG": CODEX_RUST_LOG}
     assert base == {"PATH": "/bin", "RUST_LOG": "info"}
+
+
+@pytest.mark.parametrize(
+    ("text", "has_text"),
+    [
+        ("--- Last 20 lines of terminal output ---", False),
+        ("--- Last 20 lines of terminal output ---\n\n  \n", False),
+        ("--- Last 20 lines of terminal output ---\nCodex exited", True),
+    ],
+)
+def test_a_live_read_has_terminal_text_only_past_its_header(text: str, has_text: bool) -> None:
+    assert _has_terminal_text(text) is has_text
+
+
+class _ScriptedReader:
+    """Answers from its script; the last reply sets the stop event, so the poll loop ends."""
+
+    def __init__(self, replies: list[Any], stop: threading.Event) -> None:
+        self.replies = replies
+        self.stop = stop
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+        self.closed = False
+
+    def call_tool(self, server: str, tool: str, arguments: dict[str, Any], /) -> Any:
+        self.calls.append((server, tool, arguments))
+        reply = self.replies.pop(0)
+        if not self.replies:
+            self.stop.set()
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_live_output_poller_keeps_the_last_read_with_terminal_text() -> None:
+    header = "--- Last 20 lines of terminal output ---"
+    stop = threading.Event()
+    reader = _ScriptedReader(
+        [
+            {"success": True, "result": header},
+            {"success": True, "result": f"{header}\nCodex exited"},
+            {"success": True, "result": header},
+            RuntimeError("daemon refused the read"),
+        ],
+        stop,
+    )
+    poller = _LiveOutputPoller(lambda: reader, {"recovery_steward": {"run": "run-9"}}, stop, 0)
+
+    poller.start()
+    poller.stop()
+
+    assert poller.record() == {
+        "polls": 3,
+        "last_nonempty": f"{header}\nCodex exited",
+        "error": "RuntimeError: daemon refused the read",
+        "stopped": True,
+    }
+    assert reader.calls[0] == ("gobby-agents", "get_agent_live_output", {"run_id": "run-9"})
+    assert reader.closed
+
+
+def test_the_steward_codex_wrapper_runs_the_real_codex_with_its_flags_first(tmp_path: Path) -> None:
+    real = tmp_path / "real codex"
+    real.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n', encoding="utf-8")
+    real.chmod(0o755)
+    wrapper = tmp_path / "codex"
+    wrapper.write_text(_codex_argv_wrapper(str(real), STEWARD_CODEX_FLAGS), encoding="utf-8")
+    wrapper.chmod(0o755)
+
+    result = subprocess.run(
+        [str(wrapper), "exec", "hello world"], capture_output=True, text=True, check=True
+    )
+
+    assert result.stdout.splitlines() == [*STEWARD_CODEX_FLAGS, "exec", "hello world"]
