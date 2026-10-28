@@ -48,7 +48,10 @@ leaves keep their scope; this plan touches neither.
    rules, the server registry and tool-inventory cache, `$secret` resolution,
    browser policy, metrics, untrusted-value cleaning, result offload and
    paging, and per-tool timeouts. The Rust pool receives a fully resolved
-   server spec and runs only the protocol.
+   server spec and runs only the protocol. Resolved header and env values are
+   secrets: Python, gdaemon and the node never log them, return them in
+   status, or echo them in errors, and `ServerSpec`'s `Debug` prints only
+   header names and env keys. gmcp never sees a spec.
 4. **OAuth and dynamic client registration stay in Python.** The interactive
    login (`gobby mcp auth`, `authorize_server`) keeps using the Python MCP SDK
    on the operator's machine. Storage, keepalive refresh, advisory locks and
@@ -93,8 +96,9 @@ leaves keep their scope; this plan touches neither.
    then sends SIGKILL. Disconnect, idle close and `Pool::shutdown` signal the
    group the same way. This replaces the Python psutil supervisor for MCP, and
    `src/gobby/utils/child_supervisor.py` stays for its ACP user. Windows
-   compiles with process-wrap's `JobObject`. Its runtime proof belongs to the
-   1.0 Windows work, per Josh's ruling.
+   compiles with process-wrap's `JobObject`, and a Windows Rust CI job proves
+   that compile. Its runtime proof belongs to the 1.0 Windows work, per Josh's
+   ruling.
    - Rejected: supervising only browser hooks, as Python does. An npx launch is
      already a launcher plus a child, so one rule for every server is simpler
      and closes the same orphan path.
@@ -224,6 +228,14 @@ Targets:
     (Decision 8) and `Pool::shutdown`. Requests use rmcp's
     `send_cancellable_request`, and a cancel or deadline calls the handle's
     `cancel`.
+  - The public Rust surface, which #24884 consumes without HTTP, is
+    `Pool::new`, `Pool::request(McpRequest) -> McpReply`,
+    `Pool::cancel(call_id) -> bool`, `Pool::disconnect`, `Pool::status` and
+    `Pool::shutdown`, plus the `wire` types. `Pool` stays one concrete type,
+    and the route is a thin adapter over it.
+  - `ServerSpec` implements `Debug` by hand (Decision 3). `Pool::status`
+    reports each connection's id, transport, connected flag and in-flight
+    count, never spec values.
   - `stdio.rs` launches the spec's command, args and env as given; 1.2 adds the
     launch environment.
   - `internal_api.rs` serves `POST /api/internal/mcp/request`,
@@ -237,15 +249,15 @@ Targets:
   - The fixture binary `gdaemon-mcp-fixture` (`[[bin]]` with
     `required-features = ["mcp-fixture"]`, never built in release) is an rmcp
     stdio server. Its tools are `echo`, `whoami` (pid, ppid and `GOBBY_HOME`),
-    `sleep` (records receipt of `notifications/cancelled` to a marker file),
-    `big` and `spawn_grandchild`.
+    `getenv`, `sleep` (records receipt of `notifications/cancelled` to a
+    marker file), `big` and `spawn_grandchild`.
 - Planned verification:
   `cargo nextest run -p gobby-daemon --features mcp-fixture --test mcp_client`
   and `cargo fmt -p gobby-daemon -- --check`.
 
 **Granularity:** One lifecycle owner, the pool. Its route, wire types and
-fixture are the minimum needed to test it; eight acceptance items cover its
-transitions.
+fixture are the minimum needed to test it; nine acceptance items cover its
+transitions and its direct Rust surface.
 
 **Acceptance:**
 
@@ -256,7 +268,8 @@ transitions.
 - 1.1.5 - A connection found closed before sending reconnects once; a transport failure after sending answers `transport_closed` and the fixture records one call. test: `crates/gdaemon/tests/mcp_client.rs::no_replay_after_send`.
 - 1.1.6 - Non-loopback peers, a wrong or missing secret, and every request on the Node door get 404 before the body is read. test: `crates/gdaemon/tests/mcp_client.rs::route_admits_only_loopback_backend_secret`.
 - 1.1.7 - `Pool::shutdown` leaves no fixture process alive. test: `crates/gdaemon/tests/mcp_client.rs::shutdown_reaps_every_server`.
-- 1.1.8 - The contract documents the route, wire types, error codes and pool policy. behavior: "circuit_open" in `docs/contracts/mcp-multiplexer.md`.
+- 1.1.8 - The contract documents the public `Pool` API, the route, wire types, error codes and pool policy. behavior: "Pool::request" in `docs/contracts/mcp-multiplexer.md`.
+- 1.1.9 - An integration test drives `Pool::request` and `Pool::cancel` against the stdio fixture with no HTTP route, as #24884 will. test: `crates/gdaemon/tests/mcp_client.rs::pool_api_serves_without_route`.
 
 ### 1.2 Stdio launch environment and orphan-proof supervision [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -272,9 +285,15 @@ Targets:
 - `crates/gdaemon/assets/browser-loopback.json`
 - `crates/gdaemon/tests/mcp_client_stdio.rs`
 - `docs/contracts/mcp-multiplexer.md`
+- `.github/workflows/rust-ci.yml`
 - `src/gobby/install/version_pins.py::*` — scope-reason: bump the gdaemon pin
 
 **Research context:**
+- Observed: `.github/workflows/rust-ci.yml` cross-lints only `gobby-terminal`
+  for `x86_64-pc-windows-msvc`. `gobby-daemon` pulls `openssl-sys` and `ring`
+  for that target, so a cross lint from the Linux runner cannot build it.
+  `release-gdaemon.yml` builds it natively on `windows-latest`, but only on a
+  release tag.
 - Observed: `src/gobby/mcp_proxy/transports/stdio.py::StdioTransportConnection._open_transport`
   does four things on the executing machine:
   - runs `bundled.py::resolve_runtime_stdio_args`;
@@ -302,8 +321,13 @@ Targets:
   - `supervise.rs` implements `gdaemon mcp-child -- <argv>` per Decision 7, and
     `stdio.rs` runs every server through it, using `current_exe()`.
   - Stderr appends to `<gobby_home>/logs/mcp-servers.log`.
+  - `rust-ci.yml` gains a `windows-latest` job, "Clippy (gobby-daemon,
+    Windows)", running
+    `cargo clippy -p gobby-daemon --target x86_64-pc-windows-msvc -- -D warnings`.
+    It is compile-only; the runtime orphan proof stays deferred.
 - Planned verification:
-  `cargo nextest run -p gobby-daemon --features mcp-fixture --test mcp_client_stdio`.
+  `cargo nextest run -p gobby-daemon --features mcp-fixture --test mcp_client_stdio`
+  and the new Windows job passing on the leaf's pushed commit.
 
 **Acceptance:**
 
@@ -312,6 +336,7 @@ Targets:
 - 1.2.3 - SIGKILL of the process that owns the pool leaves no server or grandchild alive within 10 seconds. test: `crates/gdaemon/tests/mcp_client_stdio.rs::owner_death_reaps_server_group`.
 - 1.2.4 - Disconnect and idle close terminate the whole group, grandchild included. test: `crates/gdaemon/tests/mcp_client_stdio.rs::disconnect_reaps_grandchildren`.
 - 1.2.5 - Server stderr lands in the MCP server log. test: `crates/gdaemon/tests/mcp_client_stdio.rs::stderr_reaches_server_log`.
+- 1.2.6 - Rust CI type-checks gdaemon, including the `JobObject` launch path, for `x86_64-pc-windows-msvc` on a Windows runner. behavior: "Clippy (gobby-daemon, Windows)" in `.github/workflows/rust-ci.yml`.
 
 ### 1.3 Streamable HTTP and SSE transports [category: code] (depends: 1.2)
 `kind: deliverable`
@@ -349,6 +374,7 @@ Targets:
 - 1.3.1 - Streamable HTTP lists and calls tools with the spec's headers. test: `crates/gdaemon/tests/mcp_client_http.rs::streamable_http_round_trip_sends_headers`.
 - 1.3.2 - Legacy SSE lists and calls tools through the advertised endpoint. test: `crates/gdaemon/tests/mcp_client_http.rs::legacy_sse_round_trip`.
 - 1.3.3 - A 401 answers `unauthorized` with the server's `WWW-Authenticate`, and the next request with a new bearer reconnects. test: `crates/gdaemon/tests/mcp_client_http.rs::unauthorized_is_typed_and_new_bearer_reconnects`.
+- 1.3.4 - A sentinel bearer header and a sentinel stdio env value reach their fixtures (`getenv` for stdio) and appear in no captured gdaemon log line, status reply, error reply or `ServerSpec` `Debug` output, including after a 401 and a failed connect. test: `crates/gdaemon/tests/mcp_client_http.rs::spec_secrets_stay_out_of_status_errors_and_logs`.
 
 ## P2: Python delegation
 `kind: framing`
@@ -501,8 +527,21 @@ Targets:
     connection-level ones: `connections`, `get_client`,
     `get_client_session`, `ensure_connected`, `_connect_server`,
     `get_lazy_connection_states`, `health_check_all`, `get_server_health`,
-    `_monitor_health` and `_reconnect`. `get_health_report` reads
-    `GET /api/internal/mcp/status`.
+    `_monitor_health` and `_reconnect`.
+  - The kept lifecycle methods map onto 1.1's routes with no second
+    lifecycle layer:
+    - `remove_server`, `set_server_enabled` with `enabled=False` and a
+      config-changing `update_server` post `disconnect {id}` at once, so the
+      old process or connection does not wait for idle close.
+    - `disconnect_server` posts `disconnect {id}`, and `disconnect_all`
+      posts `disconnect {all: true}`.
+    - `is_connected` reads the last reply's `connected` flag and turns false
+      after a disconnect.
+    - `connect_all` registers the configs and warms each
+      `preconnect_servers` entry with one `list_tools`.
+    - `get_health_report` reads `GET /api/internal/mcp/status`.
+  - `McpBackend` logs and raised errors carry the server id, error code and
+    backend message, never resolved header or env values (Decision 3).
   - `_list_external_server_tools` calls `mcp_manager.list_tools(server_name)`
     within its existing deadline.
   - `enforce_browser_call` runs in `MCPClientManager.call_tool` before
@@ -517,7 +556,7 @@ Targets:
 
 **Granularity:** Seventeen production files are edited or created and fourteen
 are deleted, but they form one replacement: the transport layer and every
-consumer of its removed API. The five acceptance items are the behaviors of
+consumer of its removed API. The seven acceptance items are the behaviors of
 that one seam. Splitting the deletion from delegation would leave a commit
 where external servers do not work.
 
@@ -528,6 +567,8 @@ where external servers do not work.
 - 2.2.3 - `timeout`, `circuit_open` and `transport_closed` map to the existing timeout result and `MCPError` messages. test: `tests/mcp_proxy/test_backend_client.py::test_error_codes_map_to_existing_shapes`.
 - 2.2.4 - Cancelling the awaiting coroutine sends a backend `cancel` for its `call_id`. test: `tests/mcp_proxy/test_backend_client.py::test_cancelled_call_cancels_backend`.
 - 2.2.5 - A websocket server config is rejected by `MCPServerConfig` and absent from the CLI choices. test: `tests/mcp_proxy/test_backend_client.py::test_websocket_transport_is_rejected`.
+- 2.2.6 - `remove_server`, disabling, a config-changing `update_server`, `disconnect_server` and `disconnect_all` post the matching backend disconnect at once and flip `is_connected`; `connect_all` warms only `preconnect_servers`; `get_health_report` returns the backend status. test: `tests/mcp_proxy/test_backend_client.py::test_lifecycle_methods_map_to_backend_routes`.
+- 2.2.7 - Sentinel header and env values reach the stub backend in the spec and appear in no captured log record or raised error, including after a failed `unauthorized` recovery. test: `tests/mcp_proxy/test_backend_client.py::test_resolved_secrets_stay_out_of_logs_and_errors`.
 
 ### 2.3 Client cancellation from gmcp to the upstream server [category: code] (depends: 2.2)
 `kind: deliverable`
@@ -681,6 +722,7 @@ Targets:
 - 3.2.1 - An `mcp.request` frame runs the stdio fixture on the node, and `whoami` reports the node daemon's `GOBBY_HOME`. test: `crates/gdaemon/tests/node_mcp.rs::request_runs_server_on_node`.
 - 3.2.2 - `mcp.cancel` for an in-flight call answers `{cancelled: true}` and the pending request answers `cancelled`. test: `crates/gdaemon/tests/node_mcp.rs::cancel_reaches_node_pool`.
 - 3.2.3 - MCP commands do not wait behind a busy run's queue. test: `crates/gdaemon/tests/node_mcp.rs::mcp_commands_skip_run_queues`.
+- 3.2.4 - A node-run request carrying a sentinel env value delivers it to the fixture's `getenv`, and the value appears in no captured node log line or command reply, including a failed connect. test: `crates/gdaemon/tests/node_mcp.rs::spec_secrets_stay_out_of_node_logs_and_replies`.
 
 ### 3.3 Hub places stdio servers on the caller's machine [category: code] (depends: 3.2)
 `kind: deliverable`
@@ -741,8 +783,18 @@ Targets:
 - Chosen approach:
   - The fixture is a Python MCP SDK server with `whoami`, `sleep`, `big` and
     `read_file`.
-  - The hub registers it twice: as a stdio server, and as a streamable-HTTP
-    server the test hosts behind a static bearer from a `$secret`.
+  - The hub registers it three times:
+    - as a stdio server;
+    - as a streamable-HTTP server the test hosts behind a static bearer from
+      a `$secret`;
+    - as a streamable-HTTP server with `requires_oauth`. Its host also serves
+      a refresh-grant token endpoint, rejects a stale bearer with 401 and
+      `WWW-Authenticate`, and records each bearer it receives. The test seeds
+      `MCPOAuthStorage` in the isolated hub with that token endpoint, a
+      client, a stale access token and a refresh token.
+  - The OAuth case crosses the real seam: gdaemon's typed `unauthorized`,
+    2.1's `recover_unauthorized` in `McpBackend`, and the pool's reconnect
+    with the new bearer. It adds no auth mechanism.
   - The test runs on macOS and Linux and has no latency assertions.
 - Planned verification:
   `uv run pytest tests/e2e/test_hub_node_pair.py -v -m e2e`.
@@ -753,6 +805,7 @@ Targets:
 - 4.1.2 - From gmcp on the node, the hub-hosted HTTP connector succeeds with its bearer and an internal `gobby-tasks` call succeeds. test: `tests/e2e/test_hub_node_pair.py::test_node_reaches_hub_connector_and_internal_tool`.
 - 4.1.3 - From gmcp on the node, `get_tool_schema` returns the stdio tool's schema and an oversized `big` result pages through `gobby-results:get_tool_result`. test: `tests/e2e/test_hub_node_pair.py::test_node_discovers_schema_and_pages_oversized_result`.
 - 4.1.4 - From gmcp on the node, a short tool timeout and a client cancel each end the call, and the fixture records `notifications/cancelled` for both the node stdio and hub HTTP servers. test: `tests/e2e/test_hub_node_pair.py::test_node_timeout_and_cancel_reach_upstream`.
+- 4.1.5 - From gmcp on the node, a call to the OAuth HTTP connector succeeds after one refresh: the fixture records the stale bearer answered 401 with `WWW-Authenticate`, one refresh grant, then the new bearer, and storage holds the new token. test: `tests/e2e/test_hub_node_pair.py::test_node_oauth_connector_recovers_from_401`.
 
 ## V1 Plan Changelog
 `kind: framing`
@@ -761,6 +814,13 @@ Targets:
 review are pending. Per the Orchestrator's ruling the draft lives at this path
 under #25259; the earlier unowned draft at
 `.gobby/plans/external-mcp-multiplexer.md` stays untouched for Josh.
+
+2026-10-28 — The Orchestrator confirmed Decision 2 (remove the WebSocket
+transport). Triage dispositioned all five Plan Enhancer suggestions as apply:
+the live OAuth 401 recovery proof (4.1.5), the manager lifecycle mapping
+(2.2.6), secret non-leakage proofs (Decision 3, 1.3.4, 2.2.7, 3.2.4), the
+Windows compile-only CI job (1.2.6) and the direct `Pool` surface for #24884
+(1.1.8, 1.1.9).
 
 ## V2 Verification
 `kind: verification`
