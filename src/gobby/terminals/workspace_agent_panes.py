@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from typing import Literal
 
-from psycopg.errors import UniqueViolation
+from psycopg.errors import LockNotAvailable, UniqueViolation
 
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
@@ -43,7 +44,12 @@ AgentPlacementErrorCode = Literal[
     "busy",
     "invalid_placement",
     "sandbox_required",
+    "timeout",
 ]
+
+logger = logging.getLogger(__name__)
+# Bound on each placement wait (preflight, workspace lock, row lock) when a spawn sets no timeout.
+PLACEMENT_WAIT_SECONDS = 30.0
 
 # Placement's split directions, mapped to the layout's storage axis.
 _SPLIT_AXES = {"right": "horizontal", "down": "vertical", "balanced": "balanced"}
@@ -86,6 +92,11 @@ def _placement_errors() -> Iterator[None]:
 
 def _invalid(message: str) -> AgentPlacementError:
     return AgentPlacementError("invalid_placement", message)
+
+
+def _timed_out(message: str) -> AgentPlacementError:
+    logger.warning("Placed spawn refused: %s", message)
+    return AgentPlacementError("timeout", message)
 
 
 @dataclass(frozen=True)
@@ -325,17 +336,33 @@ class AgentPaneReserver:
         return _pane_of(self._workspaces.resolve_reference(last), last)
 
     async def reserve(
-        self, resolved: ResolvedPlacement, *, worktree_id: str | None
+        self,
+        resolved: ResolvedPlacement,
+        *,
+        worktree_id: str | None,
+        timeout: float = PLACEMENT_WAIT_SECONDS,
     ) -> ReservedPane:
-        """Insert the unbound pane under the workspace lock; compensate on any failure."""
+        """Insert the unbound pane under the workspace lock; compensate on any failure.
+
+        ``timeout`` bounds the wait for the workspace lock and each row-lock wait in the
+        insert (see ``_insert``). The insert's own work is never cut short.
+        """
         lock = self._locks.setdefault(resolved.workspace_id, asyncio.Lock())
-        async with lock:
+        try:
+            async with asyncio.timeout(timeout):
+                await lock.acquire()
+        except TimeoutError as exc:
+            raise _timed_out(
+                f"Placed spawn timed out after {timeout:g}s waiting for workspace "
+                f"{resolved.workspace_id}"
+            ) from exc
+        try:
             pane_id = mint_pane_id()
             self._workspaces.mark_spawn_in_flight(pane_id)
             # asyncio.wait leaves the insert running when reserve is cancelled, like
             # shield, without shield's loop-handler report of a later insert failure.
             insert = asyncio.ensure_future(
-                asyncio.to_thread(self._insert, resolved, pane_id, worktree_id)
+                asyncio.to_thread(self._insert, resolved, pane_id, worktree_id, timeout)
             )
             with _placement_errors():
                 try:
@@ -346,6 +373,8 @@ class AgentPaneReserver:
                     if interrupted and not isinstance(exc, asyncio.CancelledError):
                         raise asyncio.CancelledError from exc
                     raise
+        finally:
+            lock.release()
         return ReservedPane(
             pane_id=pane.id,
             tab_id=tab.id,
@@ -357,33 +386,72 @@ class AgentPaneReserver:
         )
 
     def _insert(
-        self, resolved: ResolvedPlacement, pane_id: str, worktree_id: str | None
+        self,
+        resolved: ResolvedPlacement,
+        pane_id: str,
+        worktree_id: str | None,
+        timeout: float,
+    ) -> tuple[WorkspaceTab, WorkspacePane]:
+        """Write the layout; a row lock held past ``timeout`` fails the write, not parks it."""
+        try:
+            return self._insert_layout(resolved, pane_id, worktree_id, timeout)
+        except LockNotAvailable as exc:
+            raise _timed_out(
+                f"Placed spawn timed out after {timeout:g}s waiting for a workspace row lock"
+            ) from exc
+
+    @contextmanager
+    def _bounded(self, timeout: float) -> Iterator[None]:
+        """Run one layout write in its own transaction, under a lock timeout.
+
+        Each write keeps its own commit, as an unbounded insert does: a failed rename never
+        rolls back the pane row that the add already committed.
+        """
+        with self._workspaces.db.transaction() as conn:
+            conn.execute(
+                "SELECT set_config('lock_timeout', %s, true)",
+                (f"{max(1, round(timeout * 1000))}ms",),
+            )
+            yield
+
+    def _insert_layout(
+        self,
+        resolved: ResolvedPlacement,
+        pane_id: str,
+        worktree_id: str | None,
+        timeout: float,
     ) -> tuple[WorkspaceTab, WorkspacePane]:
         placement = resolved.placement
         if placement.kind == "tab":
-            change = self._workspaces.create_tab(
-                resolved.workspace_id,
-                pane_id=pane_id,
-                project_id=resolved.project_id,
-                worktree_id=worktree_id,
-                title=placement.title,
-            )
+            with self._bounded(timeout):
+                change = self._workspaces.create_tab(
+                    resolved.workspace_id,
+                    pane_id=pane_id,
+                    project_id=resolved.project_id,
+                    worktree_id=worktree_id,
+                    title=placement.title,
+                )
             if placement.seat_title is None:
                 return change.tabs[0], change.panes[0]
-            return change.tabs[0], self._workspaces.rename_pane(pane_id, placement.seat_title)
+            with self._bounded(timeout):
+                pane = self._workspaces.rename_pane(pane_id, placement.seat_title)
+            return change.tabs[0], pane
         if resolved.beside_pane_id is None or placement.axis is None:
             raise _invalid("a split placement needs its preflighted pane and axis")
-        change = self._workspaces.add_pane(
-            pane_id,
-            beside=resolved.beside_pane_id,
-            axis="vertical" if placement.axis == "balanced" else placement.axis,
-            balance_columns=placement.columns if placement.axis == "balanced" else None,
-            balance_rows=placement.rows,
-            expected_workspace_id=resolved.workspace_id,
-            expected_tab_id=resolved.tab_id,
-            expected_project_id=resolved.project_id,
-        )
-        return change.tabs[0], self._workspaces.rename_pane(pane_id, placement.title)
+        with self._bounded(timeout):
+            change = self._workspaces.add_pane(
+                pane_id,
+                beside=resolved.beside_pane_id,
+                axis="vertical" if placement.axis == "balanced" else placement.axis,
+                balance_columns=placement.columns if placement.axis == "balanced" else None,
+                balance_rows=placement.rows,
+                expected_workspace_id=resolved.workspace_id,
+                expected_tab_id=resolved.tab_id,
+                expected_project_id=resolved.project_id,
+            )
+        with self._bounded(timeout):
+            pane = self._workspaces.rename_pane(pane_id, placement.title)
+        return change.tabs[0], pane
 
     async def _compensate(
         self,

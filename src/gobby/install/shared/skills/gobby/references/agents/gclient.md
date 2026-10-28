@@ -41,9 +41,10 @@ either refuses. `title` names the agent's tab or pane.
 
 A refusal carries `placement_error` and changes nothing: `invalid_placement` for
 a malformed shape, `invalid_ref` or `not_found` for a ref that names nothing
-usable, `forbidden` for another project's pane or a caller out of scope, and
-`busy` while another spawn into that pane is still in flight. Fix the input
-and spawn again.
+usable, `forbidden` for another project's pane or a caller out of scope,
+`busy` while another spawn into that pane is still in flight, and `timeout`
+when the placement or its workspace stays blocked past the spawn's timeout (30
+seconds at most). Fix the input and spawn again.
 
 ## Keep operator tabs clear
 

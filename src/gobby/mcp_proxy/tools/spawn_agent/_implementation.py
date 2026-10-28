@@ -410,6 +410,7 @@ async def spawn_agent_impl(
         seat_title=definition_display_name(agent_body.name) if agent_body is not None else None,
         resume_session_id=resume_session_id,
         replaces_tab=replaces_tab,
+        spawn_timeout=effective_timeout,
     )
     if isinstance(placed, dict):
         return placed
