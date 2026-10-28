@@ -5,6 +5,7 @@ directly. Sync-managed rows are refreshed or restored from their on-disk YAML,
 while user/custom rows remain protected.
 """
 
+import hashlib
 import json
 import logging
 import shutil
@@ -318,10 +319,16 @@ def resolve_sync_placeholders(definition_json: str) -> str:
     - ``{{ gobby_bin }}``: resolved to the absolute path of the ``gobby``
       binary via ``shutil.which``, falling back to
       ``<sys.executable> -m gobby`` when the binary isn't on PATH.
+    - ``{{ rule_digest }}``: resolved to the SHA-256 of the unresolved
+      definition text. A rule that stores it in a session variable re-fires
+      in live sessions exactly when its synced content changes.
 
     Called once per rule during sync so the DB always stores a concrete path
     that works regardless of whether the binary is on the CLI's PATH.
     """
+    if "{{ rule_digest }}" in definition_json:
+        digest = hashlib.sha256(definition_json.encode("utf-8")).hexdigest()
+        definition_json = definition_json.replace("{{ rule_digest }}", digest)
     if "{{ gobby_bin }}" in definition_json:
         gobby_bin = shutil.which("gobby")
         if not gobby_bin:
