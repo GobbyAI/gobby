@@ -43,6 +43,7 @@ RETIRED_PIPELINES = (
     "merge-clone",
     "merge-worktree",
     "nightly-fixes",
+    "planning",
     "qa",
     "spawn-developer",
     "spawn-qa",
@@ -127,6 +128,65 @@ def test_retired_pipeline_yaml_is_absent_from_active_and_deprecated_bundles(
     assert not any(path.exists() for path in candidates), (
         f"retired pipeline remains bundled: {[path for path in candidates if path.exists()]}"
     )
+
+
+# A reference to the retired `planning` pipeline: the runbook named in prose, backticked
+# where a pipeline is launched, or named in a pipeline file or run call. The task category
+# `planning` and the `team-planning` runbook are not references.
+PLANNING_PIPELINE_REFERENCE = re.compile(
+    r"(?<![\w-])planning (?:runbook|pipeline)s?\b"
+    r"|`planning`\s+\[?(?:runbook|pipeline|directly)\b"
+    r"|`planning`\s*\|\s*writer\b"
+    r"|pipelines/planning\b"
+    r"|^name:\s*planning\s*$"
+    r"|run_pipeline\([^)]*['\"]planning['\"]",
+    re.MULTILINE,
+)
+PLANNING_REFERENCE_ROOTS = (
+    WORKFLOWS_DIR.parent,
+    REPO_ROOT / "docs/guides",
+    REPO_ROOT / "docs/contracts",
+)
+
+
+def test_bundled_sources_and_guides_do_not_reference_the_planning_pipeline() -> None:
+    hits: list[str] = []
+    for root in PLANNING_REFERENCE_ROOTS:
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path.suffix not in {".md", ".yaml", ".yml", ".json"}:
+                continue
+            text = path.read_text(encoding="utf-8")
+            for match in PLANNING_PIPELINE_REFERENCE.finditer(text):
+                line = text.count("\n", 0, match.start()) + 1
+                hits.append(f"{path.relative_to(REPO_ROOT)}:{line}: {match.group(0)}")
+
+    assert hits == [], "planning pipeline still referenced:\n" + "\n".join(hits)
+
+
+def test_planning_pipeline_row_is_retired_by_bundled_sync(temp_db: HubDatabase) -> None:
+    manager = PipelineDefinitionManager(temp_db)
+    manager.create(
+        name="planning",
+        definition_json={
+            "name": "planning",
+            "type": "pipeline",
+            "description": "old definition",
+            "steps": [{"id": "noop", "exec": "true"}],
+        },
+        source="installed",
+        tags=["gobby"],
+        enabled=True,
+    )
+
+    result = sync_bundled_pipelines(temp_db)
+
+    assert result["errors"] == []
+    assert manager.get_by_name("planning") is None
+    row = manager.get_by_name("planning", include_deleted=True)
+    assert row is not None
+    assert row.deleted_at is not None
+    assert manager.get_by_name("team-planning") is not None
+    assert manager.get_by_name("research") is not None
 
 
 @pytest.mark.parametrize("name", RETIRED_AGENTS)

@@ -339,7 +339,12 @@ def test_team_planning_tiles_the_policy_tab_its_writer_opens() -> None:
         },
         "steps": {
             "guard": {
-                "output": {"workspace_id": WORKSPACE, "launch": ["plan-writer"], "tab_title": title}
+                "output": {
+                    "workspace_id": WORKSPACE,
+                    "launch": ["plan-writer"],
+                    "tab_title": title,
+                    "tab_exists": False,
+                }
             },
             "plan-writer": {"output": {"tab_ref": tab_ref, "pane_ref": f"{tab_ref}:pane-1"}},
         },

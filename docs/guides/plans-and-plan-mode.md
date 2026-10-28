@@ -102,7 +102,7 @@ source of truth after daemon startup and sync.
 ## Optional Enhancement
 
 After materialization and base validation, `/gobby plan` offers an optional
-enhancement loop. When selected, the planning runbook's live `plan-enhancer`
+enhancement loop. When selected, the team-planning runbook's live `plan-enhancer`
 seat loads `gobby:references/plan/enhancement.md` and standalone
 `proportionality`, then sends ranked Better/Bigger suggestions to the Writer
 through `send_message`. It never claims tasks, edits the plan file, or calls a
@@ -164,9 +164,9 @@ review evidence. After user approval, offer manual expansion.
 `/gobby plan references expansion` loads manual expansion guidance for debugging and
 targeted reruns.
 
-## Planning Runbook Flow
+## Team Planning Runbook Flow
 
-Josh's plans run through the bundled `planning` [runbook](pipelines.md#runbooks),
+Josh's plans run through the bundled `team-planning` [runbook](pipelines.md#runbooks),
 one interactive flow per plan with no numbered review rounds. The runbook
 launches three live seats into one workspace: the Plan Writer (`plan-writer`),
 the Plan Enhancer (`plan-enhancer`) and the Plan Adversary (`plan-adversary`).

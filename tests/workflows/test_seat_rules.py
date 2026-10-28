@@ -640,7 +640,7 @@ def harness(
 
 @pytest.mark.asyncio
 async def test_plan_writer_cannot_spawn_plan_enhancer_taskless_old(harness: _ProxyHarness) -> None:
-    """The planning runbook launches the live Enhancer; the Writer spawns no pass."""
+    """The team-planning runbook launches the live Enhancer; the Writer spawns no pass."""
     writer = harness.session("writer", PLAN_WRITER, claim=harness.task("plan"))
 
     assert await harness.provider_hook(writer) == "block"

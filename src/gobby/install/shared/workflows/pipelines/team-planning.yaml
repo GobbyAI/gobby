@@ -120,6 +120,8 @@ steps:
           ${{ {'split': {'pane': inputs.seat_pane,
           'axis': 'right', 'title': 'Plan Writer'}}
           if inputs.seat_pane
+          else {'split': {'workspace': inputs.workspace, 'tab_title': steps.guard.output.tab_title,
+          'axis': 'right', 'title': 'Plan Writer'}} if steps.guard.output.tab_exists
           else {'tab': {'workspace': inputs.workspace, 'title': steps.guard.output.tab_title}} }}
 
   - id: plan-adversary
@@ -141,6 +143,8 @@ steps:
           ${{ {'split': {'pane': inputs.seat_pane or (steps['plan-writer'].output.pane_ref),
           'axis': 'right', 'title': 'Plan Adversary'}}
           if inputs.seat_pane or 'plan-writer' in inputs.seats.split(',')
+          else {'split': {'workspace': inputs.workspace, 'tab_title': steps.guard.output.tab_title,
+          'axis': 'right', 'title': 'Plan Adversary'}} if steps.guard.output.tab_exists
           else {'tab': {'workspace': inputs.workspace, 'title': steps.guard.output.tab_title}} }}
 
   - id: plan-enhancer
@@ -164,6 +168,8 @@ steps:
           'axis': 'right', 'title': 'Plan Enhancer'}}
           if inputs.seat_pane or 'plan-writer' in inputs.seats.split(',')
           or 'plan-adversary' in inputs.seats.split(',')
+          else {'split': {'workspace': inputs.workspace, 'tab_title': steps.guard.output.tab_title,
+          'axis': 'right', 'title': 'Plan Enhancer'}} if steps.guard.output.tab_exists
           else {'tab': {'workspace': inputs.workspace, 'title': steps.guard.output.tab_title}} }}
 
   # Tiles the tab the launched seats joined, by the tab_ref their placement returned. A supplied

@@ -265,10 +265,10 @@ compact in place under context pressure. Closing a DevTeam task ends every seat
 of that team; other standing seats outlive the tasks they work on. See
 [runbooks](runbooks.md) for the Support and DevTeam launches.
 
-### Planning Runbook Agents
+### Team Planning Agents
 
 `plan-writer`, `plan-enhancer`, and `plan-adversary` are run-scoped planning
-agents, separate from the standing-seat catalogue. The planning runbook launches
+agents, separate from the standing-seat catalogue. The team-planning runbook launches
 them; they complete their run through `end_agent_run`. Their own definitions
 control provider, lifetime, and workflow choices, so standing-seat invariants
 do not apply to them.

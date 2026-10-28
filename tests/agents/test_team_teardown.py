@@ -570,3 +570,30 @@ async def test_teardown_ends_the_seats_of_a_team_with_no_tree_without_refusing(
     assert {session_status(db, session) for session in team.seats} == {"expired"}
     assert teardown(world, team).get("outcome") != "refused"
     assert finding_tasks(world, team) == []
+
+
+async def test_treeless_team_closes_its_seats_without_deleting_a_tree(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkout_mode none team has no tree: its close ends the seats and never calls delete."""
+    db = world.case.db
+    terminations = Terminations(db)
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
+    task = world.case.task("Treeless research team")
+    runbook = world.child(task)
+    binding = await world.admit(runbook, task, checkout_mode="none")
+    world.finish(runbook)
+    researcher = seat(world, runbook, binding, "researcher")
+    team = Team(task, runbook, binding, [researcher])
+    closed = close(world, team, commit(team, "report.md"))
+    deleted: list[TeamBinding] = []
+
+    async def no_tree_delete(binding: TeamBinding) -> WorktreeDeletionResult:
+        deleted.append(binding)
+        return WorktreeDeletionResult(success=False, error_code="worktree_not_found")
+
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE, delete=no_tree_delete)
+
+    assert deleted == []
+    assert terminations.ended() == [researcher]
+    assert teardown(world, team) == {"outcome": "cleaned"}

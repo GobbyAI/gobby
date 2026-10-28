@@ -531,6 +531,7 @@ TEAM_PLANNING = (
 )
 
 
+@pytest.mark.parametrize("managed", [False, True], ids=["operator-launch", "managed-launch"])
 @pytest.mark.parametrize(
     ("seats", "expected_rows"),
     [
@@ -542,9 +543,13 @@ TEAM_PLANNING = (
     ],
 )
 async def test_team_planning_arrange_tiles_the_tab_a_seat_pane_joins(
-    stack: _Stack, seats: tuple[str, ...], expected_rows: list[int]
+    stack: _Stack, seats: tuple[str, ...], expected_rows: list[int], managed: bool
 ) -> None:
-    """A seat_pane in a tab with another title: arrange tiles the tab the seats joined."""
+    """A seat_pane in a tab with another title: arrange tiles the tab the seats joined.
+
+    The run inherits its launcher's principal: none for an operator launch, the managed token
+    for an agent launch. The step acts as the pipeline's session either way.
+    """
     definition = PipelineDefinition.model_validate(yaml.safe_load(TEAM_PLANNING.read_text()))
     arrange = next(step for step in definition.steps if step.id == "arrange")
     assert arrange.mcp is not None and arrange.mcp.arguments is not None
@@ -554,6 +559,14 @@ async def test_team_planning_arrange_tiles_the_tab_a_seat_pane_joins(
         machine_id=LOCAL_MACHINE_ID,
         source="claude",
         project_id=stack.project_id,
+    )
+    claims = AgentApiTokenClaims(
+        session_id=session.id,
+        project_id=stack.project_id,
+        machine_id=LOCAL_MACHINE_ID,
+        iat=0,
+        exp=0,
+        agent_run_id="team-planning-arrange-run",
     )
     with _principal(None), session_context_for_test(session.id):
         [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]
@@ -593,11 +606,12 @@ async def test_team_planning_arrange_tiles_the_tab_a_seat_pane_joins(
                 server="gobby-workspaces", tool="rebalance_tab", arguments=arguments
             ),
         )
-        tiled = await execute_mcp_step(
-            step,
-            {"session_id": session.id, "project_id": stack.project_id},
-            lambda: _PipelineProxy(registry),
-        )
+        with _principal(claims if managed else None):
+            tiled = await execute_mcp_step(
+                step,
+                {"session_id": session.id, "project_id": stack.project_id},
+                lambda: _PipelineProxy(registry),
+            )
     assert _pane_count(tiled["tab"]["layout"]) == 1 + len(seats)
     assert _row_sizes(tiled["tab"]["layout"]) == expected_rows
 

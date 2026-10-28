@@ -1,4 +1,4 @@
-"""Live acceptance for the bundled ``planning`` runbook (#23335, obligations 8.1.7-8.1.9).
+"""Live acceptance for the bundled ``team-planning`` runbook (#23335, obligations 8.1.7-8.1.9).
 
 A real isolated daemon runs the genuine runner through a test bootstrap that adds a
 one-shot completion barrier. Seats launch through managed SRT, a byte-for-byte
@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
-import re
 import shutil
 import signal
 import subprocess
@@ -36,6 +36,7 @@ from gobby.storage.definitions._shared import decode_json_object
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.workspace_panes import WorkspacePane
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.terminals.host_protocol import control_token_path, read_pidfile
@@ -85,7 +86,7 @@ e2e_srt_spawn_home = e2e_fixtures.e2e_srt_spawn_home
 
 pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 
-PIPELINE = "planning"
+PIPELINE = "team-planning"
 PROJECT_ID = "00000000-0000-0000-0000-000000000e2e"
 MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 CHECKOUT_ROOT = Path(__file__).resolve().parents[2]
@@ -95,31 +96,37 @@ UNSETTLED_TERMINALS = frozenset({"pending", "live", "orphaned"})
 RUNBOOK_INPUTS = frozenset(
     {
         "workspace",
-        "writer_title",
-        "enhancer_title",
-        "adversary_title",
-        "writer_provider",
-        "writer_model",
-        "writer_reasoning_effort",
-        "enhancer_provider",
-        "enhancer_model",
-        "enhancer_reasoning_effort",
-        "adversary_provider",
-        "adversary_model",
-        "adversary_reasoning_effort",
+        "task",
+        "seat_pane",
+        "project_path",
         "seats",
+        "report_to",
+        "plan_writer_provider",
+        "plan_writer_model",
+        "plan_writer_reasoning_effort",
+        "plan_adversary_provider",
+        "plan_adversary_model",
+        "plan_adversary_reasoning_effort",
+        "plan_enhancer_provider",
+        "plan_enhancer_model",
+        "plan_enhancer_reasoning_effort",
     }
 )
-SEAT_AGENTS = {"writer": "plan-writer", "enhancer": "plan-enhancer", "adversary": "plan-adversary"}
+SEATS = ("plan-writer", "plan-adversary", "plan-enhancer")
+FULL_SEATS = ",".join(SEATS)
+# The pane title a seat takes when its placement splits the team tab.
+ROLE_TITLES = {
+    "plan-writer": "Plan Writer",
+    "plan-adversary": "Plan Adversary",
+    "plan-enhancer": "Plan Enhancer",
+}
 SEAT_RUNTIMES = {
     "plan-writer": ("codex", "gpt-5.4"),
     "plan-enhancer": ("codex", "gpt-5.4"),
     "plan-adversary": ("grok", "grok-4"),
 }
-# The amendment's layout: Adversary splits right of Writer, Enhancer splits below it.
-SPLIT_AXES = {"right": "horizontal", "down": "vertical"}
-_INPUT_REF = re.compile(r"\$\{\{\s*inputs\.(\w+)\s*\}\}")
-_PANE_SOURCE = re.compile(r"steps\.(\w+)\.output\.pane_ref")
+# team-planning splits every later seat right of the Writer's pane, or opens the team tab.
+SPLIT_AXES = {"right": "horizontal"}
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -284,6 +291,10 @@ class Live:
     machine_ref: int
     runbook: PipelineDefinition
     evidence: dict[str, Any]
+    checkout: Path
+    task: str
+    report_to: str
+    tab_title: str
     # Every accepted execution, recorded before any of its seats is awaited.
     executions: list[str] = field(default_factory=list)
     places: list[Place] = field(default_factory=list)
@@ -306,6 +317,12 @@ def live(
     )
     write_project_marker(checkout, project_id=PROJECT_ID, name="E2E Test Project")
     LocalProjectCheckoutManager(postgres_db).rebind(MACHINE_ID, PROJECT_ID, str(checkout))
+    # team-planning's guard resolves the task, and its tab takes the task's sequence number.
+    task = LocalTaskManager(postgres_db).create_task(
+        project_id=PROJECT_ID,
+        title="Team planning live",
+        validation_criteria="team-planning launches its seats into the task's team tab.",
+    )
     # Bundled seats inherit their runtime. This isolated placement test supplies
     # project-local choices, which also survive global template sync on restart.
     definitions = AgentDefinitionManager(postgres_db)
@@ -341,7 +358,13 @@ def live(
         machine.ref,
         _installed_runbook(postgres_db),
         {"test": request.node.name, "srt": rig.srt, "native_sha256": rig.binaries},
+        checkout,
+        str(task.id),
+        str(coordinator["id"]),
+        f"Team Planning - #{task.seq_num}",
     )
+    # A failed call phase is counted before this fixture's teardown runs.
+    failures_before = request.session.testsfailed
     try:
         # Auth liveness precedes recovery; a new runbook must not be resumed by it.
         def startup_ready() -> bool:
@@ -364,6 +387,9 @@ def live(
         finally:
             # A failed cleanup still leaves the evidence of the run it was cleaning.
             evidence_dir = Path(os.environ.get("GOBBY_E2E_EVIDENCE_DIR") or tmp_path / "evidence")
+            if request.session.testsfailed > failures_before:
+                logs = evidence_dir / f"{request.node.name}-logs"
+                state.evidence["logs"] = _copy_logs(state, logs)
             write_evidence(evidence_dir, request.node.name, state.evidence)
             client.close()
             mcp.close()
@@ -372,13 +398,13 @@ def live(
 def _installed_runbook(db: HubDatabase) -> PipelineDefinition:
     """The runbook as a launch resolves it: the loader projects the row's tags on."""
     row = PipelineDefinitionManager(db).get_by_name(PIPELINE)
-    assert row is not None and row.enabled, "the bundled planning runbook is not installed"
+    assert row is not None and row.enabled, "the bundled team-planning runbook is not installed"
     definition = asyncio.run(PipelineLoader(db).load_pipeline(PIPELINE))
     assert definition is not None, PIPELINE
     assert "runbook" in definition.tags
     # No optional-enhancer, role-file or superseded agent-name inputs remain.
     assert set(definition.inputs) == RUNBOOK_INPUTS, sorted(definition.inputs)
-    assert set(_catalogue(definition).values()) == set(SEAT_AGENTS.values())
+    assert set(_catalogue(definition).values()) == set(SEATS)
     return definition
 
 
@@ -389,16 +415,19 @@ def _catalogue(definition: PipelineDefinition) -> dict[str, str]:
     return {str(seat["name"]): str(seat["agent"]) for seat in _arguments(guard)["catalogue"]}
 
 
-def _defaults(definition: PipelineDefinition) -> dict[str, str]:
-    defaults: dict[str, str] = {}
-    for name, spec in definition.inputs.items():
-        value = spec.get("default") if isinstance(spec, dict) else getattr(spec, "default", None)
-        if value is not None:
-            defaults[name] = str(value)
-    return defaults
+def _inputs(live: Live, place: Place, seats: str = FULL_SEATS) -> dict[str, Any]:
+    """The inputs the runner resolves for a launch; unset optional inputs resolve to null."""
+    return {
+        "seat_pane": None,
+        "workspace": place.ref,
+        "task": live.task,
+        "project_path": str(live.checkout),
+        "report_to": live.report_to,
+        "seats": seats,
+    }
 
 
-def _seat_steps(definition: PipelineDefinition, inputs: dict[str, str]) -> list[PipelineStep]:
+def _seat_steps(definition: PipelineDefinition, inputs: dict[str, Any]) -> list[PipelineStep]:
     """The spawn steps the snapshot's own conditions select for these inputs."""
     renderer = StepRenderer(None)
     return [
@@ -419,14 +448,25 @@ def _agent(step: PipelineStep) -> str:
     return str(_arguments(step)["agent"])
 
 
-def _render(template: str, inputs: dict[str, str]) -> str:
-    return _INPUT_REF.sub(lambda match: inputs[match.group(1)], template)
+def _expected_tabs(
+    steps: list[PipelineStep], inputs: dict[str, Any], tab_title: str
+) -> dict[str, Any]:
+    """Tab title to layout tree, replaying each step's placement in snapshot order.
 
-
-def _expected_tabs(steps: list[PipelineStep], inputs: dict[str, str]) -> dict[str, Any]:
-    """Tab title to layout tree, replaying each step's placement in snapshot order."""
+    Each placement is the runbook's own expression, evaluated by the renderer the runner uses.
+    A seat's pane_ref is its step id, so a split's source names the seat it lands beside.
+    """
     tabs: dict[str, Any] = {}
     home: dict[str, str] = {}
+    renderer = StepRenderer(None)
+    context = {
+        "inputs": inputs,
+        "steps": {
+            # A replay models a fresh launch, so no team tab exists yet to join.
+            "guard": {"output": {"tab_title": tab_title, "tab_exists": False}},
+            **{step.id: {"output": {"pane_ref": step.id}} for step in steps},
+        },
+    }
 
     def split(node: Any, source: str, axis: str, new: str) -> Any:
         if node == {"pane": source}:
@@ -439,19 +479,48 @@ def _expected_tabs(steps: list[PipelineStep], inputs: dict[str, str]) -> dict[st
         return node
 
     for step in steps:
-        placement = _arguments(step)["placement"]
+        rendered = renderer.render_mcp_arguments(
+            {"placement": _arguments(step)["placement"]}, context
+        )
+        placement = rendered["placement"]
         if "tab" in placement:
-            title = _render(placement["tab"]["title"], inputs)
+            title = placement["tab"]["title"]
             tabs[title] = {"pane": step.id}
             home[step.id] = title
             continue
-        match = _PANE_SOURCE.search(placement["split"]["pane"])
-        assert match is not None, placement
-        title = home[match.group(1)]
+        source = placement["split"]["pane"]
+        title = home[source]
         axis = SPLIT_AXES[placement["split"]["axis"]]
-        tabs[title] = split(tabs[title], match.group(1), axis, step.id)
+        tabs[title] = split(tabs[title], source, axis, step.id)
         home[step.id] = title
     return tabs
+
+
+def _join_tree(nodes: list[Any], axis: str) -> Any:
+    """The binary split tree balanced_layout's _join builds over ``nodes``."""
+    if len(nodes) == 1:
+        return nodes[0]
+    middle = len(nodes) // 2
+    first = _join_tree(nodes[:middle], axis)
+    second = _join_tree(nodes[middle:], axis)
+    return {"axis": axis, "children": [first, second]}
+
+
+def _leaves(node: Any) -> list[str]:
+    if "children" not in node:
+        return [node["pane"]]
+    return [pane for child in node["children"] for pane in _leaves(child)]
+
+
+def _tiled(tree: Any) -> Any:
+    """The layout rebalance_tab's tiled arrangement builds over the same pane order."""
+    panes = [{"pane": pane} for pane in _leaves(tree)]
+    per_row = math.ceil(len(panes) / (math.isqrt(len(panes) - 1) + 1))
+    tiers = [
+        _join_tree(panes[start : start + per_row], "horizontal")
+        for start in range(0, len(panes), per_row)
+    ]
+    return _join_tree(tiers, "vertical")
 
 
 def _actual_layout(node: dict[str, Any], step_of: dict[str, str]) -> Any:
@@ -515,12 +584,15 @@ def _workspace(live: Live, name: str) -> Place:
     return place
 
 
-def _launch(live: Live, place: Place, **inputs: str) -> str:
+def _launch(live: Live, place: Place, seats: str = FULL_SEATS) -> str:
+    resolved = _inputs(live, place, seats)
+    # Null inputs take the runbook's own defaults, so only the set ones are sent.
+    inputs = {key: value for key, value in resolved.items() if value is not None}
     started = live.client.post(
         "/api/pipelines/run",
         json={
             "name": PIPELINE,
-            "inputs": {"workspace": place.ref, **inputs},
+            "inputs": inputs,
             "project_id": PROJECT_ID,
             "background": True,
         },
@@ -538,11 +610,20 @@ def _execution(live: Live, execution_id: str) -> dict[str, Any]:
     return execution
 
 
+def _step_states(live: Live, execution_id: str) -> list[dict[str, Any]]:
+    """Each step row of a run by its id, status and error, as a timeout's evidence."""
+    return [
+        {"step_id": step["step_id"], "status": step["status"], "error": step["error"]}
+        for step in _snapshot_steps(live, execution_id)
+    ]
+
+
 def _finished(live: Live, execution_id: str, timeout: float = 240.0) -> dict[str, Any]:
     return _until(
         lambda: (lambda e: e if e["status"] in FINISHED else None)(_execution(live, execution_id)),
         timeout,
         f"execution {execution_id}",
+        lambda: _step_states(live, execution_id),
     )
 
 
@@ -823,19 +904,63 @@ def _snapshot_steps(live: Live, execution_id: str) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def _assert_layout(live: Live, place: Place, seats: list[Seat], inputs: dict[str, str]) -> Any:
+def _arrange_record(live: Live, execution_id: str) -> list[dict[str, Any]]:
+    """Every arrange row of the run, with its status, recorded reply and error."""
+    return [
+        {"status": step["status"], "output": step["output_json"], "error": step["error"]}
+        for step in _snapshot_steps(live, execution_id)
+        if step["step_id"] == "arrange"
+    ]
+
+
+def _copy_logs(live: Live, destination: Path) -> dict[str, Any]:
+    """The daemon and gterm host logs of a failed run, kept beside its evidence."""
+    sources = {
+        "daemon": live.daemon.gobby_home / "logs",
+        "host": live.rig.host.socket_dir / "logs",
+    }
+    copied: dict[str, Any] = {}
+    for name, source in sources.items():
+        try:
+            if source.is_dir():
+                shutil.copytree(source, destination / name, dirs_exist_ok=True)
+                copied[name] = str(destination / name)
+        except OSError as exc:
+            copied[name] = f"copy failed: {exc}"
+    return copied
+
+
+def _assert_layout(live: Live, place: Place, seats: list[Seat], inputs: dict[str, Any]) -> Any:
     """Placement derived from the launch snapshot's bytes matches the bound panes."""
     by_step = {seat.step_id: seat for seat in seats}
     steps = [step for step in _seat_steps(live.runbook, inputs) if step.id in by_step]
-    expected = _expected_tabs(steps, inputs)
+    expected = _expected_tabs(steps, inputs, live.tab_title)
     step_of = {seat.pane_id: seat.step_id for seat in seats}
     tabs = {tab.id: tab for tab in WorkspaceManager(live.db).list_tabs(place.id)}
     actual: dict[str, Any] = {}
     for tab_id in {seat.tab_id for seat in seats}:
         tab = tabs[tab_id]
         actual[str(tab.title)] = _actual_layout(dict(tab.layout), step_of)
-    assert actual == expected
+    # The arrange step tiles each tab the seats joined; the split tree is the placement, tiled.
+    tiled = {title: _tiled(tree) for title, tree in expected.items()}
+    assert actual == tiled, (actual, tiled)
     return actual
+
+
+def _assert_team_tab(live: Live, place: Place, seats: list[Seat]) -> None:
+    """The one team tab holds every seat given, tiled over its own pane order.
+
+    A redeploy joins the retained tab, so the layout spans seats the repair did not launch.
+    Tiled output depends only on pane order, so the expectation is the tiled form of the actual.
+    """
+    tabs = [
+        tab for tab in WorkspaceManager(live.db).list_tabs(place.id) if tab.title == live.tab_title
+    ]
+    assert len(tabs) == 1, [tab.title for tab in tabs]
+    step_of = {seat.pane_id: seat.step_id for seat in seats}
+    actual = _actual_layout(dict(tabs[0].layout), step_of)
+    assert sorted(_leaves(actual)) == sorted(step_of.values()), actual
+    assert actual == _tiled(actual), actual
 
 
 def _assert_snapshot(live: Live, execution_id: str) -> None:
@@ -863,9 +988,9 @@ def _child_session(live: Live, execution_id: str) -> str:
 
 
 def test_live_three_seat_runbook(live: Live) -> None:
-    defaults = _defaults(live.runbook)
-    steps = _seat_steps(live.runbook, defaults)
     first_place, other_place = _workspace(live, "runbook-a"), _workspace(live, "runbook-b")
+    inputs = _inputs(live, first_place)
+    steps = _seat_steps(live.runbook, inputs)
     live.rig.barrier.arm(steps[-1].id)
     first = _launch(live, first_place)
     reached = _until(live.rig.barrier.reached, 240, "the last default seat's completion write")
@@ -874,11 +999,19 @@ def test_live_three_seat_runbook(live: Live) -> None:
     _assert_snapshot(live, first)
     seats = [_await_seat(live, first_place, first, step) for step in steps]
     assert [seat.agent for seat in seats] == [_agent(step) for step in steps]
-    live.evidence["layout"] = _assert_layout(live, first_place, seats, defaults)
     roster = _roster(live)
     titles = {seat.run_id: roster[seat.run_id]["seat"] for seat in seats}
     for seat in seats:
         assert titles[seat.run_id]["workspace"] == first_place.id, titles
+    # The writer opens the team tab, so its pane keeps the runbook title. The adversary and
+    # enhancer split beside it and take their role titles.
+    # PENDING #25233 G: the tab opener takes ROLE_TITLES["plan-writer"]; flip this expectation then.
+    fresh = {seat.step_id: titles[seat.run_id]["title"] for seat in seats}
+    assert fresh == {
+        "plan-writer": live.tab_title,
+        "plan-adversary": ROLE_TITLES["plan-adversary"],
+        "plan-enhancer": ROLE_TITLES["plan-enhancer"],
+    }, fresh
     live.evidence["roster"] = titles
 
     # Same place while the first execution is still launching: refused, no side effects.
@@ -895,9 +1028,16 @@ def test_live_three_seat_runbook(live: Live) -> None:
     other_seats = [_await_seat(live, other_place, other, step) for step in steps]
     live.evidence["other_workspace"] = {"execution": other, "kills": _kill(live, other_seats)}
 
+    # The barrier holds the last seat's completion write, so arrange runs only after this release.
     live.rig.barrier.release()
     _completed(live, first)
     assert live.rig.barrier.released()
+    # The arrange reply is evidence before the layout check, so a refused arrange is visible.
+    arrange = _arrange_record(live, first)
+    live.evidence["arrange"] = arrange
+    assert [row["status"] for row in arrange] == ["completed"], arrange
+    assert "refused" not in str(arrange[0]["output"]), arrange
+    live.evidence["layout"] = _assert_layout(live, first_place, seats, inputs)
     shown = _shown_runs(_runs_show(live, first))
     assert shown == {seat.step_id: seat.run_id for seat in seats}
 
@@ -907,8 +1047,9 @@ def test_live_three_seat_runbook(live: Live) -> None:
     _assert_live(live, seats)
     assert not {seat.terminal_id for seat in seats} & {seat.terminal_id for seat in second_seats}
     roster = _roster(live)
+    # The second launch joins the team tab, so each pane takes its role title.
     assert [roster[s.run_id]["seat"]["title"] for s in second_seats] == [
-        titles[s.run_id]["title"] for s in seats
+        ROLE_TITLES[s.step_id] for s in second_seats
     ]
     live.evidence["second_pod"] = {"execution": second, "kills": _kill(live, second_seats)}
     _assert_live(live, seats)
@@ -916,9 +1057,8 @@ def test_live_three_seat_runbook(live: Live) -> None:
 
 
 def test_live_stop_by_run_ids(live: Live) -> None:
-    defaults = _defaults(live.runbook)
-    steps = _seat_steps(live.runbook, defaults)
     place = _workspace(live, "runbook-stop")
+    steps = _seat_steps(live.runbook, _inputs(live, place))
     execution = _completed(live, _launch(live, place))["id"]
     shown = _shown_runs(_runs_show(live, execution))
     assert set(shown) == {step.id for step in steps}
@@ -934,14 +1074,13 @@ def test_live_stop_by_run_ids(live: Live) -> None:
 
 
 @pytest.mark.parametrize("renamed", [False, True], ids=["unchanged", "renamed"])
-@pytest.mark.parametrize("seat_name", ["writer", "enhancer", "adversary"])
+@pytest.mark.parametrize("seat_name", ["plan-writer", "plan-enhancer", "plan-adversary"])
 def test_live_crash_window_adopts_seat(live: Live, seat_name: str, renamed: bool) -> None:
-    defaults = _defaults(live.runbook)
-    steps = _seat_steps(live.runbook, defaults)
+    place = _workspace(live, f"runbook-crash-{seat_name}")
+    steps = _seat_steps(live.runbook, _inputs(live, place))
     agent = _catalogue(live.runbook)[seat_name]
     [selected] = [step for step in steps if _agent(step) == agent]
     held = steps[: steps.index(selected) + 1]
-    place = _workspace(live, f"runbook-crash-{seat_name}")
     baseline = _inventory(live.db)
     live.rig.barrier.arm(selected.id)
     execution = _launch(live, place)
@@ -1039,16 +1178,15 @@ def test_live_crash_window_adopts_seat(live: Live, seat_name: str, renamed: bool
     live.evidence["kills"] = _kill(live, all_seats)
 
 
-@pytest.mark.parametrize("failing", ["adversary", "enhancer"])
+@pytest.mark.parametrize("failing", ["plan-adversary", "plan-enhancer"])
 def test_live_partial_redeploy(live: Live, failing: str) -> None:
-    defaults = _defaults(live.runbook)
-    steps = _seat_steps(live.runbook, defaults)
+    place = _workspace(live, f"runbook-redeploy-{failing}")
+    steps = _seat_steps(live.runbook, _inputs(live, place))
     catalogue = _catalogue(live.runbook)
     [failing_step] = [step for step in steps if _agent(step) == catalogue[failing]]
     provider = live.rig.providers[catalogue[failing]]
     standin = live.rig.standins[provider]
     earlier = steps[: steps.index(failing_step)]
-    place = _workspace(live, f"runbook-redeploy-{failing}")
     # A provider an earlier seat also runs breaks only after that seat launched.
     shared = any(live.rig.providers[_agent(step)] == provider for step in earlier)
     if shared:
@@ -1083,13 +1221,18 @@ def test_live_partial_redeploy(live: Live, failing: str) -> None:
     set_executable(standin, True)
     assert shutil.which(provider, path=live.rig.path) == str(standin)
     seats = ",".join(missing)
-    repair = _completed(live, _launch(live, place, seats=seats))["id"]
-    repair_inputs = {**defaults, "seats": seats}
+    repair_run = _completed(live, _launch(live, place, seats=seats))
+    repair = repair_run["id"]
+    repair_inputs = _inputs(live, place, seats)
     repaired = [
         _await_seat(live, place, repair, step) for step in _seat_steps(live.runbook, repair_inputs)
     ]
     assert sorted(seat_of[seat.agent] for seat in repaired) == sorted(missing)
-    _assert_layout(live, place, repaired, repair_inputs)
+    # A refused arrange leaves the tab as placed; name the refusal instead of an axis mismatch.
+    arranged = _steps(repair_run)["arrange"]
+    assert arranged["status"] == "completed", arranged
+    assert "refused" not in (arranged["output_json"] or ""), arranged
+    _assert_team_tab(live, place, retained + repaired)
     _assert_live(live, retained)
 
     full = _completed(live, _launch(live, place))["id"]

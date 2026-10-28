@@ -151,12 +151,14 @@ class TeamWorld:
         *,
         fresh_reviewer: bool = False,
         exclude_reviewers: Sequence[str] = (),
+        checkout_mode: str = "worktree",
     ) -> TeamBinding:
         return await admit_team(
             self.case.db,
             caller_session_id=caller.id,
             task=task.id,
             team_id=team_id,
+            checkout_mode=checkout_mode,
             fresh_reviewer=fresh_reviewer,
             exclude_reviewers=exclude_reviewers,
         )

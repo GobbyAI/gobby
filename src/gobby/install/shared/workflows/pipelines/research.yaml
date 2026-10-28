@@ -1,0 +1,173 @@
+name: research
+type: pipeline
+version: "1.0"
+description: |
+  Research runbook: admits a treeless team for the task and launches a Researcher and a Research
+  Reviewer into one 'Research - #<task>' tab in the shared checkout. The seats work in the main
+  checkout with no branch or worktree, and there is no Dev Manager: the Researcher sends its
+  candidate to the Research Reviewer, which answers LAND or BOUNCE, and the Researcher reports
+  READY_TO_CLOSE to report_to. Each seat runs its own agent definition, and each seat pane takes
+  its definition name (docs/contracts/seat-titles.md).
+  Approved seats: researcher, research-reviewer.
+
+  Placement: the researcher opens the Research tab, or splits the seat_pane when one is supplied;
+  the research reviewer splits right of the researcher, or of the seat_pane, and otherwise opens
+  or splits the Research tab. A seat relaunched into an existing tab splits that tab by title.
+  Relaunch missing seats with a fresh run that names them in `seats`; a failed runbook execution
+  is never resumed. Supply seat_pane to add seats to an existing tab across runs.
+tags: [runbook]
+resume_on_restart: true
+
+inputs:
+  workspace:
+    type: string
+    required: true
+    description: "Existing target workspace UUID or ref"
+  task:
+    type: string
+    required: true
+    description: "Task the research run is for; its tab takes the task's sequence number"
+  seat_pane:
+    type: string
+    default: null
+    description: "Existing pane to split; omit to open the Research tab"
+  project_path:
+    type: string
+    required: true
+    description: "Shared project checkout; the treeless team's seats work here, no worktree is created"
+  seats:
+    type: string
+    default: researcher,research-reviewer
+    description: "Comma-separated missing seats: researcher, research-reviewer"
+  report_to:
+    type: string
+    required: true
+    description: "Triage's live session ref for readiness, blockers, verdicts and unassigned waits"
+  researcher_provider:
+    type: string
+    default: null
+    description: "Seat provider; override to change the default"
+  researcher_model:
+    type: string
+    default: null
+    description: "Seat model; override to change the default"
+  researcher_reasoning_effort:
+    type: string
+    default: null
+    description: "Seat reasoning effort; override to change the default"
+  research_reviewer_provider:
+    type: string
+    default: null
+    description: "Seat provider; override to change the default"
+  research_reviewer_model:
+    type: string
+    default: null
+    description: "Seat model; override to change the default"
+  research_reviewer_reasoning_effort:
+    type: string
+    default: null
+    description: "Seat reasoning effort; override to change the default"
+
+steps:
+  - id: guard
+    mcp:
+      server: gobby-agents
+      tool: check_runbook_seats
+      arguments:
+        workspace: "${{ inputs.workspace }}"
+        requested: "${{ inputs.seats }}"
+        report_to: "${{ inputs.report_to }}"
+        require_report_to: true
+        skip_live_seats: true
+        task: "${{ inputs.task }}"
+        tab_title: Research
+        catalogue:
+          - name: researcher
+            title: Researcher
+            agent: researcher
+          - name: research-reviewer
+            title: Research Reviewer
+            agent: research-reviewer
+
+  # The team is treeless: no branch or worktree, its seats work in the main checkout.
+  - id: admit
+    condition: "${{ len(steps.guard.output.launch) > 0 }}"
+    mcp:
+      server: gobby-agents
+      tool: admit_team
+      arguments:
+        task: "${{ inputs.task }}"
+        checkout_mode: none
+
+  - id: researcher
+    condition: "${{ 'researcher' in steps.guard.output.launch }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: researcher
+        provider: "${{ inputs.researcher_provider }}"
+        model: "${{ inputs.researcher_model }}"
+        reasoning_effort: "${{ inputs.researcher_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: >-
+          You are the researcher seat. Your task is ${{ inputs.task }}. Your current session ref is fresh; follow your installed agent definition for your research duties and authority, except where this run's routing below differs. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target="session", target_id="${{ inputs.report_to }}"). This run has no Dev Manager. Do not launch a DevTeam, another seat or a pipeline. Claim the task with gobby-tasks:claim_task, do the research in the main checkout, and record your implementation step. Your research reviewer names its session to you when it starts; once you have it, send EVENT=CANDIDATE TASK=${{ inputs.task }} TASK_TITLE= RUN= WT= COMMIT= NOTE= to that session and to report_to, with the commit and the checks you ran. Wait with gobby-agents:wait_for_coordination(owner_session="${{ inputs.report_to }}", reply=true). On BOUNCE, fix the findings and send a new CANDIDATE. On LAND, send EVENT=READY_TO_CLOSE TASK=${{ inputs.task }} to report_to; the Orchestrator closes the task. Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended.
+        placement: >-
+          ${{ {'split': {'pane': inputs.seat_pane, 'axis': 'right', 'title': 'Researcher'}}
+          if inputs.seat_pane
+          else {'split': {'workspace': inputs.workspace,
+          'tab_title': steps.guard.output.tab_title, 'axis': 'right', 'title': 'Researcher'}}
+          if steps.guard.output.get('tab_exists')
+          else {'tab': {'workspace': inputs.workspace, 'title': steps.guard.output.tab_title}} }}
+
+  - id: research-reviewer
+    condition: "${{ 'research-reviewer' in steps.guard.output.launch }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: research-reviewer
+        provider: "${{ inputs.research_reviewer_provider }}"
+        model: "${{ inputs.research_reviewer_model }}"
+        reasoning_effort: "${{ inputs.research_reviewer_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: >-
+          You are the research reviewer seat. Your task is ${{ inputs.task }}. Your current session ref is fresh; follow your installed agent definition for your review duties and authority, except where this run's routing below differs. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target="session", target_id="${{ inputs.report_to }}"). This run has no Dev Manager. ${{ ('Name your session to your researcher seat, session ' + steps['researcher'].output.get('child_session_id') + ', with gobby-agents:send_message(target="session", target_id="' + steps['researcher'].output.get('child_session_id') + '"), so it can send you its candidate.') if 'researcher' in steps and steps['researcher'].output.get('child_session_id') else ('Name your session to your researcher seat, session ' + steps.guard.output.get('live')['researcher'] + ', with gobby-agents:send_message(target="session", target_id="' + steps.guard.output.get('live')['researcher'] + '"), so it can send you its candidate.') if steps.guard.output.get('live') and 'researcher' in steps.guard.output.get('live') else 'Your researcher seat is not in this launch; name your session to report_to so it can reach you.' }} Wait with gobby-agents:wait_for_coordination(owner_session="${{ inputs.report_to }}", reply=true) for the researcher's EVENT=CANDIDATE TASK=${{ inputs.task }}. Review that commit against the task's criteria, then send a CANDIDATE_VERDICT with VERDICT=LAND, or VERDICT=BOUNCE with its findings, to the researcher seat and to report_to. Record your review step. Do not launch other seats or pipelines.
+        placement: >-
+          ${{ {'split': {'pane': inputs.seat_pane or steps['researcher'].output.get('pane_ref'),
+          'axis': 'right', 'title': 'Research Reviewer'}}
+          if inputs.seat_pane or ('researcher' in steps.guard.output.launch and 'researcher' in steps and steps['researcher'].output.get('pane_ref'))
+          else {'split': {'workspace': inputs.workspace,
+          'tab_title': steps.guard.output.tab_title, 'axis': 'right', 'title': 'Research Reviewer'}}
+          if steps.guard.output.get('tab_exists')
+          else {'tab': {'workspace': inputs.workspace, 'title': steps.guard.output.tab_title}} }}
+
+  # Tiles the tab the launched seats joined, by the tab_ref their placement returned. A supplied
+  # seat_pane can sit in a tab with any title, so the tab is named by ref, not by title. A refused
+  # layout is recorded and the run goes on.
+  - id: arrange
+    condition: "${{ len(steps.guard.output.launch) > 0 }}"
+    mcp:
+      server: gobby-workspaces
+      tool: rebalance_tab
+      on_refused: record
+      arguments:
+        workspace: >-
+          ${{ none if (steps.researcher.output.get('tab_ref') if 'researcher' in steps.guard.output.launch else none)
+          or (steps['research-reviewer'].output.get('tab_ref') if 'research-reviewer' in steps.guard.output.launch else none)
+          else inputs.workspace }}
+        tab: >-
+          ${{ (steps.researcher.output.get('tab_ref') if 'researcher' in steps.guard.output.launch else none)
+          or (steps['research-reviewer'].output.get('tab_ref') if 'research-reviewer' in steps.guard.output.launch else none)
+          or steps.guard.output.tab_title }}
+        # A seat's null pane_ref (its pane is gone) is reported as skipped, not tiled.
+        seats: "${{ [{'name': s, 'pane': steps[s].output.pane_ref} for s in steps.guard.output.launch] }}"
+        # Tiled ratios do not depend on the viewport height; rows only has to fit the tiers.
+        rows: 100
+        layout: tiled

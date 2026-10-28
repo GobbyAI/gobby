@@ -301,3 +301,34 @@ async def test_closed_task_refuses_its_landed_team(world: TeamWorld) -> None:
     with pytest.raises(TeamAdmissionRefused) as refused:
         await world.admit(world.child(task), task, team_id=team.team_id)
     assert refused.value.code == "team_task_closed"
+
+
+async def test_treeless_team_admits_without_a_tree(world: TeamWorld) -> None:
+    """A checkout_mode none team has no tree; it names the main checkout's branch and joins."""
+    task = world.case.task(TITLE)
+    first = world.child(task)
+    team = await world.admit(first, task, checkout_mode="none")
+
+    assert (team.task_id, team.project_id, team.branch, team.base_branch) == (
+        task.id,
+        world.case.project_id,
+        "trunk",
+        "trunk",
+    )
+    assert team.worktree_id is None
+    assert team.worktree_path is not None
+    assert Path(team.worktree_path).is_dir()
+    assert world.task_branches() == []
+    assert world.tree_ids() == []
+
+    # A duplicate launch returns the same team; a second execution for the task joins it.
+    assert await world.admit(first, task, checkout_mode="none") == team
+    second = world.child(task)
+    assert await world.admit(second, task, checkout_mode="none") == team
+    with session_context_for_test(second.id):
+        reply = await world.tools.call(
+            "admit_team", {"task": f"#{task.seq_num}", "checkout_mode": "none"}
+        )
+    assert (reply["success"], reply["team"]) == (True, asdict(team))
+    assert world.task_branches() == []
+    assert world.tree_ids() == []

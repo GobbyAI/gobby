@@ -599,7 +599,7 @@ class TestSyncBundledPipelines:
             "devteam",
             "expand-task",
             "gobby-merge",
-            "planning",
+            "research",
             "review",
             "support",
             "team-planning",
