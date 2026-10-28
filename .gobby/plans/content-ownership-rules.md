@@ -175,8 +175,9 @@ together. The first is delivered; 1.5 builds the second.
   chooses to record when in doubt, so rule 1 never misses dirt the session
   may have made; a false record costs a commit of the session's own paths,
   which rule 2 allows. A pair whose path cannot be fingerprinted when it is
-  recorded (an unreadable file, or a directory) gets no content record; gate
-  3 still finds it through the task's live interval (Decision 22).
+  recorded (an unreadable file, or a directory) gets no content record, and
+  the task's older record of it in that session is dropped; gate 3 still
+  finds it through the task's live interval (Decision 22).
 - **Fingerprint read failure.** Each path is observed on its own. A path
   whose before-call fingerprint raises `OSError` stores no entry. A path
   whose after-call fingerprint raises `OSError` (for example, the call made
@@ -434,7 +435,10 @@ through the Assistant (#25261 criterion 3).
     unreadable file, or a directory), is found from the task's live interval
     in every session (`task_edited_file_checkouts`). It counts unless its
     current content is another task's, so a failed observation never hides
-    the task's work (Adversary CO-A4-F2, 2026-10-28). A directory pair is
+    the task's work (Adversary CO-A4-F2, 2026-10-28). The write that could
+    not fingerprint the path also drops the task's older hash of it in that
+    session, so the pair stays without a content record after the file is
+    readable again. A directory pair is
     inspected as a git pathspec: gate 3 fails while any path under it is
     dirty, including dirt another session made there after the task's write.
     That over-block is accepted. The owner's own directory pairs already
@@ -500,7 +504,9 @@ V1's edits to `state_manager.py` and `storage/hub/postgres_pool.py`
   rule template of 1.6 goes live only after the Orchestrator's next daemon
   restart syncs it (AGENTS.md rule 8).
 - **Order.** 1.4 precedes 1.7, because both edit
-  `_close_context.py::capture_attribution`. 1.8 precedes 1.7, so gate 3 never
+  `_close_context.py::capture_attribution`,
+  `session_edit_ledger.py::SessionEditLedger.record_edited_files` and
+  `task_claim_state.py`. 1.8 precedes 1.7, so gate 3 never
   requires a commit that rule 2 refuses, and both edit `dirty_edit_grants.py`.
   1.5 precedes 1.6, whose end-to-end acceptance needs the recorder to record a
   sanctioned worktree write. 1.8 follows 1.4, because both edit
@@ -1321,6 +1327,8 @@ isolation prefix.
 Targets:
 - `src/gobby/mcp_proxy/tools/tasks/_close_context.py::capture_attribution`
 - `src/gobby/workflows/dirty_edit_grants.py::*` — scope-reason: adds task_recorded_pairs beside claimed_task_ledger_paths
+- `src/gobby/workflows/session_edit_ledger.py::SessionEditLedger.record_edited_files`
+- `src/gobby/workflows/task_claim_state.py::*` — scope-reason: record_task_content_hashes gains the keyword-only unhashed paths it removes
 - `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::*` — scope-reason: adds the cross-session gate 3 tests
 - `tests/workflows/test_dirty_edit_grants.py::*` — scope-reason: adds the task_recorded_pairs test
 
@@ -1365,7 +1373,9 @@ discovery rule exists for one gate 3 outcome.
   directory), and `task_claim_state.record_task_content_hashes` returns
   early on empty digests. The pair still enters `session_dirty_file_checkouts`
   and `task_edited_file_checkouts`, and an earlier record of the same path
-  stays as a stale hash. `checkout_path_owners` compares each record with
+  stays as a stale hash, which matches again if the file returns to those
+  bytes. `state_manager.py` (879 lines) also calls
+  `record_task_content_hashes`, with the digests of adopted shell edits. `checkout_path_owners` compares each record with
   `dirty_edit_grants._current_digest`, which returns "unreadable" on
   `OSError`, so it never maps such a pair to a task. Only three functions
   write `task_edited_file_checkouts`: `record_edited_files` adds,
@@ -1385,6 +1395,13 @@ discovery rule exists for one gate 3 outcome.
   - fallback pairs: every pair of a session's `task_edited_file_checkouts`
     entry for the task that the same session's hash entry for the task
     lacks, or whose `_current_digest` is "unreadable".
+- `record_task_content_hashes` takes a keyword-only `unhashed: Iterable[str]
+  = ()` and removes those paths from the task's hashes under the root; it
+  returns early only when both `digests` and `unhashed` are empty.
+  `record_edited_files` passes the recorded paths that `path_fingerprints`
+  skipped, so a pair recorded without a fingerprint keeps no stale hash and
+  stays a fallback pair after its file is readable again. The
+  `state_manager.py` call is unchanged.
 - In `capture_attribution`, after reading the owner's live pairs:
   1. Read `task_recorded_pairs(db, task_id=task.id)` and drop roots whose
      directory no longer exists (Decision 22).
@@ -1409,6 +1426,7 @@ Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py` — no-edit-reason: commit_close re-evaluates through _evaluate_close, which calls capture_attribution unchanged
 - `tests/mcp_proxy/tools/tasks/test_close_candidate.py` — no-edit-reason: patches capture_attribution with a fixed CloseAttributionSnapshot
 - `tests/mcp_proxy/tools/test_task_lifecycle_coverage.py` — no-edit-reason: patches capture_attribution with a fixed CloseAttributionSnapshot
+- `src/gobby/workflows/state_manager.py` — no-edit-reason: calls record_task_content_hashes without the new keyword
 
 **Focused verification (planned):** run
 `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py`,
@@ -1424,7 +1442,8 @@ Consumers unchanged:
 - 1.7.4 - A predecessor's record of `p` for T whose current content task U's later recorded edit owns adds nothing to T's attributed paths. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_skips_recorded_pairs_another_task_now_owns`.
 - 1.7.5 - A recorded pair under a deleted checkout root is dropped and never makes gate 3 unavailable, while a failing `task_recorded_pairs` read fails gate 3 with "Git could not inspect all task-attributed files." test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_drops_deleted_roots_and_fails_closed_on_unread_records`.
 - 1.7.6 - `task_recorded_pairs` returns as content pairs every root and path that any session's `task_edited_checkout_hashes` recorded for the task, and nothing recorded only for other tasks. It returns as fallback pairs a live pair of the task whose session holds no hash for it, a live directory pair, and a live pair whose stale hash names a file that is now unreadable, and it omits a live pair whose recorded hash belongs to a readable file. test: `tests/workflows/test_dirty_edit_grants.py::test_task_recorded_pairs_reads_every_session`.
-- 1.7.7 - An escalated predecessor recorded, for T, a file `p` through the status fallback while `p` was unreadable and a directory `d` that now holds an untracked file, neither with a content record. After B claims T, gate 3 fails instead of passing over either pair. Once `p` is readable again and both are committed, gate 3 passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_checks_predecessor_pairs_recorded_without_content`.
+- 1.7.7 - An escalated predecessor recorded, for T, a file `p` through the status fallback while `p` was unreadable and a directory `d` that now holds an untracked file, neither with a content record. After B claims T, gate 3 fails instead of passing over either pair. Once `p` is readable again but uncommitted, gate 3 still fails. Once both are committed, gate 3 passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_checks_predecessor_pairs_recorded_without_content`.
+- 1.7.8 - Stale-hash recovery: T's predecessor session records readable `p` (hash H1), and a later recorded write changes `p` and leaves it unreadable, which removes that session's hash of `p` for T while its other paths keep theirs. After B claims T and `p` is made readable again without a byte change, gate 3 fails on the uncommitted `p`, then passes once `p` is committed. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_keeps_pairs_whose_stale_hash_was_dropped`.
 
 ### 1.8 Rule 2 lets a claimant commit its claimed task's dirt [category: code] (depends: 1.3, 1.4)
 `kind: deliverable`
