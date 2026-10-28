@@ -675,6 +675,7 @@ fn is_false(value: &bool) -> bool {
 #[serde(rename_all = "snake_case")]
 pub enum SearchWarningLane {
     Semantic,
+    Graph,
 }
 
 /// Why a hybrid-search lane degraded.

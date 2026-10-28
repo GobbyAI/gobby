@@ -6,6 +6,7 @@ use crate::db;
 use crate::graph::typed_query;
 use crate::models::{GraphPathStep, GraphResult};
 use crate::visibility;
+use crate::visibility::graph_versions::{admitted_graph_versions, with_admitted_versions};
 
 use super::super::connection::with_optional_core_graph;
 use super::super::payload::{row_string_owned, row_usize};
@@ -56,6 +57,16 @@ fn graph_fetch_limit(offset: usize, limit: usize) -> usize {
         .saturating_add(limit)
         .saturating_mul(POST_FILTER_OVERFETCH_FACTOR)
         .min(MAX_GRAPH_LIMIT)
+}
+
+/// Binds the scope's admitted content versions into a relationship query, so
+/// edges from versions the scope does not serve never reach a LIMIT.
+fn admitted_query(
+    ctx: &Context,
+    query: (String, HashMap<String, String>),
+) -> anyhow::Result<(String, HashMap<String, String>)> {
+    let admitted = admitted_graph_versions(ctx)?;
+    Ok(with_admitted_versions(query, &admitted))
 }
 
 fn post_filter_symbol_ids(
@@ -161,8 +172,10 @@ fn count_visible_graph_results(
 pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
     count_visible_graph_results(ctx, |raw_offset, raw_limit| {
         with_optional_core_graph(ctx, Vec::new, |client| {
-            let (query, params) =
-                find_callers_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
+            let (query, params) = admitted_query(
+                ctx,
+                find_callers_query(&ctx.project_id, symbol_id, raw_offset, raw_limit),
+            )?;
             let rows = client.query(&query, Some(params))?;
             Ok(rows.iter().map(row_to_graph_result).collect())
         })
@@ -172,8 +185,10 @@ pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
 pub fn count_callees(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
     count_visible_graph_results(ctx, |raw_offset, raw_limit| {
         with_optional_core_graph(ctx, Vec::new, |client| {
-            let (query, params) =
-                find_callees_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
+            let (query, params) = admitted_query(
+                ctx,
+                find_callees_query(&ctx.project_id, symbol_id, raw_offset, raw_limit),
+            )?;
             let rows = client.query(&query, Some(params))?;
             Ok(rows.iter().map(row_to_graph_result).collect())
         })
@@ -183,8 +198,10 @@ pub fn count_callees(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
 pub fn count_usages(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
     count_visible_graph_results(ctx, |raw_offset, raw_limit| {
         with_optional_core_graph(ctx, Vec::new, |client| {
-            let (query, params) =
-                find_usages_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
+            let (query, params) = admitted_query(
+                ctx,
+                find_usages_query(&ctx.project_id, symbol_id, raw_offset, raw_limit),
+            )?;
             let rows = client.query(&query, Some(params))?;
             Ok(rows.iter().map(row_to_graph_result).collect())
         })
@@ -199,8 +216,10 @@ pub fn find_callers(
 ) -> anyhow::Result<Vec<GraphResult>> {
     collect_visible_graph_results(ctx, offset, limit, |raw_offset, raw_limit| {
         with_optional_core_graph(ctx, Vec::new, |client| {
-            let (query, params) =
-                find_callers_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
+            let (query, params) = admitted_query(
+                ctx,
+                find_callers_query(&ctx.project_id, symbol_id, raw_offset, raw_limit),
+            )?;
             let rows = client.query(&query, Some(params))?;
             Ok(rows.iter().map(row_to_graph_result).collect())
         })
@@ -215,8 +234,10 @@ pub fn find_callees(
 ) -> anyhow::Result<Vec<GraphResult>> {
     collect_visible_graph_results(ctx, offset, limit, |raw_offset, raw_limit| {
         with_optional_core_graph(ctx, Vec::new, |client| {
-            let (query, params) =
-                find_callees_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
+            let (query, params) = admitted_query(
+                ctx,
+                find_callees_query(&ctx.project_id, symbol_id, raw_offset, raw_limit),
+            )?;
             let rows = client.query(&query, Some(params))?;
             Ok(rows.iter().map(row_to_graph_result).collect())
         })
@@ -231,8 +252,10 @@ pub fn find_usages(
 ) -> anyhow::Result<Vec<GraphResult>> {
     collect_visible_graph_results(ctx, offset, limit, |raw_offset, raw_limit| {
         with_optional_core_graph(ctx, Vec::new, |client| {
-            let (query, params) =
-                find_usages_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
+            let (query, params) = admitted_query(
+                ctx,
+                find_usages_query(&ctx.project_id, symbol_id, raw_offset, raw_limit),
+            )?;
             let rows = client.query(&query, Some(params))?;
             Ok(rows.iter().map(row_to_graph_result).collect())
         })
@@ -246,7 +269,10 @@ pub fn find_caller_ids(
 ) -> anyhow::Result<Vec<String>> {
     let fetch_limit = graph_fetch_limit(0, limit);
     let ids = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_caller_ids_query(&ctx.project_id, symbol_id, fetch_limit);
+        let (query, params) = admitted_query(
+            ctx,
+            find_caller_ids_query(&ctx.project_id, symbol_id, fetch_limit),
+        )?;
         let rows = client.query(&query, Some(params))?;
         Ok(rows
             .iter()
@@ -259,7 +285,10 @@ pub fn find_caller_ids(
 pub fn find_usage_ids(ctx: &Context, symbol_id: &str, limit: usize) -> anyhow::Result<Vec<String>> {
     let fetch_limit = graph_fetch_limit(0, limit);
     let ids = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_usage_ids_query(&ctx.project_id, symbol_id, fetch_limit);
+        let (query, params) = admitted_query(
+            ctx,
+            find_usage_ids_query(&ctx.project_id, symbol_id, fetch_limit),
+        )?;
         let rows = client.query(&query, Some(params))?;
         Ok(rows
             .iter()
@@ -280,7 +309,10 @@ pub fn find_callers_batch(
     }
     let fetch_limit = graph_fetch_limit(0, limit);
     let results = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_callers_batch_query(&ctx.project_id, symbol_ids, fetch_limit);
+        let (query, params) = admitted_query(
+            ctx,
+            find_callers_batch_query(&ctx.project_id, symbol_ids, fetch_limit),
+        )?;
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
     })?;
@@ -297,7 +329,10 @@ pub fn find_caller_ids_batch(
     }
     let fetch_limit = graph_fetch_limit(0, limit);
     let ids = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_caller_ids_batch_query(&ctx.project_id, symbol_ids, fetch_limit);
+        let (query, params) = admitted_query(
+            ctx,
+            find_caller_ids_batch_query(&ctx.project_id, symbol_ids, fetch_limit),
+        )?;
         let rows = client.query(&query, Some(params))?;
         Ok(rows
             .iter()
@@ -318,7 +353,10 @@ pub fn find_callees_batch(
     }
     let fetch_limit = graph_fetch_limit(0, limit);
     let results = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_callees_batch_query(&ctx.project_id, symbol_ids, fetch_limit);
+        let (query, params) = admitted_query(
+            ctx,
+            find_callees_batch_query(&ctx.project_id, symbol_ids, fetch_limit),
+        )?;
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
     })?;
@@ -335,7 +373,10 @@ pub fn find_callee_ids_batch(
     }
     let fetch_limit = graph_fetch_limit(0, limit);
     let ids = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_callee_ids_batch_query(&ctx.project_id, symbol_ids, fetch_limit);
+        let (query, params) = admitted_query(
+            ctx,
+            find_callee_ids_batch_query(&ctx.project_id, symbol_ids, fetch_limit),
+        )?;
         let rows = client.query(&query, Some(params))?;
         Ok(rows
             .iter()
@@ -529,8 +570,9 @@ pub fn blast_radius(
     depth: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
     let results = with_optional_core_graph(ctx, Vec::new, |client| {
-        let query = blast_radius_query(depth, MAX_GRAPH_LIMIT);
         let params = typed_query::string_params(&[("project", &ctx.project_id), ("id", symbol_id)]);
+        let (query, params) =
+            admitted_query(ctx, (blast_radius_query(depth, MAX_GRAPH_LIMIT), params))?;
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
     })?;

@@ -73,6 +73,7 @@ pub fn repo_outline(
         offset,
         limit,
         hint: None,
+        warnings: &[],
     };
     let page = token_budget::paginate(summaries, meta, token_budget, format, render_text);
     token_budget::print_page(&page, meta, format, render_text)

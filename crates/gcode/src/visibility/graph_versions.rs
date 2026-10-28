@@ -7,11 +7,55 @@ use std::collections::{BTreeSet, HashMap};
 use crate::config::Context;
 use crate::db;
 use crate::graph::typed_query;
+use crate::models::{SearchWarning, SearchWarningCause, SearchWarningLane};
 
 use super::{
     TOMBSTONE_LANGUAGE, file_selectors_sql, machine_uuid_or_invisible, project_uuid_or_invisible,
     scope_project_id,
 };
+
+/// Degraded-state notices for graph reads. A pin whose graph projection has not
+/// landed serves no graph facts, so reads report it instead of returning empty.
+pub(crate) fn pending_projection_warnings(ctx: &Context) -> Vec<SearchWarning> {
+    match has_pending_pinned_graph_projection(ctx) {
+        Ok(true) => vec![SearchWarning {
+            lane: SearchWarningLane::Graph,
+            cause: SearchWarningCause::ProjectionPending,
+            message: "graph results degraded: pinned graph projection pending recovery; \
+                      pinned files are omitted until it lands"
+                .to_string(),
+        }],
+        Ok(false) => Vec::new(),
+        Err(error) => {
+            log::warn!("pinned graph projection state unavailable: {error}");
+            Vec::new()
+        }
+    }
+}
+
+fn has_pending_pinned_graph_projection(ctx: &Context) -> anyhow::Result<bool> {
+    let (Some(machine), Some(project)) = (
+        machine_uuid_or_invisible(&ctx.machine_id),
+        project_uuid_or_invisible(scope_project_id(ctx)),
+    ) else {
+        return Ok(false);
+    };
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let row = conn.query_one(
+        "SELECT EXISTS (
+             SELECT 1 FROM code_overlay_pins p
+             WHERE p.machine_id = $1 AND p.overlay_project_id = $2
+               AND NOT p.graph_projected
+               AND NOT EXISTS (
+                   SELECT 1 FROM code_indexed_file_states shadow
+                   WHERE shadow.machine_id = $1 AND shadow.project_id = $2
+                     AND shadow.file_path = p.file_path
+               )
+         )",
+        &[&machine, &project],
+    )?;
+    Ok(row.try_get(0)?)
+}
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct AdmittedGraphVersions {
