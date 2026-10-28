@@ -1543,7 +1543,7 @@ Consumers unchanged:
 `kind: deliverable`
 
 Targets:
-- `src/gobby/workflows/commit_guard.py::*` — scope-reason: rule 2 skips holders working a task the session claims, _live_path_owners takes each holder's task from its live interval whether or not it is claimed, and _operation_paths moves out
+- `src/gobby/workflows/commit_guard.py::*` — scope-reason: rules 2 and 3 skip a holder when its interval task or its content-owner task is one the session claims, testing each field on its own, _live_path_owners takes each holder's task from its live interval whether or not it is claimed, and _operation_paths moves out
 - `src/gobby/workflows/git_operation_paths.py`
 - `src/gobby/workflows/dirty_edit_grants.py::*` — scope-reason: renames _claimed_task_ids to the public claimed_task_ids and updates its two callers
 - `tests/workflows/test_commit_guard.py::*` — scope-reason: adds the rule 2 claimed-task tests
@@ -1567,7 +1567,9 @@ import it in both rules.
   from `dirty_edit_grants.claimed_task_carriers` and drops holders whose
   `owner_task_id or ledger_task_id` is in `own_tasks` (lines 365-370), "a
   holder working a task this session now claims is this session's past
-  self".
+  self". Python's `or` tests only the first nonempty field, so a holder's
+  interval task masks a content owner the session claims (Adversary
+  CO-A5-F1).
 - `commit_guard._live_path_owners` (lines 498-583) builds each holder's
   `ForeignPathOwner`. `owner_task_id` comes from `_live_interval_task`
   (lines 586-611), which scans only the holder's `claimed_tasks`, else from
@@ -1609,9 +1611,12 @@ import it in both rules.
   conflict texts name the released task's ref.
 - In `foreign_staged_commit_conflict`, read `claimed_task_ids(db,
   session_id)` once per call (in a thread) and add a dirty path's holder to
-  the conflicts only when its `owner_task_id or ledger_task_id` is not among
-  them. Candidate collection, the stale-holder release and the rule 2 text
-  are unchanged.
+  the conflicts only when neither its `owner_task_id` nor its
+  `ledger_task_id` is among them, each field tested on its own. Candidate
+  collection, the stale-holder release and the rule 2 text are unchanged.
+- In `foreign_dirty_edit_conflict`, the past-self exclusion drops a holder
+  when its `owner_task_id` is in `own_tasks` or its `ledger_task_id` is in
+  `own_tasks`, replacing the `or` fallback (Decision 15).
 - Move `_operation_paths` to `git_operation_paths.operation_paths` unchanged.
 
 **Focused verification (planned):** run `tests/workflows/test_commit_guard.py`,
@@ -1627,6 +1632,7 @@ checkpoint's foreign-owner outcomes.
 - 1.8.1 - Session C claims task T, and live session P, which escalated T and so no longer claims it, holds dirty `p` with T's live interval and T's content record; rule 2 lets C commit `p`, while a dirty path P holds for task U, which C does not claim, is refused with the rule 2 text naming U's `#<seq_num>`. test: `tests/workflows/test_commit_guard.py::test_rule2_allows_commit_of_claimed_task_dirt_held_by_live_predecessor`.
 - 1.8.2 - `operation_paths` imports from `git_operation_paths` and returns the merge set while `MERGE_HEAD` exists and an empty set when no operation is in progress. test: `tests/workflows/test_git_operation_paths.py::test_operation_paths_lists_merge_set_only_during_merge`.
 - 1.8.3 - Fallback pairs held by a live escalated predecessor: in a temporary git checkout, live session P recorded for T, through the status fallback and so with no content record, a file `p` while it was unreadable and a directory `d` holding an untracked file, then escalated T. After C claims T and `p` is readable again, `_live_path_owners` names T, with T's `#<seq_num>` ref, as P's `owner_task_id` for both pairs while `ledger_task_id` is None. Rule 3 lets C edit `p`. C's Bash `git add p d && git commit -m m` event gets "" from `foreign_staged_commit_conflict` before the commit runs, and the commit then lands. A pair P holds for task U still refuses C's commit, naming U. test: `tests/workflows/test_commit_guard.py::test_claimant_commits_fallback_pairs_held_by_escalated_predecessor`.
+- 1.8.4 - Interval and content owners differ: live session P holds dirty `p` under T's live interval, and ended session Q's content record for U is the newest one matching `p`'s current bytes, so `_live_path_owners` gives P `owner_task_id` T and `ledger_task_id` U. Session C, which claims U, may edit `p` under rule 3 and gets "" from `foreign_staged_commit_conflict` for `git add p && git commit -m m`. Session D, which claims neither T nor U, is refused by both rules, and both texts name T's `#<seq_num>`. test: `tests/workflows/test_commit_guard.py::test_claimed_task_exclusion_tests_interval_and_content_owners_separately`.
 
 ## V1 Plan Changelog
 `kind: verification`
