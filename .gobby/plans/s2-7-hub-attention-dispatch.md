@@ -1268,3 +1268,16 @@ all four are resolved:
 
 The adversary's final recheck of c82ebba passed base validation with no open
 decisions.
+
+2026-10-28: Renewed consensus after the Orchestrator's review. The
+Orchestrator's review of 348f4b33 raised ORCH-REV-1: 4.3's cutover preflight
+was a manual bootstrap check that no leaf implemented or tested. The adversary
+withdrew the prior consensus, and the writer withdrew the superseded M1 in a
+removal-only commit (3529556). 4.3 now adds
+`attention_route_override_refusal` in `src/gobby/cli/daemon_preflight.py`.
+`restart_start_refusal` and `_start_dependency_errors` call it, so restart,
+cutover and start refuse any `front_door.routes.attention` entry before
+anything stops, is promoted or launches. Acceptance 4.3.8 pins this. The
+rollback boundary and 4.4's documentation are preserved. The adversary's
+re-review of 2e8e158 resolved ORCH-REV-1, with base validation clean and no
+open decisions.
