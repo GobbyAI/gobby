@@ -453,6 +453,13 @@ pub(crate) mod serial_db {
             lifecycle,
         };
 
+        let mut check = db::connect_readwrite(&database_url).expect("check connection");
+        let baseline = [
+            vector_flags(&mut check, &source, "hash-h"),
+            vector_flags(&mut check, &source, "hash-k"),
+        ];
+        assert_eq!(baseline, [(false, true); 2], "fixture source attempts unstamped");
+
         let outcome = state.sync_file(FILE).expect("sync pinned path");
 
         assert_eq!(outcome, ProjectionFileSyncOutcome::Synced { symbols: 1 });
@@ -480,7 +487,6 @@ pub(crate) mod serial_db {
             Symbol::make_id(&source, FILE, "hash-h", "run", "function", 0)
         );
         assert_eq!(body["points"][0]["payload"]["file_path"], FILE);
-        let mut check = db::connect_readwrite(&database_url).expect("check connection");
         let projected: bool = check
             .query_one(
                 "SELECT vector_projected FROM code_overlay_pins
@@ -490,8 +496,14 @@ pub(crate) mod serial_db {
             .expect("pin flag")
             .get(0);
         assert!(projected);
-        assert_eq!(vector_flags(&mut check, &source, "hash-h"), (false, false));
-        assert_eq!(vector_flags(&mut check, &source, "hash-k"), (false, false));
+        assert_eq!(
+            [
+                vector_flags(&mut check, &source, "hash-h"),
+                vector_flags(&mut check, &source, "hash-k"),
+            ],
+            baseline,
+            "pinned recovery must leave source flags unchanged"
+        );
     }
 
     #[test]
@@ -557,6 +569,12 @@ pub(crate) mod serial_db {
                 lifecycle,
             };
 
+            let mut check = db::connect_readwrite(&database_url).expect("check connection");
+            let baseline = [
+                vector_flags(&mut check, &source, "hash-h"),
+                vector_flags(&mut check, &source, "hash-k"),
+            ];
+            assert_eq!(baseline, [(false, true); 2], "fixture source attempts unstamped");
             let outcome = state.sync_file(FILE).expect("sync races with pin change");
 
             assert!(
@@ -569,7 +587,6 @@ pub(crate) mod serial_db {
                 ProjectionFileSyncOutcome::SkippedMissingIndexedFile,
                 "{change}"
             );
-            let mut check = db::connect_readwrite(&database_url).expect("check connection");
             let pin = check
                 .query_opt(
                     "SELECT vector_projected FROM code_overlay_pins
@@ -582,8 +599,11 @@ pub(crate) mod serial_db {
                 "{change}: late completion"
             );
             assert_eq!(
-                vector_flags(&mut check, &source, "hash-h"),
-                (false, false),
+                [
+                    vector_flags(&mut check, &source, "hash-h"),
+                    vector_flags(&mut check, &source, "hash-k"),
+                ],
+                baseline,
                 "{change}"
             );
         }
