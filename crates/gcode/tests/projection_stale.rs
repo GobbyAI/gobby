@@ -295,10 +295,18 @@ mod serial_db {
             std::fs::create_dir_all(root.path().join(".gobby")).expect("child metadata");
             let source = uuid::Uuid::new_v5(
                 &CODE_INDEX_UUID_NAMESPACE,
-                root.path().to_str().expect("root").as_bytes(),
+                format!("pin-source:{}", root.path().display()).as_bytes(),
             )
             .to_string();
             let overlay = gobby_core::project::code_index_id_for_root(root.path());
+            let source_cleanup = ProjectCleanup {
+                database_url: database_url.into(),
+                project_id: source.clone(),
+            };
+            let overlay_cleanup = ProjectCleanup {
+                database_url: database_url.into(),
+                project_id: overlay.clone(),
+            };
             std::fs::write(
                 root.path().join(".gobby/isolation.json"),
                 serde_json::json!({
@@ -349,14 +357,8 @@ mod serial_db {
                 home,
                 overlay: overlay.clone(),
                 service,
-                _overlay_cleanup: ProjectCleanup {
-                    database_url: database_url.into(),
-                    project_id: overlay.clone(),
-                },
-                _source_cleanup: ProjectCleanup {
-                    database_url: database_url.into(),
-                    project_id: source,
-                },
+                _overlay_cleanup: overlay_cleanup,
+                _source_cleanup: source_cleanup,
             }
         }
 
