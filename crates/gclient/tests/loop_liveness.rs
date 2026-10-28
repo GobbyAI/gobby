@@ -724,6 +724,245 @@ fn roster_items(ids: &[&str]) -> Value {
     })
 }
 
+#[tokio::test]
+async fn a_roster_for_a_project_no_longer_focused_is_dropped() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("initial workspace");
+    mock.seed_other_workspace("project-2", &[(&["terminal-late"], "terminal-late")]);
+    let release = mock.enqueue_held(
+        "GET",
+        "/api/terminals?project_id=project-2",
+        200,
+        roster_items(&["terminal-late"]),
+    );
+    let mut chrome = Chrome::dark();
+    let selected = timeout(
+        LIVENESS_DEADLINE,
+        gobby_client::app::focus_project(&mut workspace, &mut chrome, "project-2"),
+    )
+    .await;
+    assert!(
+        selected.is_ok(),
+        "selecting a project must not await its held roster"
+    );
+    selected.unwrap().expect("select second project");
+    assert_eq!(workspace.project_id(), Some("project-2"));
+
+    mock.enqueue(
+        "GET",
+        "/api/terminals?project_id=project-1",
+        200,
+        roster_items(&["terminal-a", "terminal-b"]),
+    );
+    timeout(
+        LIVENESS_DEADLINE,
+        gobby_client::app::focus_project(&mut workspace, &mut chrome, "project-1"),
+    )
+    .await
+    .expect("switch back while the old roster is held")
+    .expect("select first project");
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        wait_until("the held project roster", || {
+            mock.requests().iter().any(|request| {
+                request
+                    .target
+                    .starts_with("/api/terminals?project_id=project-2")
+            })
+        })
+        .await;
+        release.notify_one();
+        let mut probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        wait_for_replies(&mock, "terminal_take_control", 1).await;
+        probe.key_reaches("terminal-b", 'y').await;
+        probe.frames_render("terminal-a").await;
+        probe.key_reaches("terminal-b", 'x').await;
+        probe.frames_render("terminal-b").await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(workspace.project_id(), Some("project-1"));
+    assert!(
+        !workspace
+            .roster_terminal_ids()
+            .iter()
+            .any(|id| id == "terminal-late"),
+        "the late project's roster must not replace the selected project's roster"
+    );
+    assert!(
+        attach_requests(&mock, "terminal-late").is_empty(),
+        "discarded roster rows must never attach"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn rest_failures_and_lagged_events_warn_with_elapsed_time() {
+    let (_guard, logs) = capture_logs();
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("initial workspace");
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        503,
+        json!({"error": "roster unavailable"}),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/sessions?",
+        503,
+        json!({"error": "sessions unavailable"}),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/projects",
+        200,
+        json!([{"id": "surviving-project", "name": "Surviving project"}]),
+    );
+    workspace.queue_initial_sidebar_fetch();
+    let fetch = workspace
+        .start_sidebar_refetch()
+        .expect("queued fetch")
+        .await
+        .expect("successful components survive partial failures");
+    workspace.apply_sidebar_fetch(fetch);
+    assert!(
+        workspace
+            .sidebar()
+            .projects
+            .iter()
+            .any(|project| project.project_id == "surviving-project"),
+        "successful project rows still apply"
+    );
+    let rest_warnings: Vec<_> = records(&logs, "WARN")
+        .into_iter()
+        .filter(|line| line.contains("operation="))
+        .collect();
+    assert_eq!(
+        rest_warnings.len(),
+        2,
+        "one WARN per failed REST component: {rest_warnings:?}"
+    );
+    for operation in ["attention roster", "sessions"] {
+        let warning = rest_warnings
+            .iter()
+            .find(|line| line.contains(operation))
+            .unwrap_or_else(|| panic!("missing WARN for {operation}: {rest_warnings:?}"));
+        for field in ["generation=", "error_class=", "elapsed_ms="] {
+            assert!(warning.contains(field), "missing {field}: {warning}");
+        }
+        if operation == "sessions" {
+            assert!(warning.contains("project-1"), "project context: {warning}");
+        }
+    }
+
+    assert_eq!(assert_lagged_warning(&mock, &mut workspace, &logs).await, 1);
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn receiver_overflow_warns_with_elapsed_time() {
+    let (_guard, logs) = capture_logs();
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("initial workspace");
+    assert_eq!(assert_lagged_warning(&mock, &mut workspace, &logs).await, 1);
+    mock.shutdown().await;
+}
+
+async fn assert_lagged_warning(
+    mock: &MockDaemon,
+    workspace: &mut Workspace<LiveDaemon>,
+    logs: &Arc<Mutex<Vec<u8>>>,
+) -> usize {
+    // Keep the workspace receiver idle until the actual daemon reader has
+    // published more events than its bounded broadcast channel can hold.
+    let (_, mut monitor) = workspace.daemon().subscribe();
+    let burst = async {
+        for seq in 1..=2049 {
+            mock.send_event(json!({"type": "terminal_event", "event": "noop",
+                "terminal_id": "terminal-a", "daemon_epoch": "epoch-1", "seq": seq,
+                "timestamp": "2026-01-01T00:00:00Z"}));
+        }
+        loop {
+            match monitor.recv().await {
+                Ok(gobby_client::daemon::DaemonEvent::Terminal { seq: 2049, .. }) => break,
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(error) => panic!("monitor closed before overflow: {error}"),
+            }
+        }
+    };
+    timeout(DRAIN_DEADLINE, burst)
+        .await
+        .expect("daemon reader published overflow");
+    // Lag repair must retain the panes the liveness probe exercises.
+    for _ in 0..2 {
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            roster_items(&["terminal-a", "terminal-b"]),
+        );
+    }
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        let mut probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        wait_for_replies(&mock, "terminal_take_control", 1).await;
+        probe.key_reaches("terminal-b", 'x').await;
+        probe.frames_render("terminal-a").await;
+        probe.key_reaches("terminal-b", 'z').await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(workspace, &mut terminal, &mut chrome, input_rx, &mut switch),
+        driver
+    );
+    result.expect("live loop recovers from lag");
+    let lagged: Vec<_> = records(&logs, "WARN")
+        .into_iter()
+        .filter(|line| line.contains("source=") && line.contains("lag"))
+        .collect();
+    assert_eq!(
+        lagged.len(),
+        1,
+        "one WARN for the overflow episode: {lagged:?}"
+    );
+    for field in ["source=", "generation=", "elapsed_ms="] {
+        assert!(lagged[0].contains(field), "missing {field}: {}", lagged[0]);
+    }
+    lagged.len()
+}
+
 fn pane_added_event(tab: &str, first: &str, added: &str, terminal: &str, seq: u64) -> Value {
     json!({
         "type": "workspace_event",
