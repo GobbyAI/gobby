@@ -42,7 +42,9 @@ def _packaged_defaults_path() -> Path:
 @pytest.mark.parametrize("model", ["inherit", "", "   "])
 def test_codex_launch_defaults_exclude_non_model_values(model: str) -> None:
     assert codex_model_ids_in_policy({"provider": "codex", "model": model}) == set()
-    assert codex_model_ids_in_policy({"reviewer_provider": "codex", "reviewer_model": model}) == set()
+    assert (
+        codex_model_ids_in_policy({"reviewer_provider": "codex", "reviewer_model": model}) == set()
+    )
 
 
 def test_packaged_models_are_parsed_once_per_process(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -238,6 +240,17 @@ def test_active_policy_codex_model_is_seeded(
     assert models == ("gpt-7-sol",)
     config = tomllib.loads((tmp_path / ".codex/config.toml").read_text())
     assert config["tui"]["model_availability_nux"]["gpt-7-sol"] == 4
+
+    # Caching package resources must not freeze the DB-active defaults.
+    policy_row.definition_json["effects"][0]["value"]["launch_defaults"]["developer_model"] = (
+        "gpt-7-terra"
+    )
+    updated_models = active_codex_launch_models(cast(Any, object()), "project-1")
+    assert updated_models == ("gpt-7-terra",)
+    with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
+        pre_approve_directory("codex", workspace, updated_models)
+    updated_config = tomllib.loads((tmp_path / ".codex/config.toml").read_text())
+    assert updated_config["tui"]["model_availability_nux"]["gpt-7-terra"] == 4
 
 
 @pytest.mark.parametrize(
