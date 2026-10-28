@@ -18,7 +18,12 @@ from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.eligibility import overlay_project_id_for_root
 from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.code_index.maintenance_launch import open_launch_async
-from gobby.releases.window import ReleaseWindowUnreadable, admissions_closed, read_window
+from gobby.releases.window import (
+    ReleaseWindowUnreadable,
+    admissions_closed,
+    project_checkout_root,
+    read_window,
+)
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
@@ -141,7 +146,7 @@ async def _branch(main: Path) -> str | None:
 
 async def main_checkout_target(db: HubDatabase, project_id: str) -> tuple[Path, str] | None:
     """Read the registered main checkout and the branch protected by landing."""
-    repo = Path(await asyncio.to_thread(require_root, db, project_id, require_machine_id()))
+    repo = Path(await asyncio.to_thread(project_checkout_root, db, project_id))
     common = Path(await _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
     main = common.parent
     branch = await _branch(main)

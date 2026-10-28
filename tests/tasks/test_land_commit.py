@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from functools import partial
@@ -442,6 +443,26 @@ async def test_landing_branch_is_main_checkout_head(case: LandingCase, tmp_path:
             require_machine_id(), case.project_id, str(case.repo)
         )
         case.git("worktree", "remove", str(caller_path))
+
+
+async def test_main_checkout_target_reads_the_checkout_off_the_event_loop(
+    case: LandingCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reads: list[int] = []
+
+    def recording() -> str:
+        reads.append(threading.get_ident())
+        return require_machine_id()
+
+    monkeypatch.setattr("gobby.tasks.land_commit.require_machine_id", recording)
+    monkeypatch.setattr("gobby.releases.window.require_machine_id", recording)
+    loop_thread = threading.get_ident()
+
+    target = await land_commit.main_checkout_target(case.db, case.project_id)
+
+    assert target is not None and target[1] == "trunk"
+    assert reads, "the landing read never touched the machine id"
+    assert loop_thread not in reads
 
 
 async def test_concurrent_landings_serialize_and_release_lock(case: LandingCase) -> None:
