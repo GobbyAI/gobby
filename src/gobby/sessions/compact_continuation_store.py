@@ -169,6 +169,30 @@ def pending_compact_attempt(db: HubDatabase, session_id: str) -> str | None:
     return attempt_id if delivered is None else None
 
 
+def delivered_compact_continuation(db: HubDatabase, session_id: str) -> str | None:
+    """Identify an unconsumed compact whose matching boundary already landed.
+
+    A wake may deliver its pull prompt, never an in-flight compact or a clear
+    predecessor's handoff. Keep the attempt identity for the final write recheck.
+    """
+    marker = _load_session_variables(db, session_id, variable_name=PENDING_HANDOFF_VARIABLE).get(
+        PENDING_HANDOFF_VARIABLE
+    )
+    if not isinstance(marker, Mapping) or marker.get("clear_session") is not False:
+        return None
+    attempt_id = marker.get("attempt_id")
+    handoff_id = marker.get("handoff_record_id")
+    if not isinstance(attempt_id, str) or not attempt_id or not isinstance(handoff_id, str):
+        return None
+    receipt = db.fetchone(
+        "SELECT 1 FROM session_handoff_deliveries "
+        "WHERE handoff_id = %s AND attempt_id = %s AND boundary_kind = 'compact' "
+        "AND continuation_session_id = %s",
+        (handoff_id, attempt_id, session_id),
+    )
+    return attempt_id if receipt is not None else None
+
+
 def _pop_session_variable(
     db: HubDatabase,
     session_id: str,
