@@ -71,9 +71,14 @@ def reviewer_launch(
     # Synthetic owner configuration stays unreadable to the sandboxed hook path.
     (home / "bootstrap.yaml").write_text("daemon_port: 12345\n")
     (home / "bootstrap.yaml").chmod(0o600)
-    workspace = Path(os.environ.get("GOBBY_REVIEWER_PROOF_WORKSPACE", str(tmp_path / "workspace")))
-    workspace.mkdir(exist_ok=True)
     anchor = home / "agents_workspaces" / "proof-project"
+    mode = getattr(request, "param", False)
+    workspace = (
+        anchor / "default" / "session-50" / "task-1"
+        if mode == "task-worktree"
+        else Path(os.environ.get("GOBBY_REVIEWER_PROOF_WORKSPACE", str(tmp_path / "workspace")))
+    )
+    workspace.mkdir(parents=True, exist_ok=True)
     own = anchor / "proof-seat" / "session-40"
     epic = anchor / "epics" / "epic-1"
     prior = anchor / "proof-seat" / "session-10"
@@ -81,10 +86,14 @@ def reviewer_launch(
         folder.mkdir(parents=True)
     (anchor / "README.md").write_text("Shared guidance")
     reads = [str(own), str(epic), str(prior), str(anchor / "README.md")]
-    if getattr(request, "param", False):
+    writes = [str(own), str(epic)]
+    if mode == "task-worktree":
+        reads.append(str(workspace))
+        writes.append(str(workspace))
+    elif mode is True:
         reads = [str(anchor.parent)]
     config = SandboxConfig(enabled=True, backend="srt", allow_network=False).with_workspace_scope(
-        reads, [str(own), str(epic)]
+        reads, writes
     )
     if not (workspace / "pyproject.toml").exists():
         (workspace / "pyproject.toml").write_text(
@@ -254,6 +263,32 @@ def test_reviewer_cached_settings_and_python_environment(
     assert result.returncode == 0, result.stderr
     assert "cached-settings-and-endpoint-and-uv-ok" in result.stdout
     assert Path(environment["UV_PROJECT_ENVIRONMENT"]).is_dir()
+
+
+@pytest.mark.parametrize("reviewer_launch", ["task-worktree"], indirect=True)
+def test_reviewer_runs_pytest_in_assigned_developer_checkout(
+    reviewer_launch: tuple[SandboxLaunch, Path, dict[str, str]],
+) -> None:
+    launch, workspace, environment = reviewer_launch
+    (workspace / "candidate.txt").write_text("candidate-under-review")
+    (workspace / "test_candidate.py").write_text(
+        "from pathlib import Path\n"
+        "def test_candidate():\n"
+        "    assert Path('candidate.txt').read_text() == 'candidate-under-review'\n"
+    )
+    secret = workspace.parent / "private.txt"
+    secret.write_text("another seat's notes")
+    result = _run(
+        launch,
+        workspace,
+        environment,
+        [sys.executable, "-m", "pytest", "test_candidate.py", "-q", "-p", "no:cacheprovider"],
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "1 passed" in result.stdout
+    denied = _run(launch, workspace, environment, ["/bin/cat", str(secret)])
+    assert denied.returncode != 0
+    assert "another seat's notes" not in denied.stdout
 
 
 def test_reviewer_workspace_case_alias_still_needs_hook_scope(

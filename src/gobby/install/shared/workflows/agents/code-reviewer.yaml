@@ -38,6 +38,9 @@ prompts:
     ## Sandbox
     The sandbox denies writes to /tmp, ps argument listing, and an explicit /bin/ps path. Write scratch files under your agent workspace folder (named in your Agent Workspace section), never under /tmp, $TMPDIR or a provider scratchpad. For stall diagnosis run bare `ps -axo pid,ppid,etime,comm`, which resolves to the sandbox-safe shim; never list command arguments or environment.
 
+    ## Candidate checkout
+    Review and run focused tests in the developer's registered task worktree. Your coordinator launches you with `spawn_agent(agent="code-reviewer", worktree_id=<developer task worktree id>)`; this grants access to that exact checkout. Verify HEAD matches the candidate SHA before running tests. If your run lacks that assignment, report it to your Dev Manager for relaunch. Never create a worktree or use `git archive` extraction into a seat folder as a review checkout. Preserve the author's files and branch.
+
     ## Continuity
     Continuity: compact in place after each verdict. Once the unit's last line is sent, or under context pressure mid-review, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.
 

@@ -22,7 +22,10 @@ from gobby.workflows.agent_resolver import (
     resolve_agent,
     resolve_agent_with_row,
 )
-from gobby.workflows.condition_helpers_paths import workspace_contains
+from gobby.workflows.condition_helpers_paths import (
+    agent_workspace_write_violation,
+    workspace_contains,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -857,12 +860,15 @@ def agent_workspace_read_violation(
     bound = own or epic
     anchor = bound.parents[1] if bound is not None else None
     folders = (own, epic, anchor)
+    worktree = _assigned_workspace_checkout(session_manager, caller_id)
 
     def readable(target: Path) -> bool:
         within = workspace_contains(target, root)
         if within is not True:
             return within is False
         canonical = root.joinpath(*target.parts[len(root.parts) :])
+        if worktree is not None and workspace_contains(canonical, worktree) is True:
+            return True
         return _placeholder_folder(canonical, root) or _workspace_path_readable(
             canonical, session_manager, caller_id, folders
         )
@@ -875,6 +881,18 @@ def agent_workspace_read_violation(
         if boundary is not None and not readable(boundary):
             return True
     return False
+
+
+def _assigned_workspace_checkout(
+    session_manager: SessionManager | None, caller_id: str | None
+) -> Path | None:
+    from gobby.agents.agent_workspaces import assigned_task_worktree
+
+    return (
+        assigned_task_worktree(session_manager.db, caller_id)
+        if session_manager is not None and caller_id
+        else None
+    )
 
 
 def session_condition_helpers(
@@ -911,6 +929,14 @@ def session_condition_helpers(
         "agent_workspace_read_violation": lambda event_data, tool_input, variables, caller_id: (
             agent_workspace_read_violation(
                 session_manager, event_data, tool_input, variables, caller_id
+            )
+        ),
+        "agent_workspace_write_violation": lambda event_data, tool_input, variables, caller_id: (
+            agent_workspace_write_violation(
+                event_data,
+                tool_input,
+                variables,
+                task_worktree=_assigned_workspace_checkout(session_manager, caller_id),
             )
         ),
     }

@@ -115,7 +115,9 @@ def workspace_contains(path: Path, directory: Path) -> bool | None:
         return None
 
 
-def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> bool:
+def _workspace_write_refused(
+    path: Path, root: Path, allowed: list[Path], task_worktree: Path | None = None
+) -> bool:
     within_root = workspace_contains(path, root)
     if within_root is not True:
         return within_root is None
@@ -145,7 +147,7 @@ def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> boo
                 return True
             return not (
                 checkout is not None
-                and len(checkout.parts) > len(directory.parts)
+                and (len(checkout.parts) > len(directory.parts) or checkout == task_worktree)
                 and workspace_contains(checkout, directory) is True
             )
     return True
@@ -155,6 +157,8 @@ def agent_workspace_write_violation(
     event_data: Mapping[str, Any] | None,
     tool_input: Any,
     variables: Mapping[str, Any],
+    *,
+    task_worktree: Path | None = None,
 ) -> bool:
     """True when a write lands under the workspace root outside the seat's own or epic folder.
 
@@ -206,7 +210,9 @@ def agent_workspace_write_violation(
         )
         if directory is not None
     ]
-    return any(_workspace_write_refused(path, root, allowed) for path in paths)
+    if task_worktree is not None:
+        allowed.append(task_worktree)
+    return any(_workspace_write_refused(path, root, allowed, task_worktree) for path in paths)
 
 
 # Provider scratchpads and per-user temp dirs live under /private/var/folders on macOS.
