@@ -1057,21 +1057,30 @@ class TestAgentToolEnforcement:
         assert response.reason is not None
         assert f"Tool '{tool_name}' is blocked" in response.reason
 
-    def test_blocked_tools_overrides_infra_exempt_for_agent(self) -> None:
+    def test_blocked_tools_overrides_infra_exempt_for_agent(self, db: "HubDatabase") -> None:
         """Native variable authority precedes agent blocklists; reads stay usable."""
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        _create_session(db)
         variables: dict[str, Any] = {
             "_agent_blocked_tools": AGENT_BLOCKED_TOOLS,
             "_agent_type": "locked-down-agent",
         }
 
-        denied = _check_agent_tool("mcp__gobby__set_variable", variables)
-        allowed = _check_agent_tool("mcp__gobby__get_variable", variables)
+        SessionVariableManager(db).merge_variables(SESSION_ID, variables)
+        engine = RuleEngine(db, session_manager=SessionManager(db))
+        denied = engine._check_agent_tool_enforcement(
+            _make_event(data={"tool_name": "mcp__gobby__set_variable"}), SESSION_ID, variables
+        )
+        allowed = engine._check_agent_tool_enforcement(
+            _make_event(data={"tool_name": "mcp__gobby__get_variable"}), SESSION_ID, variables
+        )
 
         assert denied is not None
         assert denied.decision == "block"
         assert denied.reason is not None
         assert "[native-variable-authority]" in denied.reason
-        assert "agent definition 'locked-down-agent'" in denied.reason
+        assert "does not grant write_session_variables" in denied.reason
         assert allowed is None
 
 

@@ -21,6 +21,7 @@ from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_resolver import session_has_capability_or_operator
 from gobby.workflows.condition_helpers_sessions import network_override_allowed
+from gobby.workflows.engine.idle_declaration import SET_VARIABLE_TOOL, native_variable_write_error
 from gobby.workflows.state_manager import SessionVariableManager
 
 
@@ -135,6 +136,7 @@ def test_root_authority_survives_clear_lineage(
                 "close_without_work",
                 "override_spawn_network",
                 "send_reports",
+                "write_session_variables",
             ],
         },
         project_id=project,
@@ -170,5 +172,15 @@ def test_root_authority_survives_clear_lineage(
 
     assert session_has_capability_or_operator(temp_db, caller.id, "close_without_work")
     assert network_override_allowed(sessions, caller.id)
+    assert (
+        native_variable_write_error(
+            SET_VARIABLE_TOOL,
+            {"name": "sample", "value": True},
+            caller.id,
+            variables.get_variables(caller.id),
+            sessions,
+        )
+        is None
+    )
     assert recipient_policy(temp_db, caller.id, [inbox.id]).withheld == frozenset()
     assert is_operator_coordinator(LocalTaskManager(temp_db), caller) is (role == "coordinator")

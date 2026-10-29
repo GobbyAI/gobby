@@ -1,5 +1,5 @@
 name: default
-capabilities: [override_spawn_network]
+capabilities: [override_spawn_network, write_session_variables]
 description: Baseline agent — bootstraps core guidance and loads other skills on demand
 sources: [claude, codex, droid]
 surfaces: [spawn, persona]

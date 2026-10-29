@@ -13,6 +13,7 @@ import yaml
 
 from gobby.agents.agent_workspaces import predecessor_folder_readable
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -406,6 +407,17 @@ async def test_exemptions_and_variable_protection(
     )
     sessions = SessionManager(temp_db)
     for role in ("assistant", "orchestrator", "default"):
+        AgentDefinitionManager(temp_db).create(
+            role,
+            {
+                "name": role,
+                "prompts": {"agent": "Maintain assigned session state."},
+                "workflows": {"rule_selectors": {"include": []}},
+                "capabilities": ["write_session_variables"],
+            },
+            project_id=sample_project["id"],
+        )
+        SessionVariableManager(temp_db).set_variable(caller, "_agent_type", role)
         for key in (
             "_agent_workspace_dir",
             "_agent_workspace_epic_dir",
