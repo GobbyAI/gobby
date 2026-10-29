@@ -141,6 +141,21 @@ def workspace_write_engine(temp_db: HubDatabase) -> RuleEngine:
     return RuleEngine(temp_db)
 
 
+@pytest.fixture
+def workspace_read_engine(temp_db: HubDatabase) -> RuleEngine:
+    document = yaml.safe_load((RULES_DIR / "roles" / "agent-workspace-scope.yaml").read_text())
+    name = "agent-workspace-read-scope"
+    body_data, metadata = split_rule_definition_data(document["rules"][name])
+    RuleDefinitionManager(temp_db).create(
+        name=name,
+        definition_json=RuleDefinitionBody.model_validate(body_data).model_dump_json(),
+        priority=metadata["priority"],
+        enabled=metadata["enabled"],
+        tags=document["tags"],
+    )
+    return RuleEngine(temp_db)
+
+
 def _event(data: dict[str, Any], session_id: str) -> HookEvent:
     # The platform session id rides in metadata, as the hook handlers stamp it in production.
     return HookEvent(
@@ -418,6 +433,115 @@ async def test_case_alias_cannot_borrow_unproven_seat_ownership(
     )
     assert response.decision == "block"
     assert "agent-workspace-write-scope" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ancestor", ["gobby", "root", "definition"])
+@pytest.mark.parametrize("tool", ["read", "grep", "shell"])
+async def test_case_alias_reads_preserve_workspace_isolation(
+    workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, ancestor: str, tool: str
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    own.mkdir(parents=True)
+    directory = {"gobby": root.parent, "root": root, "definition": own.parent}[ancestor]
+    alias = directory.with_name(directory.name.upper())
+    if not alias.exists():
+        pytest.skip("Filesystem distinguishes workspace root casing")
+    assert alias.samefile(directory)
+    for target, decision in (
+        (own.parent / "session-99" / "notes.md", "block"),
+        (own / "notes.md", "allow"),
+    ):
+        path = alias / target.relative_to(directory)
+        if tool == "shell":
+            data = _shell(f"cat {path}", project)
+        elif tool == "grep":
+            data = _grep(path, project)
+        else:
+            data = _read(path, project)
+        response = await _decide(workspace_read_engine, data, variables)
+        assert response.decision == decision, (path, tool, response.reason)
+        if decision == "block":
+            assert response.reason is not None
+            assert "agent-workspace-read-scope" in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["shell", "glob"])
+@pytest.mark.parametrize(
+    "pattern",
+    ["agents_work*", "agents_work?paces", "agents_[w]orkspaces", "agents_{workspaces,other}"],
+)
+async def test_workspace_root_patterns_cannot_expose_foreign_reads(
+    workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, tool: str, pattern: str
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    target = root.parent / pattern / PROJECT / "developer" / "session-99" / "notes.md"
+    data = (
+        _shell(f"cat {target}", project)
+        if tool == "shell"
+        else {"tool_name": "Glob", "tool_input": {"pattern": str(target)}, "cwd": str(project)}
+    )
+    response = await _decide(workspace_read_engine, data, variables)
+    assert response.decision == "block", (target, response.reason)
+    assert response.reason is not None
+    assert "agent-workspace-read-scope" in response.reason
+
+
+@pytest.mark.asyncio
+async def test_read_patterns_keep_an_unambiguous_owned_boundary(
+    workspace_read_engine: RuleEngine, root: Path, tmp_path: Path
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    for target, decision in (
+        (own / "*.md", "allow"),
+        (own / "**" / "*.md", "allow"),
+        (Path(variables["_agent_workspace_epic_dir"]) / "*.md", "allow"),
+        (project / "src" / "*.py", "allow"),
+        (own.parent / "session-*" / "notes.md", "block"),
+        (own.parent / "*" / "notes.md", "block"),
+        (own / "*" / ".." / ".." / "session-99" / "notes.md", "block"),
+    ):
+        response = await _decide(workspace_read_engine, _shell(f"cat {target}", project), variables)
+        assert response.decision == decision, (target, response.reason)
+        if decision == "block":
+            assert response.reason is not None
+            assert "agent-workspace-read-scope" in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("folder", ["own", "epic"])
+async def test_nested_task_worktree_plan_allowance_stays_bounded(
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, folder: str
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    variable = "_agent_workspace_dir" if folder == "own" else "_agent_workspace_epic_dir"
+    worktree = Path(variables[variable]) / "task-25298"
+    for relative, decision in (
+        (".gobby/plans/runbook-devteam-addendum.md", "allow"),
+        (".gobby/plans/research/notes.MD", "allow"),
+        (".gobby/project.json", "block"),
+        (".git/config", "block"),
+        (".gobby/plans/.git/notes.md", "block"),
+        (".gobby/plans/nested/.gobby/plans/notes.md", "block"),
+    ):
+        response = await _decide(
+            workspace_write_engine, _write(worktree / relative, project), variables
+        )
+        assert response.decision == decision, (relative, response.reason)
+        if decision == "block":
+            assert response.reason is not None
+            assert "agent-workspace-write-scope" in response.reason
 
 
 @pytest.mark.asyncio
