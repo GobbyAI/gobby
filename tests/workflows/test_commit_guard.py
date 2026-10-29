@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
@@ -18,6 +19,7 @@ import pytest
 from psycopg_pool import PoolTimeout
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import Project
@@ -2760,6 +2762,54 @@ async def test_same_relative_path_commits_from_separate_worktrees(
     _git(foreign_checkout, "commit", "-q", "-m", "foreign checkout")
     assert _git(guard_harness.repo, "show", "HEAD:foreign.txt") == "current checkout"
     assert _git(foreign_checkout, "show", "HEAD:foreign.txt") == "foreign checkout"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("definition_name", ["orchestrator", "fixture-controller"])
+@pytest.mark.parametrize("exempt", [False, True])
+async def test_definition_exemption_controls_actual_foreign_staged_commit(
+    guard_harness: GuardHarness, definition_name: str, exempt: bool
+) -> None:
+    h = guard_harness
+    AgentDefinitionManager(h.db).create(
+        name=definition_name,
+        source="installed",
+        project_id=h.project.id,
+        definition_json=json.dumps(
+            {
+                "name": definition_name,
+                "prompts": {"agent": "Handle the assigned work."},
+                "workflows": {
+                    "rule_selectors": {
+                        "include": ["tag:default"],
+                        "exclude": [f"name:{RULE_NAME}"] if exempt else [],
+                    }
+                },
+            },
+        ),
+    )
+    SessionVariableManager(h.db).merge_variables(
+        h.current_session.id, {"_agent_type": definition_name}
+    )
+    (h.repo / "owned.txt").write_text("current change\n", encoding="utf-8")
+    (h.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    _git(h.repo, "add", "--", "owned.txt", "foreign.txt")
+    original_head = _git(h.repo, "rev-parse", "HEAD")
+
+    response = await h.handler._evaluate_rules(h.event("git commit -m 'selected'"))
+
+    assert response.decision == ("allow" if exempt else "block"), response.reason
+    if exempt:
+        _git(h.repo, "commit", "-m", "selected")
+        assert _git(h.repo, "show", "HEAD:foreign.txt") == "foreign change"
+        assert _git(h.repo, "show", "HEAD:owned.txt") == "current change"
+        assert _git(h.repo, "diff", "--cached", "--name-only") == ""
+    else:
+        assert _git(h.repo, "rev-parse", "HEAD") == original_head
+        assert set(_git(h.repo, "diff", "--cached", "--name-only").splitlines()) == {
+            "foreign.txt",
+            "owned.txt",
+        }
 
 
 @pytest.mark.asyncio
