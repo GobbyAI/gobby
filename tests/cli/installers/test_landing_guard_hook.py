@@ -156,6 +156,75 @@ def test_direct_commit_allows_listed_markdown_and_coverage(tmp_path: Path) -> No
     assert verdicts == {path: is_direct_commit_path(path) for path in verdicts}
 
 
+@pytest.mark.parametrize("setting", [None, "false", "invalid", "true"])
+def test_direct_code_commit_uses_repository_policy(tmp_path: Path, setting: str | None) -> None:
+    repo = _baseline(tmp_path)
+    if setting is not None:
+        repo.ok(repo.root, "config", "--local", "gobby.allowDirectIntegrationCommits", setting)
+
+    result = repo.commit(repo.root, {"src/policy.py": "value = 1\n"})
+
+    if setting == "true":
+        assert result.returncode == 0, result.stderr
+        assert repo.ok(repo.root, "show", "HEAD:src/policy.py") == "value = 1"
+        deletion = repo.git(repo.root, "update-ref", "-d", "refs/heads/main")
+        assert deletion.returncode != 0
+        assert "the protected branch cannot be deleted" in deletion.stderr
+    else:
+        _assert_refused(result)
+
+
+def test_direct_commit_policy_is_shared_with_linked_worktrees(tmp_path: Path) -> None:
+    repo = _baseline(tmp_path)
+    main_view = tmp_path / "main-view"
+    repo.ok(repo.root, "worktree", "add", "-q", "--force", str(main_view), "main")
+    repo.ok(repo.root, "config", "--local", "gobby.allowDirectIntegrationCommits", "true")
+
+    result = repo.commit(main_view, {"src/linked.py": "linked = True\n"})
+
+    assert result.returncode == 0, result.stderr
+    assert repo.ok(repo.root, "show", "main:src/linked.py") == "linked = True"
+
+
+@pytest.mark.parametrize("scope", ["command", "worktree"])
+def test_transient_config_cannot_override_direct_commit_policy(tmp_path: Path, scope: str) -> None:
+    repo = _baseline(tmp_path)
+    repo.ok(repo.root, "config", "--local", "gobby.allowDirectIntegrationCommits", "false")
+    refused = repo.commit(repo.root, {"src/policy.py": "value = 1\n"})
+    _assert_refused(refused)
+
+    if scope == "worktree":
+        repo.ok(repo.root, "config", "extensions.worktreeConfig", "true")
+        repo.ok(repo.root, "config", "--worktree", "gobby.allowDirectIntegrationCommits", "true")
+        result = repo.git(repo.root, "commit", "-q", "-m", "change")
+    else:
+        result = repo.git(
+            repo.root,
+            "-c",
+            "gobby.allowDirectIntegrationCommits=true",
+            "commit",
+            "-q",
+            "-m",
+            "change",
+        )
+
+    _assert_refused(result)
+
+
+def test_configured_direct_commits_keep_checkout_operation_guard(tmp_path: Path) -> None:
+    repo = _baseline(tmp_path)
+    repo.ok(repo.root, "config", "--local", "gobby.allowDirectIntegrationCommits", "true")
+    lane = tmp_path / "lane"
+    repo.ok(repo.root, "worktree", "add", "-q", "-b", "lane", str(lane))
+    created = repo.commit(lane, {"src/merged.py": "merged = True\n"})
+    assert created.returncode == 0, created.stderr
+
+    result = repo.git(repo.root, "merge", "--ff-only", "lane")
+
+    _assert_refused(result)
+    assert not (repo.root / "src/merged.py").exists()
+
+
 def test_protected_branch_refuses_writes_from_any_worktree(tmp_path: Path) -> None:
     repo = _baseline(tmp_path)
     lane = tmp_path / "lane"

@@ -85,9 +85,10 @@ def _landing_guard_hook() -> str:
     return (
         r"""
 # Gobby protected-branch guard. The branch checked out in the main worktree
-# takes code only through gobby-tasks-ops:land_commit. A direct update may
-# change only Markdown at the root or under the listed directories, and
-# coverage manifests. POSIX sh: no interpreter start per ref update.
+# takes code through gobby-tasks-ops:land_commit unless the repository-local
+# gobby.allowDirectIntegrationCommits setting enables direct code commits.
+# Otherwise direct updates are limited to the listed Markdown/coverage paths.
+# POSIX sh: no interpreter start per ref update.
 GOBBY_REF_LINES=$(cat)
 gobby_refuse() {
     echo "Gobby refused the update of ${GOBBY_PROTECTED_REF:-the protected branch}: $1." >&2
@@ -155,6 +156,20 @@ if [ -n "$GOBBY_PROTECTED_REF" ]; then
         case $gobby_old in
         *[!0]*) ;;
         *) gobby_old=$(git rev-parse -q --verify "$gobby_ref^{commit}") || continue ;;
+        esac
+        # Read the shared repository's persisted policy only. A command-line -c
+        # setting or a linked checkout's worktree config cannot grant this permission.
+        gobby_direct_commits=$(git --git-dir="$GOBBY_COMMON_DIR" config --local \
+            --type=bool --get gobby.allowDirectIntegrationCommits)
+        case $? in
+        0)
+            case $gobby_direct_commits in
+            true) continue ;;
+            false) ;;
+            *) gobby_refuse "invalid gobby.allowDirectIntegrationCommits policy" ;;
+            esac ;;
+        1) ;; # An unset policy retains the documentation-only allowance.
+        *) gobby_refuse "cannot read gobby.allowDirectIntegrationCommits policy" ;;
         esac
         # Unquoted non-ASCII matches the policy; git still quotes control characters.
         gobby_paths=$(git -c core.quotePath=false diff --name-only --no-renames \
