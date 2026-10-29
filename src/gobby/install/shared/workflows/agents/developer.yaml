@@ -73,7 +73,6 @@ step_workflow:
       - code-review
     required_skills_loaded: false
     additional_skills: []
-    # Runtime-owned completion rights survive the next task's claim and reset.
     additional_skills_loaded: false
     implementation_complete: false
     candidate_sent: false

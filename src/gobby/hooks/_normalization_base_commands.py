@@ -46,42 +46,67 @@ from gobby.hooks.code_navigation import (
 )
 
 
+_UV_VALUE_OPTIONS = frozenset(
+    "--extra --no-extra --group --no-group --only-group --no-editable-package "
+    "--env-file -w --with --with-editable --with-requirements --package --python-platform "
+    "--index --default-index -i --index-url --extra-index-url -f --find-links --index-strategy "
+    "--keyring-provider -P --upgrade-package --upgrade-group --resolution --prerelease "
+    "--prerelease-package --fork-strategy --exclude-newer --exclude-newer-package "
+    "--no-sources-package --reinstall-package --link-mode -C --config-setting "
+    "--config-settings-package --no-build-isolation-package --no-build-package "
+    "--no-binary-package --cache-dir --refresh-package -p --python --color "
+    "--allow-insecure-host --directory --project --config-file".split()
+)
+
+
+def _wrapper_options_end(parts: list[str], start: int, value_options: frozenset[str]) -> int:
+    while start < len(parts) and parts[start].startswith("-"):
+        if parts[start] == "--":
+            return start + 1
+        if parts[start] in {"-m", "-c"}:
+            break
+        start += 2 if parts[start] in value_options else 1
+    return start
+
+
+def _execution_command(parts: list[str]) -> list[str]:
+    """Expose the executable behind package runners without changing generic write scope."""
+    while parts:
+        command = shell_command_name(parts[0])
+        if command == "uv":
+            index = _wrapper_options_end(parts, 1, _UV_VALUE_OPTIONS)
+            if parts[index : index + 1] != ["run"]:
+                break
+            index = _wrapper_options_end(parts, index + 1, _UV_VALUE_OPTIONS)
+            if parts[index : index + 1] == ["-m"]:
+                index += 1
+        elif command in {"npx", "bunx"}:
+            index = _wrapper_options_end(parts, 1, frozenset({"--package", "-p"}))
+        elif command in {"python", "python3"}:
+            index = _wrapper_options_end(
+                parts, 1, frozenset({"-W", "-X", "--check-hash-based-pycs"})
+            )
+            if parts[index : index + 1] != ["-m"]:
+                break
+            index += 1
+        else:
+            break
+        parts = parts[index:]
+    return parts
+
+
 def _formatter_mutates(parts: list[str]) -> bool:
-    """Recognize formatter write modes behind the supported execution wrappers."""
+    """Recognize formatter write modes after execution wrappers are removed."""
     if not parts:
         return False
     command = shell_command_name(parts[0])
-    if command == "uv" and parts[1:2] == ["run"]:
-        index = 2
-        options_with_values = {
-            "--directory",
-            "--project",
-            "--python",
-            "-p",
-            "--with",
-            "--with-editable",
-            "--with-requirements",
-            "--package",
-            "--extra",
-            "--group",
-            "--index",
-            "--index-url",
-        }
-        while index < len(parts) and parts[index].startswith("-"):
-            index += 2 if parts[index] in options_with_values else 1
-        return _formatter_mutates(parts[index:])
-    if command in {"npx", "bunx"}:
-        index = 1
-        while index < len(parts) and parts[index] in {"--yes", "-y", "--no-install"}:
-            index += 1
-        return _formatter_mutates(parts[index:])
-    if command in {"python", "python3"} and parts[1:2] == ["-m"]:
-        return _formatter_mutates(parts[2:])
     arguments = parts[1:]
     if command == "ruff":
-        return (
-            "format" in arguments and not {"--check", "--diff"}.intersection(arguments)
-        ) or bool({"--fix", "--fix-only", "--unsafe-fixes"}.intersection(arguments))
+        if "--diff" in arguments:
+            return False
+        return ("format" in arguments and "--check" not in arguments) or bool(
+            {"--fix", "--fix-only"}.intersection(arguments)
+        )
     if command in {"black", "isort", "rustfmt"}:
         return not {"--check", "--check-only", "--diff"}.intersection(arguments)
     if command == "prettier":
@@ -114,7 +139,14 @@ def classify_base_command(
             )
         return git_metadata
 
-    if _formatter_mutates(parts):
+    executed = _execution_command(parts)
+    if (
+        executed
+        and shell_command_name(executed[0]) == "git"
+        and not git_command_is_read_only(executed)
+    ):
+        return _ShellSegmentMetadata("execute", extra={"canonical_git_mutation": True})
+    if _formatter_mutates(executed):
         return _ShellSegmentMetadata("execute", extra={"canonical_formatter_mutation": True})
 
     if cmd == "patch":

@@ -50,6 +50,8 @@ async def _submit_seat(db: HubDatabase) -> SeatRun:
         "uv run --no-sync gobby test-types audit tests/test_example.py --fail-on-new",
         "uv run --no-sync ruff format --check src/example.py",
         "uv run --no-sync ruff check src/example.py",
+        "uv run --no-sync ruff check --fix --diff src/example.py",
+        "uv run --no-sync ruff check --unsafe-fixes src/example.py",
         "uv --directory . run --no-sync ruff format --check src/example.py",
         "uv run --env-file .env ruff format --diff src/example.py",
         "python3 -I -m black --check src/example.py",
