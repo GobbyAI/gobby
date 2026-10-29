@@ -49,6 +49,8 @@ _DATA_COMMANDS = frozenset(
 _DATA_BASENAME_HEADS = (_DATA_COMMANDS - {"git"}) | {"cd", "curl", "test", "["}
 # Interpreter flags that cannot load code. PYTHONPATH and similar can load a shadowing module.
 _PYTHON_FLAG = re.compile(r"(PYTHONDONTWRITEBYTECODE|PYTHONUNBUFFERED|PYTHONUTF8)=[01]")
+# A literal uv environment path selects the environment, leaving Python's stdin as source.
+_UV_ENVIRONMENT = re.compile(r"UV_PROJECT_ENVIRONMENT=[\w./-]+")
 # Git subcommands whose operands are revisions or pathspecs. Git runs a program
 # from a positional only for subcommands such as `bisect run`, so these stay data.
 _GIT_READ_ONLY_SUBCOMMANDS = frozenset(
@@ -768,12 +770,21 @@ def _literal_language_heredoc(command: str, scan: ShellScan) -> bool:
     if any(command[start:end] != token.value for token, (start, end) in argv):
         return False
     words = [token.value for token, _ in argv]
-    while words and _PYTHON_FLAG.fullmatch(words[0]):
+    uv_environment = False
+    while words:
+        if _UV_ENVIRONMENT.fullmatch(words[0]):
+            uv_environment = True
+        elif not _PYTHON_FLAG.fullmatch(words[0]):
+            break
         words = words[1:]
+    if uv_environment and words[:2] != ["uv", "run"]:
+        return False
     if words[:1] in (["node"], ["nodejs"]):
         return all(word in {"--input-type=module", "--input-type=commonjs"} for word in words[1:])
     if words[:2] == ["uv", "run"]:
         words = words[2:]
+        if words[:1] == ["--no-sync"]:
+            words = words[1:]
     return words in (["python"], ["python", "-"], ["python3"], ["python3", "-"])
 
 
