@@ -44,5 +44,7 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
+    exclude:
+      - "name:block-unclaimed-found-work"
     # Daemon management stays blocked: the Orchestrator owns restarts and activation.
   variables: {}

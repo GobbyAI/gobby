@@ -55,6 +55,7 @@ workflows:
     # The Orchestrator edits tasks as needed, reads seats' report folders to review them,
     # and lands approved work in shared checkouts that hold other sessions' staged paths.
     exclude:
+      - "name:block-unclaimed-found-work"
       - "name:query-readonly-seat-scope"
       - "name:seat-no-spawn"
       - "name:seat-no-pipeline-launch"

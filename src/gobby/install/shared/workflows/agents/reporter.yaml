@@ -52,6 +52,7 @@ workflows:
       - "tag:worker-safety"
       - "name:no-send-keys"
     exclude:
+      - "name:block-unclaimed-found-work"
       - "name:no-comms-attach"
   variables:
     _seat_procedure: gobby:references/agents/procedures/reporter.md

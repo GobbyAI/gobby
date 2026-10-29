@@ -62,6 +62,7 @@ workflows:
       - "tag:default"
     # The Assistant edits tasks when the operator asks.
     exclude:
+      - "name:block-unclaimed-found-work"
       - "name:query-readonly-seat-scope"
       - "name:seat-no-spawn"
       - "name:seat-no-pipeline-launch"

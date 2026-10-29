@@ -67,6 +67,7 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
     exclude:
+      - "name:block-unclaimed-found-work"
       - "name:seat-no-task-close"
       - "name:unassigned-session-no-task-close"
   variables:

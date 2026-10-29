@@ -62,5 +62,7 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
+    exclude:
+      - "name:block-unclaimed-found-work"
   variables:
     _seat_procedure: gobby:references/agents/procedures/triage.md
