@@ -236,9 +236,9 @@ async def test_timer_bootstraps_the_first_workspace(
     assert _subjects(project_id) == ["agents-ws: timer default"]
 
 
-@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("state", ["running", "disabled", "parked"])
 def test_registration_migrates_interval_to_nightly_and_preserves_parked_state(
-    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, enabled: bool
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, state: str
 ) -> None:
     monkeypatch.setattr("gobby.storage.cron.resolve_local_timezone", lambda zone: "America/Chicago")
     storage = CronJobStorage(temp_db)
@@ -250,8 +250,13 @@ def test_registration_migrates_interval_to_nightly_and_preserves_parked_state(
         action_type="handler",
         action_config={"handler": agent_workspaces.WORKSPACE_CRON_HANDLER},
         is_system=True,
-        enabled=enabled,
+        enabled=state != "disabled",
     )
+    if state == "parked":
+        parked = storage.park_system_job(old.id)
+        assert parked is not None
+        assert parked.enabled
+        assert parked.next_run_at is None
 
     agent_workspaces._ensure_workspace_cron_job(storage)
 
@@ -261,5 +266,5 @@ def test_registration_migrates_interval_to_nightly_and_preserves_parked_state(
     assert updated.cron_expr == "30 3 * * *"
     assert updated.interval_seconds is None
     assert updated.timezone == "America/Chicago"
-    assert updated.enabled is enabled
-    assert (updated.next_run_at is not None) is enabled
+    assert updated.enabled is (state != "disabled")
+    assert (updated.next_run_at is not None) is (state == "running")

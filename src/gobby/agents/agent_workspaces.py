@@ -182,6 +182,7 @@ async def _git(
     had_index_lock = index_lock.exists()
     result = await daemon_git.run(
         [
+            "--no-optional-locks",
             "--literal-pathspecs",
             f"--git-dir={workspace_git_dir(project_id)}",
             f"--work-tree={anchor}",
@@ -213,15 +214,18 @@ def _recover_index_lock(
         return False
     try:
         holders = subprocess.run(
-            ["lsof", "-t", "--", str(lock)],
+            ["lsof", "-w", "-t", "--", str(lock)],
             capture_output=True,
             text=True,
             timeout=5,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    if holders.returncode != 1 or holders.stdout.strip() or holders.stderr.strip():
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise WorkspaceGitError(f"Cannot inspect workspace index.lock with lsof: {exc}") from exc
+    if holders.returncode not in {0, 1} or holders.stderr.strip():
+        detail = holders.stderr.strip() or f"lsof exited {holders.returncode}"
+        raise WorkspaceGitError(f"Cannot inspect workspace index.lock: {detail}")
+    if holders.returncode != 1 or holders.stdout.strip():
         return False
     try:
         after = lock.lstat()
@@ -336,11 +340,11 @@ def _commit_worker(project_id: str, trigger: str) -> str | None:
     """One process-wide worker owns all backup I/O and parsing, across caller loops."""
     if time.monotonic() < _BLOCKED_UNTIL.get(project_id, 0):
         return None
-    ensure_workspace(project_id)
-    if not _recover_index_lock(project_id):
-        _BLOCKED_UNTIL[project_id] = time.monotonic() + _LOCK_BACKOFF_SECONDS
-        return None
     try:
+        ensure_workspace(project_id)
+        if not _recover_index_lock(project_id):
+            _BLOCKED_UNTIL[project_id] = time.monotonic() + _LOCK_BACKOFF_SECONDS
+            return None
         return asyncio.run(_commit_locked(project_id, trigger))
     except WorkspaceGitError:
         _BLOCKED_UNTIL[project_id] = time.monotonic() + _LOCK_BACKOFF_SECONDS
@@ -353,8 +357,12 @@ async def _commit_logged(project_id: str, trigger: str) -> None:
             try:
                 await commit_workspace(project_id, trigger)
             except Exception as exc:
-                logger.warning(
-                    "Agent workspace commit failed (%s) for %s: %s", trigger, project_id, exc
+                await asyncio.to_thread(
+                    logger.warning,
+                    "Agent workspace commit failed (%s) for %s: %s",
+                    trigger,
+                    project_id,
+                    exc,
                 )
             with _SCHEDULE_LOCK:
                 pending = _SCHEDULED_PROJECTS.get(project_id)
@@ -455,7 +463,9 @@ async def run_workspace_cron(_job: CronJob) -> str:
             await _maybe_gc(project_id)
         except Exception as exc:
             failed += 1
-            logger.warning("Agent workspace cron failed for %s: %s", project_id, exc)
+            await asyncio.to_thread(
+                logger.warning, "Agent workspace cron failed for %s: %s", project_id, exc
+            )
     return f"agent workspaces: {committed} committed, {failed} failed"
 
 

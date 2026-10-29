@@ -5,12 +5,14 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import threading
 import time
 import uuid
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,6 +25,7 @@ from gobby.agents.agent_workspaces import (
     workspace_anchor,
     workspace_git_dir,
 )
+from gobby.storage.cron_models import CronJob
 from gobby.utils.daemon_git import GitResult, daemon_git
 
 pytestmark = pytest.mark.unit
@@ -178,15 +181,54 @@ async def test_stale_index_lock_is_recovered_with_a_warning(
     assert any("index.lock" in message for message in warnings), warnings
 
 
-async def test_fresh_orphan_lock_is_not_removed(project_id: str) -> None:
+async def test_fresh_orphan_lock_is_not_removed(
+    project_id: str, caplog: pytest.LogCaptureFixture
+) -> None:
     anchor = ensure_workspace(project_id)
     _write(anchor, NOTES, "one finding\n")
     lock = workspace_git_dir(project_id) / "index.lock"
     lock.touch()
+    caplog.set_level(logging.WARNING, logger="gobby.agents.agent_workspaces")
 
     await _trigger(project_id, "set_handoff")
 
     assert lock.exists(), "a lock younger than the stale bound may belong to a git about to run"
+    assert not any("index.lock" in record.message for record in caplog.records)
+
+
+@pytest.mark.parametrize("failure", ["missing", "stderr"])
+async def test_uninspectable_lock_reports_failure_off_loop_and_backs_off(
+    project_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    failure: str,
+) -> None:
+    ensure_workspace(project_id)
+    lock = _stale_lock(project_id)
+    real_run = subprocess.run
+    inspections = 0
+
+    def inspect_failure(args: Sequence[str], **kwargs: Any) -> Any:
+        nonlocal inspections
+        if args[0] == "lsof":
+            inspections += 1
+            if failure == "missing":
+                raise FileNotFoundError("lsof")
+            return subprocess.CompletedProcess(args, 1, "", "lsof: cannot inspect lock")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", inspect_failure)
+    caplog.set_level(logging.WARNING, logger="gobby.agents.agent_workspaces")
+
+    result = await agent_workspaces.run_workspace_cron(MagicMock(spec=CronJob))
+    await _trigger(project_id, "set_handoff")
+
+    assert result == "agent workspaces: 0 committed, 1 failed"
+    assert lock.exists()
+    assert inspections == 1
+    warnings = [record for record in caplog.records if "index.lock" in record.message]
+    assert len(warnings) == 1
+    assert warnings[0].thread != threading.get_ident()
 
 
 async def test_live_holder_lock_is_kept_and_commits_back_off(

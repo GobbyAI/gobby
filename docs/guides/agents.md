@@ -628,7 +628,8 @@ or close the task. If a release error includes a commit, inspect it before retry
 The daemon commits agent workspace notes on handoff, compaction, and session end.
 The `gobby:agent-workspaces` system cron catches missed changes nightly at 03:30
 local time (`30 3 * * *`). Upgrades migrate the old five-minute schedule while
-preserving a parked job's disabled state.
+preserving disabled jobs and parked jobs. A parked job stays enabled but has no
+next scheduled run until it is explicitly woken.
 
 One background worker serializes backup scans, commits, and garbage collection.
 Generated trees, provider homes, and credential filenames are excluded before

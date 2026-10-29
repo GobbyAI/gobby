@@ -9,6 +9,7 @@ import pytest
 import uvicorn
 import websockets
 from fastapi import FastAPI, WebSocket
+from uvicorn._types import ASGISendEvent
 from websockets.exceptions import ConnectionClosedError
 
 from gobby.servers.websocket.asgi_adapter import ASGIWebSocketAdapter
@@ -24,11 +25,17 @@ async def test_abrupt_disconnect_stops_stream_without_socket_warning(
     lost = asyncio.Event()
     resume = asyncio.Event()
     finished = asyncio.Event()
+    writer_waiting = asyncio.Event()
     connected: list[WebSocketProtocol] = []
     delivered: list[str] = []
     adapters: list[ASGIWebSocketAdapter] = []
 
     class ObservedProtocol(WebSocketProtocol):
+        async def send(self, message: ASGISendEvent) -> None:
+            if not self.writable.is_set():
+                writer_waiting.set()
+            await super().send(message)
+
         def connection_lost(self, exc: Exception | None) -> None:
             super().connection_lost(exc)
             lost.set()
@@ -84,7 +91,12 @@ async def test_abrupt_disconnect_stops_stream_without_socket_warning(
                 )
                 assert len(connected) == 1
                 if paused:
-                    connected[0].pause_writing()
+                    # Uvicorn 0.40's pause_writing is a no-op. Exercise the
+                    # protocol's blocked-writer path explicitly and prove it waits.
+                    connected[0].writable.clear()
+                    resume.set()
+                    await asyncio.wait_for(writer_waiting.wait(), timeout=2)
+                    assert not finished.is_set()
                 # Abort TCP without a WebSocket close frame. The writer has no
                 # receive loop to consume the queued ASGI disconnect notification.
                 client.transport.abort()
@@ -99,6 +111,6 @@ async def test_abrupt_disconnect_stops_stream_without_socket_warning(
     finally:
         resume.set()
         for protocol in connected:
-            protocol.resume_writing()
+            protocol.writable.set()
         server.should_exit = True
         await asyncio.wait_for(serving, timeout=5)
