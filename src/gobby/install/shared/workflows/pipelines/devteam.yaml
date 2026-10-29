@@ -126,6 +126,7 @@ steps:
       tool: admit_team
       arguments:
         task: "${{ inputs.task }}"
+        tab_title: "${{ steps.guard.output.tab_title }}"
         team_id: "${{ inputs.team_id }}"
         fresh_reviewer: "${{ inputs.fresh_reviewer }}"
         exclude_reviewers: "${{ inputs.exclude_reviewers }}"

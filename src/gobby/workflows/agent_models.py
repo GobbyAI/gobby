@@ -172,6 +172,9 @@ class AgentDefinitionBody(BaseModel):
     # limit-spawnable-agents rule: [SPAWN_ANY_AGENT] for any, named agents, or
     # empty (the default) for none.
     spawnable_agents: list[str] = Field(default_factory=list)
+    # Existing seats this definition may resume within its admitted team. Fresh
+    # spawns still require spawnable_agents; team membership and stored type are checked.
+    resumable_team_agents: list[str] = Field(default_factory=list)
     # Agent-level tool restrictions (applied regardless of step workflow)
     blocked_tools: list[str] = Field(default_factory=list)
     blocked_mcp_tools: list[str] = Field(default_factory=list)

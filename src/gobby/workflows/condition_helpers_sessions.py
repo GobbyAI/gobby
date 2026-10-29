@@ -170,11 +170,6 @@ def _spawn_caller(session_manager: SessionManager, caller_ref: Any) -> tuple[Ses
     return caller, run.agent_name
 
 
-_TEAM_SEAT_TYPES = frozenset({"test-writer", "developer", "code-reviewer"})
-# The devteam runbook titles its team tab "Dev Team"; an epic team's tab is "<this> - #<seq>".
-_DEV_TEAM_TAB = "Dev Team"
-
-
 def own_seat_resume(
     session_manager: SessionManager, caller_ref: Any, agent: Any, resume_session_id: Any
 ) -> bool:
@@ -197,54 +192,55 @@ def own_team_tab(session_manager: SessionManager, caller_ref: Any, agent: Any) -
     """The team tab a running epic team manager's fresh seat may open into, or None.
 
     Placement admits an autonomous fresh seat only where its spawn is for the caller's own
-    epic team: the caller is a running team manager, the seat is a team seat type, and the
-    caller's team is an epic. The tab is the one the devteam runbook titles for that epic.
+    epic team: the caller is a running team manager whose definition permits the target,
+    and the caller's team is an epic. Admission owns the runbook's declared tab title.
     A single-task team and any other spawn get no tab.
     """
     from gobby.agents.team_lifecycle import seat_team
-    from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.team_records import EPIC_MODE
 
-    if agent not in _TEAM_SEAT_TYPES:
+    if not isinstance(agent, str) or not agent:
         return None
     try:
         caller, agent_name = _spawn_caller(session_manager, caller_ref)
     except (ValueError, AgentResolutionError):
         return None
-    if not _running_team_manager(session_manager, caller, agent_name):
+    definition = _running_team_manager_definition(session_manager, caller, agent_name)
+    if definition is None or not definition.may_spawn(agent):
         return None
     team = seat_team(session_manager.db, caller.id)
     if team is None or team.mode != EPIC_MODE:
         return None
-    seq_num = LocalTaskManager(session_manager.db).get_task(team.task_id).seq_num
-    return None if seq_num is None else f"{_DEV_TEAM_TAB} - #{seq_num}"
+    return team.tab_title
 
 
-def _running_team_manager(
+def _running_team_manager_definition(
     session_manager: SessionManager, caller: Session, agent_name: str | None
-) -> bool:
-    """Whether the caller runs as an enabled team manager definition, bound to its run.
+) -> AgentDefinitionBody | None:
+    """The caller's enabled team manager definition, if bound to its running run.
 
     The definition must set the ``team_manager`` variable, so a session variable alone
     never grants it. The caller's running run must be bound to the caller.
     """
     if agent_name is None:
-        return False
+        return None
     found = resolve_agent_with_row(agent_name, session_manager.db, project_id=caller.project_id)
     if found is None or not found[1].enabled:
-        return False
+        return None
     if found[0].workflows.variables.get("team_manager") is not True:
-        return False
+        return None
     manager_run = (
         LocalAgentRunManager(session_manager.db).get(caller.agent_run_id)
         if caller.agent_run_id
         else None
     )
-    return (
-        manager_run is not None
-        and manager_run.status == "running"
-        and manager_run.child_session_id == caller.id
-    )
+    if (
+        manager_run is None
+        or manager_run.status != "running"
+        or manager_run.child_session_id != caller.id
+    ):
+        return None
+    return found[0]
 
 
 def _manager_resumes_own_seat(
@@ -258,8 +254,8 @@ def _manager_resumes_own_seat(
 
     The caller's enabled installed definition must set the ``team_manager`` variable,
     so a session variable alone never grants it. The caller's running run must be
-    bound to the caller, and the seat's run to the seat. The seat must be a test
-    writer, developer or code reviewer in the caller's project and machine, launched
+    bound to the caller, and the seat's run to the seat. The definition must list
+    the seat in resumable_team_agents. It must share the caller's project and machine, launched
     by a runbook of the caller's admitted team. The resume must name the seat's stored
     type, so a resume cannot re-type it. A fresh spawn has no resume reference.
     """
@@ -268,7 +264,8 @@ def _manager_resumes_own_seat(
 
     if not isinstance(resume_session_id, str) or not resume_session_id:
         return False
-    if not _running_team_manager(session_manager, caller, agent_name):
+    definition = _running_team_manager_definition(session_manager, caller, agent_name)
+    if definition is None:
         return False
     runs = LocalAgentRunManager(session_manager.db)
     team = seat_team(session_manager.db, caller.id)
@@ -284,7 +281,7 @@ def _manager_resumes_own_seat(
         .get_variable_subset(seat.id, ("_agent_type",))
         .get("_agent_type")
     )
-    if seat_type not in _TEAM_SEAT_TYPES or agent != seat_type:
+    if seat_type not in definition.resumable_team_agents or agent != seat_type:
         return False
     seat_run = runs.get(seat.agent_run_id) if seat.agent_run_id else None
     if seat_run is None or seat_run.child_session_id != seat.id:

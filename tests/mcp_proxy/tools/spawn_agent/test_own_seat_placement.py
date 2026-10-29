@@ -61,7 +61,9 @@ async def test_placed_resume_is_admitted_only_for_the_team_managers_own_seat(
 ) -> None:
     h = harness
     workspace = _workspace(h)
-    _define_agent(h.db, "dev-manager", None, variables={"team_manager": True})
+    _define_agent(
+        h.db, "dev-manager", None, variables={"team_manager": True}, resumable=("developer",)
+    )
     placement = {"tab": {"workspace": workspace.id, "title": "seat"}}
 
     async def place(resume_session_id: str | None) -> PlacedLaunch | dict[str, Any] | None:
@@ -122,9 +124,9 @@ async def test_epic_manager_places_its_fresh_seat_into_its_own_team_tab(
     epic = new_task(world, TITLE, epic=True)
     other = new_task(world, "Another team's epic", epic=True)
     new_task(world, LEAF_TITLE, parent=epic)
-    team = await epic_team(world, epic)
+    tab_title = f"Product Studio - #{epic.seq_num}"
+    team = await epic_team(world, epic, tab_title=tab_title)
     h = placed_harness
-    tab_title = f"Dev Team - #{epic.seq_num}"
     team_pane = spawn_placement._held_seat(h, tab_title, state="exited")
     spawn_placement._held_seat(h, f"Dev Team - #{other.seq_num}", state="exited")
     spawn_placement._held_seat(h, "Operator", state="exited")

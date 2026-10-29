@@ -142,11 +142,11 @@ def new_task(
     )
 
 
-async def epic_team(world: TeamWorld, epic: Task) -> EpicTeam:
+async def epic_team(world: TeamWorld, epic: Task, tab_title: str | None = None) -> EpicTeam:
     """An admitted epic team with its running Dev Manager seat, which never claims."""
     db = world.case.db
     runbook = world.child(epic)
-    binding = await world.admit(runbook, epic)
+    binding = await world.admit(runbook, epic, tab_title=tab_title or f"Dev Team - #{epic.seq_num}")
     manager = world.case.session("dev-manager", parent=runbook.id)
     runs = LocalAgentRunManager(db)
     run = runs.create(

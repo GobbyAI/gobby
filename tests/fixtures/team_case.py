@@ -45,6 +45,7 @@ def synthetic_manager_body() -> dict[str, Any]:
         "surfaces": ["spawn"],
         "send_message_targets": ["parent", "session", "project"],
         "spawnable_agents": ["developer", "code-reviewer", "docs-reviewer", "research-reviewer"],
+        "resumable_team_agents": ["test-writer", "developer", "code-reviewer"],
         "prompts": {"agent": "Run the dev-manager seat."},
         "workflows": {
             "rule_selectors": {"include": []},
@@ -152,6 +153,7 @@ class TeamWorld:
         fresh_reviewer: bool = False,
         exclude_reviewers: Sequence[str] = (),
         checkout_mode: str = "worktree",
+        tab_title: str | None = None,
     ) -> TeamBinding:
         return await admit_team(
             self.case.db,
@@ -159,6 +161,7 @@ class TeamWorld:
             task=task.id,
             team_id=team_id,
             checkout_mode=checkout_mode,
+            tab_title=tab_title,
             fresh_reviewer=fresh_reviewer,
             exclude_reviewers=exclude_reviewers,
         )
