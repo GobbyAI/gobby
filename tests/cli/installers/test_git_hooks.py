@@ -7,7 +7,9 @@ in-progress commit (gobby-#22419).
 """
 
 import os
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -217,6 +219,66 @@ def test_precommit_scratch_stays_in_managed_tmpdir(
     assert _git_out(repo, "show", "HEAD:staged.txt") == "changed\n"
 
 
+@pytest.mark.parametrize("linked_worktree", [False, True])
+@pytest.mark.parametrize("concurrent_write", [False, True], ids=["existing-edit", "during-hook"])
+def test_precommit_preserves_foreign_unstaged_edits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    linked_worktree: bool,
+    concurrent_write: bool,
+) -> None:
+    """The real framework must never stash/restore another writer's paths.
+
+    A local hook supplies a deterministic interleaving: it observes the shared
+    checkout, then optionally writes the foreign file before the framework's
+    restore. No network, daemon, timing sleeps, or real user state is involved.
+    """
+    repo = _init_hook_repo(tmp_path, ["owned.txt", "foreign.txt"], linked_worktree=linked_worktree)
+    monkeypatch.setenv("PRE_COMMIT_HOME", str(tmp_path / "pre-commit-cache"))
+    _write_executable(
+        tmp_path / "bin" / "pre-commit",
+        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -m pre_commit "$@"\n',
+    )
+    foreign = repo / "foreign.txt"
+    observed = tmp_path / "observed.bin"
+    writer = tmp_path / "writer.py"
+    before = b"other writer's existing edit\r\n"
+    during = b"other writer's edit during hook\r\n"
+    writer.write_text(
+        "from pathlib import Path\n"
+        f"foreign = Path({str(foreign)!r})\n"
+        f"observed = Path({str(observed)!r})\n"
+        "if not observed.exists():\n"
+        "    observed.write_bytes(foreign.read_bytes())\n"
+        + (f"    foreign.write_bytes({during!r})\n" if concurrent_write else ""),
+        encoding="utf-8",
+    )
+    entry = f"{shlex.quote(sys.executable)} {shlex.quote(str(writer))}"
+    (repo / ".pre-commit-config.yaml").write_text(
+        "repos:\n- repo: local\n  hooks:\n  - id: foreign-writer\n"
+        "    name: observe concurrent writer\n"
+        f"    entry: {entry}\n"
+        "    language: system\n    pass_filenames: false\n",
+        encoding="utf-8",
+    )
+    _git_out(repo, "add", ".pre-commit-config.yaml")
+    _git_out(repo, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "local hook config")
+    (repo / "owned.txt").write_text("owned change\n", encoding="utf-8")
+    foreign.write_bytes(before)
+
+    result = _git(repo, "commit", "-m", "owned deliverable", "--", "owned.txt")
+
+    assert observed.exists(), result.stdout + result.stderr
+    assert foreign.read_bytes() == (during if concurrent_write else before), (
+        "Hook restore lost another writer's bytes:\n" + result.stdout + result.stderr
+    )
+    assert observed.read_bytes() == before, "Hook temporarily hid another writer's unstaged edit"
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _committed_paths(repo) == ["owned.txt"]
+    assert _git_out(repo, "show", "HEAD:foreign.txt") == "base\n"
+    assert _git_out(repo, "show", ":foreign.txt") == "base\n"
+
+
 class TestPreCommitAutoFixBoundary:
     """The generated pre-commit section keeps auto-fixes inside the caller's commit."""
 
@@ -350,3 +412,125 @@ def test_post_merge_in_dirty_worktree_indexes_the_merged_files(tmp_path: Path) -
 
     assert result.returncode == 0, result.stderr
     assert "--files=landed.py" in capture.read_text(encoding="utf-8").splitlines()
+
+
+_RECORD_AND_REJECT = (
+    "import pathlib\n"
+    "import sys\n"
+    "log = pathlib.Path(sys.argv[1])\n"
+    "log.write_text(''.join(name + '\\n' for name in sys.argv[2:]), encoding='utf-8')\n"
+    "sys.exit(1 if sys.argv[2:] else 0)\n"
+)
+_APPEND_AUTO_FIX = (
+    "import sys\n"
+    "status = 0\n"
+    "for name in sys.argv[1:]:\n"
+    "    with open(name, 'rb') as handle:\n"
+    "        data = handle.read()\n"
+    "    if not data.endswith(b'auto-fixed\\n'):\n"
+    "        with open(name, 'ab') as handle:\n"
+    "            handle.write(b'auto-fixed\\n')\n"
+    "        status = 1\n"
+    "sys.exit(status)\n"
+)
+_NAMES_GIT_QUOTES_OR_CONTROL = ["plain.txt", 'q"x.txt', "a\\b.txt"]
+
+
+def _use_real_precommit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the wrapper's ``pre-commit`` at the real framework with an isolated cache."""
+    monkeypatch.setenv("PRE_COMMIT_HOME", str(tmp_path / "pre-commit-cache"))
+    _write_executable(
+        tmp_path / "bin" / "pre-commit",
+        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -m pre_commit "$@"\n',
+    )
+
+
+def _commit_local_hook(repo: Path, entry: str) -> None:
+    """Commit a local hook config; its entry receives each staged file as an argument."""
+    (repo / ".pre-commit-config.yaml").write_text(
+        "repos:\n- repo: local\n  hooks:\n  - id: local-check\n"
+        f"    name: local check\n    entry: {entry}\n    language: system\n",
+        encoding="utf-8",
+    )
+    _git_out(repo, "add", ".pre-commit-config.yaml")
+    _git_out(repo, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "local hook config")
+
+
+def _commit_recording_hook(repo: Path, tmp_path: Path) -> Path:
+    """Install a hook that rejects every staged file; returns the log of names it received."""
+    script = tmp_path / "record_and_reject.py"
+    script.write_text(_RECORD_AND_REJECT, encoding="utf-8")
+    received = tmp_path / "received.txt"
+    entry = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {shlex.quote(str(received))}"
+    _commit_local_hook(repo, entry)
+    return received
+
+
+def _committed_names(repo: Path) -> list[str]:
+    """Committed paths as raw names; ``_committed_paths`` shows git's C-quoted form."""
+    output = _git_out(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD")
+    return output.split("\0")[:-1]
+
+
+@pytest.mark.parametrize("name", _NAMES_GIT_QUOTES_OR_CONTROL, ids=["plain", "quote", "backslash"])
+def test_precommit_filename_hook_receives_each_staged_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """A staged name must reach filename hooks as written, or the commit is refused.
+
+    git C-quotes a name containing a double quote or a backslash. A quoted list hands
+    the framework a literal that matches no file, so the hook is skipped and the
+    commit lands with the file never checked.
+    """
+    repo = _init_hook_repo(tmp_path, [name])
+    _use_real_precommit(tmp_path, monkeypatch)
+    received = _commit_recording_hook(repo, tmp_path)
+    (repo / name).write_text("changed\n", encoding="utf-8")
+    _git_out(repo, "add", "--", name)
+
+    result = _git(repo, "commit", "-m", "owned deliverable")
+
+    assert received.exists(), "The filename hook never ran, so the staged name was dropped"
+    assert received.read_text(encoding="utf-8") == f"{name}\n"
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert _subjects(repo) == ["local hook config", "baseline"]
+
+
+@pytest.mark.parametrize("name", _NAMES_GIT_QUOTES_OR_CONTROL, ids=["plain", "quote", "backslash"])
+def test_precommit_auto_fix_to_each_staged_name_is_restaged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """A fix to a staged name joins the commit, whatever characters the name has."""
+    repo = _init_hook_repo(tmp_path, [name])
+    _use_real_precommit(tmp_path, monkeypatch)
+    script = tmp_path / "append_auto_fix.py"
+    script.write_text(_APPEND_AUTO_FIX, encoding="utf-8")
+    _commit_local_hook(repo, f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}")
+    (repo / name).write_text("base\nedit\n", encoding="utf-8")
+    _git_out(repo, "add", "--", name)
+
+    result = _git(repo, "commit", "-m", "owned deliverable")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _subjects(repo)[0] == "owned deliverable"
+    assert _committed_names(repo) == [name]
+    assert _git_out(repo, "show", f"HEAD:{name}") == "base\nedit\nauto-fixed\n"
+    assert _git_out(repo, "show", f":{name}") == "base\nedit\nauto-fixed\n"
+
+
+def test_precommit_refuses_a_staged_name_containing_a_newline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A newline cannot cross the wrapper's line lists, so the commit is refused, not landed."""
+    name = "a\nb.txt"
+    repo = _init_hook_repo(tmp_path, [name])
+    _use_real_precommit(tmp_path, monkeypatch)
+    _commit_recording_hook(repo, tmp_path)
+    (repo / name).write_text("changed\n", encoding="utf-8")
+    _git_out(repo, "add", "--", name)
+
+    result = _git(repo, "commit", "-m", "owned deliverable")
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "newline" in result.stdout + result.stderr
+    assert _subjects(repo) == ["local hook config", "baseline"]
