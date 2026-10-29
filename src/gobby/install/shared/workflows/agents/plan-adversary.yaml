@@ -107,8 +107,10 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
+      - "name:guard-durable-memory-writes"
     exclude:
       - "tag:task-skill-gates"
+      - "name:guard-plan-memory-writes"
 
 step_workflow:
   variables:

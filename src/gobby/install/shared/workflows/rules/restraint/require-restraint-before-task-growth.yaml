@@ -1,0 +1,25 @@
+tags: [task-growth-policy]
+
+rules:
+  require-restraint-before-task-growth:
+    description: "Require restraint before an interactive session creates tasks or spawns agents"
+    event: before_tool
+    enabled: true
+    priority: 22
+    when: >
+      not skill_loaded('restraint')
+      and not variables.get('restraint_disabled')
+      and not variables.get('is_spawned_agent')
+      and (
+        (
+          event.data.get('mcp_server') == 'gobby-tasks'
+          and event.data.get('mcp_tool') == 'create_task'
+        )
+        or (
+          event.data.get('mcp_server') == 'gobby-agents'
+          and event.data.get('mcp_tool') == 'spawn_agent'
+        )
+      )
+    effects:
+      - type: block
+        reason: '{{ skill_fetch_directive("restraint") }}'

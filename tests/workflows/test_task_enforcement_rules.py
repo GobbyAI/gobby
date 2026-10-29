@@ -25,6 +25,7 @@ from gobby.skills.formatting import (
     skill_fetch_directive,
     skill_fetch_proxy_path,
 )
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
@@ -34,6 +35,7 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import sync_bundled_rules
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -139,11 +141,13 @@ def manager(db: HubDatabase) -> RuleDefinitionManager:
     return RuleDefinitionManager(db)
 
 
-def _sync_bundled(db: HubDatabase) -> object:
+def _sync_bundled(db: HubDatabase, *, include_task_gate: bool = True) -> object:
     """Sync bundled rules from the real rules directory."""
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
+    if include_task_gate and AgentDefinitionManager(db).get_by_name("default") is None:
+        seed_seat(db, "default", include=["tag:default", "name:require-tasks-skill-for-mutations"])
     # Mark templates as installed so get_by_name() finds them
     db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
     return result
@@ -1739,7 +1743,7 @@ class TestRequireTasksSkillForMutations:
 
         assert task_mutation_requires_tasks_skill(tool_input, event_data) is False
 
-    def test_rule_uses_normalized_helper_and_default_agent_scope(
+    def test_rule_uses_normalized_helper(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _sync_bundled(db)
@@ -1749,7 +1753,6 @@ class TestRequireTasksSkillForMutations:
         assert body.effects
 
         assert body.event.value == "before_tool"
-        assert "variables.get('_agent_type') == 'default'" in (body.when or "")
         assert "task_mutation_requires_tasks_skill(tool_input, event.data)" in (body.when or "")
         assert body.effects[0].reason is not None
         assert "gobby:references/tasks/overview.md" in body.effects[0].reason
@@ -1757,25 +1760,36 @@ class TestRequireTasksSkillForMutations:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("agent_type", "loaded_skill_references", "expected"),
+        ("agent_type", "selected", "loaded_skill_references", "expected"),
         [
-            pytest.param("default", [], "block", id="interactive-default"),
+            pytest.param("default", True, [], "block", id="interactive-default"),
             pytest.param(
-                "default", ["gobby:references/tasks/overview.md"], "allow", id="already-loaded"
+                "default",
+                True,
+                ["gobby:references/tasks/overview.md"],
+                "allow",
+                id="already-loaded",
             ),
-            pytest.param("backend-developer", [], "allow", id="specialized-developer"),
-            pytest.param("qa-reviewer", [], "allow", id="specialized-reviewer"),
-            pytest.param("pipeline", [], "allow", id="pipeline"),
+            pytest.param("backend-developer", True, [], "block", id="custom-selection"),
+            pytest.param("default", False, [], "allow", id="familiar-name-without-selection"),
+            pytest.param("qa-reviewer", False, [], "allow", id="specialized-reviewer"),
+            pytest.param("pipeline", False, [], "allow", id="pipeline"),
         ],
     )
-    async def test_rule_excludes_specialized_agents_and_loaded_sessions(
+    async def test_rule_applies_to_selected_definitions_and_unloaded_sessions(
         self,
         db: HubDatabase,
         agent_type: str,
+        selected: bool,
         loaded_skill_references: list[str],
         expected: str,
     ) -> None:
-        _sync_bundled(db)
+        _sync_bundled(db, include_task_gate=False)
+        seed_seat(
+            db,
+            agent_type,
+            include=["name:require-tasks-skill-for-mutations"] if selected else [],
+        )
         with db.transaction() as conn:
             conn.execute("UPDATE rule_definitions SET enabled = FALSE")
             conn.execute(
@@ -2619,7 +2633,6 @@ class TestRequireTasksSkillOnMutationSchema:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert "task_mutation_requires_tasks_skill" in (body.when or "")
-        assert "_agent_type" in (body.when or "")
         assert "not skill_loaded('gobby:references/tasks/overview.md')" in (body.when or "")
         assert body.effects is not None
         assert len(body.effects) == 1

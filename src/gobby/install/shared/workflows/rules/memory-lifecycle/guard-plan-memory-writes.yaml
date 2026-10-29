@@ -8,10 +8,7 @@ rules:
     priority: 11
     when: >-
       not variables.get('plan_memory_write_nudge_fired')
-      and (
-        variables.get('plan_mode')
-        or variables.get('_agent_type') in ['plan-adversary']
-      )
+      and variables.get('plan_mode')
     effects:
       - type: block
         delivery: on_receipt
