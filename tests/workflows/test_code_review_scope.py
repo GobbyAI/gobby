@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import Project
 from gobby.storage.session_models import Session
@@ -29,7 +30,9 @@ from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize("agent_type", ["developer", "plan-enhancer", None, "plan-writer"])
+@pytest.mark.parametrize("agent_type", ["plan-writer", "custom-seat"])
+@pytest.mark.parametrize("granted", [False, True])
+@pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize(
     "path",
     [
@@ -37,9 +40,17 @@ pytestmark = pytest.mark.unit
         ".gobby/plans/coverage/.regenerate.log",
     ],
 )
-async def test_coverage_review_scope_exempts_only_plan_writer(
-    repo: Path, agent_type: str | None, path: str
+async def test_coverage_review_scope_uses_definition_grant(
+    repo: Path,
+    gate_handler: tuple[WorkflowHookHandler, Session, Project],
+    temp_db: HubDatabase,
+    agent_type: str,
+    granted: bool,
+    enabled: bool,
+    path: str,
 ) -> None:
+    _, session, project = gate_handler
+    _plan_definition(temp_db, session, agent_type, granted=granted, enabled=enabled)
     artifact = repo / path
     artifact.parent.mkdir(parents=True, exist_ok=True)
     artifact.write_text("coverage: pending\n", encoding="utf-8")
@@ -50,9 +61,42 @@ async def test_coverage_review_scope_exempts_only_plan_writer(
         "session_dirty_files": {str(repo): [path]},
     }
     scope = await inspect_commit_review_scope(
-        _event("git commit -m coverage", repo), str(repo), variables
+        _gate_event("git commit -m coverage", session, project, repo),
+        str(repo),
+        variables,
+        db=temp_db,
     )
-    assert scope.has_reviewable_paths is (agent_type != "plan-writer")
+    assert scope.has_reviewable_paths is not (granted and enabled)
+
+
+def _plan_definition(
+    db: HubDatabase, session: Session, name: str, *, granted: bool, enabled: bool = True
+) -> None:
+    AgentDefinitionManager(db).create(
+        name,
+        {
+            "name": name,
+            "prompts": {"agent": "Maintain the assigned plan."},
+            "workflows": {
+                "rule_selectors": {
+                    "include": [
+                        "name:require-task-before-edit",
+                        "name:require-task-before-commit",
+                        "name:require-code-review-skill",
+                        "name:require-code-review-self-review",
+                    ]
+                }
+            },
+            "capabilities": (
+                ["write_plan_artifacts_without_task", "commit_plan_artifacts_without_review"]
+                if granted
+                else []
+            ),
+        },
+        project_id=session.project_id,
+        enabled=enabled,
+    )
+    SessionVariableManager(db).set_variable(session.id, "_agent_type", name)
 
 
 SESSION_ID = "33333333-3333-4333-8333-333333333333"
@@ -484,6 +528,8 @@ def plan_commit_handler(
         ("require-task-before-commit",),
     )
     _, session, _ = gate_handler
+    _plan_definition(temp_db, session, "plan-writer", granted=True)
+    _plan_definition(temp_db, session, "custom-seat", granted=True)
     SessionVariableManager(temp_db).merge_variables(
         session.id,
         {
@@ -494,6 +540,52 @@ def plan_commit_handler(
         },
     )
     return gate_handler
+
+
+@pytest.mark.parametrize("agent_type", ["plan-writer", "custom-seat"])
+@pytest.mark.parametrize("granted", [False, True])
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("operation", ["write", "commit"])
+async def test_plan_artifact_task_gate_uses_definition_grant(
+    gate_handler: tuple[WorkflowHookHandler, Session, Project],
+    temp_db: HubDatabase,
+    repo: Path,
+    agent_type: str,
+    granted: bool,
+    enabled: bool,
+    operation: str,
+) -> None:
+    handler, session, project = gate_handler
+    _plan_definition(temp_db, session, agent_type, granted=granted, enabled=enabled)
+    temp_db.execute(
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s))",
+        ("require-task-before-edit", "require-task-before-commit"),
+    )
+    SessionVariableManager(temp_db).merge_variables(
+        session.id,
+        {
+            "_variable_defaults_loaded": True,
+            "require_task_before_edit": True,
+            "task_claimed": False,
+        },
+    )
+    path = ".gobby/plans/coverage/project/123/plan.coverage.yaml"
+    artifact = repo / path
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("coverage: pending\n", encoding="utf-8")
+    _git(repo, "add", path)
+    event = _gate_event("git commit -m coverage", session, project, repo)
+    if operation == "write":
+        event.data = {
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(artifact), "content": "coverage: complete\n"},
+            "canonical_repo_mutation": True,
+            "canonical_structured_mutation": True,
+            "canonical_file_paths": [str(artifact)],
+            "project_path": str(repo),
+        }
+    response = await handler._evaluate_rules(event)
+    assert response.decision == ("allow" if granted and enabled else "block")
 
 
 @pytest.mark.parametrize(
@@ -547,6 +639,7 @@ async def test_plan_writer_commit_exemption_checks_recorded_paths(
     [
         ("plan-writer", ".gobby/plans/coverage/project/22948/plan.coverage.yaml", "allow"),
         ("plan-writer", ".gobby/plans/coverage/.regenerate.log", "allow"),
+        ("custom-seat", ".gobby/plans/coverage/.regenerate.log", "allow"),
         ("developer", ".gobby/plans/coverage/project/22948/plan.coverage.yaml", "block"),
         ("plan-enhancer", ".gobby/plans/coverage/.regenerate.log", "block"),
         ("plan-writer", ".gobby/plans/other.yaml", "block"),

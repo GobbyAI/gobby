@@ -1,5 +1,5 @@
 name: plan-writer
-capabilities: [accept_resume_retype]
+capabilities: [accept_resume_retype, write_plan_artifacts_without_task, commit_plan_artifacts_without_review]
 description: |
   Plan Writer seat for the team-planning runbook. Drafts and edits the plan, folds
   in the live enhancer's dispositioned edits and the adversary's findings, and

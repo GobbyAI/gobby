@@ -2927,7 +2927,7 @@ class TestWriteRouteParity:
                 "task_claimed": False,
                 "plan_mode": False,
             },
-            "event": type("Event", (), {"data": data})(),
+            "event": type("Event", (), {"data": data, "metadata": {}})(),
             "tool_input": data["tool_input"],
             "source": "claude_code",
         }
@@ -3247,7 +3247,7 @@ def test_edits_need_a_claim_that_receives_them(
     normalize_tool_fields(data)
     context = {
         "variables": {"require_task_before_edit": True, "plan_mode": False, **claim_state},
-        "event": type("Event", (), {"data": data})(),
+        "event": type("Event", (), {"data": data, "metadata": {}})(),
         "tool_input": data["tool_input"],
         "source": "claude_code",
     }

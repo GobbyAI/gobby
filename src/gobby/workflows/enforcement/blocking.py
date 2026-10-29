@@ -694,7 +694,7 @@ def requires_task_for_any_touched_file(
     source: str | None = None,
     plan_mode: bool = False,
     event_data: Any = None,
-    agent_type: str | None = None,
+    allow_plan_artifacts: bool = False,
 ) -> bool:
     """Return True when any touched file should be task-gated.
 
@@ -702,7 +702,7 @@ def requires_task_for_any_touched_file(
     commands carry none, so the adapter's canonical path extraction in event
     data is the fallback — a bash write whose extracted paths are all plan or
     taskless feedback files is exempt, but a structured Write/Edit of a plan file is
-    not: plan mode and the plan-writer seat exempt those paths below. The helper still
+    not: plan mode and an explicit plan-artifact grant exempt those paths below. The helper still
     fails closed: when neither source yields a path for a write-like
     tool, the edit is treated as requiring a task.
     """
@@ -715,7 +715,7 @@ def requires_task_for_any_touched_file(
 
     for path in touched_paths:
         if (
-            agent_type == "plan-writer"
+            allow_plan_artifacts is True
             and isinstance(event_data, dict)
             and is_project_plan_artifact_path(
                 path, event_data.get("project_path"), include_coverage=True
@@ -723,7 +723,7 @@ def requires_task_for_any_touched_file(
         ):
             continue
         # A native Write/Edit of a plan file needs a claim outside plan mode and the
-        # plan-writer role; only shell writes keep the taskless plan-file exemption.
+        # plan-artifact grant; only shell writes keep the taskless plan-file exemption.
         if not structured_mutation and is_plan_file(path, source):
             continue
         if plan_mode and path.endswith(".md"):

@@ -12,12 +12,14 @@ from typing import TYPE_CHECKING, Any
 from gobby.hooks._path_scope import current_project_root, current_tool_cwd, resolve_tool_path
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.session_resolution import is_session_uuid
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.agent_resolver import (
     AgentResolutionError,
     resolve_agent,
     resolve_agent_with_row,
+    session_has_capability,
     session_has_capability_or_operator,
 )
 
@@ -578,6 +580,13 @@ def session_condition_helpers(
     from gobby.workflows.engine.idle_declaration import readiness_message_completed
 
     return {
+        "session_has_capability": lambda caller_id, capability: (
+            session_manager is not None
+            and isinstance(caller_id, str)
+            and is_session_uuid(caller_id)
+            and isinstance(capability, str)
+            and session_has_capability(session_manager.db, caller_id, capability)
+        ),
         "seat_readiness_completed": lambda caller_id, output: readiness_message_completed(
             session_manager, caller_id, output
         ),
