@@ -1471,26 +1471,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/hooks/test_skill_manager.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 173,
-      "message": "Argument 1 to \"update\" of \"MutableMapping\" has incompatible type \"dict[str, object]\"; expected \"SupportsKeysAndGetItem[str, bool | str | None]\"",
-      "occurrences": 1,
-      "path": "tests/hooks/test_skill_manager.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/hooks/test_skill_manager.py::::mypy:method-assign",
-      "issue_code": "mypy:method-assign",
-      "line": 337,
-      "message": "Cannot assign to a method",
-      "occurrences": 1,
-      "path": "tests/hooks/test_skill_manager.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/hooks/test_transcript_path_derivation.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 48,
