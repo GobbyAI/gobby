@@ -858,13 +858,15 @@ def test_delayed_edit_observation_keeps_latest_content(
         return original_mutate(*args, **kwargs)
 
     monkeypatch.setattr(manager, "_mutate_variables", delayed_mutate)
-    with ThreadPoolExecutor(max_workers=1) as pool:
+
+    def observe() -> None:
         if observation == "shell":
-            first = pool.submit(manager.adopt_claimed_shell_edits, S1, "format-call")
+            manager.adopt_claimed_shell_edits(S1, "format-call")
         else:
-            first = pool.submit(
-                manager.record_edited_file, S1, "app.py", checkout_root=str(tmp_path)
-            )
+            manager.record_edited_file(S1, "app.py", checkout_root=str(tmp_path))
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(observe)
         try:
             assert first_waiting.wait(timeout=10), "earlier edit did not reach ledger lock"
             path.write_text("second edit\n")

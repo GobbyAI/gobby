@@ -19,7 +19,6 @@ from gobby.tasks.lifecycle_access import (
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.memory_review_conditions import (
     pending_memory_reviews,
-    pending_memory_reviews_complete,
 )
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -31,8 +30,6 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager, Task
 
 
-REVIEW_RECORDS_VARIABLE = "_memory_task_review_records"
-REVIEW_DELIVERED_VARIABLE = "_memory_review_stop_delivered"
 _MAX_REVIEW_RECORDS = 50
 _CANDIDATE_LIMIT = 5
 
@@ -58,18 +55,7 @@ def _record_review(
     A fully reviewed batch releases the post-close stop/compact gate exactly as
     delivering its block would, so proactive reviews are never re-requested.
     """
-    state.upsert_bounded_list_variable(
-        session_id,
-        REVIEW_RECORDS_VARIABLE,
-        record,
-        identity={"closure_id": record["closure_id"]},
-        max_items=_MAX_REVIEW_RECORDS,
-    )
-    variables = state.get_variable_subset(
-        session_id, ("_memory_pending_task_reviews", REVIEW_RECORDS_VARIABLE)
-    )
-    if pending_memory_reviews_complete(variables):
-        state.set_variable(session_id, REVIEW_DELIVERED_VARIABLE, True)
+    variables = state.record_memory_review(session_id, record, max_records=_MAX_REVIEW_RECORDS)
     pending_reviews = pending_memory_reviews(variables)
     return not pending_reviews, pending_reviews
 
@@ -148,6 +134,7 @@ def register_memory_review_tools(
             "one of its spawned descendants, or reviewed by an operator coordinator. "
             "Accepts <project>#N and UUIDs across authorized local projects. "
             "Returns candidates for optional cleanup or durable capture; never writes memories. "
+            "Reviewing a closure acknowledges it for every session awaiting that closure. "
             "Reviewing every queued closure releases the post-close stop/compact review gate."
         ),
     )
@@ -284,6 +271,7 @@ def register_memory_review_tools(
             "task_ref": _task_ref(task),
             "candidate_ids": [candidate["id"] for candidate in serialized],
             "reviewed_at": datetime.now(UTC).isoformat(),
+            "reviewed_by_session_id": resolved_session_id,
         }
         reviews_complete, pending_reviews = await asyncio.to_thread(
             _record_review, variables, resolved_session_id, record

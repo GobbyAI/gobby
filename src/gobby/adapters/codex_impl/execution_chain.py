@@ -753,6 +753,10 @@ class ExecutionChainCorrelator:
             {"command": execution.literal_command} if execution.literal_command is not None else {}
         )
         data["verification_execution_id"] = execution.outer_call_id
+        # An undecidable PTY chunk is still attached to its running process.
+        # Consumers must retain edit snapshots and task fences until its receipt.
+        if resolution.state == "unknown" and execution.session_id in self._sessions:
+            data["_verification_pending"] = True
         if resolution.state == "pending":
             data["_verification_pending"] = True
             data["tool_result"] = {

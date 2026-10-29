@@ -12,7 +12,7 @@ from psycopg.errors import QueryCanceled
 from gobby.hooks.effect_deadline import (
     BlockingEffectDeadline,
 )
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, tool_execution_id
 from gobby.hooks.fifo_lock import CrossLoopFifoLock
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
 from gobby.storage.hub.operation_deadline import (
@@ -741,7 +741,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 if (
                     event.event_type == HookEventType.BEFORE_TOOL
                     and session_id
-                    and event.request_id
+                    and (call_id := tool_execution_id(event))
                     and response.decision == "block"
                     and self._session_var_manager
                 ):
@@ -750,7 +750,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                             release_structured_edit_calls,
                             self._session_var_manager,
                             session_id,
-                            event.request_id,
+                            call_id,
                         )
                     except _DATABASE_TIMEOUTS:
                         raise
