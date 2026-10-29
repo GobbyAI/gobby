@@ -139,7 +139,9 @@ async def test_dev_manager_cannot_close_with_a_no_work_reason(
     assert closing.manager.get_task(closing.task.id).closed_at is None
 
 
-@pytest.mark.parametrize("case", ["operator", "spawned", "disabled"])
+@pytest.mark.parametrize(
+    "case", ["operator", "default_operator", "spawned", "default_spawned", "disabled"]
+)
 @pytest.mark.asyncio
 async def test_no_work_operator_exemption_and_disabled_grant(closing: Closing, case: str) -> None:
     if case == "disabled":
@@ -158,16 +160,18 @@ async def test_no_work_operator_exemption_and_disabled_grant(closing: Closing, c
                 machine_id=require_machine_id(),
                 source="codex",
                 project_id=closing.project_id,
-                parent_session_id=closing.task.claimed_by_session_id if case == "spawned" else None,
-                agent_depth=1 if case == "spawned" else 0,
+                parent_session_id=closing.task.claimed_by_session_id if "spawned" in case else None,
+                agent_depth=1 if "spawned" in case else 0,
             )
             .id
         )
+        if case.startswith("default_"):
+            SessionVariableManager(closing.db).set_variable(caller, "_agent_type", "default")
 
     evaluation = await _evaluate(closing, caller, "moot")
 
-    assert evaluation.ready is (case == "operator")
-    if case != "operator":
+    assert evaluation.ready is ("operator" in case)
+    if "operator" not in case:
         assert evaluation.error == "no_work_close_forbidden"
 
 

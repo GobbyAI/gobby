@@ -50,21 +50,18 @@ def session_has_capability(db: HubDatabase, session_id: str, capability: str) ->
     return resolved is not None and capability in resolved[0].capabilities
 
 
+def is_operator_session(session: Session, role: object) -> bool:
+    """An unspawned, unseated terminal retains the operator's authority."""
+    return not session.agent_run_id and not session.agent_depth and role in (None, "default")
+
+
 def session_has_capability_or_operator(db: HubDatabase, session_id: str, capability: str) -> bool:
     """Recognize a declared permission or the operator's own unspawned terminal."""
     session = SessionManager(db).get(session_id)
     if session is None:
         return False
     role = SessionVariableManager(db).get_variable_subset(session_id, ("_agent_type",))
-    if (
-        not session.agent_run_id
-        and not session.agent_depth
-        and role.get("_agent_type")
-        in (
-            None,
-            "default",
-        )
-    ):
+    if is_operator_session(session, role.get("_agent_type")):
         return True
     resolved = session_agent_definition(db, session)
     return resolved is not None and capability in resolved[0].capabilities

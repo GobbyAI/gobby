@@ -8,6 +8,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.agent_models import AgentTaskScope
 from gobby.workflows.agent_resolver import session_agent_definition
 
 
@@ -24,6 +25,17 @@ def session_grants(db: HubDatabase, session_id: str, step: str) -> bool:
     session = SessionManager(db).get(session_id)
     resolved = session_agent_definition(db, session) if session is not None else None
     return resolved is not None and step in resolved[0].task_step_writes
+
+
+def task_scope_refusal(task: Task, session_id: str, scope: AgentTaskScope) -> str | None:
+    """Explain which declared task constraint excludes the operation, if any."""
+    if scope.task_types is not None and task.task_type not in scope.task_types:
+        return f"The definition's task scope excludes type {task.task_type}."
+    if scope.categories is not None and task.category not in scope.categories:
+        return f"The definition's task scope excludes category {task.category}."
+    if scope.own_claim_only and task.claimed_by_session_id != session_id:
+        return "The definition's task scope requires the caller's own claim."
+    return None
 
 
 def is_operator_coordinator(

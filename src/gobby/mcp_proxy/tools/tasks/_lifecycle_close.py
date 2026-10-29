@@ -28,9 +28,10 @@ from gobby.sessions.machine_scope import (
     require_local_session_ownership,
 )
 from gobby.storage.project_checkouts import CheckoutNotFoundError
-from gobby.storage.tasks import Task, TaskNotFoundError
+from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.close_invariants import evaluate_close_invariants
 from gobby.tasks.land_commit import LandingGitError, main_checkout_target
+from gobby.tasks.lifecycle_access import task_scope_refusal
 from gobby.tasks.state_semantics import (
     NO_WORK_CLOSE_REASONS,
     get_claimed_session_id,
@@ -39,20 +40,11 @@ from gobby.tasks.state_semantics import (
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.git import descends_from_all
 from gobby.utils.session_context import get_current_session_id
-from gobby.workflows.agent_resolver import session_has_capability_or_operator
-
-
-def _researcher_close_refusal(task: Task, closer: str, reason: str) -> tuple[str, str] | None:
-    """A researcher closes only the research spike it claimed, as done."""
-    if reason.casefold() != "done":
-        return "researcher_close_done_only", "A researcher closes its research spike as done."
-    if (
-        task.claimed_by_session_id != closer
-        or task.task_type != "research_spike"
-        or task.category != "research"
-    ):
-        return "researcher_close_own_spike_only", "A researcher closes only its claimed spike."
-    return None
+from gobby.workflows.agent_resolver import (
+    is_operator_session,
+    session_agent_definition,
+    session_has_capability_or_operator,
+)
 
 
 async def _evaluate_close(
@@ -96,6 +88,13 @@ async def _evaluate_close(
             ctx.session_var_manager.get_variable_subset, session_id, ("_agent_type",)
         )
     ).get("_agent_type")
+    session = await asyncio.to_thread(ctx.session_manager.get, session_id)
+    if session is None or not session.machine_id:
+        return evaluation.refuse("session_machine_missing", "The close session needs a machine_id.")
+    resolved_definition = await asyncio.to_thread(
+        session_agent_definition, ctx.task_manager.db, session
+    )
+    closer_definition = resolved_definition[0] if resolved_definition else None
     if closer_role == CONSOLIDATOR_ROLE:
         fold_refusal = await asyncio.to_thread(
             consolidator_close_refusal, ctx.task_manager, task, reason, session_id
@@ -110,14 +109,17 @@ async def _evaluate_close(
             f"Closing a task as {reason} requires the close_without_work capability. "
             "Close with reason done, or send the request to an authorized coordinator.",
         )
-    if closer_role == "researcher":
-        researcher_refusal = _researcher_close_refusal(task, session_id, reason)
-        if researcher_refusal is not None:
-            return evaluation.refuse(*researcher_refusal)
+    if closer_role and closer_definition is None and not is_operator_session(session, closer_role):
+        return evaluation.refuse(
+            "invalid_agent_definition", "Closing requires an enabled, valid active definition."
+        )
+    if closer_definition is not None:
+        reasons = closer_definition.task_close_reasons
+        if reasons is not None and reason.casefold() not in reasons:
+            return evaluation.refuse(
+                "task_close_reason_forbidden", "The definition does not allow this close reason."
+            )
     evaluation.edit_session_id = get_claimed_session_id(task) or session_id
-    session = await asyncio.to_thread(ctx.session_manager.get, session_id)
-    if session is None or not session.machine_id:
-        return evaluation.refuse("session_machine_missing", "The close session needs a machine_id.")
     try:
         require_local_session_ownership(session)
     except RemoteSessionOwnershipError as exc:
@@ -127,6 +129,10 @@ async def _evaluate_close(
         evaluation.commit_shas = list(task.commits or [])
         evaluation.candidate_commit_sha = task.closed_commit_sha
         return evaluation
+
+    if closer_definition is not None:
+        if refusal := task_scope_refusal(task, session_id, closer_definition.task_close_scope):
+            return evaluation.refuse("task_close_scope_forbidden", refusal)
 
     try:
         repo = await asyncio.to_thread(
@@ -200,7 +206,7 @@ async def _evaluate_close(
         target = None
     integration_ref = f"refs/heads/{target[1]}" if target else None
     try:
-        steps = await step_requirements(ctx, task, commits, closer_definition=closer_role)
+        steps = await step_requirements(ctx, task, commits, closer_definition=closer_definition)
     except ValueError as exc:
         return evaluation.refuse("step_records_unavailable", str(exc))
     evaluation.checklist = await evaluate_close_invariants(

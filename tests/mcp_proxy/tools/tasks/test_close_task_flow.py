@@ -23,6 +23,7 @@ from gobby.storage.tasks import Task, TaskHasOpenChildrenError
 from gobby.tasks.close_checklist import CloseChecklist, CloseGateResult
 from gobby.tasks.step_records import StepRequirements
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.agent_definitions import make_agent_definition
 
 
 def _task(*, criteria: str | None = "Focused tests pass.") -> Task:
@@ -45,6 +46,8 @@ def _ctx(task: Task) -> RegistryContext:
     manager = MagicMock()
     manager.get_task.return_value = task
     manager.list_tasks.return_value = []
+    variables = MagicMock()
+    variables.get_variable_subset.return_value = {}
     return cast(
         RegistryContext,
         SimpleNamespace(
@@ -52,7 +55,7 @@ def _ctx(task: Task) -> RegistryContext:
             project_manager=MagicMock(),
             session_manager=MagicMock(),
             session_task_manager=MagicMock(),
-            session_var_manager=MagicMock(),
+            session_var_manager=variables,
         ),
     )
 
@@ -110,8 +113,17 @@ async def test_close_evaluation_storage_stays_off_the_event_loop(
     )
     cast(MagicMock, ctx.session_var_manager).get_variables.side_effect = record("variables", {})
     cast(MagicMock, ctx.session_var_manager).get_variable_subset.side_effect = record(
-        "closer_role", {"_agent_type": "orchestrator"}
+        "closer_role", {"_agent_type": "fixture-closer"}
     )
+    definition = make_agent_definition(
+        name="fixture-closer",
+        prompts={"agent": "Close the reviewed task."},
+        capabilities=["close_without_work"],
+    )
+    monkeypatch.setattr(
+        lifecycle, "session_agent_definition", record("definition", (definition, "digest"))
+    )
+    monkeypatch.setattr(lifecycle, "session_has_capability_or_operator", record("permission", True))
     monkeypatch.setattr(lifecycle, "resolve_task_id_for_mcp", record("resolve_task", task.id))
     monkeypatch.setattr(lifecycle, "resolve_task_repo_path", record("repo", "/repo"))
 
@@ -131,6 +143,8 @@ async def test_close_evaluation_storage_stays_off_the_event_loop(
         "resolve_session",
         "session",
         "closer_role",
+        "definition",
+        "permission",
         "variables",
         "resolve_task",
         "repo",

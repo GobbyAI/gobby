@@ -86,6 +86,15 @@ class AgentPromptBlocks(BaseModel):
         return value
 
 
+class AgentTaskScope(BaseModel):
+    """Optional task constraints for a definition's step writes or closes."""
+
+    model_config = ConfigDict(extra="forbid")
+    task_types: list[StrictStr] | None = None
+    categories: list[StrictStr] | None = None
+    own_claim_only: StrictBool = False
+
+
 class AgentDefinitionBody(BaseModel):
     """Stored as definition_json on agent_definitions.
 
@@ -194,6 +203,15 @@ class AgentDefinitionBody(BaseModel):
     task_step_writes: list[Literal["test", "implementation", "review", "closing"]] = Field(
         default_factory=list,
         description="Task step records this definition may write through dedicated tools.",
+    )
+    task_step_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)
+    task_close_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)
+    task_close_reasons: list[StrictStr] | None = Field(
+        default=None, description="Allowed close reasons; None leaves reasons unrestricted."
+    )
+    required_review_capabilities: list[StrictStr] = Field(
+        default_factory=list,
+        description="All permissions the approved review must record before this definition closes.",
     )
     supplemental_review: StrictBool = Field(
         default=False,

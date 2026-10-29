@@ -28,6 +28,7 @@ from gobby.storage.tasks._updates import update_task
 from gobby.tasks.lifecycle_access import (
     CrossProjectTaskForbidden,
     resolve_lifecycle_task,
+    task_scope_refusal,
 )
 from gobby.utils.datetime import utc_now
 from gobby.utils.machine_id import require_machine_id
@@ -251,19 +252,18 @@ def _project_close_policy(db: HubDatabase, project_id: str) -> TaskClosePolicyCo
 
 
 def task_step_requirements(
-    db: HubDatabase, task: Task, *, closer_definition: str | None = None
+    db: HubDatabase, task: Task, *, closer_definition: AgentDefinitionBody | None = None
 ) -> StepRequirements:
-    """Evaluate policy against the task's present commits, for preview and final close.
-
-    A researcher closing its report spike needs the Orchestrator's review of the report SHA.
-    """
+    """Evaluate project and definition policy at the task's present commits."""
     required = required_task_steps(
         _project_close_policy(db, task.project_id),
         task_type=task.task_type,
         category=task.category,
     )
-    if closer_definition == "researcher":
-        # The Orchestrator's review gates a researcher's own spike under every policy.
+    review_capabilities = (
+        closer_definition.required_review_capabilities if closer_definition else []
+    )
+    if review_capabilities:
         required = tuple(step for step in TASK_STEPS if step in {*required, "review"})
     if not required:
         return StepRequirements((), ())
@@ -271,18 +271,17 @@ def task_step_requirements(
     missing = tuple(
         step
         for step in required
-        if _closing_approval(task, records, step, closer_definition) is None
+        if _closing_approval(task, records, step, review_capabilities) is None
     )
     return StepRequirements(required, missing)
 
 
 def _closing_approval(
-    task: Task, records: list[TaskStepRecord], step: TaskStep, closer_definition: str | None
+    task: Task, records: list[TaskStepRecord], step: TaskStep, review_capabilities: Sequence[str]
 ) -> TaskStepRecord | None:
     approval = approved_task_step(task, records, step)
-    if step == "review" and closer_definition == "researcher" and approval is not None:
-        # A research report is reviewed by the Orchestrator, never by a DevTeam reviewer.
-        return approval if approval.agent_definition == "orchestrator" else None
+    if step == "review" and approval is not None:
+        return approval if set(review_capabilities).issubset(approval.agent_capabilities) else None
     return approval
 
 
@@ -339,10 +338,8 @@ def _writer(
     body, digest = definition
     if step not in body.task_step_writes and not _review_fixer(task, session_id, step, records):
         raise StepRecordError(f"agent definition {body.name} cannot write the {step} step")
-    if body.name == "researcher" and (
-        task.task_type != "research_spike" or task.claimed_by_session_id != session_id
-    ):
-        raise StepRecordError("a researcher can write steps only for its own research spike")
+    if refusal := task_scope_refusal(task, session_id, body.task_step_scope):
+        raise StepRecordError(refusal)
     return body, digest
 
 
