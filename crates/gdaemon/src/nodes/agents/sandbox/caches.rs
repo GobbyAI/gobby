@@ -265,38 +265,28 @@ pub(super) fn agent_cargo_target_dir(inputs: &PolicyInputs) -> String {
 
 /// The seat's workspace grant: `agent_workspaces.py::spawn_workspace_write_paths`, added
 /// right after the nextest grant so the order matches the Python chain.
-pub(super) fn grant_workspace_folders(config: &mut Sandbox, inputs: &PolicyInputs) {
-    for path in workspace_write_paths(inputs) {
-        if !config.extra_write_paths.contains(&path) {
-            config.extra_write_paths.push(path);
-        }
+pub(super) fn grant_workspace_folders(
+    config: &mut Sandbox,
+    inputs: &PolicyInputs,
+) -> Result<super::workspace_scope::WorkspaceScope> {
+    let scope = super::workspace_scope::WorkspaceScope::resolve(inputs)?;
+    // Validate the whole scope before creating Linux bind targets.
+    for folder in &scope.writes {
+        fs::create_dir_all(folder)?;
     }
-}
-
-/// The seat's own session folder and, when it shares one, its epic folder, under the
-/// project's workspace anchor.
-fn workspace_write_paths(inputs: &PolicyInputs) -> Vec<String> {
-    let Some(session_seq) = inputs.session_seq else {
-        return Vec::new();
-    };
-    let anchor = inputs
-        .gobby_home
-        .join("agents_workspaces")
-        .join(&inputs.project_id);
-    let definition = inputs
-        .definition
-        .as_deref()
-        .filter(|definition| !definition.is_empty())
-        .unwrap_or("default");
-    let mut folders = vec![
-        anchor
-            .join(definition)
-            .join(format!("session-{session_seq}")),
-    ];
-    if let Some(epic_seq) = inputs.epic_seq {
-        folders.push(anchor.join("epics").join(format!("epic-{epic_seq}")));
-    }
-    folders.iter().map(|folder| text(folder)).collect()
+    config.extra_write_paths.retain(|path| {
+        let expanded = expand_user(path, &inputs.home);
+        let absolute = if expanded.is_absolute() {
+            expanded
+        } else {
+            inputs.workspace.join(expanded)
+        };
+        !resolve_nonstrict(&absolute).starts_with(&scope.root)
+    });
+    config
+        .extra_write_paths
+        .extend(scope.writes.iter().map(|path| text(path)));
+    Ok(scope)
 }
 
 /// `sandbox_config_for_spawn`: fill the spawn caches and PATH, then grant the project

@@ -6,7 +6,8 @@ use fancy_regex::{Regex, RegexBuilder};
 use super::manifest::{
     DetectionState, ManifestError, ParsedClause, ParsedRule, Region, parse_manifest,
 };
-use super::regions::{casefold, select_region};
+use super::regions::select_region;
+use crate::casefold::casefold;
 
 /// The longest pattern accepted, in code points, as `MAX_PATTERN_SIZE` in `safe_regex.py`.
 const MAX_PATTERN_SIZE: usize = 2_048;

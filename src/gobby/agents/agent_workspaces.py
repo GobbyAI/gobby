@@ -571,19 +571,28 @@ def predecessor_folder_readable(
         or caller["seq_num"] is None
     ):
         return False
+    return _predecessor_folder_readable(
+        sessions.db, caller["project_id"], caller["definition"], int(caller["seq_num"]), folder
+    )
+
+
+def _predecessor_folder_readable(
+    db: HubDatabase, project_id: str, definition: str, seq: int, folder: str
+) -> bool:
+    """Shared sequence/live-holder check, after resolving persistence authority."""
     path = Path(os.path.normpath(folder))
     try:
-        relative = path.relative_to(workspace_anchor(caller["project_id"]))
+        relative = path.relative_to(workspace_anchor(project_id))
     except ValueError:
         return False
-    if len(relative.parts) != 2 or relative.parts[0] != caller["definition"]:
+    if len(relative.parts) != 2 or relative.parts[0] != definition:
         return False
     match = _SESSION_FOLDER.fullmatch(relative.parts[1])
-    if match is None or int(match.group(1)) >= int(caller["seq_num"]):
+    if match is None or int(match.group(1)) >= seq:
         return False
-    bound = sessions.db.execute(
+    bound = db.execute(
         _LIVE_FOLDER_BINDER_SQL,
-        (caller["project_id"], list(LIVE_SESSION_STATUSES), str(path)),
+        (project_id, list(LIVE_SESSION_STATUSES), str(path)),
     ).fetchone()
     return bound is None
 
@@ -723,19 +732,61 @@ def spawn_workspace_write_paths(
 def grant_seat_workspace_paths(
     config: SandboxConfig, db: HubDatabase, session_id: str, definition: str | None
 ) -> SandboxConfig:
-    """Return ``config`` with the seat's workspace folders among its write grants, once each.
+    """Recompute launch authority from the session and stored definition, including resume.
 
-    Spawn and resume both apply this, so a relaunched seat carries the folders its spawn
-    granted even when its stored snapshot predates them.
+    Read/write scope is private runtime state, never authority carried by a saved
+    policy snapshot. A new session need not have received SessionStart variables yet.
     """
-    granted = [
+    from gobby.storage.definitions import AgentDefinitionManager
+
+    granted = spawn_workspace_write_paths(db, session_id, definition)
+    reads = list(granted)
+    location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
+    if location is not None and location["project_id"] is not None:
+        anchor = workspace_anchor(location["project_id"])
+        reads.append(str(anchor / "README.md"))
+        row = (
+            AgentDefinitionManager(db).get_by_name(definition, location["project_id"])
+            if definition
+            else None
+        )
+        body = row.definition_json if row is not None else {}
+        if body.get("read_all_agent_workspaces") is True:
+            reads = [str(workspaces_root())]
+        elif body.get("persistent_workspace") is True and definition and location["seq_num"]:
+            directory = anchor / definition
+            # Validate the identity before enumerating this one definition's folders.
+            config.with_workspace_scope([str(directory)], []).restrict_workspace_paths([], [])
+            if directory.is_dir():
+                reads.extend(
+                    str(folder)
+                    for folder in directory.iterdir()
+                    if folder.is_dir()
+                    and not folder.is_symlink()
+                    and _predecessor_folder_readable(
+                        db,
+                        location["project_id"],
+                        definition,
+                        int(location["seq_num"]),
+                        str(folder),
+                    )
+                )
+    scoped = config.with_workspace_scope(reads, granted)
+    # Reject aliasing bindings before launch creates any directories in them.
+    scoped.restrict_workspace_paths([], [])
+    # SRT's Linux bind grants require existing paths, including persona launches
+    # that do not pass through the spawned-agent directory preparation step.
+    for folder in granted:
+        Path(folder).mkdir(parents=True, exist_ok=True)
+    root = workspaces_root().resolve()
+    retained = [
         path
-        for path in spawn_workspace_write_paths(db, session_id, definition)
-        if path not in config.extra_write_paths
+        for path in config.extra_write_paths
+        if not Path(path).expanduser().resolve().is_relative_to(root)
     ]
-    if not granted:
-        return config
-    return config.model_copy(update={"extra_write_paths": [*config.extra_write_paths, *granted]})
+    return scoped.model_copy(
+        update={"extra_write_paths": list(dict.fromkeys([*retained, *granted]))}
+    )
 
 
 def bind_epic_workspace(db: HubDatabase, session_id: str) -> Path | None:

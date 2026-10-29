@@ -1487,6 +1487,15 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
         definition: filled["definition"].as_str().map(str::to_owned),
         session_seq: filled["session_seq"].as_u64(),
         epic_seq: filled["epic_seq"].as_u64(),
+        read_all_agent_workspaces: filled["read_all_agent_workspaces"]
+            .as_bool()
+            .unwrap_or(false),
+        predecessor_workspace_folders: serde_json::from_value(
+            filled
+                .get("predecessor_workspace_folders")
+                .cloned()
+                .unwrap_or(json!([])),
+        )?,
     })
 }
 
@@ -1643,11 +1652,21 @@ fn srt_settings_match_python_corpus() -> Result<()> {
         let tree = SrtTree::new(&root.path().join(&name))?;
         tree.materialize(&case["inputs"])?;
         let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &case["inputs"])?)?;
-        assert_eq!(
-            srt_portable_settings(&tree, &corpus, &policy.settings)?,
-            srt_expected_settings(&tree, &corpus, &case["expected"]["settings"])?,
-            "{name}: sandbox settings"
-        );
+        let actual = srt_portable_settings(&tree, &corpus, &policy.settings)?;
+        let expected = srt_expected_settings(&tree, &corpus, &case["expected"]["settings"])?;
+        if actual != expected {
+            let index = actual
+                .chars()
+                .zip(expected.chars())
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| actual.chars().count().min(expected.chars().count()));
+            let start = index.saturating_sub(40);
+            anyhow::bail!(
+                "{name}: sandbox settings differ at character {index}: actual {:?}, expected {:?}",
+                actual.chars().skip(start).take(120).collect::<String>(),
+                expected.chars().skip(start).take(120).collect::<String>()
+            );
+        }
         let expected = tree.fill(&case["expected"]);
         assert_eq!(
             policy.env,
@@ -1747,6 +1766,13 @@ fn srt_agent_workspace_grants_match_python_corpus() -> Result<()> {
     let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &inputs)?)?;
 
     let workspaces = tree.path("gobby_home").join("agents_workspaces");
+    let settings: Value = serde_json::from_slice(&policy.settings)?;
+    assert!(
+        settings["filesystem"]["denyRead"]
+            .as_array()
+            .context("denyRead")?
+            .contains(&json!(workspaces))
+    );
     let anchor = workspaces.join(srt_text(&inputs, "project_id")?);
     let own = anchor.join(srt_text(&inputs, "definition")?).join(format!(
         "session-{}",

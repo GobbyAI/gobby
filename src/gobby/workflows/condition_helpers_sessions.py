@@ -21,7 +21,7 @@ from gobby.workflows.agent_resolver import (
     resolve_agent,
     resolve_agent_with_row,
 )
-from gobby.workflows.condition_helpers_paths import _workspace_contains
+from gobby.workflows.condition_helpers_paths import workspace_contains
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -753,19 +753,19 @@ def _workspace_read_boundary(target: Path, root: Path, start: int) -> Path | Non
         if match is None:
             continue
         prefix = Path(*target.parts[:index])
-        within = _workspace_contains(prefix, root)
+        within = workspace_contains(prefix, root)
         if within is None:
             return root
         if within:
             target = prefix
             break
-        ancestor = _workspace_contains(root, prefix)
+        ancestor = workspace_contains(root, prefix)
         if ancestor is None:
             return root
         if ancestor and _pattern_reaches_root(target.parts[index:], root.parts[index:]):
             return root
         return None
-    within = _workspace_contains(target, root)
+    within = workspace_contains(target, root)
     if within is None:
         return root
     return root.joinpath(*target.parts[len(root.parts) :]) if within else None
@@ -801,20 +801,20 @@ def _workspace_path_readable(
 
     own, epic, anchor = folders
     if any(
-        folder is not None and _workspace_contains(target, folder) is True for folder in (own, epic)
+        folder is not None and workspace_contains(target, folder) is True for folder in (own, epic)
     ):
         return True
-    if anchor is None or _workspace_contains(target, anchor) is not True:
+    if anchor is None or workspace_contains(target, anchor) is not True:
         return False
     relative = target.parts[len(anchor.parts) :]
-    if len(relative) == 1 and _workspace_contains(target, anchor / "README.md") is True:
+    if len(relative) == 1 and workspace_contains(target, anchor / "README.md") is True:
         return True
     if len(relative) < 2 or not caller_id or session_manager is None:
         return False
     folder = anchor / relative[0] / relative[1]
     if own is not None:
         canonical = own.parent / relative[1].casefold()
-        if _workspace_contains(folder, canonical) is True:
+        if workspace_contains(folder, canonical) is True:
             folder = canonical
     return predecessor_folder_readable(session_manager, caller_id, str(folder))
 
@@ -847,7 +847,7 @@ def agent_workspace_read_violation(
     folders = (own, epic, anchor)
 
     def readable(target: Path) -> bool:
-        within = _workspace_contains(target, root)
+        within = workspace_contains(target, root)
         if within is not True:
             return within is False
         canonical = root.joinpath(*target.parts[len(root.parts) :])

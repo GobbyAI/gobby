@@ -12,6 +12,7 @@ pub mod runtime;
 mod settings;
 mod tables;
 mod verify;
+mod workspace_scope;
 
 use crate::node_commands::{Sandbox, SandboxBackend};
 use anyhow::{Result, bail};
@@ -54,6 +55,11 @@ pub struct PolicyInputs {
     pub definition: Option<String>,
     pub session_seq: Option<u64>,
     pub epic_seq: Option<u64>,
+    /// Authority resolved from the stored definition by the hub at launch/resume.
+    pub read_all_agent_workspaces: bool,
+    /// Existing same-definition predecessors selected by the hub's persistence,
+    /// sequence and live-holder checks. Refresh at every launch/resume.
+    pub predecessor_workspace_folders: Vec<PathBuf>,
 }
 
 /// The resolved policy for one `srt` run.
@@ -109,7 +115,7 @@ pub(super) fn compile_policy(
     let project = caches::project_write_paths(&inputs.source_root)?;
     let mut config = inputs.sandbox.clone();
     caches::grant_declared_nextest(&mut config, &inputs.source_root, &project);
-    caches::grant_workspace_folders(&mut config, inputs);
+    let workspace_scope = caches::grant_workspace_folders(&mut config, inputs)?;
     env.insert(
         "CARGO_TARGET_DIR".to_string(),
         caches::agent_cargo_target_dir(inputs),
@@ -151,7 +157,7 @@ pub(super) fn compile_policy(
 
     let mut policy_env = env;
     policy_env.extend(layout.environment(&inputs.provider));
-    let resolved = paths::compute(&effective, inputs, &policy_env)?;
+    let resolved = paths::compute(&effective, inputs, &policy_env, &workspace_scope)?;
     Ok(CompiledPolicy {
         resolved,
         sandbox: effective,

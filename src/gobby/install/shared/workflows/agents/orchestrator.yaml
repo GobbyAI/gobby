@@ -11,6 +11,7 @@ provider: inherit
 execution_mode: interactive
 checkout_mode: inherit
 persistent_workspace: true
+read_all_agent_workspaces: true
 timeout: 0
 send_message_targets: [parent, session, agent, project, global]
 # No blocked tools: the Orchestrator ends dead or orphaned seats directly (kill_agent).
