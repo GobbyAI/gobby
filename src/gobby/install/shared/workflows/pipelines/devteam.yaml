@@ -118,7 +118,7 @@ steps:
             agent: developer
           - name: code-reviewer
             title: Code Reviewer
-            agent: code-reviewer
+            agent: "${{ inputs.reviewer_agent }}"
 
   - id: admit
     mcp:

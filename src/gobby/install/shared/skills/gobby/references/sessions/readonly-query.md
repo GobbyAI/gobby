@@ -4,9 +4,10 @@ Load before calling `gobby-sessions:query_readonly`, or when a `query_readonly`
 refusal or failure needs diagnosing. Fetch the schema first with
 `get_tool_schema(server_name="gobby-sessions", tool_name="query_readonly")`.
 
-Only the Assistant and the Orchestrator may call it. Every other seat is refused
-by the `query-readonly-seat-scope` rule. Route the database need to Triage or
-your Dev Manager through `gobby-agents:send_message`.
+Definitions selecting `query-readonly-seat-scope` are refused. Permission comes
+from the installed definition's rule selectors, independent of its name. When
+refused, send the database need to your authorized coordinator through
+`gobby-agents:send_message`.
 
 ## Call shape
 

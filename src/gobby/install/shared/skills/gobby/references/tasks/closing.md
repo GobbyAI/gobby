@@ -1,11 +1,12 @@
 # Close verified work
 
-Load before any task close, including no-work dispositions. Only the Dev Manager and
-the Orchestrator call `close_task`; every other seat is refused and reports to its
-Dev Manager or Triage. Discover `close_task` on `gobby-tasks` and post-close
+Load before any task close, including no-work dispositions. The installed
+definition's rule selectors, close reasons and task scope determine who may
+close. A refused caller reports to its authorized coordinator. Discover
+`close_task` on `gobby-tasks` and post-close
 `review_task_memories` on `gobby-memory`. Tool schemas own parameters.
 
-Finish in this order (closers: the Dev Manager or the Orchestrator):
+Authorized closers finish in this order:
 
 1. Finish the task, resolve owned findings, and check its acceptance criteria.
 2. Run focused validation after the final edit and follow every command to its
@@ -24,10 +25,14 @@ Finish in this order (closers: the Dev Manager or the Orchestrator):
 
 ## Who closes
 
-- The Dev Manager closes delivered work with `reason=done`.
-- The Orchestrator closes no-work dispositions (`moot`, `superseded`, `wont_do`) and may close with `done`.
-- The Consolidator closes only `moot` or `superseded`, and only for a fold or retirement the Orchestrator directs by proposal number.
-- A researcher report spike closes with `done` by its researcher, after the Orchestrator's approved review of the linked SHA. Only the Orchestrator closes it with a no-work reason.
+- Selected closure rules must permit the call.
+- `task_close_reasons` and `task_close_scope` constrain the enabled definition's
+  permitted reasons and tasks; `required_review_capabilities` can require an
+  approved review from a definition with the declared permissions.
+- No-work dispositions additionally require `close_without_work`, or the
+  operator-terminal exemption.
+- A definition with `respect_task_protections` follows the project's
+  `task_protection_policy` for foreign claims, labels and protected subtrees.
 - `preview=true` is open to every seat and changes nothing.
 
 ## Five close gates
@@ -48,12 +53,9 @@ The final close re-evaluates current state before writing. A concurrent change
 can require another preview or retry.
 
 Close reasons are `done`, `moot`, `superseded`, and `wont_do`. Delivered work closes
-with `done`. Only the Orchestrator closes with the no-work reasons `moot`, `superseded`,
-and `wont_do`; a Dev Manager's attempt is refused with `no_work_close_orchestrator_only`.
-The Consolidator may close `moot` or `superseded` for an approved fold or retirement. Its
-`done` or `wont_do` is refused with `consolidator_close_reason_refused`, and it cannot close a task
-claimed by another session, labeled `deferred-by-josh`, or under #22978 or #22225; those
-are refused with `consolidator_task_protected`.
+with `done`. A missing no-work capability returns `no_work_close_forbidden`.
+Definition reason and scope restrictions return `task_close_reason_forbidden`
+and `task_close_scope_forbidden`; protected tasks return `task_protected`.
 A no-work close is commitless and explains the disposition in `changes_summary`.
 A no-work close with any linked commit fails `integration_ancestry`, landed or not.
 Unlink each unlanded candidate first with
@@ -89,12 +91,14 @@ approval only from a session that never claimed, implemented or edited the task.
 
 Peer evidence a close depends on is recorded by the peer, not the closer. A
 review LAND is the reviewer's approved `record_review_step` record for the exact
-commit. `land_commit` lands that commit only for the task's Dev Manager or the
-root Orchestrator, never for the reviewer, and records a daemon-attested landing
-receipt on the task. Nothing else records a close receipt.
+commit. `land_commit` requires an enabled definition granting `land_tasks` and
+either a run bound to the task or a locally owned root session, and records a
+daemon-attested landing receipt on the task. Nothing else records a close receipt.
 
-The Orchestrator owns every restart and activation. It activates with
-`gobby restart` after a global notice and runs no release batches.
+Follow the project's assigned restart and activation owner. Announce a plain
+restart or cutover globally, proceed, and report DAEMON BACK when healthy;
+no worker/validator quiet-window acknowledgement is required. Honor configured
+quiet hours and separately coordinate operations that can kill agent panes.
 
 When a CLOSED/VALID task's `closed_commit_sha` differs from the explicit
 `commit_sha` its original VALID close review accepted,

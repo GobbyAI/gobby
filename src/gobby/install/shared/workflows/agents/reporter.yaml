@@ -56,3 +56,4 @@ workflows:
       - "name:no-comms-attach"
   variables:
     _seat_procedure: gobby:references/agents/procedures/reporter.md
+    operator_relay_agent: assistant
