@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,6 +27,7 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.idle_declaration import native_variable_write_error
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.agent_definitions import seed_seat
+from tests.fixtures.isolated_checkout import init_git_checkout
 
 pytestmark = pytest.mark.unit
 
@@ -299,6 +301,76 @@ def _register(
         },
     )
     return session_id
+
+
+@pytest.mark.parametrize("operation", ["write", "commit"])
+@pytest.mark.parametrize(
+    ("target_kind", "expected"),
+    [
+        ("tracked_baseline", "allow"),
+        ("new_repo_config", "allow"),
+        ("bare_session_config", "block"),
+        ("git_marker", "block"),
+        ("git_config", "block"),
+        ("symlink_to_session_config", "block"),
+        ("checkout_unavailable", "block"),
+    ],
+)
+async def test_owned_task_worktree_repository_content_keeps_metadata_boundary(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    target_kind: str,
+    expected: str,
+) -> None:
+    project = tmp_path / "checkout"
+    (project / ".gobby").mkdir(parents=True)
+    (project / ".gobby/test-types-baseline.json").write_text("{}\n", encoding="utf-8")
+    init_git_checkout(project)
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    own.mkdir(parents=True)
+    worktree = own / "task-25133"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(worktree)],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    session_config = own / ".gobby/project.json"
+    session_config.parent.mkdir()
+    session_config.write_text("{}\n", encoding="utf-8")
+    alias = worktree / ".gobby/session-config.json"
+    alias.symlink_to(session_config)
+    target = {
+        "tracked_baseline": worktree / ".gobby/test-types-baseline.json",
+        "new_repo_config": worktree / ".gobby/project.json",
+        "bare_session_config": session_config,
+        "git_marker": worktree / ".git",
+        "git_config": worktree / ".git/config",
+        "symlink_to_session_config": alias,
+        "checkout_unavailable": worktree / ".gobby/test-types-baseline.json",
+    }[target_kind]
+    if target_kind == "checkout_unavailable":
+
+        def unavailable(_path: Path) -> Path | None:
+            raise OSError("checkout inspection unavailable")
+
+        monkeypatch.setattr("gobby.workflows.condition_helpers_paths.checkout_root", unavailable)
+    if operation == "commit":
+        event = _shell(f"git commit --only -m 'task change' -- {target}", worktree)
+    else:
+        event = _write(target, worktree)
+    normalize_tool_fields(event)
+
+    response = await _decide(workspace_write_engine, event, variables)
+
+    assert response.decision == expected, (target_kind, operation, response.reason)
+    if expected == "block":
+        assert "agent-workspace-write-scope" in (response.reason or "")
 
 
 SEATS = ("researcher", "assistant", "archivist", "developer", None)
