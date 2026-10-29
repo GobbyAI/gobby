@@ -245,21 +245,21 @@ The 30s timeout is deliberately generous — the daemon may be doing real work (
 ### Planned Shutdown Stops
 
 `planned_shutdown` handles intentional daemon stop/restart windows without
-changing the envelope schema. After project/input and managed-context resolution,
-but before terminal-context injection or enqueue, Stop hooks check
+changing the envelope schema. Every hook enqueues and POSTs as usual. After a
+live POST fails with `Connect` or `Timeout`, Stop and pre-compact hooks check
 `shutdown_intent_active.json` under `$GOBBY_HOME` or `~/.gobby`. Fresh markers
-are accepted for `intent` values
-`stop`/`restart` or source prefixes `cli_`, `http_`, `service_`, and `mcp_`.
+are accepted for `intent` values `stop`/`restart`/`maintenance` or source
+prefixes `cli_`, `http_`, `service_`, and `mcp_`. An accepted marker returns
+the provider-specific continue action with exit 0 and leaves the envelope
+queued for replay. HTTP failures are treated as daemon responses and are never
+suppressed. With `--enqueue-only`, a failed enqueue takes the same marker rule
+after recording a failure artifact.
 
-Accepted markers trigger a short GET to `{daemon_url}/api/health`. Any
-HTTP response means the daemon is reachable; transport failures mean it is
-unreachable. Fresh marker plus unreachable daemon returns the provider-specific
-continue action with exit 0 and no enqueue side effects.
-
-After enqueue, the same marker rule suppresses only Stop live POST failures
-classified as `Connect` or `Timeout`. `ghook` removes the just-enqueued Stop
-envelope first; if removal fails, the normal critical-hook failure path stays in
-force. HTTP failures are treated as daemon responses and are never suppressed.
+For spawned agents, `daemon_down` runs before that rule. It answers a `Connect`
+failure with exit 2 and `[Gobby] Daemon down. Please wait.` on every hook
+except Stop, SubagentStop, and Codex Interrupt. `restart_in_progress()` narrows
+one case: a fresh marker whose `intent` is `restart` lets Claude's
+`post-tool-batch` continue, because Claude ends the turn on that hook's exit 2.
 
 Environment:
 
