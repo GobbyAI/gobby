@@ -159,6 +159,7 @@ async def test_no_work_operator_exemption_and_disabled_grant(closing: Closing, c
                 source="codex",
                 project_id=closing.project_id,
                 parent_session_id=closing.task.claimed_by_session_id if case == "spawned" else None,
+                agent_depth=1 if case == "spawned" else 0,
             )
             .id
         )

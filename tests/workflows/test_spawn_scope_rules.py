@@ -389,7 +389,7 @@ class TestLimitSpawnNetworkOverride:
         assert response.decision == ("allow" if granted else "block")
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("case", ["disabled", "forged-variable", "runless-child"])
+    @pytest.mark.parametrize("case", ["disabled", "forged-variable", "lineage-root"])
     async def test_network_grant_requires_enabled_verified_definition(
         self,
         temp_db: HubDatabase,
@@ -403,10 +403,10 @@ class TestLimitSpawnNetworkOverride:
             assert definition is not None
             definitions.update(definition.id, enabled=False)
             caller = callers["orchestrator"]
-        elif case == "runless-child":
+        elif case == "lineage-root":
             root = callers["root"]
             caller = session_manager.register(
-                external_id="runless-child-at-depth-zero",
+                external_id="lineage-root-at-depth-zero",
                 source="codex",
                 machine_id=root.machine_id,
                 project_id=root.project_id,
@@ -424,7 +424,7 @@ class TestLimitSpawnNetworkOverride:
             variables={},
         )
 
-        assert response.decision == "block"
+        assert response.decision == ("allow" if case == "lineage-root" else "block")
 
     @pytest.fixture
     def callers(

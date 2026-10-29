@@ -24,7 +24,7 @@ class RecipientPolicy:
 
 
 _SEATS = (
-    "SELECT s.id, s.project_id, s.parent_session_id, s.agent_run_id, s.agent_depth, "
+    "SELECT s.id, s.project_id, s.agent_run_id, s.agent_depth, "
     "v.variables ->> '_agent_type' AS role "
     "FROM sessions s LEFT JOIN session_variables v ON v.session_id = s.id "
 )
@@ -32,12 +32,7 @@ _SEATS = (
 
 def operator_terminal(row: Row) -> bool:
     """The operator's own terminal is no seat: no agent run, no depth and no seat role."""
-    return (
-        row["parent_session_id"] is None
-        and not row["agent_run_id"]
-        and not row["agent_depth"]
-        and row["role"] in (None, "default")
-    )
+    return not row["agent_run_id"] and not row["agent_depth"] and row["role"] in (None, "default")
 
 
 def _definition(db: HubDatabase, row: Row) -> AgentDefinitionBody | None:

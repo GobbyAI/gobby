@@ -137,7 +137,7 @@ def _fallback_chain(target: str, db: Any, project_id: str | None) -> list[str]:
 def _spawn_caller(session_manager: SessionManager, caller_ref: Any) -> tuple[Session, str | None]:
     """The verified caller session and its agent run's definition name, None for a root.
 
-    A root session has no parent, no agent run and depth 0. A spawned caller's name comes from
+    A root session has no agent run and depth 0. A spawned caller's name comes from
     its agent run record, never from a caller-supplied parent. A run-less session
     below the root, a missing run, or a run that names no definition raises.
     """
@@ -146,7 +146,7 @@ def _spawn_caller(session_manager: SessionManager, caller_ref: Any) -> tuple[Ses
     caller = session_manager.get(session_manager.resolve_session_reference(caller_ref))
     if caller is None:
         raise ValueError(f"Caller session {caller_ref} not found")
-    if caller.parent_session_id is None and caller.agent_run_id is None and caller.agent_depth == 0:
+    if caller.agent_run_id is None and caller.agent_depth == 0:
         return caller, None
     if caller.agent_run_id is None:
         raise ValueError(f"Spawned session {caller.id} has no agent run")
@@ -330,7 +330,6 @@ def spawn_target_allowed(
     return all(body.may_spawn(name) for name in names)
 
 
-# Spawned definitions that may choose a spawn's network profile; a root session always may.
 def network_override_allowed(session_manager: SessionManager | None, caller_ref: Any) -> bool:
     """Whether the caller may pass an explicit ``network`` profile to a spawn.
 

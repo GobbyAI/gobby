@@ -405,7 +405,7 @@ async def test_retired_definition_fields_refuse_delivery_without_aborting_fanout
 
 
 @pytest.mark.asyncio
-async def test_unseated_child_has_no_operator_message_exemption(
+async def test_spawned_child_has_no_operator_message_exemption(
     temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:
     project = sample_project["id"]
@@ -416,6 +416,7 @@ async def test_unseated_child_has_no_operator_message_exemption(
         project_id=project,
         machine_id=AGENT_TEST_MACHINE_ID,
         parent_session_id=parent,
+        agent_depth=1,
     )
     recipient = _seat(session_manager, project, "recipient", "inbox", required_senders=("report",))
     wakes = _Wakes()

@@ -30,7 +30,8 @@ def is_operator_coordinator(
     tasks: LocalTaskManager, caller: Session, *, capability: str = "coordinate_tasks"
 ) -> bool:
     """Check a definition's coordinator permission on a locally owned root session."""
-    if caller.parent_session_id is not None or caller.machine_id != require_machine_id():
+    # Clear successors have parents for lineage; run/depth identify spawned seats.
+    if caller.agent_run_id or caller.agent_depth or caller.machine_id != require_machine_id():
         return False
     definition = session_agent_definition(tasks.db, caller)
     return definition is not None and capability in definition[0].capabilities
