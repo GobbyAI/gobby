@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 import yaml
 
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
@@ -237,6 +238,61 @@ async def test_rerun_with_team_id_launches_only_the_missing_seats(
 
     assert launched == ["developer"]
     assert other_launched == ["dev-manager", "test-writer", "code-reviewer"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ended", [False, True])
+async def test_replacement_guard_ignores_cancelled_run_with_live_session(
+    world: TeamWorld, ended: bool
+) -> None:
+    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "devteam")[0].id
+    task = world.case.task(TITLE)
+    original = _execution(world, task, _inputs(task, workspace, world.case.creator, None))
+    team = await world.admit(original, task)
+    developer = running_seat(world, original, "developer")
+    assert developer.agent_run_id is not None
+    if ended:
+        LocalAgentRunManager(world.case.db).cancel(developer.agent_run_id)
+    world.finish(original)
+
+    inputs = _inputs(task, workspace, world.case.creator, team.team_id)
+    inputs["seats"] = "developer"
+    replacement = _execution(world, task, inputs)
+    context = await _admit(world, replacement, inputs)
+
+    assert _launched(replacement, context) == (["developer"] if ended else [])
+    assert context["steps"]["guard"]["output"]["live"].get("developer") == (
+        None if ended else developer.id
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_seat", SEATS)
+async def test_failed_first_seat_relaunch_opens_missing_team_tab(
+    world: TeamWorld, first_seat: str
+) -> None:
+    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "devteam")[0].id
+    task = world.case.task(TITLE)
+    original = _execution(world, task, _inputs(task, workspace, world.case.creator, None))
+    team = await world.admit(original, task)
+    world.fail(original)
+    trees = world.tree_ids()
+    inputs = _inputs(task, workspace, world.case.creator, team.team_id)
+    inputs["seats"] = first_seat
+    replacement = _execution(world, task, inputs)
+
+    context = await _admit(world, replacement, inputs)
+    step = next(step for step in DEVTEAM.steps if step.id == first_seat)
+    assert step.mcp is not None
+    arguments = RENDERER.render_mcp_arguments(
+        step.mcp.arguments or {}, _step_context(replacement, first_seat, context), drop_none=True
+    )
+
+    assert _launched(replacement, context) == [first_seat]
+    assert arguments["placement"] == {
+        "tab": {"workspace": workspace, "title": f"Dev Team - #{task.seq_num}"}
+    }
+    assert world.tree_ids() == trees
 
 
 @pytest.mark.asyncio

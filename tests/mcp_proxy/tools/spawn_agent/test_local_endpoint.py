@@ -1,40 +1,39 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.agents.local_model import LocalModelError
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import resolve_spawn_generation_endpoint
+from gobby.storage.agents import LocalAgentRunManager
 
 pytestmark = pytest.mark.unit
 
 
 def _config() -> DaemonConfig:
-    return DaemonConfig.model_validate(
-        {
-            "ai": {
-                "generation": {
-                    "endpoints": {
-                        "lm-studio": {
-                            "protocol": "lmstudio",
-                            "api_base": "http://localhost:1234/v1",
-                            "model": "qwen-coder-32b",
-                            "api_key": "endpoint-token",
-                        },
-                        "ollama": {
-                            "protocol": "ollama",
-                            "api_base": "http://localhost:11434",
-                            "model": "llama3.2:latest",
-                        },
-                        "openrouter": {
-                            "wire_api": "responses",
-                            "api_base": "https://openrouter.ai/api/v1",
-                            "api_key": "openrouter-secret",
-                            "model": "moonshotai/kimi-k3",
-                        },
-                    }
+    return DaemonConfig(
+        ai={
+            "generation": {
+                "endpoints": {
+                    "lm-studio": {
+                        "protocol": "lmstudio",
+                        "api_base": "http://localhost:1234/v1",
+                        "model": "qwen-coder-32b",
+                        "api_key": "endpoint-token",
+                    },
+                    "ollama": {
+                        "protocol": "ollama",
+                        "api_base": "http://localhost:11434",
+                        "model": "llama3.2:latest",
+                    },
+                    "openrouter": {
+                        "wire_api": "responses",
+                        "api_base": "https://openrouter.ai/api/v1",
+                        "api_key": "openrouter-secret",
+                        "model": "moonshotai/kimi-k3",
+                    },
                 }
             }
         }
@@ -43,7 +42,7 @@ def _config() -> DaemonConfig:
 
 @pytest.mark.asyncio
 async def test_resolve_spawn_generation_endpoint_uses_named_generation_endpoint() -> None:
-    run_manager = object()
+    run_manager = MagicMock(spec=LocalAgentRunManager)
     with patch(
         "gobby.agents.local_model.ensure_local_model",
         new=AsyncMock(return_value="qwen-coder-32b"),

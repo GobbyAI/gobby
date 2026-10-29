@@ -44,6 +44,7 @@ from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
 from gobby.storage.team_records import ADMISSION_STEP, EPIC_MODE
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.tasks.land_commit import LandingGitError, main_checkout_target
+from gobby.tasks.state_semantics import is_task_actionable
 from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.uuid_validation import parse_uuid_reference
@@ -153,6 +154,8 @@ async def admit_team(
         if refusal is not None:
             raise TeamAdmissionRefused("reviewer_refused", refusal)
     async with db.advisory_lock(MainCheckoutLanding(caller.project_id)):
+        # Admission may have waited while the task was closed or escalated.
+        target = await asyncio.to_thread(_open_task, db, task, caller.project_id)
         own = await asyncio.to_thread(_own_record, caller)
         if own is not None:
             return await _readmit(db, caller, own, target, team_id, reviewer_agent)
@@ -247,6 +250,8 @@ def _open_task(db: HubDatabase, ref: str, project_id: str) -> Task:
         raise TeamAdmissionRefused("team_task_unknown", str(exc)) from exc
     if task.closed_at is not None:
         raise TeamAdmissionRefused("team_task_closed", f"task {task.id} is closed")
+    if not is_task_actionable(task):
+        raise TeamAdmissionRefused("team_task_not_actionable", f"task {task.id} is not actionable")
     if task.seq_num is None:
         raise TeamAdmissionRefused("team_task_unknown", f"task {task.id} has no sequence number")
     return task

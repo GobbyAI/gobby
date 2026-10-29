@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -12,6 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.agents import spawn_in_doubt_owner
+from gobby.mcp_proxy.tools.agents_run_payload import _list_run_payload
 from gobby.mcp_proxy.tools.spawn_agent import _implementation as impl
 from gobby.mcp_proxy.tools.spawn_agent._resume import ResumeSeatGone, resumed_seat_plan
 from gobby.storage.agents import AgentRun
@@ -263,6 +265,9 @@ async def test_resumed_seat_launches_in_its_lane_tab(placed: _Harness) -> None:
     pane = h.workspaces.get_pane_for_terminal(run.terminal_id)
     assert pane is not None and pane.tab_id == lane.tab_id
     assert _tabs(h) == {lane.tab_id}
+    assert _list_run_payload(run)["seat"] == {"workspace": h.workspace.id, "title": SEAT}
+    h.workspaces.sweep_dead_panes(h.workspace.id)
+    assert {item.id for item in h.workspaces.list_panes(h.workspace.id)} == {pane.id}
 
 
 async def test_resumed_paused_seat_without_a_live_pane_rebinds_and_launches(
@@ -426,7 +431,11 @@ async def test_rehome_during_close_refuses_the_resume_and_keeps_the_tab(
 
     def close_after_rehome(tab_id: str, **_: Any) -> Any:
         # The store's race: the tab moves between close's home read and its lock.
-        h.workspaces.move_tab(tab_id, workspace_id=other.id, position=0)
+        # A concurrent actor commits independently of close's bounded transaction.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(
+                h.workspaces.move_tab, tab_id, workspace_id=other.id, position=0
+            ).result(timeout=5)
         raise WorkspaceNotFoundError("A tab moved to another workspace concurrently; retry")
 
     monkeypatch.setattr(impl, "resumed_seat_plan", plan_then_fill_tab)
