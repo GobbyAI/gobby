@@ -198,21 +198,19 @@ def test_reviewer_diff_process_substitution(
     reviewer_launch: tuple[SandboxLaunch, Path, dict[str, str]],
 ) -> None:
     launch, workspace, environment = reviewer_launch
-    cat = _run(
+    result = _run(
         launch,
         workspace,
         environment,
-        ["/bin/bash", "-c", "cat <(printf 'a\\n') <(printf 'b\\n')"],
+        [
+            "/bin/bash",
+            "-c",
+            "cat <(printf 'a\\n') <(printf 'b\\n') && "
+            "/usr/bin/diff <(printf 'a\\n') <(printf 'a\\n')",
+        ],
     )
-    assert cat.returncode == 0, cat.stderr
-    assert cat.stdout == "a\nb\n"
-    diff = _run(
-        launch,
-        workspace,
-        environment,
-        ["/bin/bash", "-c", "/usr/bin/diff <(printf 'a\\n') <(printf 'a\\n')"],
-    )
-    assert diff.returncode == 0, diff.stderr
+    assert result.stdout == "a\nb\n", result.stderr
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.timeout(1200)

@@ -621,6 +621,63 @@ async def test_apply_patch_workspace_targets_use_the_actual_headers(
 
 
 @pytest.mark.asyncio
+async def test_predecessor_case_alias_keeps_live_holder_and_sequence_guards(
+    workspace_read_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id: str = sample_project["id"]
+    anchor = root / project_id
+    own = anchor / "assistant" / "session-40"
+    own.mkdir(parents=True)
+    alias_root = root.with_name(root.name.upper())
+    if not alias_root.exists():
+        pytest.skip("Filesystem distinguishes workspace root casing")
+    assert alias_root.samefile(root)
+    variables = _seat(anchor, "assistant", 40, persistent=True)
+    caller = _register(
+        temp_db,
+        project_id,
+        seq=40,
+        status="active",
+        agent_type="assistant",
+        folder=own,
+        persistent=True,
+    )
+    (anchor / "README.md").write_text("Shared workspace guide")
+    readme = await _decide(
+        workspace_read_engine,
+        _read(alias_root / project_id / "readme.md", tmp_path),
+        variables,
+        caller,
+    )
+    assert readme.decision == "allow", readme.reason
+    for seq, status, decision in (
+        (30, "expired", "allow"),
+        (20, "active", "block"),
+        (60, "expired", "block"),
+    ):
+        folder = own.parent / f"session-{seq}"
+        folder.mkdir()
+        _register(
+            temp_db,
+            project_id,
+            seq=seq,
+            status=status,
+            agent_type="assistant",
+            folder=folder,
+            persistent=True,
+        )
+        alias = alias_root / project_id / "ASSISTANT" / f"SESSION-{seq}" / "notes.md"
+        response = await _decide(workspace_read_engine, _read(alias, tmp_path), variables, caller)
+        assert response.decision == decision, (seq, response.reason)
+        if decision == "block":
+            assert "agent-workspace-read-scope" in (response.reason or "")
+
+
+@pytest.mark.asyncio
 async def test_read_scope_by_persistence(
     engine: RuleEngine,
     root: Path,
