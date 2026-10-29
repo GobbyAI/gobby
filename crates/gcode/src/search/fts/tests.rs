@@ -603,7 +603,10 @@ fn connect_overlay_visibility_test_db() -> (Client, String) {
 }
 
 #[test]
-#[cfg_attr(not(gcode_postgres_tests), ignore = "requires a PostgreSQL test database URL")]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
 #[serial_test::serial(serial_db)]
 fn gcode_connections_keep_bm25_out_of_parallel_workers() -> anyhow::Result<()> {
     let (mut seed, database_url) = connect_overlay_visibility_test_db();
@@ -630,9 +633,19 @@ fn gcode_connections_keep_bm25_out_of_parallel_workers() -> anyhow::Result<()> {
     for query in queries {
         // EXPLAIN only: running the unsafe plan can crash the entire test hub.
         let rows = seed.query(&format!("EXPLAIN {query}"), &[])?;
-        let plan = rows.iter().map(|row| row.get::<_, String>(0)).collect::<Vec<_>>().join("\n");
-        assert!(plan.contains("Gather"), "fixture must exercise a parallel BM25 plan: {plan}");
-        assert!(plan.contains("Custom Scan"), "fixture must use the BM25 index: {plan}");
+        let plan = rows
+            .iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            plan.contains("Gather"),
+            "fixture must exercise a parallel BM25 plan: {plan}"
+        );
+        assert!(
+            plan.contains("Custom Scan"),
+            "fixture must use the BM25 index: {plan}"
+        );
     }
     for connect in [
         crate::db::connect_readonly,
@@ -643,9 +656,19 @@ fn gcode_connections_keep_bm25_out_of_parallel_workers() -> anyhow::Result<()> {
         conn.batch_execute(favor_parallel)?;
         for query in queries {
             let rows = conn.query(&format!("EXPLAIN {query}"), &[])?;
-            let plan = rows.iter().map(|row| row.get::<_, String>(0)).collect::<Vec<_>>().join("\n");
-            assert!(!plan.contains("Gather"), "BM25 must stay in the leader process: {plan}");
-            assert!(plan.contains("Custom Scan"), "BM25 index must remain enabled: {plan}");
+            let plan = rows
+                .iter()
+                .map(|row| row.get::<_, String>(0))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                !plan.contains("Gather"),
+                "BM25 must stay in the leader process: {plan}"
+            );
+            assert!(
+                plan.contains("Custom Scan"),
+                "BM25 index must remain enabled: {plan}"
+            );
         }
     }
     cleanup.cleanup()?;
