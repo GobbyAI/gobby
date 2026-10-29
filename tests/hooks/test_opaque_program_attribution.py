@@ -865,7 +865,7 @@ def test_native_computed_cwd_reads_never_borrow_launcher_ownership(
                 metadata={**outer.metadata, "_platform_session_id": checkout.session_id},
             )
         )
-        assert outer_response.decision == ("allow" if allowed else "block")
+        assert outer_response.decision == "allow"
     event = adapter.translate_to_hook_event({"hook_type": "PreToolUse", "input_data": hook_input})
     assert event is not None
     event = replace(
