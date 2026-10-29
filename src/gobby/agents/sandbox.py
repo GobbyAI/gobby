@@ -82,6 +82,8 @@ class SandboxConfig(BaseModel):
         def checked_scope(items: tuple[str, ...]) -> list[Path]:
             scope = []
             for item in items:
+                if any(char in item for char in "*?["):
+                    raise ValueError(f"agent workspace scope contains glob syntax: {item}")
                 path = Path(item)
                 relative = path.relative_to(workspaces_root())
                 expected = root / relative

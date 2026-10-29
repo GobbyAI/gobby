@@ -156,34 +156,37 @@ def test_workspace_read_boundary_beneath_shell_expansion(
     for folder in (anchor / "epics" / "epic-1", anchor / "proof-seat" / "session-10"):
         (folder / "sentinel.txt").write_text("allowed-content")
 
-    allowed = [
-        (own / "sentinel.txt", "own-content"),
-        (own / "own-link", "own-content"),
-        (anchor / "README.md", "Shared guidance"),
-        (anchor / "epics" / "epic-1" / "sentinel.txt", "allowed-content"),
-        (anchor / "proof-seat" / "session-10" / "sentinel.txt", "allowed-content"),
-    ]
-    for path, content in allowed:
-        result = _run(launch, workspace, environment, ["/bin/cat", str(path)])
-        assert result.returncode == 0, (path, result.stderr)
-        assert result.stdout == content
-
-    denied = [foreign / "sentinel.txt", own / "foreign-link" / "sentinel.txt"]
     alias = anchor.parent / "PROOF-PROJECT" / "OTHER-SEAT" / "SESSION-99" / "sentinel.txt"
     assert alias.samefile(foreign / "sentinel.txt"), "macOS host proof needs a case alias"
-    denied.append(alias)
-    for path in denied:
-        result = _run(launch, workspace, environment, ["/bin/cat", str(path)])
-        assert result.returncode != 0, path
-        assert "foreign-secret" not in result.stdout
+    # Keep the proof in one running sandbox and violation-monitor lifetime.
+    script = """
+set -eu
+anchor=$1
+test "$(cat "$anchor/proof-seat/session-40/sentinel.txt")" = own-content
+test "$(cat "$anchor/proof-seat/session-40/own-link")" = own-content
+test "$(cat "$anchor/PROOF-SEAT/SESSION-40/sentinel.txt")" = own-content
+test "$(cat "$anchor/README.md")" = 'Shared guidance'
+test "$(cat "$anchor/epics/epic-1/sentinel.txt")" = allowed-content
+test "$(cat "$anchor/proof-seat/session-10/sentinel.txt")" = allowed-content
+for target in "$anchor/other-seat/session-99/sentinel.txt" \
+              "$anchor/proof-seat/session-40/foreign-link/sentinel.txt" \
+              "$2" "$anchor"/other-*/session-*/sentinel.txt; do
+    if cat "$target"; then
+        printf 'Unexpected foreign read: %s\\n' "$target" >&2
+        exit 1
+    fi
+done
+printf workspace-boundary-ok
+"""
     result = _run(
         launch,
         workspace,
         environment,
-        ["/bin/bash", "-c", 'cat "$1"/other-*/session-*/sentinel.txt', "proof", str(anchor)],
+        ["/bin/bash", "-c", script, "proof", str(anchor), str(alias)],
     )
-    assert result.returncode != 0
-    assert "foreign-secret" not in result.stdout
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "workspace-boundary-ok"
+    assert "Operation not permitted" in result.stderr
 
 
 def test_reviewer_cached_settings_and_python_environment(

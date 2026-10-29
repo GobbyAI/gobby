@@ -41,7 +41,7 @@ async def test_unbound_sandbox_denies_workspace_root(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("grant", ["root", "foreign", "ancestor", "alias", "case"])
+@pytest.mark.parametrize("grant", ["root", "foreign", "ancestor", "alias", "case", "glob"])
 async def test_config_read_grant_cannot_override_workspace_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, grant: str
 ) -> None:
@@ -59,6 +59,7 @@ async def test_config_read_grant_cannot_override_workspace_boundary(
         "ancestor": home,
         "alias": alias,
         "case": home / "AGENTS_WORKSPACES" / "project" / "other" / "session-1",
+        "glob": root / "project" / "*",
     }[grant]
     if grant == "ancestor":
         with pytest.raises(ValueError, match="contains sensitive root"):
@@ -73,8 +74,23 @@ async def test_config_read_grant_cannot_override_workspace_boundary(
     )
     assert str(root.resolve()) in paths.deny_read_paths
     assert not any(foreign.resolve().is_relative_to(Path(path)) for path in paths.read_paths)
-    if grant == "case":
+    if grant in {"case", "glob"}:
         assert str(requested) not in paths.read_paths
+
+
+@pytest.mark.asyncio
+async def test_workspace_scope_cannot_be_interpreted_as_a_glob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby"))
+    root = tmp_path / "gobby" / "agents_workspaces"
+    root.mkdir(parents=True)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    config = SandboxConfig(enabled=True, backend="srt").with_workspace_scope([str(root / "*")], [])
+    with pytest.raises(ValueError, match="workspace scope contains glob syntax"):
+        await compute_sandbox_paths(config, str(checkout))
 
 
 def _definition(db: HubDatabase, *, persistent: bool, read_all: bool = False) -> None:
@@ -140,6 +156,11 @@ async def test_seat_scope_uses_definition_and_preserves_predecessor_guards(
     assert (str(prior) in paths.read_paths) is persistent
     assert not {str(live), str(future), str(foreign)}.intersection(paths.read_paths)
     assert str(root) in paths.deny_read_paths
+    if persistent:
+        _session(temp_db, project, 35, prior)
+        refreshed = grant_seat_workspace_paths(config, temp_db, caller, "custom-seat")
+        paths = await compute_sandbox_paths(refreshed, str(own))
+        assert str(prior) not in paths.read_paths, "resume must drop a now-live predecessor"
 
 
 @pytest.mark.asyncio
@@ -152,14 +173,17 @@ async def test_managed_persona_scope_is_available_before_backend_start(
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby"))
     root = tmp_path / "gobby" / "agents_workspaces"
     root.mkdir(parents=True)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
     _definition(temp_db, persistent=False, read_all=True)
     caller = _session(temp_db, sample_project["id"], 10)
     observed: list[str] = []
 
     async def start(model: str | None = None) -> None:
         assert model is None
+        assert (root / sample_project["id"] / "custom-seat" / "session-10").is_dir()
         assert session.sandbox_config is not None
-        paths = await compute_sandbox_paths(session.sandbox_config, str(tmp_path))
+        paths = await compute_sandbox_paths(session.sandbox_config, str(checkout))
         observed.extend(paths.read_paths)
 
     session = cast(
@@ -182,7 +206,7 @@ async def test_managed_persona_scope_is_available_before_backend_start(
                 config=SandboxConfig(enabled=True, backend="srt"),
                 policy_hash="proof",
             ),
-            workspace_path=str(tmp_path),
+            workspace_path=str(checkout),
         ),
         session_key="proof",
         effective_model=None,
@@ -220,6 +244,7 @@ async def test_symlinked_own_binding_cannot_authorize_foreign_folder(
     config = SandboxConfig(enabled=True, backend="srt")
     if when == "before-render":
         config = grant_seat_workspace_paths(config, temp_db, caller, "custom-seat")
+        own.rmdir()
     own.symlink_to(foreign, target_is_directory=True)
     with pytest.raises(ValueError, match="scope follows an alias"):
         if when == "before-grant":

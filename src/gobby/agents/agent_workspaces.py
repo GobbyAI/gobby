@@ -774,6 +774,10 @@ def grant_seat_workspace_paths(
     scoped = config.with_workspace_scope(reads, granted)
     # Reject aliasing bindings before launch creates any directories in them.
     scoped.restrict_workspace_paths([], [])
+    # SRT's Linux bind grants require existing paths, including persona launches
+    # that do not pass through the spawned-agent directory preparation step.
+    for folder in granted:
+        Path(folder).mkdir(parents=True, exist_ok=True)
     root = workspaces_root().resolve()
     retained = [
         path
