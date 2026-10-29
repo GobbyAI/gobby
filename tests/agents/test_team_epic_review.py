@@ -34,6 +34,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.tasks.land_commit import land_candidate, task_landing_target
 from gobby.tasks.step_records import (
+    NoWorkDisposition,
     StepRecordError,
     StepStatus,
     StepSubmission,
@@ -491,6 +492,69 @@ async def test_closed_prerequisite_must_be_in_the_linked_tip(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("disposition", ["moot", "superseded", "wont_do"])
+@pytest.mark.parametrize("nested_phase", [False, True])
+async def test_no_work_prerequisite_satisfies_linked_tip(
+    world: TeamWorld, disposition: NoWorkDisposition, nested_phase: bool
+) -> None:
+    tasks = LocalTaskManager(world.case.db)
+    epic = new_task(world, "No-work prerequisites", epic=True)
+    dependent = new_task(world, "Dependent", parent=epic)
+    phase = new_task(world, "No-work phase", epic=True, parent=epic) if nested_phase else epic
+    prerequisite = new_task(world, "Unnecessary implementation", parent=phase)
+    team = await epic_team(world, epic)
+    developer = team.seat("developer", "implementation")
+    reviewer = team.seat("code-reviewer", "review")
+    tasks.claim_task(dependent.id, developer, force=True)
+    sha = team.commit(dependent, "dependent.py")
+    submit(team.db, developer, dependent, "implementation", "approved", 1, sha)
+    submit(team.db, reviewer, dependent, "review", "approved", 1, sha)
+    team.link_tip()
+    TaskDependencyManager(team.db).add_dependency(
+        dependent.id, phase.id if nested_phase else prerequisite.id, "blocks"
+    )
+    expected_holds = {dependent.id, prerequisite.id}
+    if nested_phase:
+        expected_holds.add(phase.id)
+    statuses: tuple[StepStatus, ...] = ("rejected", "approved")
+    for round_number, status in enumerate(statuses, start=1):
+        record_task_step(
+            team.db,
+            task_id=prerequisite.id,
+            session_id=reviewer,
+            step="review",
+            submission=StepSubmission(
+                status=status,
+                epoch=prerequisite.review_epoch,
+                round_number=round_number,
+                feedback=f"No-work disposition {status}",
+                disposition=disposition,
+            ),
+        )
+        state = sync_epic_review(team.db, team.binding.team_id)
+        assert state.epic_tip_ready is (status == "approved")
+        assert set(state.holds) == (set() if status == "approved" else expected_holds)
+
+    # The real no-work path has review evidence only, then an operator close.
+    records = list_task_step_records(team.db, prerequisite.id)
+    assert {record.step for record in records} == {"review"}
+    with session_context_for_test(world.case.creator):
+        closed = await create_task_registry(tasks).call(
+            "close_task",
+            {
+                "task_id": prerequisite.id,
+                "reason": disposition,
+                **({"superseded_by": dependent.id} if disposition == "superseded" else {}),
+            },
+        )
+    assert closed.get("closed") is True, closed
+    state = sync_epic_review(team.db, team.binding.team_id)
+    assert state.epic_tip_ready
+    assert state.holds == ()
+    assert tasks.get_task(prerequisite.id).closed_at is not None
+
+
+@pytest.mark.asyncio
 async def test_running_pod_review_respects_explicit_parent_hold(world: TeamWorld) -> None:
     epic = new_task(world, "Parent hold", epic=True)
     leaf = new_task(world, "Running pod", parent=epic)
@@ -700,6 +764,8 @@ async def test_only_epic_manager_can_launch_pods(world: TeamWorld) -> None:
         ("run_pipeline", {"name": "devteam", "inputs": inputs}, True),
         ("pipeline:devteam", inputs, True),
         ("run_pipeline", {"name": "other", "inputs": inputs}, False),
+        ("pipeline:other", inputs, False),
+        ("run_pipeline", {"name": "devteam", "inputs": {"task": leaf.id}}, False),
         ("pipeline:devteam", {**inputs, "task": epic.id}, False),
     ):
         event = _event(HookEventType.BEFORE_TOOL, _proxy_call("gobby-workflows", tool, arguments))

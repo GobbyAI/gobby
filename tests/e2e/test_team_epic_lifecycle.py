@@ -426,9 +426,15 @@ async def test_complete_epic_team(world: TeamWorld, monkeypatch: pytest.MonkeyPa
     wire_sha = commit_work(db, tree, wire, "wire.py")
     submit(db, primary, wire, "implementation", "approved", 1, sha=wire_sha)
 
-    # The no-work leaf records its disposition; the docs leaf it blocks unlocks with it.
+    # The no-work path records a review disposition, then the operator closes the leaf.
     assert document.id not in ready_ids(world)
-    submit(db, primary, retire, "implementation", "approved", 1, disposition="moot")
+    submit(db, code_reviewer, retire, "review", "approved", 1, disposition="moot")
+    assert {record.step for record in list_task_step_records(db, retire.id)} == {"review"}
+    with session_context_for_test(world.case.creator):
+        closed = await create_task_registry(tasks).call(
+            "close_task", {"task_id": retire.id, "reason": "moot"}
+        )
+    assert closed.get("closed") is True, closed
     assert document.id in ready_ids(world)
     tasks.claim_task(document.id, primary, force=True)
     doc_sha = commit_work(db, tree, document, "docs/scroll-flag.md")
@@ -446,7 +452,6 @@ async def test_complete_epic_team(world: TeamWorld, monkeypatch: pytest.MonkeyPa
     submit(db, primary, frontend, "implementation", "approved", 2, sha=frontend_fix)
     submit(db, code_reviewer, frontend, "review", "approved", 2, sha=frontend_fix)
     submit(db, code_reviewer, wire, "review", "approved", 1, sha=wire_sha)
-    submit(db, code_reviewer, retire, "review", "approved", 1, disposition="moot")
     submit(db, docs_reviewer, document, "review", "approved", 1, sha=doc_sha)
     submit(db, research_reviewer, survey, "review", "approved", 1, sha=survey_sha)
 
@@ -478,9 +483,7 @@ async def test_complete_epic_team(world: TeamWorld, monkeypatch: pytest.MonkeyPa
     assert (landed["landed"], landed["worktree_merged"]) == (True, True), landed
     assert world.case.git("rev-parse", "trunk") == tip
 
-    # Leaves close bottom-up: no-work first, then work-bearing; the phase epic closes by cascade.
-    submit(db, manager, retire, "closing", "approved", 1, disposition="moot")
-    tasks.close_task(retire.id, reason="moot", closed_in_session_id=manager)
+    # The remaining work-bearing leaves close; the phase epic closes by cascade.
     for leaf, sha in ((backend, backend_sha), (frontend, frontend_fix)):
         submit(db, manager, leaf, "closing", "approved", 1, sha=sha)
         tasks.close_task(

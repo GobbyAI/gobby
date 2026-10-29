@@ -146,8 +146,10 @@ def sync_epic_review(db: HubDatabase, team_id: str) -> EpicReviewState:
                 for step in approval_steps
             ):
                 approved.add(leaf.id)
-        elif not leaf.commits and all(
-            approved_task_step(leaf, records, step) is not None for step in approval_steps
+        elif (
+            not leaf.commits
+            and (approval := approved_task_step(leaf, records, "review")) is not None
+            and approval.disposition is not None
         ):
             approved.add(leaf.id)
 
