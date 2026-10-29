@@ -545,6 +545,82 @@ async def test_nested_task_worktree_plan_allowance_stays_bounded(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "relative", ["{..,.}/session-99/notes.md", "{../session-99,notes}/notes.md"]
+)
+async def test_brace_expansion_cannot_escape_owned_read_folder(
+    workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, relative: str
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    target = Path(variables["_agent_workspace_dir"]) / relative
+    response = await _decide(workspace_read_engine, _shell(f"cat {target}", tmp_path), variables)
+    assert response.decision == "block"
+    assert "agent-workspace-read-scope" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity", ["different", "unavailable"])
+async def test_read_alias_requires_proven_seat_identity(
+    workspace_read_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    identity: str,
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+
+    def samefile(path: Path, other: Path) -> bool:
+        if identity == "unavailable":
+            raise PermissionError("Cannot inspect folder identity")
+        return False
+
+    monkeypatch.setattr(Path, "samefile", samefile)
+    response = await _decide(
+        workspace_read_engine,
+        _read(own.with_name(own.name.upper()) / "notes.md", tmp_path),
+        variables,
+    )
+    assert response.decision == "block"
+    assert "agent-workspace-read-scope" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["plan", "templates"])
+async def test_apply_patch_workspace_targets_use_the_actual_headers(
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, shape: str
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    worktree = Path(variables["_agent_workspace_dir"]) / "task-25298"
+    targets = (
+        [worktree / ".gobby/plans/runbook-devteam-addendum.md"]
+        if shape == "plan"
+        else [
+            worktree / "src/gobby/install/shared" / name
+            for name in (
+                "workflows/agents/orchestrator.yaml",
+                "workflows/agents/triage.yaml",
+                "workflows/agents/assistant.yaml",
+                "workflows/agents/archivist.yaml",
+                "workflows/agents/release-manager.yaml",
+                "AGENTS.md",
+            )
+        ]
+    )
+    patch = (
+        "*** Begin Patch\n"
+        + "".join(f"*** Update File: {path}\n@@\n-before\n+after\n" for path in targets)
+        + "*** End Patch\n"
+    )
+    data: dict[str, Any] = {"tool_name": "apply_patch", "tool_input": patch, "cwd": str(tmp_path)}
+    normalize_tool_fields(data)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_file_paths"] == [str(path) for path in targets]
+    response = await _decide(workspace_write_engine, data, variables)
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.asyncio
 async def test_read_scope_by_persistence(
     engine: RuleEngine,
     root: Path,

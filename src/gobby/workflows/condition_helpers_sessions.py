@@ -518,7 +518,8 @@ def _workspace_read_boundary(target: Path, root: Path) -> Path | None:
     """Require a literal authorized folder before patterns; never enumerate the fleet.
 
     An expansion above the workspace can reach other seats, so judge the root itself.
-    A pattern below a proven folder stays in that folder unless it traverses upward.
+    A glob below a proven folder stays there unless it traverses upward. Brace expansions
+    are ambiguous: even separate dot fragments can combine into a parent traversal.
     """
     for index, part in enumerate(target.parts):
         match = _READ_PATTERN.search(part)
@@ -529,7 +530,8 @@ def _workspace_read_boundary(target: Path, root: Path) -> Path | None:
         if within is None:
             return root
         if within:
-            target = root if ".." in target.parts[index:] else prefix
+            tail = target.parts[index:]
+            target = root if ".." in tail or any("{" in part for part in tail) else prefix
             break
         ancestor = _workspace_contains(root, prefix)
         if ancestor is None:

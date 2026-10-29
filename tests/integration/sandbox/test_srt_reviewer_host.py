@@ -194,6 +194,27 @@ def test_reviewer_workspace_case_alias_still_needs_hook_scope(
         print("Managed SRT allowed the harmless write through the granted workspace case alias")
 
 
+def test_reviewer_diff_process_substitution(
+    reviewer_launch: tuple[SandboxLaunch, Path, dict[str, str]],
+) -> None:
+    launch, workspace, environment = reviewer_launch
+    cat = _run(
+        launch,
+        workspace,
+        environment,
+        ["/bin/bash", "-c", "cat <(printf 'a\\n') <(printf 'b\\n')"],
+    )
+    assert cat.returncode == 0, cat.stderr
+    assert cat.stdout == "a\nb\n"
+    diff = _run(
+        launch,
+        workspace,
+        environment,
+        ["/bin/bash", "-c", "/usr/bin/diff <(printf 'a\\n') <(printf 'a\\n')"],
+    )
+    assert diff.returncode == 0, diff.stderr
+
+
 @pytest.mark.timeout(1200)
 def test_reviewer_rust_compare(
     reviewer_launch: tuple[SandboxLaunch, Path, dict[str, str]],
