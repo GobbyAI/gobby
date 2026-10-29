@@ -990,7 +990,7 @@ class TestCanonicalToolMetadata:
     def test_exec_command_unclassified_shell_sets_canonical_execute_kind(self) -> None:
         data: dict[str, Any] = {
             "tool_name": "exec_command",
-            "tool_input": {"command": "uv run gobby build #15117"},
+            "tool_input": {"command": "uv run --no-sync gobby build #15117"},
         }
 
         normalize_tool_fields(data)
@@ -3008,14 +3008,14 @@ class TestExternalNavigationScope:
         "command",
         [
             "ruby -ryaml -e 'puts YAML.safe_load_file(\"config.yaml\")'",
-            "uv run ruby -ryaml -e 'puts YAML.safe_load_file(\"config.yaml\")'",
+            "uv run --no-sync ruby -ryaml -e 'puts YAML.safe_load_file(\"config.yaml\")'",
             "node -e \"console.log(require('fs').readFileSync('config.json'))\"",
-            "uv run node --eval \"console.log(require('fs').readFileSync('config.json'))\"",
+            "uv run --no-sync node --eval \"console.log(require('fs').readFileSync('config.json'))\"",
             "ruby -e \"File.open('config.yaml', 'r') { |file| puts file.read }\"",
             "ruby - <<'RUBY'\nputs File.read('config.yaml')\nRUBY",
             "node - <<'NODE'\nconsole.log(require('fs').readFileSync('config.json'))\nNODE",
             (
-                'uv run python -c "from pathlib import Path; '
+                'uv run --no-sync python -c "from pathlib import Path; '
                 "print(Path('~/.gobby/bootstrap.yaml').expanduser().read_text())\""
             ),
         ],
@@ -3281,7 +3281,9 @@ class TestExternalNavigationScope:
     def test_python_script_execution_is_execute(self) -> None:
         data: dict[str, Any] = {
             "tool_name": "Bash",
-            "tool_input": {"command": "uv run python scripts/generate_schema_identity.py --check"},
+            "tool_input": {
+                "command": "uv run --no-sync python scripts/generate_schema_identity.py --check"
+            },
         }
 
         normalize_tool_fields(data)
