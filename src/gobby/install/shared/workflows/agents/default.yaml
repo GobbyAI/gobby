@@ -75,6 +75,7 @@ workflows:
       - "tag:default"
       - "name:require-tasks-skill-for-mutations"
       - "name:require-restraint-before-task-growth"
+      - "tag:plan-directive-policy"
   skill_selectors:
     include: []
     # Every context epoch requests gobby:references/skills/loading.md, gobby:references/memory/overview.md, brevity, then restraint. Other

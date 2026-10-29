@@ -108,6 +108,7 @@ workflows:
       - "tag:worker-safety"
       - "name:no-send-keys"
       - "name:guard-durable-memory-writes"
+      - "name:inject-plan-reviewer-lessons"
     exclude:
       - "tag:task-skill-gates"
       - "name:guard-plan-memory-writes"
