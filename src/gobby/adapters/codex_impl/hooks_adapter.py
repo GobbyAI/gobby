@@ -22,7 +22,6 @@ from gobby.adapters.capabilities import (
 from gobby.adapters.codex_impl.execution_chain import (
     DIRECT_EXEC_NAMES,
     FUNCTIONS_EXEC_NAMES,
-    extract_functions_exec_command,
     functions_exec_shell_input,
 )
 from gobby.adapters.codex_impl.lifecycle_events import annotate_codex_hook_event
@@ -156,7 +155,10 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
     except (OSError, UnicodeError, ValueError):
         return None
     chain = parser.snapshot_state()["execution_chain"]
-    if not chain["complete"] or chain["ambiguous_cells"] or chain["ambiguous_sessions"]:
+    # Process IDs describe commands that already started. Losing old process
+    # receipts must not poison a new command's cwd proof; unresolved calls and
+    # yielded cells can still launch it, so their overflow remains fail closed.
+    if not chain["pending_complete"] or chain["ambiguous_cells"]:
         return None
     pending = {
         entry["outer_call_id"]: entry
@@ -332,18 +334,6 @@ class CodexHooksAdapter(BaseAdapter):
         # Check for failure on PostToolUse
         is_failure = normalized_data.get("is_error", False)
         metadata: dict[str, Any] = {"_native_hook_type": hook_type}
-        if hook_type == "PreToolUse" and raw_tool_name in FUNCTIONS_EXEC_NAMES:
-            arguments = input_data.get("arguments", raw_tool_input)
-            if isinstance(arguments, dict):
-                arguments = arguments.get("arguments")
-            command = extract_functions_exec_command(arguments)
-            if command is not None:
-                wrapper = normalize_tool_fields(
-                    {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": None}
-                )
-                metadata["_native_shell_wrapper_read_only"] = (
-                    wrapper.get("canonical_read_only") is True
-                )
         if shell_cwd_unproven:
             # The launcher's cwd cannot vouch for a script in a computed workdir.
             # Keep it for session lookup, but classify without it for the read-only proof.
