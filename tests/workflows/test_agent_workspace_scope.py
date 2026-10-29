@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -450,7 +451,21 @@ async def test_case_alias_of_workspace_root_does_not_bypass_write_scope(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("location", ["own", "outside"])
-@pytest.mark.parametrize("pattern", ["*.md", "*/notes.md", "**/*.md"])
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "*.md",
+        "*/notes.md",
+        "**/*.md",
+        "[^a]*.md",
+        "[[:alpha:]]*.md",
+        "@(leak|notes).md",
+        "+(leak).md",
+        "!(notes).md",
+        "?(leak).md",
+        "*(leak).md",
+    ],
+)
 @pytest.mark.parametrize("tool", ["Bash", "Glob"])
 async def test_glob_matches_check_resolved_seat(
     workspace_read_engine: RuleEngine,
@@ -469,7 +484,7 @@ async def test_glob_matches_check_resolved_seat(
         (directory / "notes.md").write_text("Fixture notes")
     search = own if location == "own" else tmp_path / "repository"
     search.mkdir(exist_ok=True)
-    file_link = pattern == "*.md"
+    file_link = "/" not in pattern
     link = search / ("leak.md" if file_link else "leak")
     link.symlink_to(foreign / "notes.md" if file_link else foreign)
     data = (
@@ -516,12 +531,55 @@ async def test_glob_inspection_fails_closed_when_incomplete(
             def unavailable(path: Path) -> None:
                 raise PermissionError("Cannot inspect pattern entries")
 
-            scope.setattr(helpers.os, "scandir", unavailable)
+            scope.setattr(os, "scandir", unavailable)
         response = await _decide(
             workspace_read_engine, _shell(f"cat {own}/*.md", tmp_path), variables
         )
     assert response.decision == "block"
     assert "agent-workspace-read-scope" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("location", ["own", "repository"])
+@pytest.mark.parametrize(
+    ("tool", "expression"),
+    [
+        ("Bash", "ls src/*.{py,md}"),
+        ("Bash", "ls src/{a,b}.py"),
+        ("Bash", "awk '/foo/{print}' README.md"),
+        ("Bash", "sed -n '/^def /{p}' src/x.py"),
+        ("Bash", "ls src/*/../tests"),
+        ("Glob", "**/*.{ts,tsx}"),
+        ("Glob", "**/*.{py,md}"),
+    ],
+)
+async def test_safe_braces_and_parent_patterns_remain_readable(
+    workspace_read_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    location: str,
+    tool: str,
+    expression: str,
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    directory = (
+        Path(variables["_agent_workspace_dir"]) if location == "own" else tmp_path / "repository"
+    )
+    (directory / "src" / "tests").mkdir(parents=True)
+    (directory / "web").mkdir()
+    for relative in ("src/a.py", "src/b.py", "src/a.md", "web/a.ts", "web/b.tsx"):
+        (directory / relative).write_text("Fixture source")
+    data = (
+        _shell(expression, directory)
+        if tool == "Bash"
+        else {
+            "tool_name": "Glob",
+            "tool_input": {"path": str(directory), "pattern": expression},
+            "cwd": str(directory),
+        }
+    )
+    response = await _decide(workspace_read_engine, data, variables)
+    assert response.decision == "allow", response.reason
 
 
 @pytest.mark.asyncio

@@ -465,6 +465,13 @@ def _shell_path_words(command: Any) -> list[str]:
         tokens = _SHELL_OPERATORS.sub(" ", text).split()
     shell_reads = any(os.path.basename(os.path.expandvars(t)) in _BODY_CONSUMERS for t in tokens)
     words = _path_words(tokens)
+    # The operator-aware lexer splits extglob parentheses and alternatives. Keep
+    # an additional whole-word view so their literal path prefix is not lost.
+    try:
+        whole_words = shlex.split(text)
+    except ValueError:
+        whole_words = []
+    words.extend(word for word in _path_words(whole_words) if _EXTGLOB.search(word))
     command_name = os.path.basename(os.path.expandvars(tokens[0])) if tokens else ""
     data_consumer = command_name in {"cat", "tee"} or (
         command_name == "git" and tokens[1:2] == ["commit"]
@@ -480,7 +487,68 @@ def _shell_path_words(command: Any) -> list[str]:
     return words
 
 
-_READ_PATTERN = re.compile(r"[*?\[{]")
+_READ_PATTERN = re.compile(r"[*?\[]")
+_EXTGLOB = re.compile(r"[@+?!*]\(")
+_BRACE_RANGE = re.compile(r"(?:-?\d+\.\.-?\d+|[a-zA-Z]\.\.[a-zA-Z])(?:\.\.-?\d+)?")
+_READ_EXPANSION_LIMIT = 256
+
+
+def _brace_read_words(raw: str) -> list[str] | None:
+    """Expand bounded comma alternatives; approximate ranges with a filename glob.
+
+    Non-expanding braces remain literal, including awk/sed program data. Work on
+    complete words before path normalization because alternatives can contain '/'
+    or combine separate dot fragments into '..'. None means the bound was exceeded.
+    """
+    pending = [raw]
+    expanded: list[str] = []
+    budget = _READ_EXPANSION_LIMIT
+    while pending:
+        word = pending.pop()
+        budget -= 1
+        if budget < 0:
+            return None
+        groups: list[list[int]] = []
+        for end, char in enumerate(word):
+            if char == "{":
+                groups.append([end])
+            elif char == "," and groups:
+                groups[-1].append(end)
+            elif char == "}" and groups:
+                positions = groups.pop()
+                start = positions[0]
+                if len(positions) > 1:
+                    bounds = [*positions, end]
+                    alternatives = [word[a + 1 : b] for a, b in zip(bounds, bounds[1:])]
+                elif _BRACE_RANGE.fullmatch(word[start + 1 : end]):
+                    alternatives = ["*"]
+                else:
+                    continue
+                if len(pending) + len(alternatives) > budget:
+                    return None
+                pending.extend(word[:start] + choice + word[end + 1 :] for choice in alternatives)
+                break
+        else:
+            expanded.append(word)
+    return expanded
+
+
+def _extglob_read_word(word: str) -> str | None:
+    """Overapproximate filename extglobs without executing a shell.
+
+    Slash-bearing groups change path structure and cannot be inspected as one
+    component. Refuse those rather than silently matching only part of a group.
+    """
+    while match := _EXTGLOB.search(word):
+        depth = 1
+        end = match.end()
+        while end < len(word) and depth:
+            depth += (word[end] == "(") - (word[end] == ")")
+            end += 1
+        if depth or "/" in word[match.end() : end]:
+            return None
+        word = word[: match.start()] + "*" + word[end:]
+    return word
 
 
 def _resolve_read_target(raw: Any, base: Path | None) -> Path | None:
@@ -495,7 +563,9 @@ def _resolve_read_target(raw: Any, base: Path | None) -> Path | None:
     return resolve_tool_path(raw, base)
 
 
-def _workspace_read_targets(event_data: Mapping[str, Any] | None, tool_input: Any) -> list[Path]:
+def _workspace_read_targets(
+    event_data: Mapping[str, Any] | None, tool_input: Any
+) -> list[Path] | None:
     """Resolved paths a tool reads: path-like Bash words, or the path fields of a file tool."""
     if not isinstance(tool_input, Mapping):
         return []
@@ -506,12 +576,23 @@ def _workspace_read_targets(event_data: Mapping[str, Any] | None, tool_input: An
         raws = list(_shell_path_words(tool_input.get("command")))
     else:
         raws = [tool_input.get("file_path"), tool_input.get("path")]
-    paths = [path for raw in raws if (path := _resolve_read_target(raw, base)) is not None]
+    inputs = [(raw, base) for raw in raws]
     if data.get("tool_name") == "Glob":
         pattern_base = resolve_tool_path(tool_input.get("path"), base) or base
-        pattern = _resolve_read_target(tool_input.get("pattern"), pattern_base)
-        if pattern is not None:
-            paths.append(pattern)
+        inputs.append((tool_input.get("pattern"), pattern_base))
+    paths: list[Path] = []
+    for raw, directory in inputs:
+        if not isinstance(raw, str) or not raw:
+            continue
+        words = _brace_read_words(os.path.expandvars(os.path.expanduser(raw)))
+        if words is None:
+            return None
+        for word in words:
+            pattern = _extglob_read_word(word)
+            if pattern is None:
+                return None
+            if (path := _resolve_read_target(pattern, directory)) is not None:
+                paths.append(path)
     return paths
 
 
@@ -519,17 +600,14 @@ def _workspace_read_boundary(target: Path, root: Path) -> Path | None:
     """Require a literal authorized folder before patterns; never enumerate the fleet.
 
     An expansion above the workspace can reach other seats, so judge the root itself.
-    A glob below a proven folder stays there unless it traverses upward. Brace expansions
-    are ambiguous: even separate dot fragments can combine into a parent traversal.
+    Fold lexical parents for the boundary check only. The filesystem walker still
+    resolves every original component, so symlink traversal is checked separately.
     """
+    target = Path(os.path.normpath(target))
     for index, part in enumerate(target.parts):
         match = _READ_PATTERN.search(part)
         if match is None:
             continue
-        tail = target.parts[index:]
-        if ".." in tail or any("{" in component for component in tail):
-            # Expansion can enter the workspace from an outside literal prefix.
-            return root
         prefix = Path(*target.parts[:index])
         within = _workspace_contains(prefix, root)
         if within is None:
@@ -591,7 +669,13 @@ def _workspace_glob_readable(target: Path, readable: Callable[[Path], bool]) -> 
                     if budget < 0:
                         return False
                     # Include hidden names and case aliases conservatively across tools.
-                    if recursive or fnmatchcase(entry.name.casefold(), part.casefold()):
+                    # Shell negated/POSIX classes differ from Python fnmatch. An
+                    # overapproximation must inspect every entry for such syntax.
+                    if (
+                        recursive
+                        or "[" in part
+                        or fnmatchcase(entry.name.casefold(), part.casefold())
+                    ):
                         pending.append(
                             (Path(entry.path), index if recursive else index + 1, depth + 1)
                         )
@@ -686,7 +770,10 @@ def agent_workspace_read_violation(
             canonical, session_manager, caller_id, folders
         )
 
-    for raw in _workspace_read_targets(event_data, tool_input):
+    targets = _workspace_read_targets(event_data, tool_input)
+    if targets is None:
+        return True
+    for raw in targets:
         boundary = _workspace_read_boundary(raw, root)
         if boundary is not None and not readable(boundary):
             return True
