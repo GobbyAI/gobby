@@ -446,7 +446,11 @@ def create_variable(
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
         auto_export_definition(
-            _export_row(row), project_path, kind="variable", make_global=make_global_template
+            _export_row(row),
+            project_path,
+            db=def_manager.db,
+            kind="variable",
+            make_global=make_global_template,
         )
     except Exception as e:
         logger.warning("Failed to auto-export variable '%s': %s", name, e)
@@ -497,7 +501,11 @@ def update_variable(
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
         auto_export_definition(
-            _export_row(updated), project_path, kind="variable", make_global=make_global_template
+            _export_row(updated),
+            project_path,
+            db=def_manager.db,
+            kind="variable",
+            make_global=make_global_template,
         )
     except Exception as e:
         logger.warning("Failed to auto-export variable '%s': %s", name, e)

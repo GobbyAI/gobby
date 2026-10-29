@@ -466,6 +466,17 @@ def move_definition_scope(
     return row
 
 
+def preserve_bundled_tag(current_tags: list[str] | None, fields: dict[str, Any]) -> None:
+    """Keep bundled provenance when an adapter replaces editable definition tags."""
+    if "tags" not in fields or "gobby" not in (current_tags or []):
+        return
+    tags = fields["tags"]
+    if tags is None:
+        fields["tags"] = ["gobby"]
+    elif isinstance(tags, list) and "gobby" not in tags:
+        fields["tags"] = [*tags, "gobby"]
+
+
 def prepare_sync_values(
     current: Mapping[str, Any],
     fields: Mapping[str, Any],
@@ -506,6 +517,7 @@ __all__ = [
     "move_definition_scope",
     "new_definition_id",
     "prepare_sync_values",
+    "preserve_bundled_tag",
     "purge_deleted_definitions",
     "require_definition_id",
     "restore_definition",
