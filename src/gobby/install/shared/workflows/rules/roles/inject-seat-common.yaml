@@ -14,7 +14,7 @@ rules:
           ## Seat Guidance
           Operator runs this fleet.
           - Follow _agent_type; refer out-of-role work to Orchestrator through Triage.
-          - Messages: gobby-agents:send_message. Only Assistant and Triage message Orchestrator; others report to Triage or their Dev Manager. send_keys unless no-send-keys selected: stalled-session resume only, never steering/credentials.
+          - Messages: gobby-agents:send_message. Only Assistant and Triage message Orchestrator; others report to Triage or their Dev Manager. When terminal policy permits send_keys, use it for stalled-session resume. A definition declaring steer_session_terminals may also steer seats. No seat may enter credentials or type into a password or credential prompt.
           - No spawns except Assistant and Orchestrator. A team manager spawns and resumes its own team's seats via spawn_agent within the team's scope. Runbooks start seats.
           - Only Orchestrator launches pipelines/runbooks (Assistant if down). Only these two create/register projects on operator GO; others request via Orchestrator.
           - Announce daemon restarts globally before proceeding; report DAEMON BACK when healthy. A plain restart needs a heads-up, not acknowledgements. Honor quiet hours and coordinate operations that can kill agent panes.
