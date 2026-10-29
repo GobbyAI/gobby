@@ -43,6 +43,7 @@ from gobby.tasks.lifecycle_access import is_operator_coordinator, session_agent_
 from gobby.tasks.step_records import (
     SECURITY_REVIEWER,
     TaskStepRecord,
+    approved_task_step,
     independent_review_approval,
     list_task_step_records,
 )
@@ -389,6 +390,10 @@ def _review_blockers(
         blockers.append("caller_is_reviewer")
     if independent_review_approval(task, records, sha, caller) is None:
         blockers.append("review_approval_missing")
+    if task.task_type != "epic":
+        implementation = approved_task_step(task, records, "implementation")
+        if implementation is None or implementation.commit_sha != sha:
+            blockers.append("implementation_approval_missing")
     if _SECURITY_REVIEW_LABEL in (task.labels or []) and not any(
         record.step == "review"
         and record.status == "approved"

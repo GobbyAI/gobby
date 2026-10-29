@@ -86,19 +86,20 @@ def _merged_tips(binding: TeamBinding, leaves: list[Task], tip: str | None) -> d
     """Find each leaf's latest evidence included in the linked epic tip."""
     if not tip or not binding.worktree_path:
         return {}
-    history = run_git_command(["git", "rev-list", tip, "--"], cwd=binding.worktree_path)
-    if history is None:
-        return {}
-    ancestors = set(history.splitlines())
     merged: dict[str, str] = {}
     for leaf in leaves:
         for sha in reversed(leaf.commits or []):
-            full = (
-                sha
-                if sha in ancestors
-                else next((commit for commit in ancestors if commit.startswith(sha)), None)
+            full = run_git_command(
+                ["git", "rev-parse", "--verify", "--end-of-options", f"{sha}^{{commit}}"],
+                cwd=binding.worktree_path,
             )
-            if full is not None:
+            if (
+                full is not None
+                and run_git_command(
+                    ["git", "merge-base", "--is-ancestor", full, tip], cwd=binding.worktree_path
+                )
+                is not None
+            ):
                 merged[leaf.id] = full
                 break
     return merged

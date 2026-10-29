@@ -23,10 +23,12 @@ from gobby.agents.team_lifecycle import (
     bind_primary_run,
     bind_reviewer_run,
     seat_team,
+    team_binding,
 )
 from gobby.agents.team_review import sync_epic_review
 from gobby.agents.team_scope import open_leaf_below
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
@@ -37,6 +39,7 @@ from gobby.workflows.state_manager import SessionVariableManager
 
 _LIVE = frozenset({"queued", "pending", "running"})
 _MAKER_GRANT = "implementation"
+_TEST_GRANT = "test"
 _REVIEWER_GRANT = "review"
 # A leaf with no implementation domain takes the fullstack primary slot.
 _UNDOMAINED_DOMAIN = "fullstack"
@@ -80,25 +83,38 @@ def _leaf_id(db: HubDatabase, project_id: str, task_ref: str) -> str:
         ) from exc
 
 
-def _live_primary(db: HubDatabase, binding: TeamBinding) -> bool:
-    """Include the initial runbook maker, which has no domain dispatch binding."""
-    if any(_live(db, run_id) for run_id in binding.primaries.values()):
+def _live_primary(db: HubDatabase, binding: TeamBinding, grant: str = _MAKER_GRANT) -> bool:
+    """Count initial runbook seats and pending launches before session pickup."""
+    if grant == _MAKER_GRANT and any(_live(db, run_id) for run_id in binding.primaries.values()):
         return True
     rows = db.fetchall(
-        "SELECT s.id FROM sessions s JOIN agent_runs r ON s.agent_run_id = r.id "
-        "LEFT JOIN sessions parent ON parent.id = r.parent_session_id "
-        "WHERE s.project_id = %s AND r.status = ANY(%s) "
+        "SELECT r.child_session_id, r.parent_session_id, r.agent_name, "
+        "parent.source AS parent_source, parent.external_id AS parent_external_id FROM agent_runs r "
+        "JOIN sessions parent ON parent.id = r.parent_session_id "
+        "WHERE parent.project_id = %s AND r.status = ANY(%s) "
         "AND (r.worktree_id = %s OR parent.source = 'pipeline')",
         (binding.project_id, sorted(_LIVE), binding.worktree_id),
     )
     sessions = SessionManager(db)
+    definitions = AgentDefinitionManager(db)
     for row in rows:
-        team = seat_team(db, row["id"])
+        team = (
+            team_binding(db, row["parent_external_id"].removeprefix("pipeline-"))
+            if row["parent_source"] == "pipeline"
+            else seat_team(db, row["child_session_id"] or row["parent_session_id"])
+        )
         if team is None or team.team_id != binding.team_id:
             continue
-        session = sessions.get(row["id"])
+        session = sessions.get(row["child_session_id"]) if row["child_session_id"] else None
         definition = session_agent_definition(db, session) if session is not None else None
-        if definition is not None and _MAKER_GRANT in definition[0].task_step_writes:
+        body = definition[0] if definition is not None else None
+        if body is None and row["agent_name"]:
+            stored = definitions.get_by_name(row["agent_name"], binding.project_id)
+            if stored is not None and stored.enabled:
+                body = AgentDefinitionBody.model_validate(
+                    {**stored.definition_json, "name": stored.name}
+                )
+        if body is not None and grant in body.task_step_writes:
             return True
     return False
 
@@ -341,7 +357,7 @@ def dispatch_for_caller(
             )
     if _REVIEWER_GRANT in grants:
         return _reviewer(db, binding, agent, parent, resume_session_id=resume_session_id, **options)
-    if agent in {"test-writer", "researcher"}:
+    if _TEST_GRANT in grants or {_MAKER_GRANT, "closing"} <= grants:
         if (
             task_id is not None
             and open_leaf_below(db, epic.id, _leaf_id(db, binding.project_id, task_id)) is None
@@ -354,11 +370,15 @@ def dispatch_for_caller(
             or worktree_id not in (None, binding.worktree_id)
         ):
             raise TeamAdmissionRefused("team_tree_fixed", "use a Dev Pod for a parallel leaf")
+        if _TEST_GRANT in grants and _live_primary(db, binding, _TEST_GRANT):
+            raise TeamAdmissionRefused(
+                "test_seat_live", "the team's primary test seat is live; use a Dev Pod"
+            )
         return DispatchScope(
             team_id=binding.team_id,
             project_id=binding.project_id,
             parent_session_id=parent,
-            worktree_id=binding.worktree_id if agent == "test-writer" and not resumed else None,
+            worktree_id=binding.worktree_id if _TEST_GRANT in grants and not resumed else None,
         )
     if resumed:
         return _resumed_maker(db, binding, parent, session_id) if _MAKER_GRANT in grants else None
@@ -366,7 +386,7 @@ def dispatch_for_caller(
         return _maker(db, binding, epic, parent, **options)
     raise TeamAdmissionRefused(
         "seat_not_granted",
-        f"{agent} holds no implementation or review grant for team {binding.team_id}",
+        f"{agent} holds no test, implementation or review grant for team {binding.team_id}",
     )
 
 

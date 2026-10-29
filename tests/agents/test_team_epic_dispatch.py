@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 
-from gobby.agents.team_lifecycle import TeamBinding
+from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions import AgentDefinitionManager
@@ -47,6 +47,8 @@ LONG_LEAF_SLUG = "teach-the-terminal-pane-to-keep-its-scro"
 # Definitions by their step grants; tech-writer grants nothing a team seat writes.
 DEFINITIONS: dict[str, tuple[str, ...]] = {
     "developer": ("implementation",),
+    "test-writer": ("test",),
+    "fixture-test-writer": ("test",),
     "code-reviewer": ("review",),
     "docs-reviewer": ("review",),
     "research-reviewer": ("review",),
@@ -83,11 +85,12 @@ def world(
         """Record the launch and start a run for it, as the real launcher would."""
         world.launches.append(kwargs)
         run = runs.create(
-            parent_session_id=world.case.creator,
+            parent_session_id=kwargs["parent_session_id"] or world.case.creator,
             provider="claude",
             prompt=kwargs["prompt"],
             agent_name=kwargs["agent_lookup_name"],
             task_id=kwargs.get("task_id"),
+            worktree_id=kwargs.get("worktree_id"),
         )
         runs.start(run.id)
         return {"success": True, "run_id": run.id}
@@ -98,7 +101,9 @@ def world(
     for name, steps in DEFINITIONS.items():
         definitions.create(name, _body(name, steps), project_id=project_id)
     # A synthetic Dev Manager carries the team_manager grant and spawn scope under test.
-    definitions.create("dev-manager", synthetic_manager_body(), project_id=project_id)
+    manager_body = synthetic_manager_body()
+    manager_body["spawnable_agents"] = list(DEFINITIONS)
+    definitions.create("dev-manager", manager_body, project_id=project_id)
     return world
 
 
@@ -242,8 +247,27 @@ async def test_manager_leaf_spawns_scoped(world: TeamWorld) -> None:
     assert sub.get("error_code") == "team_pod_required", sub
     assert len(world.launches) == before
 
+    pod_run = world.child(long_leaf, parent=team.manager)
+    pod = await world.admit(pod_run, long_leaf, parent_team_id=team.binding.team_id)
+    assert pod.branch == f"epic/{epic.seq_num}/{long_leaf.seq_num}"
+    assert pod.base_branch == team.binding.branch
+    assert tree_of(pod).name == f"wt-epic-{epic.seq_num}-{long_leaf.seq_num}-{LONG_LEAF_SLUG}"
+    assert len(LONG_LEAF_SLUG) == 40
+    assert git_in(tree_of(pod), "rev-parse", "HEAD") == git_in(
+        tree_of(team.binding), "rev-parse", "HEAD"
+    )
+    competing = world.child(long_leaf, parent=team.manager)
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(competing, long_leaf, parent_team_id=team.binding.team_id)
+    assert refused.value.code == "team_exists"
+
     # Out of scope: another task, a definition without a team grant, an in-flight leaf.
     outside = new_task(world, "Outside the epic")
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(
+            world.child(outside, parent=team.manager), outside, parent_team_id=team.binding.team_id
+        )
+    assert refused.value.code == "pod_parent_invalid"
     in_flight_seat = world.case.session("developer", parent=team.runbook.id)
     LocalTaskManager(world.case.db).claim_task(busy.id, in_flight_seat, force=True)
     before = len(world.launches)
@@ -310,6 +334,64 @@ async def test_runbook_primary_prevents_extra_domain_primary(world: TeamWorld) -
 
     LocalAgentRunManager(world.case.db).complete(replacement["run_id"])
     resumed = await team.spawn("developer", resume_session_id=primary.id)
+    assert resumed.get("success") is True, resumed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing", ["runbook", "runbook_pending", "pending", "running"])
+@pytest.mark.parametrize("agent", ["test-writer", "fixture-test-writer"])
+async def test_one_primary_test_writer(world: TeamWorld, existing: str, agent: str) -> None:
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    runs = LocalAgentRunManager(world.case.db)
+    if existing == "runbook":
+        seat = running_seat(world, team.runbook, "test-writer")
+        assert seat.agent_run_id is not None
+        run_id = seat.agent_run_id
+    elif existing in {"pending", "runbook_pending"}:
+        run_id = runs.create(
+            parent_session_id=team.runbook.id if existing == "runbook_pending" else team.manager,
+            provider="claude",
+            prompt="Write the primary tests.",
+            agent_name="test-writer",
+            worktree_id=team.binding.worktree_id,
+        ).id
+    else:
+        first = await team.spawn("test-writer", task_id=leaf.id)
+        assert first.get("success") is True, first
+        run_id = first["run_id"]
+    before = len(world.launches)
+
+    refused = await team.spawn(agent, task_id=leaf.id)
+
+    assert refused.get("error_code") == "test_seat_live", refused
+    assert len(world.launches) == before
+    runs.complete(run_id)
+    replacement = await team.spawn(agent, task_id=leaf.id)
+    assert replacement.get("success") is True, replacement
+    assert world.launches[-1]["worktree_id"] == team.binding.worktree_id
+
+
+@pytest.mark.asyncio
+async def test_resumed_primary_test_writer_waits_for_replacement(world: TeamWorld) -> None:
+    epic = new_task(world, TITLE, epic=True)
+    new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    seat = running_seat(world, team.runbook, "test-writer")
+    assert seat.agent_run_id is not None
+    runs = LocalAgentRunManager(world.case.db)
+    runs.complete(seat.agent_run_id)
+    replacement = await team.spawn("test-writer")
+    assert replacement.get("success") is True, replacement
+    before = len(world.launches)
+
+    refused = await team.spawn("test-writer", resume_session_id=seat.id)
+
+    assert refused.get("error_code") == "test_seat_live", refused
+    assert len(world.launches) == before
+    runs.complete(replacement["run_id"])
+    resumed = await team.spawn("test-writer", resume_session_id=seat.id)
     assert resumed.get("success") is True, resumed
 
 

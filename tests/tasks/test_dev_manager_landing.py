@@ -14,8 +14,9 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 from gobby.tasks.close_receipts import LANDING, list_close_receipts
 from gobby.tasks.landing_policy import write_freeze
+from gobby.tasks.step_records import StepSubmission, record_task_step
 from tests.fixtures.landing_case import DEV_MANAGER, LandingCase, make_landing_case
-from tests.fixtures.review_approvals import approve_review, grant_step_writes
+from tests.fixtures.review_approvals import approve_review, grant_review_writes, grant_step_writes
 
 pytestmark = pytest.mark.unit
 
@@ -42,6 +43,7 @@ async def test_manager_landing_authority(case: LandingCase, caller_kind: str) ->
     sha = case.candidate("lane", {"docs/change.md": "land me\n"})
     task = case.task()
     case.link(task, sha)
+    case.implement(task, sha)
     if caller_kind in {
         "bound_manager",
         "unrelated_manager",
@@ -107,6 +109,50 @@ async def test_manager_landing_authority(case: LandingCase, caller_kind: str) ->
     assert case.git("rev-parse", "trunk") == sha
     [receipt] = landings
     assert receipt.author_session_id == caller
+
+
+@pytest.mark.parametrize("implementation", ["missing", "stale", "rejected", "approved"])
+async def test_test_review_alone_cannot_land(case: LandingCase, implementation: str) -> None:
+    task = case.task()
+    manager = case.manager_for(task)
+    first = case.candidate("first", {"feature.py": "initial = True\n"})
+    sha = case.candidate("tests", {"tests/test_feature.py": "assert True\n"}, base=first)
+    case.link(task, first)
+    grant_step_writes(case.db, case.claimant, case.project_id, "developer", ("implementation",))
+
+    def implement(commit: str) -> None:
+        record_task_step(
+            case.db,
+            task_id=task.id,
+            session_id=case.claimant,
+            step="implementation",
+            submission=StepSubmission(
+                status="rejected" if implementation == "rejected" else "approved",
+                epoch=task.review_epoch,
+                round_number=1,
+                feedback="Implementation evidence for the candidate.",
+                commit_sha=commit,
+            ),
+        )
+
+    if implementation == "stale":
+        implement(first)
+    case.link(task, sha)
+    if implementation in {"rejected", "approved"}:
+        implement(sha)
+    grant_review_writes(case.db, case.reviewer, case.project_id)
+    approve_review(case.db, task_id=task.id, reviewer_session_id=case.reviewer, commit_sha=sha)
+
+    result = await case.land(task, sha, caller=manager)
+
+    if implementation == "approved":
+        assert result["landed"] is True, result
+        assert case.git("rev-parse", "trunk") == sha
+    else:
+        assert result["landed"] is False, result
+        assert "implementation_approval_missing" in result["blockers"]
+        assert case.git("rev-parse", "trunk") == case.base
+        assert not [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
 
 
 @pytest.mark.parametrize(
