@@ -410,6 +410,82 @@ async def test_case_alias_of_workspace_root_does_not_bypass_write_scope(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("location", ["own", "outside"])
+@pytest.mark.parametrize("pattern", ["*.md", "*/notes.md", "**/*.md"])
+@pytest.mark.parametrize("tool", ["Bash", "Glob"])
+async def test_glob_matches_check_resolved_seat(
+    workspace_read_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    location: str,
+    pattern: str,
+    tool: str,
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    safe = own / "target"
+    foreign = own.parent / "session-99"
+    for directory in (safe, foreign):
+        directory.mkdir(parents=True)
+        (directory / "notes.md").write_text("Fixture notes")
+    search = own if location == "own" else tmp_path / "repository"
+    search.mkdir(exist_ok=True)
+    file_link = pattern == "*.md"
+    link = search / ("leak.md" if file_link else "leak")
+    link.symlink_to(foreign / "notes.md" if file_link else foreign)
+    data = (
+        _shell(f"cat {search / pattern}", tmp_path)
+        if tool == "Bash"
+        else {
+            "tool_name": "Glob",
+            "tool_input": {"path": str(search), "pattern": pattern},
+            "cwd": str(tmp_path),
+        }
+    )
+    refused = await _decide(workspace_read_engine, data, variables)
+    assert refused.decision == "block"
+    assert "agent-workspace-read-scope" in (refused.reason or "")
+    link.unlink()
+    link.symlink_to(safe / "notes.md" if file_link else safe)
+    allowed = await _decide(workspace_read_engine, data, variables)
+    assert allowed.decision == "allow", allowed.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["entries", "depth", "permission"])
+async def test_glob_inspection_fails_closed_when_incomplete(
+    workspace_read_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    from gobby.workflows import condition_helpers_sessions as helpers
+
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    own.mkdir(parents=True)
+    for number in range(3):
+        (own / f"notes-{number}.md").write_text("Fixture notes")
+    with monkeypatch.context() as scope:
+        if failure == "entries":
+            scope.setattr(helpers, "_WORKSPACE_GLOB_BUDGET", 2)
+        elif failure == "depth":
+            scope.setattr(helpers, "_WORKSPACE_GLOB_MAX_DEPTH", 0)
+        else:
+
+            def unavailable(path: Path) -> None:
+                raise PermissionError("Cannot inspect pattern entries")
+
+            scope.setattr(helpers.os, "scandir", unavailable)
+        response = await _decide(
+            workspace_read_engine, _shell(f"cat {own}/*.md", tmp_path), variables
+        )
+    assert response.decision == "block"
+    assert "agent-workspace-read-scope" in (response.reason or "")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("prefix", ["log*/..", "logs/{..,other}", "logs/{.,other}{.,other}"])
 async def test_read_expansion_cannot_enter_workspace_from_outside(
     workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, prefix: str

@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 from collections.abc import Callable, Mapping
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -548,6 +549,59 @@ def _workspace_read_boundary(target: Path, root: Path) -> Path | None:
     return root.joinpath(*target.parts[len(root.parts) :]) if within else None
 
 
+_WORKSPACE_GLOB_BUDGET = 8192
+_WORKSPACE_GLOB_MAX_DEPTH = 64
+
+
+def _workspace_glob_readable(target: Path, readable: Callable[[Path], bool]) -> bool:
+    """Check resolved expansion targets before entering directories, with bounded work."""
+    start = next((i for i, part in enumerate(target.parts) if _READ_PATTERN.search(part)), None)
+    if start is None:
+        return True
+    parts = target.parts[start:]
+    pending = [(Path(*target.parts[:start]), 0, 0)]
+    visited: set[tuple[Path, int]] = set()
+    budget = _WORKSPACE_GLOB_BUDGET
+    while pending:
+        path, index, depth = pending.pop()
+        # Charge both states (including final matches) and every directory entry.
+        budget -= 1
+        if budget < 0 or depth > _WORKSPACE_GLOB_MAX_DEPTH:
+            return False
+        try:
+            resolved = path.resolve(strict=True)
+            if not readable(resolved):
+                return False
+            state = (resolved, index)
+            if state in visited:
+                continue
+            visited.add(state)
+            if index == len(parts):
+                continue
+            part = parts[index]
+            recursive = part == "**"
+            if recursive:
+                pending.append((resolved, index + 1, depth))
+            elif not _READ_PATTERN.search(part):
+                pending.append((resolved / part, index + 1, depth + 1))
+                continue
+            with os.scandir(resolved) as entries:
+                for entry in entries:
+                    budget -= 1
+                    if budget < 0:
+                        return False
+                    # Include hidden names and case aliases conservatively across tools.
+                    if recursive or fnmatchcase(entry.name.casefold(), part.casefold()):
+                        pending.append(
+                            (Path(entry.path), index if recursive else index + 1, depth + 1)
+                        )
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except (OSError, RuntimeError):
+            return False
+    return True
+
+
 def _variable_folder(value: Any) -> Path | None:
     return Path(value) if isinstance(value, str) and value else None
 
@@ -617,22 +671,28 @@ def agent_workspace_read_violation(
     root = resolve_tool_path(str(workspaces_root()), None)
     if root is None:
         return False
-    targets = [
-        target
-        for raw in _workspace_read_targets(event_data, tool_input)
-        if (target := _workspace_read_boundary(raw, root)) is not None
-        and not _placeholder_folder(target, root)
-    ]
-    if not targets:
-        return False
     own = _variable_folder(variables.get(WORKSPACE_DIR_VARIABLE))
     epic = _variable_folder(variables.get(WORKSPACE_EPIC_DIR_VARIABLE))
     bound = own or epic
     anchor = bound.parents[1] if bound is not None else None
     folders = (own, epic, anchor)
-    return not all(
-        _workspace_path_readable(target, session_manager, caller_id, folders) for target in targets
-    )
+
+    def readable(target: Path) -> bool:
+        within = _workspace_contains(target, root)
+        if within is not True:
+            return within is False
+        canonical = root.joinpath(*target.parts[len(root.parts) :])
+        return _placeholder_folder(canonical, root) or _workspace_path_readable(
+            canonical, session_manager, caller_id, folders
+        )
+
+    for raw in _workspace_read_targets(event_data, tool_input):
+        boundary = _workspace_read_boundary(raw, root)
+        if boundary is not None and not readable(boundary):
+            return True
+        if not _workspace_glob_readable(raw, readable):
+            return True
+    return False
 
 
 def session_condition_helpers(
