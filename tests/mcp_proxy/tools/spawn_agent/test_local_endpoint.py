@@ -12,27 +12,29 @@ pytestmark = pytest.mark.unit
 
 
 def _config() -> DaemonConfig:
-    return DaemonConfig(
-        ai={
-            "generation": {
-                "endpoints": {
-                    "lm-studio": {
-                        "protocol": "lmstudio",
-                        "api_base": "http://localhost:1234/v1",
-                        "model": "qwen-coder-32b",
-                        "api_key": "endpoint-token",
-                    },
-                    "ollama": {
-                        "protocol": "ollama",
-                        "api_base": "http://localhost:11434",
-                        "model": "llama3.2:latest",
-                    },
-                    "openrouter": {
-                        "wire_api": "responses",
-                        "api_base": "https://openrouter.ai/api/v1",
-                        "api_key": "openrouter-secret",
-                        "model": "moonshotai/kimi-k3",
-                    },
+    return DaemonConfig.model_validate(
+        {
+            "ai": {
+                "generation": {
+                    "endpoints": {
+                        "lm-studio": {
+                            "protocol": "lmstudio",
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "qwen-coder-32b",
+                            "api_key": "endpoint-token",
+                        },
+                        "ollama": {
+                            "protocol": "ollama",
+                            "api_base": "http://localhost:11434",
+                            "model": "llama3.2:latest",
+                        },
+                        "openrouter": {
+                            "wire_api": "responses",
+                            "api_base": "https://openrouter.ai/api/v1",
+                            "api_key": "openrouter-secret",
+                            "model": "moonshotai/kimi-k3",
+                        },
+                    }
                 }
             }
         }
@@ -115,6 +117,7 @@ async def test_resolve_spawn_generation_endpoint_uses_selected_model_override() 
     assert resolution.api_base == "http://localhost:1234/v1"
     assert resolution.api_token == "endpoint-token"
     assert resolution.is_local is True
+    assert ensure_local_model.await_args is not None
     assert ensure_local_model.await_args.args[0].model == "google/gemma-4-26b-a4b-qat"
 
 
@@ -138,6 +141,7 @@ async def test_resolve_spawn_generation_endpoint_routes_codex_through_oss() -> N
     assert resolution.api_token is None
     assert resolution.is_local is True
     assert resolution.codex_oss_provider == "ollama"
+    assert ensure_local_model.await_args is not None
     assert ensure_local_model.await_args.args[0].model == "ollama/qwen3-coder"
 
 
