@@ -161,8 +161,16 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                         ],
                         repo_path,
                     )
-                    _require_git_success(branch_result, "Branch status")
-                    for line in branch_result.stdout.splitlines():
+                    # A project checkout may be a plain directory. Keep its normal
+                    # counts while clearing Git metadata instead of reporting an outage.
+                    if branch_result.returncode == 128 and branch_result.stderr.startswith(
+                        "fatal: not a git repository (or any "
+                    ):
+                        branch_lines = []
+                    else:
+                        _require_git_success(branch_result, "Branch status")
+                        branch_lines = branch_result.stdout.splitlines()
+                    for line in branch_lines:
                         if not line:
                             continue
                         head, name, upstream, track = (*line.split("\t", 3), "", "", "")[:4]

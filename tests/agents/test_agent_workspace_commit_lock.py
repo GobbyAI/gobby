@@ -233,6 +233,32 @@ async def test_git_timeout_leaves_no_index_lock(
     assert not (workspace_git_dir(project_id) / "index.lock").exists()
 
 
+async def test_commit_timeout_leaves_no_index_lock(
+    project_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    anchor = ensure_workspace(project_id)
+    _write(anchor, NOTES, "commit me\n")
+    _configure_filter(project_id, "slow", "sleep 30; cat")
+    hook = workspace_git_dir(project_id) / "hooks" / "pre-commit"
+    hook.write_text(
+        "#!/bin/sh\ntouch hook-started\necho generated > hook.slow\ngit add hook.slow\n"
+    )
+    hook.chmod(0o755)
+    real_run = daemon_git.run
+
+    async def short_commit_timeout(args: Sequence[str], **kwargs: Any) -> GitResult:
+        if "commit" in args:
+            kwargs["timeout"] = ADD_TIMEOUT_SECONDS
+        return await real_run(args, **kwargs)
+
+    monkeypatch.setattr(daemon_git, "run", short_commit_timeout)
+
+    await _trigger(project_id, "set_handoff")
+
+    assert (anchor / "hook-started").exists()
+    assert not (workspace_git_dir(project_id) / "index.lock").exists()
+
+
 async def test_secret_named_files_are_never_staged(project_id: str) -> None:
     anchor = ensure_workspace(project_id)
     _write(anchor, NOTES, "one finding\n")

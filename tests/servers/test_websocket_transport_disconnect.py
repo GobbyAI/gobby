@@ -52,10 +52,18 @@ async def test_abrupt_disconnect_stops_stream_without_socket_warning(
         finally:
             finished.set()
 
-    server = uvicorn.Server(uvicorn.Config(
-        app, host="127.0.0.1", port=0, lifespan="off", ws=ObservedProtocol,
-        log_level="warning", log_config=None, access_log=False,
-    ))
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=0,
+            lifespan="off",
+            ws=ObservedProtocol,
+            log_level="warning",
+            log_config=None,
+            access_log=False,
+        )
+    )
     serving = asyncio.create_task(server.serve())
     try:
         async with asyncio.timeout(5):
@@ -70,7 +78,8 @@ async def test_abrupt_disconnect_stops_stream_without_socket_warning(
             async with websockets.connect(f"ws://127.0.0.1:{port}/ws") as client:
                 assert await client.recv() == "ready"
                 connected.extend(
-                    protocol for protocol in server.server_state.connections
+                    protocol
+                    for protocol in server.server_state.connections
                     if isinstance(protocol, WebSocketProtocol)
                 )
                 assert len(connected) == 1
@@ -84,7 +93,9 @@ async def test_abrupt_disconnect_stops_stream_without_socket_warning(
                 await asyncio.wait_for(finished.wait(), timeout=2)
         assert delivered == ["ready"]
         assert adapters[0].disconnected
-        assert not any("socket.send() raised exception" in record.message for record in caplog.records)
+        assert not any(
+            "socket.send() raised exception" in record.message for record in caplog.records
+        )
     finally:
         resume.set()
         for protocol in connected:

@@ -5,8 +5,8 @@ work tree, ``<gobby_home>/agents_workspaces/<project_id>.git/`` its daemon-only 
 Each session writes ``<definition>/session-<seq>/``; an epic team shares ``epics/epic-<seq>/``.
 
 The daemon is the only committer. A trigger schedules a commit and returns; a failed commit is
-logged and never raised into set_handoff, compaction or session end. The nightly cron commits
-whatever a trigger missed.
+logged and never raised into set_handoff, compaction or session end. The nightly cron at
+03:30 local time commits whatever a trigger missed.
 """
 
 from __future__ import annotations
@@ -193,7 +193,7 @@ async def _git(
     )
     if isinstance(result, GitOk):
         return result
-    if isinstance(result, GitTimeout) and args[0] in {"add", "commit"} and not had_index_lock:
+    if isinstance(result, GitTimeout) and args[0] in {"add", "commit", "rm"} and not had_index_lock:
         # The timed-out Git worker has killed its process group. Only consider a
         # lock created during our write, and preserve it if any holder remains.
         _recover_index_lock(project_id, minimum_age=0)
@@ -315,9 +315,8 @@ async def _commit_locked(project_id: str, trigger: str) -> str | None:
     subject = " ".join([f"agents-ws: {trigger}", *folders])
     await _git(
         project_id,
-        "-c",
-        "commit.gpgsign=false",
         "commit",
+        "--no-gpg-sign",
         "--quiet",
         "-m",
         subject,
@@ -354,7 +353,9 @@ async def _commit_logged(project_id: str, trigger: str) -> None:
             try:
                 await commit_workspace(project_id, trigger)
             except Exception as exc:
-                logger.warning("Agent workspace commit failed (%s) for %s: %s", trigger, project_id, exc)
+                logger.warning(
+                    "Agent workspace commit failed (%s) for %s: %s", trigger, project_id, exc
+                )
             with _SCHEDULE_LOCK:
                 pending = _SCHEDULED_PROJECTS.get(project_id)
                 if pending is None:

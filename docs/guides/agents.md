@@ -623,6 +623,19 @@ rejected. A successful checkpoint returns commit/path evidence and releases the
 temporary worktree claim while preserving the task claim. It does not validate
 or close the task. If a release error includes a commit, inspect it before retrying.
 
+## Workspace Backups
+
+The daemon commits agent workspace notes on handoff, compaction, and session end.
+The `gobby:agent-workspaces` system cron catches missed changes nightly at 03:30
+local time (`30 3 * * *`). Upgrades migrate the old five-minute schedule while
+preserving a parked job's disabled state.
+
+One background worker serializes backup scans, commits, and garbage collection.
+Generated trees, provider homes, and credential filenames are excluded before
+Git expands status. Symlinks and files larger than 1 MiB are skipped. An old
+index lock is recovered only after checking that no process holds it; live or
+uncertain locks are preserved and retries back off.
+
 ## Checkout Modes
 
 Isolation is a runtime setting for spawned runs:
