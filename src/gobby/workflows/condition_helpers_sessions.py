@@ -527,7 +527,9 @@ def _brace_read_words(raw: str) -> list[str] | None:
                 start = positions[0]
                 if len(positions) > 1:
                     bounds = [*positions, end]
-                    alternatives = [word[a + 1 : b] for a, b in zip(bounds, bounds[1:])]
+                    alternatives = [
+                        word[a + 1 : b] for a, b in zip(bounds, bounds[1:], strict=False)
+                    ]
                 elif _BRACE_RANGE.fullmatch(word[start + 1 : end]):
                     alternatives = ["*"]
                 else:
@@ -559,21 +561,24 @@ def _extglob_read_word(word: str) -> str | None:
     return word
 
 
-def _resolve_read_target(raw: Any, base: Path | None) -> Path | None:
-    """Resolve the literal prefix without collapsing traversal after an expansion."""
+def _resolve_read_target(raw: Any, base: Path | None) -> tuple[Path, int | None] | None:
+    """Resolve a pattern and retain where expansion starts; base paths stay literal."""
     if not isinstance(raw, str) or not raw:
         return None
     parts = Path(os.path.expandvars(os.path.expanduser(raw))).parts
     for index, part in enumerate(parts):
         if _READ_PATTERN.search(part):
             prefix = resolve_tool_path(str(Path(*parts[:index])), base)
-            return prefix.joinpath(*parts[index:]) if prefix is not None else None
-    return resolve_tool_path(raw, base)
+            return (
+                (prefix.joinpath(*parts[index:]), len(prefix.parts)) if prefix is not None else None
+            )
+    literal = resolve_tool_path(raw, base)
+    return (literal, None) if literal is not None else None
 
 
 def _workspace_read_targets(
     event_data: Mapping[str, Any] | None, tool_input: Any
-) -> list[Path] | None:
+) -> list[tuple[Path, int | None]] | None:
     """Resolved paths a tool reads: path-like Bash words, or the path fields of a file tool."""
     if not isinstance(tool_input, Mapping):
         return []
@@ -584,18 +589,20 @@ def _workspace_read_targets(
         raws = list(_shell_path_words(tool_input.get("command")))
     else:
         raws = [tool_input.get("file_path"), tool_input.get("path")]
-    inputs = [(raw, base) for raw in raws]
+    inputs = [(raw, base, data.get("tool_name") == "Bash") for raw in raws]
     if data.get("tool_name") == "Glob":
         pattern_base = resolve_tool_path(tool_input.get("path"), base) or base
-        inputs.append((tool_input.get("pattern"), pattern_base))
-    paths: list[Path] = []
-    for raw, directory in inputs:
+        inputs.append((tool_input.get("pattern"), pattern_base, True))
+    paths: list[tuple[Path, int | None]] = []
+    for raw, directory, expand in inputs:
         if not isinstance(raw, str) or not raw:
             continue
         # A quoted or structured path can contain literal glob/brace characters.
         # Check that actual filename too, before inspecting possible expansions.
         if (literal := resolve_tool_path(raw, directory)) is not None:
-            paths.append(literal)
+            paths.append((literal, None))
+        if not expand:
+            continue
         words = _brace_read_words(os.path.expandvars(os.path.expanduser(raw)))
         if words is None:
             return None
@@ -608,15 +615,23 @@ def _workspace_read_targets(
     return list(dict.fromkeys(paths))
 
 
-def _workspace_read_boundary(target: Path, root: Path) -> Path | None:
+def _workspace_read_boundary(target: Path, root: Path, start: int) -> Path | None:
     """Require a literal authorized folder before patterns; never enumerate the fleet.
 
     An expansion above the workspace can reach other seats, so judge the root itself.
     Fold lexical parents for the boundary check only. The filesystem walker still
     resolves every original component, so symlink traversal is checked separately.
     """
-    target = Path(os.path.normpath(target))
+    parts: list[tuple[str, bool]] = []
     for index, part in enumerate(target.parts):
+        if part == ".." and len(parts) > 1:
+            parts.pop()
+        else:
+            parts.append((part, index >= start))
+    target = Path(*(part for part, _ in parts))
+    for index, (part, expandable) in enumerate(parts):
+        if not expandable:
+            continue
         match = _READ_PATTERN.search(part)
         if match is None:
             continue
@@ -643,11 +658,8 @@ _WORKSPACE_GLOB_BUDGET = 8192
 _WORKSPACE_GLOB_MAX_DEPTH = 64
 
 
-def _workspace_glob_readable(target: Path, readable: Callable[[Path], bool]) -> bool:
+def _workspace_glob_readable(target: Path, start: int, readable: Callable[[Path], bool]) -> bool:
     """Check resolved expansion targets before entering directories, with bounded work."""
-    start = next((i for i, part in enumerate(target.parts) if _READ_PATTERN.search(part)), None)
-    if start is None:
-        return True
     parts = target.parts[start:]
     pending = [(Path(*target.parts[:start]), 0, 0)]
     visited: set[tuple[Path, int]] = set()
@@ -686,6 +698,7 @@ def _workspace_glob_readable(target: Path, readable: Callable[[Path], bool]) -> 
                     if (
                         recursive
                         or "[" in part
+                        or fnmatchcase(entry.name, part)
                         or fnmatchcase(entry.name.casefold(), part.casefold())
                     ):
                         pending.append(
@@ -785,11 +798,11 @@ def agent_workspace_read_violation(
     targets = _workspace_read_targets(event_data, tool_input)
     if targets is None:
         return True
-    for raw in targets:
-        boundary = _workspace_read_boundary(raw, root)
+    for raw, start in targets:
+        boundary = _workspace_read_boundary(raw, root, start) if start is not None else raw
         if boundary is not None and not readable(boundary):
             return True
-        if not _workspace_glob_readable(raw, readable):
+        if start is not None and not _workspace_glob_readable(raw, start, readable):
             return True
     return False
 

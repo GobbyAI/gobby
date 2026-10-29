@@ -562,6 +562,82 @@ async def test_literal_pattern_filename_cannot_hide_foreign_symlink(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["ß.md", "İ.md"])
+@pytest.mark.parametrize("tool", ["Bash", "Glob"])
+async def test_glob_width_uses_original_unicode_names(
+    workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, name: str, tool: str
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    foreign = own.parent / "session-99"
+    own.mkdir(parents=True)
+    foreign.mkdir()
+    target = foreign / "notes.md"
+    target.write_text("Foreign notes")
+    link = own / name
+    link.symlink_to(target)
+    data = (
+        _shell(f"cat {own}/?.md", tmp_path)
+        if tool == "Bash"
+        else {"tool_name": "Glob", "tool_input": {"path": str(own), "pattern": "?.md"}}
+    )
+    refused = await _decide(workspace_read_engine, data, variables)
+    assert refused.decision == "block"
+    link.unlink()
+    link.write_text("Owned notes")
+    allowed = await _decide(workspace_read_engine, data, variables)
+    assert allowed.decision == "allow", allowed.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["{a,b}", "[ab]", "*"])
+@pytest.mark.parametrize("tool", ["Read", "Grep", "Glob"])
+async def test_file_tool_paths_are_literal_not_patterns(
+    workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, name: str, tool: str
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    directory = own / name
+    foreign = own.parent / "session-99"
+    for folder in (directory, foreign):
+        folder.mkdir(parents=True)
+        (folder / "notes.md").write_text("Fixture notes")
+    (own / "a").symlink_to(foreign)
+    data = {
+        "Read": _read(directory / "notes.md", tmp_path),
+        "Grep": _grep(directory, tmp_path),
+        "Glob": {
+            "tool_name": "Glob",
+            "tool_input": {"path": str(directory), "pattern": "*.md"},
+        },
+    }[tool]
+    response = await _decide(workspace_read_engine, data, variables)
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pattern", [".[.]", ".[^a]", ".[[:punct:]]", ".*"])
+@pytest.mark.parametrize("tool", ["Bash", "Glob"])
+async def test_shell_dot_patterns_cannot_traverse_to_foreign_sibling(
+    workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, pattern: str, tool: str
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    foreign = own.parent / "session-99"
+    own.mkdir(parents=True)
+    foreign.mkdir()
+    (foreign / "notes.md").write_text("Foreign notes")
+    relative = f"{pattern}/session-99/notes.md"
+    data = (
+        _shell(f"cat {own / relative}", tmp_path)
+        if tool == "Bash"
+        else {"tool_name": "Glob", "tool_input": {"path": str(own), "pattern": relative}}
+    )
+    response = await _decide(workspace_read_engine, data, variables)
+    assert response.decision == ("block" if tool == "Bash" else "allow"), response.reason
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["entries", "depth", "permission", "braces"])
 async def test_glob_inspection_fails_closed_when_incomplete(
     workspace_read_engine: RuleEngine,
