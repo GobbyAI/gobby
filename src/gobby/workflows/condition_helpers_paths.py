@@ -9,6 +9,7 @@ from typing import Any
 
 from gobby.hooks._path_scope import (
     _is_temp_path,
+    checkout_root,
     current_project_root,
     current_tool_cwd,
     resolve_tool_path,
@@ -129,11 +130,23 @@ def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> boo
                 return False
             # Plan documents are repository content, not daemon configuration.
             index = parts.index(".gobby")
-            return not (
+            if (
                 parts.count(".gobby") == 1
                 and parts[index + 1 : index + 2] == ("plans",)
                 and len(parts) > index + 2
                 and path.suffix.casefold() == ".md"
+            ):
+                return False
+            # A nested task checkout owns its repository files, including
+            # tracked baselines and newly added .gobby configuration.
+            try:
+                checkout = checkout_root(path)
+            except (OSError, CheckoutReadUnavailable):
+                return True
+            return not (
+                checkout is not None
+                and len(checkout.parts) > len(directory.parts)
+                and workspace_contains(checkout, directory) is True
             )
     return True
 
@@ -145,10 +158,11 @@ def agent_workspace_write_violation(
 ) -> bool:
     """True when a write lands under the workspace root outside the seat's own or epic folder.
 
-    Inside those folders Git metadata and Gobby config are refused; Markdown plan
-    documents under ``.gobby/plans`` remain writable. Explicit Git commit pathspecs
-    obey the same boundary; literal message text is not a pathspec. A read of a
-    predecessor folder is the read rule's concern.
+    Git metadata stays refused. Gobby config is writable only in a nested
+    repository checkout; Markdown plan documents under ``.gobby/plans`` also
+    remain writable outside checkouts. Explicit Git commit pathspecs obey the
+    same boundary; literal message text is not a pathspec. A read of a predecessor
+    folder is the read rule's concern.
     """
     from gobby.agents.agent_workspaces import workspaces_root
 

@@ -793,14 +793,154 @@ def test_native_codex_outer_and_inner_have_one_shell_owner(
         handlers.handle_after_tool(event("PostToolUse", inner=False))
 
 
+@pytest.mark.parametrize(
+    ("command", "allowed"),
+    [
+        ("git status --short", True),
+        ("rg -n value format_me.py", True),
+        ("uv run --frozen python -c 'print(1)'", True),
+        ("uv run python -c 'print(1)'", False),
+        ("GIT_TRACE=out.txt git log -1", False),
+        ("cat format_me.py; unknown-program", False),
+        ("rg --pre ./preprocess value format_me.py", False),
+        ("bash misleading.sh", False),
+    ],
+)
+@pytest.mark.parametrize("outer_hook", [False, True])
+def test_native_computed_cwd_reads_never_borrow_launcher_ownership(
+    mock_dependencies: dict[str, Any],
+    task_worktree: Checkout,
+    tmp_path: Path,
+    command: str,
+    allowed: bool,
+    outer_hook: bool,
+) -> None:
+    checkout = task_worktree
+    launcher = tmp_path / "launcher"
+    launcher.mkdir()
+    (launcher / "misleading.sh").write_text("cat format_me.py\n")
+    checkout.write("misleading.sh", "touch foreign.py\n")
+    transcript = tmp_path / "computed-read.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "call_id": "computed-read",
+                    "input": (
+                        f"text(await tools.exec_command({{cmd:{json.dumps(command)},"
+                        'workdir:load("worktree")}));'
+                    ),
+                },
+            }
+        )
+        + "\n"
+    )
+    hook_input = {
+        "session_id": "current-external",
+        "cwd": str(launcher),
+        "tool_use_id": "exec-computed-read",
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+        "transcript_path": str(transcript),
+    }
+    adapter = CodexHooksAdapter()
+    outer_input = {
+        **hook_input,
+        "tool_use_id": "computed-read",
+        "tool_name": "functions.exec",
+        "tool_input": {"arguments": json.loads(transcript.read_text())["payload"]["input"]},
+    }
+    if outer_hook:
+        outer = adapter.translate_to_hook_event(
+            {"hook_type": "PreToolUse", "input_data": outer_input}
+        )
+        assert outer is not None
+        outer_response = _handlers(mock_dependencies, checkout.db).handle_before_tool(
+            replace(
+                outer,
+                project_id=checkout.project_id,
+                metadata={**outer.metadata, "_platform_session_id": checkout.session_id},
+            )
+        )
+        assert outer_response.decision == ("allow" if allowed else "block")
+    event = adapter.translate_to_hook_event({"hook_type": "PreToolUse", "input_data": hook_input})
+    assert event is not None
+    event = replace(
+        event,
+        project_id=checkout.project_id,
+        metadata={**event.metadata, "_platform_session_id": checkout.session_id},
+    )
+    response = _handlers(mock_dependencies, checkout.db).handle_before_tool(event)
+    assert response.decision == ("allow" if allowed else "block"), response.reason
+    manager = SessionVariableManager(checkout.db)
+    for key in ("worktree_shell_calls", "claimed_shell_snapshots", "git_operation_ownership"):
+        assert not manager.get_variables(checkout.session_id).get(key), key
+    if allowed:
+        checkout.write("foreign.py", "A concurrent writer owns these bytes.\n")
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "item_completed",
+                        "item": {
+                            "type": "CommandExecution",
+                            "id": hook_input["tool_use_id"],
+                            "command": ["/bin/zsh", "-lc", command],
+                            "cwd": checkout.repo.as_uri(),
+                            "status": "completed",
+                            "exit_code": 0,
+                            "aggregated_output": "",
+                        },
+                    },
+                }
+            )
+            + "\n"
+        )
+        after = adapter.translate_to_hook_event(
+            {"hook_type": "PostToolUse", "input_data": hook_input}
+        )
+        assert after is not None
+        _handlers(mock_dependencies, checkout.db).handle_after_tool(
+            replace(
+                after,
+                project_id=checkout.project_id,
+                metadata={**after.metadata, "_platform_session_id": checkout.session_id},
+            )
+        )
+        assert "foreign.py" not in checkout.ledger()
+        assert UNOWNED in checkout.rule_3_reason("foreign.py")
+        if outer_hook:
+            outer_after = adapter.translate_to_hook_event(
+                {
+                    "hook_type": "PostToolUse",
+                    "input_data": {**outer_input, "tool_response": {"exit_code": 0}},
+                }
+            )
+            assert outer_after is not None
+            _handlers(mock_dependencies, checkout.db).handle_after_tool(
+                replace(
+                    outer_after,
+                    project_id=checkout.project_id,
+                    metadata={**outer_after.metadata, "_platform_session_id": checkout.session_id},
+                )
+            )
+    TaskToolBindings(manager, checkout.session_id).assert_can_select(None)
+
+
 @pytest.mark.parametrize("relative_operands", [False, True])
 @pytest.mark.parametrize("foreign_finishes_first", [None, False, True])
+@pytest.mark.parametrize("computed_first", [False, True])
 def test_native_codex_formatter_receipt_keeps_worktree_ownership(
     mock_dependencies: dict[str, Any],
     task_worktree: Checkout,
     tmp_path: Path,
     foreign_finishes_first: bool | None,
     relative_operands: bool,
+    computed_first: bool,
 ) -> None:
     """A native inner CommandExecution supplies cwd missing from the shell hook."""
     checkout = task_worktree
@@ -810,7 +950,10 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
         checkout.session_id, ["format_me.py"], checkout_root=str(checkout.repo)
     )
     operand = "format_me.py" if relative_operands else str(checkout.repo / "format_me.py")
-    command = f"uv run --no-sync ruff format {operand}"
+    command = (
+        f"UV_PROJECT_ENVIRONMENT={tmp_path / '.venv'} PYTHONPATH=src "
+        f"uv run --no-sync ruff format {operand}"
+    )
     arguments = (
         'text(await tools.apply_patch("*** Begin Patch\\n*** End Patch"));\n'
         f"text(await tools.exec_command({json.dumps({'cmd': command, 'workdir': str(checkout.repo)})}));\n"
@@ -840,6 +983,46 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
         "transcript_path": str(transcript),
     }
     adapter = CodexHooksAdapter()
+    if computed_first:
+        # #18515 call_97279653d017412582776ccb65fac403: the workdir was load(),
+        # not the resolved literal reported in the original incident message.
+        literal_transcript = transcript.read_text()
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "name": "exec",
+                        "call_id": "outer-computed",
+                        "input": (
+                            f"text(await tools.exec_command({{cmd:{json.dumps(command)},"
+                            '"workdir":load("worktree"),"max_output_tokens":2000}));'
+                        ),
+                    },
+                }
+            )
+            + "\n"
+        )
+        refused = adapter.translate_to_hook_event(
+            {"hook_type": "PreToolUse", "input_data": hook_input}
+        )
+        assert refused is not None
+        refused = replace(
+            refused,
+            project_id=checkout.project_id,
+            metadata={**refused.metadata, "_platform_session_id": checkout.session_id},
+        )
+        response = _handlers(mock_dependencies, checkout.db).handle_before_tool(refused)
+        assert response.decision == "block"
+        assert "literal" in (response.reason or "") and "workdir" in (response.reason or "")
+        assert (checkout.repo / "format_me.py").read_text() == "x=1\n"
+        for key in ("worktree_shell_calls", "claimed_shell_snapshots", "git_operation_ownership"):
+            assert not manager.get_variables(checkout.session_id).get(key), key
+        TaskToolBindings(manager, checkout.session_id).assert_can_select(None)
+        assert checkout.rule_3_reason("format_me.py") == ""
+        # Retry through the normal literal wrapper, with no ownership recovery.
+        transcript.write_text(literal_transcript)
     outer_input = {
         **hook_input,
         "tool_use_id": "outer-formatter",
@@ -900,7 +1083,7 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
                     "item": {
                         "type": "CommandExecution",
                         "id": hook_input["tool_use_id"],
-                        "command": ["/bin/zsh", "-lc", "rtk " + command],
+                        "command": ["/bin/zsh", "-lc", command.replace("uv run", "rtk uv run", 1)],
                         "cwd": checkout.repo.as_uri(),
                         "status": "completed",
                         "exit_code": 0,

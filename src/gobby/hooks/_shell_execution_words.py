@@ -139,7 +139,9 @@ _SUDO_FLAG_OPTIONS = frozenset(
 )
 
 
-def _unwrap(words: list[str], *, stop_at_xargs: bool = False) -> list[str]:
+def _unwrap(
+    words: list[str], *, stop_at_xargs: bool = False, assignments: set[str] | None = None
+) -> list[str]:
     """Common literal execution wrappers; never treat query operands as launches."""
     i = 0
     # Decoded env -S words run before the untouched argv. A reversed stack
@@ -181,7 +183,11 @@ def _unwrap(words: list[str], *, stop_at_xargs: bool = False) -> list[str]:
             and peek(2) == "__gobby_loop_list__"
         ):
             advance(3)
-        elif _ASSIGNMENT.match(peek()) or name in {
+        elif _ASSIGNMENT.match(peek()):
+            if assignments is not None:
+                assignments.add(peek().partition("=")[0].removesuffix("+"))
+            advance()
+        elif name in {
             "!",
             "{",
             "then",

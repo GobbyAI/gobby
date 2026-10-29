@@ -37,12 +37,12 @@ from gobby.tasks.landing_policy import (
     classify_paths,
     missing_schema_carriers,
     read_freeze,
-    requires_project_sync,
 )
 from gobby.tasks.lifecycle_access import is_operator_coordinator, session_agent_definition
 from gobby.tasks.step_records import (
     SECURITY_REVIEWER,
     TaskStepRecord,
+    approved_task_step,
     independent_review_approval,
     list_task_step_records,
 )
@@ -54,9 +54,11 @@ __all__ = ["LandingResult", "land_candidate", "main_checkout_target"]
 logger = logging.getLogger(__name__)
 
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")
+# Reflogs retain earlier landings after their activation policy changes.
+_REFLOG_ACTIVATION_CLASSES = (*ACTIVATION_CLASSES, "sync")
 _LANDING_ACTION = re.compile(
     r"gobby-land candidate=(?P<candidate>[0-9a-f]{40}) "
-    rf"mode=(?P<mode>ff|merge) class=(?P<class>{'|'.join(ACTIVATION_CLASSES)})"
+    rf"mode=(?P<mode>ff|merge) class=(?P<class>{'|'.join(_REFLOG_ACTIVATION_CLASSES)})"
     r"(?: lander=(?P<lander>[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}))?(?:: .*)?"
 )
 _ATTEMPTS = 3
@@ -83,7 +85,6 @@ class LandingResult(TypedDict, total=False):
     observed_tip: str
     mode: str
     activation_class: str
-    project_sync_required: bool
     retest_required: bool
     provenance: str
     merge_commit: str
@@ -143,6 +144,26 @@ async def main_checkout_target(db: HubDatabase, project_id: str) -> tuple[Path, 
     main = common.parent
     branch = await _branch(main)
     return (main, branch) if branch is not None else None
+
+
+async def task_landing_target(db: HubDatabase, task: Task) -> tuple[Path, str] | None:
+    """Leaves land in their epic's tree; top-level tasks land in the main checkout."""
+    from gobby.agents.team_lifecycle import task_team, team_binding
+    from gobby.storage.team_records import EPIC_MODE
+
+    team = await asyncio.to_thread(task_team, db, task.id)
+    epic = None
+    if team and team.parent_team_id:
+        epic = await asyncio.to_thread(team_binding, db, team.parent_team_id)
+        if epic is None:
+            raise LandingGitError("the pod's parent team has no admission binding")
+    elif team and team.mode == EPIC_MODE and team.task_id != task.id:
+        epic = team
+    if epic is not None:
+        if epic.worktree_path is None or await _branch(Path(epic.worktree_path)) != epic.branch:
+            raise LandingGitError("the epic landing worktree is unavailable or changed branch")
+        return Path(epic.worktree_path), epic.branch
+    return await main_checkout_target(db, task.project_id)
 
 
 async def _tip(main: Path, branch: str) -> str:
@@ -220,7 +241,7 @@ async def _recover_landing(
                 return unknown
             if await _ancestor(main, sha, entry.old):
                 continue
-            activation_class = action["class"]
+            activation_class = "restart" if action["class"] == "sync" else action["class"]
             facts: dict[str, str | int | bool] = {
                 **unknown,
                 "landed_tip": entry.new,
@@ -232,17 +253,15 @@ async def _recover_landing(
             }
             if action["mode"] == "merge":
                 facts["merge_commit"] = entry.new
+            if action["candidate"] == sha:
+                return facts
             try:
                 merged = await _merge_tree(main, entry.old, sha)
                 tree = merged.stdout.split("\n", 1)[0]
                 paths = await _candidate_paths(main, entry.old, sha, tree)
             except LandingGitError:
-                # Exact-candidate trailers still prove activation and landing provenance.
-                # Missing sync facts hold release until project sync is verified.
-                return facts if action["candidate"] == sha else unknown
-            if action["candidate"] != sha:
-                facts["activation_class"] = classify_paths(paths)
-            facts["project_sync_required"] = requires_project_sync(paths)
+                return unknown
+            facts["activation_class"] = classify_paths(paths)
             return facts
     except (OSError, UnicodeError, LandingGitError):
         return unknown
@@ -264,8 +283,6 @@ def _facts_result(sha: str, facts: dict[str, str | int | bool]) -> LandingResult
     }
     if "merge_commit" in facts:
         result["merge_commit"] = str(facts["merge_commit"])
-    if "project_sync_required" in facts:
-        result["project_sync_required"] = bool(facts["project_sync_required"])
     return result
 
 
@@ -318,8 +335,6 @@ async def _record_and_notify(
             f'Landed #{task.seq_num} "{task.title}" {sha[:10]} on {facts["branch"]} '
             f"at {str(facts['landed_tip'])[:10]}; activation {facts['activation_class']}"
         )
-        if facts.get("project_sync_required"):
-            content += "; project workflow sync required"
         manager = InterSessionMessageManager(db)
         unreached: list[str] = []
         for recipient in sorted(recipients):
@@ -341,6 +356,10 @@ def _refused(refusal: LandingResult, error: str, message: str | None = None) -> 
 
 def _manages_task(db: HubDatabase, task: Task, caller_session_id: str) -> bool:
     """The task's bound Dev Manager lands it; the root Orchestrator is the last resort."""
+    from gobby.agents.team_lifecycle import managed_task_team
+
+    if managed_task_team(db, caller_session_id, task.id) is not None:
+        return True
     caller = SessionManager(db).get(caller_session_id)
     if caller is None:
         return False
@@ -365,6 +384,10 @@ def _review_blockers(
         blockers.append("caller_is_reviewer")
     if independent_review_approval(task, records, sha, caller) is None:
         blockers.append("review_approval_missing")
+    if task.task_type != "epic":
+        implementation = approved_task_step(task, records, "implementation")
+        if implementation is None or implementation.commit_sha != sha:
+            blockers.append("implementation_approval_missing")
     if _SECURITY_REVIEW_LABEL in (task.labels or []) and not any(
         record.step == "review"
         and record.status == "approved"
@@ -488,12 +511,12 @@ async def land_candidate(
         if await _resolve(repo, sha) != sha:
             return {"landed": False, "error": "candidate_unresolved"}
         common = Path(await _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
-        main = common.parent
         async with db.advisory_lock(MainCheckoutLanding(task.project_id)):
             current_task = LocalTaskManager(db).get_task(task.id)
-            branch = await _branch(main)
-            if branch is None:
+            landing_target = await task_landing_target(db, current_task)
+            if landing_target is None:
                 return {"landed": False, "error": "main_checkout_detached"}
+            main, branch = landing_target
             linked = False
             for candidate in current_task.commits or []:
                 if await _resolve(main, candidate) == sha:
@@ -558,7 +581,6 @@ async def land_candidate(
                     "landed": False,
                     "commit_sha": sha,
                     "activation_class": activation_class,
-                    "project_sync_required": requires_project_sync(paths),
                     "shared_paths": shared,
                     "missing_schema_carriers": missing_carriers,
                     "blockers": blockers,
@@ -605,7 +627,6 @@ async def land_candidate(
                         "observed_tip": observed_tip,
                         "mode": mode,
                         "activation_class": activation_class,
-                        "project_sync_required": requires_project_sync(paths),
                         "provenance": "recorded",
                         "landed_by_session_id": caller_session_id,
                     }

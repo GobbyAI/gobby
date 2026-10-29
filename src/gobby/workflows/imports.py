@@ -20,9 +20,11 @@ from gobby.storage.definitions.agents import (
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
 from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
 from gobby.storage.workspace_machine_scope import require_local_machine_id
+from gobby.utils.dev import linked_worktree_root
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import (
     PipelineDefinition,
@@ -256,6 +258,22 @@ def sync_imported_workflow_file(
     return result
 
 
+def get_project_workflows_root(db: HubDatabase, project_id: str) -> Path | None:
+    """Return the registered local main checkout's canonical workflow directory."""
+    try:
+        machine_id = require_local_machine_id(
+            None, resource_kind="project_checkout", resource_id=project_id
+        )
+        checkout_root = require_root(db, project_id, machine_id)
+    except CheckoutNotFoundError:
+        return None
+    checkout_path = Path(checkout_root).resolve()
+    linked = linked_worktree_root(checkout_path)
+    if linked is not None:
+        checkout_path = linked.main_checkout
+    return checkout_path / ".gobby" / "workflows"
+
+
 def sync_imported_workflows(
     db: Any,
     *,
@@ -267,19 +285,18 @@ def sync_imported_workflows(
     if project_path is not None:
         if project_id is None:
             raise ValueError("project_id is required with project_path")
-        roots.append((Path(project_path) / ".gobby" / "workflows", project_id))
+        checkout_path = Path(project_path).resolve()
+        linked = linked_worktree_root(checkout_path)
+        if linked is not None:
+            checkout_path = linked.main_checkout
+        roots.append((checkout_path / ".gobby" / "workflows", project_id))
     else:
         for project in LocalProjectManager(db).list():
             if project.id in CHECKOUT_FREE_PROJECT_IDS:
                 continue
-            try:
-                machine_id = require_local_machine_id(
-                    None, resource_kind="project_checkout", resource_id=project.id
-                )
-                checkout_root = require_root(db, project.id, machine_id)
-            except CheckoutNotFoundError:
-                continue
-            roots.append((Path(checkout_root) / ".gobby" / "workflows", project.id))
+            root = get_project_workflows_root(db, project.id)
+            if root is not None:
+                roots.append((root, project.id))
 
     synced = 0
     orphaned = 0

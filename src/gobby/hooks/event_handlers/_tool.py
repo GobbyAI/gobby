@@ -115,6 +115,22 @@ class ToolEventHandlerMixin(EventHandlersBase):
         input_data = event.data
         tool_name = input_data.get("tool_name", "unknown")
         session_id = event.metadata.get("_platform_session_id")
+        unproven_shell_cwd = event.metadata.get("_native_shell_cwd_unproven") is True
+        if unproven_shell_cwd and event.metadata.get("_native_shell_read_only") is not True:
+            retry = (
+                "On this node, retry with a command beginning cd '/absolute/task/worktree' && "
+                "followed by one command, with no additional directory changes or subshells."
+                if node_origin()
+                else "Retry with one exec_command call whose cmd and absolute workdir are literal "
+                "strings in the functions.exec source; do not use load() or a variable for workdir."
+            )
+            return HookResponse(
+                decision="block",
+                reason=(
+                    "Shell command blocked before execution: Gobby cannot prove its working "
+                    "directory and the command is not proven read-only. " + retry
+                ),
+            )
         project_id = event.project_id or self._resolve_project_id(event.project_id, event.cwd)
 
         if session_id:
@@ -133,7 +149,10 @@ class ToolEventHandlerMixin(EventHandlersBase):
             wrapper_error = validate_functions_exec_wrapper(
                 input_data.get("arguments", input_data.get("tool_input"))
             )
-            if wrapper_error is not None:
+            if (
+                wrapper_error is not None
+                and event.metadata.get("_native_shell_wrapper_read_only") is not True
+            ):
                 return HookResponse(decision="block", reason=wrapper_error)
 
         # Intercept Skill tool calls to resolve gobby skills
@@ -234,7 +253,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         "Retry after the repository and daemon are available."
                     ),
                 )
-            if tool_name == "Bash":
+            if tool_name == "Bash" and not unproven_shell_cwd:
                 self._snapshot_shell_writes(event, session_id)
                 self._begin_worktree_shell_call(event, session_id, project_id)
 

@@ -60,7 +60,7 @@ async def _evaluate(repo: Path, linked: list[str], requested: str | None) -> Clo
             "capture_attribution",
             AsyncMock(return_value=CloseAttributionSnapshot({}, True)),
         ),
-        patch.object(lifecycle, "main_checkout_target", AsyncMock(return_value=(repo, "0.5.0"))),
+        patch.object(lifecycle, "task_landing_target", AsyncMock(return_value=(repo, "0.5.0"))),
         patch.object(
             lifecycle, "step_requirements", AsyncMock(return_value=StepRequirements((), ()))
         ),

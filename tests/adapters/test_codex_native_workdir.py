@@ -57,6 +57,7 @@ def _output(call_id: str, output: str) -> dict[str, Any]:
         "running_process",
         "relative_with_base",
         "relative_without_base",
+        "missing",
     ],
 )
 def test_native_before_workdir_requires_unique_complete_evidence(tmp_path: Path, case: str) -> None:
@@ -84,8 +85,10 @@ def test_native_before_workdir_requires_unique_complete_evidence(tmp_path: Path,
         records.append(_call("other", command, str(tmp_path / "other")))
     elif case == "computed":
         records[0]["payload"]["input"] = (
-            f"text(await tools.exec_command({{cmd:{json.dumps(command)},workdir:target}}));"
+            f'text(await tools.exec_command({{cmd:{json.dumps(command)},workdir:load("worktree")}}));'
         )
+    elif case == "missing":
+        records = []
     elif case == "overflow":
         records = [_call(f"outer-{i}", command, str(target)) for i in range(65)]
         records.extend(_output(f"outer-{i}", '{"exit_code":0}') for i in range(1, 64))
@@ -113,6 +116,10 @@ def test_native_before_workdir_requires_unique_complete_evidence(tmp_path: Path,
     assert tool_execution_id(event) == "exec-inner"
     expected = target if case in {"literal", "direct", "yielded", "relative_with_base"} else root
     assert current_tool_cwd(event.data) == expected
+    proven = case in {"literal", "direct", "yielded", "relative_with_base"}
+    assert event.metadata.get("_native_shell_cwd_unproven", False) is not proven
+    if not proven:
+        assert event.metadata["_native_shell_read_only"] is False
 
 
 @pytest.mark.parametrize("field", ["workdir", "cwd"])

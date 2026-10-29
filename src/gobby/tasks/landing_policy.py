@@ -16,7 +16,7 @@ from pathlib import Path
 from gobby.sync.jsonl_io import atomic_write_text
 
 # Weakest first; the strongest class among a candidate's changed paths wins.
-ACTIVATION_CLASSES = ("none", "sync", "reload", "ui_build", "restart", "cutover")
+ACTIVATION_CLASSES = ("none", "reload", "ui_build", "restart", "cutover")
 
 _CUTOVER_PREFIXES = ("crates/",)
 _CUTOVER_FILES = frozenset(
@@ -39,7 +39,7 @@ UNREADABLE_FREEZE_REASON = "unreadable landing freeze file"
 def _path_class(path: str) -> str:
     if path in _CUTOVER_FILES or path.startswith(_CUTOVER_PREFIXES):
         return "cutover"
-    # Project workflows activate through reload_cache's project-aware DB import.
+    # Startup imports workflow files from registered projects' main checkouts.
     for prefix in (
         ".gobby/workflows/pipelines/",
         ".gobby/workflows/rules/",
@@ -52,7 +52,7 @@ def _path_class(path: str) -> str:
             and "/" not in workflow_file
             and workflow_file.endswith((".yaml", ".yml"))
         ):
-            return "sync"
+            return "restart"
     # reload_cache syncs these definitions to the DB read by each new spawn.
     agent_file = path.removeprefix("src/gobby/install/shared/workflows/agents/")
     if agent_file != path and "/" not in agent_file and agent_file.endswith(".yaml"):
@@ -93,11 +93,6 @@ def missing_schema_carriers(paths: Iterable[str]) -> list[str]:
         return []
     identity_pin = "src/gobby/storage/schema_expected_identity.json"
     return [] if identity_pin in changed else [identity_pin]
-
-
-def requires_project_sync(paths: Iterable[str]) -> bool:
-    """Report imported workflow changes independently of activation precedence."""
-    return any(_path_class(path) == "sync" for path in paths)
 
 
 def is_direct_commit_path(path: str) -> bool:

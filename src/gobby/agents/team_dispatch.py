@@ -2,8 +2,8 @@
 
 The Dev Manager holds no claim; its run is bound to the epic, and it dispatches the team's seats
 here. A maker takes an open, unclaimed leaf of the epic. A primary leaf works in the team tree
-and holds its implementation domain (``fullstack`` when unset): one live primary per domain. A
-sub-worktree leaf gets ``epic/<seq>/<leaf-seq>`` off the epic branch and holds no primary slot.
+and records its implementation domain for skills: only one live primary works that tree. A
+parallel leaf uses a Dev Pod on ``epic/<seq>/<leaf-seq>`` and holds no primary slot.
 A reviewer works in the team tree and is recorded on the team, one live seat per definition. A
 resumed seat keeps the definition its session was stored under. A resumed reviewer rebinds that
 definition to the resumed run, and a resumed primary takes its domain slot back. A team manager's
@@ -23,10 +23,12 @@ from gobby.agents.team_lifecycle import (
     bind_primary_run,
     bind_reviewer_run,
     seat_team,
+    team_binding,
 )
 from gobby.agents.team_review import sync_epic_review
 from gobby.agents.team_scope import open_leaf_below
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
@@ -37,6 +39,7 @@ from gobby.workflows.state_manager import SessionVariableManager
 
 _LIVE = frozenset({"queued", "pending", "running"})
 _MAKER_GRANT = "implementation"
+_TEST_GRANT = "test"
 _REVIEWER_GRANT = "review"
 # A leaf with no implementation domain takes the fullstack primary slot.
 _UNDOMAINED_DOMAIN = "fullstack"
@@ -80,6 +83,42 @@ def _leaf_id(db: HubDatabase, project_id: str, task_ref: str) -> str:
         ) from exc
 
 
+def _live_primary(db: HubDatabase, binding: TeamBinding, grant: str = _MAKER_GRANT) -> bool:
+    """Count initial runbook seats and pending launches before session pickup."""
+    if grant == _MAKER_GRANT and any(_live(db, run_id) for run_id in binding.primaries.values()):
+        return True
+    rows = db.fetchall(
+        "SELECT r.child_session_id, r.parent_session_id, r.agent_name, "
+        "parent.source AS parent_source, parent.external_id AS parent_external_id FROM agent_runs r "
+        "JOIN sessions parent ON parent.id = r.parent_session_id "
+        "WHERE parent.project_id = %s AND r.status = ANY(%s) "
+        "AND (r.worktree_id = %s OR parent.source = 'pipeline')",
+        (binding.project_id, sorted(_LIVE), binding.worktree_id),
+    )
+    sessions = SessionManager(db)
+    definitions = AgentDefinitionManager(db)
+    for row in rows:
+        team = (
+            team_binding(db, row["parent_external_id"].removeprefix("pipeline-"))
+            if row["parent_source"] == "pipeline"
+            else seat_team(db, row["child_session_id"] or row["parent_session_id"])
+        )
+        if team is None or team.team_id != binding.team_id:
+            continue
+        session = sessions.get(row["child_session_id"]) if row["child_session_id"] else None
+        definition = session_agent_definition(db, session) if session is not None else None
+        body = definition[0] if definition is not None else None
+        if body is None and row["agent_name"]:
+            stored = definitions.get_by_name(row["agent_name"], binding.project_id)
+            if stored is not None and stored.enabled:
+                body = AgentDefinitionBody.model_validate(
+                    {**stored.definition_json, "name": stored.name}
+                )
+        if body is not None and grant in body.task_step_writes:
+            return True
+    return False
+
+
 def _maker(
     db: HubDatabase,
     binding: TeamBinding,
@@ -108,25 +147,18 @@ def _maker(
         raise TeamAdmissionRefused("task_in_flight", f"task {task_id} already has a claimed seat")
     leaf = LocalTaskManager(db).get_task(leaf_id)
     if checkout_mode == "worktree":
-        if worktree_id is not None:
-            raise TeamAdmissionRefused("team_tree_fixed", "a sub-worktree leaf names no tree")
-        branch, directory = leaf_names(epic, leaf)
-        return DispatchScope(
-            team_id=binding.team_id,
-            project_id=binding.project_id,
-            parent_session_id=parent,
-            branch_name=branch,
-            base_branch=binding.branch,
-            worktree_dir_name=directory,
+        raise TeamAdmissionRefused(
+            "team_pod_required",
+            "launch the devteam pipeline with parent_team_id for a parallel leaf",
         )
     if worktree_id not in (None, binding.worktree_id):
         raise TeamAdmissionRefused(
             "team_tree_mismatch", f"team {binding.team_id} works in tree {binding.worktree_id}"
         )
     domain = leaf.implementation_domain or _UNDOMAINED_DOMAIN
-    if _live(db, binding.primaries.get(domain)):
+    if _live_primary(db, binding):
         raise TeamAdmissionRefused(
-            "primary_live", f"team {binding.team_id} already has a live {domain} primary"
+            "primary_live", f"team {binding.team_id} already has a live primary; use a Dev Pod"
         )
     return DispatchScope(
         team_id=binding.team_id,
@@ -157,21 +189,23 @@ def _stored_definition(db: HubDatabase, session_id: str) -> str:
 def _resumed_maker(
     db: HubDatabase, binding: TeamBinding, parent: str, session_id: str | None
 ) -> DispatchScope | None:
-    """A resumed primary takes its domain slot back; any other resumed maker takes no scope.
+    """A resumed primary takes the team's primary slot; other resumed makers take no scope.
 
-    A run counts as a primary when it worked the team tree on a leaf. Its leaf's domain must
-    hold no other live primary.
+    A run counts as a primary when it worked the team tree, even before claiming a leaf. No primary
+    may still be live, regardless of its implementation domain.
     """
     session = SessionManager(db).get(session_id) if session_id is not None else None
     last = session.agent_run_id if session is not None else None
     run = LocalAgentRunManager(db).get(last) if last else None
-    if run is None or run.task_id is None or run.worktree_id != binding.worktree_id:
+    if run is None or run.worktree_id != binding.worktree_id:
         return None
-    domain = LocalTaskManager(db).get_task(run.task_id).implementation_domain or _UNDOMAINED_DOMAIN
-    if _live(db, binding.primaries.get(domain)):
+    if _live_primary(db, binding):
         raise TeamAdmissionRefused(
-            "primary_live", f"team {binding.team_id} already has a live {domain} primary"
+            "primary_live", f"team {binding.team_id} already has a live primary; use a Dev Pod"
         )
+    domain = (
+        LocalTaskManager(db).get_task(run.task_id).implementation_domain if run.task_id else None
+    ) or _UNDOMAINED_DOMAIN
     return DispatchScope(
         team_id=binding.team_id,
         project_id=binding.project_id,
@@ -230,6 +264,7 @@ def _is_bound_dev_manager(db: HubDatabase, caller_session_id: str, epic_id: str)
         run is not None
         and run.task_id == epic_id
         and definition is not None
+        and definition[0].name != "researcher"
         and "closing" in definition[0].task_step_writes
     )
 
@@ -301,15 +336,57 @@ def dispatch_for_caller(
                 "seat_definition_mismatch",
                 f"seat {resume_session_id} is {stored}; it resumes as {stored}, not {agent}",
             )
+        resumed_team = seat_team(db, session_id)
+        if resumed_team is not None and resumed_team.parent_team_id == binding.team_id:
+            if (
+                task_id is not None
+                or checkout_mode is not None
+                or branch_name is not None
+                or base_branch is not None
+                or worktree_id not in (None, resumed_team.worktree_id)
+            ):
+                raise TeamAdmissionRefused("team_tree_fixed", "a resumed pod seat keeps its tree")
+            if _REVIEWER_GRANT in grants:
+                return _reviewer(
+                    db, resumed_team, agent, parent, resume_session_id=resume_session_id, **options
+                )
+            return DispatchScope(
+                team_id=resumed_team.team_id,
+                project_id=resumed_team.project_id,
+                parent_session_id=parent,
+            )
     if _REVIEWER_GRANT in grants:
         return _reviewer(db, binding, agent, parent, resume_session_id=resume_session_id, **options)
+    if _TEST_GRANT in grants or {_MAKER_GRANT, "closing"} <= grants:
+        if (
+            task_id is not None
+            and open_leaf_below(db, epic.id, _leaf_id(db, binding.project_id, task_id)) is None
+        ):
+            raise TeamAdmissionRefused("task_outside_epic", "the seat must work an open epic leaf")
+        if (
+            branch_name
+            or base_branch
+            or checkout_mode not in (None, "none")
+            or worktree_id not in (None, binding.worktree_id)
+        ):
+            raise TeamAdmissionRefused("team_tree_fixed", "use a Dev Pod for a parallel leaf")
+        if _TEST_GRANT in grants and _live_primary(db, binding, _TEST_GRANT):
+            raise TeamAdmissionRefused(
+                "test_seat_live", "the team's primary test seat is live; use a Dev Pod"
+            )
+        return DispatchScope(
+            team_id=binding.team_id,
+            project_id=binding.project_id,
+            parent_session_id=parent,
+            worktree_id=binding.worktree_id if _TEST_GRANT in grants and not resumed else None,
+        )
     if resumed:
         return _resumed_maker(db, binding, parent, session_id) if _MAKER_GRANT in grants else None
     if _MAKER_GRANT in grants:
         return _maker(db, binding, epic, parent, **options)
     raise TeamAdmissionRefused(
         "seat_not_granted",
-        f"{agent} holds no implementation or review grant for team {binding.team_id}",
+        f"{agent} holds no test, implementation or review grant for team {binding.team_id}",
     )
 
 

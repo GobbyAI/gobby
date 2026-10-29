@@ -276,9 +276,14 @@ SELECT w.id::text AS worktree_id, w.worktree_path, w.branch_name, w.base_branch,
 FROM worktrees w
 JOIN tasks t ON t.id = w.task_id
 WHERE t.closed_at <= %s AND t.parent_task_id IS NOT NULL AND w.machine_id = %s
+AND NOT EXISTS (
+    SELECT 1 FROM step_executions se WHERE se.step_id = %s
+    AND se.output_json #>> '{team,task_id}' = t.id::text
+    AND se.output_json #>> '{team,parent_team_id}' IS NOT NULL
+)
 ORDER BY w.id
 """,
-        (cutoff, require_machine_id()),
+        (cutoff, require_machine_id(), ADMISSION_STEP),
     )
     if not rows:
         return []
@@ -472,7 +477,8 @@ async def _delete_tree(
 def _team_seats(db: HubDatabase, team: _DueTeam) -> list[AgentRun]:
     """Every run the team's runbooks launched, ended or not.
 
-    An ended seat still anchors the seats it dispatched, so those are found after it ends.
+    An ended seat still anchors its resumed run and the seats it dispatched. Resumes
+    may be parented to the epic manager even when the original seat belongs to a pod.
     """
     executions = LocalPipelineExecutionManager(db, team.binding.project_id)
     runs = LocalAgentRunManager(db)
@@ -481,6 +487,15 @@ def _team_seats(db: HubDatabase, team: _DueTeam) -> list[AgentRun]:
         execution = executions.get_execution(execution_id)
         if execution is not None and execution.session_id is not None:
             seats.extend(runs.list_all_by_parent(execution.session_id))
+    if seats:
+        current = db.fetchall(
+            "SELECT r.* FROM agent_runs r JOIN sessions s ON s.agent_run_id = r.id "
+            "WHERE s.id = ANY(%s)",
+            ([seat.child_session_id for seat in seats if seat.child_session_id],),
+        )
+        by_id = {seat.id: seat for seat in seats}
+        by_id.update((run.id, run) for run in map(AgentRun.from_row, current))
+        seats = list(by_id.values())
     return seats
 
 

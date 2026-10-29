@@ -7,7 +7,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from gobby.hooks._normalization_base_commands import classify_base_command, unwrap_execution_command
+from gobby.hooks._normalization_base_commands import (
+    classify_base_command,
+    execution_context_is_read_only,
+    unwrap_execution_command,
+)
 from gobby.hooks._normalization_bindings import (
     _literal_assignment_bindings,
     _literal_assignment_values,
@@ -374,7 +378,7 @@ def _classify_shell_command(
                 depth=depth,
                 base_cwd=None if directory.changed else base_cwd,
             )
-            if body_metadata.repo_mutation or any(
+            if not body_metadata.proven_read_only or any(
                 (body_metadata.extra or {}).get(flag)
                 for flag in (
                     "canonical_script_execution",
@@ -429,14 +433,28 @@ def _classify_shell_command(
                 directory.list_conditional |= (
                     segment.separator_before == "&&" or directory.in_conditional
                 )
-            metadata.append(
-                _ShellSegmentMetadata(
-                    "execute",
-                    neutral_setup=True,
-                    shell_words=tuple(raw_parts),
-                    shell_raw_words=source_parts,
+            if has_mutating_output_redirection(segment.tokens):
+                # The redirect runs in the invocation directory, before cd changes it.
+                metadata.append(
+                    _classify_shell_segment(
+                        segment.tokens,
+                        parts,
+                        segment_cwd,
+                        depth=depth,
+                        base_cwd=segment_base,
+                        invocation_cwd=segment_cwd,
+                        raw_by_token=raw_by_token,
+                    )
                 )
-            )
+            else:
+                metadata.append(
+                    _ShellSegmentMetadata(
+                        "execute",
+                        neutral_setup=True,
+                        shell_words=tuple(raw_parts),
+                        shell_raw_words=source_parts,
+                    )
+                )
             continue
 
         pipeline_filter = segment.separator_before == "|" and _is_read_only_pipeline_stage(
@@ -523,6 +541,12 @@ def _classify_shell_command(
         directory.apply_opaque_change(parts)
 
     metadata = _classify_stdin_python(metadata, heredoc_bodies)
+    metadata = [
+        item
+        if execution_context_is_read_only(list(item.shell_words))
+        else replace(item, read_only=False)
+        for item in metadata
+    ]
     result = _merge_shell_segment_metadata(_gate_rewritable_scripts(metadata))
     if compound_directory_change and result.get("canonical_repo_mutation"):
         # Without whole-stage ownership, neither inner nor followup cwd is proven.
@@ -725,6 +749,7 @@ def _classify_shell_segment_impl(
             neutral_setup=base_metadata.neutral_setup,
             pure_gcode_navigation=base_metadata.pure_gcode_navigation,
             read_only_pipeline_filter=base_metadata.read_only_pipeline_filter,
+            read_only=base_metadata.proven_read_only,
         )
 
     if has_shell_input_redirection(tokens):
@@ -785,9 +810,10 @@ def _classify_shell_segment_without_redirection(
     if not parts:
         return _ShellSegmentMetadata("execute")
 
-    executed, execution_cwd = unwrap_execution_command(
+    runner = unwrap_execution_command(
         parts, cwd or (str(base_cwd) if base_cwd is not None else None)
     )
+    executed, execution_cwd = runner.parts, runner.cwd
     if executed is None:
         return _ShellSegmentMetadata("execute", extra={"canonical_unresolved_execution": True})
     if executed != parts:
@@ -822,7 +848,7 @@ def _classify_shell_segment_without_redirection(
     if execution is not None and execution.parse_only:
         # A syntax check reads its script and runs none of it.
         if execution.script_word is None:
-            return _ShellSegmentMetadata("execute")
+            return _ShellSegmentMetadata("execute", read_only=True)
         return _ShellSegmentMetadata(
             "read", paths=tuple(_rebase_shell_paths([execution.script_word], cwd))
         )
@@ -888,6 +914,7 @@ def _classify_shell_segment_without_redirection(
             }
             return _ShellSegmentMetadata(
                 nested.get("canonical_tool_kind", "execute"),
+                read_only=nested.get("canonical_read_only") is True,
                 paths=tuple(nested.get("canonical_file_paths", ())),
                 write_paths=tuple(nested.get("canonical_write_file_paths", ())),
                 repo_mutation=bool(nested.get("canonical_repo_mutation")),
