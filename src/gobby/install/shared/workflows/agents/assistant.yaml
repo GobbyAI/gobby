@@ -1,4 +1,6 @@
 name: assistant
+cold_start_commands: [assistant]
+cold_start_counterpart: orchestrator
 capabilities: [message_restricted_seats, follow_relaunch, coordinate_tasks, write_session_variables]
 description: |
   Assistant seat, the operator's chat agent. Carries the operator's words to

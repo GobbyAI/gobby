@@ -94,6 +94,26 @@ def _resolve_inherit(body: AgentDefinitionBody, cli_source: str | None) -> Agent
     return body
 
 
+def resolve_cold_start_command(
+    db: HubDatabase, command: str, *, project_id: str | None = None
+) -> str | None:
+    """Resolve a unique alias from enabled interactive definitions in project scope."""
+    matches: list[str] = []
+    for row in AgentDefinitionManager(db).list_resolved(project_id=project_id):
+        if not row.enabled:
+            continue
+        try:
+            reject_terminal_backend(row.definition_json)
+            body = _body_from_row(row, row.name)
+        except (ValueError, TypeError):
+            continue
+        if body.supports_cold_start() and command.casefold() in body.cold_start_commands:
+            matches.append(row.name)
+    if len(matches) > 1:
+        raise AgentResolutionError(f"Cold-start command {command!r} matches multiple definitions")
+    return matches[0] if matches else None
+
+
 def resolve_agent_with_row(
     name: str,
     db: HubDatabase,

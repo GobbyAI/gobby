@@ -25,6 +25,7 @@ from gobby.skills.capability_routing import (
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hook_receipts import retire_session_hook_effects
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.agent_resolver import resolve_cold_start_command
 
 logger = logging.getLogger(__name__)
 
@@ -401,6 +402,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
             resolve_skill=lambda name: manager.resolve_skill_name(name, **project_kwargs),
             command_prefix=command_prefix,
             operator_commands=skill_name is None,
+            resolve_cold_start=lambda name: (
+                resolve_cold_start_command(self._session_manager.db, name, project_id=project_id)
+                if self._session_manager is not None
+                else None
+            ),
         )
         if route.kind == "help":
             return self._generate_help_content(
