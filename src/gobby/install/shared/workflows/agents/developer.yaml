@@ -1,4 +1,5 @@
 name: developer
+task_categories: [code, config, refactor, test]
 capabilities: [accept_resume_retype]
 description: |
   Developer seat. Implements one DevTeam task against the Test Writer's

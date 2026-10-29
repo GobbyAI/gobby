@@ -12,11 +12,13 @@ from pydantic import (
     PositiveInt,
     StrictBool,
     StrictStr,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
 
 from gobby.agents.reasoning import normalize_reasoning_effort
+from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES, IMPLEMENTATION_DOMAINS
 from gobby.workflows.definitions import WorkflowStep
 
 # The spawnable_agents value that lets a spawned agent spawn any agent.
@@ -196,6 +198,14 @@ class AgentDefinitionBody(BaseModel):
         default_factory=list,
         description="Permissions granted to this definition, independent of its name.",
     )
+    task_categories: list[StrictStr] = Field(
+        default_factory=list,
+        description="Expansion categories this definition accepts for automatic assignment.",
+    )
+    implementation_domains: list[StrictStr] = Field(
+        default_factory=list,
+        description="Optional code-domain restriction for automatic assignment; empty accepts all.",
+    )
     message_sender_capabilities: list[StrictStr] = Field(
         default_factory=list,
         description=(
@@ -328,6 +338,19 @@ class AgentDefinitionBody(BaseModel):
     def may_spawn(self, agent: str) -> bool:
         """Whether a spawned run of this definition may spawn ``agent``."""
         return self.spawnable_agents == [SPAWN_ANY_AGENT] or agent in self.spawnable_agents
+
+    @field_validator("task_categories", "implementation_domains")
+    @classmethod
+    def _validate_task_routing(cls, value: list[str], info: ValidationInfo) -> list[str]:
+        allowed = (
+            DEVELOPMENT_FORWARD_LEAF_CATEGORIES
+            if info.field_name == "task_categories"
+            else IMPLEMENTATION_DOMAINS
+        )
+        unknown = set(value) - allowed
+        if unknown:
+            raise ValueError(f"Unsupported {info.field_name}: {sorted(unknown)}")
+        return list(dict.fromkeys(value))
 
     @field_validator("cold_start_commands")
     @classmethod

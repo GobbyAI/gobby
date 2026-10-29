@@ -31,11 +31,12 @@ from gobby.plans.parser import (
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.tasks import Task
-from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN
+from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.expansion._common import (
     _CONTRACT_PHASE_ID_RE,
     _DEFAULT_PHASE_ID,
     _PHASE_ROOT_REF_RE,
+    _append_agent_selection_marker,
     _contract_acceptance_lines,
     _contract_affected_files,
     _contract_deferral_record,
@@ -45,6 +46,7 @@ from gobby.tasks.expansion._common import (
     _contract_section_body,
     _contract_single_task_id,
     _dedupe_dependencies,
+    _select_agent_from_registry,
     validate_contract_manifest,
 )
 
@@ -61,6 +63,7 @@ def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[
     section_by_id = {section.section_id: section for section in plan_doc.sections}
     phase_by_section_id = self._contract_phase_index(plan_doc)
     manifest_entry_by_section = validate_contract_manifest(plan_doc)
+    agent_definitions = self._list_agent_definitions_for_selection(task.project_id)
 
     phases: list[dict[str, Any]] = []
     phase_by_id: dict[str, dict[str, Any]] = {}
@@ -105,6 +108,7 @@ def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[
                 entry=entry,
                 section=section,
                 phase_id=phase_id,
+                agent_definitions=agent_definitions,
             )
             # Cross-plan ``(depends: #N)`` refs become blocked-by edges at apply. In a
             # multi-phase plan the phase's declared root waits on this leaf's phase
@@ -231,6 +235,7 @@ def _build_contract_entry_work_task(
     entry: ManifestEntry,
     section: PlanSection,
     phase_id: str,
+    agent_definitions: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Build the per-entry work task."""
     body = _contract_section_body(plan_doc, section)
@@ -240,6 +245,9 @@ def _build_contract_entry_work_task(
     if acceptance_lines:
         description = f"{description}\n\nAcceptance items:\n" + "\n".join(acceptance_lines)
     validation = _contract_validation_criteria(entry, section)
+    assigned_agent = _assigned_agent_for_entry(entry, agent_definitions)
+    if assigned_agent is None:
+        description = _append_agent_selection_marker(description)
 
     labels = list(entry.labels)
     additional_skills: list[str] = []
@@ -259,7 +267,7 @@ def _build_contract_entry_work_task(
         "validation": validation,
         "affected_files": affected_files,
         "labels": labels,
-        "assigned_agent": _assigned_agent_for_entry(entry),
+        "assigned_agent": assigned_agent,
         "implementation_domain": entry.implementation_domain,
         "additional_skills": additional_skills,
         "tdd_required": entry.tdd,
@@ -301,18 +309,21 @@ def _contract_validation_criteria(entry: ManifestEntry, section: PlanSection) ->
     return "\n".join(line for line in lines if line)
 
 
-def _assigned_agent_for_entry(entry: ManifestEntry) -> str | None:
+def _assigned_agent_for_entry(
+    entry: ManifestEntry, agent_definitions: list[dict[str, Any]]
+) -> str | None:
     if entry.assigned_agent:
         return entry.assigned_agent
     if entry.implementation_domain:
-        agent = AGENT_BY_IMPLEMENTATION_DOMAIN.get(entry.implementation_domain)
-        if agent is None:
+        if entry.implementation_domain not in IMPLEMENTATION_DOMAINS:
             raise ValueError(
                 f"Unsupported implementation_domain {entry.implementation_domain!r} "
                 f"for manifest entry source_section={entry.source_section!r}"
             )
-        return agent
-    return None
+    return _select_agent_from_registry(
+        {"category": entry.category, "implementation_domain": entry.implementation_domain},
+        agent_definitions,
+    )
 
 
 def _contract_phase_index(self: Any, plan_doc: PlanDocument) -> dict[str, PlanSection]:

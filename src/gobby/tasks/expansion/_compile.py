@@ -398,6 +398,7 @@ def _normalize_native_compiled_spec(
             "affected_files": affected_files,
             "execution_group": task_item.get("execution_group") or task_item.get("parallel_group"),
             "assigned_agent": assigned_agent,
+            "implementation_domain": task_item.get("implementation_domain"),
             "additional_skills": additional_skills,
         }
         tasks.append(normalized_task)
