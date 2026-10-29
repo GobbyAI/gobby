@@ -154,7 +154,12 @@ def agent_workspace_write_violation(
 
     data = event_data or {}
     command = tool_input.get("command") if isinstance(tool_input, Mapping) else None
-    commits = parse_git_commit_invocations(command) if isinstance(command, str) else ()
+    # Structured patches may carry prose in command; only shell tools execute it.
+    commits = (
+        parse_git_commit_invocations(command)
+        if data.get("tool_name") == "Bash" and isinstance(command, str)
+        else ()
+    )
     is_write = (
         data.get("tool_name") in WORKSPACE_WRITE_TOOLS or data.get("canonical_tool_kind") == "write"
     )
