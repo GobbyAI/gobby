@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from gobby.communications.models import ChannelConfig, CommsMessage
 from gobby.communications.telegram_access import allowed_senders, is_telegram_dm
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
-from gobby.storage.sessions._contested_expiry import read_session_variables
+from gobby.workflows.agent_resolver import session_has_capability
 
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
@@ -45,7 +45,7 @@ def is_terminal_session(session: Session) -> bool:
 
 
 def reconcile_operator_target(manager: CommunicationsManager, channel: ChannelConfig) -> str | None:
-    """Retain an operator selection, otherwise attach the live canonical Assistant."""
+    """Retain an operator selection, otherwise attach a live definition-authorized seat."""
     if _operator_sender(channel) is None:
         return None
     try:
@@ -78,13 +78,14 @@ def reconcile_operator_target(manager: CommunicationsManager, channel: ChannelCo
                 or session.agent_run_id is not None
             ):
                 continue
-            variables = read_session_variables(manager.store.db, session.id, keys=("_agent_type",))
-            if (variables or {}).get("_agent_type") != "assistant":
+            if not session_has_capability(
+                manager.store.db, session.id, "auto_attach_operator_conversations"
+            ):
                 continue
             try:
                 manager.attach_conversation(channel.name, conversation, session.id)
             except ValueError:
-                continue  # An Assistant already serving another conversation is unavailable.
+                continue  # A seat already serving another conversation is unavailable.
             return session.id
     return None
 

@@ -9,17 +9,20 @@ import pytest
 
 from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
+from gobby.communications.operator_routing import reconcile_operator_target
 from gobby.communications.telegram_actions import TelegramActionController
 from gobby.config.communications import CommunicationsConfig
 from gobby.sessions.mailbox import MailboxService
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.communications import LocalCommunicationsStore
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.utils.datetime import utc_now
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.integration
 
@@ -35,11 +38,9 @@ class OperatorEnvironment:
     adapter: MagicMock
     project_id: str
 
-    def assistant(self) -> Session:
+    def assistant(self, definition: str = "assistant") -> Session:
         session = self.sessions.register("assistant-seat", None, "claude", self.project_id)
-        SessionVariableManager(self.sessions.db).set_variable(
-            session.id, "_agent_type", "assistant"
-        )
+        SessionVariableManager(self.sessions.db).set_variable(session.id, "_agent_type", definition)
         return session
 
     def message(self) -> CommsMessage:
@@ -56,6 +57,7 @@ class OperatorEnvironment:
 
 @pytest.fixture
 def operator_dm(temp_db: HubDatabase, sample_project: dict[str, str]) -> OperatorEnvironment:
+    seed_seat(temp_db, "assistant", capabilities=["auto_attach_operator_conversations"])
     sessions = SessionManager(temp_db)
     project_id = sample_project["id"]
     old = sessions.register("expired-identity", None, "codex", project_id)
@@ -104,6 +106,27 @@ def operator_dm(temp_db: HubDatabase, sample_project: dict[str, str]) -> Operato
     return OperatorEnvironment(
         manager, sessions, channel, old, mailbox, backend, adapter, project_id
     )
+
+
+@pytest.mark.parametrize("definition", ["assistant", "custom-inbox"])
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("granted", [False, True])
+def test_automatic_operator_target_uses_definition_capability(
+    operator_dm: OperatorEnvironment, definition: str, enabled: bool, granted: bool
+) -> None:
+    env = operator_dm
+    definitions = AgentDefinitionManager(env.sessions.db)
+    row = definitions.get_by_name("assistant")
+    assert row is not None
+    body = dict(row.definition_json)
+    body["name"] = definition
+    body["capabilities"] = ["auto_attach_operator_conversations"] if granted else []
+    definitions.update(row.id, name=definition, definition_json=body, enabled=enabled)
+    seat = env.assistant(definition)
+    target = reconcile_operator_target(env.manager, env.channel)
+    expected = seat.id if enabled and granted else None
+    assert target == expected
+    assert env.manager.attached_session(env.channel.id, "dm:42") == expected
 
 
 @pytest.mark.asyncio
