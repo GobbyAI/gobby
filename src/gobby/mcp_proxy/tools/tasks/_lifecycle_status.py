@@ -360,7 +360,8 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         name="de_escalate_task",
         description=(
             "Return an escalated task to ready after human intervention resolves the issue. "
-            "Only Triage or the operator resets a task whose review epoch is exhausted."
+            "Resetting an exhausted review epoch requires the caller's enabled definition "
+            "to declare reset_review_epoch, or the operator's own terminal."
         ),
         input_schema={
             "type": "object",
