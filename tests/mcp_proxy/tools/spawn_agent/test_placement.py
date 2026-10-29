@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import threading
 import uuid
@@ -41,6 +42,7 @@ from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager, ensure_system_session, system_session_id
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id, native_locator_key
 from gobby.storage.workspaces import (
     Workspace,
@@ -1021,9 +1023,9 @@ async def test_bind_publish_failure_keeps_release_kill_backstop(
     released: list[str | None] = []
     real_release = h.reserver.release
 
-    async def recording_release(reserved: Any, *, terminal_id: str | None) -> None:
+    async def recording_release(reserved: Any, *, terminal_id: str | None, timeout: float) -> None:
         released.append(terminal_id)
-        await real_release(reserved, terminal_id=terminal_id)
+        await real_release(reserved, terminal_id=terminal_id, timeout=timeout)
 
     monkeypatch.setattr(h.reserver, "release", recording_release)
 
@@ -1305,7 +1307,9 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
         runtimes=(runtime,),
     )
 
-    result = await _spawn(h, _tab(h), timeout=0.05)
+    # The budget times out the held launch. It also bounds the placement read, which spikes
+    # to 40-210ms on the shared hub under full-file load; 50ms made that read the flake.
+    result = await _spawn(h, _tab(h), timeout=1.0)
 
     assert result["success"] is False
     [terminal_id] = _terminal_states(h)
@@ -1344,6 +1348,144 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
     assert _terminal_states(h)[terminal_id] == "orphaned"
     assert h.checkout_mode.cleaned == 0
     assert _panes(h) == {pane_id: terminal_id}
+
+
+@pytest.mark.parametrize(
+    "resource", ["session_read", "preflight", "workspace_lock", "workspace_row"]
+)
+async def test_placed_timeout_bounds_resource_wait_and_releases_dispatch(
+    placed: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    resource: str,
+) -> None:
+    h = placed
+    tasks = LocalTaskManager(h.db)
+    task = tasks.create_task(
+        h.project_id, "Blocked placed spawn", validation_criteria="Timeout frees the seat and task."
+    )
+    caplog.set_level(logging.WARNING)
+    gate = asyncio.Event()
+    release_read = threading.Event()
+    lock = h.reserver._locks.setdefault(h.workspace.id, asyncio.Lock())
+    if resource == "session_read":
+
+        def held_team_tab(*args: object) -> None:
+            assert release_read.wait(10), "Test did not release the session read"
+
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools.spawn_agent._placement.own_team_tab", held_team_tab
+        )
+    elif resource == "preflight":
+        original = h.reserver.preflight
+
+        async def held_preflight(*args: Any, **kwargs: Any) -> Any:
+            await gate.wait()
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(h.reserver, "preflight", held_preflight)
+    elif resource == "workspace_lock":
+        await lock.acquire()
+
+    row_held, release_row = threading.Event(), threading.Event()
+
+    def hold_row() -> None:
+        # Separate thread prevents the spawn from inheriting this transaction's context.
+        with h.db.transaction() as conn:
+            conn.execute("SELECT id FROM workspaces WHERE id = %s FOR UPDATE", (h.workspace.id,))
+            row_held.set()
+            assert release_row.wait(10), "Test did not release the workspace row lock"
+
+    holder = (
+        asyncio.create_task(asyncio.to_thread(hold_row)) if resource == "workspace_row" else None
+    )
+    try:
+        if holder is not None:
+            assert await asyncio.to_thread(row_held.wait, 5)
+        spawn = asyncio.create_task(
+            _spawn(
+                h,
+                _tab(h),
+                timeout=0.05,
+                task_id=task.id,
+                task_manager=tasks,
+                agent_lookup_name=SEAT if resource == "session_read" else None,
+            )
+        )
+        try:
+            # The refusal lands at the 0.05s budget; the ceiling covers its post-refusal writes,
+            # which slow under full-file load. A 30s placement default would still miss it.
+            done, _ = await asyncio.wait({spawn}, timeout=5.0)
+        finally:
+            gate.set()
+            release_read.set()
+            if resource == "workspace_lock":
+                lock.release()
+            if not spawn.done():
+                spawn.cancel()
+            # Release the row before awaiting cancellation's insert compensation.
+            release_row.set()
+            await asyncio.gather(spawn, return_exceptions=True)
+    finally:
+        release_row.set()
+        if holder is not None:
+            await holder
+    assert done, f"Placed spawn ignored its timeout while waiting for {resource}"
+    result = spawn.result()
+    assert result["success"] is False
+    assert result.get("placement_error") == "timeout"
+    reason = result.get("error", "")
+    assert reason.strip()
+    assert any(reason in record.getMessage() for record in caplog.records)
+    assert h.launches == []
+    assert _panes(h) == {} and _tabs(h) == set()
+    assert h.workspaces._spawns_in_flight == set()
+    assert not lock.locked()
+    mutexes = TaskDispatchMutexManager(h.db)
+    assert mutexes.acquire_mutex(task.id, "retry", "spawn", ttl_seconds=5)
+    assert mutexes.release_mutex(task.id, "retry")
+    assert all(status in {"cancelled", "failed"} for status in _run_statuses(h))
+
+
+async def test_failed_placed_launch_bounds_release_row_lock(
+    placed: _Harness, caplog: pytest.LogCaptureFixture
+) -> None:
+    h = placed
+    caplog.set_level(logging.WARNING)
+    row_held, release_row = threading.Event(), threading.Event()
+    holders: list[asyncio.Task[None]] = []
+
+    def hold_row(pane_id: str) -> None:
+        with h.db.transaction() as conn:
+            conn.execute("SELECT id FROM workspace_panes WHERE id = %s FOR UPDATE", (pane_id,))
+            row_held.set()
+            assert release_row.wait(10), "Test did not release the pane row lock"
+
+    async def fail_with_locked_pane(request: SpawnRequest) -> SpawnResult:
+        [pane_id] = _panes(h)
+        holders.append(asyncio.create_task(asyncio.to_thread(hold_row, pane_id)))
+        assert await asyncio.to_thread(row_held.wait, 5)
+        return await _sandbox_refused(request)
+
+    h.executor = fail_with_locked_pane
+    spawn = asyncio.create_task(_spawn(h, _tab(h), timeout=1.0))
+    try:
+        done, _ = await asyncio.wait({spawn}, timeout=5.0)
+    finally:
+        release_row.set()
+        await asyncio.gather(spawn, *holders, return_exceptions=True)
+    assert done, "Failed placed launch ignored its timeout while releasing the pane"
+    result = spawn.result()
+    assert result["success"] is False
+    assert "Sandbox startup failed closed" in result["error"]
+    assert any(
+        "waiting for a workspace row lock" in record.getMessage() for record in caplog.records
+    )
+    assert h.workspaces._spawns_in_flight == set()
+    [pane_id] = _panes(h)
+    assert _panes(h) == {pane_id: None}
+    swept = h.workspaces.sweep_dead_panes(h.workspace.id)
+    assert {pane.id for pane in swept.removed_panes} == {pane_id}
 
 
 async def test_unplaced_timeout_rolls_back_at_once_without_a_claim(

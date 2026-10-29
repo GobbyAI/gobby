@@ -6,6 +6,8 @@ import asyncio
 import logging
 import math
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -646,9 +648,16 @@ class TestKeywordAsyncSearchBackend:
                 self.sql = ""
                 self.params: tuple[object, ...] = ()
 
-            def fetchall(self, sql: str, params: tuple[object, ...]) -> list[object]:
+            @contextmanager
+            def transaction(self) -> Iterator[RecordingHub]:
+                yield self
+
+            def execute(self, sql: str, params: tuple[object, ...] = ()) -> RecordingHub:
                 self.sql = sql
                 self.params = params
+                return self
+
+            def fetchall(self) -> list[object]:
                 return []
 
         hub = RecordingHub()

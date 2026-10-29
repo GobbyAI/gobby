@@ -47,10 +47,12 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
-    # The Orchestrator edits tasks as needed and reads seats' report folders to review them.
+    # The Orchestrator edits tasks as needed, reads seats' report folders to review them,
+    # and lands approved work in shared checkouts that hold other sessions' staged paths.
     exclude:
       - "name:block-update-task"
       - "name:agent-workspace-read-scope"
+      - "name:block-cross-session-foreign-staged-commit"
   variables:
     _seat_procedure: gobby:references/agents/procedures/orchestrator.md
     _seat_references:

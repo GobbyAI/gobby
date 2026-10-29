@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import functools
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +14,7 @@ from gobby.agents.sandbox_gate import SandboxRequiredError, require_managed_srt
 from gobby.mcp_proxy.tools.spawn_agent._spawn_phase import SpawnPhase
 from gobby.storage.sessions._constants import system_session_id
 from gobby.terminals.workspace_agent_panes import (
+    PLACEMENT_WAIT_SECONDS,
     AgentPaneReserver,
     AgentPlacement,
     AgentPlacementError,
@@ -20,6 +22,8 @@ from gobby.terminals.workspace_agent_panes import (
 )
 from gobby.utils.git import run_to_completion
 from gobby.workflows.condition_helpers_sessions import own_seat_resume, own_team_tab
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -30,6 +34,15 @@ class PlacedLaunch:
     resolved: ResolvedPlacement
     # An empty tab the resumed seat replaces; closed before the reserve takes the title.
     replaces_tab: str | None = None
+    # Bounds the reserve's workspace-lock wait and its row-lock waits.
+    wait_seconds: float = PLACEMENT_WAIT_SECONDS
+
+
+def placement_wait_seconds(spawn_timeout: float | None) -> float:
+    """The placement wait bound: the spawn's own timeout, capped at the placement default."""
+    if spawn_timeout is None:
+        return PLACEMENT_WAIT_SECONDS
+    return min(spawn_timeout, PLACEMENT_WAIT_SECONDS)
 
 
 def _refusal(code: str, message: str) -> dict[str, Any]:
@@ -50,6 +63,7 @@ async def preflight_placement(
     seat_title: str | None = None,
     resume_session_id: str | None = None,
     replaces_tab: str | None = None,
+    spawn_timeout: float | None = None,
 ) -> PlacedLaunch | dict[str, Any] | None:
     """Resolve a placement before any side effect; return a refusal reply or ``None``.
 
@@ -78,31 +92,44 @@ async def preflight_placement(
         )
     if reserver is None:
         return _refusal("invalid_op", "Agent pane placement is not available")
-    # Only a team manager's own-team seat may place from an autonomous caller: a resume,
-    # or a fresh seat into its epic team's tab.
-    own_seat = (
-        resume_session_id is not None
-        and session_manager is not None
-        and await asyncio.to_thread(
-            own_seat_resume, session_manager, parent_session_id, agent_name, resume_session_id
-        )
-    )
-    own_tab: str | None = None
-    if resume_session_id is None and session_manager is not None and agent_name is not None:
-        own_tab = await asyncio.to_thread(
-            own_team_tab, session_manager, parent_session_id, agent_name
-        )
+    wait = placement_wait_seconds(spawn_timeout)
     try:
-        resolved = await reserver.preflight(
-            f"session:{parent_session_id}",
-            project_id,
-            parsed,
-            own_seat_resume=own_seat,
-            own_team_tab=own_tab,
-        )
+        # Activate one deadline before any session read or placement resolution.
+        async with asyncio.timeout(wait):
+            # Only a team manager's own-team seat may place from an autonomous caller: a
+            # resume, or a fresh seat into its epic team's tab.
+            own_seat = (
+                resume_session_id is not None
+                and session_manager is not None
+                and await asyncio.to_thread(
+                    own_seat_resume,
+                    session_manager,
+                    parent_session_id,
+                    agent_name,
+                    resume_session_id,
+                )
+            )
+            own_tab: str | None = None
+            if resume_session_id is None and session_manager is not None and agent_name is not None:
+                own_tab = await asyncio.to_thread(
+                    own_team_tab, session_manager, parent_session_id, agent_name
+                )
+            resolved = await reserver.preflight(
+                f"session:{parent_session_id}",
+                project_id,
+                parsed,
+                own_seat_resume=own_seat,
+                own_team_tab=own_tab,
+            )
     except AgentPlacementError as exc:
         return _refusal(exc.code, str(exc) or type(exc).__name__)
-    return PlacedLaunch(reserver=reserver, resolved=resolved, replaces_tab=replaces_tab)
+    except TimeoutError:
+        message = "Placed spawn timed out resolving the placement"
+        logger.warning("Placed spawn refused: %s", message)
+        return _refusal("timeout", message)
+    return PlacedLaunch(
+        reserver=reserver, resolved=resolved, replaces_tab=replaces_tab, wait_seconds=wait
+    )
 
 
 def task_active_refusal(response: dict[str, Any]) -> dict[str, Any]:
@@ -126,8 +153,10 @@ async def run_placed_spawn(
     reserver = placed.reserver
     try:
         if placed.replaces_tab is not None:
-            await reserver.close_empty_tab(placed.replaces_tab)
-        reserved = await reserver.reserve(placed.resolved, worktree_id=worktree_id)
+            await reserver.close_empty_tab(placed.replaces_tab, timeout=placed.wait_seconds)
+        reserved = await reserver.reserve(
+            placed.resolved, worktree_id=worktree_id, timeout=placed.wait_seconds
+        )
     except asyncio.CancelledError:
         await phase.fail("Agent spawn cancelled")
         raise
@@ -144,7 +173,7 @@ async def run_placed_spawn(
         nonlocal launch_terminal_id, bind_error
         launch_terminal_id = terminal_id
         try:
-            await reserver.bind(reserved, terminal_id)
+            await reserver.bind(reserved, terminal_id, timeout=placed.wait_seconds)
         except AgentPlacementError as exc:
             bind_error = exc.code
             if exc.code == "busy":
@@ -168,7 +197,11 @@ async def run_placed_spawn(
         if result is not None and result.get("success") is True:
             reserver.settle(reserved)
         else:
-            await run_to_completion(reserver.release(reserved, terminal_id=launch_terminal_id))
+            await run_to_completion(
+                reserver.release(
+                    reserved, terminal_id=launch_terminal_id, timeout=placed.wait_seconds
+                )
+            )
     if bind_error is not None and result.get("success") is not True:
         return {**result, "placement_error": bind_error}
     return result
