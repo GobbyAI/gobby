@@ -12,6 +12,7 @@ import yaml
 
 from gobby.paths import get_global_workflows_dir
 from gobby.storage.definition_validation import validate_registry_regexes
+from gobby.storage.definitions import preserve_bundled_tag
 from gobby.storage.definitions.agents import (
     AgentDefinitionManager,
 )
@@ -59,17 +60,6 @@ def _check_import_override(db: Any, kind: str, name: str, data: dict[str, Any]) 
     """Require explicit intent even when an existing project row hides the bundle."""
     bundled = _KIND_MANAGERS[kind](db).get_by_name(name)
     detect_override_conflict(SimpleNamespace(name=name, definition_json=data), bundled)
-
-
-def _preserve_bundled_tag(existing: Any, fields: dict[str, Any]) -> None:
-    """An intentional override must not make later unmarked imports look unrelated."""
-    if "gobby" not in (existing.tags or []):
-        return
-    tags = fields.get("tags")
-    if tags is None:
-        fields["tags"] = ["gobby"]
-    elif isinstance(tags, list) and "gobby" not in tags:
-        fields["tags"] = [*tags, "gobby"]
 
 
 def _lookup_existing_kind(db: Any, name: str, project_id: str | None) -> str | None:
@@ -147,7 +137,7 @@ def _upsert_rule(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
         "tags": data.get("tags"),
     }
     if existing is not None and existing.project_id == project_id:
-        _preserve_bundled_tag(existing, fields)
+        preserve_bundled_tag(existing.tags, fields)
         return manager.update(existing.id, **fields)
     return manager.create(name=name, project_id=project_id, source="installed", **fields)
 
@@ -191,7 +181,7 @@ def _upsert_pipeline(db: Any, data: dict[str, Any], project_id: str | None) -> A
         "tags": definition.tags,
     }
     if existing is not None and existing.project_id == project_id:
-        _preserve_bundled_tag(existing, fields)
+        preserve_bundled_tag(existing.tags, fields)
         return manager.update(existing.id, **fields)
     return manager.create(name=name, project_id=project_id, source="installed", **fields)
 

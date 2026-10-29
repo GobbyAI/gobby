@@ -5,7 +5,6 @@ Contains helpers and a register_pipeline_tools() function that adds all
 pipeline-related MCP tools to a given InternalToolRegistry.
 """
 
-import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -55,7 +54,15 @@ logger = logging.getLogger(__name__)
 def _export_row(row: PipelineDefinitionRow) -> SimpleNamespace:
     return SimpleNamespace(
         name=row.name,
-        definition_json=json.dumps(row.definition_json),
+        definition_json={
+            **row.definition_json,
+            "type": "pipeline",
+            "name": row.name,
+            "description": row.description,
+            "enabled": row.enabled,
+            "tags": row.tags or [],
+            **({"version": row.version} if row.version is not None else {}),
+        },
         tags=row.tags,
     )
 
@@ -162,6 +169,7 @@ def create_pipeline_definition(
             cast(Any, _export_row(row)),
             project_path,
             kind="pipeline",
+            db=def_manager.db,
             make_global=make_global_template,
         )
     except Exception as e:
@@ -211,6 +219,9 @@ def update_pipeline_definition(
         fields["tags"] = tags
     if not fields:
         return {"success": False, "error": "No fields to update"}
+    from gobby.storage.definitions import preserve_bundled_tag
+
+    preserve_bundled_tag(row.tags, fields)
     try:
         updated = def_manager.update(row.id, **fields)
     except Exception as e:
@@ -223,6 +234,7 @@ def update_pipeline_definition(
             cast(Any, _export_row(updated)),
             project_path,
             kind="pipeline",
+            db=def_manager.db,
             make_global=make_global_template,
         )
     except Exception as e:

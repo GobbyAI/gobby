@@ -4,6 +4,7 @@ from gobby.storage.definitions._shared import (
     DefinitionNameConflictError,
     DefinitionNotFoundError,
     compute_definition_hash,
+    preserve_bundled_tag,
 )
 from gobby.storage.definitions.agents import (
     AgentDefinitionManager,
@@ -51,6 +52,7 @@ __all__ = [
     "advance_persistent_revision",
     "bump_definitions_revision",
     "compute_definition_hash",
+    "preserve_bundled_tag",
     "fetch_persistent_revisions",
     "get_definitions_revision",
     "register_revision_listener",

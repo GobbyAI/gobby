@@ -722,7 +722,9 @@ def test_auto_exported_agent_reimports_every_field(temp_db: HubDatabase, tmp_pat
     )
     original = AgentDefinitionBody.model_validate(manager.get(row.id).definition_json)
 
-    exported = auto_export_definition(_export_row(manager.get(row.id)), tmp_path, kind="agent")
+    exported = auto_export_definition(
+        _export_row(manager.get(row.id)), tmp_path, db=temp_db, kind="agent"
+    )
     assert exported is not None
     assert manager.hard_delete(row.id)
 
@@ -750,7 +752,9 @@ def test_mcp_toggled_agent_auto_exports_its_state(
     )
     assert toggle_agent_definition(manager, "toggled-agent", enabled)["success"] is True
 
-    exported = auto_export_definition(_export_row(manager.get(row.id)), tmp_path, kind="agent")
+    exported = auto_export_definition(
+        _export_row(manager.get(row.id)), tmp_path, db=temp_db, kind="agent"
+    )
     assert exported is not None
     assert yaml.safe_load(exported.read_text())["enabled"] is enabled
     assert manager.hard_delete(row.id)
