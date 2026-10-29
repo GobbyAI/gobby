@@ -10,7 +10,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.tasks.state_semantics import is_task_claimed_by_session
 from gobby.workflows.agent_models import AgentStepWorkflowBody
-from gobby.workflows.reserved_variables import DEVELOPER_HANDOFF_TASKS_VARIABLE
 from gobby.workflows.step_instances import (
     AgentStepInstance,
     AgentStepInstanceManager,
@@ -39,6 +38,18 @@ def _read_task(db: HubDatabase, task_id: str) -> Task | None:
         return LocalTaskManager(db).get_task(task_id)
     except (TaskNotFoundError, ValueError):
         return None
+
+
+def pending_claim_handlers(instance: AgentStepInstance) -> list[dict[str, Any]] | None:
+    """Bind an early successful claim without skipping the steps before claim."""
+    workflow = instance.workflow
+    binding = _binding_step_index(workflow)
+    names = [step.name for step in workflow.steps]
+    if binding is None or instance.current_step not in names:
+        return None
+    if names.index(instance.current_step) >= binding:
+        return None
+    return workflow.steps[binding].on_mcp_success
 
 
 def release_lost_binding(
@@ -91,8 +102,6 @@ def release_lost_binding(
 
     rewound = instance.model_copy(deep=True)
     defaults = copy.deepcopy(snapshot.variables)
-    # Handoffs outlive any one binding; only observing their close retires them.
-    defaults.pop(DEVELOPER_HANDOFF_TASKS_VARIABLE, None)
     rewound.variables.update(defaults)
     rewound.current_step = names[binding]
     rewound.step_action_count = 0
@@ -102,3 +111,60 @@ def release_lost_binding(
     except StaleStepInstanceWriteError:
         return instance
     return rewound
+
+
+def recover_rejected_submission(db: HubDatabase, instance: AgentStepInstance) -> AgentStepInstance:
+    """Recover a developer whose current candidate was rejected without a message read.
+
+    Review records are authoritative even when a hold delayed the reviewer or its
+    notification. Require evidence from this submission; a previous round must not
+    reopen a freshly resubmitted candidate.
+    """
+    if (
+        instance.agent_name != "developer"
+        or instance.current_step != "submit"
+        or instance.workflow.get_step("implement") is None
+        or instance.step_entered_at is None
+    ):
+        return instance
+    task_id = instance.variables.get(BOUND_TASK_VARIABLE)
+    task = _read_task(db, task_id) if isinstance(task_id, str) else None
+    if (
+        task is None
+        or not is_task_claimed_by_session(task, instance.session_id)
+        or not task.commits
+    ):
+        return instance
+
+    from gobby.agents.team_lifecycle import seat_team
+    from gobby.agents.team_review import seat_team_held
+    from gobby.tasks.step_records import current_task_steps, list_task_step_records
+
+    steps = current_task_steps(list_task_step_records(db, task.id), task.review_epoch)
+    review, implementation = steps.get("review"), steps.get("implementation")
+    if (
+        review is None
+        or review.status != "rejected"
+        or review.updated_at < instance.step_entered_at
+        or implementation is None
+        or implementation.status != "approved"
+        or implementation.session_id != instance.session_id
+        or not review.commit_sha
+        or implementation.commit_sha != review.commit_sha
+        or not review.commit_sha.startswith(task.commits[-1])
+    ):
+        return instance
+    binding = seat_team(db, instance.session_id)
+    if binding is not None and seat_team_held(db, binding):
+        return instance
+
+    recovered = instance.model_copy(deep=True)
+    recovered.variables.update(bounced=True, implementation_complete=False)
+    recovered.current_step = "implement"
+    recovered.step_action_count = 0
+    recovered.step_entered_at = datetime.now(UTC)
+    try:
+        AgentStepInstanceManager(db).save(recovered, if_match=(instance.id, instance.updated_at))
+    except StaleStepInstanceWriteError:
+        return instance
+    return recovered

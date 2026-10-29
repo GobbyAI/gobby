@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.step_binding import release_lost_binding
+from gobby.workflows.step_binding import recover_rejected_submission, release_lost_binding
 from gobby.workflows.step_instances import (
     AgentStepInstance,
     AgentStepInstanceManager,
@@ -77,7 +77,9 @@ def _get_active_step_workflow_context(
         instance = (
             active
             if session_variables is None
-            else release_lost_binding(db, active, session_variables)
+            else recover_rejected_submission(
+                db, release_lost_binding(db, active, session_variables)
+            )
         )
         if not instance.current_step:
             continue

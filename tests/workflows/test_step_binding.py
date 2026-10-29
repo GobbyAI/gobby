@@ -382,35 +382,17 @@ async def test_inline_close_handler_moves_implement_to_claim(
     assert _current_step(seats.db, seats.former) == "claim"
 
 
-def test_developer_cannot_forge_handoff_permission(seats: _Seats) -> None:
-    _seat(seats, seats.former, "implement")
-    event = replace(
-        _after_tool(seats.former, "set_variable", {}, {}),
-        event_type=HookEventType.BEFORE_TOOL,
-    )
-    event.data.update(
-        tool_name="mcp__gobby__set_variable",
-        tool_input={"name": "_developer_handoff_tasks", "value": [seats.task_id], "scope": "step"},
-    )
-    response = RuleEngine(seats.db)._check_step_tool_enforcement(event, seats.former, {})
-    assert response is not None and response.decision == "block"
-    assert "managed by the step workflow runtime" in str(response.reason)
-
-
-def test_lost_active_claim_keeps_previous_handoffs(seats: _Seats) -> None:
-    """An unrelated transfer retires the active binding, not unfinished handoffs."""
+def test_lost_active_claim_resets_binding_state(seats: _Seats) -> None:
+    """An unrelated transfer retires the old binding and its attempt state."""
     claim_task(seats.db, seats.task_id, seats.former)
-    _seat(seats, seats.former, "implement")
-    tasks = LocalTaskManager(seats.db)
-    handoff = tasks.create_task(
-        tasks.get_task(seats.task_id).project_id,
-        "Previously handed off",
-        validation_criteria="The handoff is still pending.",
-    )
+    body = synthetic_developer_body()
+    assert body.step_workflow is not None
+    body.step_workflow.variables["bounced"] = False
+    _persist(seats, seats.former, body, "implement")
     instances = AgentStepInstanceManager(seats.db)
     instance = instances.get_for_session(seats.former)
     assert instance is not None
-    instance.variables["_developer_handoff_tasks"] = [handoff.id]
+    instance.variables["bounced"] = True
     instances.save(instance)
     _force_transfer(seats)
 
@@ -419,7 +401,7 @@ def test_lost_active_claim_keeps_previous_handoffs(seats: _Seats) -> None:
     assert context is not None and context.current_step == "claim"
     _, state = _instance_state(seats.db, seats.former)
     assert state["assigned_task_id"] is None and state["task_claimed"] is False
-    assert state["_developer_handoff_tasks"] == [handoff.id]
+    assert state["bounced"] is False
 
 
 @pytest.mark.parametrize("move", [_transfer, _force_transfer, _release])
@@ -1392,7 +1374,7 @@ async def test_active_claim_rebinds_parked_or_closed_step_task(
     instances = AgentStepInstanceManager(seats.db)
     instance = instances.get_for_session(seats.former)
     assert instance is not None
-    instance.variables.update(bounced=True, _developer_handoff_tasks=[history.id])
+    instance.variables.update(bounced=True)
     instances.save(instance)
 
     # Reconcile through the real BEFORE_TOOL hook, then use an ordinary idempotent claim.
@@ -1429,7 +1411,6 @@ async def test_active_claim_rebinds_parked_or_closed_step_task(
     assert step == "route_skills"
     assert (state["assigned_task_id"], state["assigned_task_ref"]) == (active.id, active_ref)
     assert state["bounced"] is False
-    assert state["_developer_handoff_tasks"] == [history.id]
     session_state = variables.get_variables(seats.former)
     assert (session_state["assigned_task_id"], session_state["assigned_task_ref"]) == (
         active.id,

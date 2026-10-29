@@ -50,6 +50,11 @@ async def _submit_seat(db: HubDatabase) -> SeatRun:
         "uv run --no-sync gobby test-types audit tests/test_example.py --fail-on-new",
         "uv run --no-sync ruff format --check src/example.py",
         "uv run --no-sync ruff check src/example.py",
+        "uv --directory . run --no-sync ruff format --check src/example.py",
+        "uv run --env-file .env ruff format --diff src/example.py",
+        "python3 -I -m black --check src/example.py",
+        "npx --package prettier prettier --check src/example.ts",
+        "uv run --no-sync git status --short",
         "GOBBY_TEST_PROTECT=1 uv run --no-sync pytest tests/test_example.py -q",
     ],
 )
@@ -80,6 +85,11 @@ async def test_submit_allows_read_and_audit_commands(temp_db: HubDatabase, comma
         "uv run --no-sync black src/example.py",
         "npx prettier --write src/example.ts",
         "cargo fmt",
+        "uv --directory . run --no-sync ruff format src/example.py",
+        "uv run --env-file .env ruff format src/example.py",
+        "python3 -I -m black src/example.py",
+        "npx --package prettier prettier --write src/example.ts",
+        "uv run --no-sync git add src/example.py",
     ],
 )
 async def test_submit_refuses_candidate_mutation(temp_db: HubDatabase, command: str) -> None:

@@ -14,8 +14,8 @@ from gobby.agents.team_review import seat_team_held
 from gobby.hooks.events import HookEventType
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sessions import SessionManager
 from gobby.storage.session_tasks import SessionTaskManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.step_records import StepRecordError, StepSubmission, record_task_step
 from gobby.workflows.hooks import WorkflowHookHandler
