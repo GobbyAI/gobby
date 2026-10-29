@@ -107,12 +107,13 @@ class _Repo:
         self.ok(cwd, "reset", "-q", "--", *paths)
 
 
-def _baseline(tmp_path: Path, *init_args: str) -> _Repo:
+def _baseline(tmp_path: Path, *init_args: str, marker: str | None = None) -> _Repo:
     repo = _Repo(tmp_path, *init_args)
     # The first commit creates the protected ref, which the guard allows even for code.
-    created = repo.commit(
-        repo.root, {"src/gobby/base.py": "x = 1\n", BASE_PLAN: "plan\n", BASE_MANIFEST: "m\n"}
-    )
+    files = {"src/gobby/base.py": "x = 1\n", BASE_PLAN: "plan\n", BASE_MANIFEST: "m\n"}
+    if marker is not None:
+        files[".gobby/project.json"] = marker
+    created = repo.commit(repo.root, files)
     assert created.returncode == 0, created.stderr
     return repo
 
@@ -156,15 +157,30 @@ def test_direct_commit_allows_listed_markdown_and_coverage(tmp_path: Path) -> No
     assert verdicts == {path: is_direct_commit_path(path) for path in verdicts}
 
 
-@pytest.mark.parametrize("setting", [None, "false", "invalid", "true"])
-def test_direct_code_commit_uses_repository_policy(tmp_path: Path, setting: str | None) -> None:
-    repo = _baseline(tmp_path)
-    if setting is not None:
-        repo.ok(repo.root, "config", "--local", "gobby.allowDirectIntegrationCommits", setting)
+@pytest.mark.parametrize(
+    ("marker", "allowed"),
+    [
+        (None, False),
+        ("{}", False),
+        ('{"allow_direct_integration_commits": false}', False),
+        ('{"allow_direct_integration_commits": "true"}', False),
+        ('{"allow_direct_integration_commits": 1}', False),
+        ('{"allow_direct_integration_commits": null}', False),
+        ("null", False),
+        ("[]", False),
+        ('{"allow_direct_integration_commits": true', False),
+        ('{"allow_direct_integration_commits":\x00true}', False),
+        ('{"allow_direct_integration_commits": true}', True),
+    ],
+)
+def test_direct_code_commit_uses_project_policy(
+    tmp_path: Path, marker: str | None, allowed: bool
+) -> None:
+    repo = _baseline(tmp_path, marker=marker)
 
     result = repo.commit(repo.root, {"src/policy.py": "value = 1\n"})
 
-    if setting == "true":
+    if allowed:
         assert result.returncode == 0, result.stderr
         assert repo.ok(repo.root, "show", "HEAD:src/policy.py") == "value = 1"
         deletion = repo.git(repo.root, "update-ref", "-d", "refs/heads/main")
@@ -175,10 +191,10 @@ def test_direct_code_commit_uses_repository_policy(tmp_path: Path, setting: str 
 
 
 def test_direct_commit_policy_is_shared_with_linked_worktrees(tmp_path: Path) -> None:
-    repo = _baseline(tmp_path)
+    repo = _baseline(tmp_path, marker='{"allow_direct_integration_commits": true}')
     main_view = tmp_path / "main-view"
     repo.ok(repo.root, "worktree", "add", "-q", "--force", str(main_view), "main")
-    repo.ok(repo.root, "config", "--local", "gobby.allowDirectIntegrationCommits", "true")
+    (main_view / ".gobby/project.json").write_text("{}", encoding="utf-8")
 
     result = repo.commit(main_view, {"src/linked.py": "linked = True\n"})
 
@@ -186,34 +202,44 @@ def test_direct_commit_policy_is_shared_with_linked_worktrees(tmp_path: Path) ->
     assert repo.ok(repo.root, "show", "main:src/linked.py") == "linked = True"
 
 
-@pytest.mark.parametrize("scope", ["command", "worktree"])
-def test_transient_config_cannot_override_direct_commit_policy(tmp_path: Path, scope: str) -> None:
-    repo = _baseline(tmp_path)
-    repo.ok(repo.root, "config", "--local", "gobby.allowDirectIntegrationCommits", "false")
-    refused = repo.commit(repo.root, {"src/policy.py": "value = 1\n"})
-    _assert_refused(refused)
+@pytest.mark.parametrize("staged", [False, True])
+def test_draft_project_policy_cannot_authorize_its_commit(tmp_path: Path, staged: bool) -> None:
+    repo = _baseline(tmp_path, marker="{}")
+    (repo.root / ".gobby/project.json").write_text(
+        '{"allow_direct_integration_commits": true}', encoding="utf-8"
+    )
+    if staged:
+        repo.ok(repo.root, "add", "--", ".gobby/project.json")
 
-    if scope == "worktree":
-        repo.ok(repo.root, "config", "extensions.worktreeConfig", "true")
-        repo.ok(repo.root, "config", "--worktree", "gobby.allowDirectIntegrationCommits", "true")
-        result = repo.git(repo.root, "commit", "-q", "-m", "change")
-    else:
-        result = repo.git(
-            repo.root,
-            "-c",
-            "gobby.allowDirectIntegrationCommits=true",
-            "commit",
-            "-q",
-            "-m",
-            "change",
-        )
+    result = repo.commit(repo.root, {"src/policy.py": "value = 1\n"})
 
     _assert_refused(result)
 
 
+def test_incoming_project_policy_cannot_authorize_its_ref_update(tmp_path: Path) -> None:
+    repo = _baseline(tmp_path, marker="{}")
+    lane = tmp_path / "lane"
+    repo.ok(repo.root, "worktree", "add", "-q", "-b", "lane", str(lane))
+    created = repo.commit(
+        lane, {".gobby/project.json": '{"allow_direct_integration_commits": true}'}
+    )
+    assert created.returncode == 0, created.stderr
+
+    result = repo.git(lane, "update-ref", "refs/heads/main", "HEAD")
+
+    _assert_refused(result)
+
+
+def test_false_project_policy_preserves_documentation_allowance(tmp_path: Path) -> None:
+    repo = _baseline(tmp_path, marker='{"allow_direct_integration_commits": false}')
+
+    result = repo.commit(repo.root, {"docs/policy.md": "policy\n", BASE_MANIFEST: "updated\n"})
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_configured_direct_commits_keep_checkout_operation_guard(tmp_path: Path) -> None:
-    repo = _baseline(tmp_path)
-    repo.ok(repo.root, "config", "--local", "gobby.allowDirectIntegrationCommits", "true")
+    repo = _baseline(tmp_path, marker='{"allow_direct_integration_commits": true}')
     lane = tmp_path / "lane"
     repo.ok(repo.root, "worktree", "add", "-q", "-b", "lane", str(lane))
     created = repo.commit(lane, {"src/merged.py": "merged = True\n"})
@@ -223,6 +249,26 @@ def test_configured_direct_commits_keep_checkout_operation_guard(tmp_path: Path)
 
     _assert_refused(result)
     assert not (repo.root / "src/merged.py").exists()
+
+
+@pytest.mark.parametrize("object_suffix", ["", ":.gobby/project.json"], ids=["commit", "blob"])
+def test_replacement_objects_cannot_override_project_policy(
+    tmp_path: Path, object_suffix: str
+) -> None:
+    repo = _baseline(tmp_path, marker='{"allow_direct_integration_commits": false}')
+    lane = tmp_path / "lane"
+    repo.ok(repo.root, "worktree", "add", "-q", "-b", "lane", str(lane))
+    created = repo.commit(
+        lane, {".gobby/project.json": '{"allow_direct_integration_commits": true}'}
+    )
+    assert created.returncode == 0, created.stderr
+    old_object = repo.ok(repo.root, "rev-parse", f"main{object_suffix}")
+    new_object = repo.ok(repo.root, "rev-parse", f"lane{object_suffix}")
+    repo.ok(repo.root, "replace", old_object, new_object)
+
+    result = repo.commit(repo.root, {"src/replacement.py": "value = 1\n"})
+
+    _assert_refused(result)
 
 
 def test_protected_branch_refuses_writes_from_any_worktree(tmp_path: Path) -> None:

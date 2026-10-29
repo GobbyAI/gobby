@@ -95,15 +95,16 @@ commit. `land_commit` requires an enabled definition granting `land_tasks` and
 either a run bound to the task or a locally owned root session, and records a
 daemon-attested landing receipt on the task. Nothing else records a close receipt.
 
-The installed Git hook reads the repository-local boolean
-`gobby.allowDirectIntegrationCommits`. A project operator can set it with
-`git config --local gobby.allowDirectIntegrationCommits true` to allow direct
-code commits to the integration branch; `false` or an unset key keeps the
-Markdown/coverage path allowance. Invalid values refuse the update. Linked
-worktrees share the main repository's setting; command-line `-c` and worktree
-settings cannot override it. Branch deletion and checkout-changing operations
-remain protected. This setting does not grant task ownership, review approval,
-or a landing receipt.
+The installed Git hook reads the boolean `allow_direct_integration_commits`
+from `.gobby/project.json` in the integration branch's current commit, beside
+project settings such as `task_protection_policy`. Change this policy through a
+reviewed, landed commit. `true` allows subsequent direct code commits; `false`
+or a missing key or marker keeps the Markdown/coverage path allowance. Malformed
+JSON or non-boolean values refuse the update. All worktrees use that same
+committed policy; staged, working-copy and incoming policy edits cannot authorize
+their own update. Branch deletion and checkout-changing operations remain
+protected. This setting does not grant task ownership, review approval, or a
+landing receipt.
 
 Follow the project's assigned restart and activation owner. Announce a plain
 restart or cutover globally, proceed, and report DAEMON BACK when healthy;
