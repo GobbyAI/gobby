@@ -473,7 +473,14 @@ async def test_hand_off_keeps_the_closer_and_the_reviewer_eligible(world: TeamWo
     team = await team_in_review(world)
     task_id = team.task.id
     closer = seat(world, team.runbook, "closer")
-    grant_step_writes(db, closer, world.case.project_id, "fixture-closer", ("closing",))
+    grant_step_writes(
+        db,
+        closer,
+        world.case.project_id,
+        "fixture-closer",
+        ("closing",),
+        capabilities=("land_tasks",),
+    )
     # A former claimant never lands, so the seats that close the task never take its claim.
     refused = await hand_off(tools, team.manager, team.task, team.developer, team.manager)
     assert refused.get("error_code") == "closer_claim_forbidden", refused
@@ -883,7 +890,9 @@ def _reviewer_step_workflow() -> dict[str, Any]:
 def reviewer_at_await(db: HubDatabase, session_id: str) -> None:
     """Run ``session_id`` as a code-reviewer step instance waiting for a candidate."""
     workflow = _reviewer_step_workflow()
-    SessionVariableManager(db).set_variable(session_id, "_agent_type", "code-reviewer")
+    reviewer = SessionManager(db).get(session_id)
+    assert reviewer is not None and reviewer.project_id is not None
+    grant_step_writes(db, session_id, reviewer.project_id, "code-reviewer", ("review",))
     AgentStepInstanceManager(db).save(
         AgentStepInstance(
             id=str(uuid.uuid4()),

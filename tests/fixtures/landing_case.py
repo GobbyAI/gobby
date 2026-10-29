@@ -39,7 +39,14 @@ def bind_task_manager(
     db: HubDatabase, *, manager: str, parent: str, project_id: str, task: Task
 ) -> None:
     """Run ``manager`` as a Dev Manager whose active agent run is bound to ``task``."""
-    grant_step_writes(db, manager, project_id, DEV_MANAGER, ("closing",))
+    grant_step_writes(
+        db,
+        manager,
+        project_id,
+        DEV_MANAGER,
+        ("closing",),
+        capabilities=("manage_task_claims", "land_tasks"),
+    )
     LocalAgentRunManager(db).create(
         parent_session_id=parent,
         provider="claude",
@@ -52,7 +59,14 @@ def bind_task_manager(
 
 def grant_orchestrator(db: HubDatabase, session_id: str, project_id: str) -> None:
     """Run a registered root session as the project's Orchestrator, which writes every step."""
-    grant_step_writes(db, session_id, project_id, ORCHESTRATOR, TASK_STEPS)
+    grant_step_writes(
+        db,
+        session_id,
+        project_id,
+        ORCHESTRATOR,
+        TASK_STEPS,
+        capabilities=("coordinate_tasks", "manage_task_claims", "land_tasks"),
+    )
 
 
 @dataclass

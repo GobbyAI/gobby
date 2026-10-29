@@ -1,5 +1,5 @@
 name: assistant
-capabilities: [message_restricted_seats, follow_relaunch]
+capabilities: [message_restricted_seats, follow_relaunch, coordinate_tasks]
 description: |
   Assistant seat, the operator's chat agent. Carries the operator's words to
   the Orchestrator, brings fleet news and decisions back on the operator's

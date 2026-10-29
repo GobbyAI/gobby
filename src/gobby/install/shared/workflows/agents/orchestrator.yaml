@@ -1,5 +1,5 @@
 name: orchestrator
-capabilities: [reset_review_epoch, message_restricted_seats, follow_relaunch]
+capabilities: [reset_review_epoch, message_restricted_seats, follow_relaunch, coordinate_tasks, manage_task_claims, land_tasks]
 message_sender_capabilities: [message_restricted_seats]
 description: |
   Orchestrator seat. Sets priority and owners, rules on contracts, launches the

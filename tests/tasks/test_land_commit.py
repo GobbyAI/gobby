@@ -33,7 +33,7 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import add_claimed_task
 from tests.fixtures.landing_case import LandingCase, make_landing_case
-from tests.fixtures.review_approvals import reject_review
+from tests.fixtures.review_approvals import grant_step_writes, reject_review
 
 pytestmark = pytest.mark.unit
 
@@ -98,6 +98,33 @@ async def test_approved_review_record_at_exact_tip_lands(case: LandingCase) -> N
     assert landed["landed"] is True
     assert landed["landed_tip"] == sha
     assert case.git("rev-parse", "trunk") == sha
+
+
+@pytest.mark.parametrize("name", ["researcher", "custom-lander"])
+@pytest.mark.parametrize("granted", [True, False])
+async def test_task_bound_landing_requires_declared_permission(
+    case: LandingCase, name: str, granted: bool
+) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "reviewed record"})
+    task = case.reviewed(sha)
+    manager = case.manager_for(task)
+    grant_step_writes(
+        case.db,
+        manager,
+        case.project_id,
+        name,
+        ("closing",),
+        capabilities=("land_tasks",) if granted else (),
+    )
+
+    result = await case.land(task, sha, caller=manager)
+
+    assert result["landed"] is granted
+    if granted:
+        assert case.git("rev-parse", "trunk") == sha
+    else:
+        assert result["blockers"] == ["caller_not_task_manager"]
+        assert case.git("rev-parse", "trunk") == case.base
 
 
 async def test_land_preview_follows_the_approval_not_a_drifted_stored_status(

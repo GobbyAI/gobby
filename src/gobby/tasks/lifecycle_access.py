@@ -19,9 +19,6 @@ class CrossProjectTaskForbidden(ValueError):
         super().__init__("task_not_found")
 
 
-OPERATOR_ROLES = frozenset({"assistant", "orchestrator"})
-
-
 def session_grants(db: HubDatabase, session_id: str, step: str) -> bool:
     """Whether the enabled definition a session runs as grants ``step`` records."""
     session = SessionManager(db).get(session_id)
@@ -30,13 +27,13 @@ def session_grants(db: HubDatabase, session_id: str, step: str) -> bool:
 
 
 def is_operator_coordinator(
-    tasks: LocalTaskManager, caller: Session, roles: frozenset[str] = OPERATOR_ROLES
+    tasks: LocalTaskManager, caller: Session, *, capability: str = "coordinate_tasks"
 ) -> bool:
-    """Recognize an enabled operator role on a locally owned root session."""
+    """Check a definition's coordinator permission on a locally owned root session."""
     if caller.parent_session_id is not None or caller.machine_id != require_machine_id():
         return False
     definition = session_agent_definition(tasks.db, caller)
-    return definition is not None and definition[0].name in roles
+    return definition is not None and capability in definition[0].capabilities
 
 
 def resolve_lifecycle_task(
@@ -50,8 +47,8 @@ def resolve_lifecycle_task(
     """Resolve local refs normally, and foreign refs only for local coordinators.
 
     This does not authorize claiming or bypass landing/receipt policy. Foreign
-    access requires a descendant owning the task or an enabled operator role on
-    a root session. Identity and lineage come exclusively from stored records.
+    access requires a descendant owning the task or the coordinate_tasks capability
+    on a root session. Identity and lineage come exclusively from stored records.
     """
     target_project = project_id
     local_ref = ref

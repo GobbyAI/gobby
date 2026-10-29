@@ -1,4 +1,5 @@
 name: dev-manager
+capabilities: [manage_task_claims, land_tasks]
 description: |
   Dev Manager seat. Runs one task's DevTeam: moves the task claim between its
   seats through the review loop, keeps them working, and lands and closes the

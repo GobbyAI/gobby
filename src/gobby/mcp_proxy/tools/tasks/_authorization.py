@@ -71,25 +71,15 @@ def has_delegated_agent_run(
     return isinstance(run_id, str) and bool(run_id)
 
 
-def is_orchestrator_coordinator(task_manager: "LocalTaskManager", caller_session_id: str) -> bool:
-    """True when the caller is the enabled Orchestrator's local root session.
-
-    Josh, 2026-10-21: the Orchestrator is exempt from claim refusals. The
-    Assistant, though also an operator coordinator, is not. Lookup failures
-    fail closed.
-    """
+def can_manage_task_claims(task_manager: "LocalTaskManager", caller_session_id: str) -> bool:
+    """Check the installed claim-management grant on a local root; fail closed."""
     try:
         caller = SessionManager(task_manager.db).get(caller_session_id)
         if caller is None:
             return False
-        role = SessionVariableManager(task_manager.db).get_variable_subset(
-            caller.id, ("_agent_type",)
-        )
-        if role.get("_agent_type") != "orchestrator":
-            return False
-        return is_operator_coordinator(task_manager, caller)
+        return is_operator_coordinator(task_manager, caller, capability="manage_task_claims")
     except Exception as e:
-        logger.debug("Orchestrator authority lookup failed: %s", e)
+        logger.debug("Claim-management authority lookup failed: %s", e)
         return False
 
 
@@ -128,7 +118,7 @@ def require_claim_authority(
         owner_session_id=owner_session_id,
     ):
         return None
-    if is_orchestrator_coordinator(task_manager, caller_session_id):
+    if can_manage_task_claims(task_manager, caller_session_id):
         return None
     return task_error(
         f"Cannot {action}: task {task_ref} is claimed by session '{owner_session_id}'.",
