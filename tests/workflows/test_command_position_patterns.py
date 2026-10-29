@@ -34,6 +34,7 @@ from gobby.workflows.engine.command_matching import command_patterns_match, mask
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.fixtures.agent_definitions import seed_seat
 from tests.fixtures.postgres import _reset_schema
 
 pytestmark = pytest.mark.unit
@@ -153,7 +154,7 @@ def _block_pattern_entries(body: RuleDefinitionBody) -> list[tuple[str, str | No
 # gate on is_spawned_agent; overrides below cover the other groups.
 DEFAULT_ENGINE_VARIABLES: dict[str, object] = {"is_spawned_agent": True}
 ENGINE_VARIABLE_OVERRIDES: dict[str, dict[str, object]] = {
-    "no-push-for-workers": {"_agent_type": "developer"},
+    "no-git-push": {"_agent_type": "push-policy-test"},
     "require-task-before-commit": {"require_task_before_edit": True, "task_claimed": False},
     "require-code-review-skill": {},
     # The skill is loaded and no ocr review has run, which is the state the
@@ -250,7 +251,7 @@ RULE_CASES = (
         allowed=('echo "git push"', 'git commit -m "docs: describe git push flow"'),
     ),
     RuleCase(
-        "no-push-for-workers",
+        "no-git-push",
         blocked=("git push origin HEAD",),
         allowed=('echo "git push origin main"',),
     ),
@@ -615,7 +616,7 @@ SUBSTITUTION_CASES = (
 
 GIT_OPTION_CASES = (
     ("no-push", "push origin main"),
-    ("no-push-for-workers", "push"),
+    ("no-git-push", "push"),
     ("no-force-push", "push --force origin main"),
     ("no-force-push-interactive", "push --force origin main"),
     ("no-git-stash", "stash"),
@@ -677,6 +678,8 @@ async def test_invocations_block_and_prose_allowed(
         lambda variables, project_path: ["src/gobby/oversized.py"],
     )
     db.execute("DELETE FROM rule_definitions WHERE name != %s", (case.name,))
+    if case.name == "no-git-push":
+        seed_seat(db, "push-policy-test", include=["name:no-git-push"])
     engine = RuleEngine(db)
     for command in (case.blocked[0], env_prefixed):
         response = await engine.evaluate(

@@ -744,7 +744,7 @@ async def test_spawn_rules_let_a_team_manager_resume_a_session(
         SEAT_NO_SPAWN,
         LIMIT_SPAWNABLE_AGENTS,
         LIMIT_SPAWN_NETWORK_OVERRIDE,
-        "no-agent-spawn-for-merge",
+        "no-agent-spawn",
     )
     seed_seat(temp_db, "custom-team-manager", include=[f"name:{SEAT_NO_SPAWN}"])
     seat = _register(session_manager, str(sample_project["id"]), "custom-team-manager")

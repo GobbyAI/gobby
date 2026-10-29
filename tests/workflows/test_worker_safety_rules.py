@@ -158,17 +158,16 @@ class TestWorkerSafetySync:
             if row.name in EXPECTED_WORKER_SAFETY_RULES:
                 assert body.get("group") == "worker-safety", f"{row.name} missing group"
 
-    def test_agent_scope_persists_through_sync(
+    def test_strict_policy_has_no_fixed_agent_scope(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
-        """agent_scope from YAML should be preserved in definition_json."""
         _sync_bundled(db)
 
-        row = manager.get_by_name("no-push-for-workers")
+        row = manager.get_by_name("no-git-push")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.agent_scope == ["developer"]
+        assert body.agent_scope is None
 
     def test_all_rules_are_valid_pydantic(
         self, db: HubDatabase, manager: RuleDefinitionManager
@@ -188,10 +187,10 @@ class TestWorkerSafetySync:
 @pytest.mark.parametrize(
     ("rule_name", "agent_type", "tool_name", "tool_input"),
     [
-        ("no-push-for-workers", "developer", "Bash", {"command": "git push origin topic"}),
-        ("no-push-for-workers", "custom-builder", "Bash", {"command": "git push origin topic"}),
+        ("no-git-push", "developer", "Bash", {"command": "git push origin topic"}),
+        ("no-git-push", "custom-builder", "Bash", {"command": "git push origin topic"}),
         (
-            "no-agent-spawn-for-merge",
+            "no-agent-spawn",
             "merge",
             "mcp__gobby__call_tool",
             {
@@ -201,7 +200,7 @@ class TestWorkerSafetySync:
             },
         ),
         (
-            "no-agent-spawn-for-merge",
+            "no-agent-spawn",
             "custom-integrator",
             "mcp__gobby__call_tool",
             {
@@ -438,6 +437,11 @@ class TestManagedGitIsolationRules:
         command: str,
         spawned: bool,
     ) -> None:
+        seed_seat(
+            db,
+            "isolation-policy-test",
+            include=[f"name:{name}" for name in sorted(MANAGED_GIT_RULES)],
+        )
         db.execute(
             "DELETE FROM rule_definitions WHERE name NOT IN "
             "('block-git-clone', 'block-git-clone-interactive', "
@@ -459,7 +463,7 @@ class TestManagedGitIsolationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"is_spawned_agent": spawned},
+            variables={"_agent_type": "isolation-policy-test", "is_spawned_agent": spawned},
         )
 
         assert response.decision == "block"

@@ -61,6 +61,7 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
+      - "name:no-git-push"
 
 step_workflow:
   variables:
