@@ -172,6 +172,28 @@ def test_reviewer_cached_settings_and_python_environment(
     assert Path(environment["UV_PROJECT_ENVIRONMENT"]).is_dir()
 
 
+def test_reviewer_workspace_case_alias_still_needs_hook_scope(
+    reviewer_launch: tuple[SandboxLaunch, Path, dict[str, str]],
+) -> None:
+    launch, workspace, environment = reviewer_launch
+    alias = workspace.with_name(workspace.name.upper())
+    if not alias.exists():
+        pytest.skip("Filesystem distinguishes workspace casing")
+    assert alias.samefile(workspace)
+    script = "from pathlib import Path; import sys; Path(sys.argv[1]).write_text('case-alias-ok')"
+    with tempfile.NamedTemporaryFile(prefix="case-alias-probe-", dir=workspace) as owned_file:
+        probe = Path(owned_file.name)
+        result = _run(
+            launch,
+            workspace,
+            environment,
+            [sys.executable, "-c", script, str(alias / probe.name)],
+        )
+        assert result.returncode == 0, result.stderr
+        assert probe.read_text() == "case-alias-ok"
+        print("Managed SRT allowed the harmless write through the granted workspace case alias")
+
+
 @pytest.mark.timeout(1200)
 def test_reviewer_rust_compare(
     reviewer_launch: tuple[SandboxLaunch, Path, dict[str, str]],

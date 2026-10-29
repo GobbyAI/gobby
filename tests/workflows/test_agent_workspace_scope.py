@@ -105,6 +105,7 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     os_temp = tmp_path / "os-temp"
     os_temp.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(os_temp))
+    monkeypatch.setattr("gobby.workflows.condition_helpers_paths._PROVIDER_TEMP_ROOT", os_temp)
     return home / ".gobby" / "agents_workspaces"
 
 
@@ -122,6 +123,21 @@ def engine(temp_db: HubDatabase) -> RuleEngine:
                 enabled=metadata["enabled"],
                 tags=document["tags"],
             )
+    return RuleEngine(temp_db)
+
+
+@pytest.fixture
+def workspace_write_engine(temp_db: HubDatabase) -> RuleEngine:
+    document = yaml.safe_load((RULES_DIR / "roles" / "agent-workspace-scope.yaml").read_text())
+    name = "agent-workspace-write-scope"
+    body_data, metadata = split_rule_definition_data(document["rules"][name])
+    RuleDefinitionManager(temp_db).create(
+        name=name,
+        definition_json=RuleDefinitionBody.model_validate(body_data).model_dump_json(),
+        priority=metadata["priority"],
+        enabled=metadata["enabled"],
+        tags=document["tags"],
+    )
     return RuleEngine(temp_db)
 
 
@@ -308,7 +324,7 @@ async def test_plan_documents_in_owned_worktrees_are_writable(
 @pytest.mark.parametrize("tool", ["write", "commit"])
 @pytest.mark.parametrize("folder", ["own", "epic"])
 async def test_workspace_metadata_names_ignore_case(
-    engine: RuleEngine, root: Path, tmp_path: Path, tool: str, folder: str
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, tool: str, folder: str
 ) -> None:
     project = tmp_path / "checkout"
     project.mkdir()
@@ -335,29 +351,73 @@ async def test_workspace_metadata_names_ignore_case(
             else _shell(f"git commit -m plan --only -- {path}", project)
         )
         normalize_tool_fields(data)
-        response = await _decide(engine, data, variables)
+        response = await _decide(workspace_write_engine, data, variables)
         assert response.decision == decision, (path, tool, response.reason)
+        if decision == "block":
+            assert response.reason is not None
+            assert "agent-workspace-write-scope" in response.reason
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("ancestor", ["gobby", "root", "definition"])
+@pytest.mark.parametrize("tool", ["write", "commit"])
 async def test_case_alias_of_workspace_root_does_not_bypass_write_scope(
-    engine: RuleEngine, root: Path, tmp_path: Path
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, ancestor: str, tool: str
 ) -> None:
     project = tmp_path / "checkout"
     project.mkdir()
     variables = _seat(root / PROJECT, "developer", 12)
     own = Path(variables["_agent_workspace_dir"])
     own.mkdir(parents=True)
-    alias = root.with_name(root.name.upper())
+    directory = {"gobby": root.parent, "root": root, "definition": own.parent}[ancestor]
+    alias = directory.with_name(directory.name.upper())
     if not alias.exists():
         pytest.skip("Filesystem distinguishes workspace root casing")
-    assert alias.samefile(root)
-    for path in (
-        alias / own.relative_to(root) / ".GIT" / "config",
-        alias / PROJECT / "developer" / "session-99" / "notes.md",
+    assert alias.samefile(directory)
+    for target, decision in (
+        (own / ".GIT" / "config", "block"),
+        (own / ".gobby" / "project.json", "block"),
+        (own.parent / "session-99" / "notes.md", "block"),
+        (own / "notes.md", "allow"),
     ):
-        response = await _decide(engine, _write(path, project), variables)
-        assert response.decision == "block", (path, response.reason)
+        path = alias / target.relative_to(directory)
+        data = (
+            _write(path, project)
+            if tool == "write"
+            else _shell(f"git commit -m plan --only -- {path}", project)
+        )
+        normalize_tool_fields(data)
+        response = await _decide(workspace_write_engine, data, variables)
+        assert response.decision == decision, (path, tool, response.reason)
+        if decision == "block":
+            assert response.reason is not None
+            assert "agent-workspace-write-scope" in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity", ["different", "unavailable"])
+async def test_case_alias_cannot_borrow_unproven_seat_ownership(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    identity: str,
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    alias = own.with_name(own.name.upper())
+
+    def samefile(path: Path, other: Path) -> bool:
+        if identity == "unavailable":
+            raise PermissionError("Cannot inspect folder identity")
+        return False
+
+    monkeypatch.setattr(Path, "samefile", samefile)
+    response = await _decide(
+        workspace_write_engine, _write(alias / "notes.md", tmp_path), variables
+    )
+    assert response.decision == "block"
+    assert "agent-workspace-write-scope" in (response.reason or "")
 
 
 @pytest.mark.asyncio

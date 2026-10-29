@@ -99,14 +99,30 @@ def agent_workspace_write_dirs(variables: Mapping[str, Any]) -> list[str]:
     return write_dirs(variables)
 
 
-def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> bool:
-    if not path.is_relative_to(root):
+def _workspace_contains(path: Path, directory: Path) -> bool | None:
+    """Prove containment, or return None for an unverifiable case-only alias."""
+    prefix_parts = path.parts[: len(directory.parts)]
+    if prefix_parts == directory.parts:
+        return True
+    if tuple(part.casefold() for part in prefix_parts) != tuple(
+        part.casefold() for part in directory.parts
+    ):
         return False
+    try:
+        return Path(*prefix_parts).samefile(directory)
+    except OSError:
+        return None
+
+
+def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> bool:
+    within_root = _workspace_contains(path, root)
+    if within_root is not True:
+        return within_root is None
     for directory in allowed:
-        if path.is_relative_to(directory):
+        if _workspace_contains(path, directory) is True:
             # Reserve metadata names regardless of spelling; Path.resolve keeps
             # input casing even when the volume resolves it to the same directory.
-            parts = tuple(part.casefold() for part in path.relative_to(directory).parts)
+            parts = tuple(part.casefold() for part in path.parts[len(directory.parts) :])
             if ".git" in parts:
                 return True
             if ".gobby" not in parts:
