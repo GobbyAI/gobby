@@ -61,9 +61,13 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "name:require-seat-procedure"
       - "tag:default"
       - "tag:worker-safety"
+    exclude:
+      - "name:seat-no-task-close"
+      - "name:unassigned-session-no-task-close"
   variables:
     _seat_procedure: gobby:references/agents/procedures/dev-manager.md
     # The manager places its team's panes.

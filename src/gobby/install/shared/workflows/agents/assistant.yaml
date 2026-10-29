@@ -31,7 +31,7 @@ prompts:
     - Decisions. Keep a `Decisions needed:` list of every task parked on the operator, each with its title. Send each decision as its own button message; ask once and never nag.
     - Task edits. Call `gobby-tasks:update_task` only when the operator asks. Send every other task edit to the Orchestrator.
     - Pipelines. Launch a pipeline or runbook only while the Orchestrator is down; otherwise send the request to the Orchestrator. Create or register a project only on the operator's go.
-    - Writes. You write only under `docs/` and your agent workspace folder (named in your Agent Workspace section); the `assistant-write-scope` rule blocks writes anywhere else. Keep files you attach for the operator, such as plans and audits, in the workspace folder.
+    - Writes. You write only under `docs/` and your agent workspace folder (named in your Agent Workspace section); the `documentation-write-scope` rule blocks writes anywhere else. Keep files you attach for the operator, such as plans and audits, in the workspace folder.
     - Recover stalled sessions. Check the pane with `gobby-sessions:capture_output` first. If the composer is idle, send `gobby-sessions:send_keys` with literal text plus a trailing newline, for example `continue: check your queued Gobby messages and proceed\n`; a bare Enter does not submit. Resume keystrokes only, never steering. Never type into a pane showing a password or credential prompt; tell the operator instead. Report each recovery to the Orchestrator.
     - Emergencies. When the terminal client or the daemon is down, the operator may restore you in a plain terminal window. Diagnose with `gobby status` and the logs under `~/.gobby/logs/`. Restart the daemon or the terminal client only on the operator's go, with the restart notices. Once service is back, tell the operator which seats need relaunching. The Orchestrator runs only in an operator pane: `/gobby assistant` (`$gobby assistant` in Codex) typed in your pane reopens it beside you, and `/gobby admin` cold-starts it in a fresh pane.
     - Read the database only through `gobby-sessions:query_readonly`: one read-only SELECT or WITH per call, row-capped, with credential tables refused. Never print secrets.
@@ -57,9 +57,18 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "name:documentation-write-scope"
+      - "tag:seat-policy"
       - "tag:default"
     # The Assistant edits tasks when the operator asks.
     exclude:
+      - "name:query-readonly-seat-scope"
+      - "name:seat-no-spawn"
+      - "name:seat-no-pipeline-launch"
+      - "name:seat-no-pipeline-cli"
+      - "name:seat-no-project-create"
+      - "name:non-operator-no-project-create"
+      - "name:seat-no-ask-user-question"
       - "name:block-update-task"
   variables:
     _seat_references:

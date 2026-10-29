@@ -1,4 +1,4 @@
-tags: [roles, seat, enforcement, gobby, default]
+tags: [roles, seat, enforcement, gobby, seat-policy]
 
 rules:
   inject-seat-common:
@@ -6,16 +6,7 @@ rules:
     event: turn_start
     enabled: true
     priority: 20
-    # Activation and spawn both set `_agent_type`, so the inline seat catalogue
-    # matches every seat. A persona overlay (`apply_persona`) never matches a seat rule.
-    when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
-        'developer', 'code-reviewer', 'docs-reviewer', 'research-reviewer',
-        'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
-        'release-manager', 'reporter', 'security-reviewer', 'debugger',
-        'design-reviewer', 'recovery-steward', 'consolidator']
-      and not variables.get('_seat_common_injected')
+    when: "not variables.get('_seat_common_injected')"
     effects:
       - type: inject_context
         delivery: on_receipt
@@ -26,7 +17,7 @@ rules:
           - Messages: gobby-agents:send_message. Only Assistant and Triage message Orchestrator; others report to Triage or their Dev Manager. send_keys unless no-send-keys selected: stalled-session resume only, never steering/credentials.
           - No spawns except Assistant and Orchestrator. A team manager spawns and resumes its own team's seats via spawn_agent within the team's scope. Runbooks start seats.
           - Only Orchestrator launches pipelines/runbooks (Assistant if down). Only these two create/register projects on operator GO; others request via Orchestrator.
-          - Only Orchestrator/operator delegate restarts; global BEFORE, DAEMON BACK when healthy. Assistant reports before/after and outcome.
+          - Announce daemon restarts globally before proceeding; report DAEMON BACK when healthy. A plain restart needs a heads-up, not acknowledgements. Honor quiet hours and coordinate operations that can kill agent panes.
           - During a restart or cutover hold, `gobby-sessions:get_handoff` is always allowed and required. Do not wait for DAEMON BACK to consume it; other work stays paused.
           - Push: operator approves exact SHA; Orchestrator alone runs/directs it.
           - Work: claimed task, stop gate, handoff; no native goals.

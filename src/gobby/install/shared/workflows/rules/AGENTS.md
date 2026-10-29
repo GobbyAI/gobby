@@ -45,9 +45,9 @@ rules:
     enabled: true                    # Templates default to enabled
     priority: 100
     when: "condition"
-    effect:
-      type: block
-      ...
+    effects:
+      - type: block
+        ...
 ```
 
 Multiple rules can live in one YAML file, or each rule can have its own file. The convention varies by group.
@@ -86,10 +86,25 @@ Tags serve two purposes:
 | Tag | Meaning |
 |-----|---------|
 | `gobby` | **Provenance** — rule ships with Gobby. All bundled rules get this tag. |
-| `default` | **Audience** — rule applies to the interactive session (`default` agent). |
+| `default` | **Baseline** — selected by the interactive definition and used when no enabled definition resolves. |
 | Group tags | **Identity** — rule belongs to a functional group. Workers cherry-pick these. |
 
 The `default` agent uses `rule_selectors: {include: ["tag:default"]}` to load interactive-session rules. Worker agents select the group tags needed for their role.
+
+The current enabled definition supplies rule selection. Missing or disabled
+definitions receive only enabled `default`-tagged rules; cached
+`_active_rule_names` cannot preserve an exclusion or activate an opt-in rule.
+An enabled definition may intentionally select an empty set.
+
+Standing definitions explicitly select `tag:seat-policy`. Their exclusions grant
+spawn, pipeline, question, project-creation and closure permissions. Write scopes
+(`research-artifact-write-scope`, `documentation-write-scope`, `digest-write-scope`)
+and `prometheus-query-only` are selected by name. Database-query permission is an
+explicit exclusion of `query-readonly-seat-scope`. Baseline session rules
+keep unresolved children and missing or disabled named definitions bounded while
+leaving the operator's unspawned terminal open. Project creation uses the stored
+operator identity; parent lineage alone never identifies a spawned child. Closing definitions
+also declare their permitted reasons and task scopes for MCP enforcement.
 
 `pipeline-enforcement` and `no-send-keys` omit `default` and are selected explicitly, `no-send-keys` by name. `worker-safety` combines default-tagged interactive protections with worker protections selected by group tag.
 

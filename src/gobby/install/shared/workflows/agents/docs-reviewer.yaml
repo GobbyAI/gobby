@@ -62,6 +62,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "name:require-seat-procedure"
       - "tag:default"
       # Review seats run tests and gcode through Bash, so worker-safety guards their shell.

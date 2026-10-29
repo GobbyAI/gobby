@@ -1,8 +1,6 @@
-tags: [roles, seat, enforcement, gobby, default]
+tags: [roles, seat, enforcement, gobby, seat-policy]
 
-# Activation and spawn both set `_agent_type`, so seat identity matches it alone,
-# with the catalogue inline as in inject-seat-common. A persona overlay
-# (`apply_persona`) never matches a seat rule.
+# Definitions select this policy group and exclude the permissions they grant.
 rules:
   seat-no-spawn:
     description: "Seats, the Plan Writer included, do not spawn agents; a team manager spawns its team's seats. The Assistant and Orchestrator are outside this rule"
@@ -15,13 +13,7 @@ rules:
     # exempts its spawn_agent calls. Spawn admission bounds them: an epic team's
     # Dev Manager takes only its epic's leaves, reviewers and the team tree.
     when: >
-      variables.get('_agent_type') in ['dev-manager',
-        'developer', 'code-reviewer', 'docs-reviewer', 'research-reviewer',
-        'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
-        'release-manager', 'reporter', 'security-reviewer', 'debugger',
-        'design-reviewer', 'recovery-steward', 'consolidator']
-      and not (
+      not (
         variables.get('team_manager')
         and tool_input.get('server_name') == 'gobby-agents'
         and tool_input.get('tool_name') == 'spawn_agent'
@@ -45,14 +37,7 @@ rules:
     # `block` mcp_tools matching is exact or `server:*`, and exposed pipelines are
     # named `pipeline:<name>`, so the condition alone selects the call.
     when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
-        'developer', 'code-reviewer', 'docs-reviewer', 'research-reviewer',
-        'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
-        'release-manager', 'reporter', 'security-reviewer', 'debugger',
-        'design-reviewer', 'recovery-steward', 'consolidator']
-      and variables.get('_agent_type') not in ['assistant', 'orchestrator']
-      and tool_input.get('server_name') == 'gobby-workflows'
+      tool_input.get('server_name') == 'gobby-workflows'
       and (tool_input.get('tool_name') == 'run_pipeline'
         or str(tool_input.get('tool_name') or '').startswith('pipeline:'))
     effects:
@@ -70,14 +55,6 @@ rules:
     event: before_tool
     enabled: true
     priority: 10
-    when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
-        'developer', 'code-reviewer', 'docs-reviewer', 'research-reviewer',
-        'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
-        'release-manager', 'reporter', 'security-reviewer', 'debugger',
-        'design-reviewer', 'recovery-steward', 'consolidator']
-      and variables.get('_agent_type') not in ['assistant', 'orchestrator']
     effects:
       - type: block
         tools: [Bash]
@@ -93,13 +70,6 @@ rules:
     event: before_tool
     enabled: true
     priority: 10
-    when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
-        'developer', 'code-reviewer', 'docs-reviewer', 'research-reviewer',
-        'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
-        'release-manager', 'reporter', 'security-reviewer', 'debugger',
-        'design-reviewer', 'recovery-steward', 'consolidator']
     effects:
       - type: block
         tools: [Bash]
@@ -109,11 +79,9 @@ rules:
           gobby-agents spawn_agent or a runbook; seats without that authority send
           the request to Triage.
 
-  # Every agent except the Assistant and Orchestrator needs this rule against new
-  # project creation. Root sessions fall back to `_agent_type` 'default' and stay
-  # open. A spawned session is blocked whatever its type, definition-less spawns
-  # included. The Assistant and Orchestrator are root persona panes and never
-  # spawned. Surfaces: the proxy's init_project tool,
+  # Definitions opt into this unconditional project-creation policy. A separate
+  # baseline rule covers spawned sessions, including unresolved definitions.
+  # Surfaces: the proxy's init_project tool,
   # `gobby init`, `gobby install --no-interactive` (it initializes a git root with
   # no project), and any shell request naming the /api/projects/init route, which
   # stays open for the operator's gclient and web flows. A grep, rg or gcode search
@@ -123,10 +91,6 @@ rules:
     event: before_tool
     enabled: true
     priority: 10
-    when: >
-      variables.get('_agent_type') not in ['assistant', 'orchestrator']
-      and (variables.get('is_spawned_agent')
-        or (variables.get('_agent_type') or 'default') != 'default')
     effects:
       - type: block
         tools: [Bash]

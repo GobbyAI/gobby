@@ -1,20 +1,13 @@
-tags: [roles, seat, enforcement, gobby, default]
+tags: [roles, seat, enforcement, gobby, seat-policy]
 
 # The Assistant's attached AskUserQuestion prompts reach Telegram as buttons.
 # Other seats route decisions through the Assistant. Unseated sessions keep the tool.
 rules:
   seat-no-ask-user-question:
-    description: "Seats except the Assistant ask questions through send_message"
+    description: "Selected definitions route questions through send_message"
     event: before_tool
     enabled: true
     priority: 10
-    when: >
-      variables.get('_agent_type') in ['orchestrator', 'dev-manager',
-        'developer', 'code-reviewer', 'docs-reviewer', 'research-reviewer',
-        'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
-        'release-manager', 'reporter', 'security-reviewer', 'debugger',
-        'design-reviewer', 'recovery-steward', 'consolidator']
     effects:
       - type: block
         tools: [AskUserQuestion]

@@ -40,8 +40,8 @@ def test_researcher_rule_allows_only_research_artifacts(
         / "src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml"
     )
     rules = yaml.safe_load(rule_path.read_text())["rules"]
-    assert "researcher-write-scope" in rules
-    rule = rules["researcher-write-scope"]
+    assert "research-artifact-write-scope" in rules
+    rule = rules["research-artifact-write-scope"]
     data = _write(project, str(project / relative), cwd=project / "docs")
     evaluator = SafeExpressionEvaluator(
         {
@@ -78,7 +78,7 @@ def test_archivist_rule_allows_only_workspace_report_names(
         Path(__file__).parents[2]
         / "src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml"
     )
-    rule = yaml.safe_load(rule_path.read_text())["rules"]["archivist-write-scope"]
+    rule = yaml.safe_load(rule_path.read_text())["rules"]["digest-write-scope"]
     data = _write(project, str(project / relative), cwd=project / "docs")
     evaluator = SafeExpressionEvaluator(
         {

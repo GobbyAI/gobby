@@ -53,9 +53,9 @@ prompts:
 
 workflows:
   rule_selectors:
-    include: ["tag:default", "tag:worker-safety", "name:no-send-keys"]
+    include: ["tag:default", "tag:seat-policy", "tag:worker-safety", "name:no-send-keys"]
     # The Consolidator applies Orchestrator-directed folds, so it may update tasks.
-    exclude: ["name:block-update-task"]
+    exclude: ["name:block-update-task", "name:seat-no-task-close", "name:unassigned-session-no-task-close"]
   variables: {}
 
 # Task inspection and proposals, with skill and continuity support.

@@ -57,6 +57,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"

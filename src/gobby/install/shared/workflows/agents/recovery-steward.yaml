@@ -56,6 +56,7 @@ workflows:
     # Terminal control is the steward's job: it resumes stalled composers with
     # send_keys, so it does not select no-send-keys.
     include:
+      - "tag:seat-policy"
       - "tag:default"
       - "tag:worker-safety"
   variables: {}

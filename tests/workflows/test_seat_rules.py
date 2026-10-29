@@ -130,7 +130,7 @@ def _load_roles(db: HubDatabase) -> None:
                     "name:seat-no-pipeline-launch",
                     "name:seat-no-pipeline-cli",
                     "name:seat-no-project-create",
-                    "name:spawned-session-no-project-create",
+                    "name:non-operator-no-project-create",
                 ]
             )
         if name in {"orchestrator", "dev-manager", "researcher", "consolidator"}:
@@ -201,9 +201,19 @@ def _shell(command: str) -> dict[str, Any]:
 async def _decide(
     engine: RuleEngine, data: dict[str, Any], variables: dict[str, Any]
 ) -> HookResponse:
-    return await engine.evaluate(
-        _event(HookEventType.BEFORE_TOOL, data), session_id=SESSION_ID, variables=dict(variables)
+    depth = int(bool(variables.get("is_spawned_agent")))
+    role = variables.get("_agent_type")
+    session_id = SessionManager(engine.db).register_session(
+        external_id=f"seat-policy-{role}-{depth}",
+        machine_id=None,
+        source="claude",
+        project_id=None,
+        agent_depth=depth,
     )
+    SessionVariableManager(engine.db).set_variable(session_id, "_agent_type", role)
+    event = _event(HookEventType.BEFORE_TOOL, data)
+    event.metadata["_platform_session_id"] = session_id
+    return await engine.evaluate(event, session_id=session_id, variables=dict(variables))
 
 
 @pytest.mark.parametrize("name", ["fixture-seat", "assistant"])

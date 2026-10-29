@@ -91,8 +91,8 @@ TRUE_RESTRICTION_RULES = frozenset(
     {
         "agent-workspace-read-scope",
         "agent-workspace-write-scope",
-        "archivist-write-scope",
-        "assistant-write-scope",
+        "digest-write-scope",
+        "documentation-write-scope",
         "block-autonomous-clear-session",
         "block-cross-project-send-keys",
         "block-cross-session-foreign-dirty-edit",
@@ -110,7 +110,7 @@ TRUE_RESTRICTION_RULES = frozenset(
         "block-web-chat-send-keys",
         "limit-spawn-network-override",
         "limit-spawnable-agents",
-        "metrics-monitor-query-only",
+        "prometheus-query-only",
         "no-agent-spawn-for-merge",
         "no-brew-install",
         "no-cargo-add",
@@ -156,7 +156,7 @@ TRUE_RESTRICTION_RULES = frozenset(
         "no-yarn-add",
         "query-readonly-seat-scope",
         "require-handoff-at-context-limit",
-        "researcher-write-scope",
+        "research-artifact-write-scope",
         "retry-terminal-handoff-after-delivery-failure",
         "review-closed-task-memories-before-handoff",
         "scope-spawned-agent-send-message",
@@ -165,6 +165,9 @@ TRUE_RESTRICTION_RULES = frozenset(
         "seat-no-pipeline-launch",
         "seat-no-project-create",
         "seat-no-spawn",
+        "seat-no-task-close",
+        "non-operator-no-project-create",
+        "unassigned-session-no-task-close",
     }
 )
 

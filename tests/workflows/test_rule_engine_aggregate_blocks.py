@@ -82,6 +82,7 @@ def _insert_rule(
     )
     manager.create(
         name=name,
+        tags=["default"],
         definition_json=json.dumps(body.model_dump(mode="json")),
         priority=priority,
         enabled=True,

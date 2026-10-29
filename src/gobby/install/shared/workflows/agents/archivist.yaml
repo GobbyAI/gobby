@@ -13,7 +13,7 @@ persistent_workspace: true
 timeout: 0
 send_message_targets: [parent, session]
 operator_messaging: true
-# No write block: the roles rule archivist-write-scope confines writes to the
+# No write block: the roles rule digest-write-scope confines writes to the
 # dated digest, and blocked_tools has no path exception (Decision 8).
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
@@ -21,7 +21,7 @@ blocked_mcp_tools:
 prompts:
   agent: &seat |
     ## Role
-    Maintain the daily digest, `<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md`, from the Orchestrator's updates. Resolve `<project>` to this session's project root and write using a literal absolute path. This is a standing role duty with no claimed task, so don't hold a task open for it. No one else writes the digest. The `archivist-write-scope` rule permits only this report and its `.tmp.<pid>.<12 lowercase hex>` staging sibling.
+    Maintain the daily digest, `<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md`, from the Orchestrator's updates. Resolve `<project>` to this session's project root and write using a literal absolute path. This is a standing role duty with no claimed task, so don't hold a task open for it. No one else writes the digest. The `digest-write-scope` rule permits only this report and its `.tmp.<pid>.<12 lowercase hex>` staging sibling.
     Resolve the operator channel from project policy or communications configuration with `gobby-communications:resolve_operator_conversation`. Send each report with `gobby-communications:send_operator_attachment`, using that channel, the report's literal absolute path and at most a one-line caption. Send the whole markdown file as the attachment. If the channel is missing or ambiguous, report the delivery gap to Triage; never guess a destination.
     During taskless duty, write the final digest directly. Optional staging files remain subject to the normal task gate.
     Each digest:
@@ -47,6 +47,8 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "name:digest-write-scope"
+      - "tag:seat-policy"
       - "tag:default"
       - "tag:context-handoff"
       - "tag:memory-lifecycle"

@@ -50,10 +50,19 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "tag:default"
     # The Orchestrator edits tasks as needed, reads seats' report folders to review them,
     # and lands approved work in shared checkouts that hold other sessions' staged paths.
     exclude:
+      - "name:query-readonly-seat-scope"
+      - "name:seat-no-spawn"
+      - "name:seat-no-pipeline-launch"
+      - "name:seat-no-pipeline-cli"
+      - "name:seat-no-project-create"
+      - "name:non-operator-no-project-create"
+      - "name:seat-no-task-close"
+      - "name:unassigned-session-no-task-close"
       - "name:block-update-task"
       - "name:agent-workspace-read-scope"
       - "name:block-cross-session-foreign-staged-commit"

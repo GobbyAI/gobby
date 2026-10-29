@@ -59,6 +59,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "tag:default"
       - "tag:context-handoff"
       - "tag:memory-lifecycle"

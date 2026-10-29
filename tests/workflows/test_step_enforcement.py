@@ -55,7 +55,7 @@ async def test_researcher_title_and_report_writes_follow_step_and_path_scope(
         "name": "researcher",
         "blocked_tools": [],
         "blocked_mcp_tools": [],
-        "workflows": {"rule_selectors": {"include": ["name:researcher-write-scope"]}},
+        "workflows": {"rule_selectors": {"include": ["name:research-artifact-write-scope"]}},
         "steps": [
             {"name": "load_skills", "blocked_tools": ["Edit", "Write", "apply_patch"]},
             {"name": "serve"},
@@ -68,9 +68,9 @@ async def test_researcher_title_and_report_writes_follow_step_and_path_scope(
     }
     _setup_step_workflow(db, manager, instance_mgr, current_step=step, workflow_data=definition)
     scope_bundle = yaml.safe_load((rules_root / "roles/seat-write-scope.yaml").read_text())
-    scope_rule = scope_bundle["rules"]["researcher-write-scope"]
+    scope_rule = scope_bundle["rules"]["research-artifact-write-scope"]
     RuleDefinitionManager(db).create(
-        name="researcher-write-scope",
+        name="research-artifact-write-scope",
         definition_json={key: scope_rule[key] for key in ("event", "when", "effects")},
         tags=scope_bundle["tags"],
     )
@@ -109,7 +109,7 @@ async def test_researcher_title_and_report_writes_follow_step_and_path_scope(
             allowed = step == "serve" and relative == ".gobby/plans/research/report.md"
             assert (response.decision != "block") is allowed, (native, relative, step, response)
             if step == "serve" and not allowed:
-                assert "researcher-write-scope" in (response.reason or "")
+                assert "research-artifact-write-scope" in (response.reason or "")
     current = instance_mgr.get_for_session(SESSION_ID)
     assert current is not None and current.current_step == step
 

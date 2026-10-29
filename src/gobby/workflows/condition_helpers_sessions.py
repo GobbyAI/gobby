@@ -17,11 +17,13 @@ from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, r
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.agent_resolver import (
     AgentResolutionError,
+    is_operator_session,
     resolve_agent,
     resolve_agent_with_row,
     session_has_capability,
     session_has_capability_or_operator,
 )
+from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -573,6 +575,19 @@ def agent_workspace_read_violation(
     )
 
 
+def operator_session(session_manager: SessionManager | None, caller_id: Any) -> bool:
+    """Resolve the stored caller identity before granting the operator exemption."""
+    if session_manager is None or not isinstance(caller_id, str) or not is_session_uuid(caller_id):
+        return False
+    session = session_manager.get(caller_id)
+    if session is None:
+        return False
+    variables = SessionVariableManager(session_manager.db).get_variable_subset(
+        caller_id, ("_agent_type",)
+    )
+    return is_operator_session(session, variables.get("_agent_type"))
+
+
 def session_condition_helpers(
     session_manager: SessionManager | None,
 ) -> dict[str, Callable[..., Any]]:
@@ -580,6 +595,7 @@ def session_condition_helpers(
     from gobby.workflows.engine.idle_declaration import readiness_message_completed
 
     return {
+        "operator_session": lambda caller_id: operator_session(session_manager, caller_id),
         "session_has_capability": lambda caller_id, capability: (
             session_manager is not None
             and isinstance(caller_id, str)

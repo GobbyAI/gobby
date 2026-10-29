@@ -87,6 +87,8 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "name:seat-no-task-close"
+      - "name:seat-no-project-create"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
