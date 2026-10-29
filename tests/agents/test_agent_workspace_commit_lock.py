@@ -196,6 +196,28 @@ async def test_fresh_orphan_lock_is_not_removed(
     assert not any("index.lock" in record.message for record in caplog.records)
 
 
+async def test_lock_disappearing_during_inspection_does_not_block_backup(
+    project_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    anchor = ensure_workspace(project_id)
+    _write(anchor, NOTES, "commit after owner releases lock\n")
+    lock = _stale_lock(project_id)
+    real_run = subprocess.run
+
+    def lock_released(args: Sequence[str], **kwargs: Any) -> Any:
+        if args[0] == "lsof":
+            lock.unlink()
+            return subprocess.CompletedProcess(args, 1, "", "lsof: status error: No such file")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", lock_released)
+    await _trigger(project_id, "set_handoff")
+
+    assert NOTES in _tracked(project_id)
+    assert not lock.exists()
+    assert "Agent workspace commit failed" not in caplog.text
+
+
 @pytest.mark.parametrize("failure", ["missing", "stderr"])
 async def test_uninspectable_lock_reports_failure_off_loop_and_backs_off(
     project_id: str,
@@ -299,6 +321,40 @@ async def test_commit_timeout_leaves_no_index_lock(
 
     assert (anchor / "hook-started").exists()
     assert not (workspace_git_dir(project_id) / "index.lock").exists()
+
+
+async def test_git_timeout_keeps_original_failure_when_lock_inspection_fails(
+    project_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    anchor = ensure_workspace(project_id)
+    _configure_filter(project_id, "slow", "sleep 30; cat")
+    _write(anchor, "developer/session-1/slow.slow", "slow\n")
+    real_git = daemon_git.run
+    real_run = subprocess.run
+
+    async def short_add_timeout(args: Sequence[str], **kwargs: Any) -> GitResult:
+        if "add" in args:
+            kwargs["timeout"] = ADD_TIMEOUT_SECONDS
+        return await real_git(args, **kwargs)
+
+    def missing_lsof(args: Sequence[str], **kwargs: Any) -> Any:
+        if args[0] == "lsof":
+            raise FileNotFoundError("lsof")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(daemon_git, "run", short_add_timeout)
+    monkeypatch.setattr(subprocess, "run", missing_lsof)
+    await _trigger(project_id, "set_handoff")
+
+    assert (workspace_git_dir(project_id) / "index.lock").exists()
+    warnings = "\n".join(
+        record.message
+        for record in caplog.records
+        if record.name == "gobby.agents.agent_workspaces"
+    )
+    assert "git add failed" in warnings
+    assert "GitTimeout" in warnings
+    assert "Cannot inspect workspace index.lock" in warnings
 
 
 async def test_secret_named_files_are_never_staged(project_id: str) -> None:

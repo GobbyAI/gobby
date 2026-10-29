@@ -524,7 +524,13 @@ class DaemonGitService:
             return result
         except TimeoutError:
             control.expire()
-            diagnostic = control.expired_diagnostic() or control.diagnostic(include_cleanup=False)
+            diagnostic = control.expired_diagnostic()
+            if diagnostic is None:
+                # The worker finished within its deadline, but a blocked loop
+                # delivered its result after wait_for's timer became ready.
+                if await _await_worker_cleanup(completion):
+                    raise asyncio.CancelledError() from None
+                return completion.result()
             logger.warning(
                 "Git command timed out: cwd=%s timeout_seconds=%.3f overrun_seconds=%.3f %s",
                 cwd,

@@ -126,6 +126,45 @@ def engine(temp_db: HubDatabase) -> RuleEngine:
     return RuleEngine(temp_db)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command_field", [False, True])
+@pytest.mark.parametrize(
+    ("relative", "decision"),
+    [
+        (".gobby/plans/runbook.md", "allow"),
+        ("src/gobby/install/shared/AGENTS.md", "allow"),
+        (".gobby/project.json", "block"),
+        (".git/config", "block"),
+    ],
+)
+async def test_patch_prose_checks_destinations_without_executing_shell_text(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    command_field: bool,
+    relative: str,
+    decision: str,
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    target = Path(variables["_agent_workspace_dir"]) / "task-25298" / relative
+    # Reduced from the refused plan patch, preserving its shell punctuation.
+    patch = (
+        f"*** Begin Patch\n*** Update File: {target}\n@@\n-before\n"
+        "+Each leaf\x27s \x60implementation_domain\x60 selects skills.\n*** End Patch\n"
+    )
+    data: dict[str, Any] = {
+        "tool_name": "apply_patch",
+        "tool_input": {"command": patch} if command_field else patch,
+        "cwd": str(tmp_path),
+    }
+    normalize_tool_fields(data)
+    assert data["canonical_file_paths"] == [str(target)]
+    response = await _decide(workspace_write_engine, data, variables)
+    assert response.decision == decision, response.reason
+    if decision == "block":
+        assert "agent-workspace-write-scope" in (response.reason or "")
+
+
 @pytest.fixture
 def workspace_write_engine(temp_db: HubDatabase) -> RuleEngine:
     document = yaml.safe_load((RULES_DIR / "roles" / "agent-workspace-scope.yaml").read_text())
