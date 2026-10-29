@@ -10,6 +10,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
@@ -19,13 +20,27 @@ pytestmark = pytest.mark.unit
 
 RULE = "query-readonly-seat-scope"
 SESSION_ID = "66666666-6666-4666-8666-666666666666"
-READ_ALLOWED = ("assistant", "orchestrator")
+READ_ALLOWED = ("assistant", "orchestrator", "fixture-database-reader")
 READ_REFUSED = ("default", "developer", "code-reviewer", "researcher", "dev-manager")
 
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
+    for name in READ_ALLOWED:
+        AgentDefinitionManager(temp_db).create(
+            name,
+            {
+                "name": name,
+                "prompts": {"agent": "Fixture database reader."},
+                "workflows": {
+                    "rule_selectors": {
+                        "include": ["tag:default"],
+                        "exclude": [f"name:{RULE}"],
+                    }
+                },
+            },
+        )
     yield temp_db
 
 

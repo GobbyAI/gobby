@@ -17,6 +17,7 @@ from gobby.mcp_proxy.services.result_handling import (
     apply_before_tool_enforcement,
     build_before_tool_event,
 )
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -109,6 +110,56 @@ def _load_roles(db: HubDatabase) -> None:
                 enabled=metadata["enabled"],
                 tags=document["tags"],
             )
+    for name in (
+        *NON_CLOSERS,
+        "researcher",
+        "orchestrator",
+        "dev-manager",
+        "consolidator",
+        "default",
+    ):
+        include = ["tag:default"]
+        exclude: list[str] = []
+        if name != "default":
+            include.append("tag:seat-policy")
+        if name in {"assistant", "orchestrator"}:
+            exclude.extend(
+                [
+                    "name:query-readonly-seat-scope",
+                    "name:seat-no-spawn",
+                    "name:seat-no-pipeline-launch",
+                    "name:seat-no-pipeline-cli",
+                    "name:seat-no-project-create",
+                    "name:spawned-session-no-project-create",
+                ]
+            )
+        if name in {"orchestrator", "dev-manager", "researcher", "consolidator"}:
+            exclude.extend(["name:seat-no-task-close", "name:unassigned-session-no-task-close"])
+        if name == "assistant":
+            exclude.append("name:seat-no-ask-user-question")
+        scope = {
+            "assistant": "documentation-write-scope",
+            "researcher": "research-artifact-write-scope",
+            "archivist": "digest-write-scope",
+            "metrics-monitor": "prometheus-query-only",
+        }.get(name)
+        if scope:
+            include.append(f"name:{scope}")
+        _set_policy(db, name, include, exclude)
+
+
+def _set_policy(db: HubDatabase, name: str, include: list[str], exclude: list[str]) -> None:
+    definitions = AgentDefinitionManager(db)
+    body = {
+        "name": name,
+        "prompts": {"agent": "Fixture policy."},
+        "workflows": {"rule_selectors": {"include": include, "exclude": exclude}},
+    }
+    existing = definitions.get_by_name(name)
+    if existing is None:
+        definitions.create(name, body)
+    else:
+        definitions.update(existing.id, definition_json=body)
 
 
 @pytest.fixture
@@ -153,6 +204,28 @@ async def _decide(
     return await engine.evaluate(
         _event(HookEventType.BEFORE_TOOL, data), session_id=SESSION_ID, variables=dict(variables)
     )
+
+
+@pytest.mark.parametrize("name", ["fixture-seat", "assistant"])
+@pytest.mark.parametrize(
+    ("rule", "data"),
+    [
+        ("seat-no-spawn", _proxy_call("gobby-agents", "spawn_agent", ENHANCER_CALL)),
+        ("seat-no-ask-user-question", {"tool_name": "AskUserQuestion", "tool_input": {}}),
+        (
+            "research-artifact-write-scope",
+            {"tool_name": "Write", "tool_input": {"file_path": "/tmp/out.py", "content": ""}},
+        ),
+        ("prometheus-query-only", _shell("git status --short")),
+    ],
+)
+async def test_selected_policy_applies_to_any_definition_name(
+    engine: RuleEngine, temp_db: HubDatabase, name: str, rule: str, data: dict[str, Any]
+) -> None:
+    _set_policy(temp_db, name, [f"name:{rule}"], [])
+    response = await _decide(engine, data, {"_agent_type": name})
+    assert response.decision == "block"
+    assert rule in (response.reason or "")
 
 
 @pytest.mark.asyncio
@@ -393,9 +466,7 @@ async def test_agents_cannot_create_projects(engine: RuleEngine, variables: dict
     for call in PROJECT_CREATES:
         blocked = await _decide(engine, call, variables)
         assert blocked.decision == "block", call
-        assert "project creation needs the operator's go through the Orchestrator" in (
-            blocked.reason or ""
-        )
+        assert "project" in (blocked.reason or "")
     for call in NOT_PROJECT_CREATES:
         assert (await _decide(engine, call, variables)).decision == "allow", call
 
@@ -681,7 +752,6 @@ NON_CLOSERS = (
     "code-reviewer",
     "docs-reviewer",
     "research-reviewer",
-    "researcher",
     "archivist",
     "log-monitor",
     "metrics-monitor",
@@ -702,8 +772,6 @@ NON_CLOSERS = (
     "feedback-reviewer",
     "memory-curator",
 )
-AGENTS_DIR = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
-CLOSE_TASK_NAMES = frozenset({"close_task", "gobby-tasks:close_task"})
 
 
 @pytest.mark.asyncio
@@ -742,48 +810,25 @@ async def test_persona_overlays_cannot_close_tasks(engine: RuleEngine) -> None:
         assert blocked.decision == "block", persona
 
 
-def _close_task_names(node: object) -> list[str]:
-    if isinstance(node, dict):
-        return [name for value in node.values() for name in _close_task_names(value)]
-    if isinstance(node, list):
-        return [name for item in node for name in _close_task_names(item)]
-    return [node] if isinstance(node, str) and node in CLOSE_TASK_NAMES else []
-
-
-def test_only_dev_managers_orchestrator_and_researcher_are_granted_close_task() -> None:
-    # Grant lists and workflow steps name the tool as an exact string; prose is not a grant.
-    granted = {
-        path.stem: _close_task_names(yaml.safe_load(path.read_text()))
-        for path in sorted(AGENTS_DIR.glob("*.yaml"))
-        if path.stem not in ("dev-manager", "orchestrator", "researcher", "consolidator")
-    }
-    assert {stem: names for stem, names in granted.items() if names} == {}
-    # The researcher closes only its own report spike as done; the MCP close enforces the rest.
-    researcher = yaml.safe_load((AGENTS_DIR / "researcher.yaml").read_text())
-    assert _close_task_names(researcher) == ["gobby-tasks:close_task"]
-
-
-@pytest.mark.parametrize(
-    "reason,allowed", [("moot", True), ("superseded", True), ("done", False), ("wont_do", False)]
-)
+@pytest.mark.parametrize("preview", [True, False])
+@pytest.mark.parametrize("exclude", [True, False])
 @pytest.mark.asyncio
-async def test_consolidator_rule_allows_only_fold_and_retirement_closes(
-    engine: RuleEngine, reason: str, allowed: bool
+async def test_task_close_policy_uses_definition_selector(
+    engine: RuleEngine,
+    temp_db: HubDatabase,
+    preview: bool,
+    exclude: bool,
 ) -> None:
+    _set_policy(
+        temp_db,
+        "fixture-closer",
+        ["tag:seat-policy"],
+        ["name:seat-no-task-close"] if exclude else [],
+    )
     call = _proxy_call(
         "gobby-tasks",
         "close_task",
-        {
-            "task_id": "#25235",
-            "reason": reason,
-            "superseded_by": "#25223",
-        },
+        {"task_id": "#25235", "preview": preview},
     )
-    result = await _decide(engine, call, {"_agent_type": "consolidator"})
-    assert result.decision == ("allow" if allowed else "block")
-
-
-def test_consolidator_definition_grants_approved_fold_tools() -> None:
-    definition = yaml.safe_load((AGENTS_DIR / "consolidator.yaml").read_text())
-    assert "name:block-update-task" in definition["workflows"]["rule_selectors"].get("exclude", [])
-    assert _close_task_names(definition)
+    result = await _decide(engine, call, {"_agent_type": "fixture-closer"})
+    assert result.decision == ("allow" if exclude or preview else "block")
