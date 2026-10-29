@@ -19,6 +19,11 @@ from gobby.adapters.capabilities import (
     ContextChannel,
     get_provider_capabilities,
 )
+from gobby.adapters.codex_impl.execution_chain import (
+    DIRECT_EXEC_NAMES,
+    FUNCTIONS_EXEC_NAMES,
+    functions_exec_shell_input,
+)
 from gobby.adapters.codex_impl.lifecycle_events import annotate_codex_hook_event
 from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
@@ -30,9 +35,12 @@ from gobby.adapters.degradation import (
     record_unsupported_response_fields,
     truncate_context_for_adapter,
 )
+from gobby.hooks._path_scope import current_tool_cwd
 from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
+from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.codex_items import normalize_command_execution
 
 if TYPE_CHECKING:
@@ -41,6 +49,65 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TRANSCRIPT_READ_CHUNK_BYTES = 64 * 1024
+
+
+def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
+    """Borrow cwd only from one proven, still-pending provider shell call.
+
+    Native Bash hooks omit nested exec_command.workdir. Reuse the transcript
+    execution correlator, including yielded cells, instead of guessing from the
+    session's task or the most recent matching historical command.
+    """
+    if node_origin():
+        return None
+    transcript_path = input_data.get("transcript_path")
+    tool_input = input_data.get("tool_input")
+    if not isinstance(transcript_path, str) or not isinstance(tool_input, dict):
+        return None
+    command = tool_input.get("command", tool_input.get("cmd"))
+    if not isinstance(command, str):
+        return None
+    parser = CodexTranscriptParser()
+    validated: dict[str, str | None] = {}
+    try:
+        with Path(transcript_path).open(encoding="utf-8") as transcript:
+            for index, line in enumerate(transcript):
+                if not line.endswith("\n"):
+                    return None  # An incomplete provider record cannot prove the active call.
+                json.loads(line)  # A malformed record could hide a competing pending call.
+                parsed = parser.parse_line(line, index)
+                if isinstance(parsed, ParsedMessage) and parsed.content_type == "tool_use":
+                    arguments = parsed.tool_input or {}
+                    if parsed.tool_use_id and (
+                        parsed.tool_name in DIRECT_EXEC_NAMES
+                        or (
+                            parsed.tool_name in FUNCTIONS_EXEC_NAMES
+                            and functions_exec_shell_input(arguments.get("raw")) is not None
+                        )
+                    ):
+                        cwd = arguments.get("cwd")
+                        validated[parsed.tool_use_id] = cwd if isinstance(cwd, str) else None
+    except (OSError, UnicodeError, ValueError):
+        return None
+    chain = parser.snapshot_state()["execution_chain"]
+    if not chain["complete"] or chain["ambiguous_cells"] or chain["ambiguous_sessions"]:
+        return None
+    pending = {
+        entry["outer_call_id"]: entry
+        for key in ("calls", "cells")
+        for entry in chain[key].values()
+        if entry.get("session_id") is None
+    }
+    if any(entry["literal_command"] is None for entry in pending.values()):
+        return None
+    matches = [entry for entry in pending.values() if entry["literal_command"] == command]
+    if len(matches) != 1 or matches[0]["outer_call_id"] not in validated:
+        return None
+    match = matches[0]
+    cwd = current_tool_cwd(
+        {"cwd": validated[match["outer_call_id"]], "tool_input": {"workdir": match["workdir"]}}
+    )
+    return str(cwd) if cwd is not None else None
 
 
 def _command_execution_result(input_data: dict[str, Any]) -> dict[str, Any] | None:
@@ -89,6 +156,8 @@ def _result_from_command_execution_record(record: bytes, tool_use_id: str) -> di
     if outcome is None or outcome.exit_code is None:
         return None
     return {
+        "command": outcome.command,
+        "cwd": outcome.cwd,
         "exit_code": outcome.exit_code,
         "success": outcome.success,
         "output": outcome.output,
@@ -144,11 +213,28 @@ class CodexHooksAdapter(BaseAdapter):
             normalize_tool_outcome,
         )
 
+        if hook_type == "PreToolUse" and is_shell_tool(input_data.get("tool_name")):
+            shell_input = input_data.get("tool_input")
+            if isinstance(shell_input, dict) and not any(
+                shell_input.get(key) for key in ("workdir", "cwd")
+            ):
+                workdir = _pending_shell_workdir(input_data)
+                if workdir is not None:
+                    input_data = {
+                        **input_data,
+                        "tool_input": {**shell_input, "workdir": workdir},
+                    }
+
         if hook_type == "PostToolUse" and is_shell_tool(input_data.get("tool_name")):
             command_result = _command_execution_result(input_data)
             if command_result is not None:
+                shell_input = dict(raw_tool_input) if isinstance(raw_tool_input, dict) else {}
+                shell_input["command"] = command_result["command"]
+                if command_result["cwd"] is not None:
+                    shell_input["workdir"] = command_result["cwd"]
                 input_data = {
                     **input_data,
+                    "tool_input": shell_input,
                     "tool_result": command_result,
                 }
                 normalize_tool_outcome(

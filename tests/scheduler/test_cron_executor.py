@@ -15,8 +15,10 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_children import ChildActionType
 from gobby.storage.cron_models import CronJob, CronRun
+from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager, ensure_system_session, system_session_id
 from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.pipeline_state import ExecutionStatus
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -881,6 +883,54 @@ async def test_execute_pipeline_background_timeout_fails_cron_run(
     assert persisted.error == "pipeline cron action timed out after 0.01s"
     assert persisted.completed_at is not None
     assert persisted.pipeline_execution_id == execution.id
+
+
+@pytest.mark.asyncio
+async def test_execute_pipeline_background_timeout_closes_pipeline_child(
+    cron_storage: CronJobStorage,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timed-out pipeline that kept its child through the cancel ends with it closed."""
+    pipeline = MagicMock()
+    pipeline.name = "cron-timeout"
+    pipeline.model_dump_json.return_value = '{"name":"cron-timeout"}'
+    sessions = SessionManager(temp_db)
+    manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
+    pipeline_executor = MagicMock()
+    pipeline_executor.loader = MagicMock()
+    pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
+    pipeline_executor.session_manager = sessions
+    pipeline_executor.execution_manager = manager
+
+    async def hang(*, execution_id: str, **kwargs: object) -> None:
+        # A resumable pipeline registers its child and keeps it open through a cancel.
+        sessions.register(
+            external_id=f"pipeline-{execution_id}",
+            machine_id=None,
+            source="pipeline",
+            project_id=PROJECT_ID,
+        )
+        await asyncio.Event().wait()
+
+    pipeline_executor.execute = AsyncMock(side_effect=hang)
+    executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
+    job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-timeout"})
+    run = _create_run(cron_storage, job)
+
+    await executor.execute(job, run)
+    monkeypatch.setattr(executor.config, "running_timeout_seconds", 0.01)
+    await asyncio.gather(*list(executor._background_tasks))
+
+    persisted = cron_storage.get_run(run.id)
+    assert persisted is not None and persisted.pipeline_execution_id is not None
+    failed = manager.get_execution(persisted.pipeline_execution_id)
+    assert failed is not None and failed.status == ExecutionStatus.FAILED
+    child = sessions.find_by_external_id(
+        external_id=f"pipeline-{failed.id}", project_id=PROJECT_ID, source="pipeline"
+    )
+    assert child is not None
+    assert child.status == "deleted"
 
 
 @pytest.mark.asyncio

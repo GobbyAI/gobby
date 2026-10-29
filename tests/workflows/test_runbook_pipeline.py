@@ -11,14 +11,20 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from gobby.mcp_proxy.tools.spawn_agent._seat_adoption import (
+    authorize_pipeline_invocation,
+    reconcile_pipeline_invocation,
+)
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     RUNBOOK_RESUME_REFUSED,
     _background_tasks_by_execution,
+    cancel_pipeline,
     resume_interrupted_pipelines,
     resume_pipeline,
     run_pipeline,
 )
 from gobby.servers.routes.pipelines import create_pipelines_router
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager, system_session_id
@@ -547,6 +553,193 @@ async def test_planning_child_past_the_first_fifty_children_is_reused(
     assert "gobby-tasks:create_task" not in [call["tool"] for call in proxy.calls]
     writer = proxy.spawns()[0]
     assert "#26100" in writer["prompt"]
+
+
+@pytest.mark.parametrize("run_state", ["missing", "pending", "started"])
+async def test_restart_reconciles_real_reserved_run(temp_db: HubDatabase, run_state: str) -> None:
+    pipeline = await _team_planning(temp_db)
+    before = InterruptingProxy("plan-adversary")
+    with pytest.raises(asyncio.CancelledError):
+        await _executor(temp_db, before).execute(pipeline, RUN_INPUTS, PROJECT_ID)
+    execution_id = _latest_execution_id(temp_db)
+    interrupted = before.spawns()[-1]
+    run_id = interrupted["reserved_run_id"]
+    sessions = SessionManager(temp_db)
+    runs = LocalAgentRunManager(temp_db)
+    if run_state != "missing":
+        run = runs.create(
+            parent_session_id=before.calls[-1]["session_id"],
+            provider="claude",
+            prompt="Interrupted placed seat",
+            run_id=run_id,
+        )
+        if run_state == "started":
+            assert runs.start(run.id) is not None
+    else:
+        assert runs.get(run_id) is None
+
+    class ReconcileProxy(RunbookAgentsProxy):
+        async def call_tool(
+            self,
+            server: str,
+            tool: str,
+            arguments: dict[str, Any],
+            *,
+            session_id: str | None,
+            enforce_workflow: bool,
+        ) -> dict[str, Any]:
+            if server == "gobby-agents" and tool == "spawn_agent":
+                assert session_id is not None
+                caller = sessions.get(session_id)
+                assert caller is not None
+                reserved = arguments["reserved_run_id"]
+                reply = authorize_pipeline_invocation(
+                    temp_db,
+                    caller,
+                    parent_session_id=session_id,
+                    project_id=PROJECT_ID,
+                    reserved_run_id=reserved,
+                ) or reconcile_pipeline_invocation(temp_db, sessions, caller, reserved)
+                if reply is not None:
+                    replies.append(reply)
+                    return reply
+            return await super().call_tool(
+                server,
+                tool,
+                arguments,
+                session_id=session_id,
+                enforce_workflow=enforce_workflow,
+            )
+
+    replies: list[dict[str, Any]] = []
+    manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
+    after = ReconcileProxy()
+    resumed = await resume_interrupted_pipelines(
+        PipelineLoader(temp_db), _executor(temp_db, after), manager
+    )
+    assert resumed == [execution_id]
+    await _background_tasks_by_execution[execution_id]
+    finished = manager.get_execution(execution_id)
+    assert finished is not None
+    if run_state == "missing":
+        assert replies == []
+        replayed = [spawn for spawn in after.spawns() if spawn["reserved_run_id"] == run_id]
+        assert len(replayed) == 1 and replayed[0]["agent"] == "plan-adversary"
+        assert finished.status == ExecutionStatus.COMPLETED
+        return
+
+    [reply] = replies
+    assert "reserved_run_id is not a step invocation" not in reply.get("error", "")
+    if run_state == "started":
+        assert reply["success"] is True and reply["adopted"] is True
+        assert reply["run_id"] == run_id
+    else:
+        assert reply["success"] is False
+        assert run_id in reply["error"]
+        assert "fresh" in reply["error"].lower() and "launch" in reply["error"].lower()
+    assert finished.status == (
+        ExecutionStatus.COMPLETED if run_state == "started" else ExecutionStatus.FAILED
+    )
+    assert all(spawn["reserved_run_id"] != run_id for spawn in after.spawns())
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["load_error", "missing", "disabled", "not_resumable", "unusable_snapshot", "new_run"],
+)
+async def test_restart_closes_child_only_for_skipped_old_execution(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
+    pipeline = await _team_planning(temp_db)
+    before = InterruptingProxy("plan-adversary")
+    with pytest.raises(asyncio.CancelledError):
+        await _executor(temp_db, before).execute(pipeline, RUN_INPUTS, PROJECT_ID)
+    execution_id = _latest_execution_id(temp_db)
+    manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
+    execution = manager.get_execution(execution_id)
+    assert execution is not None
+    sessions = SessionManager(temp_db)
+    child = sessions.find_by_external_id(
+        external_id=f"pipeline-{execution_id}", project_id=PROJECT_ID, source="pipeline"
+    )
+    assert child is not None and child.status == "active"
+
+    async def load(*args: object, **kwargs: object) -> PipelineDefinition | None:
+        if reason == "load_error":
+            raise ValueError("Definition could not be loaded")
+        if reason in {"missing", "new_run"}:
+            return None
+        return pipeline.model_copy(
+            update={"enabled": reason != "disabled", "resume_on_restart": reason != "not_resumable"}
+        )
+
+    if reason == "unusable_snapshot":
+        with temp_db.transaction() as conn:
+            conn.execute(
+                "UPDATE pipeline_executions SET definition_json = %s WHERE id = %s",
+                ("{}", execution_id),
+            )
+    loader = PipelineLoader(temp_db)
+    monkeypatch.setattr(loader, "load_pipeline", load)
+    after = RunbookAgentsProxy()
+    resumed = await resume_interrupted_pipelines(
+        loader,
+        _executor(temp_db, after),
+        manager,
+        created_before=execution.created_at if reason == "new_run" else None,
+    )
+    assert resumed == [] and after.calls == []
+    retained = sessions.get(child.id)
+    assert retained is not None
+    assert retained.status == ("active" if reason == "new_run" else "deleted")
+
+
+class HoldingProxy(RunbookAgentsProxy):
+    """Holds one seat's spawn open so a cancel lands mid-step."""
+
+    def __init__(self, hold_agent: str) -> None:
+        super().__init__()
+        self.hold_agent = hold_agent
+        self.held = asyncio.Event()
+
+    async def call_tool(
+        self,
+        server: str,
+        tool: str,
+        arguments: dict[str, Any],
+        *,
+        session_id: str | None,
+        enforce_workflow: bool,
+    ) -> dict[str, Any]:
+        if arguments.get("agent") == self.hold_agent:
+            self.held.set()
+            await asyncio.Event().wait()
+        return await super().call_tool(
+            server, tool, arguments, session_id=session_id, enforce_workflow=enforce_workflow
+        )
+
+
+async def test_operator_cancel_closes_resumable_child(temp_db: HubDatabase) -> None:
+    pipeline = await _team_planning(temp_db)
+    assert pipeline.resume_on_restart is True
+    proxy = HoldingProxy("plan-adversary")
+    started = await run_pipeline(
+        PipelineLoader(temp_db), _executor(temp_db, proxy), "team-planning", RUN_INPUTS, PROJECT_ID
+    )
+    execution_id = started["execution_id"]
+    await asyncio.wait_for(proxy.held.wait(), timeout=10)
+    manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
+
+    result = await cancel_pipeline(manager, execution_id)
+
+    assert result["success"] is True, result
+    cancelled = manager.get_execution(execution_id)
+    assert cancelled is not None and cancelled.status == ExecutionStatus.CANCELLED
+    child = SessionManager(temp_db).find_by_external_id(
+        external_id=f"pipeline-{execution_id}", project_id=PROJECT_ID, source="pipeline"
+    )
+    assert child is not None
+    assert child.status == "deleted"
 
 
 def _assert_child_parent(

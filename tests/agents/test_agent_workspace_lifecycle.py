@@ -11,7 +11,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from gobby.agents.agent_workspaces import workspace_handoff_references
+from gobby.agents.agent_workspaces import (
+    spawn_workspace_write_paths,
+    workspace_handoff_references,
+)
 from gobby.hooks.event_handlers._session_start.handoff import SessionStartResolution
 from gobby.hooks.event_handlers._session_start.materialize import activate_materialized_session
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -171,11 +174,13 @@ async def test_handoff_references_name_the_bound_folder(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("persistent", [True, False], ids=["persistent", "fresh"])
+@pytest.mark.parametrize("sandboxed", [True, False], ids=["sandboxed", "unsandboxed"])
 async def test_clear_inheritance_by_persistence(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     persistent: bool,
+    sandboxed: bool,
 ) -> None:
     pane = _pane(temp_db, tmp_path, monkeypatch, f"clear-{persistent}")
     home = (tmp_path / "gobby-home").resolve()
@@ -183,6 +188,7 @@ async def test_clear_inheritance_by_persistence(
     name = KEEPER if persistent else WORKER
     _define(temp_db, name, persistent=persistent)
     assert (await apply_agent_definition_impl(name, temp_db, pane.predecessor_id))["success"]
+    pane.sessions.update(pane.predecessor_id, sandbox_enabled=sandboxed)
     _activate(pane, pane.predecessor_id, "startup")
     lineage, _ = _workspace(temp_db, pane.predecessor_id)
     assert lineage == _folder(home, pane, name, pane.predecessor_id)
@@ -192,9 +198,11 @@ async def test_clear_inheritance_by_persistence(
 
     folder, flag = _workspace(temp_db, successor)
     assert flag is persistent
-    if persistent:
+    if persistent or sandboxed:
         # The lineage keeps its first sequence number across clears.
         assert folder == lineage
+        # A resume must preserve the same narrow grant after the session ID changes.
+        assert spawn_workspace_write_paths(temp_db, successor, name) == [str(lineage)]
     else:
         assert folder == _folder(home, pane, name, successor)
         assert folder != lineage

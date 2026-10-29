@@ -108,13 +108,14 @@ def apply_path_scope_metadata(
 
 def current_tool_cwd(event_data: Mapping[str, Any]) -> Path | None:
     """Resolve the directory relative tool paths should be interpreted from."""
+    base = _resolve_base_dir(event_data.get("cwd"))
     tool_input = event_data.get("tool_input")
     if isinstance(tool_input, Mapping):
         for key in ("workdir", "cwd"):
-            cwd = _resolve_base_dir(tool_input.get(key))
-            if cwd is not None:
-                return cwd
-    return _resolve_base_dir(event_data.get("cwd"))
+            value = tool_input.get(key)
+            if isinstance(value, str) and value.strip():
+                return _resolve_base_dir(value, base=base)
+    return base
 
 
 def current_project_root(event_data: Mapping[str, Any]) -> Path | None:
@@ -276,14 +277,18 @@ def resolve_tool_path(path: Any, cwd: Path | None) -> Path | None:
     return candidate.resolve(strict=False)
 
 
-def _resolve_base_dir(path: Any) -> Path | None:
+def _resolve_base_dir(path: Any, *, base: Path | None = None) -> Path | None:
     if not isinstance(path, str) or not path.strip():
         return None
-    if node_origin():
-        # The node's cwd and project path stay as sent; a hub symlink must not rewrite them.
-        return Path(path)
     try:
-        return Path(path).expanduser().resolve(strict=False)
+        remote = node_origin()
+        value = Path(path) if remote else Path(path).expanduser()
+        if not value.is_absolute():
+            if base is None:
+                return None
+            value = base / value
+        # The node's paths stay on the node; a hub symlink must not rewrite them.
+        return value if remote else value.resolve(strict=False)
     except RuntimeError:
         return None
 

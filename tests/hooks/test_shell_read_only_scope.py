@@ -199,7 +199,7 @@ def test_inline_python_writes_name_their_targets(
     data = _metadata(f'uv run python -c "{script}"', repo)
 
     assert data["canonical_tool_kind"] == "write"
-    assert data["canonical_write_file_paths"] == writes
+    assert data["canonical_write_file_paths"] == [str(repo / path) for path in writes]
 
 
 @pytest.mark.parametrize(

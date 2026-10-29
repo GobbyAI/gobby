@@ -81,8 +81,9 @@ def _is_parent_send_message(mcp_key: str, tool_input: dict[str, Any]) -> bool:
 
 
 def _step_tool_block_guidance(step_name: str) -> str:
+    claim = " Call gobby-tasks:claim_task to leave claim." if step_name == "claim" else ""
     return (
-        f"\nThis capability is unavailable for the rest of the '{step_name}' step. "
+        f"\nThis capability is unavailable for the rest of the '{step_name}' step.{claim} "
         "Abandon this call, continue with an allowed operation, and do not retry "
         "the same blocked tool in this step. Repeating an identical denial three "
         "times ends an autonomous run in a terminal blocked state."

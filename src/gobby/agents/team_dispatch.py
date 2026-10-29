@@ -2,8 +2,8 @@
 
 The Dev Manager holds no claim; its run is bound to the epic, and it dispatches the team's seats
 here. A maker takes an open, unclaimed leaf of the epic. A primary leaf works in the team tree
-and holds its implementation domain (``fullstack`` when unset): one live primary per domain. A
-sub-worktree leaf gets ``epic/<seq>/<leaf-seq>`` off the epic branch and holds no primary slot.
+and records its implementation domain for skills: only one live primary works that tree. A
+parallel leaf uses a Dev Pod on ``epic/<seq>/<leaf-seq>`` and holds no primary slot.
 A reviewer works in the team tree and is recorded on the team, one live seat per definition. A
 resumed seat keeps the definition its session was stored under. A resumed reviewer rebinds that
 definition to the resumed run, and a resumed primary takes its domain slot back. A team manager's
@@ -80,6 +80,29 @@ def _leaf_id(db: HubDatabase, project_id: str, task_ref: str) -> str:
         ) from exc
 
 
+def _live_primary(db: HubDatabase, binding: TeamBinding) -> bool:
+    """Include the initial runbook maker, which has no domain dispatch binding."""
+    if any(_live(db, run_id) for run_id in binding.primaries.values()):
+        return True
+    rows = db.fetchall(
+        "SELECT s.id FROM sessions s JOIN agent_runs r ON s.agent_run_id = r.id "
+        "LEFT JOIN sessions parent ON parent.id = r.parent_session_id "
+        "WHERE s.project_id = %s AND r.status = ANY(%s) "
+        "AND (r.worktree_id = %s OR parent.source = 'pipeline')",
+        (binding.project_id, sorted(_LIVE), binding.worktree_id),
+    )
+    sessions = SessionManager(db)
+    for row in rows:
+        team = seat_team(db, row["id"])
+        if team is None or team.team_id != binding.team_id:
+            continue
+        session = sessions.get(row["id"])
+        definition = session_agent_definition(db, session) if session is not None else None
+        if definition is not None and _MAKER_GRANT in definition[0].task_step_writes:
+            return True
+    return False
+
+
 def _maker(
     db: HubDatabase,
     binding: TeamBinding,
@@ -117,9 +140,9 @@ def _maker(
             "team_tree_mismatch", f"team {binding.team_id} works in tree {binding.worktree_id}"
         )
     domain = leaf.implementation_domain or _UNDOMAINED_DOMAIN
-    if _live(db, binding.primaries.get(domain)):
+    if _live_primary(db, binding):
         raise TeamAdmissionRefused(
-            "primary_live", f"team {binding.team_id} already has a live {domain} primary"
+            "primary_live", f"team {binding.team_id} already has a live primary; use a Dev Pod"
         )
     return DispatchScope(
         team_id=binding.team_id,
@@ -150,21 +173,23 @@ def _stored_definition(db: HubDatabase, session_id: str) -> str:
 def _resumed_maker(
     db: HubDatabase, binding: TeamBinding, parent: str, session_id: str | None
 ) -> DispatchScope | None:
-    """A resumed primary takes its domain slot back; any other resumed maker takes no scope.
+    """A resumed primary takes the team's primary slot; other resumed makers take no scope.
 
-    A run counts as a primary when it worked the team tree on a leaf. Its leaf's domain must
-    hold no other live primary.
+    A run counts as a primary when it worked the team tree, even before claiming a leaf. No primary
+    may still be live, regardless of its implementation domain.
     """
     session = SessionManager(db).get(session_id) if session_id is not None else None
     last = session.agent_run_id if session is not None else None
     run = LocalAgentRunManager(db).get(last) if last else None
-    if run is None or run.task_id is None or run.worktree_id != binding.worktree_id:
+    if run is None or run.worktree_id != binding.worktree_id:
         return None
-    domain = LocalTaskManager(db).get_task(run.task_id).implementation_domain or _UNDOMAINED_DOMAIN
-    if _live(db, binding.primaries.get(domain)):
+    if _live_primary(db, binding):
         raise TeamAdmissionRefused(
-            "primary_live", f"team {binding.team_id} already has a live {domain} primary"
+            "primary_live", f"team {binding.team_id} already has a live primary; use a Dev Pod"
         )
+    domain = (
+        LocalTaskManager(db).get_task(run.task_id).implementation_domain if run.task_id else None
+    ) or _UNDOMAINED_DOMAIN
     return DispatchScope(
         team_id=binding.team_id,
         project_id=binding.project_id,

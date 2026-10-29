@@ -35,7 +35,10 @@ async def test_dispatch_before_tool_once_shares_inflight_none_response() -> None
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def fake_pre_tool(_tool_name: str, _tool_input: dict[str, object]) -> None:
+    async def fake_pre_tool(
+        _tool_name: str, _tool_input: dict[str, object], *, tool_execution_id: str | None = None
+    ) -> None:
+        assert tool_execution_id == "same-tool"
         started.set()
         await release.wait()
         return None
@@ -205,3 +208,30 @@ async def test_post_tool_lifecycle_adds_only_mcp_display_fields(
             **derived,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_managed_codex_execution_identity_survives_pending_receipts() -> None:
+    before = AsyncMock(return_value={"decision": "block", "reason": "foreign operation"})
+    after = AsyncMock(return_value=None)
+    session = CodexManagedChatSession(conversation_id="conv-codex", _backend=MagicMock())
+    session._on_pre_tool = before
+    session._on_post_tool = after
+    command = {"command": "git merge incoming"}
+
+    result = await session._dispatch_before_tool_once("merge-call", "Bash", command)
+    await session._apply_post_tool_lifecycle(
+        "Bash", command, "running", tool_execution_id="merge-call", pending=True
+    )
+    await session._apply_post_tool_lifecycle(
+        "Bash", command, "conflict", is_error=True, tool_execution_id="merge-call"
+    )
+
+    assert result == {"decision": "block", "reason": "foreign operation"}
+    assert before.call_args.args[0]["tool_use_id"] == "merge-call"
+    pending, terminal = [call.args[0] for call in after.call_args_list]
+    assert pending["tool_use_id"] == terminal["tool_use_id"] == "merge-call"
+    assert pending["verification_execution_id"] == terminal["verification_execution_id"]
+    assert pending["_verification_pending"] is True
+    assert "_verification_pending" not in terminal
+    assert terminal["is_error"] is True

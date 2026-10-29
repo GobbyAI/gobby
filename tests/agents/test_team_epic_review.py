@@ -339,6 +339,31 @@ async def test_epic_manager_admits_isolated_leaf_pod(world: TeamWorld) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("external", [False, True])
+async def test_pod_waits_for_unresolved_dependency(world: TeamWorld, external: bool) -> None:
+    epic = new_task(world, "Dependency-ordered pods", epic=True)
+    leaf = new_task(world, "Dependent leaf", parent=epic)
+    prerequisite = new_task(world, "Prerequisite", parent=None if external else epic)
+    TaskDependencyManager(world.case.db).add_dependency(leaf.id, prerequisite.id, "blocks")
+    team = await epic_team(world, epic)
+    run = world.child(leaf, parent=team.manager)
+    inputs = {"parent_team_id": team.binding.team_id, "task": leaf.id}
+    sessions = SessionManager(team.db)
+
+    assert not dev_pod_launch_allowed(sessions, team.manager, "pipeline:devteam", inputs)
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+    assert refused.value.code == "pod_leaf_blocked"
+    assert managed_task_team(team.db, team.manager, leaf.id) == team.binding
+
+    LocalTaskManager(team.db).close_task(prerequisite.id, reason="moot")
+    assert dev_pod_launch_allowed(sessions, team.manager, "pipeline:devteam", inputs)
+    pod = await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+    assert pod.parent_team_id == team.binding.team_id
+    assert pod.worktree_id != team.binding.worktree_id
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("explicit_epic_hold", [False, True])
 async def test_pod_admission_respects_only_explicit_epic_hold(
     world: TeamWorld, explicit_epic_hold: bool

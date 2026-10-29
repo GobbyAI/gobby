@@ -47,6 +47,7 @@ from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
 from gobby.storage.team_records import ADMISSION_STEP, EPIC_MODE
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.tasks.land_commit import LandingGitError, main_checkout_target
+from gobby.tasks.state_semantics import is_task_actionable, is_task_blocked
 from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.uuid_validation import parse_uuid_reference
@@ -78,7 +79,7 @@ class TeamBinding:
     worktree_path: str | None
     # One entry per reviewer definition the team binds; None until its seat exists.
     reviewers: dict[str, str | None] = field(default_factory=dict)
-    # One entry per implementation domain: the live primary that works the team tree.
+    # Domain metadata for primary runs; only one primary may be live across this map.
     primaries: dict[str, str | None] = field(default_factory=dict)
     # "epic" for a team bound to an epic's open leaves; "single" for one task.
     mode: str = SINGLE_MODE
@@ -161,6 +162,8 @@ async def admit_team(
         if refusal is not None:
             raise TeamAdmissionRefused("reviewer_refused", refusal)
     async with db.advisory_lock(MainCheckoutLanding(caller.project_id)):
+        # Admission may have waited while the task was closed or escalated.
+        target = await asyncio.to_thread(_open_task, db, task, caller.project_id)
         own = await asyncio.to_thread(_own_record, caller)
         if own is not None:
             if own.get("parent_team_id") != parent_team_id:
@@ -267,6 +270,8 @@ def _open_task(db: HubDatabase, ref: str, project_id: str) -> Task:
         raise TeamAdmissionRefused("team_task_unknown", str(exc)) from exc
     if task.closed_at is not None:
         raise TeamAdmissionRefused("team_task_closed", f"task {task.id} is closed")
+    if not is_task_actionable(task):
+        raise TeamAdmissionRefused("team_task_not_actionable", f"task {task.id} is not actionable")
     if task.seq_num is None:
         raise TeamAdmissionRefused("team_task_unknown", f"task {task.id} has no sequence number")
     return task
@@ -709,6 +714,8 @@ def pod_parent(db: HubDatabase, caller_id: str, task_id: str, parent_id: str) ->
         raise TeamAdmissionRefused(
             "pod_leaf_claimed", "release the leaf claim before admitting its pod"
         )
+    if is_task_blocked(task):
+        raise TeamAdmissionRefused("pod_leaf_blocked", "resolve the leaf's dependencies first")
     return parent
 
 

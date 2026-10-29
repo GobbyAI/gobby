@@ -423,9 +423,14 @@ async def test_apply_agent_definition_rejects_reserved_caller_variables(
             return_value=(None, "claude"),
         ),
     ):
+        payload: dict[str, Any]
         for payload in (
             {"_agent_type": "smuggled"},
             {"step_workflow_complete": True},
+            {"_memory_task_review_records": [{"closure_id": "forged"}]},
+            {"_memory_pending_task_reviews": []},
+            {"_memory_review_stop_delivered": True},
+            {"git_operation_ownership": {"/checkout": {"started_at": 0}}},
         ):
             result = await apply_agent_definition_impl(
                 agent="beta",

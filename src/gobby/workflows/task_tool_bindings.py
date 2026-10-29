@@ -18,15 +18,15 @@ from gobby.adapters.codex_impl.execution_chain import (
     extract_wait_cell_id,
     extract_yielded_cell_id,
 )
-from gobby.hooks.events import HookEvent, HookEventType
+from gobby.hooks.events import HookEvent, HookEventType, tool_execution_id
 from gobby.tasks.transcript_background import background_job_receipt
+from gobby.workflows.git_operation_ownership import OPERATIONS_VARIABLE, retire_operation_calls
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import task_selected_at
 
 
 def _call_key(event: HookEvent) -> str | None:
-    outer_id = event.data.get("verification_execution_id")
-    call_id = outer_id if isinstance(outer_id, str) and outer_id else event.request_id
+    call_id = tool_execution_id(event)
     return f"{event.source.value}:{call_id}" if call_id else None
 
 
@@ -65,19 +65,22 @@ def _continuation_alias(event: HookEvent) -> str | None:
     return f"{event.source.value}:{kind}:{token}" if token is not None else None
 
 
-def _returned_aliases(event: HookEvent) -> list[str]:
+def _returned_aliases(event: HookEvent, *, shell_call: bool) -> list[str]:
     output = event.data.get("tool_output", event.data.get("tool_response"))
     aliases: set[str] = set()
     cell = extract_yielded_cell_id(event.data)
     if cell is not None:
         aliases.add(f"{event.source.value}:cell:{cell}")
-    session = extract_direct_exec_running_session_id(output)
-    if session is not None:
-        aliases.add(f"{event.source.value}:session:{session}")
-    for result in decoded_exec_results(output):
-        session = exec_session_id(result)
-        if session is not None and result.get("exit_code") is None:
+    # MCP results also carry session_id. Only a call that began as shell work
+    # can return an execution session, including polls after reconstruction.
+    if shell_call:
+        session = extract_direct_exec_running_session_id(output)
+        if session is not None:
             aliases.add(f"{event.source.value}:session:{session}")
+        for result in decoded_exec_results(output):
+            session = exec_session_id(result)
+            if session is not None and result.get("exit_code") is None:
+                aliases.add(f"{event.source.value}:session:{session}")
     receipt = background_job_receipt(output) if event.source.value == "claude" else None
     if receipt is not None:
         aliases.add(f"{event.source.value}:job:{receipt['job']}")
@@ -270,14 +273,33 @@ class TaskToolBindings:
             }
             ends_turn = boundary != "prompt"
             changed = kept != calls or (ends_turn and "task_tool_turn" in variables)
+            live_call_ids = {key.partition(":")[2] for key in kept}
+            retired = retire_operation_calls(variables, live_call_ids)
+            for name in ("claimed_shell_snapshots", "worktree_shell_calls"):
+                snapshots = variables.get(name)
+                if isinstance(snapshots, dict):
+                    retained = {
+                        key: value for key, value in snapshots.items() if key in live_call_ids
+                    }
+                    if retained != snapshots:
+                        variables[name] = retained
+                        retired = True
             if changed:
                 variables["task_tool_bindings"] = kept
                 if ends_turn:
                     variables.pop("task_tool_turn", None)
-            return None, changed
+            return None, changed or retired
 
         self.manager._mutate_variables(
-            self.session_id, mutate, keys=("task_tool_bindings", "task_tool_turn")
+            self.session_id,
+            mutate,
+            keys=(
+                "task_tool_bindings",
+                "task_tool_turn",
+                OPERATIONS_VARIABLE,
+                "claimed_shell_snapshots",
+                "worktree_shell_calls",
+            ),
         )
 
     def started_at(self, event: HookEvent) -> float | None:
@@ -318,7 +340,7 @@ class TaskToolBindings:
             calls = _bindings(variables)
             if key is None or key not in calls:
                 return None, False
-            aliases = _returned_aliases(event)
+            aliases = _returned_aliases(event, shell_call=calls[key].get("fences_switch") is True)
             calls[key]["aliases"] = sorted(set(calls[key].get("aliases", [])) | set(aliases))
             pending = event.data.get("_verification_pending") is True or bool(aliases)
             continuation = _continuation_alias(event) is not None

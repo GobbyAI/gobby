@@ -602,6 +602,79 @@ fn connect_overlay_visibility_test_db() -> (Client, String) {
     (conn, database_url)
 }
 
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn gcode_connections_keep_bm25_out_of_parallel_workers() -> anyhow::Result<()> {
+    let (mut seed, database_url) = connect_overlay_visibility_test_db();
+    let ids = OverlayFixtureIds::new(database_url.clone());
+    let cleanup = OverlayFixtureCleanup {
+        database_url: database_url.clone(),
+        parent_project_id: ids.parent_project_id.clone(),
+        overlay_project_id: ids.overlay_project_id.clone(),
+    };
+    seed_overlay_visibility_fixture(&mut seed, &ids);
+    let favor_parallel = "SET parallel_setup_cost = 0; SET parallel_tuple_cost = 0;
+        SET min_parallel_table_scan_size = 0; SET min_parallel_index_scan_size = 0;
+        SET debug_parallel_query = on; SET enable_seqscan = off";
+    let queries = [
+        "WITH matches AS MATERIALIZED (
+            SELECT c.id, pdb.score(c.id) AS score FROM code_content_chunks c
+            WHERE c.content @@@ 'marker'
+         ) SELECT * FROM matches ORDER BY score DESC, id LIMIT 10",
+        "SELECT cs.id, pdb.score(cs.id) FROM code_symbols cs
+         WHERE cs.name @@@ 'marker' ORDER BY pdb.score(cs.id) DESC, cs.id LIMIT 10",
+    ];
+    seed.batch_execute(favor_parallel)?;
+    seed.batch_execute("SET max_parallel_workers_per_gather = 4")?;
+    for query in queries {
+        // EXPLAIN only: running the unsafe plan can crash the entire test hub.
+        let rows = seed.query(&format!("EXPLAIN {query}"), &[])?;
+        let plan = rows
+            .iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            plan.contains("Gather"),
+            "fixture must exercise a parallel BM25 plan: {plan}"
+        );
+        assert!(
+            plan.contains("Custom Scan"),
+            "fixture must use the BM25 index: {plan}"
+        );
+    }
+    for connect in [
+        crate::db::connect_readonly,
+        crate::db::connect_readwrite,
+        crate::db::connect_freshness_readwrite,
+    ] {
+        let mut conn = connect(&database_url)?;
+        conn.batch_execute(favor_parallel)?;
+        for query in queries {
+            let rows = conn.query(&format!("EXPLAIN {query}"), &[])?;
+            let plan = rows
+                .iter()
+                .map(|row| row.get::<_, String>(0))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                !plan.contains("Gather"),
+                "BM25 must stay in the leader process: {plan}"
+            );
+            assert!(
+                plan.contains("Custom Scan"),
+                "BM25 index must remain enabled: {plan}"
+            );
+        }
+    }
+    cleanup.cleanup()?;
+    Ok(())
+}
+
 struct OverlayFixtureIds {
     database_url: String,
     parent_project_id: String,

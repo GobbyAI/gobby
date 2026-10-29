@@ -22,7 +22,12 @@ from typing import Any
 
 import pytest
 
-from gobby.agents.agent_workspaces import epic_workspace_dir, session_workspace_dir
+from gobby.agents.agent_workspaces import (
+    epic_workspace_dir,
+    session_workspace_dir,
+    workspace_anchor,
+    workspaces_root,
+)
 from gobby.agents.cargo_target import (
     ensure_agent_cargo_target_dir,
     sandbox_checkout_cargo_target_dir,
@@ -50,6 +55,10 @@ _SESSION_ID = "node-srt-session"
 _DAEMON_PORT = 60887
 _WEBSOCKET_PORT = 60888
 _PROVIDERS = ("claude", "codex", "grok", "droid", "agy")
+_DARWIN_WRITE_PATHS = (
+    "{darwin_temp}/xcrun_db-*",
+    "{darwin_cache}/com.apple.DeveloperTools",
+)
 # The seat whose agent workspace folders the spawn grants (#25148): its own
 # ``<definition>/session-<seq>/`` and its team's ``epics/epic-<seq>/`` folder.
 _WORKSPACE_CASE = "claude-agent-workspace"
@@ -118,6 +127,8 @@ def _case(
     definition: str | None = None,
     session_seq: int | None = None,
     epic_seq: int | None = None,
+    read_all_agent_workspaces: bool = False,
+    predecessor_workspace_folders: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -131,6 +142,8 @@ def _case(
             "definition": definition,
             "session_seq": session_seq,
             "epic_seq": epic_seq,
+            "read_all_agent_workspaces": read_all_agent_workspaces,
+            "predecessor_workspace_folders": list(predecessor_workspace_folders),
             "workspace": "{workspace}",
             "run_id": _RUN_ID,
             "daemon_port": _DAEMON_PORT,
@@ -206,6 +219,26 @@ def _case_templates() -> list[dict[str, Any]]:
             epic_seq=_WORKSPACE_EPIC_SEQ,
         )
     )
+    cases.append(
+        _case(
+            "claude-workspace-read-all",
+            "claude",
+            definition="custom-admin",
+            session_seq=7,
+            read_all_agent_workspaces=True,
+        )
+    )
+    cases.append(
+        _case(
+            "claude-workspace-predecessor",
+            "claude",
+            definition="persistent-seat",
+            session_seq=7,
+            predecessor_workspace_folders=(
+                "{gobby_home}/agents_workspaces/node-srt-project/persistent-seat/session-2",
+            ),
+        )
+    )
     return cases
 
 
@@ -241,6 +274,8 @@ def _layout(case_dir: Path) -> dict[str, str]:
         "main": root / "main",
         "bin": root / "bin",
         "tmp": root / "tmp",
+        "darwin_temp": root / "darwin-temp",
+        "darwin_cache": root / "darwin-cache",
     }
     named = {name: str(path) for name, path in layout.items()}
     named["run_root"] = str(root / "gobby-home" / "run" / "sandbox" / _RUN_ID)
@@ -346,17 +381,33 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
         config = config.model_copy(
             update={"extra_write_paths": [*config.extra_write_paths, nextest_store]}
         )
-    workspace_paths = [
-        path for path in _workspace_write_paths(inputs) if path not in config.extra_write_paths
+    # Replay grant_seat_workspace_paths after the hub has resolved definition
+    # authority and eligible predecessors. These inputs are outside user config.
+    workspace_paths = _workspace_write_paths(inputs)
+    reads = list(workspace_paths)
+    if inputs["session_seq"] is not None:
+        reads.append(str(workspace_anchor(str(inputs["project_id"])) / "README.md"))
+        if inputs.get("read_all_agent_workspaces", False):
+            reads = [str(workspaces_root())]
+        else:
+            reads.extend(inputs.get("predecessor_workspace_folders", []))
+    config = config.with_workspace_scope(reads, workspace_paths)
+    config.restrict_workspace_paths([], [])
+    for folder in workspace_paths:
+        Path(folder).mkdir(parents=True, exist_ok=True)
+    root = workspaces_root().resolve()
+    retained = [
+        path
+        for path in config.extra_write_paths
+        if not Path(path).expanduser().resolve().is_relative_to(root)
     ]
-    if workspace_paths:
-        config = config.model_copy(
-            update={"extra_write_paths": [*config.extra_write_paths, *workspace_paths]}
-        )
+    config = config.model_copy(
+        update={"extra_write_paths": list(dict.fromkeys([*retained, *workspace_paths]))}
+    )
 
     env["CARGO_TARGET_DIR"] = ensure_agent_cargo_target_dir(workspace, str(inputs["project_id"]))
     spawned = sandbox_config_for_spawn(
-        config, env, agent_name=None, project_path=str(main), resume_metadata_json=None
+        config, env, agent_name=None, project_config=main_config, resume_metadata_json=None
     )
     assert spawned is not None
 
@@ -404,6 +455,9 @@ def _evaluate(
     _materialize(inputs, layout)
     _pin_environment(monkeypatch, inputs["env"])
     monkeypatch.setattr(tempfile, "tempdir", layout["tmp"])
+    monkeypatch.setattr(
+        os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
+    )
     _pin_checkout(layout)
     settings, env = _run_chain(inputs)
     return settings, env, layout
@@ -417,12 +471,27 @@ def _refusal(
     _materialize(inputs, layout)
     _pin_environment(monkeypatch, inputs["env"])
     monkeypatch.setattr(tempfile, "tempdir", layout["tmp"])
+    monkeypatch.setattr(
+        os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
+    )
     _pin_checkout(layout)
     try:
         _run_chain(inputs)
     except ValueError as exc:
         return str(exc), layout
     pytest.fail(f"{template['name']}: the oracle accepted a grant it must refuse")
+
+
+def _portable_settings(settings: str, layout: dict[str, str]) -> str:
+    """Check host-specific grants separately, retaining the complete common policy."""
+    document: dict[str, Any] = json.loads(settings)
+    for key in ("allowRead", "allowWrite"):
+        paths: list[str] = document["filesystem"][key]
+        for grant in _fill(list(_DARWIN_WRITE_PATHS), layout):
+            assert paths.count(grant) == int(sys.platform == "darwin"), (key, grant)
+            if sys.platform == "darwin":
+                paths.remove(grant)
+    return json.dumps(document, sort_keys=True, separators=(",", ":"))
 
 
 def _encode_settings(settings: str, table: list[str]) -> dict[str, Any]:
@@ -470,7 +539,9 @@ def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 "platform": template["platform"],
                 "inputs": template["inputs"],
                 "expected": {
-                    "settings": _encode_settings(_placeholderize(settings, layout), table),
+                    "settings": _encode_settings(
+                        _placeholderize(_portable_settings(settings, layout), layout), table
+                    ),
                     "env": {key: _placeholderize(value, layout) for key, value in env.items()},
                 },
             }
@@ -487,6 +558,7 @@ def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "recorded_on": sys.platform,
         "path_digests": _digest_table(tmp_path / "record" / "fixture", monkeypatch),
         "deny_write_table": table,
+        "platform_write_paths": {"darwin": list(_DARWIN_WRITE_PATHS)},
         "cases": cases,
         "refusals": refusals,
     }
@@ -506,10 +578,15 @@ def _load_corpus() -> dict[str, Any]:
     return corpus
 
 
-def test_corpus_matches_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_corpus_matches_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str
+) -> None:
     if os.environ.get(_RECORD_ENV) == "1":
         _record(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "platform", platform)
     corpus = _load_corpus()
+    assert corpus["platform_write_paths"] == {"darwin": list(_DARWIN_WRITE_PATHS)}
 
     mismatches: list[str] = []
     digests = _digest_table(tmp_path / "check" / "fixture", monkeypatch)
@@ -519,6 +596,7 @@ def test_corpus_matches_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         if case["platform"] not in (None, sys.platform):
             continue
         settings, env, layout = _evaluate(case, tmp_path / "check" / case["name"], monkeypatch)
+        settings = _portable_settings(settings, layout)
         # Compare filled-in paths. Placeholder text would differ by host, since the
         # two SRT socket spellings are equal wherever /tmp is not a symlink.
         table = _fill(corpus["deny_write_table"], layout)
@@ -564,13 +642,43 @@ def test_agent_workspace_case_grants_only_the_seats_folders(
     """The oracle grants the seat's own folder and its epic folder, and nothing wider."""
     template = next(case for case in _case_templates() if case["name"] == _WORKSPACE_CASE)
     settings, _env, layout = _evaluate(template, tmp_path / "workspace-case", monkeypatch)
-    writes: list[str] = json.loads(settings)["filesystem"]["allowWrite"]
+    filesystem = json.loads(settings)["filesystem"]
+    writes: list[str] = filesystem["allowWrite"]
     root = Path(layout["gobby_home"]) / "agents_workspaces"
     anchor = root / _PROJECT_ID
     own = anchor / _WORKSPACE_DEFINITION / f"session-{_WORKSPACE_SESSION_SEQ}"
     epic = anchor / "epics" / f"epic-{_WORKSPACE_EPIC_SEQ}"
     granted = {entry for entry in writes if entry == str(root) or entry.startswith(f"{root}/")}
     assert granted == {str(own), str(epic)}
+    assert str(root) in filesystem["denyRead"]
+    reads = {
+        entry
+        for entry in filesystem["allowRead"]
+        if entry == str(root) or entry.startswith(f"{root}/")
+    }
+    assert reads == {str(own), str(epic), str(anchor / "README.md")}
     # The Rust replay reads the same recorded case, so the corpus must carry it.
     recorded = {case["name"] for case in _load_corpus()["cases"]}
     assert _WORKSPACE_CASE in recorded, sorted(recorded)
+
+
+@pytest.mark.parametrize("case_name", ["claude-workspace-read-all", "claude-workspace-predecessor"])
+def test_workspace_read_authority_does_not_expand_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case_name: str
+) -> None:
+    template = next(case for case in _case_templates() if case["name"] == case_name)
+    settings, _env, layout = _evaluate(template, tmp_path / case_name, monkeypatch)
+    filesystem = json.loads(settings)["filesystem"]
+    root = Path(layout["gobby_home"]) / "agents_workspaces"
+    anchor = root / _PROJECT_ID
+    own = anchor / template["inputs"]["definition"] / "session-7"
+    writes = {entry for entry in filesystem["allowWrite"] if entry.startswith(f"{root}/")}
+    assert writes == {str(own)}
+    assert str(root) not in filesystem["allowWrite"]
+    if case_name == "claude-workspace-read-all":
+        assert str(root) in filesystem["allowRead"]
+    else:
+        prior = own.parent / "session-2"
+        assert str(prior) in filesystem["allowRead"]
+        assert str(prior) not in writes
+        assert str(root) not in filesystem["allowRead"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +29,20 @@ __all__ = [
     "definition_db",
     "scoped_postgres_dsn",
 ]
+
+
+@pytest.fixture(autouse=True)
+def isolated_darwin_cache_locations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """OS cache grants must not point above the temporary homes used by policy tests."""
+    original = os.confstr
+    roots = {65537: str(tmp_path / "darwin-temp"), 65538: str(tmp_path / "darwin-cache")}
+
+    def confstr(name: str | int) -> str | None:
+        if isinstance(name, int) and name in roots:
+            return roots[name]
+        return original(name)
+
+    monkeypatch.setattr(os, "confstr", confstr)
 
 
 @pytest.fixture(autouse=True)

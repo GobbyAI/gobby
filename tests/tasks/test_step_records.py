@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
+from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -25,6 +30,7 @@ from gobby.tasks.step_records import (
     record_task_step,
     task_step_requirements,
 )
+from gobby.utils.git import normalize_commit_sha
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
@@ -445,3 +451,96 @@ def test_close_gate_reads_the_approval_not_the_stored_status(
     missing = task_step_requirements(temp_db, manager.get_task(task.id)).missing
 
     assert missing == ("closing",)
+
+
+@pytest.fixture
+def candidate_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Real Git ancestry with checkout discovery and daemon Git isolated."""
+
+    def git(*args: str) -> str:
+        return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
+
+    git("init", "-b", "main")
+    git("config", "user.name", "Candidate regression")
+    git("config", "user.email", "test@example.invalid")
+    commits = []
+    for index in range(3):
+        git("-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", f"step {index}")
+        commits.append(git("rev-parse", "HEAD"))
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
+        lambda **_kwargs: str(tmp_path),
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.task_commits.normalize_commit_sha",
+        AsyncMock(side_effect=normalize_commit_sha),
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.tasks._task_scope.collect_net_commit_paths_async",
+        AsyncMock(return_value=SimpleNamespace(changed=frozenset(), deleted=frozenset())),
+    )
+    return commits
+
+
+@pytest.mark.parametrize("stored_short", [False, True])
+@pytest.mark.parametrize("requested_short", [False, True])
+async def test_declared_candidate_relink_accepts_exact_sha_steps(
+    temp_db: HubDatabase,
+    task: Task,
+    team: dict[str, str],
+    candidate_history: list[str],
+    stored_short: bool,
+    requested_short: bool,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    manager.unlink_commit(task.id, _TIP[:10])
+    old, middle, candidate = candidate_history
+    stored = candidate[:10] if stored_short else candidate
+    for sha in (stored, old, middle):
+        manager.link_commit(task.id, sha)
+    registry = create_commit_registry(manager)
+    arguments = {
+        "task_id": task.id,
+        "commit_sha": candidate[:7] if requested_short else candidate,
+    }
+    with session_context_for_test(team["developer"]):
+        ordinary = await registry.call("link_commit", arguments)
+        assert ordinary["commits"] == [stored, old, middle]
+        assert ordinary["declared_candidate"] is None
+        declared = await registry.call("link_commit", {**arguments, "candidate": True})
+    assert "error" not in declared, declared
+    steps: tuple[tuple[TaskStep, str], ...] = (
+        ("implementation", "developer"),
+        ("review", "reviewer"),
+        ("closing", "closer"),
+    )
+    for step, seat in steps:
+        record, created = _step(temp_db, task, team[seat], step, "approved", sha=candidate)
+        assert created and record.commit_sha == candidate
+        with pytest.raises(StepRecordError, match="latest linked commit"):
+            _step(temp_db, task, team[seat], step, "approved", sha=middle)
+    assert declared["commits"] == [old, middle, stored]
+    assert candidate.startswith(declared["declared_candidate"])
+    assert manager.get_task(task.id).commits == [old, middle, stored]
+    with session_context_for_test(team["developer"]):
+        repeated = await registry.call("link_commit", {**arguments, "candidate": True})
+    assert repeated == declared
+
+
+async def test_declared_candidate_cannot_demote_a_newer_link(
+    temp_db: HubDatabase, task: Task, team: dict[str, str], candidate_history: list[str]
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    manager.unlink_commit(task.id, _TIP[:10])
+    old, middle, newest = candidate_history
+    for sha in (old, newest):
+        manager.link_commit(task.id, sha)
+    registry = create_commit_registry(manager)
+    with session_context_for_test(team["developer"]):
+        for candidate in (old, middle):
+            refused = await registry.call(
+                "link_commit", {"task_id": task.id, "commit_sha": candidate, "candidate": True}
+            )
+            assert "must descend from every other linked commit" in refused.get("error", "")
+            assert "declared_candidate" not in refused
+            assert manager.get_task(task.id).commits == [old, newest]

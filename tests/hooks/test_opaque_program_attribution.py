@@ -12,6 +12,7 @@ another session's write or Bash call overlaps.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import subprocess
@@ -28,6 +29,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import yaml
 
+from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
+from gobby.adapters.codex_impl.execution_chain import ExecutionChainCorrelator
+from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+from gobby.adapters.codex_impl.item_normalization import build_pre_tool_lifecycle_payload
+from gobby.hooks._path_scope import current_tool_cwd
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -36,11 +42,12 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.daemon_git import daemon_git
-from gobby.workflows.commit_guard import foreign_dirty_edit_conflict
+from gobby.workflows.commit_guard import foreign_dirty_edit_conflict, foreign_staged_commit_conflict
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path
+from gobby.workflows.task_tool_bindings import TaskToolBindings, cleanup_task_tool_bindings
 from gobby.workflows.worktree_shell_attribution import (
     OVERLAPS_VARIABLE,
     begin_structured_edit_calls,
@@ -418,8 +425,14 @@ def test_script_write_in_task_worktree_is_owned_before_next_mutation(
 
 
 @pytest.mark.parametrize("operation", ["format", "check --fix"])
+@pytest.mark.parametrize("correlation", ["provider", "execution"])
+@pytest.mark.parametrize("completion_order", ["sequential", "reader_first", "formatter_first"])
 def test_literal_ruff_write_remains_owned(
-    mock_dependencies: dict[str, Any], task_worktree: Checkout, operation: str
+    mock_dependencies: dict[str, Any],
+    task_worktree: Checkout,
+    operation: str,
+    correlation: str,
+    completion_order: str,
 ) -> None:
     """Literal formatter targets keep provenance through the next structured Edit."""
     checkout = task_worktree
@@ -429,19 +442,874 @@ def test_literal_ruff_write_remains_owned(
     )
     command = f"uv run ruff {operation} format_me.py"
     handlers = _handlers(mock_dependencies, checkout.db)
-    assert not _shell_write_refused(
-        handlers, checkout.tool_event(HookEventType.BEFORE_TOOL, command)
-    )
+    reader = checkout.tool_event(HookEventType.BEFORE_TOOL, "uv run mypy format_me.py")
+    if correlation == "execution":
+        reader = replace(
+            reader,
+            source=SessionSource.CODEX,
+            request_id=None,
+            data={**reader.data, "verification_execution_id": "exec-reader"},
+        )
+    if completion_order != "sequential":
+        assert not _shell_write_refused(handlers, reader)
+    before = checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    if correlation == "execution":
+        before = replace(
+            before,
+            source=SessionSource.CODEX,
+            request_id=None,
+            data={**before.data, "verification_execution_id": "exec-formatter"},
+        )
+    assert not _shell_write_refused(handlers, before)
     subprocess.run(
         [sys.executable, "-m", "ruff", *operation.split(), "format_me.py"],
         cwd=checkout.repo,
         check=True,
         capture_output=True,
     )
-    handlers.handle_after_tool(checkout.tool_event(HookEventType.AFTER_TOOL, command))
+    # A fresh handler reconstructs the persisted observation after a daemon restart.
+    resumed = _handlers(mock_dependencies, checkout.db)
+    if completion_order == "reader_first":
+        resumed.handle_after_tool(
+            replace(reader, event_type=HookEventType.AFTER_TOOL, timestamp=datetime.now(UTC))
+        )
+    resumed.handle_after_tool(
+        replace(before, event_type=HookEventType.AFTER_TOOL, timestamp=datetime.now(UTC))
+    )
+    if completion_order == "formatter_first":
+        resumed.handle_after_tool(
+            replace(reader, event_type=HookEventType.AFTER_TOOL, timestamp=datetime.now(UTC))
+        )
 
     assert checkout.rule_3_reason("format_me.py") == ""
     assert "format_me.py" in checkout.ledger()
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_codex_completion_resolves_workdir_from_event_cwd(
+    mock_dependencies: dict[str, Any],
+    checkout: Checkout,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    wrapped: bool,
+) -> None:
+    """The unmanaged AFTER_TOOL path must not use the daemon process directory."""
+    monkeypatch.chdir(tmp_path)
+    arguments = {"cmd": "touch output.txt", "workdir": "pkg"}
+    item: dict[str, Any] = {
+        "id": "relative-output",
+        "type": "dynamicToolCall",
+        "namespace": "functions",
+        "tool": "exec" if wrapped else "exec_command",
+        "arguments": f"text(await tools.exec_command({json.dumps(arguments)}))"
+        if wrapped
+        else arguments,
+        "status": "completed",
+        "success": True,
+        "contentItems": [{"type": "inputText", "text": '{"exit_code":0}'}],
+    }
+    before = CodexHooksAdapter().translate_to_hook_event(
+        {
+            "hook_type": "PreToolUse",
+            "input_data": {
+                "session_id": "current-external",
+                "cwd": str(checkout.repo),
+                "tool_use_id": item["id"],
+                "tool_name": "exec_command",
+                "tool_input": arguments,
+            },
+        }
+    )
+    assert before is not None
+    before = replace(
+        before,
+        project_id=checkout.project_id,
+        metadata={**before.metadata, "_platform_session_id": checkout.session_id},
+    )
+    assert not _shell_write_refused(_handlers(mock_dependencies, checkout.db), before)
+    event = CodexAdapter().translate_to_hook_event(
+        {
+            "method": "item/completed",
+            "params": {"threadId": "current-external", "cwd": str(checkout.repo), "item": item},
+        }
+    )
+    assert event is not None
+    event = replace(
+        event,
+        project_id=checkout.project_id,
+        metadata={**event.metadata, "_platform_session_id": checkout.session_id},
+    )
+    checkout.write("pkg/output.txt", "created\n")
+    _handlers(mock_dependencies, checkout.db).handle_after_tool(event)
+
+    assert current_tool_cwd(event.data) == checkout.repo / "pkg"
+    assert event.data["canonical_repo_mutation"] is True
+    assert checkout.rule_3_reason("pkg/output.txt") == ""
+    assert "pkg/output.txt" in checkout.ledger()
+
+
+def test_codex_wrapped_formatter_uses_its_task_checkout(
+    mock_dependencies: dict[str, Any],
+    task_worktree: Checkout,
+    tmp_path: Path,
+) -> None:
+    """A literal workdir survives before/after hooks and other sequential wrapper calls."""
+    checkout = task_worktree
+    checkout.write("format_me.py", "x=1\n")
+    manager = SessionVariableManager(checkout.db)
+    manager.record_edited_files(
+        checkout.session_id, ["format_me.py"], checkout_root=str(checkout.repo)
+    )
+    command = f"uv run --no-sync ruff format {checkout.repo / 'format_me.py'}"
+    arguments = (
+        f"text(await tools.exec_command({json.dumps({'cmd': command, 'workdir': str(checkout.repo)})}));\n"
+        'text(await tools.apply_patch("*** Begin Patch\\n*** End Patch"));\n'
+        'text(await tools.mcp__gobby__call_tool({server_name:"gobby-agents",tool_name:"get_inter_session_messages"}));'
+    )
+    item: dict[str, Any] = {
+        "id": "wrapped-formatter",
+        "type": "dynamicToolCall",
+        "namespace": "functions",
+        "tool": "exec",
+        "arguments": arguments,
+    }
+    payload = build_pre_tool_lifecycle_payload({"item": item})
+    assert payload is not None
+    name, tool_input = payload
+    before = replace(
+        checkout.tool_event(HookEventType.BEFORE_TOOL, command),
+        source=SessionSource.CODEX,
+        cwd=str(tmp_path),
+        data=normalize_tool_fields(
+            {"cwd": str(tmp_path), "tool_name": name, "tool_input": tool_input}
+        ),
+        request_id=item["id"],
+    )
+    before = replace(
+        before,
+        project_id=checkout.project_id,
+        metadata={**before.metadata, "_platform_session_id": checkout.session_id},
+    )
+    assert not _shell_write_refused(_handlers(mock_dependencies, checkout.db), before)
+    assert manager.worktree_shell_call_root(checkout.session_id, item["id"]) == str(
+        checkout.repo
+    ), (
+        before.data,
+        manager.get_variables(checkout.session_id).get("worktree_shell_calls"),
+    )
+    subprocess.run(
+        [sys.executable, "-m", "ruff", "format", str(checkout.repo / "format_me.py")],
+        cwd=checkout.repo,
+        check=True,
+        capture_output=True,
+    )
+    after = CodexAdapter().translate_to_hook_event(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "current-external",
+                "cwd": str(tmp_path),
+                "item": {
+                    **item,
+                    "status": "completed",
+                    "success": True,
+                    "contentItems": [
+                        {
+                            "type": "inputText",
+                            "text": '{"exit_code":0,"output":"1 file reformatted"}',
+                        },
+                        {"type": "inputText", "text": "{}"},
+                        {"type": "inputText", "text": '{"success":true,"result":{}}'},
+                    ],
+                },
+            },
+        }
+    )
+    assert after is not None
+    after = replace(
+        after,
+        project_id=checkout.project_id,
+        metadata={**after.metadata, "_platform_session_id": checkout.session_id},
+    )
+    _handlers(mock_dependencies, checkout.db).handle_after_tool(after)
+
+    assert checkout.rule_3_reason("format_me.py") == ""
+    assert not manager.get_variables(checkout.session_id).get("claimed_shell_snapshots")
+    assert manager.worktree_shell_call_root(checkout.session_id, item["id"]) is None
+
+
+@pytest.mark.parametrize("command", ["git merge --no-edit HEAD", "touch out.txt"])
+@pytest.mark.parametrize(
+    "sequence",
+    [
+        "inner_first",
+        "outer_first",
+        "missing_outer",
+        "abandoned_inner",
+        "missing_both",
+        "outer_only",
+        "yielded_outer",
+        "yielded_abandoned",
+    ],
+)
+def test_native_codex_outer_and_inner_have_one_shell_owner(
+    mock_dependencies: dict[str, Any],
+    task_worktree: Checkout,
+    tmp_path: Path,
+    command: str,
+    sequence: str,
+) -> None:
+    checkout = task_worktree
+    manager = SessionVariableManager(checkout.db)
+    abandoned = sequence in {"abandoned_inner", "missing_both", "yielded_abandoned"}
+    arguments = f"text(await tools.exec_command({json.dumps({'cmd': command, 'workdir': str(checkout.repo)})}));"
+    transcript = tmp_path / "native-sequence.jsonl"
+    records: list[dict[str, Any]] = [
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "call_id": "outer-exec",
+                "input": arguments,
+            },
+        }
+    ]
+    transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+
+    def event(hook_type: str, *, inner: bool, yielded: bool = False) -> HookEvent:
+        translated = CodexHooksAdapter().translate_to_hook_event(
+            {
+                "hook_type": hook_type,
+                "input_data": {
+                    "session_id": "current-external",
+                    "cwd": str(tmp_path),
+                    "tool_use_id": "exec-inner" if inner else "outer-exec",
+                    "tool_name": "Bash" if inner else "functions.exec",
+                    "tool_input": {"command": command} if inner else {"arguments": arguments},
+                    "tool_response": "Script running with cell ID cell-1" if yielded else {},
+                    "transcript_path": str(transcript),
+                },
+            }
+        )
+        assert translated is not None
+        return replace(
+            translated,
+            project_id=checkout.project_id,
+            metadata={**translated.metadata, "_platform_session_id": checkout.session_id},
+        )
+
+    handlers = _handlers(mock_dependencies, checkout.db)
+    outer_before = event("PreToolUse", inner=False)
+    assert handlers.handle_before_tool(outer_before).decision == "allow"
+    for key in ("worktree_shell_calls", "claimed_shell_snapshots", "git_operation_ownership"):
+        assert not manager.get_variables(checkout.session_id).get(key), key
+    if sequence != "outer_only":
+        inner_before = event("PreToolUse", inner=True)
+        response = handlers.handle_before_tool(inner_before)
+        assert response.decision == "allow", response.reason
+        assert manager.worktree_shell_call_root(checkout.session_id, "exec-inner") == str(
+            checkout.repo
+        )
+        operations = manager.get_variables(checkout.session_id).get("git_operation_ownership") or {}
+        assert {entry["call_id"] for entry in operations.values()} == (
+            {"exec-inner"} if command.startswith("git ") else set()
+        )
+        if sequence in {"outer_first", "yielded_outer", "yielded_abandoned"}:
+            handlers.handle_after_tool(
+                event("PostToolUse", inner=False, yielded=sequence.startswith("yielded_"))
+            )
+            assert manager.worktree_shell_call_root(checkout.session_id, "exec-inner") == str(
+                checkout.repo
+            )
+            if sequence.startswith("yielded_"):
+                binding = manager.get_variables(checkout.session_id)["task_tool_bindings"][
+                    "codex:outer-exec"
+                ]
+                assert binding["pending"] is True and binding["background"] is True
+                assert binding["aliases"] == ["codex:cell:cell-1"]
+        if abandoned:
+            checkout.write("unproven.txt", "No terminal receipt attributes this write.\n")
+        else:
+            subprocess.run(command.split(), cwd=checkout.repo, check=True, capture_output=True)
+            records.append(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "item_completed",
+                        "item": {
+                            "type": "CommandExecution",
+                            "id": "exec-inner",
+                            "command": ["/bin/zsh", "-lc", command],
+                            "cwd": checkout.repo.as_uri(),
+                            "status": "completed",
+                            "exit_code": 0,
+                            "aggregated_output": "",
+                        },
+                    },
+                }
+            )
+            transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+            _handlers(mock_dependencies, checkout.db).handle_after_tool(
+                event("PostToolUse", inner=True)
+            )
+            if command == "touch out.txt":
+                assert checkout.rule_3_reason("out.txt") == ""
+    if sequence in {"inner_first", "abandoned_inner", "outer_only", "yielded_outer"}:
+        handlers.handle_after_tool(event("PostToolUse", inner=False))
+    if not abandoned:
+        for key in ("worktree_shell_calls", "claimed_shell_snapshots", "git_operation_ownership"):
+            assert not manager.get_variables(checkout.session_id).get(key), key
+    cleanup_task_tool_bindings(
+        replace(outer_before, event_type=HookEventType.STOP), manager, checkout.session_id, {}
+    )
+    for key in ("worktree_shell_calls", "claimed_shell_snapshots", "git_operation_ownership"):
+        assert not manager.get_variables(checkout.session_id).get(key), key
+    if abandoned:
+        records.append(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "CommandExecution",
+                        "id": "exec-inner",
+                        "command": ["/bin/zsh", "-lc", command],
+                        "cwd": checkout.repo.as_uri(),
+                        "status": "completed",
+                        "exit_code": 0,
+                        "aggregated_output": "",
+                    },
+                },
+            }
+        )
+        transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+        handlers.handle_after_tool(event("PostToolUse", inner=True))
+        assert "unproven.txt" not in checkout.ledger()
+        assert UNOWNED in checkout.rule_3_reason("unproven.txt")
+    if sequence == "yielded_abandoned":
+        variables = manager.get_variables(checkout.session_id)
+        assert set(variables["task_tool_bindings"]) == {"codex:outer-exec"}
+        handlers.handle_after_tool(event("PostToolUse", inner=False))
+
+
+@pytest.mark.parametrize("relative_operands", [False, True])
+@pytest.mark.parametrize("foreign_finishes_first", [None, False, True])
+def test_native_codex_formatter_receipt_keeps_worktree_ownership(
+    mock_dependencies: dict[str, Any],
+    task_worktree: Checkout,
+    tmp_path: Path,
+    foreign_finishes_first: bool | None,
+    relative_operands: bool,
+) -> None:
+    """A native inner CommandExecution supplies cwd missing from the shell hook."""
+    checkout = task_worktree
+    checkout.write("format_me.py", "x=1\n")
+    manager = SessionVariableManager(checkout.db)
+    manager.record_edited_files(
+        checkout.session_id, ["format_me.py"], checkout_root=str(checkout.repo)
+    )
+    operand = "format_me.py" if relative_operands else str(checkout.repo / "format_me.py")
+    command = f"uv run --no-sync ruff format {operand}"
+    arguments = (
+        'text(await tools.apply_patch("*** Begin Patch\\n*** End Patch"));\n'
+        f"text(await tools.exec_command({json.dumps({'cmd': command, 'workdir': str(checkout.repo)})}));\n"
+        'text(await tools.write_stdin({session_id:123,chars:"",max_output_tokens:1500}));'
+    )
+    transcript = tmp_path / "rollout.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "call_id": "outer-formatter",
+                    "input": arguments,
+                },
+            }
+        )
+        + "\n"
+    )
+    hook_input = {
+        "session_id": "current-external",
+        "cwd": str(tmp_path),
+        "tool_use_id": "exec-native-formatter",
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+        "transcript_path": str(transcript),
+    }
+    adapter = CodexHooksAdapter()
+    outer_input = {
+        **hook_input,
+        "tool_use_id": "outer-formatter",
+        "tool_name": "functions.exec",
+        "tool_input": {"arguments": arguments},
+    }
+    outer_before = adapter.translate_to_hook_event(
+        {"hook_type": "PreToolUse", "input_data": outer_input}
+    )
+    assert outer_before is not None
+    outer_before = replace(
+        outer_before,
+        project_id=checkout.project_id,
+        metadata={"_platform_session_id": checkout.session_id},
+    )
+    assert (
+        _handlers(mock_dependencies, checkout.db).handle_before_tool(outer_before).decision
+        == "allow"
+    )
+    assert not manager.get_variables(checkout.session_id).get("worktree_shell_calls")
+    before = adapter.translate_to_hook_event({"hook_type": "PreToolUse", "input_data": hook_input})
+    assert before is not None
+    before = replace(
+        before,
+        project_id=checkout.project_id,
+        metadata={**before.metadata, "_platform_session_id": checkout.session_id},
+    )
+    assert not _shell_write_refused(_handlers(mock_dependencies, checkout.db), before)
+    assert manager.worktree_shell_call_root(checkout.session_id, "exec-native-formatter") == str(
+        checkout.repo
+    )
+    foreign = replace(checkout, session_id=checkout.foreign_session_id)
+    competing = replace(
+        foreign.tool_event(HookEventType.BEFORE_TOOL, "uv run python tool.py"),
+        session_id="foreign-external",
+        request_id="foreign-script",
+    )
+    if foreign_finishes_first is not None:
+        assert not _shell_write_refused(_handlers(mock_dependencies, checkout.db), competing)
+    subprocess.run(
+        [sys.executable, "-m", "ruff", "format", str(checkout.repo / "format_me.py")],
+        cwd=checkout.repo,
+        check=True,
+        capture_output=True,
+    )
+    if foreign_finishes_first is not None:
+        checkout.write("format_me.py", "x = 2\n")
+        if foreign_finishes_first:
+            _handlers(mock_dependencies, checkout.db).handle_after_tool(
+                replace(competing, event_type=HookEventType.AFTER_TOOL)
+            )
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "CommandExecution",
+                        "id": hook_input["tool_use_id"],
+                        "command": ["/bin/zsh", "-lc", "rtk " + command],
+                        "cwd": checkout.repo.as_uri(),
+                        "status": "completed",
+                        "exit_code": 0,
+                        "aggregated_output": "1 file reformatted\n",
+                    },
+                },
+            }
+        )
+        + "\n"
+    )
+    after = adapter.translate_to_hook_event(
+        {
+            "hook_type": "PostToolUse",
+            "input_data": {**hook_input, "transcript_path": str(transcript)},
+        }
+    )
+    assert after is not None
+    after = replace(
+        after,
+        project_id=checkout.project_id,
+        metadata={**after.metadata, "_platform_session_id": checkout.session_id},
+    )
+    assert current_tool_cwd(after.data) == checkout.repo
+    assert after.data["canonical_formatter_mutation"] is True
+    _handlers(mock_dependencies, checkout.db).handle_after_tool(after)
+
+    outer_after = adapter.translate_to_hook_event(
+        {
+            "hook_type": "PostToolUse",
+            "input_data": {**outer_input, "tool_response": {"exit_code": 0}},
+        }
+    )
+    assert outer_after is not None
+    outer_after = replace(
+        outer_after,
+        project_id=checkout.project_id,
+        metadata={"_platform_session_id": checkout.session_id},
+    )
+    _handlers(mock_dependencies, checkout.db).handle_after_tool(outer_after)
+    assert not manager.get_variables(checkout.session_id).get("worktree_shell_calls")
+    assert not manager.get_variables(checkout.session_id).get("claimed_shell_snapshots")
+
+    if foreign_finishes_first is False:
+        _handlers(mock_dependencies, checkout.db).handle_after_tool(
+            replace(competing, event_type=HookEventType.AFTER_TOOL)
+        )
+    reason = checkout.rule_3_reason("format_me.py")
+    if foreign_finishes_first is None:
+        assert reason == ""
+    else:
+        assert "overlap" in reason and "format_me.py" in reason
+
+
+def test_owner_checkpoint_recovers_settled_formatter_output(
+    mock_dependencies: dict[str, Any],
+    task_worktree: Checkout,
+) -> None:
+    """An unchanged formatter rerun leaves stale hashes; committing proven bytes frees edits."""
+    checkout = task_worktree
+    checkout.write("format_me.py", "x=1\n")
+    SessionVariableManager(checkout.db).record_edited_files(
+        checkout.session_id, ["format_me.py"], checkout_root=str(checkout.repo)
+    )
+    checkout.write("format_me.py", "x = 1\n")
+    command = "uv run ruff format format_me.py"
+    before = checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    assert (
+        asyncio.run(
+            foreign_dirty_edit_conflict(
+                checkout.db,
+                before,
+                session_id=checkout.session_id,
+                project_id=checkout.project_id,
+                project_path=str(checkout.repo),
+            )
+        )
+        == ""
+    )
+    handlers = _handlers(mock_dependencies, checkout.db)
+    assert not _shell_write_refused(handlers, before)
+    handlers.handle_after_tool(replace(before, event_type=HookEventType.AFTER_TOOL))
+    assert UNOWNED in checkout.rule_3_reason("format_me.py")
+
+    _git(checkout.repo, "add", "--", "format_me.py")
+    commit = checkout.tool_event(HookEventType.BEFORE_TOOL, "git commit -m checkpoint")
+    assert (
+        asyncio.run(
+            foreign_staged_commit_conflict(
+                checkout.db,
+                commit,
+                session_id=checkout.session_id,
+                project_id=checkout.project_id,
+                project_path=str(checkout.repo),
+            )
+        )
+        == ""
+    )
+    _git(
+        checkout.repo,
+        "-c",
+        "user.email=t@gobby.local",
+        "-c",
+        "user.name=T",
+        "commit",
+        "-qm",
+        "checkpoint",
+    )
+    assert (checkout.repo / "format_me.py").read_text() == "x = 1\n"
+    assert checkout.rule_3_reason("format_me.py") == ""
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_yielded_codex_formatter_keeps_snapshot_until_terminal_poll(
+    mock_dependencies: dict[str, Any], task_worktree: Checkout, wrapped: bool
+) -> None:
+    checkout = task_worktree
+    checkout.write("format_me.py", "x=1\n")
+    manager = SessionVariableManager(checkout.db)
+    manager.record_edited_files(
+        checkout.session_id, ["format_me.py"], checkout_root=str(checkout.repo)
+    )
+    before = replace(
+        checkout.tool_event(HookEventType.BEFORE_TOOL, "uv run ruff format format_me.py"),
+        source=SessionSource.CODEX,
+        request_id=None,
+    )
+    before.data["verification_execution_id"] = "yield-formatter"
+    handlers = _handlers(mock_dependencies, checkout.db)
+    assert not _shell_write_refused(handlers, before)
+    chain = ExecutionChainCorrelator()
+    pending = chain.correlate(
+        {
+            "tool_name": "functions.exec" if wrapped else "exec_command",
+            "call_id": "yield-formatter",
+            "arguments": (
+                'text(await tools.exec_command({cmd: "uv run ruff format format_me.py"}))'
+                if wrapped
+                else {"cmd": "uv run ruff format format_me.py"}
+            ),
+            "tool_output": "Script running with cell ID format-cell"
+            if wrapped
+            else "Chunk ID: first\nWall time: 1s\nProcess running with session ID 99\nOutput:\n",
+        }
+    )
+    assert pending["_verification_pending"] is True
+    handlers.handle_after_tool(replace(before, event_type=HookEventType.AFTER_TOOL, data=pending))
+    if wrapped:
+        running = chain.correlate(
+            {
+                "tool_name": "functions.wait",
+                "call_id": "formatter-cell-poll",
+                "arguments": {"cell_id": "format-cell"},
+                "tool_output": {"session_id": 99},
+            }
+        )
+        handlers.handle_after_tool(
+            replace(before, event_type=HookEventType.AFTER_TOOL, data=running)
+        )
+    truncated = chain.correlate(
+        {
+            "tool_name": "write_stdin",
+            "call_id": "truncated-poll",
+            "arguments": {"session_id": 99},
+            "tool_output": "Output chunk without a terminal receipt",
+        }
+    )
+    handlers.handle_after_tool(replace(before, event_type=HookEventType.AFTER_TOOL, data=truncated))
+    subprocess.run(
+        [sys.executable, "-m", "ruff", "format", "format_me.py"],
+        cwd=checkout.repo,
+        check=True,
+        capture_output=True,
+    )
+    resumed_chain = ExecutionChainCorrelator()
+    resumed_chain.hydrate_state(chain.snapshot_state())
+    terminal = resumed_chain.correlate(
+        {
+            "tool_name": "write_stdin",
+            "call_id": "formatter-poll",
+            "arguments": {"session_id": 99},
+            "tool_output": {"exit_code": 0}
+            if wrapped
+            else "Chunk ID: last\nWall time: 1s\nProcess exited with code 0\nOutput:\n",
+        }
+    )
+    assert terminal["verification_execution_id"] == "yield-formatter"
+    _handlers(mock_dependencies, checkout.db).handle_after_tool(
+        replace(before, event_type=HookEventType.AFTER_TOOL, data=terminal)
+    )
+
+    assert checkout.rule_3_reason("format_me.py") == ""
+    assert not manager.get_variables(checkout.session_id).get("claimed_shell_snapshots")
+    assert manager.worktree_shell_call_root(checkout.session_id, "yield-formatter") is None
+
+
+def _prepare_incoming(checkout: Checkout, path: str) -> None:
+    repo = checkout.repo
+    _git(repo, "config", "user.email", "t@gobby.local")
+    _git(repo, "config", "user.name", "T")
+    _git(repo, "checkout", "-b", "incoming")
+    checkout.write(path, "incoming\n")
+    _git(repo, "add", path)
+    _git(repo, "-c", "user.email=t@gobby.local", "-c", "user.name=T", "commit", "-m", "incoming")
+    _git(repo, "checkout", "-")
+
+
+def test_git_operation_receipt_survives_pending_and_handler_restart(
+    mock_dependencies: dict[str, Any], checkout: Checkout
+) -> None:
+    repo = checkout.repo
+    _prepare_incoming(checkout, "foreign.txt")
+    manager = SessionVariableManager(checkout.db)
+    manager.record_edited_files(
+        checkout.foreign_session_id, ["foreign.txt"], checkout_root=str(repo)
+    )
+    command = "git merge --no-ff --no-commit incoming"
+    before = replace(
+        checkout.tool_event(HookEventType.BEFORE_TOOL, command),
+        source=SessionSource.CODEX,
+        request_id=None,
+    )
+    before.data["verification_execution_id"] = "git-operation"
+    handlers = _handlers(mock_dependencies, checkout.db)
+    assert handlers.handle_before_tool(before).decision == "allow"
+    _git(repo, "merge", "--no-ff", "--no-commit", "incoming")
+    pending = replace(
+        before,
+        event_type=HookEventType.AFTER_TOOL,
+        data={**before.data, "_verification_pending": True},
+    )
+    handlers.handle_after_tool(pending)
+    terminal = replace(before, event_type=HookEventType.AFTER_TOOL)
+    _handlers(mock_dependencies, checkout.db).handle_after_tool(terminal)
+    assert checkout.rule_3_reason("foreign.txt") == ""
+    checkout.write("foreign.txt", "foreign edit after the merge stopped\n")
+    manager.record_edited_files(
+        checkout.foreign_session_id, ["foreign.txt"], checkout_root=str(repo)
+    )
+    assert "foreign.txt" in checkout.rule_3_reason("foreign.txt")
+
+
+def test_claude_background_git_waits_for_its_terminal_output(
+    mock_dependencies: dict[str, Any], checkout: Checkout, tmp_path: Path
+) -> None:
+    _prepare_incoming(checkout, "foreign.txt")
+    manager = SessionVariableManager(checkout.db)
+    manager.record_edited_files(
+        checkout.foreign_session_id, ["foreign.txt"], checkout_root=str(checkout.repo)
+    )
+    command = "git merge --no-ff --no-commit incoming"
+    handlers = _handlers(mock_dependencies, checkout.db)
+    before = checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    assert handlers.handle_before_tool(before).decision == "allow"
+    output = tmp_path / "git-job.output"
+    output.write_text("running\n", encoding="utf-8")
+    receipt = (
+        "Command did not complete within its 10s timeout and was moved to the background "
+        f"(ID: git-job). Output is being written to: {output}. "
+    )
+    handlers.handle_after_tool(
+        replace(
+            before,
+            event_type=HookEventType.AFTER_TOOL,
+            data={**before.data, "tool_output": receipt},
+        )
+    )
+    TaskToolBindings(manager, checkout.session_id).clear_pending("prompt")
+    _git(checkout.repo, "merge", "--no-ff", "--no-commit", "incoming")
+    assert "foreign.txt" in checkout.rule_3_reason("foreign.txt")
+    output.write_text("merge stopped\n[exited with code 0]\n", encoding="utf-8")
+    asyncio.run(
+        SessionVariableManager(checkout.db).settle_background_git_operations(checkout.session_id)
+    )
+    assert checkout.rule_3_reason("foreign.txt") == ""
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_git_operation_before_hook_refuses_failed_provenance_inspection(
+    mock_dependencies: dict[str, Any], checkout: Checkout, cleanup_fails: bool
+) -> None:
+    handlers = _handlers(mock_dependencies, checkout.db)
+    event = checkout.tool_event(HookEventType.BEFORE_TOOL, "git merge incoming")
+    with (
+        patch.object(
+            SessionVariableManager,
+            "begin_git_operation_call",
+            AsyncMock(side_effect=ValueError("inspection unavailable")),
+        ),
+        patch.object(
+            SessionVariableManager,
+            "cancel_git_operation_call",
+            side_effect=RuntimeError("cleanup unavailable") if cleanup_fails else None,
+        ),
+    ):
+        result = handlers.handle_before_tool(event)
+    assert result.decision == "block"
+    assert result.reason is not None and "operation ownership" in result.reason
+
+
+def test_git_operation_without_execution_id_is_refused(
+    mock_dependencies: dict[str, Any], checkout: Checkout
+) -> None:
+    event = replace(
+        checkout.tool_event(HookEventType.BEFORE_TOOL, "git merge incoming"), request_id=None
+    )
+    result = _handlers(mock_dependencies, checkout.db).handle_before_tool(event)
+    assert result.decision == "block"
+    assert result.reason is not None and "execution ID" in result.reason
+
+
+def test_git_operation_conflict_keeps_its_actionable_reason(
+    mock_dependencies: dict[str, Any],
+    checkout: Checkout,
+) -> None:
+    manager = SessionVariableManager(checkout.db)
+    asyncio.run(
+        manager.begin_git_operation_call(
+            checkout.foreign_session_id, "foreign-operation", [str(checkout.repo)]
+        )
+    )
+    response = _handlers(mock_dependencies, checkout.db).handle_before_tool(
+        checkout.tool_event(HookEventType.BEFORE_TOOL, "git merge incoming")
+    )
+    assert response.decision == "block"
+    assert "Another live session owns the Git operation" in (response.reason or "")
+    TaskToolBindings(manager, checkout.session_id).assert_can_select(None)
+    foreign_operations = manager.get_variables(checkout.foreign_session_id)[
+        "git_operation_ownership"
+    ]
+    assert foreign_operations[str(checkout.repo)]["call_id"] == "foreign-operation"
+
+
+@pytest.mark.parametrize("mode", ["--no-rebase", "--rebase"])
+def test_local_pull_conflict_retains_operation_provenance(
+    mock_dependencies: dict[str, Any], checkout: Checkout, mode: str
+) -> None:
+    _prepare_incoming(checkout, "foreign.txt")
+    checkout.write("foreign.txt", "local\n")
+    _git(checkout.repo, "add", "owned.txt", "stale.txt", "foreign.txt")
+    _git(
+        checkout.repo,
+        "-c",
+        "user.email=t@gobby.local",
+        "-c",
+        "user.name=T",
+        "commit",
+        "-m",
+        "local",
+    )
+    manager = SessionVariableManager(checkout.db)
+    manager.record_edited_files(
+        checkout.foreign_session_id, ["foreign.txt"], checkout_root=str(checkout.repo)
+    )
+    command = f"git pull {mode} . incoming"
+    handlers = _handlers(mock_dependencies, checkout.db)
+    before = checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    assert handlers.handle_before_tool(before).decision == "allow"
+    result = subprocess.run(
+        ["git", "pull", mode, ".", "incoming"], cwd=checkout.repo, capture_output=True, text=True
+    )
+    assert result.returncode == 1, result.stderr
+    handlers.handle_after_tool(checkout.tool_event(HookEventType.AFTER_TOOL, command, failed=True))
+    assert checkout.rule_3_reason("foreign.txt") == ""
+    checkout.write("foreign.txt", "foreign after pull\n")
+    manager.record_edited_files(
+        checkout.foreign_session_id, ["foreign.txt"], checkout_root=str(checkout.repo)
+    )
+    assert "foreign.txt" in checkout.rule_3_reason("foreign.txt")
+
+
+@pytest.mark.parametrize("foreign_finishes_first", [False, True])
+def test_git_operation_cannot_exempt_an_overlapping_unattributed_write(
+    mock_dependencies: dict[str, Any], task_worktree: Checkout, foreign_finishes_first: bool
+) -> None:
+    checkout = task_worktree
+    _prepare_incoming(checkout, "racer.txt")
+    handlers = _handlers(mock_dependencies, checkout.db)
+    before = checkout.tool_event(
+        HookEventType.BEFORE_TOOL, "git merge --no-ff --no-commit incoming"
+    )
+    foreign = replace(checkout, session_id=checkout.foreign_session_id)
+    foreign_before = replace(
+        foreign.tool_event(HookEventType.BEFORE_TOOL, "uv run python rewrite.py racer.txt"),
+        session_id="foreign-external",
+        request_id="foreign-shell",
+    )
+    assert not _shell_write_refused(handlers, before)
+    assert not _shell_write_refused(handlers, foreign_before)
+    _git(checkout.repo, "merge", "--no-ff", "--no-commit", "incoming")
+    checkout.write("racer.txt", "foreign concurrent write\n")
+    after = replace(before, event_type=HookEventType.AFTER_TOOL)
+    foreign_after = replace(foreign_before, event_type=HookEventType.AFTER_TOOL)
+    events = (foreign_after, after) if foreign_finishes_first else (after, foreign_after)
+    for event in events:
+        handlers.handle_after_tool(event)
+    assert "racer.txt" not in checkout.ledger()
+    assert "racer.txt" in checkout.rule_3_reason("racer.txt")
+    _git(checkout.repo, "add", "racer.txt")
+    reason = asyncio.run(
+        foreign_staged_commit_conflict(
+            checkout.db,
+            checkout.tool_event(HookEventType.BEFORE_TOOL, "git commit -m merge"),
+            session_id=checkout.session_id,
+            project_id=checkout.project_id,
+            project_path=str(checkout.repo),
+        )
+    )
+    assert "racer.txt" in reason
+    assert "overlapping" in reason
 
 
 def test_script_call_does_not_adopt_another_sessions_write(

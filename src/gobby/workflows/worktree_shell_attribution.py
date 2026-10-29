@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.hooks.events import tool_execution_id
 from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
 from gobby.workflows.checkout_fingerprint import path_fingerprints
 
@@ -168,6 +169,8 @@ def _is_fresh(entry: Any, now: float) -> bool:
         return False
     age = now - float(entry.get("started_at", 0.0))
     output_path = entry.get("output_path")
+    if entry.get("pending_receipt") is True:
+        return age < BACKGROUND_STALE_SECONDS
     if isinstance(output_path, str):
         return age < BACKGROUND_STALE_SECONDS and background_output_state(output_path) != "missing"
     return age < STALE_CALL_SECONDS
@@ -239,15 +242,21 @@ class WorktreeShellCallRegistry(ABC):
         if hits:
             self._mark_overlapped(session_id, call_id)
 
-    def defer_worktree_shell_call(self, session_id: str, call_id: str, *, output_path: str) -> None:
-        """Keep a background call in flight until its output file shows the process ended."""
+    def defer_worktree_shell_call(
+        self, session_id: str, call_id: str, *, output_path: str | None
+    ) -> None:
+        """Keep a call in flight until its output file or terminal poll proves it ended."""
 
         def defer(variables: dict[str, Any]) -> tuple[None, bool]:
             calls = _calls_of(variables)
             entry = calls.get(call_id)
             if not isinstance(entry, dict):
                 return None, False
-            calls[call_id] = {**entry, "output_path": output_path}
+            calls[call_id] = {
+                **entry,
+                "output_path": output_path,
+                "pending_receipt": output_path is None,
+            }
             variables[CALLS_VARIABLE] = calls
             return None, True
 
@@ -481,7 +490,7 @@ def begin_structured_edit_calls(
     )
 
     data = event.data
-    request_id = event.request_id
+    request_id = tool_execution_id(event)
     project_id = event.project_id
     if request_id is None or project_id is None or not isinstance(data, dict):
         return

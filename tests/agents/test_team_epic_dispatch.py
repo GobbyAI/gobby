@@ -33,6 +33,7 @@ from tests.fixtures.team_case import (
     TeamWorld,
     git_in,
     make_team_world,
+    running_seat,
     synthetic_manager_body,
 )
 
@@ -257,8 +258,8 @@ async def test_manager_leaf_spawns_scoped(world: TeamWorld) -> None:
 
 
 @pytest.mark.asyncio
-async def test_one_live_primary_per_implementation_domain(world: TeamWorld) -> None:
-    """A second primary in a domain waits for the first; other domains and pods do not."""
+async def test_one_live_primary_across_implementation_domains(world: TeamWorld) -> None:
+    """Parallel leaves use pods even when their implementation domains differ."""
     epic = new_task(world, TITLE, epic=True)
     backend = new_task(world, LEAF_TITLE, parent=epic, domain="backend")
     second_backend = new_task(world, "Second backend leaf", parent=epic, domain="backend")
@@ -273,11 +274,43 @@ async def test_one_live_primary_per_implementation_domain(world: TeamWorld) -> N
     assert primary_bindings(team) == {"backend": first["run_id"]}
 
     other = await team.spawn("developer", task_id=frontend.id, worktree_id=tree)
-    assert other.get("success") is True, other
+    assert other.get("error_code") == "primary_live", other
     run = world.child(second_backend, parent=team.manager)
     pod = await world.admit(run, second_backend, parent_team_id=team.binding.team_id)
     assert pod.worktree_id != tree
-    assert primary_bindings(team) == {"backend": first["run_id"], "frontend": other["run_id"]}
+    assert primary_bindings(team) == {"backend": first["run_id"]}
+
+
+@pytest.mark.asyncio
+async def test_runbook_primary_prevents_extra_domain_primary(world: TeamWorld) -> None:
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, "Frontend leaf", parent=epic, domain="frontend")
+    team = await epic_team(world, epic)
+    primary = running_seat(world, team.runbook, "developer")
+    assert primary_bindings(team) == {}
+
+    refused = await team.spawn("developer", task_id=leaf.id, worktree_id=team.binding.worktree_id)
+    assert refused.get("error_code") == "primary_live", refused
+
+    assert primary.agent_run_id is not None
+    world.case.db.execute(
+        "UPDATE agent_runs SET worktree_id = %s WHERE id = %s",
+        (team.binding.worktree_id, primary.agent_run_id),
+    )
+    LocalAgentRunManager(world.case.db).complete(primary.agent_run_id)
+    replacement = await team.spawn(
+        "developer", task_id=leaf.id, worktree_id=team.binding.worktree_id
+    )
+    assert replacement.get("success") is True, replacement
+
+    before = len(world.launches)
+    resumed = await team.spawn("developer", resume_session_id=primary.id)
+    assert resumed.get("error_code") == "primary_live", resumed
+    assert len(world.launches) == before
+
+    LocalAgentRunManager(world.case.db).complete(replacement["run_id"])
+    resumed = await team.spawn("developer", resume_session_id=primary.id)
+    assert resumed.get("success") is True, resumed
 
 
 @pytest.mark.asyncio
@@ -445,11 +478,14 @@ async def test_resumed_primary_takes_its_domain_slot(world: TeamWorld) -> None:
 
 
 @pytest.mark.asyncio
-async def test_resumed_primary_refused_beside_a_live_domain_primary(world: TeamWorld) -> None:
-    """A resume may not add a second live primary to a domain another seat holds."""
+@pytest.mark.parametrize("live_domain", ["backend", "frontend"])
+async def test_resumed_primary_refused_beside_a_live_primary(
+    world: TeamWorld, live_domain: str
+) -> None:
+    """A resume cannot add a primary beside a live seat, even across domains."""
     epic = new_task(world, TITLE, epic=True)
     backend = new_task(world, LEAF_TITLE, parent=epic, domain="backend")
-    second_backend = new_task(world, "Second backend leaf", parent=epic, domain="backend")
+    second_backend = new_task(world, "Other leaf", parent=epic, domain=live_domain)
     team = await epic_team(world, epic)
     tree = tree_id_of(team.binding)
     seat = stored_primary_seat(world, team, backend, tree)
@@ -461,7 +497,7 @@ async def test_resumed_primary_refused_beside_a_live_domain_primary(world: TeamW
 
     assert resumed.get("error_code") == "primary_live", resumed
     assert len(world.launches) == before
-    assert primary_bindings(team) == {"backend": live["run_id"]}
+    assert primary_bindings(team) == {live_domain: live["run_id"]}
 
 
 @pytest.mark.asyncio

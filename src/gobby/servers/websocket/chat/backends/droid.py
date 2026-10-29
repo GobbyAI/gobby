@@ -266,12 +266,18 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                                 structured_plan = extracted
                         if stream_event.data.get("kind") != "permission_request":
                             raw_tool_input = raw_non_object_tool_input(stream_event.data)
-                            await self._apply_pre_tool_lifecycle(
+                            decision = await self._apply_pre_tool_lifecycle(
                                 chat_event.tool_name,
                                 raw_tool_input
                                 if raw_tool_input is not None
                                 else chat_event.arguments,
+                                tool_execution_id=chat_event.tool_call_id,
                             )
+                            if decision and decision.get("decision") in {"block", "deny"}:
+                                await self.interrupt()
+                                raise RuntimeError(
+                                    decision.get("reason") or "Tool blocked by workflow"
+                                )
                     elif isinstance(chat_event, ToolResultEvent):
                         pending = pending_tool_calls.pop(chat_event.tool_call_id, {})
                         tool_input = pending.get("tool_input")
@@ -294,6 +300,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                             tool_input if isinstance(tool_input, dict) else {},
                             tool_response,
                             is_error=is_error,
+                            tool_execution_id=chat_event.tool_call_id,
                         )
                         # A completed tool ends the current prose paragraph; a
                         # following heading must start a new line to render. If the

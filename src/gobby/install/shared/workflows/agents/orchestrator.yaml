@@ -11,6 +11,7 @@ provider: inherit
 execution_mode: interactive
 checkout_mode: inherit
 persistent_workspace: true
+read_all_agent_workspaces: true
 timeout: 0
 send_message_targets: [parent, session, agent, project, global]
 # No blocked tools: the Orchestrator ends dead or orphaned seats directly (kill_agent).
@@ -47,10 +48,12 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
-    # The Orchestrator edits tasks as needed and reads seats' report folders to review them.
+    # The Orchestrator edits tasks as needed, reads seats' report folders to review them,
+    # and lands approved work in shared checkouts that hold other sessions' staged paths.
     exclude:
       - "name:block-update-task"
       - "name:agent-workspace-read-scope"
+      - "name:block-cross-session-foreign-staged-commit"
   variables:
     _seat_procedure: gobby:references/agents/procedures/orchestrator.md
     _seat_references:
