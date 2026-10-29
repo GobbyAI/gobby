@@ -15,10 +15,12 @@ Extracted from app.py using Strangler Fig pattern for code decomposition.
 
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator
 
 from gobby.config.feature_base import FeatureDefaultConfig, FeatureProfile
 
@@ -35,6 +37,8 @@ __all__ = [
     "TaskValidationConfig",
     "TaskClosePolicyConfig",
     "load_project_task_close_policy",
+    "TaskProtectionPolicyConfig",
+    "load_project_task_protection_policy",
     "GobbyTasksConfig",
     "WorkflowConfig",
     "WorkflowVariablesConfig",
@@ -144,6 +148,35 @@ class TaskValidationConfig(FeatureDefaultConfig):
 
 
 TASK_CLOSE_POLICY_KEY = "task_close_policy"
+
+
+class TaskProtectionPolicyConfig(BaseModel):
+    """Protected tasks and ancestors for definitions that opt into mutation restrictions."""
+
+    model_config = ConfigDict(extra="forbid")
+    foreign_claims: StrictBool = True
+    labels: list[StrictStr] = Field(default_factory=list)
+    subtree_roots: list[StrictStr] = Field(default_factory=list)
+
+    @field_validator("subtree_roots")
+    @classmethod
+    def validate_roots(cls, value: list[str]) -> list[str]:
+        return [ref if re.fullmatch(r"#[1-9][0-9]*", ref) else str(UUID(ref)) for ref in value]
+
+
+def load_project_task_protection_policy(project_path: str) -> TaskProtectionPolicyConfig:
+    """Read protected-task configuration, refusing malformed policies."""
+    marker = Path(project_path) / ".gobby" / "project.json"
+    try:
+        text = marker.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return TaskProtectionPolicyConfig()
+    try:
+        return TaskProtectionPolicyConfig.model_validate(
+            json.loads(text).get("task_protection_policy", {})
+        )
+    except (AttributeError, ValueError) as exc:
+        raise ValueError(f"Invalid task_protection_policy in {marker}: {exc}") from exc
 
 
 class TaskClosePolicyConfig(BaseModel):

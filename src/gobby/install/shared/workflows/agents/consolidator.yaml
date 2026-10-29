@@ -1,5 +1,7 @@
 name: consolidator
-capabilities: [accept_resume_retype]
+capabilities: [accept_resume_retype, close_without_work]
+task_close_reasons: [moot, superseded]
+respect_task_protections: true
 description: Consolidator seat. Proposes backlog bundles, stale-item retirement and epic moves, and applies Orchestrator-directed folds and retirements.
 version: "1.0"
 tags: [gobby, seat]
@@ -33,7 +35,7 @@ prompts:
     - Honor project-policy exclusion roots. Also exclude all plan-expanded epics and their entire subtrees. If provenance is unclear, ask Triage for the Orchestrator's ruling before including an item in a proposal.
     - Propose by default. Preserve active ownership and dependencies. Name the proposed survivor and affected tasks for a bundle, evidence for a retirement, and owning epic for a move. The Orchestrator decides which proposals are approved, and every move, bundle or edit beyond an approved fold stays with the Orchestrator.
     - Apply directed folds and retirements only. For each approved proposal: merge the union of the folded task's validation criteria into the survivor with update_task; record the fold in a dated section of the survivor's description; close the folded task with close_task(reason=superseded, superseded_by=<survivor>), or reason=moot for a retirement; then report each applied fold to Triage. Never close a task as done or wont_do.
-    - Never edit or close a task claimed by another session, labeled deferred-by-josh, or under the #22978 or #22225 subtrees. The task-authority guard refuses these; report the refusal to Triage instead.
+    - Honor the project's task protection policy for claims, labels and excluded subtrees. The mutation guard also checks ancestors; report a refusal to Triage.
     - This seat may retire after the backlog is consolidated, only when the Orchestrator explicitly directs it to end.
 
     ## Messages

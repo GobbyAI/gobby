@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from gobby.config.tasks import TaskProtectionPolicyConfig, load_project_task_protection_policy
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.project_checkouts import require_root
+from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
+from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentTaskScope
 from gobby.workflows.agent_resolver import session_agent_definition
@@ -35,6 +38,42 @@ def task_scope_refusal(task: Task, session_id: str, scope: AgentTaskScope) -> st
         return f"The definition's task scope excludes category {task.category}."
     if scope.own_claim_only and task.claimed_by_session_id != session_id:
         return "The definition's task scope requires the caller's own claim."
+    return None
+
+
+def task_protection_refusal(
+    tasks: LocalTaskManager, task: Task, caller_session_id: str
+) -> str | None:
+    """Check each task against its own project's primary-checkout policy.
+
+    Closing a last child can close its parent; reparenting changes both ancestor
+    chains. Callers must check the existing task and any proposed parent.
+    """
+    policies: dict[str, TaskProtectionPolicyConfig] = {}
+    seen: set[str] = set()
+    node: Task | None = task
+    while node is not None and node.id not in seen:
+        seen.add(node.id)
+        if node.project_id not in policies:
+            policies[node.project_id] = (
+                TaskProtectionPolicyConfig()
+                if node.project_id in CHECKOUT_FREE_PROJECT_IDS
+                else load_project_task_protection_policy(
+                    require_root(tasks.db, node.project_id, require_machine_id())
+                )
+            )
+        policy = policies[node.project_id]
+        ref = f"#{node.seq_num}" if node.seq_num is not None else node.id
+        where = f"task {ref}" if node.id == task.id else f"ancestor task {ref}"
+        owner = get_claimed_session_id(node)
+        if policy.foreign_claims and owner and owner != caller_session_id:
+            return f"{where} is claimed by session '{owner}'"
+        protected_labels = set(policy.labels).intersection(node.labels or [])
+        if protected_labels:
+            return f"{where} has protected labels: {', '.join(sorted(protected_labels))}"
+        if ref in policy.subtree_roots or node.id in policy.subtree_roots:
+            return f"{where} is a protected subtree root"
+        node = tasks.get_task(node.parent_task_id) if node.parent_task_id else None
     return None
 
 

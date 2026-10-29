@@ -206,6 +206,10 @@ class AgentDefinitionBody(BaseModel):
     )
     task_step_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)
     task_close_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)
+    respect_task_protections: StrictBool = Field(
+        default=False,
+        description="Apply the project's protected-task policy to mutations and their ancestors.",
+    )
     task_close_reasons: list[StrictStr] | None = Field(
         default=None, description="Allowed close reasons; None leaves reasons unrestricted."
     )

@@ -632,9 +632,15 @@ class TestUpdateTaskLeavesAuthorityToRules:
     def test_claimed_task_edit_writes_only_the_edited_field(
         self, context_session: str | None
     ) -> None:
-        result, mutation = _invoke(
-            UPDATE_TASK, claimed_by=OWNER_SESSION, context_session=context_session
-        )
+        with (
+            patch(f"{_AUTH}.SessionManager") as sessions,
+            patch(f"{_AUTH}.SessionVariableManager") as variables,
+        ):
+            sessions.return_value.get.return_value = MagicMock(agent_run_id=None, agent_depth=0)
+            variables.return_value.get_variable_subset.return_value = {}
+            result, mutation = _invoke(
+                UPDATE_TASK, claimed_by=OWNER_SESSION, context_session=context_session
+            )
 
         assert result.get("error_code") is None
         mutation.assert_called_once()

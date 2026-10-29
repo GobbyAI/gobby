@@ -10,10 +10,6 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
     resolve_close_worktree_root_async,
     resolve_task_repo_path,
 )
-from gobby.mcp_proxy.tools.tasks._authorization import (
-    CONSOLIDATOR_ROLE,
-    consolidator_close_refusal,
-)
 from gobby.mcp_proxy.tools.tasks._close_context import (
     CloseAttributionLookupError,
     capture_attribution,
@@ -31,7 +27,7 @@ from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.close_invariants import evaluate_close_invariants
 from gobby.tasks.land_commit import LandingGitError, main_checkout_target
-from gobby.tasks.lifecycle_access import task_scope_refusal
+from gobby.tasks.lifecycle_access import task_protection_refusal, task_scope_refusal
 from gobby.tasks.state_semantics import (
     NO_WORK_CLOSE_REASONS,
     get_claimed_session_id,
@@ -82,7 +78,6 @@ async def _evaluate_close(
         return evaluation.refuse("session_resolution_failed", str(exc))
     evaluation.resolved_session_id = session_id
     # No-work reasons require a declared grant; the unseated operator keeps them too.
-    # The Consolidator applies Orchestrator-directed folds and retirements, nothing else.
     closer_role = (
         await asyncio.to_thread(
             ctx.session_var_manager.get_variable_subset, session_id, ("_agent_type",)
@@ -95,13 +90,7 @@ async def _evaluate_close(
         session_agent_definition, ctx.task_manager.db, session
     )
     closer_definition = resolved_definition[0] if resolved_definition else None
-    if closer_role == CONSOLIDATOR_ROLE:
-        fold_refusal = await asyncio.to_thread(
-            consolidator_close_refusal, ctx.task_manager, task, reason, session_id
-        )
-        if fold_refusal:
-            return evaluation.refuse(*fold_refusal)
-    elif reason.casefold() in NO_WORK_CLOSE_REASONS and not await asyncio.to_thread(
+    if reason.casefold() in NO_WORK_CLOSE_REASONS and not await asyncio.to_thread(
         session_has_capability_or_operator, ctx.task_manager.db, session_id, "close_without_work"
     ):
         return evaluation.refuse(
@@ -133,6 +122,15 @@ async def _evaluate_close(
     if closer_definition is not None:
         if refusal := task_scope_refusal(task, session_id, closer_definition.task_close_scope):
             return evaluation.refuse("task_close_scope_forbidden", refusal)
+        if closer_definition.respect_task_protections:
+            try:
+                protected = await asyncio.to_thread(
+                    task_protection_refusal, ctx.task_manager, task, session_id
+                )
+            except (OSError, ValueError) as exc:
+                return evaluation.refuse("task_protection_policy_unavailable", str(exc))
+            if protected:
+                return evaluation.refuse("task_protected", protected)
 
     try:
         repo = await asyncio.to_thread(
