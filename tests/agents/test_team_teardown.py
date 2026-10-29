@@ -704,8 +704,9 @@ async def test_close_ends_runbook_seats_without_team_admission(
 
 
 @pytest.mark.parametrize("parked", [False, True])
+@pytest.mark.parametrize("inside_tree", [False, True])
 async def test_close_ends_task_bound_dispatched_seat_outside_tree_and_preserves_open_work(
-    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, parked: bool
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, parked: bool, inside_tree: bool
 ) -> None:
     db = world.case.db
     team = await admitted_team(world, "Dispatched reviewer in the main checkout")
@@ -730,7 +731,8 @@ async def test_close_ends_task_bound_dispatched_seat_outside_tree_and_preserves_
         (other_task.id, manager),
     )
     db.execute(
-        "UPDATE sessions SET workspace_path = %s WHERE id = %s", (str(world.case.repo), manager)
+        "UPDATE sessions SET workspace_path = %s WHERE id = %s",
+        (team.binding.worktree_path if inside_tree else str(world.case.repo), manager),
     )
     other = dispatched_seat(world, team, str(world.case.repo))
     db.execute(
@@ -756,4 +758,58 @@ async def test_close_ends_task_bound_dispatched_seat_outside_tree_and_preserves_
         assert ended_run is not None and ended_run.resume_metadata_json is not None
         assert ended_run.resume_metadata_json[CONSUMED_BY_KEY] == "teardown"
     assert LocalTaskManager(db).get_task(other_task.id).claimed_by_session_id == reassigned.id
+    assert tree_of(team.binding).exists(), "protected work keeps the tree and teardown due"
+    assert teardown(world, team) == {}
+    other_closed = LocalTaskManager(db).close_task(other_task.id, reason="done")
+
+    await teardown_pass(db, daemon(db), closed_at(other_closed) + TEARDOWN_GRACE)
+
+    expected = [*team.seats, other, reassigned.id, *([] if parked else [reviewer])]
+    assert terminations.ended() == sorted(expected)
+    assert {session_status(db, session) for session in (manager, other, reassigned.id)} == {
+        "expired"
+    }
+    assert teardown(world, team) == {"outcome": "cleaned"}
     assert not tree_of(team.binding).exists()
+
+
+async def test_runbook_seat_refusal_records_one_finding_and_stops_retrying(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = world.case.db
+    path = (
+        Path(__file__).parents[2]
+        / "src/gobby/install/shared/workflows/pipelines/team-planning.yaml"
+    )
+    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
+    task = world.case.task("Planning seat cannot end")
+    runbook = world.child(task, definition)
+    planner = running_seat(world, runbook, "plan-writer")
+    world.finish(runbook)
+    closed = LocalTaskManager(db).close_task(task.id, reason="done")
+    calls: list[str] = []
+
+    async def cannot_end(**kwargs: Any) -> dict[str, Any]:
+        run: AgentRun = kwargs["run"]
+        calls.append(run.id)
+        return {"success": False, "error_code": "test_refusal", "error": "seat cannot end"}
+
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", cannot_end)
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    assert len(calls) == 1
+    assert session_status(db, planner.id) == "active"
+    findings = LocalTaskManager(db).list_tasks(
+        project_id=world.case.project_id, label=FINDING_LABEL, closed=False
+    )
+    assert len(findings) == 1
+    assert findings[0].escalated_at is not None
+    assert task.id in (findings[0].description or "")
+    assert execution_id(runbook) in (findings[0].description or "")
+    assert planner.id in (findings[0].description or "")
+    outcomes = [
+        json.loads(step.output_json or "{}").get("teardown")
+        for step in world.executions.get_steps_for_execution(execution_id(runbook))
+    ]
+    assert {"outcome": "refused", "code": "test_refusal", "finding": findings[0].id} in outcomes
