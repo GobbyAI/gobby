@@ -268,7 +268,11 @@ def _sync_rule_file(
             if tag not in rule_tags:
                 rule_tags = [*rule_tags, tag]
 
-            if _has_gobby_rule_name_collision(manager, rule_name, tag):
+            bundled_collision = _has_gobby_rule_name_collision(manager, rule_name, tag)
+            override_bundled = (
+                bundled_collision and rule_data.get("override", data.get("override")) is True
+            )
+            if bundled_collision and not override_bundled:
                 logger.debug(
                     "Skipping user rule that collides with gobby rule",
                     extra={"rule": rule_name},
@@ -288,6 +292,7 @@ def _sync_rule_file(
                     sync_tag=tag,
                     result=result,
                     project_id=project_id,
+                    override_bundled=override_bundled,
                 )
             except Exception as e:
                 error_msg = f"Failed to sync rule '{rule_name}' from {yaml_file.name}: {e}"
@@ -342,6 +347,7 @@ def _sync_single_rule(
     sync_tag: str,
     result: dict[str, Any],
     project_id: str | None = None,
+    override_bundled: bool = False,
 ) -> None:
     """Sync a single rule to rule_definitions.
 
@@ -404,8 +410,15 @@ def _sync_single_rule(
     # lookup prefers the project-scoped row and falls back to the global one.
     existing = manager.get_by_name(rule_name, project_id=project_id, include_deleted=True)
 
+    if override_bundled and existing is not None:
+        if existing.project_id != project_id:
+            # A project override shadows the global bundle without moving it.
+            existing = None
+        elif "gobby" in (existing.tags or []) and "gobby" not in (tags or []):
+            tags = [*(tags or []), "gobby"]
+
     if existing is not None and existing.deleted_at is not None:
-        if _is_sync_managed_rule(existing, sync_tag, project_id):
+        if override_bundled or _is_sync_managed_rule(existing, sync_tag, project_id):
             manager.restore(existing.id)
             update_fields = _build_rule_update_fields(
                 existing=existing,
@@ -430,7 +443,7 @@ def _sync_single_rule(
         existing = None
 
     if existing is not None:
-        if _is_sync_managed_rule(existing, sync_tag, project_id):
+        if override_bundled or _is_sync_managed_rule(existing, sync_tag, project_id):
             update_fields = _build_rule_update_fields(
                 existing=existing,
                 definition_json=definition_json,

@@ -119,3 +119,60 @@ def test_grouped_rule_collision_is_refused_before_any_write(
     assert manager.get(row.id) == bundled
     assert manager.get_by_name("a-new-rule", project_id=project_id) is None
     assert on_disk == set()
+
+
+@pytest.mark.parametrize("project_scoped", [False, True])
+@pytest.mark.parametrize("file_override", [False, True])
+def test_grouped_rule_explicit_override_updates_without_losing_bundled_ownership(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+    project_scoped: bool,
+    file_override: bool,
+) -> None:
+    definition = {
+        "event": "before_tool",
+        "effects": [{"type": "block", "reason": "bundled policy"}],
+    }
+    row = sync_imported_definition(
+        temp_db, {**definition, "type": "rule", "name": "bundled-rule"}, None
+    )
+    manager = RuleDefinitionManager(temp_db)
+    bundled = manager.update(row.id, tags=["gobby"])
+    project_id = (
+        isolated_checkout_factory(temp_db, "grouped-override").project.id
+        if project_scoped
+        else None
+    )
+    override_rule: dict[str, Any] = {**definition, "description": "explicit override"}
+    payload: dict[str, Any] = {"rules": {"bundled-rule": override_rule, "new-rule": definition}}
+    if file_override:
+        payload["override"] = True
+    else:
+        override_rule["override"] = True
+    path = tmp_path / "rules.yaml"
+    path.write_text(yaml.safe_dump(payload))
+    on_disk: set[tuple[str, str]] = set()
+
+    result = sync_imported_workflow_file(temp_db, path, project_id, on_disk=on_disk)
+
+    assert result["errors"] == []
+    imported = manager.get_by_name("bundled-rule", project_id=project_id)
+    assert imported is not None
+    assert imported.project_id == project_id
+    assert imported.description == "explicit override"
+    assert imported.definition_json["effects"][0]["reason"] == "bundled policy"
+    assert manager.get_by_name("new-rule", project_id=project_id) is not None
+    assert on_disk == {("rule", "bundled-rule"), ("rule", "new-rule")}
+    if project_scoped:
+        assert manager.get(row.id) == bundled
+        assert imported.id != row.id
+    else:
+        assert imported.id == row.id
+        assert "gobby" in (imported.tags or [])
+
+    # A later unlabelled copy must still be refused after the explicit update.
+    path.write_text(yaml.safe_dump({"rules": {"bundled-rule": definition}}))
+    with pytest.raises(ValueError, match="override: true"):
+        sync_imported_workflow_file(temp_db, path, project_id)
+    assert manager.get(imported.id) == imported
