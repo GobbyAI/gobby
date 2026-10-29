@@ -268,6 +268,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     edit_paths: list[str] = []
     dirty_edit_paths: list[str] = []
     write_paths: list[str] = []
+    archive_paths: list[str] = []
+    archive_scope_unknown = False
     mutation_scope_unknown = False
     mutation_scope_resolved_by_loop_binding = True
     saw_unexpanded_mutation_path = False
@@ -445,6 +447,21 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         for path in item.write_paths:
             if not _path_is_unresolved(path, item.literal_path_root) and path not in write_paths:
                 write_paths.append(path)
+        if item.extra:
+            archive_scope_unknown |= bool(item.extra.get("canonical_archive_extract_scope_unknown"))
+            for path in item.extra.get("canonical_archive_extract_paths", ()):
+                if not _path_is_unresolved(path, item.literal_path_root):
+                    archive_paths.append(path)
+                    continue
+                reference = _plain_loop_binding_reference(
+                    path, item.shell_words, item.shell_raw_words
+                )
+                if reference and reference[0] in loop_bindings:
+                    variable, suffix = reference
+                    archive_paths.extend(value + suffix for value in loop_bindings[variable])
+                else:
+                    # A surrounding loop may bind a nested body's destination.
+                    archive_paths.append(path)
 
     pure_gcode_navigation = any(item.pure_gcode_navigation for item in metadata) and all(
         item.neutral_setup or item.pure_gcode_navigation or item.read_only_pipeline_filter
@@ -461,6 +478,10 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         kind = "execute"
 
     extra = _merge_code_navigation_extra(active)
+    if archive_paths:
+        extra["canonical_archive_extract_paths"] = list(dict.fromkeys(archive_paths))
+    if archive_scope_unknown:
+        extra["canonical_archive_extract_scope_unknown"] = True
     # A read beside an opaque execution is not a read-only shell program.
     extra["canonical_read_only"] = all(item.proven_read_only for item in metadata)
     if "canonical_edit_file_paths" in extra:

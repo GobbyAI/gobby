@@ -9,6 +9,7 @@ from typing import Any
 
 from gobby.hooks._path_scope import (
     _is_temp_path,
+    checkout_root,
     current_project_root,
     current_tool_cwd,
     resolve_tool_path,
@@ -138,6 +139,38 @@ def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> boo
     return True
 
 
+def _archive_workspace_write_refused(
+    data: Mapping[str, Any], root: Path, allowed: list[Path], base: Path | None
+) -> bool:
+    """A destination directory does not prove its archive members exclude seat metadata."""
+    if data.get("canonical_archive_extract_scope_unknown") or (
+        data.get("canonical_archive_extract_paths")
+        and data.get("canonical_repo_mutation_scope_unknown")
+    ):
+        return True
+    for raw in data.get("canonical_archive_extract_paths", ()):
+        path = resolve_tool_path(raw, base)
+        if path is None:
+            return True
+        within_root = workspace_contains(path, root)
+        if within_root is None:
+            return True
+        if not within_root:
+            continue
+        try:
+            checkout = checkout_root(path)
+        except (OSError, CheckoutReadUnavailable):
+            return True
+        if checkout is None or not any(
+            workspace_contains(path, directory) is True
+            and len(checkout.parts) > len(directory.parts)
+            and workspace_contains(checkout, directory) is True
+            for directory in allowed
+        ):
+            return True
+    return False
+
+
 def agent_workspace_write_violation(
     event_data: Mapping[str, Any] | None,
     tool_input: Any,
@@ -192,7 +225,9 @@ def agent_workspace_write_violation(
         )
         if directory is not None
     ]
-    return any(_workspace_write_refused(path, root, allowed) for path in paths)
+    return any(_workspace_write_refused(path, root, allowed) for path in paths) or (
+        _archive_workspace_write_refused(data, root, allowed, base)
+    )
 
 
 # Provider scratchpads and per-user temp dirs live under /private/var/folders on macOS.

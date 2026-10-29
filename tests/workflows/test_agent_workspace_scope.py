@@ -304,6 +304,113 @@ def _register(
 SEATS = ("researcher", "assistant", "archivist", "developer", None)
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tar -xf archive.tar -C {destination}",
+        "tar xf archive.tar -C{destination}",
+        "tar --extract --file=archive.tar --directory={destination}",
+        "bsdtar -xzf archive.tgz -C {destination}",
+        "gtar -xf archive.tar -C {destination}",
+        "git archive HEAD | tar -x -C {destination}",
+        "cd {destination} && tar -xf archive.tar",
+        "sh -c 'tar -xf archive.tar -C {destination}'",
+        "env -C {destination} tar -xf archive.tar",
+        'for output in {destination}; do tar -xf archive.tar -C "$output"; done',
+        "tar -xf archive.tar -C {destination} && tar -xf other.tar -C {scratch}",
+        "tar -xf other.tar -C {scratch} && tar -xf archive.tar -C {destination}",
+        "unzip archive.zip -d {destination}",
+        "unzip -oq -d{destination} archive.zip",
+        "unzip -oqd {destination} archive.zip",
+        "unzip -P -p archive.zip -d {destination}",
+        "cd {destination} && unzip archive.zip",
+        "7z x archive.7z -o{destination}",
+        "7zz e archive.7z -o{destination}",
+        "7z x -o{destination} -- -so",
+        "unrar x archive.rar {destination}/",
+        "unrar x -op{destination} archive.rar",
+        "rar e -op{destination} archive.rar",
+        "ditto -x -k archive.zip {destination}",
+        "cd {destination} && jar xf archive.jar",
+        "cd {destination} && jar xf --dir=/tmp/out",
+    ],
+)
+@pytest.mark.parametrize("target", ["seat", "checkout", "scratch"])
+async def test_archive_extraction_requires_a_checkout_in_seat_folders(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    command: str,
+    target: str,
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    checkout = own / "task-checkout"
+    (checkout / ".git").mkdir(parents=True)
+    destinations = {
+        "seat": own / "candidate",
+        "checkout": checkout / "unpacked",
+        "scratch": tmp_path / "scratch",
+    }
+    destination = destinations[target]
+    destination.mkdir(parents=True)
+    response = await _decide(
+        workspace_write_engine,
+        _shell(command.format(destination=destination, scratch=tmp_path / "other"), project),
+        variables,
+    )
+    assert response.decision == ("block" if target == "seat" else "allow"), response.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tar -tf archive.tar",
+        "tar -xOf archive.tar",
+        "bsdtar -xOf archive.tar",
+        "unzip -l archive.zip",
+        "unzip -p archive.zip",
+        "7z l archive.7z",
+        "unrar l archive.rar",
+    ],
+)
+async def test_archive_inspection_keeps_seat_folder_access(
+    workspace_write_engine: RuleEngine, root: Path, command: str
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    own.mkdir(parents=True)
+    response = await _decide(workspace_write_engine, _shell(command, own), variables)
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tar -xPf archive.tar",
+        "unzip -: archive.zip",
+        "7z x -spf archive.7z",
+        "unrar x -ep3 archive.rar",
+        "unrar x -opoutput archive.rar other/",
+        "cpio -id < archive.cpio",
+        "cpio -id -F -t",
+        "cpio -id --no-absolute-filenames < archive.cpio",
+        "pax -r -f archive.pax",
+        "pax -r -f -w",
+        "pax -r -s ',^,../,' -f archive.pax",
+    ],
+)
+async def test_archive_extraction_cannot_claim_scope_when_members_can_escape(
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, command: str
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    # Even an ordinary scratch cwd cannot confine absolute/traversing member names.
+    response = await _decide(workspace_write_engine, _shell(command, tmp_path), variables)
+    assert response.decision == "block", response.reason
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_type", SEATS, ids=lambda seat: seat or "plan-mode")
 async def test_write_isolation(
