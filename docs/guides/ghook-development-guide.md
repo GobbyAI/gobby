@@ -72,7 +72,7 @@ inbox and HTTP transport:
 | `main.rs` | Arg parsing (clap), mode dispatch (`--gobby-owned`/`--diagnose`/`--version`), orchestrates the dispatch flow. |
 | `cli_config.rs` | Per-CLI registry (claude/codex/droid/grok/agy). Lifecycle start/end/precompact hooks are critical except for Antigravity, which declares none. Stop is noncritical; host-visible failure output is provider-specific in `action.rs`. |
 | `envelope.rs` | `Envelope` struct + `SCHEMA_VERSION = 1`. Serializes to the inbox JSON shape. |
-| `planned_shutdown.rs` | Stop-only planned shutdown markers, daemon health preflight, and post-enqueue daemon-death suppression. |
+| `planned_shutdown.rs` | Planned shutdown markers: failed-POST suppression for Stop and pre-compact, and the restart check for spawned `post-tool-batch`. |
 | `transport.rs` | Inbox path resolution, atomic write, enqueue, POST + cleanup, quarantine for malformed stdin. |
 | `terminal_context.rs` | Captures parent PID, TTY, `TERM_PROGRAM`, and `GOBBY_*` env vars for lifecycle hooks, plus tmux pane/socket when valid. Injects under `input_data.terminal_context`. |
 | `diagnose.rs` | `--diagnose` mode — pure introspection, no I/O side effects. Returns `DiagnoseOutput` matching `schemas/diagnose-output.v2.schema.json`. |
@@ -245,27 +245,27 @@ The 30s timeout is deliberately generous — the daemon may be doing real work (
 ### Planned Shutdown Stops
 
 `planned_shutdown` handles intentional daemon stop/restart windows without
-changing the envelope schema. After project/input and managed-context resolution,
-but before terminal-context injection or enqueue, Stop hooks check
+changing the envelope schema. Every hook enqueues and POSTs as usual. After a
+live POST fails with `Connect` or `Timeout`, Stop and pre-compact hooks check
 `shutdown_intent_active.json` under `$GOBBY_HOME` or `~/.gobby`. Fresh markers
-are accepted for `intent` values
-`stop`/`restart` or source prefixes `cli_`, `http_`, `service_`, and `mcp_`.
+are accepted for `intent` values `stop`/`restart`/`maintenance` or source
+prefixes `cli_`, `http_`, `service_`, and `mcp_`. An accepted marker returns
+the provider-specific continue action with exit 0 and leaves the envelope
+queued for replay. HTTP failures are treated as daemon responses and are never
+suppressed. With `--enqueue-only`, a failed enqueue takes the same marker rule
+after recording a failure artifact.
 
-Accepted markers trigger a short GET to `{daemon_url}/api/health`. Any
-HTTP response means the daemon is reachable; transport failures mean it is
-unreachable. Fresh marker plus unreachable daemon returns the provider-specific
-continue action with exit 0 and no enqueue side effects.
-
-After enqueue, the same marker rule suppresses only Stop live POST failures
-classified as `Connect` or `Timeout`. `ghook` removes the just-enqueued Stop
-envelope first; if removal fails, the normal critical-hook failure path stays in
-force. HTTP failures are treated as daemon responses and are never suppressed.
+For spawned agents, `daemon_down` runs before that rule. It answers a `Connect`
+failure with exit 2 and `[Gobby] Daemon down. Please wait.` on every hook
+except Stop, SubagentStop, and Codex Interrupt. `restart_in_progress()` narrows
+one case: a fresh marker whose `intent` is `restart` lets Claude's
+`post-tool-batch` continue, because Claude ends the turn on that hook's exit 2.
 
 Environment:
 
 - `GOBBY_DAEMON_URL` overrides the daemon URL. The override is applied inside
-  `gobby_core::daemon_url::daemon_url()`, so it covers the preflight, live
-  POSTs, and the statusline POST uniformly.
+  `gobby_core::daemon_url::daemon_url()`, so it covers live POSTs and the
+  statusline POST uniformly.
 - `GOBBY_PORT` overrides only the port, dialed on `127.0.0.1`, when
   `GOBBY_DAEMON_URL` is not set.
 - Bootstrap `daemon_url` wins over separate bootstrap host/port fields when no
@@ -350,7 +350,7 @@ Each module has `#[cfg(test)] mod tests` with comprehensive coverage:
 
 - **envelope.rs**: serialization shape, schema validation against `inbox-envelope.v1.schema.json`, empty-headers serializing as empty object.
 - **transport.rs**: 13-digit timestamp shape, filename prefix matches `critical`, atomic-write creates parents, no `.tmp` left on success, enqueue produces valid filename, quarantine pair structure.
-- **planned_shutdown.rs**: marker parsing and freshness, allowed intents and source prefixes, env overrides, Stop matching, health reachability, and post-enqueue race suppression.
+- **planned_shutdown.rs**: marker parsing and freshness, allowed intents and source prefixes, env overrides, Stop matching, and post-enqueue race suppression.
 - **diagnose.rs**: unknown CLI → not recognized + null source; known CLI/hook combos hit the right critical flags and terminal-context capability; schema validation for both recognized and unrecognized CLIs.
 - **dispatch.rs**: machine identity stamping replaces stale host-provided
   identity and reports stable `machine_id_error` codes when local identity is
