@@ -72,7 +72,7 @@ inbox and HTTP transport:
 | `main.rs` | Arg parsing (clap), mode dispatch (`--gobby-owned`/`--diagnose`/`--version`), orchestrates the dispatch flow. |
 | `cli_config.rs` | Per-CLI registry (claude/codex/droid/grok/agy). Lifecycle start/end/precompact hooks are critical except for Antigravity, which declares none. Stop is noncritical; host-visible failure output is provider-specific in `action.rs`. |
 | `envelope.rs` | `Envelope` struct + `SCHEMA_VERSION = 1`. Serializes to the inbox JSON shape. |
-| `planned_shutdown.rs` | Stop-only planned shutdown markers, daemon health preflight, and post-enqueue daemon-death suppression. |
+| `planned_shutdown.rs` | Planned shutdown markers: failed-POST suppression for Stop and pre-compact, and the restart check for spawned `post-tool-batch`. |
 | `transport.rs` | Inbox path resolution, atomic write, enqueue, POST + cleanup, quarantine for malformed stdin. |
 | `terminal_context.rs` | Captures parent PID, TTY, `TERM_PROGRAM`, and `GOBBY_*` env vars for lifecycle hooks, plus tmux pane/socket when valid. Injects under `input_data.terminal_context`. |
 | `diagnose.rs` | `--diagnose` mode — pure introspection, no I/O side effects. Returns `DiagnoseOutput` matching `schemas/diagnose-output.v2.schema.json`. |
@@ -264,8 +264,8 @@ one case: a fresh marker whose `intent` is `restart` lets Claude's
 Environment:
 
 - `GOBBY_DAEMON_URL` overrides the daemon URL. The override is applied inside
-  `gobby_core::daemon_url::daemon_url()`, so it covers the preflight, live
-  POSTs, and the statusline POST uniformly.
+  `gobby_core::daemon_url::daemon_url()`, so it covers live POSTs and the
+  statusline POST uniformly.
 - `GOBBY_PORT` overrides only the port, dialed on `127.0.0.1`, when
   `GOBBY_DAEMON_URL` is not set.
 - Bootstrap `daemon_url` wins over separate bootstrap host/port fields when no
@@ -350,7 +350,7 @@ Each module has `#[cfg(test)] mod tests` with comprehensive coverage:
 
 - **envelope.rs**: serialization shape, schema validation against `inbox-envelope.v1.schema.json`, empty-headers serializing as empty object.
 - **transport.rs**: 13-digit timestamp shape, filename prefix matches `critical`, atomic-write creates parents, no `.tmp` left on success, enqueue produces valid filename, quarantine pair structure.
-- **planned_shutdown.rs**: marker parsing and freshness, allowed intents and source prefixes, env overrides, Stop matching, health reachability, and post-enqueue race suppression.
+- **planned_shutdown.rs**: marker parsing and freshness, allowed intents and source prefixes, env overrides, Stop matching, and post-enqueue race suppression.
 - **diagnose.rs**: unknown CLI → not recognized + null source; known CLI/hook combos hit the right critical flags and terminal-context capability; schema validation for both recognized and unrecognized CLIs.
 - **dispatch.rs**: machine identity stamping replaces stale host-provided
   identity and reports stable `machine_id_error` codes when local identity is

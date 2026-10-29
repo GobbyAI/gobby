@@ -93,8 +93,8 @@ the daemon is back.
 
 Environment knobs:
 
-- `GOBBY_DAEMON_URL` overrides the daemon URL used for Stop preflight, live
-  POSTs, and statusline POSTs.
+- `GOBBY_DAEMON_URL` overrides the daemon URL used for live POSTs and
+  statusline POSTs.
 - `GOBBY_PORT` overrides only the port, dialed on `127.0.0.1`, when
   `GOBBY_DAEMON_URL` is not set.
 - `GOBBY_HOME` controls marker lookup; default is `~/.gobby`.
