@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+import yaml
 
 import gobby.runner_lifecycle_agents as lifecycle_agents
 import gobby.runner_lifecycle_callbacks as lifecycle_callbacks
@@ -27,18 +28,25 @@ from gobby.agents.team_teardown import FINDING_LABEL, TEARDOWN_GRACE
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.runner_maintenance.isolation import team_tree_deleter
+from gobby.sessions.handoff_records import (
+    build_handoff_payload,
+    get_agent_end_handoff,
+    stage_agent_end_handoff,
+)
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.daemon_resume_keys import CONSUMED_BY_KEY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.definitions import PipelineDefinition
 from gobby.worktrees.deletion import WorktreeDeletionResult
 from tests.config_runtime_helpers import static_runtime_capture
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.postgres import TEST_USER_ID
-from tests.fixtures.team_case import TeamWorld, git_in, make_team_world
+from tests.fixtures.team_case import TeamWorld, execution_id, git_in, make_team_world, running_seat
 from tests.fixtures.team_teardown_case import (
     Team,
     Terminations,
@@ -182,6 +190,7 @@ async def test_close_collapses_all_team_seats(
     await teardown_pass(db, runner, closed_at(closed) + TEARDOWN_GRACE)
 
     assert terminations.ended() == sorted(seats)
+    assert all(get_agent_end_handoff(db, call["run"].id) for call in terminations.calls)
     assert {(call["effective_status"], call["debug"]) for call in terminations.calls} == {
         ("cancelled", False)
     }, "each seat's tab closes with its run"
@@ -372,6 +381,18 @@ async def test_seat_that_cannot_end_is_a_reported_failure_and_keeps_its_tree(
 
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", cannot_end)
     team = await admitted_team(world, "Seat refuses to end")
+    parked = park(db, team, 3)
+    previous_manager = park(db, team, 0)
+    resumed_manager = LocalAgentRunManager(db).create(
+        parent_session_id=team.runbook.id,
+        provider="claude",
+        prompt="Resume manager",
+        child_session_id=team.seats[0],
+    )
+    db.execute(
+        "UPDATE sessions SET agent_run_id = %s, status = 'active' WHERE id = %s",
+        (resumed_manager.id, team.seats[0]),
+    )
     sha = land(world, team, "stuck.py")
     closed = close(world, team, sha)
 
@@ -387,6 +408,15 @@ async def test_seat_that_cannot_end_is_a_reported_failure_and_keeps_its_tree(
     assert tree_of(team.binding).is_dir()
     assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is not None
     assert branch_exists(world, team.binding.branch)
+    retired = LocalAgentRunManager(db).get(parked.id)
+    assert retired is not None and retired.resume_metadata_json is not None
+    assert retired.resume_metadata_json.get(CONSUMED_BY_KEY) == "teardown"
+    assert session_status(db, team.seats[3]) == "expired"
+    assert get_agent_end_handoff(db, parked.id) is not None
+    previous = LocalAgentRunManager(db).get(previous_manager.id)
+    assert previous is not None and previous.resume_metadata_json is not None
+    assert previous.resume_metadata_json.get(CONSUMED_BY_KEY) == "teardown"
+    assert {session_status(db, child) for child in team.seats[:3]} == {"active"}
 
 
 async def test_teardown_deletes_the_tree_a_parked_seat_stopped_occupying(
@@ -521,6 +551,61 @@ async def test_team_close_ends_a_dispatched_seat_and_removes_the_tree_without_re
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["team", "dispatched", "runbook"])
+async def test_close_ends_live_seats_after_one_hundred_ended_children(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    """Historical runs never hide live seats from any teardown discovery path."""
+    db = world.case.db
+    terminations = Terminations(db)
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
+    team: Team | None = None
+    if source == "runbook":
+        pipeline_path = (
+            Path(__file__).parents[2]
+            / "src/gobby/install/shared/workflows/pipelines/team-planning.yaml"
+        )
+        definition = PipelineDefinition.model_validate(yaml.safe_load(pipeline_path.read_text()))
+        task = world.case.task("Close runbook after many ended runs")
+        runbook = world.child(task, definition)
+        parent = runbook.id
+        expected = [running_seat(world, runbook, "plan-writer").id]
+        world.finish(runbook)
+        closed = LocalTaskManager(db).close_task(task.id, reason="done")
+    else:
+        team = await admitted_team(world, "Close team after many ended runs")
+        parent = team.runbook.id if source == "team" else team.seats[0]
+        expected = list(team.seats)
+        if source == "dispatched":
+            expected.append(dispatched_seat(world, team, str(tree_of(team.binding))))
+        closed = close(world, team, land(world, team, "many_runs.py"))
+
+    runs = LocalAgentRunManager(db)
+    for _ in range(100):
+        old = runs.create(parent_session_id=parent, provider="claude", prompt="Historical run")
+        runs.cancel(old.id)
+    db.execute(
+        "UPDATE agent_runs SET started_at = %s "
+        "WHERE parent_session_id = %s AND child_session_id IS NULL",
+        ("2000-01-01T00:00:00+00:00", parent),
+    )
+    assert all(run.child_session_id is None for run in runs.list_all_by_parent(parent))
+
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    assert terminations.ended() == sorted(expected)
+    assert {session_status(db, child) for child in expected} == {"expired"}
+    for child in expected:
+        row = db.fetchone("SELECT id FROM agent_runs WHERE child_session_id = %s", (child,))
+        assert row is not None
+        assert get_agent_end_handoff(db, str(row["id"])) is not None
+    if team is not None:
+        assert teardown(world, team) == {"outcome": "cleaned"}
+        assert not tree_of(team.binding).exists()
+        assert finding_tasks(world, team) == []
+
+
+@pytest.mark.asyncio
 async def test_team_close_retries_while_a_dispatched_seat_is_still_exiting(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -597,3 +682,222 @@ async def test_treeless_team_closes_its_seats_without_deleting_a_tree(
     assert deleted == []
     assert terminations.ended() == [researcher]
     assert teardown(world, team) == {"outcome": "cleaned"}
+
+
+@pytest.mark.parametrize(
+    ("runbook_name", "roles"),
+    [
+        ("team-planning", ("plan-writer", "plan-adversary", "plan-enhancer")),
+        ("devteam", ("code-reviewer",)),
+    ],
+)
+@pytest.mark.parametrize("parked", [False, True])
+async def test_close_ends_runbook_seats_without_team_admission(
+    world: TeamWorld,
+    monkeypatch: pytest.MonkeyPatch,
+    runbook_name: str,
+    roles: tuple[str, ...],
+    parked: bool,
+) -> None:
+    """Saved runbook task ownership also covers planning and separately launched reviewers."""
+    db = world.case.db
+    terminations = Terminations(db)
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
+    pipeline_dir = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/pipelines"
+    definition = PipelineDefinition.model_validate(
+        yaml.safe_load((pipeline_dir / f"{runbook_name}.yaml").read_text())
+    )
+    task = world.case.task("Close runbook without team admission")
+    runbook = world.child(task, definition)
+    db.execute(
+        "UPDATE pipeline_executions SET inputs_json = %s WHERE id = %s",
+        (json.dumps({"task": f"#{task.seq_num}"}), execution_id(runbook)),
+    )
+    seats = [running_seat(world, runbook, role) for role in roles]
+    runs = LocalAgentRunManager(db)
+    seat_runs = {run.child_session_id: run for run in runs.list_all_by_parent(runbook.id)}
+    authored = stage_agent_end_handoff(
+        db,
+        agent_run_id=seat_runs[seats[0].id].id,
+        child_session_id=seats[0].id,
+        parent_session_id=runbook.id,
+        payload=build_handoff_payload(
+            current_state="Plan findings recorded.", next_steps=["Coordinator reviews the plan."]
+        ),
+    )
+    if parked:
+        for run in seat_runs.values():
+            runs.merge_resume_metadata(run.id, {"provider_native_session_id": f"native-{run.id}"})
+            runs.cancel(run.id, terminal_reason="daemon_stop")
+    world.finish(runbook)
+    open_task = world.case.task("Other task remains open")
+    other_runbook = world.child(open_task, definition)
+    other = running_seat(world, other_runbook, roles[0])
+    reassigned = running_seat(world, runbook, roles[0])
+    db.execute(
+        "UPDATE agent_runs SET task_id = %s WHERE child_session_id = %s",
+        (open_task.id, reassigned.id),
+    )
+    support_definition = PipelineDefinition.model_validate(
+        yaml.safe_load((pipeline_dir / "support.yaml").read_text())
+    )
+    support_runbook = world.child(task, support_definition)
+    db.execute(
+        "UPDATE pipeline_executions SET inputs_json = '{}' WHERE id = %s",
+        (execution_id(support_runbook),),
+    )
+    support = running_seat(world, support_runbook, "triage")
+    closed = LocalTaskManager(db).close_task(task.id, reason="done")
+    runner = daemon(db)
+
+    await teardown_pass(db, runner, closed_at(closed))
+    assert terminations.calls == []
+    if len(seats) > 1 and not parked:
+        terminations.stop_after = 1
+        with pytest.raises(asyncio.CancelledError):
+            await teardown_pass(db, runner, closed_at(closed) + TEARDOWN_GRACE)
+        terminations.stop_after = None
+    await teardown_pass(db, runner, closed_at(closed) + TEARDOWN_GRACE)
+
+    expected = [] if parked else sorted(session.id for session in seats)
+    assert terminations.ended() == expected
+    for session in seats:
+        ended_run = runs.get(seat_runs[session.id].id)
+        assert ended_run is not None and ended_run.status == "cancelled"
+        handoff = get_agent_end_handoff(db, ended_run.id)
+        assert handoff is not None
+        assert handoff.continuation_session_id == runbook.id
+        assert session_status(db, session.id) == "expired"
+        if parked:
+            assert ended_run.resume_metadata_json is not None
+            assert ended_run.resume_metadata_json.get(CONSUMED_BY_KEY) == "teardown"
+    assert get_agent_end_handoff(db, seat_runs[seats[0].id].id) == authored
+    assert {session_status(db, session.id) for session in (other, reassigned, support)} == {
+        "active"
+    }
+    await teardown_pass(db, runner, closed_at(closed) + TEARDOWN_GRACE)
+    assert len(terminations.calls) == len(expected), "a repeated pass never re-ends a seat"
+
+
+@pytest.mark.parametrize("parked", [False, True])
+@pytest.mark.parametrize("inside_tree", [False, True])
+async def test_close_ends_task_bound_dispatched_seat_outside_tree_and_preserves_open_work(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, parked: bool, inside_tree: bool
+) -> None:
+    db = world.case.db
+    team = await admitted_team(world, "Dispatched reviewer in the main checkout")
+    reviewer = dispatched_seat(world, team, str(world.case.repo))
+    db.execute(
+        "UPDATE agent_runs SET task_id = %s WHERE child_session_id = %s",
+        (team.task.id, reviewer),
+    )
+    runs = LocalAgentRunManager(db)
+    reviewer_run = runs.get_by_session(reviewer)
+    assert reviewer_run is not None
+    if parked:
+        SessionManager(db).update_terminal_pickup_metadata(reviewer, agent_run_id=reviewer_run.id)
+        runs.start(reviewer_run.id)
+        runs.merge_resume_metadata(reviewer_run.id, {"provider_native_session_id": "native-review"})
+        runs.cancel(reviewer_run.id, terminal_reason="daemon_stop")
+    other_task = world.case.task("Another open assignment")
+    # Preserve the manager, but still find the children it dispatched for the closing task.
+    manager = team.seats[0]
+    db.execute(
+        "UPDATE agent_runs SET task_id = %s WHERE child_session_id = %s",
+        (other_task.id, manager),
+    )
+    db.execute(
+        "UPDATE sessions SET workspace_path = %s WHERE id = %s",
+        (team.binding.worktree_path if inside_tree else str(world.case.repo), manager),
+    )
+    other = dispatched_seat(world, team, str(world.case.repo))
+    db.execute(
+        "UPDATE agent_runs SET task_id = %s WHERE child_session_id = %s",
+        (other_task.id, other),
+    )
+    reassigned = running_seat(world, team.runbook, "developer")
+    LocalTaskManager(db).claim_task(other_task.id, reassigned.id, force=True)
+    terminations = Terminations(db)
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
+    closed = close(world, team, land(world, team, "reviewed.py"))
+
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    assert terminations.ended() == sorted([*team.seats[1:], *([] if parked else [reviewer])])
+    assert session_status(db, manager) == "active"
+    assert session_status(db, other) == "active"
+    assert session_status(db, reassigned.id) == "active"
+    assert session_status(db, reviewer) == "expired"
+    assert get_agent_end_handoff(db, reviewer_run.id) is not None
+    if parked:
+        ended_run = runs.get(reviewer_run.id)
+        assert ended_run is not None and ended_run.resume_metadata_json is not None
+        assert ended_run.resume_metadata_json[CONSUMED_BY_KEY] == "teardown"
+    assert LocalTaskManager(db).get_task(other_task.id).claimed_by_session_id == reassigned.id
+    assert tree_of(team.binding).exists(), "protected work keeps the tree and teardown due"
+    assert teardown(world, team) == {}
+    other_closed = LocalTaskManager(db).close_task(other_task.id, reason="done")
+
+    await teardown_pass(db, daemon(db), closed_at(other_closed) + TEARDOWN_GRACE)
+
+    expected = [*team.seats, other, reassigned.id, *([] if parked else [reviewer])]
+    assert terminations.ended() == sorted(expected)
+    assert {session_status(db, session) for session in (manager, other, reassigned.id)} == {
+        "expired"
+    }
+    assert teardown(world, team) == {"outcome": "cleaned"}
+    assert not tree_of(team.binding).exists()
+
+
+async def test_runbook_seat_refusal_records_one_finding_and_stops_retrying(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = world.case.db
+    path = (
+        Path(__file__).parents[2]
+        / "src/gobby/install/shared/workflows/pipelines/team-planning.yaml"
+    )
+    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
+    task = world.case.task("Planning seat cannot end")
+    runbook = world.child(task, definition)
+    planner = running_seat(world, runbook, "plan-writer")
+    parked = running_seat(world, runbook, "plan-adversary")
+    runs = LocalAgentRunManager(db)
+    parked_run = next(
+        run for run in runs.list_all_by_parent(runbook.id) if run.child_session_id == parked.id
+    )
+    runs.merge_resume_metadata(parked_run.id, {"provider_native_session_id": "parked-plan"})
+    runs.cancel(parked_run.id, terminal_reason="daemon_stop")
+    world.finish(runbook)
+    closed = LocalTaskManager(db).close_task(task.id, reason="done")
+    calls: list[str] = []
+
+    async def cannot_end(**kwargs: Any) -> dict[str, Any]:
+        run: AgentRun = kwargs["run"]
+        calls.append(run.id)
+        return {"success": False, "error_code": "test_refusal", "error": "seat cannot end"}
+
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", cannot_end)
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    assert len(calls) == 1
+    assert session_status(db, planner.id) == "active"
+    retired = runs.get(parked_run.id)
+    assert retired is not None and retired.resume_metadata_json is not None
+    assert retired.resume_metadata_json.get(CONSUMED_BY_KEY) == "teardown"
+    assert session_status(db, parked.id) == "expired"
+    assert get_agent_end_handoff(db, parked_run.id) is not None
+    findings = LocalTaskManager(db).list_tasks(
+        project_id=world.case.project_id, label=FINDING_LABEL, closed=False
+    )
+    assert len(findings) == 1
+    assert findings[0].escalated_at is not None
+    assert task.id in (findings[0].description or "")
+    assert execution_id(runbook) in (findings[0].description or "")
+    assert planner.id in (findings[0].description or "")
+    outcomes = [
+        json.loads(step.output_json or "{}").get("teardown")
+        for step in world.executions.get_steps_for_execution(execution_id(runbook))
+    ]
+    assert {"outcome": "refused", "code": "test_refusal", "finding": findings[0].id} in outcomes
