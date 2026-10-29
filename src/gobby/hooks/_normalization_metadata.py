@@ -269,6 +269,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     dirty_edit_paths: list[str] = []
     write_paths: list[str] = []
     tree_paths: list[str] = []
+    unresolved_execution_paths: list[str] = []
     tree_scope_unknown = False
     mutation_scope_unknown = False
     mutation_scope_resolved_by_loop_binding = True
@@ -449,19 +450,23 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                 write_paths.append(path)
         if item.extra:
             tree_scope_unknown |= bool(item.extra.get("canonical_tree_write_scope_unknown"))
-            for path in item.extra.get("canonical_tree_write_paths", ()):
-                if not _path_is_unresolved(path, item.literal_path_root):
-                    tree_paths.append(path)
-                    continue
-                reference = _plain_loop_binding_reference(
-                    path, item.shell_words, item.shell_raw_words
-                )
-                if reference and reference[0] in loop_bindings:
-                    variable, suffix = reference
-                    tree_paths.extend(value + suffix for value in loop_bindings[variable])
-                else:
-                    # A surrounding loop may bind a nested body's destination.
-                    tree_paths.append(path)
+            for key, scope_paths in (
+                ("canonical_tree_write_paths", tree_paths),
+                ("canonical_unresolved_execution_paths", unresolved_execution_paths),
+            ):
+                for path in item.extra.get(key, ()):
+                    if not _path_is_unresolved(path, item.literal_path_root):
+                        scope_paths.append(path)
+                        continue
+                    reference = _plain_loop_binding_reference(
+                        path, item.shell_words, item.shell_raw_words
+                    )
+                    if reference and reference[0] in loop_bindings:
+                        variable, suffix = reference
+                        scope_paths.extend(value + suffix for value in loop_bindings[variable])
+                    else:
+                        # A surrounding loop may bind a nested body's destination.
+                        scope_paths.append(path)
 
     pure_gcode_navigation = any(item.pure_gcode_navigation for item in metadata) and all(
         item.neutral_setup or item.pure_gcode_navigation or item.read_only_pipeline_filter
@@ -478,6 +483,10 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         kind = "execute"
 
     extra = _merge_code_navigation_extra(active)
+    if unresolved_execution_paths:
+        extra["canonical_unresolved_execution_paths"] = list(
+            dict.fromkeys(unresolved_execution_paths)
+        )
     if tree_paths:
         extra["canonical_tree_write_paths"] = list(dict.fromkeys(tree_paths))
     if tree_scope_unknown:

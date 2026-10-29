@@ -239,6 +239,42 @@ def _formatter_mutates(parts: list[str]) -> bool:
     return False
 
 
+def unresolved_execution_metadata(
+    item: _ShellSegmentMetadata,
+    cwd: str | None,
+    *,
+    outputs: list[str] | None = None,
+    stdin_arguments: bool = False,
+) -> _ShellSegmentMetadata:
+    """Keep known paths and cwd while withholding execution and stdin scope proof."""
+    # An output-producing wrapper does not mutate its child's read operands.
+    mutation_paths = item.paths if item.repo_mutation or not outputs else ()
+    paths = tuple(dict.fromkeys([*mutation_paths, *(outputs or ())]))
+    extra = dict(item.extra or {})
+    scope = [
+        *extra.get("canonical_unresolved_execution_paths", ()),
+        *extra.pop("canonical_tree_write_paths", ()),
+        *paths,
+    ]
+    if cwd:
+        scope.append(cwd)
+    extra.update(
+        canonical_unresolved_execution=True,
+        canonical_unresolved_execution_paths=list(dict.fromkeys(scope)),
+    )
+    if stdin_arguments and (item.repo_mutation or outputs):
+        extra["_canonical_repo_mutation_scope_unknown"] = True
+    return replace(
+        item,
+        kind="write" if outputs else item.kind,
+        paths=paths,
+        write_paths=tuple(dict.fromkeys([*item.write_paths, *(outputs or ())])),
+        repo_mutation=item.repo_mutation or bool(outputs),
+        read_only=False,
+        extra=extra,
+    )
+
+
 def classify_base_command(
     parts: list[str],
     cwd: str | None,
@@ -292,8 +328,8 @@ def classify_base_command(
                 parts, index + 1, cwd, interspersed=True, value_options=value_options
             )
             if parsed is None:
-                return _ShellSegmentMetadata(
-                    "execute", extra={"canonical_unresolved_execution": True}
+                return unresolved_execution_metadata(
+                    _ShellSegmentMetadata("execute"), cwd or (str(base_cwd) if base_cwd else None)
                 )
             _, _, flags = parsed
             if operation == ["format"] and flags.isdisjoint({"--check", "--diff", "--help", "-h"}):
@@ -378,8 +414,8 @@ def classify_base_command(
     if cmd in {"rg", "grep", "git"}:
         search = classify_search_segment(cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin)
         if cmd == "rg" and any(word.partition("=")[0] == "--pre" for word in parts[1:]):
-            return replace(
-                search, extra={**(search.extra or {}), "canonical_unresolved_execution": True}
+            return unresolved_execution_metadata(
+                search, cwd or (str(base_cwd) if base_cwd else None)
             )
         return search
 
@@ -401,7 +437,9 @@ def classify_base_command(
         # Privilege/policy changes and stdin-supplied arguments cannot prove a read-only launch.
         if parts[1:] in (["--help"], ["--version"]):
             return _ShellSegmentMetadata("execute")
-        return _ShellSegmentMetadata("execute", extra={"canonical_unresolved_execution": True})
+        return unresolved_execution_metadata(
+            _ShellSegmentMetadata("execute"), cwd or (str(base_cwd) if base_cwd else None)
+        )
 
     if cmd == "awk" and parts[1:2] == ["1"]:
         # The constant-true program prints every input record.

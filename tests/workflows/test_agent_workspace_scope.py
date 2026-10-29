@@ -553,6 +553,142 @@ async def test_proven_reads_and_wrapper_help_keep_workspace_access(
 @pytest.mark.parametrize(
     "command",
     [
+        "git ls-files | xargs grep -l foo",
+        "echo a b | xargs echo",
+        "rg --pre cat foo",
+        "sudo touch report.txt",
+        "xargs touch report.txt",
+        "xargs /usr/bin/true",
+        "xargs -I ITEM unzip ITEM -d unpacked",
+        'xargs -I ITEM unzip ITEM -d "$DEST"',
+    ],
+)
+@pytest.mark.parametrize("has_seat", [True, False])
+@pytest.mark.parametrize("location", ["outside", "nested_checkout", "seat"])
+async def test_unresolved_execution_preserves_access_outside_protected_seat_folders(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    command: str,
+    has_seat: bool,
+    location: str,
+) -> None:
+    seat = _seat(root / PROJECT, "fixture-seat", 12)
+    variables = seat if has_seat else {}
+    project = tmp_path / "project"
+    if location == "seat":
+        project = Path(seat["_agent_workspace_dir"])
+        project.mkdir(parents=True)
+    elif location == "nested_checkout":
+        project = Path(seat["_agent_workspace_dir"]) / "task-checkout"
+        (project / ".git").mkdir(parents=True)
+    else:
+        project.mkdir()
+    response = await _decide(workspace_write_engine, _shell(command, project), variables)
+    # A checkout with no ownership variables is still another session's workspace.
+    expected = (
+        "block"
+        if location == "seat" or (location == "nested_checkout" and not has_seat)
+        else "allow"
+    )
+    assert response.decision == expected, response.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd {directory} && xargs touch {name}",
+        "env -C {directory} xargs touch {name}",
+        "sudo -D {directory} touch {name}",
+        "sudo -D{directory} touch {name}",
+        "sudo -nD{directory} touch {name}",
+        "sudo --chdir={directory} touch {name}",
+        "xargs env -C {directory} touch {name}",
+    ],
+)
+@pytest.mark.parametrize("location", ["seat", "checkout"])
+@pytest.mark.parametrize("name", [".git/x", "report.txt"])
+async def test_unresolved_execution_uses_literal_wrapper_directories(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    command: str,
+    location: str,
+    name: str,
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    (own / "checkout/.git").mkdir(parents=True)
+    directory = own if location == "seat" else own / "checkout"
+    response = await _decide(
+        workspace_write_engine,
+        _shell(command.format(directory=directory, name=name), tmp_path),
+        variables,
+    )
+    expected = "allow" if location == "checkout" and name == "report.txt" else "block"
+    assert response.decision == expected, response.reason
+
+
+@pytest.mark.parametrize("argument", ["-o{path}", "-ao{path}", "--output={path}", "-o {path}"])
+async def test_unresolved_execution_keeps_relative_wrapper_output_paths(
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, argument: str
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    relative = own.relative_to(tmp_path) / ".git/x"
+    response = await _decide(
+        workspace_write_engine,
+        _shell(f"xargs time {argument.format(path=relative)} cat README.md", tmp_path),
+        variables,
+    )
+    assert response.decision == "block", response.reason
+
+
+async def test_unresolved_stdin_is_not_assumed_to_be_a_literal_write_target(
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    event = _shell(f"printf '%s' {own}/.git/x | xargs touch", tmp_path)
+    normalize_tool_fields(event)
+    assert event["canonical_unresolved_execution"] is True
+    assert event["canonical_repo_mutation_scope_unknown"] is True
+    response = await _decide(workspace_write_engine, event, variables)
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.parametrize("wrapper", ["sudo -D", "sudo --chdir", "xargs env -C"])
+async def test_literal_wrapper_directory_replaces_the_bare_seat_cwd(
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, wrapper: str
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    own.mkdir(parents=True)
+    response = await _decide(
+        workspace_write_engine,
+        _shell(f"{wrapper} {tmp_path} /usr/bin/true", own),
+        variables,
+    )
+    assert response.decision == "allow", response.reason
+
+
+async def test_wrapper_output_does_not_attribute_read_sources_as_mutations(
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    source = Path(variables["_agent_workspace_dir"]) / ".gobby/report.txt"
+    output = tmp_path / "timing.txt"
+    event = _shell(f"xargs time -o {output} cat {source}", tmp_path)
+    normalize_tool_fields(event)
+    assert event["canonical_file_paths"] == [str(output)]
+    assert event["canonical_write_file_paths"] == [str(output)]
+    response = await _decide(workspace_write_engine, event, variables)
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "tar -tf archive.tar",
         "tar -xOf archive.tar",
         "bsdtar -xOf archive.tar",

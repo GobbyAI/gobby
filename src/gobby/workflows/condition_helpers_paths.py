@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+from gobby.hooks._normalization_metadata import _path_is_unresolved
 from gobby.hooks._path_scope import (
     _is_temp_path,
     checkout_root,
@@ -155,11 +156,11 @@ def _tree_workspace_write_refused(
     data: Mapping[str, Any], root: Path, allowed: list[Path], base: Path | None
 ) -> bool:
     """A destination does not prove copied or extracted members exclude seat metadata."""
-    if data.get("canonical_tree_write_scope_unknown") or (
-        data.get("canonical_tree_write_paths") and data.get("canonical_repo_mutation_scope_unknown")
-    ):
+    if data.get("canonical_tree_write_scope_unknown"):
         return True
     for raw in data.get("canonical_tree_write_paths", ()):
+        if _path_is_unresolved(raw, str(base) if base else None):
+            return True
         path = resolve_tool_path(raw, base)
         if path is None:
             return True
@@ -198,10 +199,6 @@ def agent_workspace_write_violation(
     from gobby.agents.agent_workspaces import workspaces_root
 
     data = event_data or {}
-    # Opaque execution wrappers may write paths supplied by stdin or changed cwd.
-    # Their normalizer already records the failed proof; do not reinterpret argv.
-    if data.get("canonical_unresolved_execution"):
-        return True
     command = tool_input.get("command") if isinstance(tool_input, Mapping) else None
     # Structured patches may carry prose in command; only shell tools execute it.
     commits = (
@@ -212,7 +209,8 @@ def agent_workspace_write_violation(
     is_write = (
         data.get("tool_name") in WORKSPACE_WRITE_TOOLS or data.get("canonical_tool_kind") == "write"
     )
-    if not is_write and not commits:
+    unresolved_paths = data.get("canonical_unresolved_execution_paths", ())
+    if not is_write and not commits and not unresolved_paths:
         return False
     root = resolve_tool_path(str(workspaces_root()), None)
     if root is None:
@@ -241,6 +239,18 @@ def agent_workspace_write_violation(
         )
         if directory is not None
     ]
+    # Uncertainty alone is not evidence of a workspace write. Check only
+    # literal argv/cwd paths that actually resolve inside this workspace root.
+    for raw in unresolved_paths:
+        if _path_is_unresolved(raw, str(base) if base else None):
+            continue
+        path = resolve_tool_path(raw, base)
+        if path is None or workspace_contains(path, root) is not True:
+            continue
+        if _workspace_write_refused(path, root, allowed) or _tree_workspace_write_refused(
+            {"canonical_tree_write_paths": [str(path)]}, root, allowed, base
+        ):
+            return True
     return any(_workspace_write_refused(path, root, allowed) for path in paths) or (
         _tree_workspace_write_refused(data, root, allowed, base)
     )
