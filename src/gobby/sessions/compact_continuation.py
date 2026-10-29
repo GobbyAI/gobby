@@ -606,6 +606,7 @@ async def _send_handoff_compact_continuation(
             composer_read=composer_read,
             verify_seconds=SUBMIT_VERIFY_SECONDS,
             db=db,
+            baseline_generation=baseline,
         )
         sent = result.ok
         if (
@@ -661,6 +662,7 @@ async def _type_handoff_compact_continuation(
     composer_read: ComposerReader | None,
     verify_seconds: float,
     db: HubDatabase | None = None,
+    baseline_generation: int | None = None,
 ) -> SubmitResult:
     """Type the pull prompt and prove it left the composer, or report the failure.
 
@@ -675,7 +677,12 @@ async def _type_handoff_compact_continuation(
         await asyncio.sleep(delay_seconds)
     try:
         if db is not None and (
-            refusal := await asyncio.to_thread(continuation_write_refusal, db, session_id)
+            refusal := await asyncio.to_thread(
+                continuation_write_refusal,
+                db,
+                session_id,
+                baseline_generation=baseline_generation,
+            )
         ):
             return _refuse_continuation(session_id, refusal)
         # An operator draft in the composer would be submitted with the pull
@@ -703,7 +710,12 @@ async def _type_handoff_compact_continuation(
             )
             return SubmitResult(False, drain.reason)
         if db is not None and (
-            refusal := await asyncio.to_thread(continuation_write_refusal, db, session_id)
+            refusal := await asyncio.to_thread(
+                continuation_write_refusal,
+                db,
+                session_id,
+                baseline_generation=baseline_generation,
+            )
         ):
             return _refuse_continuation(session_id, refusal)
         result = await submit_text(
