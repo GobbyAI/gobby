@@ -22,6 +22,7 @@ from gobby.adapters.capabilities import (
 from gobby.adapters.codex_impl.execution_chain import (
     DIRECT_EXEC_NAMES,
     FUNCTIONS_EXEC_NAMES,
+    extract_functions_exec_command,
     functions_exec_shell_input,
 )
 from gobby.adapters.codex_impl.lifecycle_events import annotate_codex_hook_event
@@ -206,6 +207,7 @@ class CodexHooksAdapter(BaseAdapter):
 
         session_id = input_data.get("session_id", "")
         raw_tool_input = input_data.get("tool_input")
+        shell_cwd_unproven = False
 
         from gobby.hooks.normalization import (
             is_shell_tool,
@@ -215,15 +217,19 @@ class CodexHooksAdapter(BaseAdapter):
 
         if hook_type == "PreToolUse" and is_shell_tool(input_data.get("tool_name")):
             shell_input = input_data.get("tool_input")
-            if isinstance(shell_input, dict) and not any(
-                shell_input.get(key) for key in ("workdir", "cwd")
-            ):
+            if not isinstance(shell_input, dict):
+                shell_cwd_unproven = True
+            elif not any(shell_input.get(key) for key in ("workdir", "cwd")):
                 workdir = _pending_shell_workdir(input_data)
                 if workdir is not None:
                     input_data = {
                         **input_data,
                         "tool_input": {**shell_input, "workdir": workdir},
                     }
+                else:
+                    shell_cwd_unproven = True
+            elif current_tool_cwd(input_data) is None:
+                shell_cwd_unproven = True
 
         if hook_type == "PostToolUse" and is_shell_tool(input_data.get("tool_name")):
             command_result = _command_execution_result(input_data)
@@ -261,6 +267,29 @@ class CodexHooksAdapter(BaseAdapter):
         # Check for failure on PostToolUse
         is_failure = normalized_data.get("is_error", False)
         metadata: dict[str, Any] = {"_native_hook_type": hook_type}
+        if hook_type == "PreToolUse" and raw_tool_name in FUNCTIONS_EXEC_NAMES:
+            arguments = input_data.get("arguments", raw_tool_input)
+            if isinstance(arguments, dict):
+                arguments = arguments.get("arguments")
+            command = extract_functions_exec_command(arguments)
+            if command is not None:
+                wrapper = normalize_tool_fields(
+                    {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": None}
+                )
+                metadata["_native_shell_wrapper_read_only"] = (
+                    wrapper.get("canonical_read_only") is True
+                )
+        if shell_cwd_unproven:
+            # The launcher's cwd cannot vouch for a script in a computed workdir.
+            # Keep it for session lookup, but classify without it for the read-only proof.
+            unscoped_input = dict(raw_tool_input) if isinstance(raw_tool_input, dict) else {}
+            unscoped_input.pop("workdir", None)
+            unscoped_input.pop("cwd", None)
+            unscoped = normalize_tool_fields(
+                {"tool_name": "Bash", "tool_input": unscoped_input, "cwd": None}
+            )
+            metadata["_native_shell_cwd_unproven"] = True
+            metadata["_native_shell_read_only"] = unscoped.get("canonical_read_only") is True
         if is_failure:
             metadata["is_failure"] = True
         if isinstance(raw_tool_input, dict):

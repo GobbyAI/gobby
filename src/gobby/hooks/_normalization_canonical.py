@@ -374,7 +374,7 @@ def _classify_shell_command(
                 depth=depth,
                 base_cwd=None if directory.changed else base_cwd,
             )
-            if body_metadata.repo_mutation or any(
+            if not body_metadata.proven_read_only or any(
                 (body_metadata.extra or {}).get(flag)
                 for flag in (
                     "canonical_script_execution",
@@ -429,14 +429,28 @@ def _classify_shell_command(
                 directory.list_conditional |= (
                     segment.separator_before == "&&" or directory.in_conditional
                 )
-            metadata.append(
-                _ShellSegmentMetadata(
-                    "execute",
-                    neutral_setup=True,
-                    shell_words=tuple(raw_parts),
-                    shell_raw_words=source_parts,
+            if has_mutating_output_redirection(segment.tokens):
+                # The redirect runs in the invocation directory, before cd changes it.
+                metadata.append(
+                    _classify_shell_segment(
+                        segment.tokens,
+                        parts,
+                        segment_cwd,
+                        depth=depth,
+                        base_cwd=segment_base,
+                        invocation_cwd=segment_cwd,
+                        raw_by_token=raw_by_token,
+                    )
                 )
-            )
+            else:
+                metadata.append(
+                    _ShellSegmentMetadata(
+                        "execute",
+                        neutral_setup=True,
+                        shell_words=tuple(raw_parts),
+                        shell_raw_words=source_parts,
+                    )
+                )
             continue
 
         pipeline_filter = segment.separator_before == "|" and _is_read_only_pipeline_stage(
@@ -725,6 +739,7 @@ def _classify_shell_segment_impl(
             neutral_setup=base_metadata.neutral_setup,
             pure_gcode_navigation=base_metadata.pure_gcode_navigation,
             read_only_pipeline_filter=base_metadata.read_only_pipeline_filter,
+            read_only=base_metadata.proven_read_only,
         )
 
     if has_shell_input_redirection(tokens):
@@ -822,7 +837,7 @@ def _classify_shell_segment_without_redirection(
     if execution is not None and execution.parse_only:
         # A syntax check reads its script and runs none of it.
         if execution.script_word is None:
-            return _ShellSegmentMetadata("execute")
+            return _ShellSegmentMetadata("execute", read_only=True)
         return _ShellSegmentMetadata(
             "read", paths=tuple(_rebase_shell_paths([execution.script_word], cwd))
         )
@@ -888,6 +903,7 @@ def _classify_shell_segment_without_redirection(
             }
             return _ShellSegmentMetadata(
                 nested.get("canonical_tool_kind", "execute"),
+                read_only=nested.get("canonical_read_only") is True,
                 paths=tuple(nested.get("canonical_file_paths", ())),
                 write_paths=tuple(nested.get("canonical_write_file_paths", ())),
                 repo_mutation=bool(nested.get("canonical_repo_mutation")),

@@ -187,6 +187,7 @@ def _formatter_mutates(parts: list[str]) -> bool:
     command = shell_command_name(parts[0])
     arguments = parts[1:]
     if command == "ruff":
+        arguments = arguments[: arguments.index("--")] if "--" in arguments else arguments
         if "--diff" in arguments:
             return False
         return ("format" in arguments and "--check" not in arguments) or bool(
@@ -225,10 +226,20 @@ def classify_base_command(
             git_metadata = replace(
                 git_metadata, extra={**(git_metadata.extra or {}), "canonical_git_mutation": True}
             )
+        else:
+            git_metadata = replace(git_metadata, read_only=True)
         return git_metadata
 
     if _formatter_mutates(parts):
         return _ShellSegmentMetadata("execute", extra={"canonical_formatter_mutation": True})
+
+    # Ruff check may fix from project configuration, add noqa, or write a report.
+    # Only format's explicit inspection modes prove no writes without that cwd.
+    options = parts[1 : parts.index("--")] if "--" in parts else parts[1:]
+    if cmd == "ruff" and parts[1:2] == ["format"] and parts[2:3] in (["--check"], ["--diff"]):
+        return _ShellSegmentMetadata("execute", read_only=True)
+    if cmd in {"pwd", "ls", "wc", "stat", "true", "false", "echo", "printf"}:
+        return _ShellSegmentMetadata("execute", read_only=True)
 
     if cmd == "pre-commit":
         index = _wrapper_options_end(parts, 1, frozenset({"-c", "--config", "--color"}))
@@ -269,8 +280,9 @@ def classify_base_command(
                 return _ShellSegmentMetadata("write", repo_mutation=True)
 
     if cmd == "patch":
-        if "--dry-run" in parts[1:]:
-            return _ShellSegmentMetadata("execute")
+        if "--dry-run" in options:
+            # A later option-like word can be an operand of -i/-o, not a flag.
+            return _ShellSegmentMetadata("execute", read_only=parts[1:2] == ["--dry-run"])
         return _ShellSegmentMetadata("write", repo_mutation=True)
 
     interpreter_parts = _inline_interpreter_parts(parts)
@@ -280,7 +292,7 @@ def classify_base_command(
         if interpreter in {"python", "python3"} and "-c" in interpreter_args:
             python_classification, mutation = _classify_python_pipeline_evidence(parts)
             if python_classification is _PythonExecutionClassification.READ_ONLY:
-                return _ShellSegmentMetadata("execute")
+                return _ShellSegmentMetadata("execute", read_only=True)
             if python_classification is _PythonExecutionClassification.INDETERMINATE:
                 return _ShellSegmentMetadata("execute", confidence="low")
             return _python_write_segment(mutation, cwd)
@@ -297,6 +309,7 @@ def classify_base_command(
                 return _ShellSegmentMetadata("write", repo_mutation=True)
             return _ShellSegmentMetadata(
                 "execute",
+                read_only=inline_classification is _InlineProgramClassification.READ_ONLY,
                 confidence=(
                     "high"
                     if inline_classification is _InlineProgramClassification.READ_ONLY
@@ -323,10 +336,16 @@ def classify_base_command(
             paths=tuple(paths),
             extra=find_navigation_metadata(parts, paths),
             repo_mutation=_find_has_mutation_predicate(parts),
+            read_only=not _find_has_mutation_predicate(parts),
         )
 
     if cmd in {"rg", "grep", "git"}:
-        return classify_search_segment(cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin)
+        search = classify_search_segment(cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin)
+        if cmd == "rg" and any(word.partition("=")[0] == "--pre" for word in parts[1:]):
+            return replace(
+                search, extra={**(search.extra or {}), "canonical_unresolved_execution": True}
+            )
+        return search
 
     if cmd == "xargs" and _unwrap(parts)[:1] == ["cat"]:
         # Stdin supplies file operands, not source contents; their scope is unknown.
@@ -382,6 +401,19 @@ def classify_base_command(
         return _ShellSegmentMetadata(
             "read",
             paths=tuple(paths),
+            # Interactive less can save output/run a shell; bat can launch an
+            # explicit pager or write its configuration/cache instead of reading.
+            read_only=cmd != "less"
+            and not (
+                cmd == "bat"
+                and (
+                    parts[1:2] == ["cache"]
+                    or any(
+                        part.partition("=")[0] in {"--pager", "--generate-config"}
+                        for part in parts[1:]
+                    )
+                )
+            ),
             extra=source_read_navigation_metadata(
                 paths,
                 line_count=line_count,
