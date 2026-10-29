@@ -137,7 +137,13 @@ def _program(
                     return True, modes
             environment_changes: list[tuple[str | None, str | None]] = []
             command = _unwrap(words, environment_changes=environment_changes, stop_at_eval=True)
-            if any(key == variable and value is not None for key, value in environment_changes):
+            # An assigned value can later become an environment name through
+            # export/env expansion or a nameref. Do not require local dataflow
+            # proof before rejecting a possible indirect setter.
+            if any(
+                value is not None and (key == variable or token.search(value))
+                for key, value in environment_changes
+            ):
                 return True, modes
             if not command:
                 continue
@@ -298,15 +304,19 @@ def _shellopts_export(name: str, args: list[str], modes: _Modes) -> _Modes:
 
 
 def _builtin_sets(name: str, args: list[str], variable: str, token: re.Pattern[str]) -> bool:
-    if name in {"read", "readarray", "mapfile", "getopts", "let", "integer", "float"}:
+    if name in {"read", "readarray", "mapfile", "getopts", "let", "integer", "float", "set"}:
         return any(token.search(word) for word in args)
+    if name == "alias":
+        return any("=" in word and token.search(word) for word in args)
+    if name == "trap":
+        return bool(args and args[0] not in {"-p", "-l", "-"} and token.search(" ".join(args)))
     if name == "printf":
         for index, option in enumerate(args):
             if option == "--" or not option.startswith("-"):
                 break
             if option.startswith("-v"):
                 target = option[2:] or next(iter(args[index + 1 :]), "")
-                if token.search(target):
+                if token.search(target) or any(token.search(value) for value in args[index + 1 :]):
                     return True
     if name not in {"export", "declare", "typeset", "local", "readonly"}:
         return False
@@ -316,4 +326,7 @@ def _builtin_sets(name: str, args: list[str], variable: str, token: re.Pattern[s
                 break
             if "p" in option[1:]:
                 return False
-    return any(word == variable or _assignment_name(word) == variable for word in args)
+    return any(
+        word == variable or (_assignment_name(word) is not None and token.search(word))
+        for word in args
+    )

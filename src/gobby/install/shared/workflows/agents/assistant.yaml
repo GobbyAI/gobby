@@ -1,7 +1,7 @@
 name: assistant
 cold_start_commands: [assistant]
 cold_start_counterpart: orchestrator
-capabilities: [message_restricted_seats, follow_relaunch, coordinate_tasks, write_session_variables, auto_attach_operator_conversations]
+capabilities: [message_restricted_seats, follow_relaunch, coordinate_tasks, override_spawn_network, write_session_variables, auto_attach_operator_conversations]
 description: |
   Assistant seat, the operator's chat agent. Carries the operator's words to
   the Orchestrator, brings fleet news and decisions back on the operator's

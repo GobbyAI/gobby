@@ -71,7 +71,6 @@ workflows:
       - "tag:context-handoff"
       - "tag:memory-lifecycle"
       - "tag:worker-safety"
-      - "tag:task-skill-gates"
       - "name:no-send-keys"
     # A researcher creates and claims its own report spike; the spawned-agent create block yields.
     exclude:

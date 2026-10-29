@@ -544,10 +544,15 @@ async def test_consolidator_no_work_close_preserves_cleanliness_gate(
 
 @pytest.mark.parametrize("protection", ("foreign_claim", "deferred-by-josh", "22978", "22225"))
 @pytest.mark.parametrize("operation", ("update_task", "close_task"))
+@pytest.mark.parametrize("policy_source", ("fixture", "repository"))
 @pytest.mark.asyncio
 async def test_consolidator_cannot_mutate_protected_tasks(
-    closing: Closing, protection: str, operation: str
+    closing: Closing, protection: str, operation: str, policy_source: str
 ) -> None:
+    if policy_source == "repository":
+        marker = Path(__file__).resolve().parents[4] / ".gobby" / "project.json"
+        policy = json.loads(marker.read_text()).get("task_protection_policy", {})
+        _protection_policy(closing, policy)
     if protection != "foreign_claim":
         closing.manager.release_task_claim(closing.task.id)
     if protection == "deferred-by-josh":

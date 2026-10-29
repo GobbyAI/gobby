@@ -90,7 +90,6 @@ workflows:
       - "name:seat-no-project-create"
       - "tag:default"
       - "tag:worker-safety"
-      - "tag:task-skill-gates"
       - "name:no-send-keys"
 step_workflow:
   variables:
