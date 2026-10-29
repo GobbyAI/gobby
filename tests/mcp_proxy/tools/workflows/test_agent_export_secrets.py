@@ -52,7 +52,7 @@ def test_literal_endpoint_token_never_reaches_yaml_or_diagnostics(
                 else json.dumps(definition),
             )
         )
-        auto_export_definition(exportable, tmp_path, kind="agent")
+        auto_export_definition(exportable, tmp_path, db=definition_db, kind="agent")
 
     diagnostic = str(failure.value)
     assert "endpoint-agent" in diagnostic
@@ -82,7 +82,7 @@ def test_endpoint_token_reference_round_trips_unchanged(
         "endpoint-agent", definition, definition.get("step_workflow")
     )
 
-    output = auto_export_definition(_export_row(row), tmp_path, kind="agent")
+    output = auto_export_definition(_export_row(row), tmp_path, db=definition_db, kind="agent")
 
     assert output is not None
     exported = yaml.safe_load(output.read_text())
