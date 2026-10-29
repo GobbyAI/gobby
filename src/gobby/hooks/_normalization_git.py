@@ -343,17 +343,24 @@ def git_command_is_read_only(parts: list[str]) -> bool:
     """Prove ordinary Git inspection without resolving executable aliases or config."""
     if parts[1:] in (["--version"], ["--help"]):
         return True
-    # Config can install aliases, pagers, external diff programs and other executables.
-    if any(word == "-c" or word.startswith(("-c", "--config-env")) for word in parts[1:]):
-        return False
     command, _, _ = git_command_parts(parts, None, None)
+    # Only global options configure execution; `git log -c` selects combined diffs.
+    index = 1
+    command_index = len(parts) - len(command) + 1
+    while index < command_index:
+        word = parts[index]
+        if word.startswith(("-c", "--config-env")):
+            return False
+        index += (
+            2 if word in {"-C", "--git-dir", "--work-tree", "--namespace", "--exec-path"} else 1
+        )
     operation = command[1] if len(command) > 1 else ""
     arguments = command[2:]
     if any(word == "--ext-diff" or word.startswith("--output") for word in arguments):
         return False
     if operation in {"branch", "tag"}:
         return not arguments or all(
-            word in {"--list", "--show-current", "--all", "--remotes", "-a", "-r"}
+            word in {"--list", "--show-current", "--all", "--remotes", "-a", "-r", "-v", "-vv"}
             for word in arguments
         )
     return operation in {

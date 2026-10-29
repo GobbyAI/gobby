@@ -528,7 +528,7 @@ async def test_inline_link_commit_handler_moves_implement_to_submit(seats: _Seat
 _ASSIGNED_ONLY = (
     "tool_input.get('task_id') not in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))"
 )
-_HANDED_OFF_ONLY = "tool_input.get('task_id') not in vars.get('_developer_handoff_tasks', [])"
+_HANDED_OFF_ONLY = "tool_input.get('task_id') not in vars.get('pending_completion_tasks', [])"
 
 
 def _block_when(
@@ -558,7 +558,7 @@ _HANDOFF_RESETS = (
     "additional_skills_loaded",
 )
 _FORGET_TASK = (
-    "[task_id for task_id in vars.get('_developer_handoff_tasks', [])"
+    "[task_id for task_id in vars.get('pending_completion_tasks', [])"
     " if task_id != tool_input.get('task_id')]"
 )
 _OBSERVED_CLOSED = (
@@ -574,12 +574,14 @@ def _handoff_body() -> AgentDefinitionBody:
     """The synthetic developer with its handoff, close and skill-routing handlers written inline.
 
     Only the contract the proxy tests exercise. A directed handoff of the assigned task is
-    recorded in _developer_handoff_tasks and releases the binding back to claim.
+    recorded in pending_completion_tasks and releases the binding back to claim.
     de_escalate_task and close_task are admitted for a listed task, or for the assigned task
     before a candidate was sent, and a no-work close is refused once one was sent. A
     get_task routes skills to implement, and a link_commit under the claim completes it.
     """
     body = synthetic_developer_body()
+    assert body.step_workflow is not None
+    body.step_workflow.variables["pending_completion_tasks"] = []
     _claim_routes_to_skills(body, "claim")
     for name in _HANDOFF_STEPS:
         step = _step(body, name)
@@ -610,16 +612,16 @@ def _handoff_body() -> AgentDefinitionBody:
             [
                 _set(
                     "escalate_task",
-                    "_developer_handoff_tasks",
-                    "vars.get('_developer_handoff_tasks', []) + [vars.get('assigned_task_id')]",
+                    "pending_completion_tasks",
+                    "vars.get('pending_completion_tasks', []) + [vars.get('assigned_task_id')]",
                 ),
                 _set("escalate_task", "handed_off", True),
                 _set("escalate_task", "task_claimed", False),
                 _set("escalate_task", "assigned_task_id", None),
                 _set("escalate_task", "assigned_task_ref", None),
                 *(_set("escalate_task", variable, False) for variable in _HANDOFF_RESETS),
-                _set("get_task", "_developer_handoff_tasks", _FORGET_TASK, _OBSERVED_CLOSED),
-                _set("close_task", "_developer_handoff_tasks", _FORGET_TASK, _CLOSED),
+                _set("get_task", "pending_completion_tasks", _FORGET_TASK, _OBSERVED_CLOSED),
+                _set("close_task", "pending_completion_tasks", _FORGET_TASK, _CLOSED),
             ]
         )
         step.transitions.append(WorkflowTransition(to="claim", when="vars.get('handed_off')"))
@@ -838,7 +840,7 @@ async def test_implement_close_preview_does_not_advance_the_step(seats: _Seats) 
 
 
 def test_inline_close_gate_admits_task_listed_as_handed_off(seats: _Seats) -> None:
-    """An inline close gate admits a task listed in _developer_handoff_tasks from implement.
+    """An inline close gate admits a task listed in pending_completion_tasks from implement.
 
     No claim, release or reclaim runs: the handoff list is written directly, so this proves
     the gate's condition only.
@@ -846,7 +848,7 @@ def test_inline_close_gate_admits_task_listed_as_handed_off(seats: _Seats) -> No
     body = synthetic_developer_body()
     _block_when(body, "implement", "close_task", _HANDED_OFF_ONLY, "Finish only a handed-off task.")
     assert body.step_workflow is not None
-    body.step_workflow.variables["_developer_handoff_tasks"] = [seats.task_id]
+    body.step_workflow.variables["pending_completion_tasks"] = [seats.task_id]
     _persist(seats, seats.former, body, "implement")
     event = replace(
         _after_tool(seats.former, "close_task", {"task_id": seats.ref}, {}),
@@ -1091,7 +1093,7 @@ async def test_reclaim_before_de_escalation_keeps_close_invariants(
     instances = AgentStepInstanceManager(seats.db)
     instance = instances.get_for_session(seats.former)
     assert instance is not None
-    assert instance.variables["_developer_handoff_tasks"] == [seats.task_id]
+    assert instance.variables["pending_completion_tasks"] == [seats.task_id]
     instance.current_step = close_step
     instance.variables.update(implementation_complete=close_step == "submit")
     instances.save(instance)
@@ -1231,7 +1233,7 @@ async def test_handoff_close_preserves_next_task_binding(
     assert tasks.get_task(seats.task_id).closed_at is not None
     step_after, state_after = _instance_state(seats.db, seats.former)
     assert step_after == before[0]
-    expected_state = {**before[1], "_developer_handoff_tasks": []}
+    expected_state = {**before[1], "pending_completion_tasks": []}
     assert state_after == expected_state
     session_after = SessionVariableManager(seats.db).get_variables(seats.former)
     for key in ("task_claimed", "assigned_task_id", "claimed_tasks"):
@@ -1250,7 +1252,7 @@ async def test_implement_no_work_close_preview_reaches_checklist(
     _persist(seats, seats.former, _handoff_body(), "implement")
     before = _instance_state(seats.db, seats.former)
     assert before[1]["implementation_complete"] is False
-    assert before[1]["_developer_handoff_tasks"] == []
+    assert before[1]["pending_completion_tasks"] == []
     assert not LocalTaskManager(seats.db).get_task(seats.task_id).commits
 
     with session_context_for_test(seats.former):
@@ -1304,10 +1306,10 @@ async def test_relaunched_developer_recovers_handoff_close_preview(
 
     handoff = {"task_id": seats.ref, "reason": "Handed off: reviewer LAND at linked commit"}
     assert await call("escalate_task", handoff) == {}
-    assert _instance_state(seats.db, seats.former)[1]["_developer_handoff_tasks"] == [seats.task_id]
+    assert _instance_state(seats.db, seats.former)[1]["pending_completion_tasks"] == [seats.task_id]
     # A fresh relaunch has lost the old instance's handoff permission.
     _persist(seats, seats.former, _handoff_body(), "claim", bound=False)
-    assert _instance_state(seats.db, seats.former)[1]["_developer_handoff_tasks"] == []
+    assert _instance_state(seats.db, seats.former)[1]["pending_completion_tasks"] == []
     claimed = await call("claim_task", {"task_id": seats.ref})
     assert claimed["task_id"] == seats.task_id
     assert _current_step(seats.db, seats.former) == "route_skills"
@@ -1315,7 +1317,7 @@ async def test_relaunched_developer_recovers_handoff_close_preview(
     # and rebuilds close rights through ordinary tool effects, without variable writes.
     assert await call("escalate_task", handoff) == {}
     assert _current_step(seats.db, seats.former) == "claim"
-    assert _instance_state(seats.db, seats.former)[1]["_developer_handoff_tasks"] == [seats.task_id]
+    assert _instance_state(seats.db, seats.former)[1]["pending_completion_tasks"] == [seats.task_id]
     assert "error" not in await call(
         "de_escalate_task", {"task_id": seats.ref, "reason": "Landed and released"}
     )

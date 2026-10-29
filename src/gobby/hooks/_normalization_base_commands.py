@@ -55,7 +55,8 @@ _UV_VALUE_OPTIONS = frozenset(
     "--no-sources-package --reinstall-package --link-mode -C --config-setting "
     "--config-settings-package --no-build-isolation-package --no-build-package "
     "--no-binary-package --cache-dir --refresh-package -p --python --color "
-    "--allow-insecure-host --directory --project --config-file".split()
+    "--allow-insecure-host --directory --project --config-file --from "
+    "-c --constraints --build-constraints --overrides -b --torch-backend".split()
 )
 
 
@@ -63,29 +64,49 @@ def _wrapper_options_end(parts: list[str], start: int, value_options: frozenset[
     while start < len(parts) and parts[start].startswith("-"):
         if parts[start] == "--":
             return start + 1
+        if parts[start] in value_options:
+            start += 2
+            continue
         if parts[start] in {"-m", "-c"} or parts[start].partition("=")[0] == "--call":
             break
-        start += 2 if parts[start] in value_options else 1
+        start += 1
     return start
 
 
-def _execution_command(parts: list[str]) -> list[str] | None:
-    """Expose the executable behind package runners without changing generic write scope."""
+def unwrap_execution_command(
+    parts: list[str], cwd: str | None
+) -> tuple[list[str] | None, str | None]:
+    """Expose package-runner argv and its explicit working directory for normal classification."""
     while parts:
         command = shell_command_name(parts[0])
-        if command == "uv":
+        if command in {"uv", "uvx"}:
+            tool_run = command == "uvx"
             index = _wrapper_options_end(parts, 1, _UV_VALUE_OPTIONS)
-            if parts[index : index + 1] != ["run"]:
-                break
-            index = _wrapper_options_end(parts, index + 1, _UV_VALUE_OPTIONS)
+            if command == "uv":
+                if parts[index : index + 2] == ["tool", "run"]:
+                    tool_run = True
+                    index += 1
+                elif parts[index : index + 1] != ["run"]:
+                    break
+                index = _wrapper_options_end(parts, index + 1, _UV_VALUE_OPTIONS)
+            position = 1
+            while position < index:
+                word = parts[position]
+                if word == "--directory" and position + 1 < index:
+                    cwd = _rebase_shell_paths([parts[position + 1]], cwd)[0]
+                elif word.startswith("--directory="):
+                    cwd = _rebase_shell_paths([word.partition("=")[2]], cwd)[0]
+                position += 2 if word in _UV_VALUE_OPTIONS else 1
             if parts[index : index + 1] == ["-m"]:
                 index += 1
+            if tool_run and index < len(parts):
+                parts = [*parts[:index], parts[index].partition("@")[0], *parts[index + 1 :]]
         elif command in {"npx", "bunx"}:
             index = _wrapper_options_end(parts, 1, frozenset({"--package", "-p"}))
             parts = parts[index:]
             if parts and (parts[0] == "-c" or parts[0].partition("=")[0] == "--call"):
                 # A shell program string is not an executable argv; submit must fail closed.
-                return None
+                return None, cwd
             if parts and "/" not in parts[0] and not parts[0].startswith("@"):
                 parts = [parts[0].partition("@")[0], *parts[1:]]
             continue
@@ -99,7 +120,7 @@ def _execution_command(parts: list[str]) -> list[str] | None:
         else:
             break
         parts = parts[index:]
-    return parts
+    return parts, cwd
 
 
 def _formatter_mutates(parts: list[str]) -> bool:
@@ -149,17 +170,26 @@ def classify_base_command(
             )
         return git_metadata
 
-    executed = _execution_command(parts)
-    if executed is None:
-        return _ShellSegmentMetadata("execute", extra={"canonical_unresolved_execution": True})
-    if (
-        executed
-        and shell_command_name(executed[0]) == "git"
-        and not git_command_is_read_only(executed)
-    ):
-        return _ShellSegmentMetadata("execute", extra={"canonical_git_mutation": True})
-    if _formatter_mutates(executed):
+    if _formatter_mutates(parts):
         return _ShellSegmentMetadata("execute", extra={"canonical_formatter_mutation": True})
+
+    if cmd == "pre-commit":
+        index = _wrapper_options_end(parts, 1, frozenset({"-c", "--config", "--color"}))
+        if parts[index : index + 1] == ["run"]:
+            return _ShellSegmentMetadata("execute", extra={"canonical_formatter_mutation": True})
+    if cmd == "uv":
+        index = _wrapper_options_end(parts, 1, _UV_VALUE_OPTIONS)
+        operation = parts[index : index + 1]
+        if operation in (["add"], ["remove"], ["init"]):
+            return _ShellSegmentMetadata("write", repo_mutation=True)
+        if operation == ["lock"] and not {"--check", "--check-exists"}.intersection(parts):
+            return _ShellSegmentMetadata("write", repo_mutation=True)
+        if operation == ["version"] and "--dry-run" not in parts:
+            values = _shell_positional_args_after(
+                parts, index + 1, option_args=set(_UV_VALUE_OPTIONS) | {"--output-format", "--bump"}
+            )
+            if values or any(word.partition("=")[0] == "--bump" for word in parts[index + 1 :]):
+                return _ShellSegmentMetadata("write", repo_mutation=True)
 
     if cmd == "patch":
         if "--dry-run" in parts[1:]:

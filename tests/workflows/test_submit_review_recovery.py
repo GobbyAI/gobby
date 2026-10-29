@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 from gobby.agents.team_lifecycle import seat_team
 from gobby.agents.team_review import seat_team_held
@@ -23,8 +23,8 @@ from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.test_team_epic_review import epic_team, new_task, world
 from tests.fixtures.review_approvals import grant_review_writes, reject_review
 from tests.fixtures.team_case import TeamWorld
-from tests.workflows.test_resumed_claim_binding import _BUNDLED_DEVELOPER, _already_claimed
-from tests.workflows.test_seat_step_loops import PEER_ID, SESSION_ID, SHA, SeatRun
+from tests.workflows.test_resumed_claim_binding import _already_claimed
+from tests.workflows.test_seat_step_loops import PEER_ID, SESSION_ID, SHA, SeatRun, _seat, _set
 
 __all__ = ["world"]
 pytestmark = pytest.mark.unit
@@ -47,7 +47,7 @@ async def _admits(run: SeatRun, tool: str, tool_input: dict[str, Any] | None = N
         )
     event = run._event(HookEventType.BEFORE_TOOL, {"tool_name": tool, "tool_input": tool_input})
     event.metadata["_platform_session_id"] = SESSION_ID
-    event.cwd = str(_BUNDLED_DEVELOPER.parents[6])
+    event.cwd = str(Path(__file__).resolve().parents[2])
     event.project_id = run.project_id
     return (await handler._evaluate_rules(event)).decision != "block"
 
@@ -55,7 +55,14 @@ async def _admits(run: SeatRun, tool: str, tool_input: dict[str, Any] | None = N
 async def _submitted(
     db: HubDatabase, *, project_id: str | None = None, task: Task | None = None
 ) -> tuple[SeatRun, Task]:
-    definition = yaml.safe_load(_BUNDLED_DEVELOPER.read_text())
+    definition = _seat(
+        {
+            "submit": {
+                "allowed_tools": ["Bash", "Read", "mcp__gobby__call_tool"],
+                "on_mcp_success": [_set("gobby-agents", "send_message", "candidate_sent", True)],
+            }
+        }
+    )
     run = (
         SeatRun(db, "developer", definition=definition, project_id=project_id)
         if project_id is not None

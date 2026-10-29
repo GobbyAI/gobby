@@ -1,44 +1,52 @@
-"""Resumed developer seats bind claims through the bundled workflow."""
+"""Resumed seats bind claims through definition-driven workflow handlers."""
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-import yaml
 
 from gobby.hooks.events import HookEventType
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import Task
+from tests.fixtures.agent_definitions import synthetic_developer_body
 from tests.workflows.test_seat_step_loops import COORDINATOR_ID, SESSION_ID, SeatRun
 
 pytestmark = pytest.mark.unit
 
-_BUNDLED_DEVELOPER = (
-    Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents/developer.yaml"
-)
 
-
-def test_bundled_developer_has_no_pre_v4_land_handoff_loop() -> None:
-    """The Dev Manager owns landing/close; the developer retains its claim until then."""
-    definition = yaml.safe_load(_BUNDLED_DEVELOPER.read_text())
+def _claim_definition() -> dict[str, Any]:
+    definition = synthetic_developer_body().model_dump(mode="json")
     workflow = definition["step_workflow"]
-    assert "_developer_handoff_tasks" not in workflow["variables"]
-    for step in workflow["steps"]:
-        assert "Handed off: reviewer LAND" not in step.get("status_message", "")
-        assert not [
-            handler
-            for handler in step.get("on_mcp_success", [])
-            if handler.get("server") == "gobby-tasks" and handler.get("tool") == "escalate_task"
-        ]
+    bootstrap, claim = workflow["steps"][:2]
+    for step in (bootstrap, claim):
+        step["allowed_tools"] = ["Read", "mcp__gobby__call_tool"]
+    bootstrap["allowed_mcp_tools"] = ["gobby-skills:get_skill"]
+    bootstrap["transitions"] = [
+        {"to": "claim", "when": "all(skill_loaded(skill) for skill in vars.required_skills)"}
+    ]
+    claim["allowed_mcp_tools"] = ["gobby-tasks:claim_task"]
+    claim["on_mcp_success"].extend(
+        {
+            "server": "gobby-tasks",
+            "tool": "claim_task",
+            "action": "set_variable",
+            "variable": variable,
+            "value": value,
+        }
+        for variable, value in (
+            ("task_claimed", True),
+            ("assigned_task_ref", "(tool_output.get('result') or tool_output).get('ref')"),
+        )
+    )
+    claim["transitions"] = [{"to": "route_skills", "when": "vars.task_claimed"}]
+    return definition
 
 
 async def _developer_at_claim(temp_db: HubDatabase) -> tuple[SeatRun, Task]:
-    definition = yaml.safe_load(_BUNDLED_DEVELOPER.read_text())
-    run = SeatRun(temp_db, "developer", definition=definition)
+    run = SeatRun(temp_db, "developer", definition=_claim_definition())
     await run.load(*run.vars["required_skills"])
     assert run.step == "claim"
     return run, run.task(owner=SESSION_ID)
@@ -79,12 +87,13 @@ async def test_resumed_seat_with_restored_selection_binds_on_already_claimed(
     assert run.vars["assigned_task_ref"] == f"#{task.seq_num}"
 
 
-async def test_claim_during_bootstrap_binds_without_repeating_claim(
+async def test_bootstrap_admits_only_active_runs_owned_claim_and_binds_after_skills(
     temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    definition = yaml.safe_load(_BUNDLED_DEVELOPER.read_text())
-    run = SeatRun(temp_db, "developer", definition=definition)
+    run = SeatRun(temp_db, "developer", definition=_claim_definition())
     task = run.task(owner=SESSION_ID)
+    foreign_task = run.task()
+    assert not await run.admits("gobby-tasks", "claim_task", {"task_id": task.id})
     runs = LocalAgentRunManager(temp_db)
     runs.create(
         parent_session_id=COORDINATOR_ID,
@@ -101,6 +110,8 @@ async def test_claim_during_bootstrap_binds_without_repeating_claim(
         claimed_tasks={task.id: f"#{task.seq_num}"},
     )
 
+    assert await run.admits("gobby-tasks", "claim_task", {"task_id": task.id})
+    assert not await run.admits("gobby-tasks", "claim_task", {"task_id": foreign_task.id})
     await run.call(
         "gobby-tasks",
         "claim_task",
