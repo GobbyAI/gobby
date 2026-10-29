@@ -19,13 +19,14 @@ from gobby.agents.team_lifecycle import (
     _merge,
     _recorded,
 )
+from gobby.sessions.handoff_records import build_handoff_payload, stage_agent_end_handoff
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgentRunManager
 from gobby.storage.daemon_resume_keys import CONSUMED_AT_KEY, CONSUMED_BY_KEY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
-from gobby.storage.tasks import LocalTaskManager, TaskAlreadyEscalatedError
+from gobby.storage.tasks import LocalTaskManager, TaskAlreadyEscalatedError, TaskNotFoundError
 from gobby.storage.team_records import ADMISSION_STEP
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
@@ -88,7 +89,93 @@ async def reconcile_team_teardowns(
             actions += await _tear_down_leaf(db, leaf, terminate, delete)
         except Exception:
             logger.exception("Leaf %s teardown failed; the next pass retries", leaf.binding.task_id)
+    for seats in await asyncio.to_thread(_due_runbook_seats, db, cutoff):
+        try:
+            live = [run for run in seats if run.status in ACTIVE_AGENT_RUN_STATUSES]
+            ended, refusal = await _end_seats(db, terminate, live)
+            actions += sum(ended)
+            if refusal is None and all(ended):
+                await asyncio.to_thread(_expire_runs, db, seats)
+            elif refusal is not None:
+                logger.error("Runbook seat teardown refused; the next pass retries: %s", refusal)
+        except Exception:
+            logger.exception("Runbook seat teardown failed; the next pass retries")
     return actions
+
+
+def _due_runbook_seats(db: HubDatabase, cutoff: datetime) -> list[list[AgentRun]]:
+    """Task-bound runbooks without team admission still own the seats they launched.
+
+    The saved definition and inputs are authoritative, including after a runbook finishes.
+    Support has no task input. Restrict discovery to local executions with unfinished seats;
+    admitted teams retain their existing tree cleanup and refusal handling.
+    """
+    rows = db.fetchall(
+        """
+SELECT DISTINCT p.id, p.project_id, p.session_id, p.inputs_json
+FROM pipeline_executions p
+JOIN sessions parent ON parent.id = p.session_id
+JOIN agent_runs r ON r.parent_session_id = p.session_id
+LEFT JOIN sessions child ON child.id = r.child_session_id
+WHERE parent.machine_id = %s AND parent.source = 'pipeline'
+AND p.definition_json -> 'tags' ? 'runbook'
+AND p.inputs_json ->> 'task' IS NOT NULL
+AND (r.status = ANY(%s) OR child.status = ANY(%s)
+     OR (r.terminal_reason = 'daemon_stop'
+         AND NOT (COALESCE(r.resume_metadata_json, '{}'::jsonb) ? %s)))
+AND NOT EXISTS (
+    SELECT 1 FROM step_executions se WHERE se.execution_id = p.id
+    AND se.step_id = %s AND se.output_json #>> '{team,team_id}' IS NOT NULL
+)
+""",
+        (
+            require_machine_id(),
+            list(ACTIVE_AGENT_RUN_STATUSES),
+            list(LIVE_SESSION_STATUS_ORDER),
+            CONSUMED_AT_KEY,
+            ADMISSION_STEP,
+        ),
+    )
+    tasks = LocalTaskManager(db)
+    runs = LocalAgentRunManager(db)
+    due: list[list[AgentRun]] = []
+    for row in rows:
+        ref = json.loads(row["inputs_json"])["task"]
+        try:
+            task_id = tasks.resolve_task_reference(str(ref), str(row["project_id"]))
+            task = tasks.get_task(task_id)
+        except (TaskNotFoundError, ValueError):
+            logger.warning("Runbook %s has an unresolved task %r", row["id"], ref)
+            continue
+        if task.closed_at is not None and task.closed_at <= cutoff:
+            seats = runs.list_all_by_parent(str(row["session_id"]))
+            due.append(_eligible_seats(db, seats, task_id))
+    return due
+
+
+def _eligible_seats(db: HubDatabase, runs: list[AgentRun], task_id: str) -> list[AgentRun]:
+    """A closed task cannot end a seat bound to, or still claiming, another open task."""
+    if not runs:
+        return []
+    protected = {
+        str(row["claimed_by_session_id"])
+        for row in db.fetchall(
+            "SELECT claimed_by_session_id FROM tasks WHERE closed_at IS NULL "
+            "AND id <> %s AND claimed_by_session_id = ANY(%s)",
+            (task_id, [run.child_session_id for run in runs if run.child_session_id]),
+        )
+    }
+    tasks = LocalTaskManager(db)
+    return [
+        run
+        for run in runs
+        if run.child_session_id not in protected
+        and (
+            run.task_id is None
+            or run.task_id == task_id
+            or tasks.get_task(run.task_id).closed_at is not None
+        )
+    ]
 
 
 def _due_teams(db: HubDatabase, cutoff: datetime) -> list[_DueTeam]:
@@ -204,9 +291,17 @@ async def _tear_down(
 ) -> int:
     folder = await asyncio.to_thread(release_epic_workspace, db, team.binding)
     seats = await asyncio.to_thread(_team_seats, db, team)
-    live = [run for run in seats if run.status in ACTIVE_AGENT_RUN_STATUSES]
-    dispatched = await asyncio.to_thread(_dispatched_runs, db, seats, team.binding.worktree_path)
-    ended, refusal = await _end_seats(terminate, [*live, *dispatched])
+    live = [
+        run
+        for run in await asyncio.to_thread(_eligible_seats, db, seats, team.binding.task_id)
+        if run.status in ACTIVE_AGENT_RUN_STATUSES
+    ]
+    dispatched = await asyncio.to_thread(
+        _dispatched_runs, db, seats, team.binding.worktree_path, team.binding.task_id
+    )
+    ended, refusal = await _end_seats(
+        db, terminate, [*live, *(r for r in dispatched if r.status in ACTIVE_AGENT_RUN_STATUSES)]
+    )
     if refusal is not None:
         label = f"team-{team.binding.team_id}"
         outcome = await asyncio.to_thread(_refuse, db, team.binding, refusal, label)
@@ -216,6 +311,9 @@ async def _tear_down(
         logger.warning("Team %s keeps live seats; the next pass retries", team.binding.team_id)
         return sum(ended)
     await asyncio.to_thread(_expire_seats, db, team)
+    await asyncio.to_thread(
+        _expire_runs, db, [r for r in dispatched if r.status not in ACTIVE_AGENT_RUN_STATUSES]
+    )
     if folder is not None:
         schedule_workspace_commit(team.binding.project_id, folder.name)
     if team.binding.worktree_id is None:  # a treeless team has no tree to delete
@@ -252,13 +350,22 @@ async def _tear_down_leaf(
     sub-tree stays due, and its finding is found again on the next pass, not filed twice.
     """
     seats = await asyncio.to_thread(_team_seats, db, leaf.team)
-    dispatched = await asyncio.to_thread(_dispatched_runs, db, seats, leaf.binding.worktree_path)
-    ended, refusal = await _end_seats(terminate, dispatched)
+    dispatched = await asyncio.to_thread(
+        _dispatched_runs, db, seats, leaf.binding.worktree_path, leaf.binding.task_id
+    )
+    ended, refusal = await _end_seats(
+        db, terminate, [r for r in dispatched if r.status in ACTIVE_AGENT_RUN_STATUSES]
+    )
     label = f"leaf-{leaf.binding.worktree_id}"
     if refusal is not None:
         await asyncio.to_thread(_refuse, db, leaf.binding, refusal, label)
         return sum(ended)
-    if not all(ended) or await asyncio.to_thread(_occupied, db, dispatched):
+    if not all(ended):
+        return sum(ended)
+    await asyncio.to_thread(
+        _expire_runs, db, [r for r in dispatched if r.status not in ACTIVE_AGENT_RUN_STATUSES]
+    )
+    if await asyncio.to_thread(_occupied, db, dispatched):
         return sum(ended)
     result = await _delete_tree(db, leaf.binding, delete)
     if result is None or result.abandoned:
@@ -270,18 +377,36 @@ async def _tear_down_leaf(
 
 
 async def _end_seats(
-    terminate: TeamRunTerminator, runs: list[AgentRun]
+    db: HubDatabase, terminate: TeamRunTerminator, runs: list[AgentRun]
 ) -> tuple[list[bool], WorktreeDeletionResult | None]:
     """End each run; the first seat that cannot be ended becomes the refusal."""
     ended: list[bool] = []
     refusal: WorktreeDeletionResult | None = None
     for run in runs:
         try:
+            await asyncio.to_thread(_stage_teardown_handoff, db, run)
             ended.append(await terminate(run))
         except TeamSeatNotEndedError as exc:
             if refusal is None:
                 refusal = WorktreeDeletionResult(success=False, error_code=exc.code, error=str(exc))
     return ended, refusal
+
+
+def _stage_teardown_handoff(db: HubDatabase, run: AgentRun) -> None:
+    """Preserve any authored handoff; otherwise record why the daemon ended this seat."""
+    if run.child_session_id is None:
+        return
+    stage_agent_end_handoff(
+        db,
+        agent_run_id=run.id,
+        child_session_id=run.child_session_id,
+        parent_session_id=run.parent_session_id,
+        payload=build_handoff_payload(
+            current_state="The runbook's task is closed. The daemon requested seat teardown.",
+            next_steps=["No further work is assigned to this run."],
+            references=[run.task_id] if run.task_id else [],
+        ),
+    )
 
 
 async def _delete_tree(
@@ -322,20 +447,22 @@ def _sub_trees_remain(db: HubDatabase, team: _DueTeam) -> bool:
     return row is not None
 
 
-def _dispatched_runs(db: HubDatabase, seats: list[AgentRun], tree: str | None) -> list[AgentRun]:
-    """Active runs a team seat dispatched into ``tree``, such as a Dev Manager's developer.
+def _dispatched_runs(
+    db: HubDatabase, seats: list[AgentRun], tree: str | None, task_id: str
+) -> list[AgentRun]:
+    """Runs a team seat dispatched for this task or into its tree, including parked seats.
 
     A dispatched seat is a child of the seat that dispatched it, not of the runbook. That seat
     may have ended already, so ``seats`` holds ended runs too, as ``_team_seats`` returns them.
     """
-    if tree is None or not seats:
+    if not seats:
         return []
     runs = LocalAgentRunManager(db)
     children = [
         run
         for seat in seats
         if seat.child_session_id is not None
-        for run in runs.list_by_parent(seat.child_session_id)
+        for run in runs.list_all_by_parent(seat.child_session_id)
     ]
     if not children:
         return []
@@ -347,9 +474,15 @@ def _dispatched_runs(db: HubDatabase, seats: list[AgentRun], tree: str | None) -
         )
     }
     inside = {
-        session_id for session_id, path in paths.items() if path and path_is_within(path, tree)
+        session_id
+        for session_id, path in paths.items()
+        if tree is not None and path and path_is_within(path, tree)
     }
-    return [run for run in children if str(run.child_session_id) in inside]
+    return _eligible_seats(
+        db,
+        [run for run in children if run.task_id == task_id or str(run.child_session_id) in inside],
+        task_id,
+    )
 
 
 def _occupied(db: HubDatabase, runs: list[AgentRun]) -> bool:
@@ -369,34 +502,35 @@ def _occupied(db: HubDatabase, runs: list[AgentRun]) -> bool:
 
 
 def _expire_seats(db: HubDatabase, team: _DueTeam) -> None:
+    _expire_runs(db, _eligible_seats(db, _team_seats(db, team), team.binding.task_id))
+
+
+def _expire_runs(db: HubDatabase, runs: list[AgentRun]) -> None:
     """Expire every team seat's session a stop or cancel left live, and retire its resume.
 
     This covers runs already terminal before teardown (a daemon-stop parked seat),
     which no lookup of live seats ever sees. The parked resume is marked consumed by the
     teardown, so recovery skips it while other expired parked children stay resumable.
     """
-    executions = LocalPipelineExecutionManager(db, team.binding.project_id)
-    runbooks = [
-        execution.session_id
-        for execution in map(executions.get_execution, team.executions)
-        if execution is not None and execution.session_id is not None
-    ]
-    if not runbooks:
+    if not runs:
         return
+    for run in runs:
+        _stage_teardown_handoff(db, run)
+    run_ids = [run.id for run in runs]
     retired = {CONSUMED_AT_KEY: datetime.now(UTC).isoformat(), CONSUMED_BY_KEY: TEARDOWN_KEY}
     db.execute(
         "UPDATE agent_runs SET resume_metadata_json = "
         "COALESCE(resume_metadata_json, '{}'::jsonb) || %s::jsonb "
-        "WHERE parent_session_id = ANY(%s) AND status = 'cancelled' "
+        "WHERE id = ANY(%s) AND status = 'cancelled' "
         "AND terminal_reason = 'daemon_stop' "
         "AND NOT (COALESCE(resume_metadata_json, '{}'::jsonb) ? %s)",
-        (json.dumps(retired), runbooks, CONSUMED_AT_KEY),
+        (json.dumps(retired), run_ids, CONSUMED_AT_KEY),
     )
     rows = db.fetchall(
         "SELECT DISTINCT s.id::text AS id FROM agent_runs r "
         "JOIN sessions s ON s.id = r.child_session_id "
-        "WHERE r.parent_session_id = ANY(%s) AND s.status = ANY(%s)",
-        (runbooks, list(LIVE_SESSION_STATUS_ORDER)),
+        "WHERE r.id = ANY(%s) AND s.status = ANY(%s)",
+        (run_ids, list(LIVE_SESSION_STATUS_ORDER)),
     )
     sessions = SessionManager(db)
     for row in rows:
