@@ -305,6 +305,62 @@ async def test_plan_documents_in_owned_worktrees_are_writable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["write", "commit"])
+@pytest.mark.parametrize("folder", ["own", "epic"])
+async def test_workspace_metadata_names_ignore_case(
+    engine: RuleEngine, root: Path, tmp_path: Path, tool: str, folder: str
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    key = "_agent_workspace_dir" if folder == "own" else "_agent_workspace_epic_dir"
+    directory = Path(variables[key])
+    plans = directory / ".gobby" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "linked.MD").symlink_to(directory / ".GoBbY" / "project.json")
+    for relative, decision in (
+        (".GOBBY/project.json", "block"),
+        (".GoBbY/settings.json", "block"),
+        (".GIT/config", "block"),
+        (".GiT/config", "block"),
+        (".gobby/plans/.GIT/config.md", "block"),
+        (".GOBBY/PLANS/.GoBbY/config.MD", "block"),
+        (".gobby/plans/linked.MD", "block"),
+        (".GOBBY/PLANS/plan.MD", "allow"),
+    ):
+        path = directory / relative
+        data = (
+            _write(path, project)
+            if tool == "write"
+            else _shell(f"git commit -m plan --only -- {path}", project)
+        )
+        normalize_tool_fields(data)
+        response = await _decide(engine, data, variables)
+        assert response.decision == decision, (path, tool, response.reason)
+
+
+@pytest.mark.asyncio
+async def test_case_alias_of_workspace_root_does_not_bypass_write_scope(
+    engine: RuleEngine, root: Path, tmp_path: Path
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    own.mkdir(parents=True)
+    alias = root.with_name(root.name.upper())
+    if not alias.exists():
+        pytest.skip("Filesystem distinguishes workspace root casing")
+    assert alias.samefile(root)
+    for path in (
+        alias / own.relative_to(root) / ".GIT" / "config",
+        alias / PROJECT / "developer" / "session-99" / "notes.md",
+    ):
+        response = await _decide(engine, _write(path, project), variables)
+        assert response.decision == "block", (path, response.reason)
+
+
+@pytest.mark.asyncio
 async def test_read_scope_by_persistence(
     engine: RuleEngine,
     root: Path,

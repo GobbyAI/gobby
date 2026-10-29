@@ -104,7 +104,9 @@ def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> boo
         return False
     for directory in allowed:
         if path.is_relative_to(directory):
-            parts = path.relative_to(directory).parts
+            # Reserve metadata names regardless of spelling; Path.resolve keeps
+            # input casing even when the volume resolves it to the same directory.
+            parts = tuple(part.casefold() for part in path.relative_to(directory).parts)
             if ".git" in parts:
                 return True
             if ".gobby" not in parts:
@@ -115,7 +117,7 @@ def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> boo
                 parts.count(".gobby") == 1
                 and parts[index + 1 : index + 2] == ("plans",)
                 and len(parts) > index + 2
-                and path.suffix == ".md"
+                and path.suffix.casefold() == ".md"
             )
     return True
 
