@@ -80,6 +80,7 @@ def _is_read_only_pipeline_stage(
     return (
         not metadata.paths
         and not metadata.repo_mutation
+        and metadata.proven_read_only
         and (cmd != "sed" or metadata.kind == "read")
     )
 
