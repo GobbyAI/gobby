@@ -53,9 +53,11 @@ __all__ = ["LandingResult", "land_candidate", "main_checkout_target"]
 logger = logging.getLogger(__name__)
 
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")
+# Reflogs retain earlier landings after their activation policy changes.
+_REFLOG_ACTIVATION_CLASSES = (*ACTIVATION_CLASSES, "sync")
 _LANDING_ACTION = re.compile(
     r"gobby-land candidate=(?P<candidate>[0-9a-f]{40}) "
-    rf"mode=(?P<mode>ff|merge) class=(?P<class>{'|'.join(ACTIVATION_CLASSES)})"
+    rf"mode=(?P<mode>ff|merge) class=(?P<class>{'|'.join(_REFLOG_ACTIVATION_CLASSES)})"
     r"(?: lander=(?P<lander>[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}))?(?:: .*)?"
 )
 _ATTEMPTS = 3
@@ -218,7 +220,7 @@ async def _recover_landing(
                 return unknown
             if await _ancestor(main, sha, entry.old):
                 continue
-            activation_class = action["class"]
+            activation_class = "restart" if action["class"] == "sync" else action["class"]
             facts: dict[str, str | int | bool] = {
                 **unknown,
                 "landed_tip": entry.new,

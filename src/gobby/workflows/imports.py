@@ -285,7 +285,11 @@ def sync_imported_workflows(
     if project_path is not None:
         if project_id is None:
             raise ValueError("project_id is required with project_path")
-        roots.append((Path(project_path) / ".gobby" / "workflows", project_id))
+        checkout_path = Path(project_path).resolve()
+        linked = linked_worktree_root(checkout_path)
+        if linked is not None:
+            checkout_path = linked.main_checkout
+        roots.append((checkout_path / ".gobby" / "workflows", project_id))
     else:
         for project in LocalProjectManager(db).list():
             if project.id in CHECKOUT_FREE_PROJECT_IDS:

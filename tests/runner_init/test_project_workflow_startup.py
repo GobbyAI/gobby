@@ -6,12 +6,14 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
 from click.testing import CliRunner
 
 from gobby.cli.rules import rules
+from gobby.mcp_proxy.tools.workflows._import import reload_cache
 from gobby.runner import GobbyRunner
 from gobby.runner_init.storage import run_startup_content_sync
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
@@ -143,18 +145,23 @@ def test_cli_and_startup_share_canonical_tags_but_external_import_survives_clean
 
 
 @pytest.mark.parametrize("register_linked", [False, True])
-def test_startup_imports_main_checkout_even_from_linked_cwd_or_registration(
+@pytest.mark.parametrize("entrypoint", ["startup", "reload"])
+def test_startup_and_reload_import_main_checkout_from_linked_cwd_or_registration(
     temp_db: HubDatabase,
     isolated_checkout_factory: IsolatedCheckoutFactory,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     register_linked: bool,
+    entrypoint: str,
 ) -> None:
     checkout = isolated_checkout_factory(temp_db, "main-policy")
     main = Path(checkout.root_path)
     relative = Path(".gobby/workflows/rules/policy.yaml")
     _write_rule(main / relative, "main revision")
+    main_only = relative.with_name("main-only.yaml")
+    _write_rule(main / main_only, "retained main rule", name="main-only")
     init_git_checkout(main)
+    _startup(temp_db)
     linked = tmp_path / "linked"
     subprocess.run(
         ["git", "worktree", "add", "--detach", str(linked)],
@@ -165,19 +172,32 @@ def test_startup_imports_main_checkout_even_from_linked_cwd_or_registration(
     )
     _write_rule(linked / relative, "unlanded branch revision")
     _write_rule(linked / relative.with_name("branch-only.yaml"), "branch", name="branch-only")
+    (linked / main_only).unlink()
     if register_linked:
         LocalProjectCheckoutManager(temp_db).rebind(
             checkout.machine_id, checkout.project.id, str(linked.resolve())
         )
     monkeypatch.chdir(linked)
 
-    _startup(temp_db)
+    if entrypoint == "startup":
+        _startup(temp_db)
+    else:
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools.workflows._import.sync_bundled_content_to_db",
+            lambda _db, **_kwargs: {"details": {}, "errors": []},
+        )
+        reload_result = reload_cache(
+            MagicMock(), temp_db, project_path=str(linked), project_id=checkout.project.id
+        )
+        assert reload_result["success"] is True
+        assert reload_result["imported_workflows_retired"] == 0
 
     manager = RuleDefinitionManager(temp_db)
     row = manager.get_by_name("policy", project_id=checkout.project.id)
     assert row is not None
     assert row.description == "main revision"
     assert manager.get_by_name("branch-only", project_id=checkout.project.id) is None
+    assert manager.get_by_name("main-only", project_id=checkout.project.id) is not None
 
     # Explicit branch imports remain ad hoc; main files retain canonical
     # provenance even when the command runs from the linked checkout.

@@ -692,6 +692,41 @@ async def test_already_landed_candidate_records_landing_once(
     assert case.git("rev-parse", "trunk") != first["observed_tip"]
 
 
+@pytest.mark.parametrize("activation", ["none", "restart", "sync"])
+async def test_recovery_accepts_historical_sync_entries(case: LandingCase, activation: str) -> None:
+    historical = case.candidate("historical", {".gobby/workflows/rules/old.yaml": "old"})
+    case.git(
+        "merge",
+        "--ff-only",
+        historical,
+        env={"GIT_REFLOG_ACTION": f"gobby-land candidate={historical} mode=ff class=sync"},
+    )
+    sha = case.candidate("current", {"docs/current.md": "current"}, base=historical)
+    task = case.task()
+    case.link(task, sha)
+    case.approve(task, sha)
+    case.git(
+        "merge",
+        "--ff-only",
+        sha,
+        env={
+            "GIT_REFLOG_ACTION": (
+                f"gobby-land candidate={sha} mode=ff class={activation} lander={case.creator}"
+            )
+        },
+    )
+
+    result = await case.land(task, sha)
+
+    assert result["landed"] is True
+    assert result["provenance"] == "reflog"
+    assert result["activation_class"] == ("restart" if activation == "sync" else activation)
+    assert result["landed_by_session_id"] == case.creator
+    assert result["landed_tip"] == sha
+    assert await case.land(task, sha) == result
+    assert len([r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]) == 1
+
+
 async def test_foreign_fast_forward_uses_stored_old_tip(case: LandingCase) -> None:
     a = case.candidate("ancestor", {"docs/a.md": "A"})
     b = case.candidate("descendant", {"docs/b.md": "B"}, base=a)
