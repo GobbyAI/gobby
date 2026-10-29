@@ -195,6 +195,13 @@ class AgentDefinitionBody(BaseModel):
         default_factory=list,
         description="Task step records this definition may write through dedicated tools.",
     )
+    supplemental_review: StrictBool = Field(
+        default=False,
+        description=(
+            "Review approvals supplement the primary review without changing its verdict. "
+            "They require a running agent seat and cannot reject a candidate."
+        ),
+    )
     step_workflow: AgentStepWorkflowBody | None = None
 
     @model_validator(mode="before")

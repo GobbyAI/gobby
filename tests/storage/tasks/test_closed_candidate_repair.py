@@ -209,6 +209,7 @@ def test_repair_preview_reads_the_approval_at_the_closed_tip_not_the_stored_copy
                     "commit_sha": _OLD,
                     "sequence": 1,
                     "agent_definition": "reviewer",
+                    "supplemental_review": False,
                     "session_id": review.caller_session_id,
                 }
             ),

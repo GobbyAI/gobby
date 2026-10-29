@@ -1,5 +1,6 @@
 name: security-reviewer
-capabilities: [accept_resume_retype]
+capabilities: [accept_resume_retype, approve_security_review]
+supplemental_review: true
 description: |
   Security Reviewer seat. Reviews candidates for auth, secret and token
   handling, sandbox egress, injection, and hook, proxy and daemon trust

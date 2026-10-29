@@ -41,7 +41,6 @@ from gobby.tasks.landing_policy import (
 )
 from gobby.tasks.lifecycle_access import is_operator_coordinator
 from gobby.tasks.step_records import (
-    SECURITY_REVIEWER,
     TaskStepRecord,
     independent_review_approval,
     list_task_step_records,
@@ -370,7 +369,7 @@ def _review_blockers(
         and record.status == "approved"
         and record.epoch == task.review_epoch
         and record.commit_sha == sha
-        and record.agent_definition == SECURITY_REVIEWER
+        and "approve_security_review" in record.agent_capabilities
         and record.session_id not in {caller, *claimants}
         for record in records
     ):

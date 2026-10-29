@@ -161,21 +161,41 @@ class LandingCase:
         grant_review_writes(self.db, self.reviewer, self.project_id)
         reject_review(self.db, task_id=task.id, reviewer_session_id=self.reviewer, commit_sha=sha)
 
-    def security_seat(self) -> str:
+    def security_seat(
+        self,
+        name: str = SECURITY_REVIEWER,
+        *,
+        granted: bool = True,
+        supplemental: bool = True,
+    ) -> str:
         """A session running as the installed security-reviewer definition, with no agent run."""
-        session = self.session("security-reviewer", parent=self.creator)
-        grant_step_writes(self.db, session, self.project_id, SECURITY_REVIEWER, ("review",))
+        session = self.session(name, parent=self.creator)
+        grant_step_writes(
+            self.db,
+            session,
+            self.project_id,
+            name,
+            ("review",),
+            capabilities=("approve_security_review",) if granted else (),
+            supplemental_review=supplemental,
+        )
         return session
 
-    def security_reviewer(self) -> str:
+    def security_reviewer(
+        self,
+        name: str = SECURITY_REVIEWER,
+        *,
+        granted: bool = True,
+        supplemental: bool = True,
+    ) -> str:
         """A running Security Reviewer seat: its definition plus a running agent run."""
-        session = self.security_seat()
+        session = self.security_seat(name, granted=granted, supplemental=supplemental)
         runs = LocalAgentRunManager(self.db)
         run = runs.create(
             parent_session_id=self.creator,
             provider="claude",
             prompt="Review the candidate for security.",
-            agent_name=SECURITY_REVIEWER,
+            agent_name=name,
             child_session_id=session,
         )
         runs.start(run.id)

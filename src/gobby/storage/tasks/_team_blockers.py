@@ -52,7 +52,6 @@ def team_resolved_blocker_sql(blocker: str, blocked: str) -> str:
                 WHERE steps.record ->> 'step' = 'implementation'
                   AND steps.record ->> 'epoch' = {blocker}.review_epoch::text
                   AND steps.record ->> 'sequence' ~ '^[0-9]{{1,9}}$'
-                  AND steps.record ->> 'agent_definition' <> 'security-reviewer'
                 ORDER BY (steps.record ->> 'sequence')::int DESC
                 LIMIT 1
             ) latest

@@ -27,6 +27,7 @@ def grant_step_writes(
     steps: Sequence[TaskStep],
     *,
     capabilities: Sequence[str] = (),
+    supplemental_review: bool = False,
 ) -> None:
     """Run a registered session as an installed definition that writes ``steps``."""
     definitions = AgentDefinitionManager(db)
@@ -40,6 +41,7 @@ def grant_step_writes(
                 "workflows": {"rule_selectors": {"include": []}},
                 "task_step_writes": list(steps),
                 "capabilities": list(capabilities),
+                "supplemental_review": supplemental_review,
             },
             project_id=project_id,
         )

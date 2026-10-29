@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, Literal, Self
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, model_validator
 
 from gobby.config.tasks import TaskClosePolicyConfig, load_project_task_close_policy
 from gobby.storage.hub.protocol import HubDatabase, Transaction
@@ -44,8 +44,6 @@ TASK_STEPS: tuple[TaskStep, ...] = ("test", "implementation", "review", "closing
 _TERMINAL = frozenset({"approved", "rejected"})
 # Test evidence may precede implementation; these steps attest the task tip.
 _TIP_BOUND: frozenset[TaskStep] = frozenset({"implementation", "review", "closing"})
-# Security approvals are their own review track; they never stand in for the code review.
-SECURITY_REVIEWER = "security-reviewer"
 
 
 class StepRecordError(ValueError):
@@ -83,6 +81,9 @@ class TaskStepRecord(StepSubmission):
     agent_definition: str
     agent_definition_version: str
     agent_definition_hash: str
+    agent_capabilities: list[StrictStr] = Field(default_factory=list)
+    # None is an old record with no authority snapshot; it grants no review authority.
+    supplemental_review: StrictBool | None = None
     session_id: str
     created_at: datetime
     updated_at: datetime
@@ -163,7 +164,8 @@ def current_task_steps(records: list[TaskStepRecord], epoch: int) -> dict[TaskSt
     return {
         record.step: record
         for record in records
-        if record.epoch == epoch and record.agent_definition != SECURITY_REVIEWER
+        if record.epoch == epoch
+        and (record.step != "review" or record.supplemental_review is False)
     }
 
 
@@ -288,7 +290,10 @@ def _rejected_reviews(records: list[TaskStepRecord], epoch: int) -> list[TaskSte
     return [
         record
         for record in records
-        if record.step == "review" and record.epoch == epoch and record.status == "rejected"
+        if record.step == "review"
+        and record.supplemental_review is False
+        and record.epoch == epoch
+        and record.status == "rejected"
     ]
 
 
@@ -341,14 +346,14 @@ def _writer(
     return body, digest
 
 
-def _is_security_reviewer_seat(conn: Transaction, session_id: str) -> bool:
+def _is_running_definition_seat(conn: Transaction, session_id: str, definition: str) -> bool:
     row = conn.execute(
         """
         SELECT 1 FROM agent_runs
-        WHERE child_session_id = %s AND agent_name = 'security-reviewer' AND status = 'running'
+        WHERE child_session_id = %s AND agent_name = %s AND status = 'running'
         LIMIT 1
         """,
-        (session_id,),
+        (session_id, definition),
     ).fetchone()
     return row is not None
 
@@ -477,7 +482,7 @@ def record_task_step(
                 raise StepRecordError("step progress cannot move backwards")
         # Replays return before this check: the fixer's grant ends with its claim.
         body, digest = _writer(db, task, session_id, step, records)
-        security = step == "review" and body.name == SECURITY_REVIEWER
+        supplemental = step == "review" and body.supplemental_review
         if task.closed_at is not None:
             raise StepRecordError("closed tasks cannot receive new step records")
         rejections = {
@@ -498,16 +503,18 @@ def record_task_step(
             raise StepRecordError("linked work requires commit evidence, not a no-work disposition")
         if step == "review":
             _refuse_held_team(db, session_id)
-            if security and not _is_security_reviewer_seat(conn, session_id):
+            if (
+                supplemental or "approve_security_review" in body.capabilities
+            ) and not _is_running_definition_seat(conn, session_id, body.name):
                 raise StepRecordError(
-                    "a security approval comes only from a running security-reviewer seat"
+                    "a supplemental or security approval requires a running definition seat"
                 )
-            if security and submission.status != "approved":
-                raise StepRecordError("a security-reviewer seat records only approvals")
+            if supplemental and submission.status != "approved":
+                raise StepRecordError("a supplemental review records only approvals")
             review_key = (submission.epoch, submission.round_number, submission.commit_sha)
             if submission.status in _TERMINAL and any(
                 record.step == "review"
-                and record.agent_definition != SECURITY_REVIEWER
+                and record.supplemental_review is False
                 and (record.epoch, record.round_number, record.commit_sha) == review_key
                 and record.status in _TERMINAL
                 and record.status != submission.status
@@ -529,6 +536,8 @@ def record_task_step(
             agent_definition=body.name,
             agent_definition_version=body.version or digest,
             agent_definition_hash=digest,
+            agent_capabilities=body.capabilities,
+            supplemental_review=body.supplemental_review if step == "review" else None,
             session_id=session_id,
             created_at=previous.created_at if previous else now,
             updated_at=now,
@@ -538,7 +547,7 @@ def record_task_step(
             "VALUES (%s, %s, %s, %s, %s)",
             (record.id, task_id, session_id, STEP_RECORD_AUTHOR_TYPE, record.model_dump_json()),
         )
-        if step == "review" and not security:
+        if step == "review" and not supplemental:
             # Pending and in_progress (including infrastructure errors) never count.
             count = len(rejections) + int(submission.status == "rejected")
             review_status = {"approved": "valid", "rejected": "invalid"}.get(

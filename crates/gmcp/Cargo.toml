@@ -1,6 +1,6 @@
 [package]
 name = "gobby-mcp"
-version = "0.1.19"
+version = "0.1.20"
 edition.workspace = true
 rust-version.workspace = true
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
