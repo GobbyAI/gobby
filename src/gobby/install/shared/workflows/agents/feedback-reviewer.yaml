@@ -1,4 +1,5 @@
 name: feedback-reviewer
+capabilities: [accept_resume_retype]
 description: |
   Taskless nightly reviewer that clusters session feedback and returns a
   Markdown report and validated findings for human-reviewed tasks.

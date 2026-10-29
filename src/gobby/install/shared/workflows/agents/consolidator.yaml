@@ -1,4 +1,5 @@
 name: consolidator
+capabilities: [accept_resume_retype]
 description: Consolidator seat. Proposes backlog bundles, stale-item retirement and epic moves, and applies Orchestrator-directed folds and retirements.
 version: "1.0"
 tags: [gobby, seat]

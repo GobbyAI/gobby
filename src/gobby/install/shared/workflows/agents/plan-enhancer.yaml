@@ -1,4 +1,5 @@
 name: plan-enhancer
+capabilities: [accept_resume_retype]
 description: |
   Plan Enhancer seat for the team-planning runbook. Stays live for the whole run,
   reads the writer's plan, and sends ranked Better/Bigger edits to the writer

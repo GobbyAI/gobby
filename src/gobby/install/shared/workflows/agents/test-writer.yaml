@@ -1,4 +1,5 @@
 name: test-writer
+capabilities: [accept_resume_retype]
 description: |
   Test Writer seat. Writes and commits a DevTeam task's failing tests before
   implementation, records the test step, and hands the task back to its Dev

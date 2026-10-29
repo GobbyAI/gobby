@@ -1,4 +1,5 @@
 name: expansion-qa
+capabilities: [accept_resume_retype]
 description: |
   Expansion QA agent, spawnable from a runbook after an expansion run. It checks
   the created task tree and its dependencies, repairs structural drift, saves

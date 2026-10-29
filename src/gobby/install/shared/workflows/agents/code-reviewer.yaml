@@ -1,4 +1,5 @@
 name: code-reviewer
+capabilities: [accept_resume_retype]
 description: |
   Code Reviewer seat. Reviews the CANDIDATEs routed to it against the current
   project integration head and returns LAND or BOUNCE with rated findings. The

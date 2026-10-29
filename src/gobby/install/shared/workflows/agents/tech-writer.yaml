@@ -1,4 +1,5 @@
 name: tech-writer
+capabilities: [accept_resume_retype]
 description: |
   Documentation implementation agent for docs-category lifecycle development
   leaves. Owns docs changes and release-note style writing work.

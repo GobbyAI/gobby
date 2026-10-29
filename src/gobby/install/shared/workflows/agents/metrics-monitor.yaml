@@ -1,4 +1,5 @@
 name: metrics-monitor
+capabilities: [accept_resume_retype]
 description: |
   Metrics Monitor seat. Observe daemon RSS, CPU and uptime through local Prometheus
   every ten minutes; report to Triage and Log Monitor, alarm on RSS sustained

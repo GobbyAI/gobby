@@ -1,4 +1,5 @@
 name: research-reviewer
+capabilities: [accept_resume_retype]
 description: |
   Research Reviewer seat. Reviews the research CANDIDATEs routed to it: checks each claim
   against its cited sources and code evidence, confirms the question asked is the question

@@ -1,4 +1,5 @@
 name: reporter
+capabilities: [accept_resume_retype]
 description: |
   Reporter seat. Short-lived run delivering scheduled delta and full
   queue status as markdown directly to the configured operator destination,

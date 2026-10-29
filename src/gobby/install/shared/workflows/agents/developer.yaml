@@ -1,4 +1,5 @@
 name: developer
+capabilities: [accept_resume_retype]
 description: |
   Developer seat. Implements one DevTeam task against the Test Writer's
   failing tests, submits a CANDIDATE to the Dev Manager and the assigned Code

@@ -1,4 +1,5 @@
 name: recovery-steward
+capabilities: [accept_resume_retype]
 description: |
   Recovery Steward seat. The watchdog. Patrols every live seat every 10 minutes
   or on each Triage message, classifies each one, resumes idle stalled composers with

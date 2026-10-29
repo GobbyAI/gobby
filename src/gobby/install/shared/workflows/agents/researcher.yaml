@@ -1,4 +1,5 @@
 name: researcher
+capabilities: [accept_resume_retype]
 description: |
   Researcher seat. Researches the questions the Orchestrator routes to it and
   writes research reports and proposals; never implements or lands code.

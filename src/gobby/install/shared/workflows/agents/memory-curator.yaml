@@ -1,4 +1,5 @@
 name: memory-curator
+capabilities: [accept_resume_retype]
 description: |
   Corpus curator for the gobby-memory store. Receives a batch of near-duplicate
   memory clusters and merges, splits, or points each one at its canonical source,

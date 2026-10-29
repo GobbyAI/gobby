@@ -1,4 +1,5 @@
 name: docs-reviewer
+capabilities: [accept_resume_retype]
 description: |
   Docs Reviewer seat. Reviews the docs CANDIDATEs routed to it for accuracy against the
   system they describe, the task's criteria, audience fit and the project's writing rules,

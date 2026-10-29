@@ -1,4 +1,5 @@
 name: epic-reviewer
+capabilities: [accept_resume_retype]
 description: |
   Epic-level reviewer. Reviews the approved plan, aggregate implementation diff,
   and child validation evidence of an open or closed epic.

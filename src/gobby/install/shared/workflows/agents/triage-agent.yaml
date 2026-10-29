@@ -1,4 +1,5 @@
 name: triage-agent
+capabilities: [accept_resume_retype]
 description: Structured GitHub issue triage judgment agent
 version: "1.0"
 enabled: true
