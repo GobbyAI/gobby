@@ -3,20 +3,22 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.autonomous.stuck_detector import StuckDetectionResult, StuckDetector
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from tests.agents.test_lifecycle_monitor import _pane_text, _runtime_of
 from tests.agents.test_lifecycle_monitor_watchdog_idle_recovery import (
+    _DRAIN_KEYS,
     LOCAL_MACHINE_ID,
     _make_idle_monitor_run,
 )
@@ -50,8 +52,10 @@ def _write_api_error_transcript(
     status: int,
     text: str,
     progress_after_error: bool = False,
+    age_seconds: int = 0,
+    complete: bool = True,
 ) -> None:
-    timestamp = datetime.now(UTC).isoformat()
+    timestamp = (datetime.now(UTC) - timedelta(seconds=age_seconds)).isoformat()
     records: list[dict[str, object]] = [
         {"type": "user", "timestamp": timestamp, "message": {"role": "user", "content": "go"}},
         {
@@ -74,16 +78,76 @@ def _write_api_error_transcript(
                 },
             }
         )
-    records.append(
-        {
-            "type": "system",
-            "subtype": "turn_duration",
-            "timestamp": timestamp,
-            "durationMs": 1200,
-            "messageCount": 2,
-        }
-    )
+    if complete:
+        records.append(
+            {
+                "type": "system",
+                "subtype": "turn_duration",
+                "timestamp": timestamp,
+                "durationMs": 1200,
+                "messageCount": 2,
+            }
+        )
     path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("guard", ["none", "hold", "recent", "in_flight", "incomplete"])
+async def test_proxy_tunnel_failure_recovers_without_operator_keystrokes(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+    guard: str,
+) -> None:
+    transcript = tmp_path / "proxy-tunnel.jsonl"
+    _write_api_error_transcript(
+        transcript,
+        error="unknown",
+        status=0,
+        text="API Error: Couldn't connect through your proxy (ERR_PROXY_TUNNEL)",
+        age_seconds=0 if guard == "recent" else 120,
+        complete=guard != "incomplete",
+    )
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd2529",
+        transcript_path=transcript,
+        child_source="claude",
+        session_age_seconds=0 if guard == "recent" else 120,
+    )
+    assert run.child_session_id is not None
+    waits = CoordinationWaitManager(temp_db)
+    if guard == "hold":
+        waits.register(run.child_session_id, run.parent_session_id, coordination_key="cutover")
+    pane = "API Error: Couldn't connect through your proxy (ERR_PROXY_TUNNEL)\n❯\n"
+    if guard == "in_flight":
+        pane += "Thinking (esc to interrupt)\n"
+    with (
+        _pane_text(monitor, pane),
+        patch.object(
+            monitor._idle_check_handler._recovery,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="Resume the interrupted task.",
+        ),
+    ):
+        assert await monitor.check_idle_agents() == int(guard == "none")
+        # A successful automatic write is deduplicated on the same completed turn.
+        assert await monitor.check_idle_agents() == 0
+
+    expected = (
+        [*_DRAIN_KEYS, ("text", "Resume the interrupted task."), ("key", "enter")]
+        if guard == "none"
+        else []
+    )
+    assert _runtime_of(monitor).write_log == expected
+    persisted = agent_run_manager.get(run.id)
+    assert persisted is not None and persisted.status == "running"
 
 
 @pytest.mark.parametrize("api_error", [_AUTH_ERROR, _BAD_GATEWAY_ERROR], ids=["401", "502"])

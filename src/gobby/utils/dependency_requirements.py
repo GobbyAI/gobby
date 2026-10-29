@@ -76,8 +76,8 @@ SRT_RELEASE = SrtRelease(
         "GHB350OgPbM3+FubE5WVRtSA=="
     ),
     lockfile_sha256="efd7a3220b4dcf538f4cca60cbdae040969a11047f144e7640fdbdff8fdeb175",
-    runner_sha256="44658a5b22bd801b08a60f63568dc6142e7aae038d2bc4f8b84a893e44b739c3",
-    http_proxy_sha256="5ee6a6e26a95f063ffd38e5222b001c0ad888aab597b92a3a3eabd903fe0cfb6",
+    runner_sha256="f8a463517a36dfd2c839615eecc41427682fb7f665296ebf453c9af63eb986b9",
+    http_proxy_sha256="6b318b1905be83bbbd497eade2609381dd0f7b943c134c7fb2ef9d130360f862",
     mux_proxy_sha256="0a47d7841cd0c934734a2d65ad9094eec967481f59ac64381636a4a420b41755",
     macos_profile_sha256="72155d55576e39c1a6dc6bd19e8c786adfc548a468567c665c2bff6e9164f716",
     which_sha256="91c69caf6e828eccfcbd82e0c9bfb51cf33456725e1fb32ca43e5fff83d15b20",

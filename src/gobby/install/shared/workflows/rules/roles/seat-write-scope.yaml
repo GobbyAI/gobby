@@ -3,6 +3,29 @@ tags: [roles, seat, enforcement, gobby, default]
 # Writes with no resolvable target path fail closed: both helpers return False
 # for an empty path set.
 rules:
+  developer-submit-write-scope:
+    description: "Keep the submitted Developer candidate frozen while allowing reads and audits"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      variables.get('_agent_type') == 'developer'
+      and variables.get('current_step') == 'submit'
+      and (
+        event.data.get('canonical_tool_kind') == 'write'
+        or event.data.get('canonical_repo_mutation')
+        or event.data.get('canonical_git_mutation')
+        or event.data.get('canonical_formatter_mutation')
+        or event.data.get('canonical_unresolved_execution')
+      )
+    effects:
+      - type: block
+        reason: >-
+          In submit, run reads and the required audits. Edits, formatting and Git
+          mutations wait until the review returns you to implementation. Report
+          a needed change to your Dev Manager. Run commands directly when a
+          package runner's shell-command mode cannot be classified.
+
   researcher-write-scope:
     description: "The Researcher writes only research artifacts and its agent workspace folder"
     event: before_tool

@@ -4,6 +4,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -19,6 +20,36 @@ from gobby.utils.daemon_git import GitFailed
 
 pytestmark = pytest.mark.unit
 pytest_plugins = ["pytester"]
+
+
+@pytest.mark.parametrize("platform_name", ["darwin", "linux"])
+async def test_darwin_toolchain_grants_only_approved_cache_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform_name: str
+) -> None:
+    root = tmp_path.resolve()
+    home = root / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
+    monkeypatch.setattr(sys, "platform", platform_name)
+    temp = root / "darwin/T"
+    cache = root / "darwin/C"
+    queried: list[int] = []
+
+    def confstr(name: int) -> str:
+        queried.append(name)
+        return str({65537: temp, 65538: cache}[name])
+
+    monkeypatch.setattr(os, "confstr", confstr)
+    (root / "workspace").mkdir()
+    paths = await compute_sandbox_paths(SandboxConfig(), str(root / "workspace"), env={})
+    expected = {str(temp / "xcrun_db-*"), str(cache / "com.apple.DeveloperTools")}
+    actual = {path for path in paths.write_paths if str(root / "darwin") in path}
+    assert actual == (expected if platform_name == "darwin" else set())
+    assert queried == ([65537, 65538] if platform_name == "darwin" else [])
+    assert str(home / ".gobby/bootstrap.yaml") in paths.deny_read_paths
+    assert str(home / ".claude/settings.json") in paths.deny_write_paths
 
 
 @pytest.mark.asyncio

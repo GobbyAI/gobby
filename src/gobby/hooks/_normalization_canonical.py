@@ -7,7 +7,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from gobby.hooks._normalization_base_commands import classify_base_command
+from gobby.hooks._normalization_base_commands import classify_base_command, unwrap_execution_command
 from gobby.hooks._normalization_bindings import (
     _literal_assignment_bindings,
     _literal_assignment_values,
@@ -374,8 +374,14 @@ def _classify_shell_command(
                 depth=depth,
                 base_cwd=None if directory.changed else base_cwd,
             )
-            if body_metadata.repo_mutation or (body_metadata.extra or {}).get(
-                "canonical_script_execution"
+            if body_metadata.repo_mutation or any(
+                (body_metadata.extra or {}).get(flag)
+                for flag in (
+                    "canonical_script_execution",
+                    "canonical_git_mutation",
+                    "canonical_formatter_mutation",
+                    "canonical_unresolved_execution",
+                )
             ):
                 metadata.append(body_metadata)
         if parts[:1] != ["for"] and not preserves_directory(parts):
@@ -778,6 +784,26 @@ def _classify_shell_segment_without_redirection(
 ) -> _ShellSegmentMetadata:
     if not parts:
         return _ShellSegmentMetadata("execute")
+
+    executed, execution_cwd = unwrap_execution_command(
+        parts, cwd or (str(base_cwd) if base_cwd is not None else None)
+    )
+    if executed is None:
+        return _ShellSegmentMetadata("execute", extra={"canonical_unresolved_execution": True})
+    if executed != parts:
+        execution_raw = raw_parts[-len(executed) :] if raw_parts and executed else tuple(executed)
+        execution_cwd = ShellDirectoryState(cwd=execution_cwd).invocation_cwd(
+            executed, execution_raw, base_cwd
+        )
+        executed = git_environment_parts(executed, _strip_shell_wrappers(executed))
+        return _classify_shell_segment_without_redirection(
+            executed,
+            execution_cwd,
+            depth=depth,
+            shell_stdin=shell_stdin,
+            base_cwd=Path(execution_cwd) if execution_cwd else base_cwd,
+            raw_parts=execution_raw[-len(executed) :] if executed else None,
+        )
 
     cmd = shell_command_name(parts[0])
 

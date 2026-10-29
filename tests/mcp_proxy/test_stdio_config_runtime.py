@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.mcp_proxy import stdio, stdio_daemon
 from gobby.mcp_proxy.stdio_daemon import DaemonStartupDependencies
 from gobby.mcp_proxy.stdio_daemon import ensure_daemon_running as ensure_stdio_daemon_running
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy, DaemonProxyDependencies
@@ -19,6 +20,7 @@ from gobby.mcp_proxy.stdio_server import (
     StdioServerDependencies,
     create_stdio_mcp_server,
 )
+from gobby.utils.daemon_url import DaemonUrlError, load_client_bootstrap
 
 
 @pytest.fixture(autouse=True)
@@ -30,7 +32,13 @@ def _isolate_bridge_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     that assert either failed only when run from inside one. Tests needing these
     variables set them explicitly, which still wins over this fixture.
     """
-    for name in ("GOBBY_AGENT_RUN_ID", "GOBBY_DAEMON_URL", "GOBBY_PORT", "GOBBY_DAEMON_PORT"):
+    for name in (
+        "GOBBY_AGENT_RUN_ID",
+        "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+        "GOBBY_DAEMON_URL",
+        "GOBBY_PORT",
+        "GOBBY_DAEMON_PORT",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -202,7 +210,10 @@ async def test_stdio_server_takes_dial_port_from_bootstrap(
     mcp_server_factory = MagicMock(return_value=mcp_server)
     register_proxy_tools = MagicMock()
     server_deps = StdioServerDependencies(
-        load_bootstrap=lambda: BootstrapConfig(daemon_port=61031),
+        load_bootstrap=MagicMock(
+            side_effect=PermissionError("owner bootstrap is denied") if runtime_url else None,
+            return_value=BootstrapConfig(daemon_port=61031),
+        ),
         build_gobby_instructions=lambda: "instructions",
         mcp_server_factory=mcp_server_factory,
         proxy_factory=proxy_factory,
@@ -219,11 +230,12 @@ async def test_stdio_server_takes_dial_port_from_bootstrap(
     assert server is mcp_server
     # The explicit managed URL wins when the sandbox hides bootstrap.yaml.
     expected_url = runtime_url or "http://127.0.0.1:61031"
+    expected_port = 31579 if runtime_url else 61031
     if startup_task is None:
-        proxy_factory.assert_called_once_with(61031, base_url=expected_url)
+        proxy_factory.assert_called_once_with(expected_port, base_url=expected_url)
     else:
         proxy_factory.assert_called_once_with(
-            61031, base_url=expected_url, startup_task=startup_task
+            expected_port, base_url=expected_url, startup_task=startup_task
         )
     # The whole server is wired from bootstrap facts alone: no hub read stands
     # between process start and the MCP initialize handshake (#22032).
@@ -232,3 +244,47 @@ async def test_stdio_server_takes_dial_port_from_bootstrap(
     assert server_kwargs["instructions"] == "instructions"
     assert callable(server_kwargs["lifespan"])
     register_proxy_tools.assert_called_once_with(mcp_server, proxy)
+
+
+@pytest.mark.parametrize("facade", [False, True])
+def test_managed_stdio_startup_uses_supplied_endpoint_without_owner_bootstrap(
+    monkeypatch: pytest.MonkeyPatch, facade: bool
+) -> None:
+    monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", "/managed/grant.json")
+    monkeypatch.setenv("GOBBY_DAEMON_URL", "http://127.0.0.1:31579")
+    module = stdio if facade else stdio_daemon
+    owner_read = MagicMock(side_effect=PermissionError("owner bootstrap is denied"))
+    monkeypatch.setattr(module, "load_bootstrap", owner_read)
+
+    dependencies = (
+        stdio._daemon_dependencies()
+        if facade
+        else stdio_daemon.default_daemon_startup_dependencies()
+    )
+
+    assert dependencies.bootstrap.daemon_port == 31579
+    assert dependencies.bootstrap.daemon_url == "http://127.0.0.1:31579"
+    owner_read.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "port"),
+    [("GOBBY_DAEMON_URL", "https://daemon.example.test", 443), ("GOBBY_PORT", "31579", 31579)],
+)
+def test_client_bootstrap_override_uses_url_port(
+    monkeypatch: pytest.MonkeyPatch, key: str, value: str, port: int
+) -> None:
+    monkeypatch.setenv(key, value)
+    owner_read = MagicMock(side_effect=PermissionError("owner bootstrap is denied"))
+    assert load_client_bootstrap(owner_read).daemon_port == port
+    owner_read.assert_not_called()
+
+
+def test_managed_client_missing_endpoint_reports_error_without_owner_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", "/managed/grant.json")
+    owner_read = MagicMock(side_effect=PermissionError("owner bootstrap is denied"))
+    with pytest.raises(DaemonUrlError, match="requires GOBBY_DAEMON_URL"):
+        load_client_bootstrap(owner_read)
+    owner_read.assert_not_called()

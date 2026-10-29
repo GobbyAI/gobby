@@ -25,7 +25,7 @@ from gobby.mcp_proxy.stdio_results import (
     DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
     DAEMON_HEALTH_RETRY_DELAY_SECONDS,
 )
-from gobby.utils.daemon_url import resolve_daemon_url
+from gobby.utils.daemon_url import load_client_bootstrap, resolve_daemon_url
 
 
 class CheckDaemonHealth(Protocol):
@@ -58,7 +58,7 @@ class DaemonStartupDependencies:
 
 def default_daemon_startup_dependencies() -> DaemonStartupDependencies:
     return DaemonStartupDependencies(
-        bootstrap=load_bootstrap(resolve_database_url=False),
+        bootstrap=load_client_bootstrap(lambda: load_bootstrap(resolve_database_url=False)),
         is_daemon_running=_is_daemon_running,
         check_daemon_http_health=_check_daemon_http_health,
         start_daemon_process=_start_daemon_process,

@@ -339,6 +339,78 @@ def _checkout_probe(git_cwd: str) -> Path:
     return Path(git_cwd) if checkout_reads.node_origin() else Path(git_cwd).resolve()
 
 
+def git_command_is_read_only(parts: list[str]) -> bool:
+    """Prove ordinary Git inspection without resolving executable aliases or config."""
+    if parts[1:] in (["--version"], ["--help"], ["--exec-path"]):
+        return True
+    command, _, _ = git_command_parts(parts, None, None)
+    # Only global options configure execution; `git log -c` selects combined diffs.
+    index = 1
+    command_index = len(parts) - len(command) + 1
+    while index < command_index:
+        word = parts[index]
+        if word.startswith(("-c", "--config-env", "--exec-path")):
+            return False
+        index += (
+            2 if word in {"-C", "--git-dir", "--work-tree", "--namespace", "--exec-path"} else 1
+        )
+    operation = command[1] if len(command) > 1 else ""
+    arguments = command[2:]
+    if any(word == "--ext-diff" or word.startswith("--output") for word in arguments):
+        return False
+    if operation == "ls-remote":
+        flags, _ = _git_option_flags(arguments, {"-o", "--server-option", "--sort"}, set())
+        if any(
+            flag.startswith("--")
+            and any(option.startswith(flag) for option in ("--upload-pack", "--exec"))
+            for flag in flags
+        ):
+            return False
+    if operation == "grep":
+        flags, _ = _git_option_flags(
+            arguments,
+            {"-e", "-f", "-A", "-B", "-C", "-m", "--max-count", "--threads", "--max-depth"},
+            set(),
+        )
+        if "-O" in flags or any(
+            flag.startswith("--") and "--open-files-in-pager".startswith(flag) for flag in flags
+        ):
+            return False
+    if operation in {"branch", "tag"}:
+        return not arguments or all(
+            word in {"--list", "--show-current", "--all", "--remotes", "-a", "-r", "-v", "-vv"}
+            for word in arguments
+        )
+    return operation in {
+        "annotate",
+        "blame",
+        "cat-file",
+        "check-attr",
+        "check-ignore",
+        "check-mailmap",
+        "count-objects",
+        "describe",
+        "diff",
+        "diff-files",
+        "diff-index",
+        "diff-tree",
+        "for-each-ref",
+        "grep",
+        "log",
+        "ls-files",
+        "ls-remote",
+        "ls-tree",
+        "merge-base",
+        "name-rev",
+        "rev-list",
+        "rev-parse",
+        "show",
+        "show-branch",
+        "show-ref",
+        "status",
+    }
+
+
 def classify_git_mutation(
     parts: list[str], cwd: str | None, base_cwd: Path | None
 ) -> _ShellSegmentMetadata | None:

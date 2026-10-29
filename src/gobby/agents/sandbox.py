@@ -280,6 +280,7 @@ async def compute_sandbox_paths(
         canonical_paths,
         credential_env_vars,
         credential_read_roots,
+        darwin_toolchain_write_paths,
         default_write_paths,
         deny_paths,
         gcode_runtime_write_exceptions,
@@ -314,6 +315,7 @@ async def compute_sandbox_paths(
     write_paths = canonical_paths(
         [
             *default_write_paths(config, workspace),
+            *darwin_toolchain_write_paths(),
             *git_paths,
             *gcode_runtime_write_exceptions(workspace),
             *(provider_write_exceptions(provider) if provider else []),

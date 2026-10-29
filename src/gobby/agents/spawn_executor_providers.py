@@ -26,7 +26,6 @@ from gobby.agents.constants import (
     MCP_TIMEOUT_VALUE,
 )
 from gobby.agents.isolation_code_index import ensure_isolation_code_index
-from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.sandbox_policy import canonical_path
 from gobby.agents.sandbox_resolvers import get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn, build_cli_command
@@ -152,23 +151,18 @@ def _agent_prompt_prefix(request: SpawnRequest) -> str:
     )
 
 
-def ensure_sandbox_write_directories(
-    config: SandboxConfig, workspace: str, project_path: str | None
-) -> None:
+def ensure_sandbox_write_directories(declared_paths: list[str], workspace: str) -> list[str]:
     """Create declared directory grants before cache paths enrich the policy."""
-    from gobby.utils.project_context import get_project_sandbox_config
-
-    declared_paths = list(config.extra_write_paths)
-    if project_path is not None:
-        project_config = get_project_sandbox_config(Path(project_path))
-        if project_config is not None:
-            declared_paths.extend(project_config.extra_write_paths)
+    directories: list[str] = []
     for raw_path in declared_paths:
         if has_magic(raw_path):
             continue
         path = Path(canonical_path(raw_path, base=Path(workspace)))
         if not path.exists():
             path.mkdir(parents=True, exist_ok=True)
+        if path.is_dir() and str(path) not in directories:
+            directories.append(str(path))
+    return directories
 
 
 async def _prepare_provider_sandbox(
@@ -178,7 +172,15 @@ async def _prepare_provider_sandbox(
     env: dict[str, str],
 ) -> SandboxLaunch | SpawnResult:
     try:
+        from gobby.utils.project_context import get_project_sandbox_config
+
         sandbox_config = request.sandbox_config
+        project_root = Path(request.project_path).resolve() if request.project_path else None
+        project_config = (
+            await asyncio.to_thread(get_project_sandbox_config, project_root)
+            if project_root is not None
+            else None
+        )
         if (
             sandbox_config is not None
             and sandbox_config.enabled
@@ -192,7 +194,6 @@ async def _prepare_provider_sandbox(
                 MissingMachineContextError,
                 require_root,
             )
-            from gobby.utils.project_context import get_project_sandbox_config
 
             try:
                 main_path = await asyncio.to_thread(
@@ -209,7 +210,11 @@ async def _prepare_provider_sandbox(
                 logger.debug("No primary checkout for optional nextest store grant", exc_info=True)
             else:
                 main_root = Path(main_path).resolve()
-                main_config = await asyncio.to_thread(get_project_sandbox_config, main_root)
+                main_config = (
+                    project_config
+                    if main_root == project_root
+                    else await asyncio.to_thread(get_project_sandbox_config, main_root)
+                )
                 # Sandboxed seats may validate the main manifest from their worktree.
                 # Admit only the main checkout's explicitly declared nextest store.
                 nextest_store = str(main_root / ".nextest")
@@ -238,17 +243,22 @@ async def _prepare_provider_sandbox(
                 request.agent_name,
             )
         if sandbox_config is not None and sandbox_config.enabled:
-            await asyncio.to_thread(
+            declared_paths = [
+                *sandbox_config.extra_write_paths,
+                *(project_config.extra_write_paths if project_config is not None else []),
+            ]
+            directories = await asyncio.to_thread(
                 ensure_sandbox_write_directories,
-                sandbox_config,
+                declared_paths,
                 request.cwd,
-                request.project_path,
             )
+            if request.resume_metadata_json is not None:
+                request.resume_metadata_json["sandbox_directory_write_paths"] = directories
         config = _sandbox_config_for_spawn(
             sandbox_config,
             env,
             agent_name=request.agent_name,
-            project_path=request.project_path,
+            project_config=project_config,
             resume_metadata_json=request.resume_metadata_json,
         )
         if config is None:

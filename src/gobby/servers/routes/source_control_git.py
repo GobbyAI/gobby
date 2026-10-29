@@ -24,6 +24,7 @@ from gobby.storage.workspace_machine_scope import (
     require_local_machine_id,
 )
 from gobby.utils.daemon_git import GitTimeout, daemon_git
+from gobby.utils.git import git_subprocess_env
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -71,7 +72,9 @@ async def _run_git(
     args: list[str], cwd: str, timeout: int = 10
 ) -> subprocess.CompletedProcess[str]:
     """Run a git command and return result (non-blocking)."""
-    result = await daemon_git.run(args, cwd=cwd, timeout=timeout)
+    # Status parses Git's diagnostics and upstream tracking text as a protocol.
+    env = {**(git_subprocess_env() or os.environ), "LC_ALL": "C"}
+    result = await daemon_git.run(args, cwd=cwd, timeout=timeout, env=env)
     if isinstance(result, GitTimeout):
         raise subprocess.TimeoutExpired(
             result.argv, result.timeout, output=result.stdout, stderr=result.stderr

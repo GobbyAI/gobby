@@ -73,6 +73,7 @@ from gobby.mcp_proxy.wait_tools import (
     call_with_wait_heartbeat,
     prepare_client_guard,
 )
+from gobby.utils.daemon_url import load_client_bootstrap
 
 logger = logging.getLogger("gobby.mcp.stdio")
 
@@ -168,7 +169,7 @@ def create_stdio_mcp_server(
 
 def _daemon_dependencies() -> DaemonStartupDependencies:
     return DaemonStartupDependencies(
-        bootstrap=load_bootstrap(resolve_database_url=False),
+        bootstrap=load_client_bootstrap(lambda: load_bootstrap(resolve_database_url=False)),
         is_daemon_running=is_daemon_running,
         check_daemon_http_health=check_daemon_http_health,
         start_daemon_process=start_daemon_process,

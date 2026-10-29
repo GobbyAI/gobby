@@ -50,6 +50,10 @@ _SESSION_ID = "node-srt-session"
 _DAEMON_PORT = 60887
 _WEBSOCKET_PORT = 60888
 _PROVIDERS = ("claude", "codex", "grok", "droid", "agy")
+_DARWIN_WRITE_PATHS = (
+    "{darwin_temp}/xcrun_db-*",
+    "{darwin_cache}/com.apple.DeveloperTools",
+)
 # The seat whose agent workspace folders the spawn grants (#25148): its own
 # ``<definition>/session-<seq>/`` and its team's ``epics/epic-<seq>/`` folder.
 _WORKSPACE_CASE = "claude-agent-workspace"
@@ -241,6 +245,8 @@ def _layout(case_dir: Path) -> dict[str, str]:
         "main": root / "main",
         "bin": root / "bin",
         "tmp": root / "tmp",
+        "darwin_temp": root / "darwin-temp",
+        "darwin_cache": root / "darwin-cache",
     }
     named = {name: str(path) for name, path in layout.items()}
     named["run_root"] = str(root / "gobby-home" / "run" / "sandbox" / _RUN_ID)
@@ -356,7 +362,7 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
 
     env["CARGO_TARGET_DIR"] = ensure_agent_cargo_target_dir(workspace, str(inputs["project_id"]))
     spawned = sandbox_config_for_spawn(
-        config, env, agent_name=None, project_path=str(main), resume_metadata_json=None
+        config, env, agent_name=None, project_config=main_config, resume_metadata_json=None
     )
     assert spawned is not None
 
@@ -404,6 +410,9 @@ def _evaluate(
     _materialize(inputs, layout)
     _pin_environment(monkeypatch, inputs["env"])
     monkeypatch.setattr(tempfile, "tempdir", layout["tmp"])
+    monkeypatch.setattr(
+        os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
+    )
     _pin_checkout(layout)
     settings, env = _run_chain(inputs)
     return settings, env, layout
@@ -417,12 +426,27 @@ def _refusal(
     _materialize(inputs, layout)
     _pin_environment(monkeypatch, inputs["env"])
     monkeypatch.setattr(tempfile, "tempdir", layout["tmp"])
+    monkeypatch.setattr(
+        os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
+    )
     _pin_checkout(layout)
     try:
         _run_chain(inputs)
     except ValueError as exc:
         return str(exc), layout
     pytest.fail(f"{template['name']}: the oracle accepted a grant it must refuse")
+
+
+def _portable_settings(settings: str, layout: dict[str, str]) -> str:
+    """Check host-specific grants separately, retaining the complete common policy."""
+    document: dict[str, Any] = json.loads(settings)
+    for key in ("allowRead", "allowWrite"):
+        paths: list[str] = document["filesystem"][key]
+        for grant in _fill(list(_DARWIN_WRITE_PATHS), layout):
+            assert paths.count(grant) == int(sys.platform == "darwin"), (key, grant)
+            if sys.platform == "darwin":
+                paths.remove(grant)
+    return json.dumps(document, sort_keys=True, separators=(",", ":"))
 
 
 def _encode_settings(settings: str, table: list[str]) -> dict[str, Any]:
@@ -470,7 +494,9 @@ def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 "platform": template["platform"],
                 "inputs": template["inputs"],
                 "expected": {
-                    "settings": _encode_settings(_placeholderize(settings, layout), table),
+                    "settings": _encode_settings(
+                        _placeholderize(_portable_settings(settings, layout), layout), table
+                    ),
                     "env": {key: _placeholderize(value, layout) for key, value in env.items()},
                 },
             }
@@ -487,6 +513,7 @@ def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "recorded_on": sys.platform,
         "path_digests": _digest_table(tmp_path / "record" / "fixture", monkeypatch),
         "deny_write_table": table,
+        "platform_write_paths": {"darwin": list(_DARWIN_WRITE_PATHS)},
         "cases": cases,
         "refusals": refusals,
     }
@@ -506,10 +533,15 @@ def _load_corpus() -> dict[str, Any]:
     return corpus
 
 
-def test_corpus_matches_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_corpus_matches_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str
+) -> None:
     if os.environ.get(_RECORD_ENV) == "1":
         _record(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "platform", platform)
     corpus = _load_corpus()
+    assert corpus["platform_write_paths"] == {"darwin": list(_DARWIN_WRITE_PATHS)}
 
     mismatches: list[str] = []
     digests = _digest_table(tmp_path / "check" / "fixture", monkeypatch)
@@ -519,6 +551,7 @@ def test_corpus_matches_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         if case["platform"] not in (None, sys.platform):
             continue
         settings, env, layout = _evaluate(case, tmp_path / "check" / case["name"], monkeypatch)
+        settings = _portable_settings(settings, layout)
         # Compare filled-in paths. Placeholder text would differ by host, since the
         # two SRT socket spellings are equal wherever /tmp is not a symlink.
         table = _fill(corpus["deny_write_table"], layout)
