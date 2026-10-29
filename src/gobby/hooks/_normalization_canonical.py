@@ -673,6 +673,8 @@ def _classify_shell_segment_impl(
             extra["canonical_script_execution"] = True
         base_paths = list(base_metadata.paths)
         base_write_paths = list(base_metadata.write_paths)
+        if extra.get("_canonical_patch_input_paths"):
+            extra["_canonical_repo_mutation_scope_unknown"] = True
         return _ShellSegmentMetadata(
             "write",
             paths=tuple(

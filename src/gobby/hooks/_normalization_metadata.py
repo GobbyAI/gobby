@@ -207,7 +207,7 @@ def _merge_code_navigation_extra(metadata: list[_ShellSegmentMetadata]) -> dict[
 def _gate_rewritable_scripts(
     metadata: list[_ShellSegmentMetadata],
 ) -> list[_ShellSegmentMetadata]:
-    """Make classified script bodies opaque when another segment of the command writes.
+    """Invalidate file-backed evidence when another segment of the command writes.
 
     A body is classified as it reads now. Any other write in the command, before it,
     beside it in a pipeline or on a later loop pass, may rewrite it first.
@@ -215,14 +215,17 @@ def _gate_rewritable_scripts(
     writes = [
         item.kind == "write" or item.repo_mutation or bool(item.write_paths) for item in metadata
     ]
-    return [
-        replace(item, extra={**item.extra, "canonical_script_execution": True})
-        if item.extra
-        and item.extra.get("canonical_script_bodies")
-        and any(write for other, write in enumerate(writes) if other != index)
-        else item
-        for index, item in enumerate(metadata)
-    ]
+    result: list[_ShellSegmentMetadata] = []
+    for index, item in enumerate(metadata):
+        if item.extra and any(write for other, write in enumerate(writes) if other != index):
+            extra = dict(item.extra)
+            if extra.get("canonical_script_bodies"):
+                extra["canonical_script_execution"] = True
+            if extra.get("_canonical_patch_input_paths"):
+                extra["_canonical_repo_mutation_scope_unknown"] = True
+            item = replace(item, extra=extra)
+        result.append(item)
+    return result
 
 
 def _path_is_unresolved(path: str, root: str | None) -> bool:

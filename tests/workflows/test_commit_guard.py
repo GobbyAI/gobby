@@ -2765,6 +2765,38 @@ async def test_same_relative_path_commits_from_separate_worktrees(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("sidecar", ["original.orig", "original.rej", "original.rej.~1~"])
+async def test_literal_patch_refuses_foreign_owned_sidecars(
+    guard_harness: GuardHarness, sidecar: str
+) -> None:
+    h = guard_harness
+    (h.repo / "source").mkdir()
+    (h.repo / "source/original").write_text("before\n", encoding="utf-8")
+    relative = f"source/{sidecar}"
+    (h.repo / relative).write_text("foreign sidecar\n", encoding="utf-8")
+    (h.repo / "change.patch").write_text(
+        "--- original\n+++ original\n@@ -1 +1 @@\n-before\n+after\n", encoding="utf-8"
+    )
+    SessionVariableManager(h.db).merge_variables(
+        h.foreign_session.id,
+        {
+            "session_dirty_files": [relative],
+            "session_dirty_file_checkouts": {str(h.repo): [relative]},
+            "task_edited_files": {h.foreign_task.id: [relative]},
+            "task_edited_file_checkouts": {h.foreign_task.id: {str(h.repo): [relative]}},
+        },
+    )
+
+    response = await h.handler._evaluate_rules(
+        h.event("patch -g0 -z.orig -V numbered source/original change.patch")
+    )
+
+    assert response.decision == "block"
+    assert relative in (response.reason or "")
+    assert h.foreign_session.ref in (response.reason or "")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("definition_name", ["orchestrator", "fixture-controller"])
 @pytest.mark.parametrize("exempt", [False, True])
 async def test_definition_exemption_controls_actual_foreign_staged_commit(

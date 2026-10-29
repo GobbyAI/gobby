@@ -16,6 +16,7 @@ from gobby.hooks._normalization_operands import (
     _search_command_paths,
     _shell_positional_args_after,
 )
+from gobby.hooks._normalization_patch import classify_patch
 from gobby.hooks._normalization_sed import classify_sed_segment
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import (
@@ -62,9 +63,7 @@ def classify_base_command(
             return git_metadata
 
     if cmd == "patch":
-        if "--dry-run" in parts[1:]:
-            return _ShellSegmentMetadata("execute")
-        return _ShellSegmentMetadata("write", repo_mutation=True)
+        return classify_patch(parts, cwd, base_cwd)
 
     interpreter_parts = _inline_interpreter_parts(parts)
     if interpreter_parts:
