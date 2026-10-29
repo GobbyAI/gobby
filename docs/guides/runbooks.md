@@ -90,6 +90,8 @@ sequenceDiagram
   participant CR as Code Reviewer
   TW->>TW: claim the task
   TW->>DM: failing tests committed
+  DM->>CR: review the exact test SHA
+  CR->>DM: test review verdict
   DM->>Dev: hand off the claim
   Dev->>CR: CANDIDATE with the exact SHA
   Dev->>DM: CANDIDATE
@@ -122,7 +124,11 @@ another reviewer.
 
 A team bound to an epic runs in epic mode. Its binding is an epic with open non-epic descendants, and each leaf is one of those descendants at any depth. The team's tree is `wt-epic-<seq>-<slug>` on branch `epic/<seq>/main`. Each sub-worktree leaf works on `epic/<seq>/<leaf-seq>` in `wt-epic-<seq>-<leaf-seq>-<slug>`, cut from epic main. The Dev Manager never claims the epic: it lands and closes the epic, and `land_commit` refuses a session that ever claimed the task. Each seat takes the claim on its leaves, and each seat's spawn is scoped by its step grant.
 
-Launch the runbook with `task` set to the epic and `reviewer_agent` set to the precedence winner over the leaves' approvals. The Dev Manager's epic phases are in its procedure reference. In epic mode no reviewer fixes a leaf: a leaf that exhausts its review rounds escalates, and the epic escalates once.
+Launch the runbook with `task` set to the epic and `reviewer_agent` set to the precedence winner over the leaves' approvals. The four primary seats persist until the epic closes. Serial leaves use those seats; each parallel leaf gets a Dev Pod, launched by the epic's bound Dev Manager with `run_pipeline(name="devteam", inputs={task: <leaf>, parent_team_id: <epic team UUID>, workspace: <workspace>, report_to: <Dev Manager>, reviewer_agent: <reviewer>})`.
+
+A pod is a single-task team with its own Test Writer, Developer and Code Reviewer in a sub-worktree, sharing the epic's Dev Manager. It opens `Dev Pod - #<leaf>` and follows the same test review, implementation review and rejection rounds as a single task. Rejection two transfers the fix to the reviewer and launches a fresh reviewer; rejection three escalates. Primary epic leaves follow those rounds too. A replacement joins the leaf's pod with its own `team_id`; passing the epic's ID would join the primary team instead.
+
+The Dev Manager lands each approved leaf on the epic branch and closes it immediately. Closing a pod leaf ends its triplet and deletes its worktree using the epic branch as the merge target; primary seats continue. The epic tip is reviewed and landed on the integration branch, and closing the completed epic ends the primary team. Single-task teams cannot launch pods.
 
 ## Launch planning
 

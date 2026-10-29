@@ -60,17 +60,14 @@ def bundled_content_refusal(runner: GobbyRunner) -> str | None:
 
 
 def run_startup_content_sync(runner: GobbyRunner) -> None:
-    """Sync bundled content in dev mode, then migrate rule delivery dispositions.
-
-    Non-dev startup skips the aggregator and user-template import. The narrow
-    disposition migration always runs before hook service starts.
-    """
+    """Sync installed workflow files before migrating rule delivery dispositions."""
     from gobby.sync_registry import (
         migrate_rule_delivery_dispositions,
         sync_bundled_content_to_db,
     )
     from gobby.utils.dev import is_dev_mode
     from gobby.workflows.delivery_disposition import RuleDispositionMigrationError
+    from gobby.workflows.imports import sync_imported_workflows
 
     runner._dev_mode = is_dev_mode(Path.cwd())
     if runner._dev_mode:
@@ -78,6 +75,10 @@ def run_startup_content_sync(runner: GobbyRunner) -> None:
         total = sync_result["total_synced"]
         if total > 0:
             logger.info("Dev mode: synced %s bundled items on startup", total)
+
+    # Files landed in registered main checkouts become active on restart in
+    # both dev and installed mode. The importer logs and skips malformed files.
+    sync_imported_workflows(runner.database)
 
     result = migrate_rule_delivery_dispositions(runner.database)
     if not result.get("success"):

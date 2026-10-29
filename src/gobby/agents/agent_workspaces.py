@@ -686,11 +686,13 @@ def _epic_folder(db: HubDatabase, binding: TeamBinding) -> Path | None:
 
 def _seat_epic_folder(db: HubDatabase, session_id: str) -> Path | None:
     """The epic folder of a seat run of a live epic team; None outside one."""
-    from gobby.agents.team_lifecycle import seat_team
+    from gobby.agents.team_lifecycle import seat_team, team_binding
     from gobby.agents.team_scope import live_teams
     from gobby.storage.team_records import EPIC_MODE
 
     binding = seat_team(db, session_id)
+    if binding is not None and binding.parent_team_id:
+        binding = team_binding(db, binding.parent_team_id)
     if binding is None or binding.mode != EPIC_MODE:
         return None
     live = live_teams(db, [binding.task_id]).get(binding.task_id)

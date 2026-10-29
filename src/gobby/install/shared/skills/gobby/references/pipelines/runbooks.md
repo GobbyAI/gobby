@@ -49,6 +49,20 @@ line reaches the Orchestrator through Triage. Relaunch with `team_id=<TEAM>`,
 `report_to=<Dev Manager ref>`; only a fresh code reviewer launches, under the
 `fresh_reviewer_*` identity.
 
+For an epic, the four primary seats persist until the epic closes. Its bound Dev
+Manager may launch `devteam` for an open parallel leaf with
+`parent_team_id=<epic team UUID>` and `report_to=<Dev Manager ref>`. This creates a
+single-task Dev Pod with its own Test Writer, Developer and Code Reviewer on a
+sub-branch of epic main, in `Dev Pod - #<leaf>`. Do not pass the epic as `team_id`:
+that joins the primary team instead. Single-task teams cannot launch pods.
+
+Every leaf follows Dev Manager, Test Writer, Code Reviewer, Developer, Code
+Reviewer, Dev Manager, using the existing single-task review rounds. A pod's
+fresh reviewer joins its own `team_id`; a primary leaf's joins the epic team.
+The Dev Manager lands a leaf on epic main and closes it immediately. The daemon
+ends that pod's seats and removes its worktree; the epic's primary seats persist.
+The epic tip lands on the integration branch before the epic itself closes.
+
 ## Planning
 
 The Orchestrator launches `team-planning` with `task` and `report_to=<Triage ref>`; it opens
