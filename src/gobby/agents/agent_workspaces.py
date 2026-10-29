@@ -194,11 +194,15 @@ async def _git(
     )
     if isinstance(result, GitOk):
         return result
+    failure = f"git {args[0]} failed for {project_id}: {result}"
     if isinstance(result, GitTimeout) and args[0] in {"add", "commit", "rm"} and not had_index_lock:
         # The timed-out Git worker has killed its process group. Only consider a
         # lock created during our write, and preserve it if any holder remains.
-        _recover_index_lock(project_id, minimum_age=0)
-    raise WorkspaceGitError(f"git {args[0]} failed for {project_id}: {result}")
+        try:
+            _recover_index_lock(project_id, minimum_age=0)
+        except WorkspaceGitError as exc:
+            raise WorkspaceGitError(f"{failure}; index.lock cleanup failed: {exc}") from exc
+    raise WorkspaceGitError(failure)
 
 
 def _recover_index_lock(
@@ -222,11 +226,6 @@ def _recover_index_lock(
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise WorkspaceGitError(f"Cannot inspect workspace index.lock with lsof: {exc}") from exc
-    if holders.returncode not in {0, 1} or holders.stderr.strip():
-        detail = holders.stderr.strip() or f"lsof exited {holders.returncode}"
-        raise WorkspaceGitError(f"Cannot inspect workspace index.lock: {detail}")
-    if holders.returncode != 1 or holders.stdout.strip():
-        return False
     try:
         after = lock.lstat()
         if (before.st_dev, before.st_ino, before.st_mtime_ns) != (
@@ -235,6 +234,14 @@ def _recover_index_lock(
             after.st_mtime_ns,
         ):
             return False
+    except FileNotFoundError:
+        return True
+    if holders.returncode not in {0, 1} or holders.stderr.strip():
+        detail = holders.stderr.strip() or f"lsof exited {holders.returncode}"
+        raise WorkspaceGitError(f"Cannot inspect workspace index.lock: {detail}")
+    if holders.returncode != 1 or holders.stdout.strip():
+        return False
+    try:
         lock.unlink()
     except FileNotFoundError:
         return True

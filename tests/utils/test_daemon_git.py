@@ -508,6 +508,44 @@ async def test_timeout_kills_process_group_and_reaps_leader(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failed", [False, True])
+async def test_completed_git_keeps_result_when_loop_resumes_after_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, failed: bool
+) -> None:
+    _write_fake_git(tmp_path)
+    finished = threading.Event()
+    mark_finished = daemon_git._ProcessControl.mark_finished
+
+    def record_finished(control: daemon_git._ProcessControl) -> None:
+        mark_finished(control)
+        finished.set()
+
+    monkeypatch.setattr(daemon_git._ProcessControl, "mark_finished", record_finished)
+    task = asyncio.create_task(
+        DaemonGitService().run(
+            ["status"],
+            cwd=tmp_path,
+            timeout=1.0,
+            env=_git_env(tmp_path, GIT_TEST_FAIL="1" if failed else ""),
+        )
+    )
+    await asyncio.sleep(0)
+    # The worker finishes on time while its result delivery is blocked on this loop.
+    assert finished.wait(timeout=0.8)
+    threading.Event().wait(timeout=1.1)
+    result = await task
+
+    if failed:
+        assert isinstance(result, GitFailed)
+        assert result.returncode == 7
+        assert result.stderr == "failed\n"
+    else:
+        assert isinstance(result, GitOk)
+    assert result.stdout == "status"
+    assert "Git command timed out" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_timeout_warning_reports_loop_stall_overrun(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
