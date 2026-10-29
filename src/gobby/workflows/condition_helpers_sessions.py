@@ -19,6 +19,7 @@ from gobby.workflows.agent_resolver import (
     resolve_agent,
     resolve_agent_with_row,
 )
+from gobby.workflows.condition_helpers_paths import _workspace_contains
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -478,6 +479,21 @@ def _shell_path_words(command: Any) -> list[str]:
     return words
 
 
+_READ_PATTERN = re.compile(r"[*?\[{]")
+
+
+def _resolve_read_target(raw: Any, base: Path | None) -> Path | None:
+    """Resolve the literal prefix without collapsing traversal after an expansion."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    parts = Path(os.path.expandvars(os.path.expanduser(raw))).parts
+    for index, part in enumerate(parts):
+        if _READ_PATTERN.search(part):
+            prefix = resolve_tool_path(str(Path(*parts[:index])), base)
+            return prefix.joinpath(*parts[index:]) if prefix is not None else None
+    return resolve_tool_path(raw, base)
+
+
 def _workspace_read_targets(event_data: Mapping[str, Any] | None, tool_input: Any) -> list[Path]:
     """Resolved paths a tool reads: path-like Bash words, or the path fields of a file tool."""
     if not isinstance(tool_input, Mapping):
@@ -489,9 +505,42 @@ def _workspace_read_targets(event_data: Mapping[str, Any] | None, tool_input: An
         raws = list(_shell_path_words(tool_input.get("command")))
     else:
         raws = [tool_input.get("file_path"), tool_input.get("path")]
-        if data.get("tool_name") == "Glob":
-            raws.append(tool_input.get("pattern"))
-    return [path for raw in raws if (path := resolve_tool_path(raw, base)) is not None]
+    paths = [path for raw in raws if (path := _resolve_read_target(raw, base)) is not None]
+    if data.get("tool_name") == "Glob":
+        pattern_base = resolve_tool_path(tool_input.get("path"), base) or base
+        pattern = _resolve_read_target(tool_input.get("pattern"), pattern_base)
+        if pattern is not None:
+            paths.append(pattern)
+    return paths
+
+
+def _workspace_read_boundary(target: Path, root: Path) -> Path | None:
+    """Require a literal authorized folder before patterns; never enumerate the fleet.
+
+    An expansion above the workspace can reach other seats, so judge the root itself.
+    A pattern below a proven folder stays in that folder unless it traverses upward.
+    """
+    for index, part in enumerate(target.parts):
+        match = _READ_PATTERN.search(part)
+        if match is None:
+            continue
+        prefix = Path(*target.parts[:index])
+        within = _workspace_contains(prefix, root)
+        if within is None:
+            return root
+        if within:
+            target = root if ".." in target.parts[index:] else prefix
+            break
+        ancestor = _workspace_contains(root, prefix)
+        if ancestor is None:
+            return root
+        if ancestor and root.parts[index].casefold().startswith(part[: match.start()].casefold()):
+            return root
+        return None
+    within = _workspace_contains(target, root)
+    if within is None:
+        return root
+    return root.joinpath(*target.parts[len(root.parts) :]) if within else None
 
 
 def _variable_folder(value: Any) -> Path | None:
@@ -523,16 +572,22 @@ def _workspace_path_readable(
     from gobby.agents.agent_workspaces import predecessor_folder_readable
 
     own, epic, anchor = folders
-    if any(folder is not None and target.is_relative_to(folder) for folder in (own, epic)):
+    if any(
+        folder is not None and _workspace_contains(target, folder) is True for folder in (own, epic)
+    ):
         return True
-    if anchor is None or not target.is_relative_to(anchor):
+    if anchor is None or _workspace_contains(target, anchor) is not True:
         return False
-    if target == anchor / "README.md":
+    relative = target.parts[len(anchor.parts) :]
+    if len(relative) == 1 and _workspace_contains(target, anchor / "README.md") is True:
         return True
-    relative = target.relative_to(anchor)
-    if len(relative.parts) < 2 or not caller_id or session_manager is None:
+    if len(relative) < 2 or not caller_id or session_manager is None:
         return False
-    folder = anchor / relative.parts[0] / relative.parts[1]
+    folder = anchor / relative[0] / relative[1]
+    if own is not None:
+        canonical = own.parent / relative[1].casefold()
+        if _workspace_contains(folder, canonical) is True:
+            folder = canonical
     return predecessor_folder_readable(session_manager, caller_id, str(folder))
 
 
@@ -559,8 +614,9 @@ def agent_workspace_read_violation(
         return False
     targets = [
         target
-        for target in _workspace_read_targets(event_data, tool_input)
-        if target.is_relative_to(root) and not _placeholder_folder(target, root)
+        for raw in _workspace_read_targets(event_data, tool_input)
+        if (target := _workspace_read_boundary(raw, root)) is not None
+        and not _placeholder_folder(target, root)
     ]
     if not targets:
         return False
