@@ -10,6 +10,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.hooks._normalization_shell import scan_shell_command
 from gobby.hooks._path_scope import current_project_root, current_tool_cwd, resolve_tool_path
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -458,6 +459,73 @@ def _path_words(tokens: list[str]) -> list[str]:
     ]
 
 
+def _mask_regex_operands(command: str) -> str:
+    """Mask literal grep/rg regexes and non-executing sed substitutions, keeping paths."""
+    scan = scan_shell_command(command)
+    head = ""
+    seen = False
+    expression = False
+    value = False
+    options = True
+    masked = list(command)
+    for token, (start, end) in zip(scan.tokens, scan.spans, strict=True):
+        word = token.value
+        if not token.quoted and word in {"|", "||", "&&", ";", "&", "\n"}:
+            head, seen, expression, value, options = "", False, False, False, True
+            continue
+        if not head:
+            head = os.path.basename(word)
+            continue
+        if head not in {"grep", "egrep", "fgrep", "rg", "sed"}:
+            continue
+        if value:
+            value = False
+            continue
+        if options and not expression and word == "--":
+            options = False
+            continue
+        if options and not expression and word in {"-e", "--regexp", "--expression"}:
+            expression = True
+            continue
+        if (
+            options
+            and not expression
+            and word in {"-f", "--file", "-g", "--glob", "-A", "-B", "-C", "-m"}
+        ):
+            value = True
+            seen = seen or word in {"-f", "--file"}
+            continue
+        if options and not expression and word.startswith("-") and word != "-":
+            # Unknown or attached options may already supply the pattern. Never
+            # mistake the next file for regex data (e.g. -efoo, -nefoo, --file=x).
+            if not re.fullmatch(r"-[EFGINPRUabcHhIiLlnoqrsSVvwxz0-9]+", word):
+                seen = True
+            continue
+        pattern = expression or not seen
+        seen, expression = True, False
+        raw = command[start:end]
+        literal = len(raw) >= 2 and (
+            (raw[0] == raw[-1] == "'" and "'" not in raw[1:-1])
+            or (raw[0] == raw[-1] == '"' and not any(c in raw[1:-1] for c in '$`"'))
+        )
+        if head == "sed":
+            delimiter = re.escape(word[1:2])
+            pattern = (
+                pattern
+                and bool(delimiter)
+                and bool(
+                    re.fullmatch(
+                        rf"s{delimiter}(?:\\.|[^{delimiter}])*{delimiter}"
+                        rf"(?:\\.|[^{delimiter}])*{delimiter}[gIp0-9]*",
+                        word,
+                    )
+                )
+            )
+        if pattern and literal:
+            masked[start:end] = " " * (end - start)
+    return "".join(masked)
+
+
 def _shell_path_words(command: Any) -> list[str]:
     """Shell words that look like paths: operators split outside quotes, env vars expanded.
 
@@ -467,6 +535,7 @@ def _shell_path_words(command: Any) -> list[str]:
     if not isinstance(command, str):
         return []
     text, bodies = _split_heredoc_bodies(command)
+    text = _mask_regex_operands(text)
     try:
         tokens = _shell_tokens(text)
     except ValueError:
@@ -576,6 +645,22 @@ def _resolve_read_target(raw: Any, base: Path | None) -> tuple[Path, int | None]
     return (literal, None) if literal is not None else None
 
 
+def _shell_dot_read_words(word: str, pattern: str) -> list[str] | None:
+    """Include shell dot/parent matches without enumerating filesystem entries."""
+    originals = Path(word).parts
+    variants = [Path(pattern).parts]
+    for index, part in enumerate(originals):
+        if not (part.startswith(".") or re.search(r"[|(]\.", part)):
+            continue
+        for name in (".", ".."):
+            if part == name or not _read_pattern_matches(name, variants[0][index]):
+                continue
+            variants.extend(parts[:index] + (name,) + parts[index + 1 :] for parts in variants[:])
+            if len(variants) > _READ_EXPANSION_LIMIT:
+                return None
+    return [os.path.join(*parts) for parts in variants]
+
+
 def _workspace_read_targets(
     event_data: Mapping[str, Any] | None, tool_input: Any
 ) -> list[tuple[Path, int | None]] | None:
@@ -610,17 +695,49 @@ def _workspace_read_targets(
             pattern = _extglob_read_word(word)
             if pattern is None:
                 return None
-            if (path := _resolve_read_target(pattern, directory)) is not None:
-                paths.append(path)
+            patterns = (
+                _shell_dot_read_words(word, pattern)
+                if data.get("tool_name") == "Bash"
+                else [pattern]
+            )
+            if patterns is None:
+                return None
+            for item in patterns:
+                if (path := _resolve_read_target(item, directory)) is not None:
+                    paths.append(path)
     return list(dict.fromkeys(paths))
+
+
+def _read_pattern_matches(name: str, pattern: str) -> bool:
+    """Conservatively include shell bracket classes and Unicode/case variants."""
+    pattern = re.sub(r"\[.*\]", "*", pattern)
+    return fnmatchcase(name, pattern) or fnmatchcase(name.casefold(), pattern.casefold())
+
+
+def _pattern_reaches_root(parts: tuple[str, ...], root_parts: tuple[str, ...]) -> bool:
+    """Whether a pattern has enough matching components to enter the workspace root."""
+    pending = [(0, 0)]
+    visited: set[tuple[int, int]] = set()
+    while pending:
+        index, depth = pending.pop()
+        if depth == len(root_parts):
+            return True
+        if index == len(parts) or (index, depth) in visited:
+            continue
+        visited.add((index, depth))
+        if parts[index] == "**":
+            pending.extend(((index + 1, depth), (index, depth + 1)))
+        elif _read_pattern_matches(root_parts[depth], parts[index]):
+            pending.append((index + 1, depth + 1))
+    return False
 
 
 def _workspace_read_boundary(target: Path, root: Path, start: int) -> Path | None:
     """Require a literal authorized folder before patterns; never enumerate the fleet.
 
     An expansion above the workspace can reach other seats, so judge the root itself.
-    Fold lexical parents for the boundary check only. The filesystem walker still
-    resolves every original component, so symlink traversal is checked separately.
+    Fold lexical parents and resolve the literal prefix. Symlinks selected by a
+    wildcard require kernel enforcement; #25307 tracks that pending policy decision.
     """
     parts: list[tuple[str, bool]] = []
     for index, part in enumerate(target.parts):
@@ -645,80 +762,13 @@ def _workspace_read_boundary(target: Path, root: Path, start: int) -> Path | Non
         ancestor = _workspace_contains(root, prefix)
         if ancestor is None:
             return root
-        if ancestor and root.parts[index].casefold().startswith(part[: match.start()].casefold()):
+        if ancestor and _pattern_reaches_root(target.parts[index:], root.parts[index:]):
             return root
         return None
     within = _workspace_contains(target, root)
     if within is None:
         return root
     return root.joinpath(*target.parts[len(root.parts) :]) if within else None
-
-
-_WORKSPACE_GLOB_BUDGET = 8192
-_WORKSPACE_GLOB_MAX_DEPTH = 64
-
-
-def _workspace_glob_readable(
-    target: Path, start: int, readable: Callable[[Path], bool], *, shell: bool
-) -> bool:
-    """Check resolved expansion targets before entering directories, with bounded work."""
-    parts = target.parts[start:]
-    pending = [(Path(*target.parts[:start]), 0, 0)]
-    visited: set[tuple[Path, int]] = set()
-    budget = _WORKSPACE_GLOB_BUDGET
-    while pending:
-        path, index, depth = pending.pop()
-        # Charge both states (including final matches) and every directory entry.
-        budget -= 1
-        if budget < 0 or depth > _WORKSPACE_GLOB_MAX_DEPTH:
-            return False
-        try:
-            resolved = path.resolve(strict=True)
-            if not readable(resolved):
-                return False
-            state = (resolved, index)
-            if state in visited:
-                continue
-            visited.add(state)
-            if index == len(parts):
-                continue
-            part = parts[index]
-            recursive = part == "**"
-            if recursive:
-                pending.append((resolved, index + 1, depth))
-            elif not _READ_PATTERN.search(part):
-                pending.append((resolved / part, index + 1, depth + 1))
-                continue
-            if shell and part.startswith("."):
-                # Bash can match virtual '.'/'..' entries with explicit-dot
-                # patterns; scandir omits them. Greedily widen bracket groups
-                # so negated/POSIX classes cannot skip a possible parent match.
-                dot_pattern = re.sub(r"\[.*\]", "*", part)
-                for name in (".", ".."):
-                    if fnmatchcase(name, dot_pattern):
-                        pending.append((resolved / name, index + 1, depth + 1))
-            with os.scandir(resolved) as entries:
-                for entry in entries:
-                    budget -= 1
-                    if budget < 0:
-                        return False
-                    # Include hidden names and case aliases conservatively across tools.
-                    # Shell negated/POSIX classes differ from Python fnmatch. An
-                    # overapproximation must inspect every entry for such syntax.
-                    if (
-                        recursive
-                        or "[" in part
-                        or fnmatchcase(entry.name, part)
-                        or fnmatchcase(entry.name.casefold(), part.casefold())
-                    ):
-                        pending.append(
-                            (Path(entry.path), index if recursive else index + 1, depth + 1)
-                        )
-        except (FileNotFoundError, NotADirectoryError):
-            continue
-        except (OSError, RuntimeError):
-            return False
-    return True
 
 
 def _variable_folder(value: Any) -> Path | None:
@@ -811,10 +861,6 @@ def agent_workspace_read_violation(
     for raw, start in targets:
         boundary = _workspace_read_boundary(raw, root, start) if start is not None else raw
         if boundary is not None and not readable(boundary):
-            return True
-        if start is not None and not _workspace_glob_readable(
-            raw, start, readable, shell=(event_data or {}).get("tool_name") == "Bash"
-        ):
             return True
     return False
 
