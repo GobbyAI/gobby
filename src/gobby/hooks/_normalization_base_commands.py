@@ -316,6 +316,11 @@ def classify_base_command(
         return _ShellSegmentMetadata("execute", read_only=True)
     if cmd in {"pwd", "ls", "wc", "stat", "true", "false", "echo", "printf"}:
         return _ShellSegmentMetadata("execute", read_only=True)
+    # Delegate mode prints file scope and review rules; its only write is ocr's
+    # own update-check stamp under ~/.opencodereview.
+    delegate_read = parts[2:3] in (["preview"], ["rule"])
+    if cmd == "ocr" and parts[1:2] in (["delegate"], ["d"]) and delegate_read:
+        return _ShellSegmentMetadata("execute", read_only=True)
 
     if cmd == "pre-commit":
         index = _wrapper_options_end(parts, 1, frozenset({"-c", "--config", "--color"}))
