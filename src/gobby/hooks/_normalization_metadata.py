@@ -258,7 +258,10 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         item for item in metadata if not item.neutral_setup and not item.read_only_pipeline_filter
     ]
     if not active:
-        return _build_canonical_tool_metadata("execute")
+        return _build_canonical_tool_metadata(
+            "execute",
+            extra={"canonical_read_only": all(item.proven_read_only for item in metadata)},
+        )
 
     paths: list[str] = []
     mutation_paths: list[str] = []
@@ -458,6 +461,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         kind = "execute"
 
     extra = _merge_code_navigation_extra(active)
+    # A read beside an opaque execution is not a read-only shell program.
+    extra["canonical_read_only"] = all(item.proven_read_only for item in metadata)
     if "canonical_edit_file_paths" in extra:
         # Scope-only segments authorize the command without claiming a directory.
         # Preserve actual edits in mixed commands and nested shell wrappers.

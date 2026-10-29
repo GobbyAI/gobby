@@ -244,7 +244,7 @@ async def test_other_seats_cannot_launch_pipelines(engine: RuleEngine, agent_typ
     for launch in PIPELINE_LAUNCHES:
         blocked = await _decide(engine, launch, {"_agent_type": agent_type})
         assert blocked.decision == "block", launch
-        assert "Only the Orchestrator launches pipelines" in (blocked.reason or "")
+        assert "the Orchestrator launches pipelines" in (blocked.reason or "")
         assert "send the request to Triage" in (blocked.reason or "")
 
 

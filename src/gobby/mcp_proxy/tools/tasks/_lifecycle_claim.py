@@ -129,12 +129,15 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
 
         # A descendant of an active epic team is claimed by that team's seats only. A planning
         # child is exempt, so the plan writer seat the team-planning runbook launches can claim it.
+        from gobby.agents.team_lifecycle import task_team
+
         epic_team = epic_team_above(ctx.task_manager.db, resolved_id)
         if epic_team is not None and task.category != "planning":
+            owning_team = task_team(ctx.task_manager.db, resolved_id)
             seat = seat_team(ctx.task_manager.db, resolved_session_id)
-            if seat is None or seat.team_id != epic_team.team_id:
+            if seat is None or owning_team is None or seat.team_id != owning_team.team_id:
                 return task_error(
-                    f"Task {resolved_id} is under epic team {epic_team.team_id}; "
+                    f"Task {resolved_id} is under team {owning_team.team_id if owning_team else epic_team.team_id}; "
                     "only that team's seats may claim it",
                     TaskToolErrorCode.TASK_CLAIM_CONFLICT,
                     team_id=epic_team.team_id,

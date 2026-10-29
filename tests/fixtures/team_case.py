@@ -93,7 +93,9 @@ class TeamWorld:
     def executions(self) -> LocalPipelineExecutionManager:
         return LocalPipelineExecutionManager(self.case.db, self.case.project_id)
 
-    def child(self, task: Task, definition: PipelineDefinition = RUNBOOK) -> Session:
+    def child(
+        self, task: Task, definition: PipelineDefinition = RUNBOOK, *, parent: str | None = None
+    ) -> Session:
         """Start a running team runbook execution for ``task`` whose admit step is running."""
         execution = self.executions.create_execution(
             definition.name,
@@ -106,7 +108,7 @@ class TeamWorld:
             machine_id=require_machine_id(),
             source="pipeline",
             project_id=self.case.project_id,
-            parent_session_id=self.case.creator,
+            parent_session_id=parent or self.case.creator,
         )
         self.executions.update_execution_session(execution.id, child.id)
         self.executions.update_execution_status(execution.id, ExecutionStatus.RUNNING)
@@ -152,12 +154,14 @@ class TeamWorld:
         fresh_reviewer: bool = False,
         exclude_reviewers: Sequence[str] = (),
         checkout_mode: str = "worktree",
+        parent_team_id: str | None = None,
     ) -> TeamBinding:
         return await admit_team(
             self.case.db,
             caller_session_id=caller.id,
             task=task.id,
             team_id=team_id,
+            parent_team_id=parent_team_id,
             checkout_mode=checkout_mode,
             fresh_reviewer=fresh_reviewer,
             exclude_reviewers=exclude_reviewers,

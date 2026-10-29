@@ -42,6 +42,7 @@ from gobby.tasks.lifecycle_access import is_operator_coordinator, session_agent_
 from gobby.tasks.step_records import (
     SECURITY_REVIEWER,
     TaskStepRecord,
+    approved_task_step,
     independent_review_approval,
     list_task_step_records,
 )
@@ -143,6 +144,26 @@ async def main_checkout_target(db: HubDatabase, project_id: str) -> tuple[Path, 
     main = common.parent
     branch = await _branch(main)
     return (main, branch) if branch is not None else None
+
+
+async def task_landing_target(db: HubDatabase, task: Task) -> tuple[Path, str] | None:
+    """Leaves land in their epic's tree; top-level tasks land in the main checkout."""
+    from gobby.agents.team_lifecycle import task_team, team_binding
+    from gobby.storage.team_records import EPIC_MODE
+
+    team = await asyncio.to_thread(task_team, db, task.id)
+    epic = None
+    if team and team.parent_team_id:
+        epic = await asyncio.to_thread(team_binding, db, team.parent_team_id)
+        if epic is None:
+            raise LandingGitError("the pod's parent team has no admission binding")
+    elif team and team.mode == EPIC_MODE and team.task_id != task.id:
+        epic = team
+    if epic is not None:
+        if epic.worktree_path is None or await _branch(Path(epic.worktree_path)) != epic.branch:
+            raise LandingGitError("the epic landing worktree is unavailable or changed branch")
+        return Path(epic.worktree_path), epic.branch
+    return await main_checkout_target(db, task.project_id)
 
 
 async def _tip(main: Path, branch: str) -> str:
@@ -335,6 +356,10 @@ def _refused(refusal: LandingResult, error: str, message: str | None = None) -> 
 
 def _manages_task(db: HubDatabase, task: Task, caller_session_id: str) -> bool:
     """The task's bound Dev Manager lands it; the root Orchestrator is the last resort."""
+    from gobby.agents.team_lifecycle import managed_task_team
+
+    if managed_task_team(db, caller_session_id, task.id) is not None:
+        return True
     caller = SessionManager(db).get(caller_session_id)
     if caller is None:
         return False
@@ -359,6 +384,10 @@ def _review_blockers(
         blockers.append("caller_is_reviewer")
     if independent_review_approval(task, records, sha, caller) is None:
         blockers.append("review_approval_missing")
+    if task.task_type != "epic":
+        implementation = approved_task_step(task, records, "implementation")
+        if implementation is None or implementation.commit_sha != sha:
+            blockers.append("implementation_approval_missing")
     if _SECURITY_REVIEW_LABEL in (task.labels or []) and not any(
         record.step == "review"
         and record.status == "approved"
@@ -482,12 +511,12 @@ async def land_candidate(
         if await _resolve(repo, sha) != sha:
             return {"landed": False, "error": "candidate_unresolved"}
         common = Path(await _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
-        main = common.parent
         async with db.advisory_lock(MainCheckoutLanding(task.project_id)):
             current_task = LocalTaskManager(db).get_task(task.id)
-            branch = await _branch(main)
-            if branch is None:
+            landing_target = await task_landing_target(db, current_task)
+            if landing_target is None:
                 return {"landed": False, "error": "main_checkout_detached"}
+            main, branch = landing_target
             linked = False
             for candidate in current_task.commits or []:
                 if await _resolve(main, candidate) == sha:

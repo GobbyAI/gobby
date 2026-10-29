@@ -110,6 +110,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
     async def admit_team_tool(
         task: str,
         team_id: str | None = None,
+        parent_team_id: str | None = None,
         fresh_reviewer: bool = False,
         exclude_reviewers: str | None = None,
         reviewer_agent: str | None = None,
@@ -128,6 +129,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 caller_session_id=ctx.resolve_session_id(caller_ref),
                 task=task,
                 team_id=team_id,
+                parent_team_id=parent_team_id,
                 fresh_reviewer=fresh_reviewer,
                 exclude_reviewers=[
                     ref.strip() for ref in (exclude_reviewers or "").split(",") if ref.strip()

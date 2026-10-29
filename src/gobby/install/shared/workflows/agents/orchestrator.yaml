@@ -50,10 +50,12 @@ workflows:
       - "tag:default"
     # The Orchestrator edits tasks as needed, reads seats' report folders to review them,
     # and lands approved work in shared checkouts that hold other sessions' staged paths.
+    # It also approves seats' lost dirty-path ownership itself (operator ruling).
     exclude:
       - "name:block-update-task"
       - "name:agent-workspace-read-scope"
       - "name:block-cross-session-foreign-staged-commit"
+      - "name:block-dirty-path-approval-cli"
   variables:
     _seat_procedure: gobby:references/agents/procedures/orchestrator.md
     _seat_references:

@@ -5,16 +5,19 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import Future
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
+from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.hooks import shell_execution
 from gobby.hooks._normalization_canonical import _normalize_shell_tool_metadata
 from gobby.hooks._normalization_operands import _file_transfer_paths
 from gobby.hooks.adapter_execution import run_adapter_hook
 from gobby.hooks.checkout_reads import CheckoutReadUnavailable, delivery_scope
+from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookResponse
 from gobby.servers.routes.mcp.hook_responses import _hook_exception_response
 from tests.hooks.checkout_read_fakes import NODE_MACHINE, FakeNode
@@ -115,3 +118,96 @@ async def test_unanswered_node_shell_fails_closed(node: FakeNode, tmp_path: Path
     assert "checkout_read_unavailable: node_unavailable" in str(result)
     assert NODE_MACHINE in str(result)
     manager.handle.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("command", "proven"),
+    [
+        ("cd /node/task && git commit -m fix", True),
+        ("cd -- /node/task && touch out.txt", True),
+        (
+            "cd '/node/task tree' && UV_PROJECT_ENVIRONMENT=/venv PYTHONPATH=src "
+            "uv run --no-sync ruff format file.py",
+            True,
+        ),
+        ("git commit -m fix", False),
+        ("cd /node/task && cd b && touch out.txt", False),
+        ('cd "$X" && touch out.txt', False),
+        ("cd relative && touch out.txt", False),
+        ("cd /node/task > out.txt && touch out.txt", False),
+        ("cd /node/task && touch out.txt; touch elsewhere.txt", False),
+        ("cd /node/task && touch out.txt &", False),
+        ("cd /node/task && command cd /other", False),
+        ("cd /node/task && pushd /other", False),
+        ("cd /node/task && popd", False),
+        ("cd /node/task && (touch out.txt)", False),
+        ("cd /node/task && touch $(cd /other; echo out.txt)", False),
+        ("cd /node/task && bash -c 'touch out.txt'", False),
+        ("cd /node/task && eval 'touch out.txt'", False),
+        ("cd /node/task && source script.sh", False),
+        ("cd /node/task && env -C /other touch out.txt", False),
+        ("cd /node/task && sudo -D /other touch out.txt", False),
+        ("cd /node/task && uv run --directory /other ruff format file.py", False),
+        ("cd /node/task && UV_WORKING_DIR=/other uv run --no-sync ruff format file.py", False),
+        (
+            "cd /node/task && uv run --no-sync --env-file .env "
+            "uv run --no-sync ruff format file.py",
+            False,
+        ),
+        (
+            "cd /node/task && UV_ENV_FILE=.env uv run --no-sync "
+            "uv run --no-sync ruff format file.py",
+            False,
+        ),
+        ("cd /node/task && uv run env -C /other touch out.txt", False),
+        ("cd /node/task && touch out.txt | cat", False),
+    ],
+)
+async def test_codex_node_shell_directory_proof(
+    node: FakeNode, command: str, proven: bool, mock_dependencies: dict[str, Any]
+) -> None:
+    adapter = CodexHooksAdapter()
+    handlers = EventHandlers(**mock_dependencies)
+    for path in (
+        "/node/task/out.txt",
+        "/node/task/b/out.txt",
+        "relative/out.txt",
+        "/other/out.txt",
+    ):
+        node.add_file(NODE_MACHINE, path, b"")
+    with delivery_scope(NODE_MACHINE, asyncio.get_running_loop(), "/node/launcher"):
+        event = await asyncio.to_thread(
+            adapter.translate_to_hook_event,
+            {
+                "hook_type": "PreToolUse",
+                "input_data": {
+                    "machine_id": NODE_MACHINE,
+                    "session_id": "native-node-session",
+                    "cwd": "/node/launcher",
+                    "transcript_path": "/node/provider/rollout.jsonl",
+                    "tool_use_id": "native-shell-call",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": command},
+                },
+            },
+        )
+        assert event is not None
+        assert event.data["tool_use_id"] == "native-shell-call"
+        assert event.data["tool_input"]["command"] == command
+        if proven:
+            expected = "/node/task tree" if "task tree" in command else "/node/task"
+            assert event.data["tool_input"]["workdir"] == expected
+            assert event.metadata.get("_native_shell_cwd_unproven") is not True
+        else:
+            assert event.metadata["_native_shell_cwd_unproven"] is True
+            response = await asyncio.to_thread(handlers.handle_before_tool, event)
+            if command in {
+                "cd /node/task && command cd /other",
+                "cd /node/task && pushd /other",
+                "cd /node/task && popd",
+            }:
+                # Directory-only reads can run, but never provide an ownership root.
+                assert response.decision == "allow"
+            else:
+                assert response.decision == "block"
+                assert "cd '/absolute/task/worktree' &&" in (response.reason or "")

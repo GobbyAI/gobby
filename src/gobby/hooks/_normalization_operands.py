@@ -609,7 +609,9 @@ def _git_restore_positional_args_after(parts: list[str], start: int) -> list[str
     ]
 
 
-_FIND_MUTATION_PREDICATES = frozenset({"-delete", "-exec", "-execdir", "-ok", "-okdir"})
+_FIND_MUTATION_PREDICATES = frozenset(
+    {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fls", "-fprintf"}
+)
 
 
 def _find_has_mutation_predicate(parts: list[str]) -> bool:

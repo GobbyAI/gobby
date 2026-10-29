@@ -40,7 +40,9 @@ def _classify_stdin_python(
     else:
         replacement = _ShellSegmentMetadata(
             "execute",
+            read_only=is_read_only,
             confidence="high" if is_read_only else "low",
+            shell_words=flagged[0].shell_words,
         )
     return [replacement if item.stdin_program_interpreter else item for item in metadata]
 
