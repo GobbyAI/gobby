@@ -245,10 +245,11 @@ async def test_landing_marks_bound_worktree(
     assert marked.branch_name == "lane"
     assert marked.merged_at is not None
     assert marked.cleanup_after is not None and marked.cleanup_after <= marked.merged_at
-    assert result["activation_class"] == {"restart_class": "restart", "project_sync": "sync"}.get(
-        scenario, "none"
-    )
-    assert result["project_sync_required"] is (scenario == "project_sync")
+    assert result["activation_class"] == {
+        "restart_class": "restart",
+        "project_sync": "restart",
+    }.get(scenario, "none")
+    assert "project_sync_required" not in result
     if scenario == "replay":
         replay = await case.land(task, sha, caller=case.orchestrator())
         again = worktrees.get(row.id)
