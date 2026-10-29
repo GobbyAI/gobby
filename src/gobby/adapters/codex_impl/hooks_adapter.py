@@ -207,16 +207,6 @@ class CodexHooksAdapter(BaseAdapter):
         session_id = input_data.get("session_id", "")
         raw_tool_input = input_data.get("tool_input")
 
-        if hook_type == "PreToolUse" and input_data.get("tool_name") in FUNCTIONS_EXEC_NAMES:
-            shell_input = functions_exec_shell_input(raw_tool_input)
-            if shell_input is not None:
-                input_data = {
-                    **input_data,
-                    "_original_tool_name": input_data["tool_name"],
-                    "tool_name": "Bash",
-                    "tool_input": shell_input,
-                }
-
         from gobby.hooks.normalization import (
             is_shell_tool,
             normalize_tool_fields,

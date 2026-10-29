@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -162,6 +163,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         if session_id and db is not None:
             roots = input_data.get("canonical_git_operation_roots")
             execution_id = tool_execution_id(event)
+            binding_started = False
             try:
                 if isinstance(roots, list) and not execution_id:
                     raise ValueError(
@@ -170,6 +172,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     )
                 self._assert_edit_path_selection(event, session_id)
                 TaskToolBindings(SessionVariableManager(db), session_id).start(event)
+                binding_started = True
                 if execution_id and isinstance(roots, list):
                     started = run_coro_blocking(
                         SessionVariableManager(db).begin_git_operation_call(
@@ -209,6 +212,15 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     self.logger.warning(
                         "Failed to release rejected operation edit calls", exc_info=True
                     )
+                if binding_started:
+                    try:
+                        TaskToolBindings(SessionVariableManager(db), session_id).complete(
+                            replace(event, metadata={**event.metadata, "is_failure": True})
+                        )
+                    except Exception:
+                        self.logger.warning(
+                            "Failed to release rejected tool binding", exc_info=True
+                        )
                 return HookResponse(
                     decision="block",
                     reason=(

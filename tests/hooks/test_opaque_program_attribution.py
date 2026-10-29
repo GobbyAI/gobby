@@ -47,7 +47,7 @@ from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path
-from gobby.workflows.task_tool_bindings import TaskToolBindings
+from gobby.workflows.task_tool_bindings import TaskToolBindings, cleanup_task_tool_bindings
 from gobby.workflows.worktree_shell_attribution import (
     OVERLAPS_VARIABLE,
     begin_structured_edit_calls,
@@ -548,12 +548,10 @@ def test_codex_completion_resolves_workdir_from_event_cwd(
     assert "pkg/output.txt" in checkout.ledger()
 
 
-@pytest.mark.parametrize("native", [False, True])
 def test_codex_wrapped_formatter_uses_its_task_checkout(
     mock_dependencies: dict[str, Any],
     task_worktree: Checkout,
     tmp_path: Path,
-    native: bool,
 ) -> None:
     """A literal workdir survives before/after hooks and other sequential wrapper calls."""
     checkout = task_worktree
@@ -575,33 +573,18 @@ def test_codex_wrapped_formatter_uses_its_task_checkout(
         "tool": "exec",
         "arguments": arguments,
     }
-    if native:
-        before = CodexHooksAdapter().translate_to_hook_event(
-            {
-                "hook_type": "PreToolUse",
-                "input_data": {
-                    "session_id": "current-external",
-                    "cwd": str(tmp_path),
-                    "tool_use_id": item["id"],
-                    "tool_name": "functions.exec",
-                    "tool_input": {"arguments": arguments},
-                },
-            }
-        )
-        assert before is not None
-    else:
-        payload = build_pre_tool_lifecycle_payload({"item": item})
-        assert payload is not None
-        name, tool_input = payload
-        before = replace(
-            checkout.tool_event(HookEventType.BEFORE_TOOL, command),
-            source=SessionSource.CODEX,
-            cwd=str(tmp_path),
-            data=normalize_tool_fields(
-                {"cwd": str(tmp_path), "tool_name": name, "tool_input": tool_input}
-            ),
-            request_id=item["id"],
-        )
+    payload = build_pre_tool_lifecycle_payload({"item": item})
+    assert payload is not None
+    name, tool_input = payload
+    before = replace(
+        checkout.tool_event(HookEventType.BEFORE_TOOL, command),
+        source=SessionSource.CODEX,
+        cwd=str(tmp_path),
+        data=normalize_tool_fields(
+            {"cwd": str(tmp_path), "tool_name": name, "tool_input": tool_input}
+        ),
+        request_id=item["id"],
+    )
     before = replace(
         before,
         project_id=checkout.project_id,
@@ -655,12 +638,169 @@ def test_codex_wrapped_formatter_uses_its_task_checkout(
     assert manager.worktree_shell_call_root(checkout.session_id, item["id"]) is None
 
 
+@pytest.mark.parametrize("command", ["git merge --no-edit HEAD", "touch out.txt"])
+@pytest.mark.parametrize(
+    "sequence",
+    [
+        "inner_first",
+        "outer_first",
+        "missing_outer",
+        "abandoned_inner",
+        "missing_both",
+        "outer_only",
+        "yielded_outer",
+        "yielded_abandoned",
+    ],
+)
+def test_native_codex_outer_and_inner_have_one_shell_owner(
+    mock_dependencies: dict[str, Any],
+    task_worktree: Checkout,
+    tmp_path: Path,
+    command: str,
+    sequence: str,
+) -> None:
+    checkout = task_worktree
+    manager = SessionVariableManager(checkout.db)
+    abandoned = sequence in {"abandoned_inner", "missing_both", "yielded_abandoned"}
+    arguments = f"text(await tools.exec_command({json.dumps({'cmd': command, 'workdir': str(checkout.repo)})}));"
+    transcript = tmp_path / "native-sequence.jsonl"
+    records: list[dict[str, Any]] = [
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "call_id": "outer-exec",
+                "input": arguments,
+            },
+        }
+    ]
+    transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+
+    def event(hook_type: str, *, inner: bool, yielded: bool = False) -> HookEvent:
+        translated = CodexHooksAdapter().translate_to_hook_event(
+            {
+                "hook_type": hook_type,
+                "input_data": {
+                    "session_id": "current-external",
+                    "cwd": str(tmp_path),
+                    "tool_use_id": "exec-inner" if inner else "outer-exec",
+                    "tool_name": "Bash" if inner else "functions.exec",
+                    "tool_input": {"command": command} if inner else {"arguments": arguments},
+                    "tool_response": "Script running with cell ID cell-1" if yielded else {},
+                    "transcript_path": str(transcript),
+                },
+            }
+        )
+        assert translated is not None
+        return replace(
+            translated,
+            project_id=checkout.project_id,
+            metadata={**translated.metadata, "_platform_session_id": checkout.session_id},
+        )
+
+    handlers = _handlers(mock_dependencies, checkout.db)
+    outer_before = event("PreToolUse", inner=False)
+    assert handlers.handle_before_tool(outer_before).decision == "allow"
+    for key in ("worktree_shell_calls", "claimed_shell_snapshots", "git_operation_ownership"):
+        assert not manager.get_variables(checkout.session_id).get(key), key
+    if sequence != "outer_only":
+        inner_before = event("PreToolUse", inner=True)
+        response = handlers.handle_before_tool(inner_before)
+        assert response.decision == "allow", response.reason
+        assert manager.worktree_shell_call_root(checkout.session_id, "exec-inner") == str(
+            checkout.repo
+        )
+        operations = manager.get_variables(checkout.session_id).get("git_operation_ownership") or {}
+        assert {entry["call_id"] for entry in operations.values()} == (
+            {"exec-inner"} if command.startswith("git ") else set()
+        )
+        if sequence in {"outer_first", "yielded_outer", "yielded_abandoned"}:
+            handlers.handle_after_tool(
+                event("PostToolUse", inner=False, yielded=sequence.startswith("yielded_"))
+            )
+            assert manager.worktree_shell_call_root(checkout.session_id, "exec-inner") == str(
+                checkout.repo
+            )
+            if sequence.startswith("yielded_"):
+                binding = manager.get_variables(checkout.session_id)["task_tool_bindings"][
+                    "codex:outer-exec"
+                ]
+                assert binding["pending"] is True and binding["background"] is True
+                assert binding["aliases"] == ["codex:cell:cell-1"]
+        if abandoned:
+            checkout.write("unproven.txt", "No terminal receipt attributes this write.\n")
+        else:
+            subprocess.run(command.split(), cwd=checkout.repo, check=True, capture_output=True)
+            records.append(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "item_completed",
+                        "item": {
+                            "type": "CommandExecution",
+                            "id": "exec-inner",
+                            "command": ["/bin/zsh", "-lc", command],
+                            "cwd": checkout.repo.as_uri(),
+                            "status": "completed",
+                            "exit_code": 0,
+                            "aggregated_output": "",
+                        },
+                    },
+                }
+            )
+            transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+            _handlers(mock_dependencies, checkout.db).handle_after_tool(
+                event("PostToolUse", inner=True)
+            )
+            if command == "touch out.txt":
+                assert checkout.rule_3_reason("out.txt") == ""
+    if sequence in {"inner_first", "abandoned_inner", "outer_only", "yielded_outer"}:
+        handlers.handle_after_tool(event("PostToolUse", inner=False))
+    if not abandoned:
+        for key in ("worktree_shell_calls", "claimed_shell_snapshots", "git_operation_ownership"):
+            assert not manager.get_variables(checkout.session_id).get(key), key
+    cleanup_task_tool_bindings(
+        replace(outer_before, event_type=HookEventType.STOP), manager, checkout.session_id, {}
+    )
+    for key in ("worktree_shell_calls", "claimed_shell_snapshots", "git_operation_ownership"):
+        assert not manager.get_variables(checkout.session_id).get(key), key
+    if abandoned:
+        records.append(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "CommandExecution",
+                        "id": "exec-inner",
+                        "command": ["/bin/zsh", "-lc", command],
+                        "cwd": checkout.repo.as_uri(),
+                        "status": "completed",
+                        "exit_code": 0,
+                        "aggregated_output": "",
+                    },
+                },
+            }
+        )
+        transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+        handlers.handle_after_tool(event("PostToolUse", inner=True))
+        assert "unproven.txt" not in checkout.ledger()
+        assert UNOWNED in checkout.rule_3_reason("unproven.txt")
+    if sequence == "yielded_abandoned":
+        variables = manager.get_variables(checkout.session_id)
+        assert set(variables["task_tool_bindings"]) == {"codex:outer-exec"}
+        handlers.handle_after_tool(event("PostToolUse", inner=False))
+
+
+@pytest.mark.parametrize("relative_operands", [False, True])
 @pytest.mark.parametrize("foreign_finishes_first", [None, False, True])
 def test_native_codex_formatter_receipt_keeps_worktree_ownership(
     mock_dependencies: dict[str, Any],
     task_worktree: Checkout,
     tmp_path: Path,
     foreign_finishes_first: bool | None,
+    relative_operands: bool,
 ) -> None:
     """A native inner CommandExecution supplies cwd missing from the shell hook."""
     checkout = task_worktree
@@ -669,7 +809,13 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
     manager.record_edited_files(
         checkout.session_id, ["format_me.py"], checkout_root=str(checkout.repo)
     )
-    command = f"uv run --no-sync ruff format {checkout.repo / 'format_me.py'}"
+    operand = "format_me.py" if relative_operands else str(checkout.repo / "format_me.py")
+    command = f"uv run --no-sync ruff format {operand}"
+    arguments = (
+        'text(await tools.apply_patch("*** Begin Patch\\n*** End Patch"));\n'
+        f"text(await tools.exec_command({json.dumps({'cmd': command, 'workdir': str(checkout.repo)})}));\n"
+        'text(await tools.write_stdin({session_id:123,chars:"",max_output_tokens:1500}));'
+    )
     transcript = tmp_path / "rollout.jsonl"
     transcript.write_text(
         json.dumps(
@@ -679,7 +825,7 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
                     "type": "custom_tool_call",
                     "name": "exec",
                     "call_id": "outer-formatter",
-                    "input": f"text(await tools.exec_command({json.dumps({'cmd': command, 'workdir': str(checkout.repo)})}));",
+                    "input": arguments,
                 },
             }
         )
@@ -694,6 +840,26 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
         "transcript_path": str(transcript),
     }
     adapter = CodexHooksAdapter()
+    outer_input = {
+        **hook_input,
+        "tool_use_id": "outer-formatter",
+        "tool_name": "functions.exec",
+        "tool_input": {"arguments": arguments},
+    }
+    outer_before = adapter.translate_to_hook_event(
+        {"hook_type": "PreToolUse", "input_data": outer_input}
+    )
+    assert outer_before is not None
+    outer_before = replace(
+        outer_before,
+        project_id=checkout.project_id,
+        metadata={"_platform_session_id": checkout.session_id},
+    )
+    assert (
+        _handlers(mock_dependencies, checkout.db).handle_before_tool(outer_before).decision
+        == "allow"
+    )
+    assert not manager.get_variables(checkout.session_id).get("worktree_shell_calls")
     before = adapter.translate_to_hook_event({"hook_type": "PreToolUse", "input_data": hook_input})
     assert before is not None
     before = replace(
@@ -760,6 +926,22 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
     assert current_tool_cwd(after.data) == checkout.repo
     assert after.data["canonical_formatter_mutation"] is True
     _handlers(mock_dependencies, checkout.db).handle_after_tool(after)
+
+    outer_after = adapter.translate_to_hook_event(
+        {
+            "hook_type": "PostToolUse",
+            "input_data": {**outer_input, "tool_response": {"exit_code": 0}},
+        }
+    )
+    assert outer_after is not None
+    outer_after = replace(
+        outer_after,
+        project_id=checkout.project_id,
+        metadata={"_platform_session_id": checkout.session_id},
+    )
+    _handlers(mock_dependencies, checkout.db).handle_after_tool(outer_after)
+    assert not manager.get_variables(checkout.session_id).get("worktree_shell_calls")
+    assert not manager.get_variables(checkout.session_id).get("claimed_shell_snapshots")
 
     if foreign_finishes_first is False:
         _handlers(mock_dependencies, checkout.db).handle_after_tool(
@@ -1044,6 +1226,11 @@ def test_git_operation_conflict_keeps_its_actionable_reason(
     )
     assert response.decision == "block"
     assert "Another live session owns the Git operation" in (response.reason or "")
+    TaskToolBindings(manager, checkout.session_id).assert_can_select(None)
+    foreign_operations = manager.get_variables(checkout.foreign_session_id)[
+        "git_operation_ownership"
+    ]
+    assert foreign_operations[str(checkout.repo)]["call_id"] == "foreign-operation"
 
 
 @pytest.mark.parametrize("mode", ["--no-rebase", "--rebase"])
