@@ -515,24 +515,31 @@ async def test_completed_git_keeps_result_when_loop_resumes_after_deadline(
     _write_fake_git(tmp_path)
     finished = threading.Event()
     mark_finished = daemon_git._ProcessControl.mark_finished
+    loop = asyncio.get_running_loop()
+    loop_time = loop.time()
+
+    def controlled_loop_time() -> float:
+        return loop_time
 
     def record_finished(control: daemon_git._ProcessControl) -> None:
         mark_finished(control)
         finished.set()
 
     monkeypatch.setattr(daemon_git._ProcessControl, "mark_finished", record_finished)
+    monkeypatch.setattr(loop, "time", controlled_loop_time)
     task = asyncio.create_task(
         DaemonGitService().run(
             ["status"],
             cwd=tmp_path,
-            timeout=1.0,
+            timeout=3600.0,
             env=_git_env(tmp_path, GIT_TEST_FAIL="1" if failed else ""),
         )
     )
     await asyncio.sleep(0)
-    # The worker finishes on time while its result delivery is blocked on this loop.
-    assert finished.wait(timeout=0.8)
-    threading.Event().wait(timeout=1.1)
+    # Hold result delivery until the worker is done, then make wait_for's timer
+    # due without racing the worker against a short wall-clock deadline.
+    assert finished.wait(timeout=10.0)
+    loop_time += 3601.0
     result = await task
 
     if failed:
