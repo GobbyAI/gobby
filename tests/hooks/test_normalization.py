@@ -1001,6 +1001,28 @@ class TestCanonicalToolMetadata:
         assert "canonical_repo_mutation" not in data
 
     @pytest.mark.parametrize(
+        "command",
+        [
+            "uv run pytest tests/test_example.py -q",
+            "uv run gobby test-quality audit tests/test_example.py",
+            "uv run gobby test-types audit tests/test_example.py",
+            "uv run gobby test-types suppressions .",
+            "uv run ruff check src/",
+            "uv run mypy src/",
+            "uv run gobby start --verbose",
+            "uv run --dev pytest tests/test_example.py -q",
+        ],
+    )
+    def test_uv_audits_do_not_require_repository_write_authority(self, command: str) -> None:
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert not data.get("canonical_repo_mutation")
+        assert not data.get("canonical_unresolved_execution")
+
+    @pytest.mark.parametrize(
         ("command", "expected_kind"),
         [
             ('gcode grep "pattern" src -m 50', "search"),

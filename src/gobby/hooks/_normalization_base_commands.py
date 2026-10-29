@@ -56,8 +56,59 @@ _UV_VALUE_OPTIONS = frozenset(
     "--config-settings-package --no-build-isolation-package --no-build-package "
     "--no-binary-package --cache-dir --refresh-package -p --python --color "
     "--allow-insecure-host --directory --project --config-file --from "
-    "-c --constraints --build-constraints --overrides -b --torch-backend".split()
+    "-c --constraints --build-constraints --overrides -b --torch-backend "
+    "--python-preference --python-downloads".split()
 )
+_UV_FLAG_OPTIONS = frozenset(
+    "--all-extras --dev --no-dev --only-dev --no-default-groups --all-groups -m --module "
+    "--no-editable --exact --no-env-file --isolated --active --no-sync --locked --frozen "
+    "-s --script --gui-script --all-packages --no-project --no-index -U --upgrade "
+    "--no-sources --reinstall --compile-bytecode --no-build-isolation --no-build --no-binary "
+    "--require-build-hashes --no-require-build-hashes -n --no-cache --refresh --managed-python "
+    "--no-managed-python --no-python-downloads -q --quiet -v --verbose --system-certs "
+    "--native-tls --offline --no-progress --no-config -h --help --lfs --check --diff "
+    "--dry-run -V --version".split()
+)
+
+
+def _uv_options(
+    parts: list[str],
+    start: int,
+    cwd: str | None,
+    *,
+    interspersed: bool = False,
+    value_options: frozenset[str] = _UV_VALUE_OPTIONS,
+) -> tuple[int, str | None, set[str]] | None:
+    """Parse known option arities; an unknown option cannot prove the executable boundary."""
+    flags: set[str] = set()
+    while start < len(parts):
+        word = parts[start]
+        if not word.startswith("-"):
+            if interspersed:
+                start += 1
+                continue
+            break
+        if word == "--":
+            return start + 1, cwd, flags
+        option, separator, value = word.partition("=")
+        if option in value_options:
+            if not separator:
+                start += 1
+                if start >= len(parts):
+                    return None
+                value = parts[start]
+            if option == "--directory":
+                cwd = _rebase_shell_paths([value], cwd)[0]
+        elif word in _UV_FLAG_OPTIONS:
+            flags.add(word)
+        elif not word.startswith("--") and len(word) > 2 and word[:2] in value_options:
+            pass  # Attached short-option value, e.g. -p3.13.
+        elif re.fullmatch(r"-[qv]+", word):
+            pass
+        else:
+            return None
+        start += 1
+    return start, cwd, flags
 
 
 def _wrapper_options_end(parts: list[str], start: int, value_options: frozenset[str]) -> int:
@@ -77,28 +128,26 @@ def unwrap_execution_command(
     parts: list[str], cwd: str | None
 ) -> tuple[list[str] | None, str | None]:
     """Expose package-runner argv and its explicit working directory for normal classification."""
+    # Implicit runner setup must not require write authority for read-only audits.
+    # Explicit project changes such as uv sync/lock are classified separately.
     while parts:
         command = shell_command_name(parts[0])
         if command in {"uv", "uvx"}:
             tool_run = command == "uvx"
-            index = _wrapper_options_end(parts, 1, _UV_VALUE_OPTIONS)
+            parsed = _uv_options(parts, 1, cwd)
+            if parsed is None:
+                return None, cwd
+            index, cwd, _ = parsed
             if command == "uv":
                 if parts[index : index + 2] == ["tool", "run"]:
                     tool_run = True
                     index += 1
                 elif parts[index : index + 1] != ["run"]:
                     break
-                index = _wrapper_options_end(parts, index + 1, _UV_VALUE_OPTIONS)
-            position = 1
-            while position < index:
-                word = parts[position]
-                if word == "--directory" and position + 1 < index:
-                    cwd = _rebase_shell_paths([parts[position + 1]], cwd)[0]
-                elif word.startswith("--directory="):
-                    cwd = _rebase_shell_paths([word.partition("=")[2]], cwd)[0]
-                position += 2 if word in _UV_VALUE_OPTIONS else 1
-            if parts[index : index + 1] == ["-m"]:
-                index += 1
+                parsed = _uv_options(parts, index + 1, cwd)
+                if parsed is None:
+                    return None, cwd
+                index, cwd, _ = parsed
             if tool_run and index < len(parts):
                 parts = [*parts[:index], parts[index].partition("@")[0], *parts[index + 1 :]]
         elif command in {"npx", "bunx"}:
@@ -180,6 +229,26 @@ def classify_base_command(
     if cmd == "uv":
         index = _wrapper_options_end(parts, 1, _UV_VALUE_OPTIONS)
         operation = parts[index : index + 1]
+        if operation in (["format"], ["sync"]):
+            value_options = _UV_VALUE_OPTIONS | (
+                {"--version"} if operation == ["format"] else set()
+            )
+            parsed = _uv_options(
+                parts, index + 1, cwd, interspersed=True, value_options=value_options
+            )
+            if parsed is None:
+                return _ShellSegmentMetadata(
+                    "execute", extra={"canonical_unresolved_execution": True}
+                )
+            _, _, flags = parsed
+            if operation == ["format"] and flags.isdisjoint({"--check", "--diff", "--help", "-h"}):
+                return _ShellSegmentMetadata(
+                    "execute", extra={"canonical_formatter_mutation": True}
+                )
+            if operation == ["sync"] and flags.isdisjoint(
+                {"--locked", "--frozen", "--dry-run", "--check", "--help", "-h"}
+            ):
+                return _ShellSegmentMetadata("write", repo_mutation=True)
         if operation in (["add"], ["remove"], ["init"]):
             return _ShellSegmentMetadata("write", repo_mutation=True)
         if operation == ["lock"] and not {"--check", "--check-exists"}.intersection(parts):
@@ -263,6 +332,12 @@ def classify_base_command(
             "read",
             extra={**navigation, "canonical_code_navigation_segments": [navigation]},
         )
+
+    if cmd in {"sudo", "xargs"}:
+        # Privilege/policy changes and stdin-supplied arguments cannot prove a read-only launch.
+        if parts[1:] in (["--help"], ["--version"]):
+            return _ShellSegmentMetadata("execute")
+        return _ShellSegmentMetadata("execute", extra={"canonical_unresolved_execution": True})
 
     if cmd == "awk" and parts[1:2] == ["1"]:
         # The constant-true program prints every input record.
