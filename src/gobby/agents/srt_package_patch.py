@@ -78,6 +78,56 @@ _PATCHES = (
 )
 
 
+_CONNECT_FAILURE_REPORTER = b"""function reportConnectFailure(target, stage, error = null, status = null) {
+    // Log only validated endpoint metadata and bounded error codes, never the
+    // raw CONNECT authority, proxy credentials, headers, command, or error text.
+    const hostname = target?.hostname;
+    const host = typeof hostname === 'string' && /^[a-z0-9._:-]{1,253}$/i.test(hostname)
+        ? hostname : 'unknown';
+    const port = Number.isInteger(target?.port) ? target.port : null;
+    const errorCode = typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)
+        ? error.code : typeof error?.message === 'string' && error.message.includes('timed out')
+        ? 'ETIMEDOUT' : status ? `HTTP_${status}` : 'CONNECT_FAILURE';
+    const record = { timestamp: new Date().toISOString(), source: 'srt-proxy',
+        operation: 'CONNECT', stage, host, port, error_code: errorCode, status };
+    console.error('[gobby-srt proxy] ' + JSON.stringify(record));
+    try {
+        globalThis.gobbySrtProxyFailure?.(record);
+    } catch {
+        console.error('[gobby-srt proxy] failure journal unavailable');
+    }
+}
+
+"""
+
+
+def _patch_http_diagnostics(source: bytes) -> bytes:
+    """Keep failures visible without enabling upstream's verbose debug logging."""
+    entry = b"export function createHttpProxyServer(options) {"
+    status = b"        const endWithStatus = (payload) => {"
+    failure = b"""logForDebugging(`CONNECT tunnel failed: ${err.message}`, {
+                    level: 'error',
+                });"""
+    handler = b"logForDebugging(`Error handling CONNECT: ${err}`, { level: 'error' });"
+    if (
+        source.count(entry) != 1
+        or source.count(status) != 1
+        or source.count(failure) != 2
+        or source.count(handler) != 1
+    ):
+        raise ValueError("managed SRT CONNECT diagnostics do not match pinned source")
+    source = source.replace(entry, _CONNECT_FAILURE_REPORTER + entry)
+    source = source.replace(
+        status,
+        status
+        + b"\n            reportConnectFailure(parseConnectTarget(req.url), 'response', null, Number(payload.split(' ')[1]));",
+    )
+    source = source.replace(failure, b"reportConnectFailure({ hostname, port }, 'upstream', err);")
+    return source.replace(
+        handler, b"reportConnectFailure(parseConnectTarget(req.url), 'handler', err, 500);"
+    )
+
+
 def verify_srt_proxy_patch(root: Path) -> None:
     """Require the exact patched bytes, independently of the writable manifest."""
     for relative_path, _, expected, _, _ in _PATCHES:
@@ -101,6 +151,8 @@ def apply_srt_proxy_patch(root: Path) -> None:
                 f"managed SRT {relative_path.name} does not match the pinned upstream source"
             )
         patched = original.replace(needle, replacement)
+        if relative_path == HTTP_PROXY_PATH:
+            patched = _patch_http_diagnostics(patched)
         if relative_path == MACOS_PROFILE_PATH:
             if patched.count(_MONITOR_NEEDLE) != 1:
                 raise ValueError("managed SRT macOS monitor does not match pinned source")

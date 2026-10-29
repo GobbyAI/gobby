@@ -46,6 +46,8 @@ pub struct PolicyInputs {
     pub prewarm_pre_commit_store: bool,
     /// `sys.platform` spelling of the host: `darwin` or `linux`.
     pub platform: String,
+    /// Trusted host-resolved Darwin temp/cache roots; absent means query confstr.
+    pub darwin_user_dirs: Option<[PathBuf; 2]>,
     /// The seat's definition, its session sequence number, and its epic sequence number
     /// when it shares an epic folder. They name the workspace folders the spawn grants
     /// (#25148); an absent value grants nothing for that folder.

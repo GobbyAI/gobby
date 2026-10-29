@@ -389,6 +389,11 @@ impl RunLayout {
             .collect();
         values.insert(CARGO_HOME.to_string(), text(&self.cargo_home()));
         values.insert(CARGO_TARGET_DIR.to_string(), text(&self.cargo_target));
+        values.insert(
+            "UV_PROJECT_ENVIRONMENT".to_string(),
+            text(&self.cache.join("uv-project-environment")),
+        );
+        values.insert("ZDOTDIR".to_string(), text(&self.root.join("assets")));
         values.insert("TMPDIR".to_string(), text(&self.tmp));
         if provider == "claude" {
             values.insert("CLAUDE_CODE_TMPDIR".to_string(), text(&self.tmp));

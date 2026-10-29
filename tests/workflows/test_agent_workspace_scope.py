@@ -13,6 +13,7 @@ import yaml
 
 from gobby.agents.agent_workspaces import predecessor_folder_readable
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -104,6 +105,7 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     os_temp = tmp_path / "os-temp"
     os_temp.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(os_temp))
+    monkeypatch.setattr("gobby.workflows.condition_helpers_paths._PROVIDER_TEMP_ROOT", os_temp)
     return home / ".gobby" / "agents_workspaces"
 
 
@@ -121,6 +123,21 @@ def engine(temp_db: HubDatabase) -> RuleEngine:
                 enabled=metadata["enabled"],
                 tags=document["tags"],
             )
+    return RuleEngine(temp_db)
+
+
+@pytest.fixture
+def workspace_write_engine(temp_db: HubDatabase) -> RuleEngine:
+    document = yaml.safe_load((RULES_DIR / "roles" / "agent-workspace-scope.yaml").read_text())
+    name = "agent-workspace-write-scope"
+    body_data, metadata = split_rule_definition_data(document["rules"][name])
+    RuleDefinitionManager(temp_db).create(
+        name=name,
+        definition_json=RuleDefinitionBody.model_validate(body_data).model_dump_json(),
+        priority=metadata["priority"],
+        enabled=metadata["enabled"],
+        tags=document["tags"],
+    )
     return RuleEngine(temp_db)
 
 
@@ -267,6 +284,140 @@ async def test_write_isolation(
     ):
         response = await _decide(engine, _write(refused, project), dict(variables))
         assert response.decision == "block", refused
+
+
+@pytest.mark.asyncio
+async def test_plan_documents_in_owned_worktrees_are_writable(
+    engine: RuleEngine, root: Path, tmp_path: Path
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    worktree = own / "task-25298"
+    plans = worktree / ".gobby" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "config.md").symlink_to(worktree / ".gobby" / "project.json")
+
+    for path, expected in (
+        (plans / "runbook-devteam-addendum.md", "allow"),
+        (plans / "nested" / "design.md", "allow"),
+        (plans / "config.md", "block"),
+        (plans / ".." / "project.json", "block"),
+        (plans / "settings.json", "block"),
+        (plans / ".git" / "config.md", "block"),
+        (plans / ".gobby" / "config.md", "block"),
+        (root / PROJECT / "developer" / "session-99" / ".gobby" / "plans" / "a.md", "block"),
+    ):
+        event = {
+            "tool_name": "apply_patch",
+            "canonical_tool_kind": "write",
+            "tool_input": {"file_path": str(path), "content": "# Plan"},
+            "cwd": str(worktree),
+            "project_path": str(project),
+        }
+        response = await _decide(engine, event, dict(variables))
+        assert response.decision == expected, (path, response.reason)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["write", "commit"])
+@pytest.mark.parametrize("folder", ["own", "epic"])
+async def test_workspace_metadata_names_ignore_case(
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, tool: str, folder: str
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    key = "_agent_workspace_dir" if folder == "own" else "_agent_workspace_epic_dir"
+    directory = Path(variables[key])
+    plans = directory / ".gobby" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "linked.MD").symlink_to(directory / ".GoBbY" / "project.json")
+    for relative, decision in (
+        (".GOBBY/project.json", "block"),
+        (".GoBbY/settings.json", "block"),
+        (".GIT/config", "block"),
+        (".GiT/config", "block"),
+        (".gobby/plans/.GIT/config.md", "block"),
+        (".GOBBY/PLANS/.GoBbY/config.MD", "block"),
+        (".gobby/plans/linked.MD", "block"),
+        (".GOBBY/PLANS/plan.MD", "allow"),
+    ):
+        path = directory / relative
+        data = (
+            _write(path, project)
+            if tool == "write"
+            else _shell(f"git commit -m plan --only -- {path}", project)
+        )
+        normalize_tool_fields(data)
+        response = await _decide(workspace_write_engine, data, variables)
+        assert response.decision == decision, (path, tool, response.reason)
+        if decision == "block":
+            assert response.reason is not None
+            assert "agent-workspace-write-scope" in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ancestor", ["gobby", "root", "definition"])
+@pytest.mark.parametrize("tool", ["write", "commit"])
+async def test_case_alias_of_workspace_root_does_not_bypass_write_scope(
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, ancestor: str, tool: str
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    own.mkdir(parents=True)
+    directory = {"gobby": root.parent, "root": root, "definition": own.parent}[ancestor]
+    alias = directory.with_name(directory.name.upper())
+    if not alias.exists():
+        pytest.skip("Filesystem distinguishes workspace root casing")
+    assert alias.samefile(directory)
+    for target, decision in (
+        (own / ".GIT" / "config", "block"),
+        (own / ".gobby" / "project.json", "block"),
+        (own.parent / "session-99" / "notes.md", "block"),
+        (own / "notes.md", "allow"),
+    ):
+        path = alias / target.relative_to(directory)
+        data = (
+            _write(path, project)
+            if tool == "write"
+            else _shell(f"git commit -m plan --only -- {path}", project)
+        )
+        normalize_tool_fields(data)
+        response = await _decide(workspace_write_engine, data, variables)
+        assert response.decision == decision, (path, tool, response.reason)
+        if decision == "block":
+            assert response.reason is not None
+            assert "agent-workspace-write-scope" in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity", ["different", "unavailable"])
+async def test_case_alias_cannot_borrow_unproven_seat_ownership(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    identity: str,
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    alias = own.with_name(own.name.upper())
+
+    def samefile(path: Path, other: Path) -> bool:
+        if identity == "unavailable":
+            raise PermissionError("Cannot inspect folder identity")
+        return False
+
+    monkeypatch.setattr(Path, "samefile", samefile)
+    response = await _decide(
+        workspace_write_engine, _write(alias / "notes.md", tmp_path), variables
+    )
+    assert response.decision == "block"
+    assert "agent-workspace-write-scope" in (response.reason or "")
 
 
 @pytest.mark.asyncio
@@ -657,6 +808,73 @@ async def test_shell_wrapped_reads_of_other_session_folders_stay_refused(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "header",
+    [
+        "cat <<'EOF' > {target}",
+        "cat <<'EOF' >> {target}",
+        "tee {target} <<'EOF'",
+        "git commit --only -F - -- {target} <<'EOF'",
+    ],
+)
+@pytest.mark.parametrize("target_kind", ["config", "foreign"])
+async def test_quoted_data_heredoc_still_checks_real_write_targets(
+    engine: RuleEngine, root: Path, tmp_path: Path, header: str, target_kind: str
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    target = (
+        own / ".gobby" / "project.json"
+        if target_kind == "config"
+        else root / PROJECT / "developer" / "session-99" / "notes.md"
+    )
+    command = header.format(target=target) + "\nLiteral commit or document content\nEOF"
+    data = _shell(command, project)
+    normalize_tool_fields(data)
+
+    response = await _decide(engine, data, variables)
+
+    assert response.decision == "block", (command, response.reason)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("arguments", "decision"),
+    [
+        ("--only -- .gobby/project.json", "block"),
+        ("--only .gobby/project.json", "block"),
+        ("-o -- .git/config", "block"),
+        ("--only -- ../session-99/notes.md", "block"),
+        ("--only -- .gobby/plans/plan.md", "allow"),
+        ("--only -- notes.md", "allow"),
+        ("-m '.gobby/project.json' -- notes.md", "allow"),
+        ("-m.git/config -- notes.md", "allow"),
+        ("--only -- ':(top).gobby/project.json'", "block"),
+        ("--only -- '.gobby/*'", "block"),
+        ("--pathspec-from-file=paths.txt", "block"),
+        ("--only -- '$TARGET'", "block"),
+    ],
+)
+async def test_git_commit_pathspec_workspace_scope(
+    engine: RuleEngine, root: Path, tmp_path: Path, arguments: str, decision: str
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    message_option = "" if arguments.startswith("-m") else "-F - "
+    command = f"git -C {own} commit {message_option}{arguments} <<'EOF'\nLiteral .git/config\nEOF"
+    data = _shell(command, project)
+    normalize_tool_fields(data)
+
+    response = await _decide(engine, data, variables)
+
+    assert response.decision == decision, (command, response.reason)
+
+
+@pytest.mark.asyncio
 async def test_quoted_heredoc_bodies_and_quoted_text_judge_concrete_foreign_paths(
     engine: RuleEngine,
     root: Path,
@@ -679,13 +897,16 @@ async def test_quoted_heredoc_bodies_and_quoted_text_judge_concrete_foreign_path
         persistent=False,
     )
     # A shell that reads a quoted heredoc body runs it, so the body is judged as shell code.
-    # Text no shell reads, and quoted text, is judged word by word and still refuses a concrete path.
+    # Literal heredoc data does not read the paths it describes.
     sibling = anchor / "developer" / "session-51" / "notes.md"
     for command in (
         f"bash <<'EOF'\ncat {sibling}\nEOF",
         f"sh -s <<'EOF'\ncat {sibling}\nEOF",
         f"cat <<'EOF' | bash\ncat {sibling}\nEOF",
-        f"git commit -F - <<'EOF'\nAnchor: {sibling}\nEOF",
+        f"python - <<'EOF'\npath = '{sibling}'\nprint(open(path).read())\nEOF",
+        f"ruby <<'EOF'\npath = '{sibling}'\nputs File.read(path)\nEOF",
+        f"cat <<'EOF' | python -\npath = '{sibling}'\nprint(open(path).read())\nEOF",
+        f"cat <<'DATA'\nliteral\nDATA\npython - <<'PY'\npath = '{sibling}'\nprint(open(path).read())\nPY",
         f'git commit -m "see {sibling}"',
     ):
         data = _shell(command, project)
@@ -694,6 +915,12 @@ async def test_quoted_heredoc_bodies_and_quoted_text_judge_concrete_foreign_path
         assert "agent workspace folder is outside" in (response.reason or ""), command
     # The caller's own folder stays readable in the same positions.
     own = anchor / "developer" / "session-50" / "notes.md"
+    for command in (
+        f"git commit -F - <<'EOF'\nAnchor: {sibling}\nEOF",
+        f"cat > {own} <<'EOF'\n# Handoff\nPrior evidence: {sibling}\nEOF",
+    ):
+        response = await _decide(engine, _shell(command, project), dict(developer), caller)
+        assert response.decision != "block", (command, response.reason)
     for command in (
         f"bash <<'EOF'\ncat {own}\nEOF",
         f"git commit -F - <<'EOF'\nAnchor: {own}\nEOF",

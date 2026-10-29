@@ -19,6 +19,7 @@ from gobby.agents.constants import (
     get_agent_session_cache_dir,
 )
 from gobby.agents.sandbox import SandboxConfig
+from gobby.config.features import ProjectSandboxConfig
 from gobby.utils.native_bin import native_bin_dir
 
 PATH_ENV_VAR = "PATH"
@@ -126,17 +127,11 @@ def sandbox_config_for_spawn(
     env_vars: dict[str, str],
     *,
     agent_name: str | None = None,
-    project_path: str | None = None,
+    project_config: ProjectSandboxConfig | None = None,
     resume_metadata_json: dict[str, object] | None = None,
 ) -> SandboxConfig | None:
     """Include spawned validation caches, registry egress, and hook inbox."""
-    project_write_paths: list[str] = []
-    if project_path is not None:
-        from gobby.utils.project_context import get_project_sandbox_config
-
-        project_config = get_project_sandbox_config(Path(project_path))
-        if project_config is not None:
-            project_write_paths = project_config.extra_write_paths
+    project_write_paths = project_config.extra_write_paths if project_config is not None else []
 
     if sandbox_config is None:
         return None

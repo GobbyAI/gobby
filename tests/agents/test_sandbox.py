@@ -50,6 +50,7 @@ from gobby.config.app import DaemonConfig
 from gobby.integrations.rtk import platform_paths
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout
+from gobby.utils.project_context import get_project_sandbox_config
 
 pytestmark = pytest.mark.unit
 
@@ -1596,7 +1597,7 @@ class TestSandboxCacheProvisioning:
                 extra_write_paths=[str(daemon_path)],
             ),
             env_vars,
-            project_path=str(project_root),
+            project_config=get_project_sandbox_config(project_root),
             resume_metadata_json=resume_metadata,
         )
 

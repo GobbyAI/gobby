@@ -29,8 +29,10 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
+          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
+          "ZDOTDIR": "{run_root}/assets",
           "ZIG_GLOBAL_CACHE_DIR": "{run_root}/cache/zig-global-cache-dir",
           "npm_config_cache": "{run_root}/cache/npm-config-cache"
         },
@@ -1518,8 +1520,10 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
+          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
+          "ZDOTDIR": "{run_root}/assets",
           "ZIG_GLOBAL_CACHE_DIR": "{run_root}/cache/zig-global-cache-dir",
           "npm_config_cache": "{run_root}/cache/npm-config-cache"
         },
@@ -2999,8 +3003,10 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
+          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
+          "ZDOTDIR": "{run_root}/assets",
           "ZIG_GLOBAL_CACHE_DIR": "{run_root}/cache/zig-global-cache-dir",
           "npm_config_cache": "{run_root}/cache/npm-config-cache"
         },
@@ -4490,8 +4496,10 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
+          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
+          "ZDOTDIR": "{run_root}/assets",
           "ZIG_GLOBAL_CACHE_DIR": "{run_root}/cache/zig-global-cache-dir",
           "npm_config_cache": "{run_root}/cache/npm-config-cache"
         },
@@ -5977,8 +5985,10 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
+          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
+          "ZDOTDIR": "{run_root}/assets",
           "ZIG_GLOBAL_CACHE_DIR": "{run_root}/cache/zig-global-cache-dir",
           "npm_config_cache": "{run_root}/cache/npm-config-cache"
         },
@@ -7464,8 +7474,10 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
+          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
+          "ZDOTDIR": "{run_root}/assets",
           "ZIG_GLOBAL_CACHE_DIR": "{run_root}/cache/zig-global-cache-dir",
           "npm_config_cache": "{run_root}/cache/npm-config-cache"
         },
@@ -8956,8 +8968,10 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
+          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
+          "ZDOTDIR": "{run_root}/assets",
           "ZIG_GLOBAL_CACHE_DIR": "{run_root}/cache/zig-global-cache-dir",
           "npm_config_cache": "{run_root}/cache/npm-config-cache"
         },
@@ -10499,8 +10513,10 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
+          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
+          "ZDOTDIR": "{run_root}/assets",
           "ZIG_GLOBAL_CACHE_DIR": "{run_root}/cache/zig-global-cache-dir",
           "npm_config_cache": "{run_root}/cache/npm-config-cache"
         },
@@ -12044,8 +12060,10 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
+          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
+          "ZDOTDIR": "{run_root}/assets",
           "ZIG_GLOBAL_CACHE_DIR": "{run_root}/cache/zig-global-cache-dir",
           "npm_config_cache": "{run_root}/cache/npm-config-cache"
         },
@@ -13539,8 +13557,10 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
+          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
+          "ZDOTDIR": "{run_root}/assets",
           "ZIG_GLOBAL_CACHE_DIR": "{run_root}/cache/zig-global-cache-dir",
           "npm_config_cache": "{run_root}/cache/npm-config-cache"
         },
@@ -15074,8 +15094,10 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
+          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
+          "ZDOTDIR": "{run_root}/assets",
           "ZIG_GLOBAL_CACHE_DIR": "{run_root}/cache/zig-global-cache-dir",
           "npm_config_cache": "{run_root}/cache/npm-config-cache"
         },
@@ -16617,8 +16639,10 @@
           "TMPDIR": "{run_root}/tmp",
           "TMPPREFIX": "{run_root}/tmp/zsh",
           "UV_CACHE_DIR": "{run_root}/cache/uv-cache-dir",
+          "UV_PROJECT_ENVIRONMENT": "{run_root}/cache/uv-project-environment",
           "XDG_CACHE_HOME": "{run_root}/cache/xdg-cache-home",
           "YARN_CACHE_FOLDER": "{run_root}/cache/yarn-cache-folder",
+          "ZDOTDIR": "{run_root}/assets",
           "ZIG_GLOBAL_CACHE_DIR": "{run_root}/cache/zig-global-cache-dir",
           "npm_config_cache": "{run_root}/cache/npm-config-cache"
         },
@@ -19711,6 +19735,12 @@
     "checkout_component": "checkout-ed29430cd2a91255",
     "fixture_checkout": "/gobby-srt-fixture/checkout",
     "gcode_runtime_digest": "ed29430cd2a91255"
+  },
+  "platform_write_paths": {
+    "darwin": [
+      "{darwin_temp}/xcrun_db-*",
+      "{darwin_cache}/com.apple.DeveloperTools"
+    ]
   },
   "recorded_on": "darwin",
   "refusals": [

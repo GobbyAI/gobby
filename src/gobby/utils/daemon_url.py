@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -21,6 +21,25 @@ class DaemonUrlError(ValueError):
 def daemon_url(bootstrap_path: str | Path | None = None) -> str:
     """Return the daemon URL using the shared client-dial contract."""
     return resolve_daemon_url(bootstrap_path=bootstrap_path)
+
+
+def load_client_bootstrap(loader: Callable[[], BootstrapConfig]) -> BootstrapConfig:
+    """Read only the supplied endpoint for clients launched with daemon overrides.
+
+    Managed clients cannot read the owner's bootstrap. Their launcher must supply
+    the endpoint; missing launch metadata is an error, not a default-port fallback.
+    Other clients retain the normal bootstrap loader when no override is present.
+    """
+    url = _env_url_override(os.environ) or _env_port_override(os.environ)
+    if url:
+        parsed = urlsplit(url)
+        return BootstrapConfig(
+            daemon_url=url,
+            daemon_port=parsed.port or (443 if parsed.scheme == "https" else 80),
+        )
+    if os.environ.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"):
+        raise DaemonUrlError("Managed MCP client requires GOBBY_DAEMON_URL or GOBBY_DAEMON_PORT")
+    return loader()
 
 
 def resolve_daemon_url(
