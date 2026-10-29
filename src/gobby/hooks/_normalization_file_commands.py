@@ -3,8 +3,11 @@
 from pathlib import Path
 
 from gobby.hooks._normalization_operands import (
+    _SORT_VALUE_OPTIONS,
     _file_command_operands,
     _file_transfer_paths,
+    _resolve_long_option,
+    _shell_positional_args_after,
     _sort_output_paths,
     _tar_extract_paths,
     _truncate_positional_paths,
@@ -21,6 +24,26 @@ from gobby.hooks._perl_arguments import perl_inplace_operands
 def classify_file_command(
     cmd: str, parts: list[str], cwd: str | None, base_cwd: Path | None
 ) -> _ShellSegmentMetadata:
+    if cmd == "uniq":
+        value_options = {"-f", "--skip-fields", "-s", "--skip-chars", "-w", "--check-chars"}
+        abbreviations = {
+            part.partition("=")[0]
+            for part in parts[1:]
+            if _resolve_long_option(part.partition("=")[0], frozenset(value_options))
+        }
+        operands = _shell_positional_args_after(
+            parts,
+            1,
+            option_args=value_options | abbreviations,
+        )
+        if len(operands) > 1 and operands[1] != "-":
+            uniq_paths = tuple(_rebase_shell_paths([operands[1]], cwd))
+            return _ShellSegmentMetadata(
+                "write", paths=uniq_paths, write_paths=uniq_paths, repo_mutation=True
+            )
+        uniq_paths = tuple(_rebase_shell_paths([path for path in operands[:1] if path != "-"], cwd))
+        return _ShellSegmentMetadata("read", paths=uniq_paths)
+
     if cmd == "sort":
         writes, paths = _sort_output_paths(parts)
         if writes:
@@ -28,6 +51,17 @@ def classify_file_command(
             return _ShellSegmentMetadata(
                 "write", paths=rebased_paths, write_paths=rebased_paths, repo_mutation=True
             )
+        return _ShellSegmentMetadata(
+            "execute",
+            read_only=not any(
+                _resolve_long_option(part.partition("=")[0], _SORT_VALUE_OPTIONS)
+                == "--compress-program"
+                for part in parts[1:]
+            ),
+        )
+
+    if cmd in {"cut", "jq", "tr"}:
+        return _ShellSegmentMetadata("execute", read_only=True)
 
     if cmd == "tar":
         extracts, paths, unknown = _tar_extract_paths(parts, cwd)

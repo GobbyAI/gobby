@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -18,7 +19,7 @@ from gobby.hooks._path_scope import checkout_root, current_tool_cwd, resolve_too
 from gobby.hooks.checkout_reads import CheckoutReadUnavailable, node_origin
 from gobby.hooks.dispatchers import run_coro_blocking
 from gobby.hooks.event_handlers._base import EventHandlersBase
-from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.events import HookEvent, HookResponse, tool_execution_id
 from gobby.hooks.terminal_handoff_delivery import schedule_terminal_handoff_delivery
 from gobby.hooks.tool_error_tracker import is_wrapper_echo_event, track_tool_outcome
 from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
@@ -115,6 +116,22 @@ class ToolEventHandlerMixin(EventHandlersBase):
         input_data = event.data
         tool_name = input_data.get("tool_name", "unknown")
         session_id = event.metadata.get("_platform_session_id")
+        unproven_shell_cwd = event.metadata.get("_native_shell_cwd_unproven") is True
+        if unproven_shell_cwd and event.metadata.get("_native_shell_read_only") is not True:
+            retry = (
+                "On this node, retry with a command beginning cd '/absolute/task/worktree' && "
+                "followed by one command, with no additional directory changes or subshells."
+                if node_origin()
+                else "Retry with one exec_command call whose cmd and absolute workdir are literal "
+                "strings in the functions.exec source; do not use load() or a variable for workdir."
+            )
+            return HookResponse(
+                decision="block",
+                reason=(
+                    "Shell command blocked before execution: Gobby cannot prove its working "
+                    "directory and the command is not proven read-only. " + retry
+                ),
+            )
         project_id = event.project_id or self._resolve_project_id(event.project_id, event.cwd)
 
         if session_id:
@@ -129,7 +146,13 @@ class ToolEventHandlerMixin(EventHandlersBase):
         else:
             self.logger.debug("BEFORE_TOOL: %s", tool_name)
 
-        if event.source.value == "codex" and tool_name in FUNCTIONS_EXEC_NAMES:
+        # Managed app-server calls deliver this boundary. Native Codex delivers
+        # only the inner Bash hook, where the cwd-proof guard above applies.
+        if (
+            event.source.value == "codex"
+            and tool_name in FUNCTIONS_EXEC_NAMES
+            and event.metadata.get("_native_hook_type") != "PreToolUse"
+        ):
             wrapper_error = validate_functions_exec_wrapper(
                 input_data.get("arguments", input_data.get("tool_input"))
             )
@@ -161,13 +184,80 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         db = getattr(self._session_manager, "db", None)
         if session_id and db is not None:
+            roots = input_data.get("canonical_git_operation_roots")
+            execution_id = tool_execution_id(event)
+            binding_started = False
             try:
+                if isinstance(roots, list) and not execution_id:
+                    raise ValueError(
+                        "Git operation blocked: a durable tool execution ID is required. "
+                        "Retry through a tool call that provides its execution ID."
+                    )
                 self._assert_edit_path_selection(event, session_id)
                 TaskToolBindings(SessionVariableManager(db), session_id).start(event)
-            except ValueError as exc:
-                self._release_worktree_edit_calls(event, session_id)
-                return HookResponse(decision="block", reason=str(exc))
-            if tool_name == "Bash":
+                binding_started = True
+                if execution_id and isinstance(roots, list):
+                    started = run_coro_blocking(
+                        SessionVariableManager(db).begin_git_operation_call(
+                            session_id,
+                            execution_id,
+                            [root for root in roots if isinstance(root, str)],
+                        ),
+                        self._event_loop,
+                        self.logger,
+                        label="begin_git_operation",
+                        raise_errors=True,
+                    )
+                    if started is not True:
+                        raise ValueError(
+                            "Git operation blocked: Gobby could not establish operation ownership. "
+                            "Retry after the repository and daemon are available."
+                        )
+            except Exception as exc:
+                if not isinstance(exc, ValueError) and not isinstance(roots, list):
+                    raise
+                if isinstance(roots, list):
+                    self.logger.warning("Git operation ownership preflight failed", exc_info=True)
+                    if execution_id:
+                        try:
+                            SessionVariableManager(db).cancel_git_operation_call(
+                                session_id, execution_id
+                            )
+                        except Exception:
+                            self.logger.warning(
+                                "Failed to release rejected Git operation", exc_info=True
+                            )
+                try:
+                    self._release_worktree_edit_calls(event, session_id)
+                except Exception:
+                    if not isinstance(roots, list):
+                        raise
+                    self.logger.warning(
+                        "Failed to release rejected operation edit calls", exc_info=True
+                    )
+                if binding_started:
+                    try:
+                        TaskToolBindings(SessionVariableManager(db), session_id).complete(
+                            replace(event, metadata={**event.metadata, "is_failure": True})
+                        )
+                    except Exception:
+                        self.logger.warning(
+                            "Failed to release rejected tool binding", exc_info=True
+                        )
+                return HookResponse(
+                    decision="block",
+                    reason=(
+                        f"Git operation ownership preflight failed: {exc}"
+                        if isinstance(roots, list)
+                        else str(exc)
+                    )
+                    if isinstance(exc, ValueError)
+                    else (
+                        "Git operation blocked: operation ownership preflight failed. "
+                        "Retry after the repository and daemon are available."
+                    ),
+                )
+            if tool_name == "Bash" and not unproven_shell_cwd:
                 self._snapshot_shell_writes(event, session_id)
                 self._begin_worktree_shell_call(event, session_id, project_id)
 
@@ -427,7 +517,12 @@ class ToolEventHandlerMixin(EventHandlersBase):
             if tool_name == "Bash" and self._session_manager is not None:
                 self._record_worktree_shell_writes(event, session_id)
 
-            if not is_failure and is_edit and self._session_manager:
+            if (
+                not is_failure
+                and input_data.get("_verification_pending") is not True
+                and is_edit
+                and self._session_manager
+            ):
                 try:
                     self._record_successful_file_mutation(
                         event,
@@ -446,6 +541,26 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
             db = getattr(self._session_manager, "db", None)
             if db is not None:
+                execution_id = tool_execution_id(event)
+                background_path = _background_output_path(input_data)
+                if tool_name == "Bash" and execution_id and background_path:
+                    SessionVariableManager(db).defer_git_operation_call(
+                        session_id, execution_id, background_path
+                    )
+                if (
+                    tool_name == "Bash"
+                    and execution_id
+                    and background_path is None
+                    and input_data.get("_verification_pending") is not True
+                ):
+                    run_coro_blocking(
+                        SessionVariableManager(db).finish_git_operation_call(
+                            session_id, execution_id
+                        ),
+                        self._event_loop,
+                        self.logger,
+                        label="finish_git_operation",
+                    )
                 TaskToolBindings(SessionVariableManager(db), session_id).complete(event)
 
         else:
@@ -481,25 +596,29 @@ class ToolEventHandlerMixin(EventHandlersBase):
         root = checkout_root(Path(cwd)) if cwd is not None else None
         if db is None or root is None:
             return
-        if event.request_id is None:
+        call_id = tool_execution_id(event)
+        if call_id is None:
             self.logger.debug("Bash call has no tool-call id; claimed task edits not snapshotted")
             return
         try:
             SessionVariableManager(db).snapshot_claimed_shell_edits(
-                session_id, os.fspath(root), event.request_id
+                session_id, os.fspath(root), call_id
             )
         except Exception:
             self.logger.warning("Failed to snapshot claimed task edits", exc_info=True)
 
     def _adopt_shell_writes(self, event: HookEvent, session_id: str) -> None:
         """Let the claimed tasks own the ledger paths this Bash call rewrote."""
+        if event.data.get("_verification_pending") is True:
+            return
         db = getattr(self._session_manager, "db", None)
-        if db is None or event.request_id is None:
+        call_id = tool_execution_id(event)
+        if db is None or call_id is None:
             return
         try:
             SessionVariableManager(db).adopt_claimed_shell_edits(
                 session_id,
-                event.request_id,
+                call_id,
                 output_path=_background_output_path(event.data),
             )
         except Exception:
@@ -515,7 +634,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
         try:
             db = getattr(self._session_manager, "db", None)
             root = _call_worktree_root(event)
-            if db is None or root is None or event.request_id is None:
+            call_id = tool_execution_id(event)
+            if db is None or root is None or call_id is None:
                 return
             if not is_registered_worktree(db, project_id, root):
                 return
@@ -531,7 +651,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
             manager.begin_worktree_shell_call(
                 session_id,
                 root,
-                event.request_id,
+                call_id,
                 before=before,
                 attributable=attributable,
                 now=time.time(),
@@ -548,23 +668,22 @@ class ToolEventHandlerMixin(EventHandlersBase):
         """
         try:
             db = getattr(self._session_manager, "db", None)
-            if db is None or event.request_id is None:
+            call_id = tool_execution_id(event)
+            if db is None or call_id is None:
                 return
             manager = SessionVariableManager(db)
-            root = manager.worktree_shell_call_root(session_id, event.request_id)
+            root = manager.worktree_shell_call_root(session_id, call_id)
             if root is None:
                 return
             output_path = _background_output_path(event.data)
-            if output_path is not None:
-                manager.defer_worktree_shell_call(
-                    session_id, event.request_id, output_path=output_path
-                )
+            if output_path is not None or event.data.get("_verification_pending") is True:
+                manager.defer_worktree_shell_call(session_id, call_id, output_path=output_path)
                 return
             after = run_coro_blocking(
                 worktree_digests(root), self._event_loop, self.logger, label="worktree_digests"
             )
             settled = manager.settle_worktree_shell_call(
-                session_id, root, event.request_id, after=after, now=time.time()
+                session_id, root, call_id, after=after, now=time.time()
             )
             paths = attribute_settled_call(
                 manager, session_id, root, settled, edited_at=event.timestamp.timestamp()
@@ -577,10 +696,11 @@ class ToolEventHandlerMixin(EventHandlersBase):
     def _release_worktree_edit_calls(self, event: HookEvent, session_id: str) -> None:
         """Retire this call's structured-edit entries once its write completed or was refused."""
         db = getattr(self._session_manager, "db", None)
-        if db is None or event.request_id is None:
+        call_id = tool_execution_id(event)
+        if db is None or call_id is None:
             return
         try:
-            release_structured_edit_calls(SessionVariableManager(db), session_id, event.request_id)
+            release_structured_edit_calls(SessionVariableManager(db), session_id, call_id)
         except Exception:
             self.logger.warning("Failed to release structured edit in flight", exc_info=True)
 

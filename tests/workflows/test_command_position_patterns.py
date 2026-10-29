@@ -710,6 +710,28 @@ def test_git_global_options_do_not_bypass(
         assert _blocks(body, command), f"{rule_name} should block: {command}"
 
 
+@pytest.mark.parametrize(
+    "rule_name",
+    [
+        "require-task-before-commit",
+        "require-code-review-skill",
+        "require-code-review-self-review",
+    ],
+)
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        'git -C "/tmp/repo name"',
+        "git --git-dir='/tmp/repo name/.git' --work-tree='/tmp/repo name'",
+    ],
+)
+def test_quoted_git_directories_cannot_bypass_commit_gates(
+    manager: RuleDefinitionManager, rule_name: str, prefix: str
+) -> None:
+    body = _get_rule(manager, rule_name)
+    assert _blocks(body, f"{prefix} commit -am 'reviewed change'")
+
+
 @pytest.mark.parametrize(("rule_name", "command"), SUBSTITUTION_CASES)
 def test_substitution_and_subshell_positions_block(
     db: HubDatabase,

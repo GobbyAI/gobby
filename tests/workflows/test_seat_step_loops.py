@@ -25,7 +25,6 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import yaml
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.runner import AgentRunner
@@ -170,7 +169,7 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
                 "implementation_complete": False,
                 "candidate_sent": False,
                 "bounced": False,
-                "_developer_handoff_tasks": [],
+                "pending_completion_tasks": [],
                 "additional_skills": [],
                 "skills_routed": False,
             },
@@ -440,14 +439,14 @@ _HANDOFF_SEAT = _seat(
                 _set(
                     "gobby-tasks",
                     "escalate_task",
-                    "_developer_handoff_tasks",
-                    "(vars._developer_handoff_tasks or []) + [vars.assigned_task_id] "
+                    "pending_completion_tasks",
+                    "(vars.pending_completion_tasks or []) + [vars.assigned_task_id] "
                     "if str(tool_input.get('reason', '')).startswith('Handed off: reviewer LAND') "
-                    "else vars._developer_handoff_tasks",
+                    "else vars.pending_completion_tasks",
                 ),
                 _set("gobby-tasks", "escalate_task", "assigned_task_id", None),
             ],
-            "transitions": [{"to": "claim", "when": "vars._developer_handoff_tasks"}],
+            "transitions": [{"to": "claim", "when": "vars.pending_completion_tasks"}],
         }
     }
 )
@@ -969,7 +968,7 @@ async def test_developer_landed_retest_escalation_returns_to_claim(
     handoff = {"task_id": task.id, "reason": f"Handed off: reviewer LAND at {sha}; retest"}
     await run.call("gobby-tasks", "escalate_task", handoff)
     assert run.step == "claim"
-    assert run.vars["_developer_handoff_tasks"] == [task.id]
+    assert run.vars["pending_completion_tasks"] == [task.id]
 
 
 @pytest.mark.parametrize("preview", [False, True])
@@ -991,7 +990,7 @@ async def test_developer_closes_unsubmitted_no_commit_research(
     assert run.step == "implement"
     assert not task.commits
     assert not run.vars["candidate_sent"]
-    assert run.vars["_developer_handoff_tasks"] == []
+    assert run.vars["pending_completion_tasks"] == []
     arguments = {
         "task_id": task_ref if use_ref else task.id,
         "preview": preview,
@@ -1419,9 +1418,47 @@ _PRODUCTION_FIX = {"src/gobby/red_fix.py": "VALUE = 1\n"}
 _TEST_ONLY_REPAIR = {
     "tests/workflows/test_repair_only.py": "def test_repair_only():\n    assert True\n"
 }
-_BUNDLED_DEVELOPER = (
-    Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents/developer.yaml"
-)
+
+
+def _commit_kind_seat() -> dict[str, Any]:
+    """Exercise commit-result handlers without depending on an installed seat policy."""
+    remember = _set(
+        "gobby-tasks",
+        "link_commit",
+        "declared_candidates",
+        "vars.declared_candidates + [tool_output.get('declared_candidate')]",
+    )
+    remember["when"] = "tool_output.get('declared_candidate') is not None"
+    forget = _set(
+        "gobby-tasks",
+        "unlink_commit",
+        "declared_candidates",
+        "[sha for sha in vars.declared_candidates if sha in tool_output.get('commits', [])]",
+    )
+    completion = _set(
+        "gobby-tasks",
+        "unlink_commit",
+        "implementation_complete",
+        "tool_output.get('production_commits_remain') or bool(vars.declared_candidates)",
+    )
+    definition = _seat(
+        {
+            "implement": {"on_mcp_success": [remember]},
+            "submit": {
+                "on_mcp_success": [remember, forget, completion],
+                "transitions": [{"to": "implement", "when": "not vars.implementation_complete"}],
+            },
+        }
+    )
+    workflow = definition["step_workflow"]
+    workflow["variables"]["declared_candidates"] = []
+    implement = next(step for step in workflow["steps"] if step["name"] == "implement")
+    for handler in implement["on_mcp_success"][:2]:
+        handler["when"] = (
+            "tool_output.get('production_changes') is True "
+            "or tool_output.get('declared_candidate') is not None"
+        )
+    return definition
 
 
 def _commit_files(repo: Path, message: str, files: dict[str, str]) -> str:
@@ -1459,7 +1496,7 @@ async def _claimed_developer(
     _git(repo, "init", "-q", "-b", "main")
     _commit_files(repo, "unlinked base", {"README.md": "base\n"})
     _git(repo, "checkout", "-q", "-b", "seat-work")
-    definition = yaml.safe_load(_BUNDLED_DEVELOPER.read_text())
+    definition = _commit_kind_seat()
     run = SeatRun(temp_db, "developer", project_id=checkout.project.id, definition=definition)
     await run.load(*run.vars["required_skills"])
     task = run.task(owner=SESSION_ID)

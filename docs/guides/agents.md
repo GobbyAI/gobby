@@ -176,6 +176,7 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `base_branch` | Branch used for new isolation, or `inherit` |
 | `timeout` | Runtime limit in seconds; `0` means unlimited |
 | `workflows` | Rule, skill, variable, and pipeline selectors |
+| `capabilities` | Explicit permissions and workflow opt-ins; a definition's name grants no authority. Rule applicability and exemptions belong in `workflows.rule_selectors`. |
 | `blocked_tools` / `blocked_mcp_tools` | Definition-level restrictions |
 | `spawnable_agents` | What a spawned run of this definition may spawn: `["*"]` any agent, named agents, or empty (the default) none. See [Spawn Scope](#spawn-scope) |
 | `resumable_team_agents` | Existing agent definitions a running team manager may resume within its own admitted team, retaining the seat's stored type. Empty by default; fresh spawns still use `spawnable_agents`. |
@@ -188,6 +189,12 @@ Every declared surface requires its prompt block. Legacy `role`, `goal`,
 Use `workflows.skill_selectors` for discovery and
 `step_workflow.variables.required_skills` for required loads. Use `surfaces`
 plus the runtime tool choice instead of the retired `mode` field.
+
+`recover_rejected_submission` opts a definition into recovery from `submit` to
+`implement` when the current candidate receives a recorded rejection. Recovery
+requires the caller's claim and matching implementation and review records; a
+team hold postpones it. The bundled Developer declares this capability. Custom
+definitions using the same submission workflow must declare it explicitly.
 
 ### Versioning
 
@@ -623,6 +630,20 @@ machine; foreign owners, foreign-attributed paths, and unattributed paths are
 rejected. A successful checkpoint returns commit/path evidence and releases the
 temporary worktree claim while preserving the task claim. It does not validate
 or close the task. If a release error includes a commit, inspect it before retrying.
+
+## Workspace Backups
+
+The daemon commits agent workspace notes on handoff, compaction, and session end.
+The `gobby:agent-workspaces` system cron catches missed changes nightly at 03:30
+local time (`30 3 * * *`). Upgrades migrate the old five-minute schedule while
+preserving disabled jobs and parked jobs. A parked job stays enabled but has no
+next scheduled run until it is explicitly woken.
+
+One background worker serializes backup scans, commits, and garbage collection.
+Generated trees, provider homes, and credential filenames are excluded before
+Git expands status. Symlinks and files larger than 1 MiB are skipped. An old
+index lock is recovered only after checking that no process holds it; live or
+uncertain locks are preserved and retries back off.
 
 ## Checkout Modes
 

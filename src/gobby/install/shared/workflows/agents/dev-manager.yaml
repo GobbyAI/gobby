@@ -14,8 +14,8 @@ timeout: 0
 send_message_targets: [parent, session, project]
 # An epic team's seats: makers and the reviewers the team binds. The epic scope in
 # team_dispatch decides which of them a spawn may take.
-spawnable_agents: [developer, code-reviewer, docs-reviewer, research-reviewer]
-resumable_team_agents: [test-writer, developer, code-reviewer]
+spawnable_agents: [developer, test-writer, code-reviewer, docs-reviewer, research-reviewer, researcher]
+resumable_team_agents: [test-writer, developer, code-reviewer, docs-reviewer, research-reviewer, researcher]
 blocked_tools:
   - "Edit"
   - "KillShell"

@@ -164,6 +164,7 @@ def _unwrap(
     stop_at_xargs: bool = False,
     environment_changes: list[tuple[str | None, str | None]] | None = None,
     stop_at_eval: bool = False,
+    assignments: set[str] | None = None,
 ) -> list[str]:
     """Common literal execution wrappers; never treat query operands as launches."""
     i = 0
@@ -210,6 +211,8 @@ def _unwrap(
             if environment_changes is not None:
                 key, _, value = peek().partition("=")
                 environment_changes.append((key.removesuffix("+"), value))
+            if assignments is not None:
+                assignments.add(peek().partition("=")[0].removesuffix("+"))
             advance()
         elif name in {
             "!",

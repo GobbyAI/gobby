@@ -200,6 +200,7 @@ class ACPManagedChatSession(
                                     pre_tool_response = await self._apply_pre_tool_lifecycle(
                                         chat_event.tool_name,
                                         chat_event.arguments,
+                                        tool_execution_id=chat_event.tool_call_id,
                                     )
                                 if is_pre_tool_decision_denied(pre_tool_response):
                                     blocked_tool_call_ids.add(chat_event.tool_call_id)
@@ -231,6 +232,7 @@ class ACPManagedChatSession(
                                     str(pending.get("tool_name", "")),
                                     tool_input_payload,
                                     chat_event.result if chat_event.success else chat_event.error,
+                                    tool_execution_id=chat_event.tool_call_id,
                                 )
                         if chat_event is not None:
                             yield chat_event

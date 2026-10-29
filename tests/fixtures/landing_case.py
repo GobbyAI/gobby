@@ -20,7 +20,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.land_commit import LandingResult, land_candidate
-from gobby.tasks.step_records import TASK_STEPS
+from gobby.tasks.step_records import TASK_STEPS, StepSubmission, record_task_step
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.review_approvals import (
@@ -46,6 +46,7 @@ def bind_task_manager(
         DEV_MANAGER,
         ("closing",),
         capabilities=("manage_task_claims", "land_tasks"),
+        team_manager=True,
     )
     LocalAgentRunManager(db).create(
         parent_session_id=parent,
@@ -153,9 +154,29 @@ class LandingCase:
         self.db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha]), task.id))
 
     def approve(self, task: Task, sha: str, author: str | None = None) -> None:
+        """Complete implementation and obtain an independent candidate review."""
+        self.implement(task, sha)
         reviewer = author or self.reviewer
         grant_review_writes(self.db, reviewer, self.project_id)
         approve_review(self.db, task_id=task.id, reviewer_session_id=reviewer, commit_sha=sha)
+
+    def implement(self, task: Task, sha: str) -> None:
+        grant_step_writes(
+            self.db, self.claimant, self.project_id, "fixture-developer", ("implementation",)
+        )
+        record_task_step(
+            self.db,
+            task_id=task.id,
+            session_id=self.claimant,
+            step="implementation",
+            submission=StepSubmission(
+                status="approved",
+                epoch=LocalTaskManager(self.db).get_task(task.id).review_epoch,
+                round_number=1,
+                feedback="Candidate implementation is complete.",
+                commit_sha=sha,
+            ),
+        )
 
     def reject(self, task: Task, sha: str) -> None:
         grant_review_writes(self.db, self.reviewer, self.project_id)
@@ -203,6 +224,7 @@ class LandingCase:
 
     def approve_as(self, task: Task, sha: str, session: str) -> None:
         """Record an approval from a session that already runs its own definition."""
+        self.implement(task, sha)
         approve_review(self.db, task_id=task.id, reviewer_session_id=session, commit_sha=sha)
 
     def reviewed(self, sha: str, title: str = "Reviewed candidate") -> Task:

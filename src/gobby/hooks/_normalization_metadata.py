@@ -172,7 +172,11 @@ def _merge_code_navigation_extra(metadata: list[_ShellSegmentMetadata]) -> dict[
     merged: dict[str, Any] = {}
     for extra in extras:
         merged.update(extra)
-    for key in ("canonical_git_force_checkout_roots", "canonical_git_sequencer_scope_paths"):
+    for key in (
+        "canonical_git_force_checkout_roots",
+        "canonical_git_sequencer_scope_paths",
+        "canonical_git_operation_roots",
+    ):
         values = [path for extra in extras for path in extra.get(key, [])]
         if values:
             merged[key] = list(dict.fromkeys(values))
@@ -207,14 +211,12 @@ def _merge_code_navigation_extra(metadata: list[_ShellSegmentMetadata]) -> dict[
 def _gate_rewritable_scripts(
     metadata: list[_ShellSegmentMetadata],
 ) -> list[_ShellSegmentMetadata]:
-    """Invalidate file-backed evidence when another segment of the command writes.
+    """Invalidate file-backed evidence when another segment may write.
 
     A body is classified as it reads now. Any other write in the command, before it,
     beside it in a pipeline or on a later loop pass, may rewrite it first.
     """
-    writes = [
-        item.kind == "write" or item.repo_mutation or bool(item.write_paths) for item in metadata
-    ]
+    writes = [not item.proven_read_only or bool(item.write_paths) for item in metadata]
     result: list[_ShellSegmentMetadata] = []
     for index, item in enumerate(metadata):
         if item.extra and any(write for other, write in enumerate(writes) if other != index):
@@ -257,7 +259,10 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         item for item in metadata if not item.neutral_setup and not item.read_only_pipeline_filter
     ]
     if not active:
-        return _build_canonical_tool_metadata("execute")
+        return _build_canonical_tool_metadata(
+            "execute",
+            extra={"canonical_read_only": all(item.proven_read_only for item in metadata)},
+        )
 
     paths: list[str] = []
     mutation_paths: list[str] = []
@@ -457,6 +462,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         kind = "execute"
 
     extra = _merge_code_navigation_extra(active)
+    # A read beside an opaque execution is not a read-only shell program.
+    extra["canonical_read_only"] = all(item.proven_read_only for item in metadata)
     if "canonical_edit_file_paths" in extra:
         # Scope-only segments authorize the command without claiming a directory.
         # Preserve actual edits in mixed commands and nested shell wrappers.

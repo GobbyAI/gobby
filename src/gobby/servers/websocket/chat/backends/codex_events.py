@@ -250,6 +250,8 @@ def codex_tool_event_data(
 
     return {
         "tool_call_id": _codex_tool_call_id(params, data),
+        "execution_id": data.get("verification_execution_id") or _codex_tool_call_id(params, data),
+        "pending": data.get("_verification_pending") is True,
         "tool_name": tool_name,
         "server_name": str(data.get("mcp_server") or parse_server_name(tool_name)),
         "arguments": arguments,

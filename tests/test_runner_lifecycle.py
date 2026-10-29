@@ -5675,13 +5675,14 @@ class TestRuleDispositionStartup:
         runner = cast(GobbyRunner, SimpleNamespace(database=object()))
         run_startup_content_sync(runner)
 
-        assert calls == ["migrate"]
+        assert calls == ["import", "migrate"]
         assert runner._dev_mode is False
 
     def test_ambiguous_or_partial_diagnostic_aborts(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from gobby.runner_init.storage import run_startup_content_sync
         from gobby.workflows.delivery_disposition import RuleDispositionMigrationError
 
+        monkeypatch.setattr("gobby.workflows.imports.sync_imported_workflows", lambda _db: {})
         monkeypatch.setattr("gobby.utils.dev.is_dev_mode", lambda _path: False)
         monkeypatch.setattr(
             "gobby.sync_registry.migrate_rule_delivery_dispositions",
@@ -5700,6 +5701,7 @@ class TestRuleDispositionStartup:
     def test_zero_write_repeat_proceeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from gobby.runner_init.storage import run_startup_content_sync
 
+        monkeypatch.setattr("gobby.workflows.imports.sync_imported_workflows", lambda _db: {})
         calls: list[str] = []
 
         def record_migrate(*_args: object, **_kwargs: object) -> dict[str, object]:

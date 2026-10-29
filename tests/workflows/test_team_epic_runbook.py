@@ -129,9 +129,13 @@ async def _dry_run(world: TeamWorld, task: Task) -> tuple[dict[str, Any], dict[s
         rendered = _render(run, step.id, context)
         if rendered is not None and step.mcp is not None and step.mcp.tool == "spawn_agent":
             seats[step.id] = rendered["agent"]
-            # The spawn reply a later step reads: the seat's child session and its pane.
+            # Later steps read the child session, run and pane from the spawn reply.
             context["steps"][step.id] = {
-                "output": {"child_session_id": f"child-{step.id}", "pane_ref": f"pane-{step.id}"}
+                "output": {
+                    "child_session_id": f"child-{step.id}",
+                    "run_id": f"run-{step.id}",
+                    "pane_ref": f"pane-{step.id}",
+                }
             }
     return reply, seats
 

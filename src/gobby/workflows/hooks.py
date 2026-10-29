@@ -12,7 +12,7 @@ from psycopg.errors import QueryCanceled
 from gobby.hooks.effect_deadline import (
     BlockingEffectDeadline,
 )
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, tool_execution_id
 from gobby.hooks.fifo_lock import CrossLoopFifoLock
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
 from gobby.storage.hub.operation_deadline import (
@@ -339,6 +339,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         raise
                     except Exception:
                         logger.warning("Failed to settle background shell edits", exc_info=True)
+                    try:
+                        await self._session_var_manager.settle_background_git_operations(session_id)
+                    except _DATABASE_TIMEOUTS:
+                        raise
+                    except Exception:
+                        logger.warning("Failed to settle background Git operations", exc_info=True)
 
                 # Load session-scoped variables (canonical store).
                 # session_id may be "" for session-less events; session_variables.session_id
@@ -741,16 +747,19 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 if (
                     event.event_type == HookEventType.BEFORE_TOOL
                     and session_id
-                    and event.request_id
+                    and (call_id := tool_execution_id(event))
                     and response.decision == "block"
                     and self._session_var_manager
                 ):
                     try:
                         await asyncio.to_thread(
+                            self._session_var_manager.cancel_git_operation_call, session_id, call_id
+                        )
+                        await asyncio.to_thread(
                             release_structured_edit_calls,
                             self._session_var_manager,
                             session_id,
-                            event.request_id,
+                            call_id,
                         )
                     except _DATABASE_TIMEOUTS:
                         raise

@@ -52,6 +52,7 @@ def test_patch_inspection_uses_option_arity(tmp_path: Path, arguments: str, kind
 
     assert data["canonical_tool_kind"] == kind
     assert bool(data.get("canonical_repo_mutation")) is (kind == "write")
+    assert data.get("canonical_read_only", False) is (kind == "execute")
 
 
 SINGLE_DIFF = "--- source\n+++ source\n@@ -1 +1 @@\n-before\n+after\n"
@@ -145,6 +146,8 @@ def test_patch_rejects_multiple_or_incomplete_diffs(tmp_path: Path, patch_text: 
         "cp multi.patch change.patch; patch -g0 -z.orig source/original change.patch",
         "patch -g0 -z.orig source/original change.patch >change.patch",
         "patch -g0 -z.orig source/original change.patch | tee change.patch",
+        "git reset --hard HEAD; patch -g0 -z.orig source/original change.patch",
+        "ruff format change.patch; patch -g0 -z.orig source/original change.patch",
     ],
 )
 def test_patch_input_rewrites_invalidate_scope(tmp_path: Path, command: str) -> None:

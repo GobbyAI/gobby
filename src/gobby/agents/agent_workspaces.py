@@ -5,21 +5,22 @@ work tree, ``<gobby_home>/agents_workspaces/<project_id>.git/`` its daemon-only 
 Each session writes ``<definition>/session-<seq>/``; an epic team shares ``epics/epic-<seq>/``.
 
 The daemon is the only committer. A trigger schedules a commit and returns; a failed commit is
-logged and never raised into set_handoff, compaction or session end. The five-minute cron commits
-whatever a trigger missed.
+logged and never raised into set_handoff, compaction or session end. The nightly cron at
+03:30 local time commits whatever a trigger missed.
 """
 
 from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import fnmatch
 import logging
 import os
 import re
 import subprocess
+import threading
 import time
-from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -32,7 +33,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
-from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
+from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git, parse_porcelain_v1_z
 
 if TYPE_CHECKING:
     from gobby.agents.team_lifecycle import TeamBinding
@@ -49,7 +50,7 @@ WORKSPACE_VARIABLE_NAMES = frozenset(
 WORKSPACE_CRON_JOB_NAME = "gobby:agent-workspaces"
 WORKSPACE_CRON_HANDLER = "agent.workspaces"
 WORKSPACE_CRON_DESCRIPTION = "Commit agent workspace changes to the daemon-owned repository"
-WORKSPACE_CRON_INTERVAL_SECONDS = 300
+WORKSPACE_CRON_EXPRESSION = "30 3 * * *"
 WORKSPACE_CRON_TRIGGER = "timer"
 WORKSPACE_GIT_TIMEOUT_SECONDS = 30.0
 WORKSPACE_GC_TIMEOUT_SECONDS = 120.0
@@ -65,7 +66,36 @@ tree. Agents do not run Git here, and retention deletes nothing.
 """
 
 _PENDING: set[concurrent.futures.Future[None]] = set()
-_PROJECT_LOCKS: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
+_BACKUP_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="gobby-workspace-backup"
+)
+_SCHEDULE_LOCK = threading.Lock()
+_SCHEDULED_PROJECTS: dict[str, str | None] = {}
+_BLOCKED_UNTIL: dict[str, float] = {}
+_INDEX_LOCK_MIN_AGE_SECONDS = 120.0
+_LOCK_BACKOFF_SECONDS = 60.0
+_SECRET_NAMES = frozenset({"bootstrap.yaml", "auth.json", ".secret_kek", "local_cli_token"})
+_GENERATED_DIRECTORIES = (
+    ".git",
+    ".codex",
+    ".claude",
+    ".droid",
+    ".cache",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".turbo",
+    "target",
+    "target-*",
+    "build",
+    "dist",
+    "coverage",
+    "gobby-pytest-home-*",
+)
 
 
 class CronRegistration(Protocol):
@@ -148,8 +178,11 @@ async def _git(
     env: Mapping[str, str] | None = None,
 ) -> GitOk:
     anchor = workspace_anchor(project_id)
+    index_lock = workspace_git_dir(project_id) / "index.lock"
+    had_index_lock = index_lock.exists()
     result = await daemon_git.run(
         [
+            "--no-optional-locks",
             "--literal-pathspecs",
             f"--git-dir={workspace_git_dir(project_id)}",
             f"--work-tree={anchor}",
@@ -161,28 +194,97 @@ async def _git(
     )
     if isinstance(result, GitOk):
         return result
-    raise WorkspaceGitError(f"git {args[0]} failed for {project_id}: {result}")
+    failure = f"git {args[0]} failed for {project_id}: {result}"
+    if isinstance(result, GitTimeout) and args[0] in {"add", "commit", "rm"} and not had_index_lock:
+        # The timed-out Git worker has killed its process group. Only consider a
+        # lock created during our write, and preserve it if any holder remains.
+        try:
+            _recover_index_lock(project_id, minimum_age=0)
+        except WorkspaceGitError as exc:
+            raise WorkspaceGitError(f"{failure}; index.lock cleanup failed: {exc}") from exc
+    raise WorkspaceGitError(failure)
 
 
-@asynccontextmanager
-async def _project_lock(project_id: str) -> AsyncIterator[None]:
-    """Serialize workspace Git work per project on the running loop.
+def _recover_index_lock(
+    project_id: str, *, minimum_age: float = _INDEX_LOCK_MIN_AGE_SECONDS
+) -> bool:
+    """Remove an old, unheld lock; uncertainty always preserves the lock."""
+    lock = workspace_git_dir(project_id) / "index.lock"
+    try:
+        before = lock.lstat()
+    except FileNotFoundError:
+        return True
+    if lock.is_symlink() or time.time() - before.st_mtime < minimum_age:
+        return False
+    try:
+        holders = subprocess.run(
+            ["lsof", "-w", "-t", "--", str(lock)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise WorkspaceGitError(f"Cannot inspect workspace index.lock with lsof: {exc}") from exc
+    try:
+        after = lock.lstat()
+        if (before.st_dev, before.st_ino, before.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_mtime_ns,
+        ):
+            return False
+    except FileNotFoundError:
+        return True
+    if holders.returncode not in {0, 1} or holders.stderr.strip():
+        detail = holders.stderr.strip() or f"lsof exited {holders.returncode}"
+        raise WorkspaceGitError(f"Cannot inspect workspace index.lock: {detail}")
+    if holders.returncode != 1 or holders.stdout.strip():
+        return False
+    try:
+        lock.unlink()
+    except FileNotFoundError:
+        return True
+    logger.warning("Recovered unheld agent workspace index.lock for %s", project_id)
+    return True
 
-    A lock created under one loop is replaced, not shared, when another loop asks for it.
-    """
-    loop = asyncio.get_running_loop()
-    entry = _PROJECT_LOCKS.get(project_id)
-    if entry is None or entry[0] is not loop:
-        entry = (loop, asyncio.Lock())
-        _PROJECT_LOCKS[project_id] = entry
-    async with entry[1]:
-        yield
+
+def _excluded_path(path: str) -> bool:
+    parts = Path(path).parts
+    return bool(parts) and (
+        parts[-1] in _SECRET_NAMES
+        or any(
+            fnmatch.fnmatchcase(part, pattern)
+            for part in parts[:-1]
+            for pattern in _GENERATED_DIRECTORIES
+        )
+    )
+
+
+async def _prepare_exclusions(project_id: str) -> None:
+    """Exclude generated trees before Git expands status; retire old tracked copies."""
+    exclude = workspace_git_dir(project_id) / "info" / "exclude"
+    begin, end = "# BEGIN GOBBY WORKSPACE EXCLUDES", "# END GOBBY WORKSPACE EXCLUDES"
+    text = exclude.read_text() if exclude.exists() else ""
+    prefix, found, remainder = text.partition(begin)
+    suffix = remainder.partition(end)[2] if found else ""
+    patterns = [*sorted(_SECRET_NAMES), *(f"{name}/" for name in _GENERATED_DIRECTORIES)]
+    managed = f"{prefix.rstrip()}\n{begin}\n" + "\n".join(patterns) + f"\n{end}{suffix}"
+    if managed != text:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        exclude.write_text(managed)
+    tracked = await _git(project_id, "ls-files", "-z")
+    retired = [path for path in tracked.stdout.split("\0") if path and _excluded_path(path)]
+    for chunk in _chunks(retired):
+        await _git(project_id, "rm", "--cached", "--force", "--ignore-unmatch", "--", *chunk)
 
 
 def _eligible_paths(anchor: Path, paths: Sequence[str]) -> list[str]:
     """Drop symlinks and regular files over the size limit; keep deletions."""
     eligible: list[str] = []
     for path in paths:
+        if _excluded_path(path):
+            continue
         full = anchor / path
         if full.is_symlink():
             logger.info("agent workspace skipped symlink %s", path)
@@ -206,6 +308,7 @@ def _chunks(paths: Sequence[str]) -> Iterator[Sequence[str]]:
 
 async def _commit_locked(project_id: str, trigger: str) -> str | None:
     anchor = workspace_anchor(project_id)
+    await _prepare_exclusions(project_id)
     status = await _git(
         project_id, "status", "--porcelain", "-z", "--untracked-files=all", "--no-renames"
     )
@@ -213,8 +316,6 @@ async def _commit_locked(project_id: str, trigger: str) -> str | None:
         return None
     entries = parse_porcelain_v1_z(status.stdout)
     eligible = _eligible_paths(anchor, [entry.path for entry in entries])
-    if not eligible:
-        return None
     for chunk in _chunks(eligible):
         await _git(project_id, "add", "-A", "--", *chunk)
     staged = await _git(project_id, "diff", "--cached", "--name-only", "-z")
@@ -225,9 +326,8 @@ async def _commit_locked(project_id: str, trigger: str) -> str | None:
     subject = " ".join([f"agents-ws: {trigger}", *folders])
     await _git(
         project_id,
-        "-c",
-        "commit.gpgsign=false",
         "commit",
+        "--no-gpg-sign",
         "--quiet",
         "-m",
         subject,
@@ -239,16 +339,49 @@ async def _commit_locked(project_id: str, trigger: str) -> str | None:
 
 async def commit_workspace(project_id: str, trigger: str) -> str | None:
     """Commit the eligible dirty paths of a project's workspace; ``None`` when nothing changed."""
-    async with _project_lock(project_id):
-        await asyncio.to_thread(ensure_workspace, project_id)
-        return await _commit_locked(project_id, trigger)
+    future = _BACKUP_EXECUTOR.submit(_commit_worker, project_id, trigger)
+    return await asyncio.wrap_future(future)
+
+
+def _commit_worker(project_id: str, trigger: str) -> str | None:
+    """One process-wide worker owns all backup I/O and parsing, across caller loops."""
+    if time.monotonic() < _BLOCKED_UNTIL.get(project_id, 0):
+        return None
+    try:
+        ensure_workspace(project_id)
+        if not _recover_index_lock(project_id):
+            _BLOCKED_UNTIL[project_id] = time.monotonic() + _LOCK_BACKOFF_SECONDS
+            return None
+        return asyncio.run(_commit_locked(project_id, trigger))
+    except WorkspaceGitError:
+        _BLOCKED_UNTIL[project_id] = time.monotonic() + _LOCK_BACKOFF_SECONDS
+        raise
 
 
 async def _commit_logged(project_id: str, trigger: str) -> None:
     try:
-        await commit_workspace(project_id, trigger)
-    except Exception as exc:
-        logger.warning("Agent workspace commit failed (%s) for %s: %s", trigger, project_id, exc)
+        while True:
+            try:
+                await commit_workspace(project_id, trigger)
+            except Exception as exc:
+                await asyncio.to_thread(
+                    logger.warning,
+                    "Agent workspace commit failed (%s) for %s: %s",
+                    trigger,
+                    project_id,
+                    exc,
+                )
+            with _SCHEDULE_LOCK:
+                pending = _SCHEDULED_PROJECTS.get(project_id)
+                if pending is None:
+                    del _SCHEDULED_PROJECTS[project_id]
+                    return
+                trigger = pending
+                _SCHEDULED_PROJECTS[project_id] = None
+    except asyncio.CancelledError:
+        with _SCHEDULE_LOCK:
+            _SCHEDULED_PROJECTS.pop(project_id, None)
+        raise
 
 
 def schedule_workspace_commit(
@@ -259,7 +392,7 @@ def schedule_workspace_commit(
 ) -> None:
     """Schedule a commit on the daemon loop and return; never raises or awaits.
 
-    Without a running loop the trigger is dropped and the five-minute cron commits the tree.
+    Without a running loop the trigger is dropped and the nightly cron commits the tree.
     """
     if project_id is None:
         return
@@ -272,29 +405,48 @@ def schedule_workspace_commit(
     if target is None or not target.is_running():
         logger.debug("No daemon loop for workspace commit (%s); the cron will commit", trigger)
         return
+    with _SCHEDULE_LOCK:
+        if project_id in _SCHEDULED_PROJECTS:
+            _SCHEDULED_PROJECTS[project_id] = trigger
+            return
+        _SCHEDULED_PROJECTS[project_id] = None
     try:
         future = asyncio.run_coroutine_threadsafe(_commit_logged(project_id, trigger), target)
     except RuntimeError as exc:
+        with _SCHEDULE_LOCK:
+            _SCHEDULED_PROJECTS.pop(project_id, None)
         logger.warning("Agent workspace commit not scheduled (%s): %s", trigger, exc)
         return
-    _PENDING.add(future)
-    future.add_done_callback(_PENDING.discard)
+    with _SCHEDULE_LOCK:
+        _PENDING.add(future)
+
+    def finished(done: concurrent.futures.Future[None]) -> None:
+        with _SCHEDULE_LOCK:
+            _PENDING.discard(done)
+
+    future.add_done_callback(finished)
 
 
 async def drain_workspace_commits() -> None:
     """Wait for every scheduled workspace commit to finish."""
-    while _PENDING:
-        pending = [asyncio.wrap_future(future) for future in list(_PENDING)]
+    while True:
+        with _SCHEDULE_LOCK:
+            pending = [asyncio.wrap_future(future) for future in _PENDING]
+        if not pending:
+            return
         await asyncio.gather(*pending, return_exceptions=True)
 
 
 async def _maybe_gc(project_id: str) -> None:
+    await asyncio.wrap_future(_BACKUP_EXECUTOR.submit(_gc_worker, project_id))
+
+
+def _gc_worker(project_id: str) -> None:
     stamp = workspace_git_dir(project_id) / _GC_STAMP
-    async with _project_lock(project_id):
-        if stamp.exists() and time.time() - stamp.stat().st_mtime < WORKSPACE_GC_INTERVAL_SECONDS:
-            return
-        await _git(project_id, "gc", "--auto", "--quiet", timeout=WORKSPACE_GC_TIMEOUT_SECONDS)
-        stamp.touch()
+    if stamp.exists() and time.time() - stamp.stat().st_mtime < WORKSPACE_GC_INTERVAL_SECONDS:
+        return
+    asyncio.run(_git(project_id, "gc", "--auto", "--quiet", timeout=WORKSPACE_GC_TIMEOUT_SECONDS))
+    stamp.touch()
 
 
 def _workspace_project_ids() -> list[str]:
@@ -311,14 +463,16 @@ async def run_workspace_cron(_job: CronJob) -> str:
     """Commit every project's workspace and run its weekly ``git gc --auto``."""
     committed = 0
     failed = 0
-    for project_id in _workspace_project_ids():
+    for project_id in await asyncio.to_thread(_workspace_project_ids):
         try:
             if await commit_workspace(project_id, WORKSPACE_CRON_TRIGGER):
                 committed += 1
             await _maybe_gc(project_id)
         except Exception as exc:
             failed += 1
-            logger.warning("Agent workspace cron failed for %s: %s", project_id, exc)
+            await asyncio.to_thread(
+                logger.warning, "Agent workspace cron failed for %s: %s", project_id, exc
+            )
     return f"agent workspaces: {committed} committed, {failed} failed"
 
 
@@ -330,8 +484,8 @@ def _ensure_workspace_cron_job(cron_storage: CronJobStorage) -> None:
             project_id=PERSONAL_PROJECT_ID,
             name=WORKSPACE_CRON_JOB_NAME,
             description=WORKSPACE_CRON_DESCRIPTION,
-            schedule_type="interval",
-            interval_seconds=WORKSPACE_CRON_INTERVAL_SECONDS,
+            schedule_type="cron",
+            cron_expr=WORKSPACE_CRON_EXPRESSION,
             action_type="handler",
             action_config=action_config,
             enabled=True,
@@ -346,9 +500,9 @@ def _ensure_workspace_cron_job(cron_storage: CronJobStorage) -> None:
         action_type="handler",
         action_config=action_config,
         description=WORKSPACE_CRON_DESCRIPTION,
-        schedule_type="interval",
-        cron_expr=None,
-        interval_seconds=WORKSPACE_CRON_INTERVAL_SECONDS,
+        schedule_type="cron",
+        cron_expr=WORKSPACE_CRON_EXPRESSION,
+        interval_seconds=None,
         run_at=None,
     )
     if repaired and was_enabled and not repaired.enabled:
@@ -417,19 +571,28 @@ def predecessor_folder_readable(
         or caller["seq_num"] is None
     ):
         return False
+    return _predecessor_folder_readable(
+        sessions.db, caller["project_id"], caller["definition"], int(caller["seq_num"]), folder
+    )
+
+
+def _predecessor_folder_readable(
+    db: HubDatabase, project_id: str, definition: str, seq: int, folder: str
+) -> bool:
+    """Shared sequence/live-holder check, after resolving persistence authority."""
     path = Path(os.path.normpath(folder))
     try:
-        relative = path.relative_to(workspace_anchor(caller["project_id"]))
+        relative = path.relative_to(workspace_anchor(project_id))
     except ValueError:
         return False
-    if len(relative.parts) != 2 or relative.parts[0] != caller["definition"]:
+    if len(relative.parts) != 2 or relative.parts[0] != definition:
         return False
     match = _SESSION_FOLDER.fullmatch(relative.parts[1])
-    if match is None or int(match.group(1)) >= int(caller["seq_num"]):
+    if match is None or int(match.group(1)) >= seq:
         return False
-    bound = sessions.db.execute(
+    bound = db.execute(
         _LIVE_FOLDER_BINDER_SQL,
-        (caller["project_id"], list(LIVE_SESSION_STATUSES), str(path)),
+        (project_id, list(LIVE_SESSION_STATUSES), str(path)),
     ).fetchone()
     return bound is None
 
@@ -452,8 +615,8 @@ def bind_session_workspace(
     """Bind the session's folder once and return it.
 
     A session keeps the folder it already holds, so compaction and resume reuse it. A persistent
-    definition's clear successor takes its predecessor's folder, which keeps the lineage's first
-    sequence number. Any other session gets ``<definition>/session-<seq>/``.
+    definition's clear successor takes its predecessor's folder. Sandboxed clears also keep it:
+    the live process still has its original folder grant. Other sessions get their own sequence.
     """
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -470,12 +633,16 @@ def bind_session_workspace(
     definition = definition if isinstance(definition, str) and definition else None
     persistent = _definition_persistent(db, definition, location["project_id"])
     folder: Path | None = None
-    if persistent and inherit_from is not None:
-        inherited = variables.get_variable_subset(inherit_from, [WORKSPACE_DIR_VARIABLE]).get(
-            WORKSPACE_DIR_VARIABLE
-        )
-        if isinstance(inherited, str) and inherited:
-            folder = Path(inherited)
+    if inherit_from is not None:
+        predecessor = db.execute(
+            "SELECT sandbox_enabled FROM sessions WHERE id = %s", (inherit_from,)
+        ).fetchone()
+        if persistent or (predecessor is not None and predecessor["sandbox_enabled"]):
+            inherited = variables.get_variable_subset(inherit_from, [WORKSPACE_DIR_VARIABLE]).get(
+                WORKSPACE_DIR_VARIABLE
+            )
+            if isinstance(inherited, str) and inherited:
+                folder = Path(inherited)
     if folder is None:
         folder = session_workspace_dir(location["project_id"], definition, location["seq_num"])
     folder.mkdir(parents=True, exist_ok=True)
@@ -519,11 +686,13 @@ def _epic_folder(db: HubDatabase, binding: TeamBinding) -> Path | None:
 
 def _seat_epic_folder(db: HubDatabase, session_id: str) -> Path | None:
     """The epic folder of a seat run of a live epic team; None outside one."""
-    from gobby.agents.team_lifecycle import seat_team
+    from gobby.agents.team_lifecycle import seat_team, team_binding
     from gobby.agents.team_scope import live_teams
     from gobby.storage.team_records import EPIC_MODE
 
     binding = seat_team(db, session_id)
+    if binding is not None and binding.parent_team_id:
+        binding = team_binding(db, binding.parent_team_id)
     if binding is None or binding.mode != EPIC_MODE:
         return None
     live = live_teams(db, [binding.task_id]).get(binding.task_id)
@@ -537,13 +706,25 @@ def spawn_workspace_write_paths(
 ) -> list[str]:
     """The folders a spawned seat may write: its own session folder and its epic folder.
 
-    Computed at spawn, before the session starts and binds its folder, from the same
-    definition and sequence number that ``bind_session_workspace`` uses.
+    Reuse a bound folder on resume, including a clear predecessor's grant. Before the first
+    SessionStart binding, derive it from the definition and sequence number.
     """
+    from gobby.workflows.state_manager import SessionVariableManager
+
     location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
     if location is None or location["project_id"] is None or location["seq_num"] is None:
         return []
-    folders = [session_workspace_dir(location["project_id"], definition, location["seq_num"])]
+    bound = (
+        SessionVariableManager(db)
+        .get_variable_subset(session_id, [WORKSPACE_DIR_VARIABLE])
+        .get(WORKSPACE_DIR_VARIABLE)
+    )
+    folder = (
+        Path(bound)
+        if isinstance(bound, str) and bound
+        else session_workspace_dir(location["project_id"], definition, location["seq_num"])
+    )
+    folders = [folder]
     epic = _seat_epic_folder(db, session_id)
     if epic is not None:
         folders.append(epic)
@@ -553,19 +734,61 @@ def spawn_workspace_write_paths(
 def grant_seat_workspace_paths(
     config: SandboxConfig, db: HubDatabase, session_id: str, definition: str | None
 ) -> SandboxConfig:
-    """Return ``config`` with the seat's workspace folders among its write grants, once each.
+    """Recompute launch authority from the session and stored definition, including resume.
 
-    Spawn and resume both apply this, so a relaunched seat carries the folders its spawn
-    granted even when its stored snapshot predates them.
+    Read/write scope is private runtime state, never authority carried by a saved
+    policy snapshot. A new session need not have received SessionStart variables yet.
     """
-    granted = [
+    from gobby.storage.definitions import AgentDefinitionManager
+
+    granted = spawn_workspace_write_paths(db, session_id, definition)
+    reads = list(granted)
+    location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
+    if location is not None and location["project_id"] is not None:
+        anchor = workspace_anchor(location["project_id"])
+        reads.append(str(anchor / "README.md"))
+        row = (
+            AgentDefinitionManager(db).get_by_name(definition, location["project_id"])
+            if definition
+            else None
+        )
+        body = row.definition_json if row is not None else {}
+        if body.get("read_all_agent_workspaces") is True:
+            reads = [str(workspaces_root())]
+        elif body.get("persistent_workspace") is True and definition and location["seq_num"]:
+            directory = anchor / definition
+            # Validate the identity before enumerating this one definition's folders.
+            config.with_workspace_scope([str(directory)], []).restrict_workspace_paths([], [])
+            if directory.is_dir():
+                reads.extend(
+                    str(folder)
+                    for folder in directory.iterdir()
+                    if folder.is_dir()
+                    and not folder.is_symlink()
+                    and _predecessor_folder_readable(
+                        db,
+                        location["project_id"],
+                        definition,
+                        int(location["seq_num"]),
+                        str(folder),
+                    )
+                )
+    scoped = config.with_workspace_scope(reads, granted)
+    # Reject aliasing bindings before launch creates any directories in them.
+    scoped.restrict_workspace_paths([], [])
+    # SRT's Linux bind grants require existing paths, including persona launches
+    # that do not pass through the spawned-agent directory preparation step.
+    for folder in granted:
+        Path(folder).mkdir(parents=True, exist_ok=True)
+    root = workspaces_root().resolve()
+    retained = [
         path
-        for path in spawn_workspace_write_paths(db, session_id, definition)
-        if path not in config.extra_write_paths
+        for path in config.extra_write_paths
+        if not Path(path).expanduser().resolve().is_relative_to(root)
     ]
-    if not granted:
-        return config
-    return config.model_copy(update={"extra_write_paths": [*config.extra_write_paths, *granted]})
+    return scoped.model_copy(
+        update={"extra_write_paths": list(dict.fromkeys([*retained, *granted]))}
+    )
 
 
 def bind_epic_workspace(db: HubDatabase, session_id: str) -> Path | None:

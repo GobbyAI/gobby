@@ -8,7 +8,7 @@ import shlex
 import shutil
 import subprocess
 from collections.abc import Collection, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -44,9 +44,15 @@ from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.dirty_edit_grants import record_dirty_path_approval
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_commit_parsing import parse_git_commit_invocations
+from gobby.workflows.git_operation_ownership import (
+    GitOperationInspectionError,
+    operation_identity,
+    owned_operation,
+)
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from gobby.workflows.task_tool_bindings import TaskToolBindings
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
@@ -310,18 +316,18 @@ async def test_rule2_own_ledger_read_failure_blocks(guard_harness: GuardHarness)
     assert "own ledger unavailable" in reason
 
 
-def _start_rename_merge(h: GuardHarness) -> None:
+async def _start_rename_merge(h: GuardHarness) -> None:
     _git(h.repo, "checkout", "-b", "incoming")
     _git(h.repo, "mv", "foreign.txt", "renamed.txt")
     _git(h.repo, "commit", "-m", "rename")
     _git(h.repo, "checkout", "-")
-    _git(h.repo, "merge", "--no-ff", "--no-commit", "incoming")
+    await _recorded_operation(h, "merge", "--no-ff", "--no-commit", "incoming")
 
 
 @pytest.mark.asyncio
 async def test_rule3_exempts_merge_set_paths_during_merge(guard_harness: GuardHarness) -> None:
     h = guard_harness
-    _start_rename_merge(h)
+    await _start_rename_merge(h)
     for path in ("foreign.txt", "renamed.txt"):
         result = await h.handler._evaluate_rules(h.edit_event(path))
         assert result.decision == "allow"
@@ -337,7 +343,7 @@ async def test_rule3_exempts_merge_set_paths_during_merge(guard_harness: GuardHa
 @pytest.mark.asyncio
 async def test_rule2_landing_merge_passes_for_merge_set_paths(guard_harness: GuardHarness) -> None:
     h = guard_harness
-    _start_rename_merge(h)
+    await _start_rename_merge(h)
     variables = SessionVariableManager(h.db)
     variables.merge_variables(
         h.foreign_session.id,
@@ -347,6 +353,12 @@ async def test_rule2_landing_merge_passes_for_merge_set_paths(guard_harness: Gua
                 str(h.repo): ["foreign.txt", "renamed.txt", "outside.txt"]
             },
         },
+    )
+    variables.record_edited_files(
+        h.foreign_session.id,
+        ["foreign.txt", "renamed.txt", "outside.txt"],
+        checkout_root=str(h.repo),
+        edited_at=0,
     )
     result = await h.handler._evaluate_rules(h.event("git commit -m merge"))
     assert result.decision == "allow"
@@ -372,22 +384,175 @@ def _git_conflict(repo: Path, *args: str) -> None:
     assert _git(repo, "diff", "--name-only", "--diff-filter=U")
 
 
-def _stop_at_conflict(repo: Path, operation: str) -> None:
+async def _recorded_operation(h: GuardHarness, *args: str, conflict: bool = False) -> None:
+    variables = SessionVariableManager(h.db)
+    variables.record_edited_files(
+        h.foreign_session.id, ["foreign.txt"], checkout_root=str(h.repo), edited_at=0
+    )
+    await variables.begin_git_operation_call(h.current_session.id, "operation", [str(h.repo)])
+    if conflict:
+        _git_conflict(h.repo, *args)
+    else:
+        _git(h.repo, *args)
+    await SessionVariableManager(h.db).finish_git_operation_call(h.current_session.id, "operation")
+
+
+async def _stop_at_conflict(h: GuardHarness, operation: str) -> None:
     """Stop `operation` conflicted in conflict.txt after it applied applied.txt."""
+    repo = h.repo
     base = _git(repo, "branch", "--show-current")
     _git(repo, "checkout", "-q", "-b", "topic")
     _commit_files(repo, "topic", {"conflict.txt": "topic\n", "applied.txt": "applied\n"})
     if operation == "revert":
         _commit_files(repo, "follow-up", {"conflict.txt": "follow-up\n"})
-        _git_conflict(repo, "revert", "--no-edit", "HEAD~1")
+        await _recorded_operation(h, "revert", "--no-edit", "HEAD~1", conflict=True)
         return
     _git(repo, "checkout", "-q", base)
     _commit_files(repo, "upstream", {"conflict.txt": "upstream\n"})
     if operation == "rebase":
         _git(repo, "checkout", "-q", "topic")
-        _git_conflict(repo, "rebase", base)
+        await _recorded_operation(h, "rebase", base, conflict=True)
     else:
-        _git_conflict(repo, "cherry-pick", "topic")
+        await _recorded_operation(h, "cherry-pick", "topic", conflict=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("background", [False, True])
+async def test_git_operation_reservation_follows_tool_binding_lifetime(
+    guard_harness: GuardHarness, background: bool
+) -> None:
+    h = guard_harness
+    manager = SessionVariableManager(h.db)
+    bindings = TaskToolBindings(manager, h.current_session.id)
+    event = replace(h.event("git merge incoming"), request_id="reserved-operation")
+    bindings.start(event)
+    manager.record_edited_files(h.current_session.id, ["owned.txt"], checkout_root=str(h.repo))
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), "reserved-operation")
+    await manager.begin_git_operation_call(
+        h.current_session.id, "reserved-operation", [str(h.repo)]
+    )
+    if background:
+        bindings.complete(
+            replace(
+                event,
+                event_type=HookEventType.AFTER_TOOL,
+                data={
+                    **event.data,
+                    "_verification_pending": True,
+                    "tool_output": {"session_id": 99},
+                },
+            )
+        )
+    bindings.clear_pending("prompt")
+    snapshots = manager.get_variables(h.current_session.id).get("claimed_shell_snapshots") or {}
+    assert ("reserved-operation" in snapshots) is background
+    if background:
+        with pytest.raises(ValueError, match="still running"):
+            await manager.begin_git_operation_call(h.current_session.id, "retry", [str(h.repo)])
+        bindings.clear_pending("session_end")
+    await manager.begin_git_operation_call(h.current_session.id, "retry", [str(h.repo)])
+    manager.cancel_git_operation_call(h.current_session.id, "retry")
+    assert await owned_operation(manager.get_variables(h.current_session.id), str(h.repo)) is None
+
+
+@pytest.mark.asyncio
+async def test_operation_inspection_failure_cannot_reset_a_continuation_start(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    await _start_rename_merge(h)
+    manager = SessionVariableManager(h.db)
+    original = await owned_operation(manager.get_variables(h.current_session.id), str(h.repo))
+    assert original is not None
+    failure = GitFailed("failed", ("git", "rev-parse"), 128, "", "inspection unavailable")
+    with patch(
+        "gobby.workflows.git_operation_ownership.daemon_git.run", AsyncMock(return_value=failure)
+    ):
+        with pytest.raises(GitOperationInspectionError, match="inspection unavailable"):
+            await operation_identity(str(h.repo))
+        with pytest.raises(GitOperationInspectionError):
+            await manager.begin_git_operation_call(h.current_session.id, "continue", [str(h.repo)])
+    assert (
+        await owned_operation(manager.get_variables(h.current_session.id), str(h.repo)) == original
+    )
+
+
+@pytest.mark.asyncio
+async def test_read_only_continuation_cannot_adopt_unowned_edits(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    await _start_rename_merge(h)
+    (h.repo / "renamed.txt").write_text("unrecorded edit after merge\n", encoding="utf-8")
+    manager = SessionVariableManager(h.db)
+    await manager.begin_git_operation_call(h.current_session.id, "no-op", [str(h.repo)])
+    git_result = subprocess.run(["git", "merge", "-h"], cwd=h.repo, capture_output=True, text=True)
+    assert git_result.returncode == 129
+    await manager.finish_git_operation_call(h.current_session.id, "no-op")
+    result = await h.handler._evaluate_rules(h.edit_event("renamed.txt"))
+    assert result.decision == "block"
+    assert result.reason is not None and "renamed.txt" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_operation_marker_from_a_later_unobserved_merge_is_not_owned(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    await _start_rename_merge(h)
+    _git(h.repo, "merge", "--abort")
+    _git(h.repo, "merge", "--no-ff", "--no-commit", "incoming")
+    result = await h.handler._evaluate_rules(h.edit_event("renamed.txt"))
+    assert result.decision == "block"
+
+
+@pytest.mark.asyncio
+async def test_missing_background_git_output_releases_reservation_without_proof(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    h = guard_harness
+    manager = SessionVariableManager(h.db)
+    await manager.begin_git_operation_call(h.current_session.id, "lost", [str(h.repo)])
+    manager.defer_git_operation_call(h.current_session.id, "lost", str(tmp_path / "missing.output"))
+    await SessionVariableManager(h.db).settle_background_git_operations(h.current_session.id)
+    assert await owned_operation(manager.get_variables(h.current_session.id), str(h.repo)) is None
+    assert await manager.begin_git_operation_call(h.current_session.id, "retry", [str(h.repo)])
+    manager.cancel_git_operation_call(h.current_session.id, "retry")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["merge", "rebase", "cherry-pick", "revert"])
+@pytest.mark.parametrize("rule", ["edit", "commit"])
+@pytest.mark.parametrize("current_observation", [False, True])
+async def test_operation_does_not_exempt_a_new_foreign_write(
+    guard_harness: GuardHarness, operation: str, rule: str, current_observation: bool
+) -> None:
+    h = guard_harness
+    if operation == "merge":
+        await _start_rename_merge(h)
+        path = "renamed.txt"
+    else:
+        await _stop_at_conflict(h, operation)
+        path = "conflict.txt"
+    (h.repo / path).write_text("new foreign work after operation start\n", encoding="utf-8")
+    SessionVariableManager(h.db).record_edited_file(
+        h.foreign_session.id, path, checkout_root=str(h.repo)
+    )
+    if current_observation:
+        # A delayed local observer can see the same bytes; it cannot erase the foreign write.
+        SessionVariableManager(h.db).record_edited_file(
+            h.current_session.id, path, checkout_root=str(h.repo)
+        )
+    if rule == "commit":
+        _git(h.repo, "add", path)
+        event = h.event("git commit -m resolution")
+    else:
+        event = h.edit_event(path)
+    result = await h.handler._evaluate_rules(event)
+    assert result.decision == "block"
+    assert result.reason is not None
+    assert h.foreign_session.ref in result.reason
+    assert path in result.reason
 
 
 @pytest.mark.asyncio
@@ -396,11 +561,11 @@ async def test_rule3_exempts_operation_paths_at_conflict_stop(
     guard_harness: GuardHarness, operation: str
 ) -> None:
     h = guard_harness
-    _stop_at_conflict(h.repo, operation)
+    await _stop_at_conflict(h, operation)
     (h.repo / "outside.txt").write_text("outside dirt\n", encoding="utf-8")
     for path in ("conflict.txt", "applied.txt"):
         result = await h.handler._evaluate_rules(h.edit_event(path))
-        assert result.decision == "allow", path
+        assert result.decision == "allow", (path, result.reason)
     for command in (
         "git checkout --ours conflict.txt",
         "git checkout --theirs conflict.txt",
@@ -422,7 +587,7 @@ async def test_rule3_operation_exemption_ends_on_abort(
     guard_harness: GuardHarness, operation: str
 ) -> None:
     h = guard_harness
-    _stop_at_conflict(h.repo, operation)
+    await _stop_at_conflict(h, operation)
     result = await h.handler._evaluate_rules(h.edit_event("conflict.txt"))
     assert result.decision == "allow"
     _git(h.repo, operation, "--abort")
@@ -438,7 +603,7 @@ async def test_rule3_rebase_exemption_ends_on_continue_despite_stale_rebase_head
     guard_harness: GuardHarness,
 ) -> None:
     h = guard_harness
-    _stop_at_conflict(h.repo, "rebase")
+    await _stop_at_conflict(h, "rebase")
     (h.repo / "conflict.txt").write_text("resolved\n", encoding="utf-8")
     _git(h.repo, "add", "conflict.txt")
     _git(h.repo, "-c", "core.editor=true", "rebase", "--continue")
@@ -463,7 +628,7 @@ async def test_rule3_exempts_rename_followed_cherry_pick_conflict(
     _git(h.repo, "checkout", "-q", base)
     _git(h.repo, "mv", "story.txt", "moved.txt")
     _commit_files(h.repo, "move", {"moved.txt": "".join([*lines[:5], "upstream\n", *lines[6:]])})
-    _git_conflict(h.repo, "cherry-pick", "topic")
+    await _recorded_operation(h, "cherry-pick", "topic", conflict=True)
     assert _git(h.repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "topic") == "story.txt"
     assert _git(h.repo, "diff", "--name-only", "--diff-filter=U") == "moved.txt"
     result = await h.handler._evaluate_rules(h.edit_event("moved.txt"))
@@ -480,7 +645,7 @@ async def test_rule3_merge_exemption_excludes_paths_only_head_changed(
     _commit_files(h.repo, "incoming", {"incoming.txt": "incoming\n"})
     _git(h.repo, "checkout", "-q", base)
     _commit_files(h.repo, "head only", {"foreign.txt": "head foreign\n"})
-    _git(h.repo, "merge", "-q", "--no-ff", "--no-commit", "incoming")
+    await _recorded_operation(h, "merge", "-q", "--no-ff", "--no-commit", "incoming")
     assert "foreign.txt" in _git(h.repo, "diff", "--name-only", "HEAD", "MERGE_HEAD")
     result = await h.handler._evaluate_rules(h.edit_event("incoming.txt"))
     assert result.decision == "allow"
@@ -501,7 +666,9 @@ async def test_unrelated_history_merge_exempts_everything_it_brings(
     _commit_files(h.repo, "unrelated", {"conflict.txt": "theirs\n", "brought.txt": "brought\n"})
     _git(h.repo, "switch", "-q", base)
     _commit_files(h.repo, "ours", {"conflict.txt": "ours\n"})
-    _git_conflict(h.repo, "merge", "--allow-unrelated-histories", "--no-edit", "unrelated")
+    await _recorded_operation(
+        h, "merge", "--allow-unrelated-histories", "--no-edit", "unrelated", conflict=True
+    )
     for path in ("conflict.txt", "brought.txt"):
         result = await h.handler._evaluate_rules(h.edit_event(path))
         assert result.decision == "allow", path
@@ -515,7 +682,13 @@ async def test_unrelated_history_merge_exempts_everything_it_brings(
         h.foreign_session.id,
         {"session_dirty_files": ledger, "session_dirty_file_checkouts": {str(h.repo): ledger}},
     )
+    SessionVariableManager(h.db).record_edited_files(
+        h.foreign_session.id, ledger, checkout_root=str(h.repo), edited_at=0
+    )
     (h.repo / "conflict.txt").write_text("resolved\n", encoding="utf-8")
+    SessionVariableManager(h.db).record_edited_file(
+        h.current_session.id, "conflict.txt", checkout_root=str(h.repo)
+    )
     _git(h.repo, "add", "conflict.txt")
     result = await h.handler._evaluate_rules(h.event("git commit -m merge"))
     assert result.decision == "allow"
@@ -530,7 +703,7 @@ async def test_merge_base_failure_fails_closed(guard_harness: GuardHarness, fail
     _commit_files(h.repo, "theirs", {"conflict.txt": "theirs\n"})
     _git(h.repo, "switch", "-q", base)
     _commit_files(h.repo, "ours", {"conflict.txt": "ours\n"})
-    _git_conflict(h.repo, "merge", "--no-edit", "incoming")
+    await _recorded_operation(h, "merge", "--no-edit", "incoming", conflict=True)
     (h.repo / "outside.txt").write_text("outside dirt\n", encoding="utf-8")
     real_run = daemon_git.run
     faked: list[tuple[str, ...]] = []
@@ -558,13 +731,22 @@ async def test_rule2_concluding_cherry_pick_passes_for_its_paths(
     guard_harness: GuardHarness,
 ) -> None:
     h = guard_harness
-    _stop_at_conflict(h.repo, "cherry-pick")
+    await _stop_at_conflict(h, "cherry-pick")
     ledger = ["conflict.txt", "applied.txt", "outside.txt"]
     SessionVariableManager(h.db).merge_variables(
         h.foreign_session.id,
         {"session_dirty_files": ledger, "session_dirty_file_checkouts": {str(h.repo): ledger}},
     )
+    SessionVariableManager(h.db).record_edited_files(
+        h.foreign_session.id,
+        ledger,
+        checkout_root=str(h.repo),
+        edited_at=0,
+    )
     (h.repo / "conflict.txt").write_text("resolved\n", encoding="utf-8")
+    SessionVariableManager(h.db).record_edited_file(
+        h.current_session.id, "conflict.txt", checkout_root=str(h.repo)
+    )
     _git(h.repo, "add", "conflict.txt")
     result = await h.handler._evaluate_rules(h.event("git commit -m pick"))
     assert result.decision == "allow"

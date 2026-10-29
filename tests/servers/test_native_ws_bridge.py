@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -15,6 +16,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
+from starlette.types import Message, Scope
 from starlette.websockets import WebSocketDisconnect
 
 import gobby.servers.websocket.native_bridge as native_bridge
@@ -157,6 +159,104 @@ def _ready(*, admitted: bool, **fields: Any) -> dict[str, Any]:
         **({"confined": False} if admitted else {}),
         **fields,
     }
+
+
+def _bridge_scope() -> Scope:
+    return {
+        "type": "websocket",
+        "scheme": "ws",
+        "path": native_bridge.BRIDGE_PATH,
+        "query_string": b"",
+        "headers": _headers().raw,
+        "client": LOOPBACK,
+        "server": ("127.0.0.1", 8000),
+        "subprotocols": [],
+    }
+
+
+@pytest.mark.parametrize("admitted,fail_after", [(True, 0), (True, 1), (False, 0)])
+async def test_bridge_send_disconnect_is_normal_close(
+    temp_db: HubDatabase,
+    db_executor: DatabaseExecutor,
+    caplog: pytest.LogCaptureFixture,
+    admitted: bool,
+    fail_after: int,
+) -> None:
+    publisher = _Publisher()
+    websocket_server = _ws_server(None, publisher, db_executor)
+    auth_service = MagicMock()
+    auth_service.authenticate.return_value = AuthDecision(allowed=admitted)
+    sent: list[Message] = []
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+        if sum(item["type"] == "websocket.send" for item in sent) > fail_after:
+            # Starlette turns a transport OSError into WebSocketDisconnect(1006),
+            # which ASGIWebSocketAdapter.send normalizes to ConnectionClosedError.
+            raise OSError("peer disconnected")
+
+    async def handle(
+        adapter: native_bridge.NativeBridgeAdapter, *_args: Any, **_kwargs: Any
+    ) -> None:
+        await adapter.send("handler response")
+
+    handler = AsyncMock(side_effect=handle)
+    receive = AsyncMock(return_value={"type": "websocket.connect"})
+    caplog.set_level(logging.DEBUG, logger=native_bridge.__name__)
+    with patch.object(websocket_server, "handle_connection", handler):
+        await _client(websocket_server, auth_service, database=temp_db).app(
+            _bridge_scope(), receive, send
+        )
+
+    assert [message["type"] for message in sent] == ["websocket.accept"] + ["websocket.send"] * (
+        fail_after + 1
+    )
+    assert json.loads(sent[1]["text"])["admitted"] is admitted
+    assert handler.await_count == fail_after
+    assert len(publisher.unregistered) == int(admitted)
+    assert not publisher.legs.get(GENERATION)
+    if admitted:
+        adapter = publisher.unregistered[0]
+        assert adapter.disconnected
+        assert adapter.close_code == 1006
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+    assert "Native WS bridge handler failed" not in caplog.text
+
+
+async def test_bridge_unexpected_handler_failure_still_logs_error(
+    temp_db: HubDatabase,
+    db_executor: DatabaseExecutor,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    publisher = _Publisher()
+    websocket_server = _ws_server(None, publisher, db_executor)
+    auth_service = MagicMock()
+    auth_service.authenticate.return_value = AuthDecision(allowed=True)
+    failure = RuntimeError("unexpected handler failure")
+    handler = AsyncMock(side_effect=failure)
+    sent: list[Message] = []
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    with patch.object(websocket_server, "handle_connection", handler):
+        await _client(websocket_server, auth_service, database=temp_db).app(
+            _bridge_scope(), AsyncMock(return_value={"type": "websocket.connect"}), send
+        )
+
+    handler.assert_awaited_once()
+    assert sent[-1] == {
+        "type": "websocket.close",
+        "code": 1011,
+        "reason": "WebSocket handler exited unexpectedly",
+    }
+    assert len(publisher.unregistered) == 1
+    assert publisher.legs[GENERATION] == set()
+    errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert errors[0].getMessage() == "Native WS bridge handler failed"
+    assert errors[0].exc_info is not None
+    assert errors[0].exc_info[1] is failure
 
 
 def _refused_before_ready(client: TestClient, headers: httpx.Headers) -> int:

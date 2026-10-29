@@ -48,7 +48,7 @@ def test_deleted_project_pipeline_is_retired_without_touching_other_rows(
     other = isolated_checkout_factory(temp_db, "other-retirement").project
     root = project_path / ".gobby" / "workflows"
     stale_path = root / "pipelines" / "retired.yaml"
-    _write_pipeline(stale_path, "retired")
+    _write_pipeline(stale_path, "retired", override=True)
     _write_pipeline(root / "pipelines" / "present.yml", "present")
     monkeypatch.setattr(
         "gobby.workflows.imports.get_global_workflows_dir", lambda: tmp_path / "global"
@@ -88,7 +88,7 @@ def test_deleted_project_pipeline_is_retired_without_touching_other_rows(
         ]
         == 0
     )
-    _write_pipeline(stale_path, "retired")
+    _write_pipeline(stale_path, "retired", override=True)
     reimported = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
     assert reimported["errors"] == []
     restored = manager.get_by_name("retired", project_id=project.id)
@@ -439,11 +439,12 @@ def test_pipeline_yaml_rejects_invalid_tags(tags: object) -> None:
         )
 
 
-def _write_pipeline(path: Path, name: str) -> None:
+def _write_pipeline(path: Path, name: str, *, override: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f"""name: {name}
 type: pipeline
+override: {str(override).lower()}
 steps:
   - id: work
     exec: echo {name}

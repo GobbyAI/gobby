@@ -1077,7 +1077,7 @@ async def test_foreign_session_needs_routed_machine(
     )
     assert str(routed.machine_id) == remote_machine
     rows = temp_db.fetchone(
-        "SELECT COUNT(*) AS n FROM sessions WHERE external_id LIKE 'foreign-%'", ()
+        "SELECT COUNT(*) AS n FROM sessions WHERE external_id LIKE %s", ("foreign-%",)
     )
     assert rows is not None and int(rows["n"]) == 0
 

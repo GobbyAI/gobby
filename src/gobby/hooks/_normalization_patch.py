@@ -10,9 +10,7 @@ from gobby.hooks._path_scope import resolve_tool_path
 from gobby.hooks.shell_execution import _bounded_read
 
 _PATCH_LIMIT = 64 * 1024
-_HUNK = re.compile(
-    r"@@ -[0-9]{1,9}(?:,([0-9]{1,9}))? \+[0-9]{1,9}(?:,([0-9]{1,9}))? @@(?: .*)?\n"
-)
+_HUNK = re.compile(r"@@ -[0-9]{1,9}(?:,([0-9]{1,9}))? \+[0-9]{1,9}(?:,([0-9]{1,9}))? @@(?: .*)?\n")
 _LONG_VALUES = {
     "--directory": "d",
     "--input": "i",
@@ -152,7 +150,7 @@ def classify_patch(
     if options is None:
         return unknown
     if "C" in options.flags:
-        return _ShellSegmentMetadata("execute")
+        return _ShellSegmentMetadata("execute", read_only=True)
     # A different input grammar, backup prefix or debug mode invalidates the proof.
     if options.flags - {"u", "f", "t", "s", "R", "N", "l", "E", "posix"}:
         return unknown

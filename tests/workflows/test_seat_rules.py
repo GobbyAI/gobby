@@ -238,6 +238,23 @@ async def test_selected_policy_applies_to_any_definition_name(
     assert rule in (response.reason or "")
 
 
+@pytest.mark.parametrize("name", ["fixture-seat", "developer"])
+@pytest.mark.parametrize("selected", [True, False])
+async def test_submit_write_scope_uses_definition_selector(
+    engine: RuleEngine, temp_db: HubDatabase, name: str, selected: bool
+) -> None:
+    rule = "submitted-candidate-write-scope"
+    _set_policy(temp_db, name, [f"name:{rule}"] if selected else [], [])
+    response = await _decide(
+        engine,
+        {"tool_name": "Write", "tool_input": {"file_path": "/tmp/candidate.py"}},
+        {"_agent_type": name, "current_step": "submit"},
+    )
+    assert (response.decision == "block") is selected
+    if selected:
+        assert rule in (response.reason or "")
+
+
 @pytest.mark.asyncio
 async def test_seat_common_injected_once_per_epoch(engine: RuleEngine) -> None:
     variables = dict(PLAN_WRITER)
@@ -249,7 +266,8 @@ async def test_seat_common_injected_once_per_epoch(engine: RuleEngine) -> None:
     assert "Assistant only on operator request" in first
     assert "Push: operator approves exact SHA" in first
     assert 'healthy="Systems nominal"' in first
-    assert "stalled-session resume only" in first
+    assert "use it for stalled-session resume" in first
+    assert "definition declaring steer_session_terminals may also steer seats" in first
     assert "No spawns except Assistant and Orchestrator." in first
     assert "A team manager spawns and resumes its own team's seats" in first
     assert GUIDANCE_HEADING not in second
@@ -327,7 +345,7 @@ async def test_other_seats_cannot_launch_pipelines(engine: RuleEngine, agent_typ
     for launch in PIPELINE_LAUNCHES:
         blocked = await _decide(engine, launch, {"_agent_type": agent_type})
         assert blocked.decision == "block", launch
-        assert "Only the Orchestrator launches pipelines" in (blocked.reason or "")
+        assert "the Orchestrator launches pipelines" in (blocked.reason or "")
         assert "send the request to Triage" in (blocked.reason or "")
 
 

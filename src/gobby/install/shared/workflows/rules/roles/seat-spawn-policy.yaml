@@ -30,7 +30,7 @@ rules:
   # backup, launching only while the Orchestrator is down. The split is a norm in
   # the seat guidance and definitions; these rules let both seats launch.
   seat-no-pipeline-launch:
-    description: "Seats other than the Orchestrator and Assistant do not launch pipelines through MCP"
+    description: "Pipeline launches belong to coordinators; epic managers may launch their own leaf pods"
     event: before_tool
     enabled: true
     priority: 10
@@ -40,10 +40,13 @@ rules:
       tool_input.get('server_name') == 'gobby-workflows'
       and (tool_input.get('tool_name') == 'run_pipeline'
         or str(tool_input.get('tool_name') or '').startswith('pipeline:'))
+      and not dev_pod_launch_allowed(event.metadata.get('_platform_session_id'),
+        tool_input.get('tool_name'), tool_input)
     effects:
       - type: block
         reason: >-
-          Only the Orchestrator launches pipelines, and the Assistant only while the
+          Epic Dev Managers may run devteam with parent_team_id for their own open
+          leaves. Otherwise only the Orchestrator launches pipelines, and the Assistant while the
           Orchestrator is down: a pipeline's steps run outside seat rules. Runbooks
           launch from the operator's surfaces or the Orchestrator; send the request to
           Triage.

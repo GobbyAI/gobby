@@ -21,10 +21,10 @@ SCAN_ROOTS = (PROJECT_ROOT / "src" / "gobby", PROJECT_ROOT / "tests")
 DB_SQL_METHODS = {"execute", "executemany", "fetchone", "fetchall"}
 RAW_PERCENT_RE = re.compile(r"(?<!%)%(?!%|\(|s\b|b\b|t\b)")
 DOLLAR_PLACEHOLDER_RE = re.compile(r"\$[1-9][0-9]*\b")
-# PostgreSQL's jsonb key-exists operator (``col ? %s`` / ``col ? 'key'``) is
+# PostgreSQL's jsonb key-exists operators (``?``, ``?|``, ``?&``) are
 # legitimate SQL, not a qmark placeholder: a qmark placeholder is never
 # directly followed by a bound %s parameter or a quoted literal.
-JSONB_KEY_EXISTS_RE = re.compile(r"\?(?=\s*(?:%s|'))")
+JSONB_KEY_EXISTS_RE = re.compile(r"\?[|&]?(?=\s*(?:%s|'))")
 # ``execute`` is not a database-only method name: WebhookTransport, the Linear
 # GraphQL client, and the AI tool runtime all expose one, so this audit also
 # collects their literal first arguments. A URL's query separator and its
@@ -99,6 +99,13 @@ def test_url_scrub_hides_only_urls_and_not_real_placeholder_bugs() -> None:
     assert _has_foreign_placeholder(embedded) is True
     assert _has_unescaped_percent(embedded) is True
     assert _has_foreign_placeholder("SELECT * FROM tasks WHERE id = $1") is True
+
+
+@pytest.mark.parametrize("operator", ["?", "?|", "?&"])
+def test_jsonb_operators_do_not_hide_qmark_placeholders(operator: str) -> None:
+    sql = f"SELECT payload FROM events WHERE payload {operator} %s"
+    assert _has_foreign_placeholder(sql) is False
+    assert _has_foreign_placeholder(f"{sql} AND id = ?") is True
 
 
 def test_prepare_exemption_requires_exactly_one_statement() -> None:

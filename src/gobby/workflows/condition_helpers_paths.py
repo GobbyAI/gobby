@@ -9,12 +9,17 @@ from typing import Any
 
 from gobby.hooks._path_scope import (
     _is_temp_path,
+    checkout_root,
     current_project_root,
     current_tool_cwd,
     resolve_tool_path,
 )
 from gobby.hooks.checkout_reads import CheckoutReadUnavailable
 from gobby.workflows.condition_helpers import _event_and_tool_paths, touches_docker_policy_path
+from gobby.workflows.git_commit_parsing import (
+    parse_git_commit_invocations,
+    resolve_commit_inspect_cwd,
+)
 
 
 def _resolved_write_paths(event_data: Mapping[str, Any] | None, tool_input: Any) -> list[Path]:
@@ -86,7 +91,6 @@ def write_paths_match(
 
 WORKSPACE_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 # Daemon-owned repository metadata and project config never live in a seat's folder.
-_WORKSPACE_PROTECTED_NAMES = frozenset({".git", ".gobby"})
 
 
 def agent_workspace_write_dirs(variables: Mapping[str, Any]) -> list[str]:
@@ -96,13 +100,53 @@ def agent_workspace_write_dirs(variables: Mapping[str, Any]) -> list[str]:
     return write_dirs(variables)
 
 
-def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> bool:
-    if not path.is_relative_to(root):
+def workspace_contains(path: Path, directory: Path) -> bool | None:
+    """Prove containment, or return None for an unverifiable case-only alias."""
+    prefix_parts = path.parts[: len(directory.parts)]
+    if prefix_parts == directory.parts:
+        return True
+    if tuple(part.casefold() for part in prefix_parts) != tuple(
+        part.casefold() for part in directory.parts
+    ):
         return False
+    try:
+        return Path(*prefix_parts).samefile(directory)
+    except OSError:
+        return None
+
+
+def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> bool:
+    within_root = workspace_contains(path, root)
+    if within_root is not True:
+        return within_root is None
     for directory in allowed:
-        if path.is_relative_to(directory):
-            return any(
-                part in _WORKSPACE_PROTECTED_NAMES for part in path.relative_to(directory).parts
+        if workspace_contains(path, directory) is True:
+            # Reserve metadata names regardless of spelling; Path.resolve keeps
+            # input casing even when the volume resolves it to the same directory.
+            parts = tuple(part.casefold() for part in path.parts[len(directory.parts) :])
+            if ".git" in parts:
+                return True
+            if ".gobby" not in parts:
+                return False
+            # Plan documents are repository content, not daemon configuration.
+            index = parts.index(".gobby")
+            if (
+                parts.count(".gobby") == 1
+                and parts[index + 1 : index + 2] == ("plans",)
+                and len(parts) > index + 2
+                and path.suffix.casefold() == ".md"
+            ):
+                return False
+            # A nested task checkout owns its repository files, including
+            # tracked baselines and newly added .gobby configuration.
+            try:
+                checkout = checkout_root(path)
+            except (OSError, CheckoutReadUnavailable):
+                return True
+            return not (
+                checkout is not None
+                and len(checkout.parts) > len(directory.parts)
+                and workspace_contains(checkout, directory) is True
             )
     return True
 
@@ -114,21 +158,47 @@ def agent_workspace_write_violation(
 ) -> bool:
     """True when a write lands under the workspace root outside the seat's own or epic folder.
 
-    Inside those folders a ``.git`` or ``.gobby`` component is refused as well. Other tools
-    are not writes here: a read of a predecessor folder is the read rule's concern.
+    Git metadata stays refused. Gobby config is writable only in a nested
+    repository checkout; Markdown plan documents under ``.gobby/plans`` also
+    remain writable outside checkouts. Explicit Git commit pathspecs obey the
+    same boundary; literal message text is not a pathspec. A read of a predecessor
+    folder is the read rule's concern.
     """
     from gobby.agents.agent_workspaces import workspaces_root
 
     data = event_data or {}
-    if data.get("tool_name") not in WORKSPACE_WRITE_TOOLS and (
-        data.get("canonical_tool_kind") != "write"
-    ):
+    command = tool_input.get("command") if isinstance(tool_input, Mapping) else None
+    # Structured patches may carry prose in command; only shell tools execute it.
+    commits = (
+        parse_git_commit_invocations(command)
+        if data.get("tool_name") == "Bash" and isinstance(command, str)
+        else ()
+    )
+    is_write = (
+        data.get("tool_name") in WORKSPACE_WRITE_TOOLS or data.get("canonical_tool_kind") == "write"
+    )
+    if not is_write and not commits:
         return False
     root = resolve_tool_path(str(workspaces_root()), None)
-    paths = _resolved_write_paths(event_data, tool_input)
-    if root is None or not paths:
+    if root is None:
         return False
     base = current_tool_cwd(data) or current_project_root(data)
+    paths = _resolved_write_paths(event_data, tool_input) if is_write else []
+    for invocation in commits:
+        if invocation.cwd_unverified:
+            return True
+        if not invocation.pathspecs:
+            continue
+        if base is None:
+            return True
+        commit_cwd = resolve_commit_inspect_cwd(
+            invocation, event_cwd=str(base), project_path=str(base)
+        )
+        for pathspec in invocation.pathspecs:
+            path = resolve_tool_path(pathspec, Path(commit_cwd))
+            if path is None:
+                return True
+            paths.append(path)
     allowed = [
         directory
         for directory in (

@@ -15,12 +15,15 @@ import pytest
 import yaml
 
 from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.mcp_proxy.tools.tasks import _claim_release, create_task_registry
+from gobby.sessions.handoff_records import get_agent_end_handoff
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -57,6 +60,7 @@ from gobby.workflows.templates import TemplateEngine
 from tests.fixtures.landing_case import bind_task_manager, make_landing_case
 from tests.fixtures.review_approvals import grant_review_writes, grant_step_writes
 from tests.fixtures.team_case import TITLE, TeamWorld, execution_id, git_in, make_team_world
+from tests.fixtures.team_teardown_case import Terminations, closed_at, daemon, teardown_pass
 
 pytestmark = pytest.mark.unit
 
@@ -215,7 +219,7 @@ async def team_in_review(world: TeamWorld, title: str = TITLE) -> ReviewTeam:
     db, project_id = world.case.db, world.case.project_id
     task = world.case.task(title)
     runbook = world.child(task, DEVTEAM)
-    binding = await world.admit(runbook, task)
+    binding = await world.admit(runbook, task, tab_title=f"Dev Team - #{task.seq_num}")
     manager = seat(world, runbook, "dev-manager", manages=task)
     developer, sol = (seat(world, runbook, role) for role in ("developer", "code-reviewer"))
     grant_step_writes(db, developer, project_id, "fixture-developer", ("implementation",))
@@ -281,7 +285,15 @@ async def team_in_moot_review(world: TeamWorld, title: str = "Moot scroll") -> M
     grant_step_writes(db, tester, project_id, "fixture-test-writer", ("test",))
     grant_step_writes(db, developer, project_id, "fixture-developer", ("implementation",))
     grant_review_writes(db, sol, project_id)
-    grant_step_writes(db, manager, project_id, "fixture-dev-manager", ("closing",))
+    grant_step_writes(
+        db,
+        manager,
+        project_id,
+        "fixture-dev-manager",
+        ("closing",),
+        capabilities=("manage_task_claims", "land_tasks"),
+        team_manager=True,
+    )
     LocalTaskManager(db).claim_task(task.id, developer, force=True)
     submit_moot(db, tester, task.id, "test", 1)
     submit_moot(db, developer, task.id, "implementation", 1)
@@ -735,6 +747,45 @@ async def test_review_escalation_sequence(world: TeamWorld) -> None:
     escalated = tasks.get_task(task_id)
     assert escalated.escalated_at is not None
     assert escalated.claimed_by_session_id is None
+
+
+async def test_close_ends_rejection_two_fresh_reviewer_with_core_seats(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = world.case.db
+    team = await team_in_review(world)
+    writer = seat(world, team.runbook, "test-writer")
+    submit(db, team.sol, team.task.id, "review", "rejected", 1, team.candidate)
+    fix = commit(db, team.binding, "fix.py")
+    submit(db, team.developer, team.task.id, "implementation", "approved", 2, fix)
+    submit(db, team.sol, team.task.id, "review", "rejected", 2, fix)
+    tasks = LocalTaskManager(db)
+    moved = await hand_off(
+        create_task_registry(tasks), team.manager, team.task, team.developer, team.sol
+    )
+    assert moved.get("success") is True
+    fresh_run = world.child(team.task, DEVTEAM)
+    await world.admit(
+        fresh_run,
+        team.task,
+        team.binding.team_id,
+        fresh_reviewer=True,
+        exclude_reviewers=[team.sol],
+    )
+    fresh = seat(world, fresh_run, "code-reviewer")
+    world.finish(team.runbook)
+    world.finish(fresh_run)
+    world.case.git("merge", "--ff-only", team.binding.branch)
+    closed = tasks.close_task(team.task.id, reason="done", closed_commit_sha=fix)
+    terminations = Terminations(db)
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
+
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    assert terminations.ended() == sorted([team.manager, team.developer, team.sol, writer, fresh])
+    for call in terminations.calls:
+        assert get_agent_end_handoff(db, call["run"].id) is not None
+    assert not tree_of(team.binding).exists()
 
 
 @pytest.mark.asyncio

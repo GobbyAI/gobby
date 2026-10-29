@@ -541,16 +541,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/cli/test_cli_rules.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 17,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 29,
-      "path": "tests/cli/test_cli_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/cli/test_cli_sessions_coverage.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 56,

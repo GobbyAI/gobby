@@ -63,6 +63,8 @@ class SandboxRunPaths:
         }
         values["CARGO_HOME"] = str(self.cargo_home)
         values["CARGO_TARGET_DIR"] = str(self.cargo_target)
+        # Validation may target a shared checkout; uv must lock and sync its own environment.
+        values["UV_PROJECT_ENVIRONMENT"] = str(self.cache / "uv-project-environment")
         # Every provider child, and everything it spawns, must land temp files in
         # the run's writable tmp. Claude alone used to get only CLAUDE_CODE_TMPDIR,
         # so its children kept the ambient system temp, which is not a write grant:
@@ -75,6 +77,8 @@ class SandboxRunPaths:
             values["CLAUDE_CODE_TMPDIR"] = str(self.tmp)
         # zsh uses TMPPREFIX for heredocs independently of TMPDIR.
         values["TMPPREFIX"] = str(self.tmp / "zsh")
+        # Provider-launched zsh shells must not source the operator's user startup files.
+        values["ZDOTDIR"] = str(self.assets)
         values["GOBBY_LOG_DIR"] = str(self.logs)
         # ocr's update check writes ~/.opencodereview/last-update-check, which
         # the policy denies, on every reviewer invocation.

@@ -1,6 +1,6 @@
 name: developer
 task_categories: [code, config, refactor, test]
-capabilities: [accept_resume_retype]
+capabilities: [accept_resume_retype, recover_rejected_submission]
 description: |
   Developer seat. Implements one DevTeam task against the Test Writer's
   failing tests, submits a CANDIDATE to the Dev Manager and the assigned Code
@@ -30,7 +30,7 @@ prompts:
     - Restart the daemon, run a cutover or promote binaries only when the Orchestrator says so.
     - Found work. Fix what you find on your task's surface inside the claimed task and name it in your implementation step record. Send anything that needs its own task to Triage with the failing command, diagnostics, paths and impact.
     - TDD. Before any behavior-bearing production write, resolve every named behavior test across the leaf's stored criteria and retain each exact node's authenticated RED after its relevant test edit. Skill completion permits test/stub preparation; writing one acceptance file never opens this barrier. Only explicitly stored regression-only: criteria proven unchanged against the claim baseline may use GREEN alone. Test-only writes and mechanically verified behavior-free API stubs may prepare RED; shell and mixed implementation writes share the leaf-wide guard. Close needs the same per-test chronology and later GREEN for every named test. Preserve original RED through compaction; never replay it.
-    - Epic leaf. In an epic team your task is one leaf the Dev Manager dispatches. Claim it, commit only that leaf's work, tag each commit and link it to the leaf, record `gobby-tasks:record_implementation_step` at the leaf tip, and release the claim. Never rebase or squash after the first link. The conflict-merge job for a sub-worktree developer is to merge epic main into its branch when the Dev Manager asks, and then to end its run with `gobby-agents:end_agent_run` after recording.
+    - Epic leaf. Serial leaves use the epic's primary seats. A parallel leaf runs in a Dev Pod with its own Test Writer, Developer and Code Reviewer. Commit only that leaf's work, link each commit to the leaf and record its implementation step. Never rebase or squash after the first link. Merge epic main into the pod branch when the Dev Manager asks. The Dev Manager lands the approved leaf in epic main and closes it; the daemon ends the pod. Primary epic seats persist for their next leaf.
     - Sandbox. The sandbox denies writes to /tmp, ps argument listing, and an explicit /bin/ps path. Write scratch files under your agent workspace folder (named in your Agent Workspace section), never under /tmp, $TMPDIR or a provider scratchpad. Run bare `ps` with non-argument columns, such as `ps -axo pid=` or `ps -axo pid,ppid,etime,comm`, instead of listing command arguments.
 
     ## Task skills
@@ -63,6 +63,7 @@ workflows:
       - "tag:worker-safety"
       - "name:no-send-keys"
       - "name:no-git-push"
+      - "name:submitted-candidate-write-scope"
 
 step_workflow:
   variables:
@@ -77,8 +78,6 @@ step_workflow:
       - code-review
     required_skills_loaded: false
     additional_skills: []
-    # Runtime-owned completion rights survive the next task's claim and reset.
-    _developer_handoff_tasks: []
     additional_skills_loaded: false
     implementation_complete: false
     candidate_sent: false
@@ -179,103 +178,7 @@ step_workflow:
         - "gobby-memory:create_memory"
         - "gobby-memory:update_memory"
         - "gobby-memory:delete_memory"
-      on_mcp_before:
-        - &assigned_handoff_guard
-          server: gobby-tasks
-          tool: escalate_task
-          action: block
-          when: >-
-            tool_input.get('task_id') is None
-            or tool_input.get('task_id') not in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
-          reason: "Hand off only the assigned task."
-        - &handoff_de_escalate_guard
-          server: gobby-tasks
-          tool: de_escalate_task
-          action: block
-          when: >-
-            tool_input.get('task_id') not in vars.get('_developer_handoff_tasks', [])
-          reason: "Finish only a task this developer handed off."
       on_mcp_success:
-        - &record_land_handoff
-          server: gobby-tasks
-          tool: escalate_task
-          action: set_variable
-          variable: _developer_handoff_tasks
-          value: "vars.get('_developer_handoff_tasks', []) + [vars.assigned_task_id]"
-          when: >-
-            tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
-            and str(tool_input.get('reason', '')).startswith('Handed off: reviewer LAND')
-        # A directed hand-off ends this task's loop just like a close. Match
-        # the assigned task first, then clear its binding last.
-        - &release_handoff_binding
-          server: gobby-tasks
-          tool: escalate_task
-          when: &own_task >-
-            tool_input.get('task_id') is not None
-            and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
-          action: set_variable
-          variable: task_claimed
-          value: false
-        - &reset_handoff_completion
-          server: gobby-tasks
-          tool: escalate_task
-          when: &task_handed_off "not vars.get('task_claimed')"
-          action: set_variable
-          variable: implementation_complete
-          value: false
-        - &reset_handoff_skills_loaded
-          server: gobby-tasks
-          tool: escalate_task
-          when: *task_handed_off
-          action: set_variable
-          variable: additional_skills_loaded
-          value: false
-        - &reset_handoff_skills_routed
-          server: gobby-tasks
-          tool: escalate_task
-          when: *task_handed_off
-          action: set_variable
-          variable: skills_routed
-          value: false
-        - &reset_handoff_candidate
-          server: gobby-tasks
-          tool: escalate_task
-          when: *task_handed_off
-          action: set_variable
-          variable: candidate_sent
-          value: false
-        - &reset_handoff_bounce
-          server: gobby-tasks
-          tool: escalate_task
-          when: *task_handed_off
-          action: set_variable
-          variable: bounced
-          value: false
-        - &clear_handoff_task_id
-          server: gobby-tasks
-          tool: escalate_task
-          when: *task_handed_off
-          action: set_variable
-          variable: assigned_task_id
-          value: null
-        - &clear_handoff_task_ref
-          server: gobby-tasks
-          tool: escalate_task
-          when: *task_handed_off
-          action: set_variable
-          variable: assigned_task_ref
-          value: null
-        - &forget_observed_closed_handoff
-          server: gobby-tasks
-          tool: get_task
-          action: set_variable
-          variable: _developer_handoff_tasks
-          value: >-
-            [task_id for task_id in vars.get('_developer_handoff_tasks', [])
-             if task_id != tool_input.get('task_id')]
-          when: >-
-            (tool_output.get('result') or tool_output).get('closed_at') is not None
-            or ((tool_output.get('result') or tool_output).get('state') or {}).get('is_closed') is True
         # Every claim starts a fresh attempt; only link_commit completes it.
         - server: gobby-tasks
           tool: claim_task
@@ -348,21 +251,10 @@ step_workflow:
         - "gobby-tasks:escalate_task"
         - "gobby-tasks:get_task"
         - "gobby-results:get_tool_result"
-      on_mcp_before:
-        - *assigned_handoff_guard
       on_mcp_success:
         - server: gobby-tasks
           tool: get_task
           action: advance_seat
-        - *record_land_handoff
-        - *release_handoff_binding
-        - *reset_handoff_completion
-        - *reset_handoff_skills_loaded
-        - *reset_handoff_skills_routed
-        - *reset_handoff_candidate
-        - *reset_handoff_bounce
-        - *clear_handoff_task_id
-        - *clear_handoff_task_ref
         # An offloaded card can drop ref; never clear the ref the claim bound.
         - server: gobby-tasks
           tool: get_task
@@ -403,18 +295,7 @@ step_workflow:
         - "gobby-tasks:escalate_task"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
-      on_mcp_before:
-        - *assigned_handoff_guard
       on_mcp_success:
-        - *record_land_handoff
-        - *release_handoff_binding
-        - *reset_handoff_completion
-        - *reset_handoff_skills_loaded
-        - *reset_handoff_skills_routed
-        - *reset_handoff_candidate
-        - *reset_handoff_bounce
-        - *clear_handoff_task_id
-        - *clear_handoff_task_ref
         - server: gobby-skills
           tool: get_skill
           action: set_variable
@@ -457,29 +338,12 @@ step_workflow:
         A reply wait ends at the owner's next message. If that message is an
         interim status and the dependency is still unresolved, re-arm the wait
         before you stop; a stop without an active wait is re-prompted.
-        For an Orchestrator-directed handoff, use escalate_task with a reason
-        starting exactly with "Handed off: reviewer LAND", for example:
-        "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator
-        decision." Your Dev Manager closes it after landing.
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-tasks:reopen_task"
         - "gobby-agents:spawn_agent"
         - "gobby-agents:kill_agent"
-      on_mcp_before:
-        - *assigned_handoff_guard
-        - *handoff_de_escalate_guard
       on_mcp_success:
-        - *record_land_handoff
-        - *release_handoff_binding
-        - *reset_handoff_completion
-        - *reset_handoff_skills_loaded
-        - *reset_handoff_skills_routed
-        - *reset_handoff_candidate
-        - *reset_handoff_bounce
-        - *clear_handoff_task_id
-        - *clear_handoff_task_ref
-        - *forget_observed_closed_handoff
         # The Dev Manager closes the task out of band, so reading the closed
         # task drives the same reset.
         # The offload envelope of a large card keeps id and state.
@@ -601,6 +465,9 @@ step_workflow:
       mcp_error_policy: stay
       description: "Submit the candidate and wait for the Dev Manager's close"
       status_message: |
+        Run required test-quality and test-types audits with Bash and use Read
+        or read-only commands to answer review questions. Edits, formatting and
+        Git mutations wait until the review returns you to implementation.
         Record gobby-tasks:record_implementation_step for the linked SHA, then
         send the CANDIDATE event line for assigned_task_ref to your Dev Manager
         and the assigned Code Reviewer with gobby-agents:send_message, then wait
@@ -613,12 +480,6 @@ step_workflow:
         A reply wait ends at the owner's next message. If that message is an
         interim status and the dependency is still unresolved, re-arm the wait
         before you stop; a stop without an active wait is re-prompted.
-        For an Orchestrator-directed handoff, escalate_task is the supported
-        release. A successful call resets task state and returns you to claim.
-        The reason must start exactly with "Handed off: reviewer LAND", for
-        example: "Handed off: reviewer LAND at <sha>, waiting on ...; not an
-        operator decision." The task stays in your hand-off list until your
-        Dev Manager closes it.
         On a bounce, or a verdict that leaves the task open, report the blocker
         to your Dev Manager. Read an assigned reviewer's stored incoming
         CANDIDATE_VERDICT (VERDICT=BOUNCE) or pre-landing EVENT=PROOF_REQUEST
@@ -628,6 +489,8 @@ step_workflow:
         the reviewer, so candidate_sent re-arms, with the proof result in NOTE.
         Never write flags.
       allowed_tools:
+        - Bash
+        - Read
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
@@ -644,9 +507,6 @@ step_workflow:
         - "gobby-tasks:unlink_commit"
         - "gobby-tasks:escalate_task"
         - "gobby-tasks:de_escalate_task"
-      on_mcp_before:
-        - *handoff_de_escalate_guard
-        - *assigned_handoff_guard
       on_mcp_success:
         - server: gobby-agents
           tool: get_inter_session_message
@@ -676,16 +536,6 @@ step_workflow:
           action: set_variable
           variable: bounced
           value: false
-        - *forget_observed_closed_handoff
-        - *record_land_handoff
-        - *release_handoff_binding
-        - *reset_handoff_completion
-        - *reset_handoff_skills_loaded
-        - *reset_handoff_skills_routed
-        - *reset_handoff_candidate
-        - *reset_handoff_bounce
-        - *clear_handoff_task_id
-        - *clear_handoff_task_ref
         - server: gobby-agents
           tool: send_message
           when: >-

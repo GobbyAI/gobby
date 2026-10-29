@@ -13,9 +13,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from gobby.agents import team_lifecycle
 from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
 from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.session_context import session_context_for_test
@@ -333,6 +334,64 @@ async def test_closed_task_refuses_its_landed_team(world: TeamWorld) -> None:
     with pytest.raises(TeamAdmissionRefused) as refused:
         await world.admit(world.child(task), task, team_id=team.team_id)
     assert refused.value.code == "team_task_closed"
+
+
+@pytest.mark.parametrize("checkout_mode", ["worktree", "none"])
+async def test_escalated_task_refuses_admission_before_creating_a_tree(
+    world: TeamWorld, checkout_mode: str
+) -> None:
+    task = world.case.task(TITLE)
+    caller = world.child(task)
+    world.case.db.execute(
+        "UPDATE tasks SET escalated_at = CURRENT_TIMESTAMP, escalation_reason = %s WHERE id = %s",
+        ("Awaiting a product decision", task.id),
+    )
+    trees, branches = world.tree_ids(), world.task_branches()
+
+    with pytest.raises(TeamAdmissionRefused, match="not actionable") as refused:
+        await world.admit(caller, task, checkout_mode=checkout_mode)
+
+    assert refused.value.code == "team_task_not_actionable"
+    assert world.tree_ids() == trees
+    assert world.task_branches() == branches
+    assert not world.admit_step_output(caller).get("team")
+
+
+@pytest.mark.parametrize("checkout_mode", ["worktree", "none"])
+async def test_task_escalated_while_admission_waits_creates_no_team(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, checkout_mode: str
+) -> None:
+    task = world.case.task(TITLE)
+    caller = world.child(task)
+    trees, branches = world.tree_ids(), world.task_branches()
+    task_read = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    open_task = team_lifecycle._open_task
+
+    def observe_task_read(db: HubDatabase, ref: str, project_id: str) -> Task:
+        snapshot = open_task(db, ref, project_id)
+        loop.call_soon_threadsafe(task_read.set)
+        return snapshot
+
+    monkeypatch.setattr(team_lifecycle, "_open_task", observe_task_read)
+    async with asyncio.timeout(10):
+        async with world.case.db.advisory_lock(MainCheckoutLanding(world.case.project_id)):
+            admission = asyncio.create_task(world.admit(caller, task, checkout_mode=checkout_mode))
+            await task_read.wait()
+            await asyncio.to_thread(
+                world.case.db.execute,
+                "UPDATE tasks SET escalated_at = CURRENT_TIMESTAMP, escalation_reason = %s "
+                "WHERE id = %s",
+                ("Escalated while admission waited", task.id),
+            )
+
+        with pytest.raises(TeamAdmissionRefused, match="not actionable") as refused:
+            await admission
+
+    assert refused.value.code == "team_task_not_actionable"
+    assert world.tree_ids() == trees
+    assert world.task_branches() == branches
+    assert not world.admit_step_output(caller).get("team")
 
 
 async def test_treeless_team_admits_without_a_tree(world: TeamWorld) -> None:

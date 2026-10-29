@@ -553,6 +553,22 @@ def default_write_paths(config: SandboxConfig, workspace: Path) -> list[str]:
     return canonical_paths(paths, base=workspace)
 
 
+def darwin_toolchain_write_paths() -> list[str]:
+    """Narrow OS-selected caches used even when the child has its own TMPDIR."""
+    if sys.platform != "darwin":
+        return []
+    # Josh approved these two grants on 2026-10-28 for #25295. Keep every existing
+    # secret/control deny; neither the whole per-user temp nor cache root is granted.
+    # Darwin's unistd.h defines these confstr keys; Python omits their string names.
+    paths: list[str] = []
+    for key, child in ((65537, "xcrun_db-*"), (65538, "com.apple.DeveloperTools")):
+        root = os.confstr(key)
+        if not root or not Path(root).is_absolute() or Path(root) == Path("/"):
+            raise ValueError(f"Darwin toolchain cache location unavailable for confstr {key}")
+        paths.append(canonical_path(Path(root) / child))
+    return paths
+
+
 def secure_policy_directory(run_id: str) -> Path:
     """Return the trusted per-run directory used for policy and violation files."""
     safe_run_id = "".join(char for char in run_id if char.isalnum() or char in "-_")

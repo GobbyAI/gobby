@@ -1377,6 +1377,8 @@ impl SrtTree {
             ("main", root.join("main")),
             ("bin", root.join("bin")),
             ("tmp", root.join("tmp")),
+            ("darwin_temp", root.join("darwin-temp")),
+            ("darwin_cache", root.join("darwin-cache")),
             ("run_root", gobby_home.join("run/sandbox").join(SRT_RUN_ID)),
             (
                 "srt_socket",
@@ -1480,10 +1482,20 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
             .as_bool()
             .context("prewarm_pre_commit_store is not a bool")?,
         platform: srt_host_platform().to_string(),
+        darwin_user_dirs: Some([tree.path("darwin_temp"), tree.path("darwin_cache")]),
         // Null on every case but the workspace one: `as_str`/`as_u64` read null as absent.
         definition: filled["definition"].as_str().map(str::to_owned),
         session_seq: filled["session_seq"].as_u64(),
         epic_seq: filled["epic_seq"].as_u64(),
+        read_all_agent_workspaces: filled["read_all_agent_workspaces"]
+            .as_bool()
+            .unwrap_or(false),
+        predecessor_workspace_folders: serde_json::from_value(
+            filled
+                .get("predecessor_workspace_folders")
+                .cloned()
+                .unwrap_or(json!([])),
+        )?,
     })
 }
 
@@ -1550,8 +1562,28 @@ fn srt_dedupe(entries: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-/// The oracle's settings text for one case. The shared deny table is expanded
-/// through the case's indices, with this host's paths filled in.
+/// Assert platform grants independently before comparing the common policy.
+fn srt_portable_settings(tree: &SrtTree, corpus: &Value, settings: &[u8]) -> Result<String> {
+    let mut document: Value = serde_json::from_slice(settings)?;
+    let platform_paths = tree.fill(&corpus["platform_write_paths"]);
+    let grants = srt_entries(&platform_paths, "darwin")?;
+    for key in ["allowRead", "allowWrite"] {
+        let paths = document["filesystem"][key]
+            .as_array_mut()
+            .context("filesystem grant list is not an array")?;
+        for grant in grants {
+            assert_eq!(
+                paths.iter().filter(|path| *path == grant).count(),
+                usize::from(cfg!(target_os = "macos")),
+                "{key}: {grant}"
+            );
+            paths.retain(|path| path != grant);
+        }
+    }
+    Ok(srt_canonical(&document))
+}
+
+/// Expand the oracle's shared deny table and this host's path placeholders.
 fn srt_expected_settings(tree: &SrtTree, corpus: &Value, settings: &Value) -> Result<String> {
     let table = srt_entries(corpus, "deny_write_table")?
         .iter()
@@ -1620,11 +1652,21 @@ fn srt_settings_match_python_corpus() -> Result<()> {
         let tree = SrtTree::new(&root.path().join(&name))?;
         tree.materialize(&case["inputs"])?;
         let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &case["inputs"])?)?;
-        assert_eq!(
-            String::from_utf8(policy.settings)?,
-            srt_expected_settings(&tree, &corpus, &case["expected"]["settings"])?,
-            "{name}: sandbox settings"
-        );
+        let actual = srt_portable_settings(&tree, &corpus, &policy.settings)?;
+        let expected = srt_expected_settings(&tree, &corpus, &case["expected"]["settings"])?;
+        if actual != expected {
+            let index = actual
+                .chars()
+                .zip(expected.chars())
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| actual.chars().count().min(expected.chars().count()));
+            let start = index.saturating_sub(40);
+            anyhow::bail!(
+                "{name}: sandbox settings differ at character {index}: actual {:?}, expected {:?}",
+                actual.chars().skip(start).take(120).collect::<String>(),
+                expected.chars().skip(start).take(120).collect::<String>()
+            );
+        }
         let expected = tree.fill(&case["expected"]);
         assert_eq!(
             policy.env,
@@ -1724,6 +1766,13 @@ fn srt_agent_workspace_grants_match_python_corpus() -> Result<()> {
     let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &inputs)?)?;
 
     let workspaces = tree.path("gobby_home").join("agents_workspaces");
+    let settings: Value = serde_json::from_slice(&policy.settings)?;
+    assert!(
+        settings["filesystem"]["denyRead"]
+            .as_array()
+            .context("denyRead")?
+            .contains(&json!(workspaces))
+    );
     let anchor = workspaces.join(srt_text(&inputs, "project_id")?);
     let own = anchor.join(srt_text(&inputs, "definition")?).join(format!(
         "session-{}",
