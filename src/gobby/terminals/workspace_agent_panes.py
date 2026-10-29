@@ -21,6 +21,7 @@ from gobby.storage.workspaces import (
     WorkspacePane,
     WorkspaceTab,
     WorkspaceTarget,
+    _lock_tabs,
     mint_pane_id,
 )
 from gobby.terminals.actor_scope import ActorScopeError, resolve_actor_scope
@@ -442,10 +443,26 @@ class AgentPaneReserver:
             return change.tabs[0], pane
         if resolved.beside_pane_id is None or placement.axis is None:
             raise _invalid("a split placement needs its preflighted pane and axis")
-        with self._bounded(timeout):
+        with self._bounded(timeout), self._workspaces.db.transaction() as conn:
+            beside = resolved.beside_pane_id
+            if placement.tab_title is not None and resolved.tab_id is not None:
+                # The selected seat can end while provider preparation runs. Keep the
+                # authorized tab locked while selecting its surviving split target.
+                tab = _lock_tabs(conn, resolved.tab_id)[resolved.tab_id]
+                if (
+                    tab.workspace_id != resolved.workspace_id
+                    or tab.project_id != resolved.project_id
+                    or tab.title != placement.tab_title
+                ):
+                    raise AgentPlacementError("not_found", "Team tab changed after preflight")
+                target = self._workspaces.resolve_reference(resolved.workspace_id)
+                _, pane = self._titled_tab_last_pane(
+                    target, resolved.workspace_id, placement.tab_title
+                )
+                beside = pane.id
             change = self._workspaces.add_pane(
                 pane_id,
-                beside=resolved.beside_pane_id,
+                beside=beside,
                 axis="vertical" if placement.axis == "balanced" else placement.axis,
                 balance_columns=placement.columns if placement.axis == "balanced" else None,
                 balance_rows=placement.rows,

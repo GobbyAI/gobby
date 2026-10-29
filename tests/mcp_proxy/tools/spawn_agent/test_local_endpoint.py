@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.agents.local_model import LocalModelError
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import resolve_spawn_generation_endpoint
+from gobby.storage.agents import LocalAgentRunManager
 
 pytestmark = pytest.mark.unit
 
@@ -41,7 +42,7 @@ def _config() -> DaemonConfig:
 
 @pytest.mark.asyncio
 async def test_resolve_spawn_generation_endpoint_uses_named_generation_endpoint() -> None:
-    run_manager = object()
+    run_manager = MagicMock(spec=LocalAgentRunManager)
     with patch(
         "gobby.agents.local_model.ensure_local_model",
         new=AsyncMock(return_value="qwen-coder-32b"),
@@ -115,6 +116,7 @@ async def test_resolve_spawn_generation_endpoint_uses_selected_model_override() 
     assert resolution.api_base == "http://localhost:1234/v1"
     assert resolution.api_token == "endpoint-token"
     assert resolution.is_local is True
+    assert ensure_local_model.await_args is not None
     assert ensure_local_model.await_args.args[0].model == "google/gemma-4-26b-a4b-qat"
 
 
@@ -138,6 +140,7 @@ async def test_resolve_spawn_generation_endpoint_routes_codex_through_oss() -> N
     assert resolution.api_token is None
     assert resolution.is_local is True
     assert resolution.codex_oss_provider == "ollama"
+    assert ensure_local_model.await_args is not None
     assert ensure_local_model.await_args.args[0].model == "ollama/qwen3-coder"
 
 

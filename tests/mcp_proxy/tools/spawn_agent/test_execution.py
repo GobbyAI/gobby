@@ -210,6 +210,7 @@ async def test_auto_claimed_task_titles_child_session(
         error=None,
     )
     with (
+        patch("gobby.mcp_proxy.tools.spawn_agent._execution._record_spawn_receipt"),
         patch("gobby.mcp_proxy.tools.spawn_agent._execution._persist_spawn_runtime"),
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._execution.start_run_or_cleanup",
@@ -334,6 +335,7 @@ async def test_auto_claim_survives_runner_without_session_manager(
     )
 
     with (
+        patch("gobby.mcp_proxy.tools.spawn_agent._execution._record_spawn_receipt"),
         patch("gobby.mcp_proxy.tools.spawn_agent._execution._persist_spawn_runtime"),
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._execution.start_run_or_cleanup",
@@ -420,6 +422,7 @@ async def test_team_manager_spawn_takes_no_task_claim(
     )
 
     with (
+        patch("gobby.mcp_proxy.tools.spawn_agent._execution._record_spawn_receipt"),
         patch("gobby.mcp_proxy.tools.spawn_agent._execution._persist_spawn_runtime"),
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._execution.start_run_or_cleanup",

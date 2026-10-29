@@ -37,6 +37,7 @@ from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.projects import LocalProjectManager
@@ -57,7 +58,7 @@ from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.termination import kill_terminal
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
-from gobby.terminals.workspace_agent_panes import AgentPaneReserver
+from gobby.terminals.workspace_agent_panes import AgentPaneReserver, ResolvedPlacement
 from gobby.terminals.workspace_contract import WorkspaceEvent, WorkspaceOpError
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.terminals.write_coordinator import WriteCoordinator
@@ -537,6 +538,109 @@ async def _sandbox_refused(request: SpawnRequest) -> SpawnResult:
         status="failed",
         error="Sandbox startup failed closed",
     )
+
+
+@pytest.mark.parametrize("by_title", [True, False])
+async def test_replacement_reselects_team_pane_removed_after_preflight(
+    placed: _Harness, monkeypatch: pytest.MonkeyPatch, by_title: bool
+) -> None:
+    h = placed
+    survivor = _held_seat(h, "Dev Team")
+    stale = h.workspaces.add_pane(str(uuid.uuid4()), beside=survivor.id, axis="horizontal")
+    stale_id = stale.panes[-1].id
+    assert stale_id != survivor.id
+    original_preflight = h.reserver.preflight
+
+    async def lose_stopped_pane(*args: Any, **kwargs: Any) -> ResolvedPlacement:
+        resolved = await original_preflight(*args, **kwargs)
+        assert resolved.beside_pane_id == stale_id
+        h.workspaces.remove_pane(stale_id)
+        return resolved
+
+    monkeypatch.setattr(h.reserver, "preflight", lose_stopped_pane)
+    placement = (
+        {
+            "split": {
+                "workspace": h.workspace.id,
+                "tab_title": "Dev Team",
+                "axis": "right",
+                "title": "Developer",
+            }
+        }
+        if by_title
+        else _split(stale_id)
+    )
+    reply = await _spawn(h, placement)
+
+    assert reply["success"] is by_title, reply
+    assert survivor.id in _panes(h)
+    assert h.kills == []
+    if by_title:
+        run = h.runs.get(reply["run_id"])
+        assert run is not None and run.terminal_id is not None
+        pane = h.workspaces.get_pane_for_terminal(run.terminal_id)
+        assert pane is not None and pane.tab_id == survivor.tab_id
+    else:
+        assert reply["placement_error"] == "not_found"
+
+
+async def test_abandoned_spawn_response_leaves_durable_parent_receipt(placed: _Harness) -> None:
+    h = placed
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held_launch(request: SpawnRequest) -> SpawnResult:
+        entered.set()
+        await release.wait()
+        return await _runtime_launch(request)
+
+    h.executor = held_launch
+    server = asyncio.create_task(_spawn(h, _tab(h)))
+
+    async def receive_response() -> dict[str, Any]:
+        # A disconnected HTTP client abandons its response, while the server owns the spawn.
+        return await asyncio.shield(server)
+
+    client = asyncio.create_task(receive_response())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        client.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await client
+    finally:
+        release.set()
+    reply = await asyncio.wait_for(server, timeout=5)
+
+    assert reply["success"] is True, reply
+    run = h.runs.get(reply["run_id"])
+    assert run is not None and run.status == "running"
+    receipts = InterSessionMessageManager(h.db).get_undelivered_messages(h.parent_id)
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert run.id in receipt.content
+    assert str(run.child_session_id) in receipt.content
+    assert "stop_agent" in receipt.content
+    assert receipt.from_session == run.child_session_id
+
+
+async def test_failed_spawn_receipt_cancels_the_unreported_run(
+    placed: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = placed
+
+    def refuse_receipt(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("Receipt storage unavailable")
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._execution._record_spawn_receipt", refuse_receipt
+    )
+    reply = await _spawn(h, _tab(h))
+
+    assert reply["success"] is False, reply
+    assert "Receipt storage unavailable" in reply["error"]
+    assert h.runs.list_active_for_machine(LOCAL_MACHINE_ID) == []
+    assert set(_terminal_states(h).values()) == {"exited"}
+    assert _panes(h) == {}
+    assert InterSessionMessageManager(h.db).get_undelivered_messages(h.parent_id) == []
 
 
 async def test_refused_placement_has_no_side_effects(placed: _Harness) -> None:
