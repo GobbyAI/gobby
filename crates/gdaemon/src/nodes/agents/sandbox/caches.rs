@@ -393,7 +393,7 @@ impl RunLayout {
             "UV_PROJECT_ENVIRONMENT".to_string(),
             text(&self.cache.join("uv-project-environment")),
         );
-        values.insert("ZDOTDIR".to_string(), text(&self.assets));
+        values.insert("ZDOTDIR".to_string(), text(&self.root.join("assets")));
         values.insert("TMPDIR".to_string(), text(&self.tmp));
         if provider == "claude" {
             values.insert("CLAUDE_CODE_TMPDIR".to_string(), text(&self.tmp));
