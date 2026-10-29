@@ -596,7 +596,10 @@ def test_large_regular_trees_keep_glob_reads_fast_and_allowed(
         for item in range(100):
             (package / f"module-{item}.py").touch()
     for pattern in ("**/*.py", "src/gobby/**/*.py"):
-        data = {"tool_name": "Glob", "tool_input": {"path": str(directory), "pattern": pattern}}
+        data: dict[str, Any] = {
+            "tool_name": "Glob",
+            "tool_input": {"path": str(directory), "pattern": pattern},
+        }
         started = perf_counter()
         refused = agent_workspace_read_violation(None, data, data["tool_input"], variables, None)
         elapsed = perf_counter() - started
