@@ -76,7 +76,11 @@ async def dispatch_live_wakes(
                     error_message=f"Session {session_id} not found",
                 )
                 continue
-            if getattr(session, "status", None) == "active" and priority != "urgent":
+            # A pending compact needs its own continuation prompt and receipt
+            # rechecks, so use the single-recipient path instead of the batch's
+            # common check-messages payload.
+            status = getattr(session, "status", None)
+            if status == "awaiting_handoff" or (status == "active" and priority != "urgent"):
                 fallback.append((session_id, session))
                 continue
             if (

@@ -39,6 +39,19 @@ pub fn is_stop_hook(hook_type: &str) -> bool {
     hook_type.eq_ignore_ascii_case("stop")
 }
 
+/// A fresh `restart` marker: the daemon is coming back, so its outage is a gap.
+pub fn restart_in_progress() -> bool {
+    marker_home()
+        .and_then(|home| read_marker(&home.join(ACTIVE_MARKER)))
+        .is_some_and(|marker| {
+            marker
+                .get("intent")
+                .and_then(value_as_text)
+                .is_some_and(|intent| intent.eq_ignore_ascii_case("restart"))
+                && marker_is_allowed_and_fresh(&marker, now_secs(), allow_seconds())
+        })
+}
+
 pub fn fail_open_after_enqueue_failure(hook_type: &str) -> bool {
     is_fail_open_hook(hook_type) && marker_home().is_some_and(|home| fresh_shutdown_marker(&home))
 }
