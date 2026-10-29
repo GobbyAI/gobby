@@ -447,7 +447,15 @@ def _wrapped_commands(tokens: list[str]) -> list[str]:
 def _path_words(tokens: list[str]) -> list[str]:
     """Words that look like paths. A quoted token holding several words is judged word by word."""
     expanded = (part for token in tokens for part in os.path.expandvars(token).split())
-    return [part for part in expanded if "/" in part or part.startswith("~")]
+    return [
+        part
+        for part in expanded
+        if "/" in part
+        or part.startswith("~")
+        or _READ_PATTERN.search(part)
+        or _EXTGLOB.search(part)
+        or ("{" in part and ("," in part or ".." in part))
+    ]
 
 
 def _shell_path_words(command: Any) -> list[str]:
@@ -584,6 +592,10 @@ def _workspace_read_targets(
     for raw, directory in inputs:
         if not isinstance(raw, str) or not raw:
             continue
+        # A quoted or structured path can contain literal glob/brace characters.
+        # Check that actual filename too, before inspecting possible expansions.
+        if (literal := resolve_tool_path(raw, directory)) is not None:
+            paths.append(literal)
         words = _brace_read_words(os.path.expandvars(os.path.expanduser(raw)))
         if words is None:
             return None
@@ -593,7 +605,7 @@ def _workspace_read_targets(
                 return None
             if (path := _resolve_read_target(pattern, directory)) is not None:
                 paths.append(path)
-    return paths
+    return list(dict.fromkeys(paths))
 
 
 def _workspace_read_boundary(target: Path, root: Path) -> Path | None:

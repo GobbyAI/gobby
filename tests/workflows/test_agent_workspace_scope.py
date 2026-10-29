@@ -506,7 +506,63 @@ async def test_glob_matches_check_resolved_seat(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["entries", "depth", "permission"])
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "*.md",
+        "[^a]*.md",
+        "@(leak|notes).md",
+        "{leak,notes}.md",
+        "{x,{leak,notes}}.md",
+        "lea{j..m}.md",
+    ],
+)
+async def test_bare_shell_patterns_check_resolved_seat(
+    workspace_read_engine: RuleEngine, root: Path, pattern: str
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    foreign = own.parent / "session-99"
+    own.mkdir(parents=True)
+    foreign.mkdir()
+    (foreign / "notes.md").write_text("Foreign notes")
+    link = own / "leak.md"
+    link.symlink_to(foreign / "notes.md")
+    data = _shell(f"cat {pattern}", own)
+    refused = await _decide(workspace_read_engine, data, variables)
+    assert refused.decision == "block"
+    link.unlink()
+    link.write_text("Owned notes")
+    allowed = await _decide(workspace_read_engine, data, variables)
+    assert allowed.decision == "allow", allowed.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["{a,b}.md", "[ab].md"])
+@pytest.mark.parametrize("tool", ["Read", "Bash"])
+async def test_literal_pattern_filename_cannot_hide_foreign_symlink(
+    workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, name: str, tool: str
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    foreign = own.parent / "session-99"
+    own.mkdir(parents=True)
+    foreign.mkdir()
+    target = foreign / "notes.md"
+    target.write_text("Foreign notes")
+    link = own / name
+    link.symlink_to(target)
+    data = _read(link, tmp_path) if tool == "Read" else _shell(f"cat '{link}'", tmp_path)
+    refused = await _decide(workspace_read_engine, data, variables)
+    assert refused.decision == "block"
+    link.unlink()
+    link.write_text("Owned notes")
+    allowed = await _decide(workspace_read_engine, data, variables)
+    assert allowed.decision == "allow", allowed.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["entries", "depth", "permission", "braces"])
 async def test_glob_inspection_fails_closed_when_incomplete(
     workspace_read_engine: RuleEngine,
     root: Path,
@@ -526,14 +582,17 @@ async def test_glob_inspection_fails_closed_when_incomplete(
             scope.setattr(helpers, "_WORKSPACE_GLOB_BUDGET", 2)
         elif failure == "depth":
             scope.setattr(helpers, "_WORKSPACE_GLOB_MAX_DEPTH", 0)
+        elif failure == "braces":
+            scope.setattr(helpers, "_READ_EXPANSION_LIMIT", 2)
         else:
 
             def unavailable(path: Path) -> None:
                 raise PermissionError("Cannot inspect pattern entries")
 
             scope.setattr(os, "scandir", unavailable)
+        pattern = "{notes-0,notes-1}.md" if failure == "braces" else "*.md"
         response = await _decide(
-            workspace_read_engine, _shell(f"cat {own}/*.md", tmp_path), variables
+            workspace_read_engine, _shell(f"cat {own / pattern}", tmp_path), variables
         )
     assert response.decision == "block"
     assert "agent-workspace-read-scope" in (response.reason or "")
