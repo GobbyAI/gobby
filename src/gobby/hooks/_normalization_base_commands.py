@@ -1,5 +1,7 @@
 """Classify plain shell commands independently of recursive shell execution."""
 
+import re
+from dataclasses import replace
 from pathlib import Path
 
 from gobby.hooks._inline_interpreter_classifier import (
@@ -8,7 +10,11 @@ from gobby.hooks._inline_interpreter_classifier import (
 )
 from gobby.hooks._normalization_bindings import _loop_binding_variable_is_stable
 from gobby.hooks._normalization_file_commands import classify_file_command
-from gobby.hooks._normalization_git import classify_git_mutation, classify_search_segment
+from gobby.hooks._normalization_git import (
+    classify_git_mutation,
+    classify_search_segment,
+    git_command_is_read_only,
+)
 from gobby.hooks._normalization_interpreter_segments import _python_write_segment
 from gobby.hooks._normalization_operands import (
     _curl_output_paths,
@@ -40,6 +46,104 @@ from gobby.hooks.code_navigation import (
     source_read_navigation_metadata,
 )
 
+_UV_VALUE_OPTIONS = frozenset(
+    "--extra --no-extra --group --no-group --only-group --no-editable-package "
+    "--env-file -w --with --with-editable --with-requirements --package --python-platform "
+    "--index --default-index -i --index-url --extra-index-url -f --find-links --index-strategy "
+    "--keyring-provider -P --upgrade-package --upgrade-group --resolution --prerelease "
+    "--prerelease-package --fork-strategy --exclude-newer --exclude-newer-package "
+    "--no-sources-package --reinstall-package --link-mode -C --config-setting "
+    "--config-settings-package --no-build-isolation-package --no-build-package "
+    "--no-binary-package --cache-dir --refresh-package -p --python --color "
+    "--allow-insecure-host --directory --project --config-file --from "
+    "-c --constraints --build-constraints --overrides -b --torch-backend".split()
+)
+
+
+def _wrapper_options_end(parts: list[str], start: int, value_options: frozenset[str]) -> int:
+    while start < len(parts) and parts[start].startswith("-"):
+        if parts[start] == "--":
+            return start + 1
+        if parts[start] in value_options:
+            start += 2
+            continue
+        if parts[start] in {"-m", "-c"} or parts[start].partition("=")[0] == "--call":
+            break
+        start += 1
+    return start
+
+
+def unwrap_execution_command(
+    parts: list[str], cwd: str | None
+) -> tuple[list[str] | None, str | None]:
+    """Expose package-runner argv and its explicit working directory for normal classification."""
+    while parts:
+        command = shell_command_name(parts[0])
+        if command in {"uv", "uvx"}:
+            tool_run = command == "uvx"
+            index = _wrapper_options_end(parts, 1, _UV_VALUE_OPTIONS)
+            if command == "uv":
+                if parts[index : index + 2] == ["tool", "run"]:
+                    tool_run = True
+                    index += 1
+                elif parts[index : index + 1] != ["run"]:
+                    break
+                index = _wrapper_options_end(parts, index + 1, _UV_VALUE_OPTIONS)
+            position = 1
+            while position < index:
+                word = parts[position]
+                if word == "--directory" and position + 1 < index:
+                    cwd = _rebase_shell_paths([parts[position + 1]], cwd)[0]
+                elif word.startswith("--directory="):
+                    cwd = _rebase_shell_paths([word.partition("=")[2]], cwd)[0]
+                position += 2 if word in _UV_VALUE_OPTIONS else 1
+            if parts[index : index + 1] == ["-m"]:
+                index += 1
+            if tool_run and index < len(parts):
+                parts = [*parts[:index], parts[index].partition("@")[0], *parts[index + 1 :]]
+        elif command in {"npx", "bunx"}:
+            index = _wrapper_options_end(parts, 1, frozenset({"--package", "-p"}))
+            parts = parts[index:]
+            if parts and (parts[0] == "-c" or parts[0].partition("=")[0] == "--call"):
+                # A shell program string is not an executable argv; submit must fail closed.
+                return None, cwd
+            if parts and "/" not in parts[0] and not parts[0].startswith("@"):
+                parts = [parts[0].partition("@")[0], *parts[1:]]
+            continue
+        elif re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", command):
+            index = _wrapper_options_end(
+                parts, 1, frozenset({"-W", "-X", "--check-hash-based-pycs"})
+            )
+            if parts[index : index + 1] != ["-m"]:
+                break
+            index += 1
+        else:
+            break
+        parts = parts[index:]
+    return parts, cwd
+
+
+def _formatter_mutates(parts: list[str]) -> bool:
+    """Recognize formatter write modes after execution wrappers are removed."""
+    if not parts:
+        return False
+    command = shell_command_name(parts[0])
+    arguments = parts[1:]
+    if command == "ruff":
+        if "--diff" in arguments:
+            return False
+        return ("format" in arguments and "--check" not in arguments) or bool(
+            {"--fix", "--fix-only"}.intersection(arguments)
+        )
+    if command in {"black", "isort", "rustfmt"}:
+        return not {"--check", "--check-only", "--diff"}.intersection(arguments)
+    if command == "prettier":
+        return bool({"--write", "-w"}.intersection(arguments))
+    if command == "cargo":
+        index = 2 if len(parts) > 1 and parts[1].startswith("+") else 1
+        return parts[index : index + 1] == ["fmt"] and "--check" not in arguments
+    return False
+
 
 def classify_base_command(
     parts: list[str],
@@ -57,9 +161,35 @@ def classify_base_command(
         return _classify_for_loop_header(parts, cwd)
 
     if cmd == "git":
-        git_metadata = classify_git_mutation(parts, cwd, base_cwd)
-        if git_metadata is not None:
-            return git_metadata
+        git_metadata = classify_git_mutation(parts, cwd, base_cwd) or classify_search_segment(
+            cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin
+        )
+        if not git_command_is_read_only(parts):
+            git_metadata = replace(
+                git_metadata, extra={**(git_metadata.extra or {}), "canonical_git_mutation": True}
+            )
+        return git_metadata
+
+    if _formatter_mutates(parts):
+        return _ShellSegmentMetadata("execute", extra={"canonical_formatter_mutation": True})
+
+    if cmd == "pre-commit":
+        index = _wrapper_options_end(parts, 1, frozenset({"-c", "--config", "--color"}))
+        if parts[index : index + 1] == ["run"]:
+            return _ShellSegmentMetadata("execute", extra={"canonical_formatter_mutation": True})
+    if cmd == "uv":
+        index = _wrapper_options_end(parts, 1, _UV_VALUE_OPTIONS)
+        operation = parts[index : index + 1]
+        if operation in (["add"], ["remove"], ["init"]):
+            return _ShellSegmentMetadata("write", repo_mutation=True)
+        if operation == ["lock"] and not {"--check", "--check-exists"}.intersection(parts):
+            return _ShellSegmentMetadata("write", repo_mutation=True)
+        if operation == ["version"] and "--dry-run" not in parts:
+            values = _shell_positional_args_after(
+                parts, index + 1, option_args=set(_UV_VALUE_OPTIONS) | {"--output-format", "--bump"}
+            )
+            if values or any(word.partition("=")[0] == "--bump" for word in parts[index + 1 :]):
+                return _ShellSegmentMetadata("write", repo_mutation=True)
 
     if cmd == "patch":
         if "--dry-run" in parts[1:]:
