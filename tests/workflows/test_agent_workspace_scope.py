@@ -551,16 +551,17 @@ async def test_proven_reads_and_wrapper_help_keep_workspace_access(
 
 
 @pytest.mark.parametrize(
-    "command",
+    ("command", "read_only"),
     [
-        "git ls-files | xargs grep -l foo",
-        "echo a b | xargs echo",
-        "rg --pre cat foo",
-        "sudo touch report.txt",
-        "xargs touch report.txt",
-        "xargs /usr/bin/true",
-        "xargs -I ITEM unzip ITEM -d unpacked",
-        'xargs -I ITEM unzip ITEM -d "$DEST"',
+        ("git ls-files | xargs grep -l foo", True),
+        ("echo a b | xargs echo", True),
+        ("rg --pre cat foo", True),
+        ("sudo touch report.txt", False),
+        ("xargs touch report.txt", False),
+        ("xargs /usr/bin/true", True),
+        ("xargs opaque-command report.txt", False),
+        ("xargs -I ITEM unzip ITEM -d unpacked", False),
+        ('xargs -I ITEM unzip ITEM -d "$DEST"', False),
     ],
 )
 @pytest.mark.parametrize("has_seat", [True, False])
@@ -570,6 +571,7 @@ async def test_unresolved_execution_preserves_access_outside_protected_seat_fold
     root: Path,
     tmp_path: Path,
     command: str,
+    read_only: bool,
     has_seat: bool,
     location: str,
 ) -> None:
@@ -585,10 +587,12 @@ async def test_unresolved_execution_preserves_access_outside_protected_seat_fold
     else:
         project.mkdir()
     response = await _decide(workspace_write_engine, _shell(command, project), variables)
-    # A checkout with no ownership variables is still another session's workspace.
+    # Writes into a checkout without ownership variables target another seat;
+    # read operands are checked by the separate workspace-read rule.
     expected = (
         "block"
-        if location == "seat" or (location == "nested_checkout" and not has_seat)
+        if not read_only
+        and (location == "seat" or (location == "nested_checkout" and not has_seat))
         else "allow"
     )
     assert response.decision == expected, response.reason
@@ -724,13 +728,190 @@ async def test_archive_inspection_keeps_seat_folder_access(
         "pax -r -s ',^,../,' -f archive.pax",
     ],
 )
-async def test_archive_extraction_cannot_claim_scope_when_members_can_escape(
+@pytest.mark.parametrize("location", ["outside", "seat", "nested_checkout"])
+async def test_archive_extraction_uncertainty_obeys_workspace_containment(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    command: str,
+    location: str,
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    project = tmp_path
+    if location == "seat":
+        project = Path(variables["_agent_workspace_dir"])
+        project.mkdir(parents=True)
+    elif location == "nested_checkout":
+        project = Path(variables["_agent_workspace_dir"]) / "task-checkout"
+        (project / ".git").mkdir(parents=True)
+    event = _shell(command, project)
+    normalize_tool_fields(event)
+    assert event["canonical_repo_mutation_scope_unknown"] is True
+    response = await _decide(workspace_write_engine, event, variables)
+    assert response.decision == ("block" if location == "seat" else "allow"), response.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'tar -xf a.tar -C "$OUT"',
+        'unzip a.zip -d "$OUT"',
+        'D=$(mktemp -d) && tar -xf a.tar -C "$D"',
+        "cpio -id < a.cpio",
+        "pax -r -f a.pax",
+        "tar -xPf a.tar",
+    ],
+)
+@pytest.mark.parametrize("has_seat", [True, False])
+@pytest.mark.parametrize("location", ["outside", "seat", "nested_checkout"])
+async def test_unresolved_archive_destinations_follow_workspace_scope(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    command: str,
+    has_seat: bool,
+    location: str,
+) -> None:
+    seat = _seat(root / PROJECT, "fixture-seat", 12)
+    project = tmp_path
+    if location == "seat":
+        project = Path(seat["_agent_workspace_dir"])
+        project.mkdir(parents=True)
+    elif location == "nested_checkout":
+        project = Path(seat["_agent_workspace_dir"]) / "task-checkout"
+        (project / ".git").mkdir(parents=True)
+    event = _shell(command, project)
+    normalize_tool_fields(event)
+    assert event["canonical_repo_mutation_scope_unknown"] is True
+    response = await _decide(workspace_write_engine, event, seat if has_seat else {})
+    expected = (
+        "block"
+        if location == "seat" or (location == "nested_checkout" and not has_seat)
+        else "allow"
+    )
+    assert response.decision == expected, response.reason
+
+
+@pytest.mark.parametrize("command", ['tar -xf a.tar -C "$OUT"', 'unzip a.zip -d "$OUT"'])
+@pytest.mark.parametrize("inside", [True, False])
+@pytest.mark.parametrize("nested", [True, False])
+async def test_unresolved_archive_destinations_use_effective_shell_cwd(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    command: str,
+    inside: bool,
+    nested: bool,
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    seat = Path(variables["_agent_workspace_dir"])
+    seat.mkdir(parents=True)
+    initial, effective = (tmp_path, seat) if inside else (seat, tmp_path)
+    command = f"cd {effective} && {command}"
+    if nested:
+        command = f"sh -c '{command}'"
+    event = _shell(command, initial)
+    response = await _decide(workspace_write_engine, event, variables)
+    assert response.decision == ("block" if inside else "allow"), response.reason
+
+
+async def test_unresolved_archive_cwd_does_not_include_a_sibling_extraction_cwd(
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    seat = Path(variables["_agent_workspace_dir"])
+    seat.mkdir(parents=True)
+    command = f'tar -xf a.tar -C {tmp_path} && cd {tmp_path} && unzip b.zip -d "$OUT"'
+    response = await _decide(workspace_write_engine, _shell(command, seat), variables)
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.parametrize(
+    "command", ["tar -xPf archive.tar -C {destination}", "unzip -: archive.zip -d {destination}"]
+)
+async def test_unknown_archive_members_keep_literal_outside_destination_scope(
     workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, command: str
 ) -> None:
     variables = _seat(root / PROJECT, "fixture-seat", 12)
-    # Even an ordinary scratch cwd cannot confine absolute/traversing member names.
-    response = await _decide(workspace_write_engine, _shell(command, tmp_path), variables)
+    seat = Path(variables["_agent_workspace_dir"])
+    seat.mkdir(parents=True)
+    event = _shell(command.format(destination=tmp_path), seat)
+    normalize_tool_fields(event)
+    assert event["canonical_repo_mutation_scope_unknown"] is True
+    response = await _decide(workspace_write_engine, event, variables)
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find src | xargs grep -l foo",
+        "rg --pre cat foo {seat}/cand",
+        "sudo cat {seat}/cand/pyproject.toml",
+    ],
+)
+@pytest.mark.parametrize("has_seat", [True, False])
+async def test_read_only_children_do_not_supply_workspace_write_evidence(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    command: str,
+    has_seat: bool,
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    seat = Path(variables["_agent_workspace_dir"])
+    (seat / "cand").mkdir(parents=True)
+    event = _shell(command.format(seat=seat), seat)
+    response = await _decide(workspace_write_engine, event, variables if has_seat else {})
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.parametrize("preprocessor", ["touch", "/usr/bin/touch", "opaque-preprocessor"])
+@pytest.mark.parametrize("attached", [True, False])
+@pytest.mark.parametrize("explicit_path", [True, False])
+@pytest.mark.parametrize("prefix", ["", "true && "])
+async def test_rg_preprocessor_write_or_opaque_scope_is_preserved(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    preprocessor: str,
+    attached: bool,
+    explicit_path: bool,
+    prefix: str,
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    seat = Path(variables["_agent_workspace_dir"])
+    (seat / ".gobby").mkdir(parents=True)
+    target = seat / ".gobby/config.yaml"
+    target.write_text("foo: bar\n")
+    option = f"--pre={preprocessor}" if attached else f"--pre {preprocessor}"
+    command = f"{prefix}rg {option} foo" + (f" {target}" if explicit_path else "")
+    response = await _decide(workspace_write_engine, _shell(command, seat), variables)
     assert response.decision == "block", response.reason
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ("--pre=cat foo {target}", "allow"),
+        # A binary invoked by path has no readable-script proof; keep it opaque.
+        ("--pre /usr/bin/cat foo {target}", "block"),
+        ("--pre touch --no-pre foo {target}", "allow"),
+        ("--no-pre --pre touch foo {target}", "block"),
+        ("--pre touch --pre cat foo {target}", "allow"),
+        ("--pre cat --pre touch foo {target}", "block"),
+        ("-e --pre {target}", "allow"),
+        ("-- --pre {target}", "allow"),
+        ("--pre= foo {target}", "allow"),
+    ],
+)
+async def test_rg_preprocessor_proof_follows_option_values_and_order(
+    workspace_write_engine: RuleEngine, root: Path, arguments: str, expected: str
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    seat = Path(variables["_agent_workspace_dir"])
+    seat.mkdir(parents=True)
+    command = "rg " + arguments.format(target=seat / ".gobby/config.yaml")
+    response = await _decide(workspace_write_engine, _shell(command, seat), variables)
+    assert response.decision == expected, response.reason
 
 
 @pytest.mark.asyncio

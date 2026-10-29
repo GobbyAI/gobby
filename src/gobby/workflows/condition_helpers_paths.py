@@ -156,14 +156,21 @@ def _tree_workspace_write_refused(
     data: Mapping[str, Any], root: Path, allowed: list[Path], base: Path | None
 ) -> bool:
     """A destination does not prove copied or extracted members exclude seat metadata."""
-    if data.get("canonical_tree_write_scope_unknown"):
-        return True
+    candidates: list[Path] = []
     for raw in data.get("canonical_tree_write_paths", ()):
         if _path_is_unresolved(raw, str(base) if base else None):
-            return True
-        path = resolve_tool_path(raw, base)
-        if path is None:
-            return True
+            # Unknown members/destinations remain unknown for the general write
+            # gates. This rule needs evidence that this operation targets a seat.
+            for cwd in data.get("canonical_tree_write_cwds", {}).get(raw, ()):
+                if not _path_is_unresolved(cwd, str(base) if base else None):
+                    path = resolve_tool_path(cwd, base)
+                    if path is not None:
+                        candidates.append(path)
+        else:
+            path = resolve_tool_path(raw, base)
+            if path is not None:
+                candidates.append(path)
+    for path in candidates:
         within_root = workspace_contains(path, root)
         if within_root is None:
             return True

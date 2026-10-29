@@ -269,6 +269,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     dirty_edit_paths: list[str] = []
     write_paths: list[str] = []
     tree_paths: list[str] = []
+    tree_cwds: dict[str, list[str]] = {}
     unresolved_execution_paths: list[str] = []
     tree_scope_unknown = False
     mutation_scope_unknown = False
@@ -450,6 +451,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                 write_paths.append(path)
         if item.extra:
             tree_scope_unknown |= bool(item.extra.get("canonical_tree_write_scope_unknown"))
+            for path, cwds in item.extra.get("canonical_tree_write_cwds", {}).items():
+                tree_cwds.setdefault(path, []).extend(cwds)
             for key, scope_paths in (
                 ("canonical_tree_write_paths", tree_paths),
                 ("canonical_unresolved_execution_paths", unresolved_execution_paths),
@@ -489,6 +492,15 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         )
     if tree_paths:
         extra["canonical_tree_write_paths"] = list(dict.fromkeys(tree_paths))
+    # Keep cwd paired with its destination through nested shell/loop merges.
+    # Once a positive binding resolves the destination, its fallback is unused.
+    extra.pop("canonical_tree_write_cwds", None)
+    if tree_cwds:
+        extra["canonical_tree_write_cwds"] = {
+            path: list(dict.fromkeys(cwds))
+            for path, cwds in tree_cwds.items()
+            if path in tree_paths
+        }
     if tree_scope_unknown:
         extra["canonical_tree_write_scope_unknown"] = True
     # A read beside an opaque execution is not a read-only shell program.

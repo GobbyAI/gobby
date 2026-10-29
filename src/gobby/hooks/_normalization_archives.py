@@ -206,6 +206,7 @@ def classify_ditto_command(parts: list[str], cwd: str | None) -> _ShellSegmentMe
         repo_mutation=True,
         extra={
             "canonical_tree_write_paths": tree_paths,
+            "canonical_tree_write_cwds": {path: [cwd] for path in tree_paths if cwd},
             "canonical_tree_write_scope_unknown": unknown,
             "_canonical_repo_mutation_scope_unknown": unknown,
         },
@@ -243,6 +244,7 @@ def classify_archive_command(
         repo_mutation=True,
         extra={
             "canonical_tree_write_paths": paths,
+            "canonical_tree_write_cwds": {path: [cwd] for path in paths if cwd},
             **(
                 {
                     "_canonical_repo_mutation_scope_unknown": True,

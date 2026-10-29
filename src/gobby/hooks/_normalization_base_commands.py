@@ -21,6 +21,7 @@ from gobby.hooks._normalization_operands import (
     _find_has_mutation_predicate,
     _search_command_paths,
     _shell_positional_args_after,
+    rg_preprocessor,
 )
 from gobby.hooks._normalization_sed import classify_sed_segment
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
@@ -246,17 +247,19 @@ def unresolved_execution_metadata(
     outputs: list[str] | None = None,
     stdin_arguments: bool = False,
 ) -> _ShellSegmentMetadata:
-    """Keep known paths and cwd while withholding execution and stdin scope proof."""
+    """Keep write evidence while withholding execution and stdin scope proof."""
+    child_is_read_only = item.proven_read_only
     # An output-producing wrapper does not mutate its child's read operands.
     mutation_paths = item.paths if item.repo_mutation or not outputs else ()
     paths = tuple(dict.fromkeys([*mutation_paths, *(outputs or ())]))
     extra = dict(item.extra or {})
+    extra.pop("canonical_tree_write_cwds", None)
     scope = [
         *extra.get("canonical_unresolved_execution_paths", ()),
         *extra.pop("canonical_tree_write_paths", ()),
-        *paths,
+        *(outputs or () if child_is_read_only else paths),
     ]
-    if cwd:
+    if cwd and not child_is_read_only:
         scope.append(cwd)
     extra.update(
         canonical_unresolved_execution=True,
@@ -282,6 +285,7 @@ def classify_base_command(
     shell_stdin: bool = False,
     base_cwd: Path | None = None,
     raw_parts: tuple[str, ...] | None = None,
+    preprocessor_read_only: bool = False,
 ) -> _ShellSegmentMetadata:
     if not parts:
         return _ShellSegmentMetadata("execute")
@@ -413,9 +417,10 @@ def classify_base_command(
 
     if cmd in {"rg", "grep", "git"}:
         search = classify_search_segment(cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin)
-        if cmd == "rg" and any(word.partition("=")[0] == "--pre" for word in parts[1:]):
+        if cmd == "rg" and rg_preprocessor(parts) is not None:
             return unresolved_execution_metadata(
-                search, cwd or (str(base_cwd) if base_cwd else None)
+                replace(search, read_only=preprocessor_read_only),
+                cwd or (str(base_cwd) if base_cwd else None),
             )
         return search
 

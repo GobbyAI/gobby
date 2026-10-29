@@ -48,6 +48,7 @@ from gobby.hooks._normalization_metadata import (
     _unknown_write_metadata,
     _without_code_index_navigation,
 )
+from gobby.hooks._normalization_operands import rg_preprocessor
 from gobby.hooks._normalization_paths import (
     CANONICAL_WRITE_TOOL_NAMES as CANONICAL_WRITE_TOOL_NAMES,
 )
@@ -578,7 +579,15 @@ def _classify_shell_segment(
         search_base_cwd=search_base_cwd,
         raw_by_token=raw_by_token,
     )
-    return replace(metadata, extra=redirect_source_read_metadata(metadata.extra, tokens))
+    extra = redirect_source_read_metadata(metadata.extra, tokens)
+    if extra and (paths := extra.get("canonical_tree_write_paths")):
+        effective_cwd = invocation_cwd or cwd or str(search_base_cwd or base_cwd or "")
+        if effective_cwd:
+            contexts = dict(extra.get("canonical_tree_write_cwds", {}))
+            for path in paths:
+                contexts.setdefault(path, [effective_cwd])
+            extra["canonical_tree_write_cwds"] = contexts
+    return replace(metadata, extra=extra)
 
 
 def _classify_shell_segment_impl(
@@ -638,7 +647,11 @@ def _classify_shell_segment_impl(
     stdin_parts = git_environment_parts(shell_token_values(tokens), stdin_parts)
     if stdin_parts and shell_command_name(stdin_parts[0]) == "rg" and input_paths == ["/dev/null"]:
         shell_stdin, cwd = False, cwd or str(search_base_cwd or base_cwd or ".")
-    if stdin_parts and shell_command_name(stdin_parts[0]) in {"sudo", "xargs"} and cwd is None:
+    if (
+        stdin_parts
+        and shell_command_name(stdin_parts[0]) in {"sudo", "xargs", "rg"}
+        and cwd is None
+    ):
         # Script-inspection proof may be lost while the invocation cwd is unchanged.
         cwd = str(search_base_cwd) if search_base_cwd else None
 
@@ -955,6 +968,23 @@ def _classify_shell_segment_without_redirection(
             )
         return _ShellSegmentMetadata("execute")
 
+    preprocessor = rg_preprocessor(parts) if cmd == "rg" else None
+    preprocessor_read_only = (
+        _classify_shell_segment_without_redirection(
+            [preprocessor, "$UNRESOLVED"],
+            execution_cwd,
+            depth=depth + 1,
+            shell_stdin=True,
+            base_cwd=base_cwd,
+        ).proven_read_only
+        if preprocessor is not None and depth < SHELL_WRAPPER_DEPTH
+        else False
+    )
     return classify_base_command(
-        parts, cwd, shell_stdin=shell_stdin, base_cwd=base_cwd, raw_parts=raw_parts
+        parts,
+        cwd,
+        shell_stdin=shell_stdin,
+        base_cwd=base_cwd,
+        raw_parts=raw_parts,
+        preprocessor_read_only=preprocessor_read_only,
     )
