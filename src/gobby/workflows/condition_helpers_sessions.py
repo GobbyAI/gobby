@@ -658,7 +658,9 @@ _WORKSPACE_GLOB_BUDGET = 8192
 _WORKSPACE_GLOB_MAX_DEPTH = 64
 
 
-def _workspace_glob_readable(target: Path, start: int, readable: Callable[[Path], bool]) -> bool:
+def _workspace_glob_readable(
+    target: Path, start: int, readable: Callable[[Path], bool], *, shell: bool
+) -> bool:
     """Check resolved expansion targets before entering directories, with bounded work."""
     parts = target.parts[start:]
     pending = [(Path(*target.parts[:start]), 0, 0)]
@@ -687,6 +689,14 @@ def _workspace_glob_readable(target: Path, start: int, readable: Callable[[Path]
             elif not _READ_PATTERN.search(part):
                 pending.append((resolved / part, index + 1, depth + 1))
                 continue
+            if shell and part.startswith("."):
+                # Bash can match virtual '.'/'..' entries with explicit-dot
+                # patterns; scandir omits them. Greedily widen bracket groups
+                # so negated/POSIX classes cannot skip a possible parent match.
+                dot_pattern = re.sub(r"\[.*\]", "*", part)
+                for name in (".", ".."):
+                    if fnmatchcase(name, dot_pattern):
+                        pending.append((resolved / name, index + 1, depth + 1))
             with os.scandir(resolved) as entries:
                 for entry in entries:
                     budget -= 1
@@ -802,7 +812,9 @@ def agent_workspace_read_violation(
         boundary = _workspace_read_boundary(raw, root, start) if start is not None else raw
         if boundary is not None and not readable(boundary):
             return True
-        if start is not None and not _workspace_glob_readable(raw, start, readable):
+        if start is not None and not _workspace_glob_readable(
+            raw, start, readable, shell=(event_data or {}).get("tool_name") == "Bash"
+        ):
             return True
     return False
 
