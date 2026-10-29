@@ -339,6 +339,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         raise
                     except Exception:
                         logger.warning("Failed to settle background shell edits", exc_info=True)
+                    try:
+                        await self._session_var_manager.settle_background_git_operations(session_id)
+                    except _DATABASE_TIMEOUTS:
+                        raise
+                    except Exception:
+                        logger.warning("Failed to settle background Git operations", exc_info=True)
 
                 # Load session-scoped variables (canonical store).
                 # session_id may be "" for session-less events; session_variables.session_id
@@ -746,6 +752,9 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     and self._session_var_manager
                 ):
                     try:
+                        await asyncio.to_thread(
+                            self._session_var_manager.cancel_git_operation_call, session_id, call_id
+                        )
                         await asyncio.to_thread(
                             release_structured_edit_calls,
                             self._session_var_manager,

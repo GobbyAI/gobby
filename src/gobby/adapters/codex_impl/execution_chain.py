@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -39,10 +38,6 @@ _FUNCTIONS_EXEC_TERMINAL_RE = re.compile(
 _EXEC_COMMAND_CALL_RE = re.compile(r"\btools\.exec_command\s*\(")
 _EXEC_COMMAND_LITERAL_RE = re.compile(
     r'(?:^|[{,])\s*(?:cmd|"cmd")\s*:\s*("(?:\\.|[^"\\])*")',
-    re.DOTALL,
-)
-_EXEC_WORKDIR_LITERAL_RE = re.compile(
-    r'(?:^|[{,])\s*(?:workdir|"workdir")\s*:\s*("(?:\\.|[^"\\])*")',
     re.DOTALL,
 )
 _EXEC_RESULT_CALL_RE = re.compile(r"\btools\.(?:exec_command|write_stdin)\s*\(")
@@ -170,6 +165,9 @@ def validate_functions_exec_wrapper(arguments: Any) -> str | None:
             "functions.exec shell wrapper command must be one statically attributable literal "
             "exec_command call"
         )
+    fields = _functions_exec_arguments(arguments)
+    if fields is None or ("workdir" in fields and _literal_workdir(fields["workdir"]) is None):
+        return "functions.exec shell wrapper arguments must be one statically attributable literal object"
     return None
 
 
@@ -188,33 +186,64 @@ def extract_direct_exec_command(arguments: Any) -> str | None:
 
 
 def extract_direct_exec_workdir(arguments: Any) -> str | None:
-    """Extract the absolute ``workdir`` of one direct Codex ``exec_command`` call."""
+    """Extract the literal ``workdir`` of one direct Codex ``exec_command`` call."""
     decoded = arguments
     if isinstance(arguments, str):
         try:
             decoded = json.loads(arguments)
         except (TypeError, ValueError):
             return None
-    return _absolute_path(decoded.get("workdir")) if isinstance(decoded, dict) else None
+    return _literal_workdir(decoded.get("workdir")) if isinstance(decoded, dict) else None
 
 
 def extract_functions_exec_workdir(arguments: Any) -> str | None:
-    """Extract the literal absolute ``workdir`` of the one nested ``exec_command``."""
+    """Extract the literal ``workdir`` of the one nested ``exec_command``."""
     if isinstance(arguments, dict):
-        return _absolute_path(arguments.get("workdir"))
-    if extract_functions_exec_command(arguments) is None:
-        return None
-    matches = _EXEC_WORKDIR_LITERAL_RE.findall(arguments)
-    if len(matches) != 1:
-        return None
-    try:
-        return _absolute_path(json.loads(matches[0]))
-    except (TypeError, ValueError):
-        return None
+        return _literal_workdir(arguments.get("workdir"))
+    fields = _functions_exec_arguments(arguments)
+    return _literal_workdir(fields.get("workdir")) if fields is not None else None
 
 
-def _absolute_path(value: Any) -> str | None:
-    return value if isinstance(value, str) and os.path.isabs(value) else None
+def _functions_exec_arguments(arguments: Any) -> dict[str, Any] | None:
+    """Read a single literal argument object, rejecting computed or overwritten fields."""
+    if not isinstance(arguments, str):
+        return None
+    calls = list(_EXEC_COMMAND_CALL_RE.finditer(arguments))
+    if len(calls) != 1:
+        return None
+    source = arguments[calls[0].end() :].lstrip()
+    if not source.startswith("{"):
+        return None
+    decoder = json.JSONDecoder()
+    fields: dict[str, Any] = {}
+    source = source[1:].lstrip()
+    while source and not source.startswith("}"):
+        key_match = re.match(r'("(?:\\.|[^"\\])*"|[$A-Za-z_][$\w]*)\s*:', source)
+        if key_match is None:
+            return None
+        raw_key = key_match[1]
+        try:
+            key = json.loads(raw_key) if raw_key.startswith('"') else raw_key
+        except ValueError:
+            return None
+        if key in fields:
+            return None
+        source = source[key_match.end() :].lstrip()
+        try:
+            value, end = decoder.raw_decode(source)
+        except ValueError:
+            return None
+        fields[key] = value
+        source = source[end:].lstrip()
+        if source.startswith(","):
+            source = source[1:].lstrip()
+        elif not source.startswith("}"):
+            return None
+    return fields if source.startswith("}") and source[1:].lstrip().startswith(")") else None
+
+
+def _literal_workdir(value: Any) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _normalize_session_id(value: Any) -> str | None:
@@ -726,7 +755,10 @@ class ExecutionChainCorrelator:
         arguments = data.get("arguments", data.get("tool_input"))
         command = data.pop("_dynamic_exec_command", None)
         if isinstance(command, str) and command:
+            workdir = extract_functions_exec_workdir(arguments)
             arguments = {"cmd": command}
+            if workdir is not None:
+                arguments["workdir"] = workdir
         self._live_sequence += 1
         call_id = str(
             data.get("callId")
@@ -752,6 +784,8 @@ class ExecutionChainCorrelator:
         data["tool_input"] = (
             {"command": execution.literal_command} if execution.literal_command is not None else {}
         )
+        if execution.workdir is not None:
+            data["tool_input"]["workdir"] = execution.workdir
         data["verification_execution_id"] = execution.outer_call_id
         # An undecidable PTY chunk is still attached to its running process.
         # Consumers must retain edit snapshots and task fences until its receipt.

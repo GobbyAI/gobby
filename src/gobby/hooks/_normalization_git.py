@@ -540,6 +540,15 @@ def classify_git_mutation(
             paths=tuple(_rebase_shell_paths(paths, git_cwd)),
             repo_mutation=True,
         )
+    operation_extra: dict[str, Any] = {}
+    if (
+        operation in {"merge", "rebase", "cherry-pick", "revert", "pull"}
+        and not unknown
+        and git_cwd
+    ):
+        root = checkout_root(_checkout_probe(git_cwd))
+        if root is not None:
+            operation_extra["canonical_git_operation_roots"] = [str(root)]
     if operation == "revert" or (operation == "cherry-pick" and recovery):
         if not unknown and git_cwd and recovery:
             return _ShellSegmentMetadata(
@@ -547,9 +556,12 @@ def classify_git_mutation(
                 paths=(git_cwd,),
                 repo_mutation=True,
                 extra={
+                    **operation_extra,
                     "canonical_edit_file_paths": [],
                     "canonical_git_sequencer_scope_paths": [git_cwd],
                 },
             )
-        return _ShellSegmentMetadata("write", repo_mutation=True)
+        return _ShellSegmentMetadata("write", repo_mutation=True, extra=operation_extra)
+    if operation_extra:
+        return _ShellSegmentMetadata("execute", repo_mutation=True, extra=operation_extra)
     return None

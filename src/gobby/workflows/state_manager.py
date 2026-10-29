@@ -23,6 +23,7 @@ from gobby.storage.sessions import startup_claim as _startup_claim
 from gobby.storage.sessions._contested_expiry import read_session_variables_row
 from gobby.storage.sessions.startup_claim import StartupClaimState, StartupContextClaim
 from gobby.workflows.checkout_fingerprint import path_fingerprints
+from gobby.workflows.git_operation_ownership import GitOperationRegistry
 from gobby.workflows.memory_review_conditions import pending_memory_reviews_complete
 from gobby.workflows.session_edit_ledger import SessionEditLedger
 from gobby.workflows.variable_defaults import (
@@ -123,7 +124,7 @@ def _clear_variable_defaults_caches() -> None:
 register_revision_listener("variables", _clear_variable_defaults_caches)
 
 
-class SessionVariableManager(SessionEditLedger, WorktreeShellCallRegistry):
+class SessionVariableManager(SessionEditLedger, WorktreeShellCallRegistry, GitOperationRegistry):
     """Manages session-scoped shared variables (visible to all workflows).
 
     Variable resolution layers definition defaults under session overrides,

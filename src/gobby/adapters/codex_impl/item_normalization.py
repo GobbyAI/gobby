@@ -15,6 +15,9 @@ from typing import Any
 
 from gobby.adapters.codex_impl.execution_chain import (
     DIRECT_EXEC_NAMES,
+    extract_direct_exec_workdir,
+    extract_functions_exec_workdir,
+    validate_functions_exec_wrapper,
 )
 from gobby.adapters.codex_impl.execution_chain import (
     DynamicExecCorrelator as DynamicExecCorrelator,
@@ -248,6 +251,8 @@ def extract_completed_item_payload(params: dict[str, Any]) -> dict[str, Any]:
     """Return tool item payload from item/started or item/completed params."""
     item = params.get("item")
     if isinstance(item, dict):
+        if "cwd" not in item and isinstance(params.get("cwd"), str):
+            return {"cwd": params["cwd"], **item}
         return item
     if any(field in params for field in TOOLISH_FIELDS):
         return params
@@ -273,17 +278,21 @@ def codex_command_input(payload: Mapping[str, Any]) -> dict[str, Any]:
     command = payload.get("parsedCmd") or payload.get("command")
     if not isinstance(command, str) or not command:
         return {}
+    tool_input: dict[str, Any] = {"command": command}
+    cwd = payload.get("cwd")
+    if isinstance(cwd, str) and cwd:
+        tool_input["cwd"] = cwd
     try:
         argv = shlex.split(command)
     except ValueError:
-        return {"command": command}
+        return tool_input
     if (
         len(argv) == 3
         and argv[0].rsplit("/", 1)[-1] in _CODEX_LOGIN_SHELLS
         and argv[1] in {"-c", "-lc"}
     ):
-        return {"command": argv[2]}
-    return {"command": command}
+        tool_input["command"] = argv[2]
+    return tool_input
 
 
 def build_tool_event_data(
@@ -355,6 +364,9 @@ def build_tool_event_data(
                 item_data["_original_tool_name"] = dynamic_name
                 item_data["tool_name"] = "Bash"
                 item_data["tool_input"] = {"command": command}
+                workdir = extract_direct_exec_workdir(item_data.get("arguments"))
+                if workdir is not None:
+                    item_data["tool_input"]["workdir"] = workdir
                 item_data["_direct_exec_native_output"] = item_data.get("contentItems")
                 terminal_result = extract_direct_exec_terminal_result(item_data.get("contentItems"))
                 if terminal_result is not None:
@@ -399,6 +411,13 @@ def build_pre_tool_lifecycle_payload(
 
     original_tool = data.get("_original_tool_name") or data.get("tool_name")
     if original_tool in _FUNCTIONS_EXEC_NAMES and isinstance(data.get("arguments"), str):
+        command = data.get("_dynamic_exec_command")
+        if isinstance(command, str) and validate_functions_exec_wrapper(data["arguments"]) is None:
+            shell_input = {"command": command}
+            workdir = extract_functions_exec_workdir(data["arguments"])
+            if workdir is not None:
+                shell_input["workdir"] = workdir
+            return "Bash", shell_input
         return tool_name, {"arguments": data["arguments"]}
     unavailable = tool_input_error(data)
     if unavailable is not None:

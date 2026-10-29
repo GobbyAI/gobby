@@ -37,11 +37,12 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.daemon_git import daemon_git
-from gobby.workflows.commit_guard import foreign_dirty_edit_conflict
+from gobby.workflows.commit_guard import foreign_dirty_edit_conflict, foreign_staged_commit_conflict
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path
+from gobby.workflows.task_tool_bindings import TaskToolBindings
 from gobby.workflows.worktree_shell_attribution import (
     OVERLAPS_VARIABLE,
     begin_structured_edit_calls,
@@ -561,6 +562,200 @@ def test_yielded_codex_formatter_keeps_snapshot_until_terminal_poll(
     assert checkout.rule_3_reason("format_me.py") == ""
     assert not manager.get_variables(checkout.session_id).get("claimed_shell_snapshots")
     assert manager.worktree_shell_call_root(checkout.session_id, "yield-formatter") is None
+
+
+def _prepare_incoming(checkout: Checkout, path: str) -> None:
+    repo = checkout.repo
+    _git(repo, "config", "user.email", "t@gobby.local")
+    _git(repo, "config", "user.name", "T")
+    _git(repo, "checkout", "-b", "incoming")
+    checkout.write(path, "incoming\n")
+    _git(repo, "add", path)
+    _git(repo, "-c", "user.email=t@gobby.local", "-c", "user.name=T", "commit", "-m", "incoming")
+    _git(repo, "checkout", "-")
+
+
+def test_git_operation_receipt_survives_pending_and_handler_restart(
+    mock_dependencies: dict[str, Any], checkout: Checkout
+) -> None:
+    repo = checkout.repo
+    _prepare_incoming(checkout, "foreign.txt")
+    manager = SessionVariableManager(checkout.db)
+    manager.record_edited_files(
+        checkout.foreign_session_id, ["foreign.txt"], checkout_root=str(repo)
+    )
+    command = "git merge --no-ff --no-commit incoming"
+    before = replace(
+        checkout.tool_event(HookEventType.BEFORE_TOOL, command),
+        source=SessionSource.CODEX,
+        request_id=None,
+    )
+    before.data["verification_execution_id"] = "git-operation"
+    handlers = _handlers(mock_dependencies, checkout.db)
+    assert handlers.handle_before_tool(before).decision == "allow"
+    _git(repo, "merge", "--no-ff", "--no-commit", "incoming")
+    pending = replace(
+        before,
+        event_type=HookEventType.AFTER_TOOL,
+        data={**before.data, "_verification_pending": True},
+    )
+    handlers.handle_after_tool(pending)
+    terminal = replace(before, event_type=HookEventType.AFTER_TOOL)
+    _handlers(mock_dependencies, checkout.db).handle_after_tool(terminal)
+    assert checkout.rule_3_reason("foreign.txt") == ""
+    checkout.write("foreign.txt", "foreign edit after the merge stopped\n")
+    manager.record_edited_files(
+        checkout.foreign_session_id, ["foreign.txt"], checkout_root=str(repo)
+    )
+    assert "foreign.txt" in checkout.rule_3_reason("foreign.txt")
+
+
+def test_claude_background_git_waits_for_its_terminal_output(
+    mock_dependencies: dict[str, Any], checkout: Checkout, tmp_path: Path
+) -> None:
+    _prepare_incoming(checkout, "foreign.txt")
+    manager = SessionVariableManager(checkout.db)
+    manager.record_edited_files(
+        checkout.foreign_session_id, ["foreign.txt"], checkout_root=str(checkout.repo)
+    )
+    command = "git merge --no-ff --no-commit incoming"
+    handlers = _handlers(mock_dependencies, checkout.db)
+    before = checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    assert handlers.handle_before_tool(before).decision == "allow"
+    output = tmp_path / "git-job.output"
+    output.write_text("running\n", encoding="utf-8")
+    receipt = (
+        "Command did not complete within its 10s timeout and was moved to the background "
+        f"(ID: git-job). Output is being written to: {output}. "
+    )
+    handlers.handle_after_tool(
+        replace(
+            before,
+            event_type=HookEventType.AFTER_TOOL,
+            data={**before.data, "tool_output": receipt},
+        )
+    )
+    TaskToolBindings(manager, checkout.session_id).clear_pending("prompt")
+    _git(checkout.repo, "merge", "--no-ff", "--no-commit", "incoming")
+    assert "foreign.txt" in checkout.rule_3_reason("foreign.txt")
+    output.write_text("merge stopped\n[exited with code 0]\n", encoding="utf-8")
+    asyncio.run(
+        SessionVariableManager(checkout.db).settle_background_git_operations(checkout.session_id)
+    )
+    assert checkout.rule_3_reason("foreign.txt") == ""
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_git_operation_before_hook_refuses_failed_provenance_inspection(
+    mock_dependencies: dict[str, Any], checkout: Checkout, cleanup_fails: bool
+) -> None:
+    handlers = _handlers(mock_dependencies, checkout.db)
+    event = checkout.tool_event(HookEventType.BEFORE_TOOL, "git merge incoming")
+    with (
+        patch.object(
+            SessionVariableManager,
+            "begin_git_operation_call",
+            AsyncMock(side_effect=ValueError("inspection unavailable")),
+        ),
+        patch.object(
+            SessionVariableManager,
+            "cancel_git_operation_call",
+            side_effect=RuntimeError("cleanup unavailable") if cleanup_fails else None,
+        ),
+    ):
+        result = handlers.handle_before_tool(event)
+    assert result.decision == "block"
+    assert result.reason is not None and "operation ownership" in result.reason
+
+
+def test_git_operation_without_execution_id_is_refused(
+    mock_dependencies: dict[str, Any], checkout: Checkout
+) -> None:
+    event = replace(
+        checkout.tool_event(HookEventType.BEFORE_TOOL, "git merge incoming"), request_id=None
+    )
+    result = _handlers(mock_dependencies, checkout.db).handle_before_tool(event)
+    assert result.decision == "block"
+    assert result.reason is not None and "execution ID" in result.reason
+
+
+@pytest.mark.parametrize("mode", ["--no-rebase", "--rebase"])
+def test_local_pull_conflict_retains_operation_provenance(
+    mock_dependencies: dict[str, Any], checkout: Checkout, mode: str
+) -> None:
+    _prepare_incoming(checkout, "foreign.txt")
+    checkout.write("foreign.txt", "local\n")
+    _git(checkout.repo, "add", "owned.txt", "stale.txt", "foreign.txt")
+    _git(
+        checkout.repo,
+        "-c",
+        "user.email=t@gobby.local",
+        "-c",
+        "user.name=T",
+        "commit",
+        "-m",
+        "local",
+    )
+    manager = SessionVariableManager(checkout.db)
+    manager.record_edited_files(
+        checkout.foreign_session_id, ["foreign.txt"], checkout_root=str(checkout.repo)
+    )
+    command = f"git pull {mode} . incoming"
+    handlers = _handlers(mock_dependencies, checkout.db)
+    before = checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    assert handlers.handle_before_tool(before).decision == "allow"
+    result = subprocess.run(
+        ["git", "pull", mode, ".", "incoming"], cwd=checkout.repo, capture_output=True, text=True
+    )
+    assert result.returncode == 1, result.stderr
+    handlers.handle_after_tool(checkout.tool_event(HookEventType.AFTER_TOOL, command, failed=True))
+    assert checkout.rule_3_reason("foreign.txt") == ""
+    checkout.write("foreign.txt", "foreign after pull\n")
+    manager.record_edited_files(
+        checkout.foreign_session_id, ["foreign.txt"], checkout_root=str(checkout.repo)
+    )
+    assert "foreign.txt" in checkout.rule_3_reason("foreign.txt")
+
+
+@pytest.mark.parametrize("foreign_finishes_first", [False, True])
+def test_git_operation_cannot_exempt_an_overlapping_unattributed_write(
+    mock_dependencies: dict[str, Any], task_worktree: Checkout, foreign_finishes_first: bool
+) -> None:
+    checkout = task_worktree
+    _prepare_incoming(checkout, "racer.txt")
+    handlers = _handlers(mock_dependencies, checkout.db)
+    before = checkout.tool_event(
+        HookEventType.BEFORE_TOOL, "git merge --no-ff --no-commit incoming"
+    )
+    foreign = replace(checkout, session_id=checkout.foreign_session_id)
+    foreign_before = replace(
+        foreign.tool_event(HookEventType.BEFORE_TOOL, "uv run python rewrite.py racer.txt"),
+        session_id="foreign-external",
+        request_id="foreign-shell",
+    )
+    assert not _shell_write_refused(handlers, before)
+    assert not _shell_write_refused(handlers, foreign_before)
+    _git(checkout.repo, "merge", "--no-ff", "--no-commit", "incoming")
+    checkout.write("racer.txt", "foreign concurrent write\n")
+    after = replace(before, event_type=HookEventType.AFTER_TOOL)
+    foreign_after = replace(foreign_before, event_type=HookEventType.AFTER_TOOL)
+    events = (foreign_after, after) if foreign_finishes_first else (after, foreign_after)
+    for event in events:
+        handlers.handle_after_tool(event)
+    assert "racer.txt" not in checkout.ledger()
+    assert "racer.txt" in checkout.rule_3_reason("racer.txt")
+    _git(checkout.repo, "add", "racer.txt")
+    reason = asyncio.run(
+        foreign_staged_commit_conflict(
+            checkout.db,
+            checkout.tool_event(HookEventType.BEFORE_TOOL, "git commit -m merge"),
+            session_id=checkout.session_id,
+            project_id=checkout.project_id,
+            project_path=str(checkout.repo),
+        )
+    )
+    assert "racer.txt" in reason
+    assert "overlapping" in reason
 
 
 def test_script_call_does_not_adopt_another_sessions_write(

@@ -20,6 +20,7 @@ from gobby.adapters.codex_impl.execution_chain import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, tool_execution_id
 from gobby.tasks.transcript_background import background_job_receipt
+from gobby.workflows.git_operation_ownership import OPERATIONS_VARIABLE, retire_operation_calls
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import task_selected_at
 
@@ -272,14 +273,33 @@ class TaskToolBindings:
             }
             ends_turn = boundary != "prompt"
             changed = kept != calls or (ends_turn and "task_tool_turn" in variables)
+            live_call_ids = {key.partition(":")[2] for key in kept}
+            retired = retire_operation_calls(variables, live_call_ids)
+            for name in ("claimed_shell_snapshots", "worktree_shell_calls"):
+                snapshots = variables.get(name)
+                if isinstance(snapshots, dict):
+                    retained = {
+                        key: value for key, value in snapshots.items() if key in live_call_ids
+                    }
+                    if retained != snapshots:
+                        variables[name] = retained
+                        retired = True
             if changed:
                 variables["task_tool_bindings"] = kept
                 if ends_turn:
                     variables.pop("task_tool_turn", None)
-            return None, changed
+            return None, changed or retired
 
         self.manager._mutate_variables(
-            self.session_id, mutate, keys=("task_tool_bindings", "task_tool_turn")
+            self.session_id,
+            mutate,
+            keys=(
+                "task_tool_bindings",
+                "task_tool_turn",
+                OPERATIONS_VARIABLE,
+                "claimed_shell_snapshots",
+                "worktree_shell_calls",
+            ),
         )
 
     def started_at(self, event: HookEvent) -> float | None:

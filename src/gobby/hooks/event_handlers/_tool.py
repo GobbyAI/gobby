@@ -160,12 +160,63 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         db = getattr(self._session_manager, "db", None)
         if session_id and db is not None:
+            roots = input_data.get("canonical_git_operation_roots")
+            execution_id = tool_execution_id(event)
             try:
+                if isinstance(roots, list) and not execution_id:
+                    raise ValueError(
+                        "Git operation blocked: a durable tool execution ID is required. "
+                        "Retry through a tool call that provides its execution ID."
+                    )
                 self._assert_edit_path_selection(event, session_id)
                 TaskToolBindings(SessionVariableManager(db), session_id).start(event)
-            except ValueError as exc:
-                self._release_worktree_edit_calls(event, session_id)
-                return HookResponse(decision="block", reason=str(exc))
+                if execution_id and isinstance(roots, list):
+                    started = run_coro_blocking(
+                        SessionVariableManager(db).begin_git_operation_call(
+                            session_id,
+                            execution_id,
+                            [root for root in roots if isinstance(root, str)],
+                        ),
+                        self._event_loop,
+                        self.logger,
+                        label="begin_git_operation",
+                    )
+                    if started is not True:
+                        raise ValueError(
+                            "Git operation blocked: Gobby could not establish operation ownership. "
+                            "Retry after the repository and daemon are available."
+                        )
+            except Exception as exc:
+                if not isinstance(exc, ValueError) and not isinstance(roots, list):
+                    raise
+                if isinstance(roots, list):
+                    self.logger.warning("Git operation ownership preflight failed", exc_info=True)
+                    if execution_id:
+                        try:
+                            SessionVariableManager(db).cancel_git_operation_call(
+                                session_id, execution_id
+                            )
+                        except Exception:
+                            self.logger.warning(
+                                "Failed to release rejected Git operation", exc_info=True
+                            )
+                try:
+                    self._release_worktree_edit_calls(event, session_id)
+                except Exception:
+                    if not isinstance(roots, list):
+                        raise
+                    self.logger.warning(
+                        "Failed to release rejected operation edit calls", exc_info=True
+                    )
+                return HookResponse(
+                    decision="block",
+                    reason=str(exc)
+                    if isinstance(exc, ValueError)
+                    else (
+                        "Git operation blocked: operation ownership preflight failed. "
+                        "Retry after the repository and daemon are available."
+                    ),
+                )
             if tool_name == "Bash":
                 self._snapshot_shell_writes(event, session_id)
                 self._begin_worktree_shell_call(event, session_id, project_id)
@@ -443,6 +494,26 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
             db = getattr(self._session_manager, "db", None)
             if db is not None:
+                execution_id = tool_execution_id(event)
+                background_path = _background_output_path(input_data)
+                if tool_name == "Bash" and execution_id and background_path:
+                    SessionVariableManager(db).defer_git_operation_call(
+                        session_id, execution_id, background_path
+                    )
+                if (
+                    tool_name == "Bash"
+                    and execution_id
+                    and background_path is None
+                    and input_data.get("_verification_pending") is not True
+                ):
+                    run_coro_blocking(
+                        SessionVariableManager(db).finish_git_operation_call(
+                            session_id, execution_id
+                        ),
+                        self._event_loop,
+                        self.logger,
+                        label="finish_git_operation",
+                    )
                 TaskToolBindings(SessionVariableManager(db), session_id).complete(event)
 
         else:
