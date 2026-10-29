@@ -410,6 +410,19 @@ async def test_case_alias_of_workspace_root_does_not_bypass_write_scope(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["log*/..", "logs/{..,other}", "logs/{.,other}{.,other}"])
+async def test_read_expansion_cannot_enter_workspace_from_outside(
+    workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, prefix: str
+) -> None:
+    (root.parent / "logs").mkdir(parents=True)
+    variables = _seat(root / PROJECT, "developer", 12)
+    target = root.parent / prefix / root.name / PROJECT / "developer/session-99/notes.md"
+    response = await _decide(workspace_read_engine, _shell(f"cat {target}", tmp_path), variables)
+    assert response.decision == "block"
+    assert "agent-workspace-read-scope" in (response.reason or "")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("identity", ["different", "unavailable"])
 async def test_case_alias_cannot_borrow_unproven_seat_ownership(
     workspace_write_engine: RuleEngine,
@@ -587,8 +600,13 @@ async def test_read_alias_requires_proven_seat_identity(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("shape", ["plan", "templates"])
+@pytest.mark.parametrize("command_field", [False, True])
 async def test_apply_patch_workspace_targets_use_the_actual_headers(
-    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, shape: str
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    shape: str,
+    command_field: bool,
 ) -> None:
     variables = _seat(root / PROJECT, "developer", 12)
     worktree = Path(variables["_agent_workspace_dir"]) / "task-25298"
@@ -612,7 +630,13 @@ async def test_apply_patch_workspace_targets_use_the_actual_headers(
         + "".join(f"*** Update File: {path}\n@@\n-before\n+after\n" for path in targets)
         + "*** End Patch\n"
     )
-    data: dict[str, Any] = {"tool_name": "apply_patch", "tool_input": patch, "cwd": str(tmp_path)}
+    # Reduced from a refused plan patch; escapes expose the shell punctuation.
+    patch = patch.replace("+after", "+Each leaf\x27s \x60implementation_domain\x60 selects skills.")
+    data: dict[str, Any] = {
+        "tool_name": "apply_patch",
+        "tool_input": {"command": patch} if command_field else patch,
+        "cwd": str(tmp_path),
+    }
     normalize_tool_fields(data)
     assert data["canonical_tool_kind"] == "write"
     assert data["canonical_file_paths"] == [str(path) for path in targets]

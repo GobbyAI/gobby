@@ -525,13 +525,16 @@ def _workspace_read_boundary(target: Path, root: Path) -> Path | None:
         match = _READ_PATTERN.search(part)
         if match is None:
             continue
+        tail = target.parts[index:]
+        if ".." in tail or any("{" in component for component in tail):
+            # Expansion can enter the workspace from an outside literal prefix.
+            return root
         prefix = Path(*target.parts[:index])
         within = _workspace_contains(prefix, root)
         if within is None:
             return root
         if within:
-            tail = target.parts[index:]
-            target = root if ".." in tail or any("{" in part for part in tail) else prefix
+            target = prefix
             break
         ancestor = _workspace_contains(root, prefix)
         if ancestor is None:
