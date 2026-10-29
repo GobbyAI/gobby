@@ -156,6 +156,8 @@ class AgentDefinitionBody(BaseModel):
     timeout: float = 0
     # One workspace folder survives the /clear successors of this definition (addendum 9.3).
     persistent_workspace: StrictBool = False
+    # Authority to read every seat's folder, including through managed SRT personas.
+    read_all_agent_workspaces: StrictBool = False
     # Orchestration
     workflows: AgentWorkflows
     enabled: bool = True

@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git
 
@@ -51,6 +51,57 @@ class SandboxConfig(BaseModel):
     allow_git_network: bool = False
     allow_package_registries: bool = False
     allow_unix_sockets: list[str] = Field(default_factory=list)
+    # Launch authority, recomputed from the stored session/definition. Never accepted
+    # from user config or persisted in a policy snapshot.
+    _workspace_reads: tuple[str, ...] = PrivateAttr(default=())
+    _workspace_writes: tuple[str, ...] = PrivateAttr(default=())
+
+    def with_workspace_scope(self, reads: list[str], writes: list[str]) -> "SandboxConfig":
+        scoped = self.model_copy(deep=True)
+        scoped._workspace_reads = tuple(reads)
+        scoped._workspace_writes = tuple(writes)
+        return scoped
+
+    def restrict_workspace_paths(self, reads: list[str], writes: list[str]) -> list[str]:
+        """Remove read exceptions that would defeat the workspace root denial.
+
+        Linux restores write binds under read-denied roots, so write grants must
+        independently stay within the seat's writable scope on every platform.
+        """
+        from gobby.agents.agent_workspaces import workspaces_root
+
+        root = workspaces_root().resolve()
+
+        def within(path: Path, parent: Path) -> bool:
+            # A case-only alias can override a Seatbelt deny on case-insensitive
+            # volumes. Conservatively discard it even when it cannot be stat'ed.
+            return tuple(part.casefold() for part in path.parts[: len(parent.parts)]) == tuple(
+                part.casefold() for part in parent.parts
+            )
+
+        def checked_scope(items: tuple[str, ...]) -> list[Path]:
+            scope = []
+            for item in items:
+                path = Path(item)
+                relative = path.relative_to(workspaces_root())
+                expected = root / relative
+                if path.resolve() != expected:
+                    raise ValueError(f"agent workspace scope follows an alias: {path}")
+                scope.append(expected)
+            return scope
+
+        allowed_reads = checked_scope(self._workspace_reads)
+        allowed_writes = checked_scope(self._workspace_writes)
+        for item in writes:
+            path = Path(item)
+            if (within(path, root) or within(root, path)) and not any(
+                path.is_relative_to(folder) for folder in allowed_writes
+            ):
+                raise ValueError(f"write grant exceeds agent workspace scope: {path}")
+        retained = [
+            item for item in reads if not (within(Path(item), root) or within(root, Path(item)))
+        ]
+        return list(dict.fromkeys([*retained, *(str(path) for path in allowed_reads)]))
 
 
 _DAEMON_OWNED_SANDBOX_MODE: Literal["permissive", "restrictive"] = "permissive"
@@ -368,6 +419,12 @@ async def compute_sandbox_paths(
         credential_denies,
         provider_credential_read_exceptions(provider) if provider else [],
     )
+
+    if config.backend == "srt":
+        from gobby.agents.agent_workspaces import workspaces_root
+
+        read_paths = config.restrict_workspace_paths(read_paths, write_paths)
+        deny_read_paths = list(dict.fromkeys([*deny_read_paths, str(workspaces_root().resolve())]))
 
     return ResolvedSandboxPaths(
         workspace_path=str(workspace),

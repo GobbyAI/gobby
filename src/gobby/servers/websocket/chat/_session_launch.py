@@ -159,6 +159,18 @@ async def start_hydrated_session(
 ) -> ChatSessionProtocol:
     """Start the backend under the launch context and register the live session."""
     apply_launch_context(session, context)
+    if session.sandbox_config and session.sandbox_config.enabled:
+        from gobby.agents.agent_workspaces import grant_seat_workspace_paths
+
+        if session_manager and session.db_session_id:
+            session.sandbox_config = await run_db(
+                owner,
+                grant_seat_workspace_paths,
+                session.sandbox_config,
+                session_manager.db,
+                session.db_session_id,
+                agent_name,
+            )
     try:
         await session.start(model=effective_model)
     except Exception:

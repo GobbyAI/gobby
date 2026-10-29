@@ -73,6 +73,16 @@ def reviewer_launch(
     (home / "bootstrap.yaml").chmod(0o600)
     workspace = Path(os.environ.get("GOBBY_REVIEWER_PROOF_WORKSPACE", str(tmp_path / "workspace")))
     workspace.mkdir(exist_ok=True)
+    anchor = home / "agents_workspaces" / "proof-project"
+    own = anchor / "proof-seat" / "session-40"
+    epic = anchor / "epics" / "epic-1"
+    prior = anchor / "proof-seat" / "session-10"
+    for folder in (own, epic, prior):
+        folder.mkdir(parents=True)
+    (anchor / "README.md").write_text("Shared guidance")
+    config = SandboxConfig(enabled=True, backend="srt", allow_network=False).with_workspace_scope(
+        [str(own), str(epic), str(prior), str(anchor / "README.md")], [str(own), str(epic)]
+    )
     if not (workspace / "pyproject.toml").exists():
         (workspace / "pyproject.toml").write_text(
             '[project]\nname="reviewer-proof"\nversion="0.0.0"\nrequires-python=">=3.13"\n'
@@ -85,7 +95,7 @@ def reviewer_launch(
             monkeypatch.setattr(srt_monitor, "srt_mux_tmpdir", lambda: Path(monitor_directory))
             launch = asyncio.run(
                 prepare_sandbox_launch(
-                    config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+                    config=config,
                     provider="claude",
                     workspace_path=str(workspace),
                     run_id="reviewer-host-proof",
@@ -129,6 +139,51 @@ def _run(
         check=False,
         timeout=timeout,
     )
+
+
+def test_workspace_read_boundary_beneath_shell_expansion(
+    reviewer_launch: tuple[SandboxLaunch, Path, dict[str, str]],
+) -> None:
+    launch, workspace, environment = reviewer_launch
+    anchor = Path(environment["GOBBY_HOME"]) / "agents_workspaces" / "proof-project"
+    own = anchor / "proof-seat" / "session-40"
+    foreign = anchor / "other-seat" / "session-99"
+    foreign.mkdir(parents=True)
+    (foreign / "sentinel.txt").write_text("foreign-secret")
+    (own / "sentinel.txt").write_text("own-content")
+    (own / "foreign-link").symlink_to(foreign, target_is_directory=True)
+    (own / "own-link").symlink_to(own / "sentinel.txt")
+    for folder in (anchor / "epics" / "epic-1", anchor / "proof-seat" / "session-10"):
+        (folder / "sentinel.txt").write_text("allowed-content")
+
+    allowed = [
+        (own / "sentinel.txt", "own-content"),
+        (own / "own-link", "own-content"),
+        (anchor / "README.md", "Shared guidance"),
+        (anchor / "epics" / "epic-1" / "sentinel.txt", "allowed-content"),
+        (anchor / "proof-seat" / "session-10" / "sentinel.txt", "allowed-content"),
+    ]
+    for path, content in allowed:
+        result = _run(launch, workspace, environment, ["/bin/cat", str(path)])
+        assert result.returncode == 0, (path, result.stderr)
+        assert result.stdout == content
+
+    denied = [foreign / "sentinel.txt", own / "foreign-link" / "sentinel.txt"]
+    alias = anchor.parent / "PROOF-PROJECT" / "OTHER-SEAT" / "SESSION-99" / "sentinel.txt"
+    assert alias.samefile(foreign / "sentinel.txt"), "macOS host proof needs a case alias"
+    denied.append(alias)
+    for path in denied:
+        result = _run(launch, workspace, environment, ["/bin/cat", str(path)])
+        assert result.returncode != 0, path
+        assert "foreign-secret" not in result.stdout
+    result = _run(
+        launch,
+        workspace,
+        environment,
+        ["/bin/bash", "-c", 'cat "$1"/other-*/session-*/sentinel.txt', "proof", str(anchor)],
+    )
+    assert result.returncode != 0
+    assert "foreign-secret" not in result.stdout
 
 
 def test_reviewer_cached_settings_and_python_environment(
