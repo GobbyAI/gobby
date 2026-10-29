@@ -339,6 +339,122 @@ def _checkout_probe(git_cwd: str) -> Path:
     return Path(git_cwd) if checkout_reads.node_origin() else Path(git_cwd).resolve()
 
 
+def _git_apply_flags(arguments: list[str]) -> set[str] | None:
+    """Prove apply options without treating their values or operands as flags."""
+    value_options = {
+        "--include",
+        "--exclude",
+        "--directory",
+        "--whitespace",
+        "--build-fake-ancestor",
+        "-p",
+        "-C",
+    }
+    switches = {
+        "--stat",
+        "--numstat",
+        "--summary",
+        "--check",
+        "--index",
+        "--cached",
+        "--apply",
+        "--3way",
+        "--ours",
+        "--theirs",
+        "--union",
+        "--intent-to-add",
+        "--unsafe-paths",
+        "--allow-empty",
+        "--no-add",
+        "--reverse",
+        "--reject",
+        "--binary",
+        "--allow-binary-replacement",
+        "--inaccurate-eof",
+        "--recount",
+        "--ignore-space-change",
+        "--ignore-whitespace",
+        "--verbose",
+        "--quiet",
+        "--help",
+        "-3",
+        "-N",
+        "-R",
+        "-z",
+        "-v",
+        "-q",
+        "-h",
+    }
+    if any(
+        _contains_unexpanded_shell_reference(argument)
+        or any(character in argument for character in "*?[{}")
+        for argument in arguments
+    ):
+        return None
+    flags: set[str] = set()
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        index += 1
+        if argument == "--":
+            break
+        if not argument.startswith("-") or argument == "-":
+            continue
+        if argument.startswith("--"):
+            option, separator, value = argument.partition("=")
+            if option in value_options:
+                if not separator:
+                    if index == len(arguments):
+                        return None
+                    value = arguments[index]
+                    index += 1
+                if not value:
+                    return None
+            elif option not in switches or separator:
+                return None
+            flags.add(option)
+            continue
+        for offset, character in enumerate(argument[1:], start=1):
+            option = f"-{character}"
+            if option in value_options:
+                value = argument[offset + 1 :]
+                if not value:
+                    if index == len(arguments):
+                        return None
+                    value = arguments[index]
+                    index += 1
+                if not value.isdecimal():
+                    return None
+                flags.add(option)
+                break
+            if option not in switches:
+                return None
+            flags.add(option)
+    return flags
+
+
+def _classify_git_apply(arguments: list[str], unknown_selector: bool) -> _ShellSegmentMetadata:
+    flags = _git_apply_flags(arguments)
+    unknown_write = _ShellSegmentMetadata("write", repo_mutation=True)
+    if flags is None or unknown_selector:
+        return unknown_write
+    if flags & {"-h", "--help"}:
+        return _ShellSegmentMetadata("execute")
+    # This writes a separate index file even in inspection modes. Its destination
+    # is deliberately left unproven until it has its own complete scope handling.
+    if "--build-fake-ancestor" in flags:
+        return unknown_write
+    if "--apply" not in flags and flags & {"--check", "--stat", "--numstat", "--summary"}:
+        return _ShellSegmentMetadata("execute")
+    if "--reject" in flags:
+        # Rejected hunks create worktree .rej files even with --cached.
+        return unknown_write
+    if "--cached" in flags:
+        # Like git add/restore --staged: require a task, without claiming file edits.
+        return _ShellSegmentMetadata("execute", repo_mutation=True)
+    return unknown_write
+
+
 def classify_git_mutation(
     parts: list[str], cwd: str | None, base_cwd: Path | None
 ) -> _ShellSegmentMetadata | None:
@@ -496,9 +612,7 @@ def classify_git_mutation(
     ):
         return _ShellSegmentMetadata("execute", repo_mutation=True)
     if operation == "apply":
-        if any(flag in arguments for flag in {"--check", "--stat", "--numstat"}):
-            return _ShellSegmentMetadata("execute")
-        return _ShellSegmentMetadata("write", repo_mutation=True)
+        return _classify_git_apply(arguments, unknown)
     if operation in {"add", "checkout", "restore", "rm", "mv"}:
         if unknown:
             return _ShellSegmentMetadata("write", repo_mutation=True)

@@ -368,6 +368,39 @@ class TestTaskEnforcementSync:
 class TestBlockUnresolvedScopeShellWrite:
     """Unknown-target shell mutations must stop before provider execution."""
 
+    @pytest.mark.asyncio
+    async def test_literal_script_with_unresolved_writes_explains_remedy(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        script = tmp_path / "install-agent.sh"
+        script.write_text('#!/bin/sh\nprintf config > "$TARGET_DIR/agent.plist"\n')
+        script.chmod(0o755)
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": f"{shlex.quote(str(script))} --keep-cron"},
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"task_claimed": True, "loaded_skills": ["restraint"]},
+        )
+
+        assert response.decision == "block"
+        reason = response.reason or ""
+        assert "script whose body writes to unresolved targets" in reason
+        assert "run its steps with literal paths" in reason
+        assert "ask the operator to run it" in reason
+
     def test_rule_uses_canonical_unknown_scope_metadata(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
