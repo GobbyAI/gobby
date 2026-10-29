@@ -18,7 +18,7 @@ from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.engine._offload import offload
-from gobby.workflows.step_binding import release_lost_binding
+from gobby.workflows.step_binding import pending_claim_handlers, release_lost_binding
 from gobby.workflows.step_instances import (
     AgentStepInstanceManager,
     StaleStepInstanceWriteError,
@@ -494,6 +494,7 @@ class EnforcementCompletionMixin:
         claim_result = (
             tool_output.get("result") or tool_output if isinstance(tool_output, dict) else None
         )
+        early_claim_handlers = None
         if (
             not tool_failed
             and (mcp_server, mcp_tool_name) == ("gobby-tasks", "claim_task")
@@ -513,6 +514,7 @@ class EnforcementCompletionMixin:
                     return None
                 step = rebound_step
                 cas_token = (str(instance.id), instance.updated_at)
+            early_claim_handlers = pending_claim_handlers(instance)
         if not tool_failed:
             await self._try_step_audit(
                 self._audit_step_tool_call,
@@ -526,6 +528,8 @@ class EnforcementCompletionMixin:
             )
 
         handlers = step.on_mcp_error if tool_failed else step.on_mcp_success
+        if early_claim_handlers is not None:
+            handlers = early_claim_handlers
         handler_tool_input = self._step_handler_tool_input(tool_input, project_id=event.project_id)
 
         instance_mgr = self.instance_manager

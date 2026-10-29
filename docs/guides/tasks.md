@@ -124,19 +124,16 @@ Git records whole seconds, so same-second ordering is treated as unproven.
 Close checks the task's attributed paths in every recorded checkout. Run
 validation again after changes and provide the results for independent review.
 
-### Recover a handed-off task after a developer relaunch
+### Recover a task after a developer relaunch
 
-A DevTeam task needs no recovery: its Dev Manager lands and closes it. Outside a
-DevTeam, a fresh developer workflow may no longer have its previous handoff list.
-After the Orchestrator releases landed work, reclaim that task with `claim_task`. If
-`de_escalate_task` or the close preview says "Finish only a task this developer
-handed off", repeat `escalate_task` on the reclaimed task with the original
-`Handed off: reviewer LAND ...` reason. This releases the reclaimed escalated
-task and records its handoff in the current workflow. Then call
-`de_escalate_task` and `close_task(preview=true)` through the ordinary developer
-path. The preview checks the five close gates. Independent review remains part
-of the developer workflow.
-This recovery requires no workflow-variable writes.
+Select the still-owned task with `claim_task`; a resumed or repeated claim binds
+the developer workflow to that task. The developer implements and submits its
+candidate, and its Dev Manager coordinates review, landing and closure. A matching
+rejected review returns the selected task to implementation. Read-only audits remain
+available in submit; edits and Git mutations wait for implementation.
+
+Recovery uses the live claim and current review records. It requires neither a
+synthetic escalation nor workflow-variable writes.
 
 ### Close
 

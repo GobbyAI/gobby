@@ -46,8 +46,6 @@ from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import Task
 from gobby.storage.terminals import TerminalManager, native_locator_key
 from gobby.terminal_ownership import PaneOwnershipDecision, resolve_pane_ownership
-from gobby.workflows.reserved_variables import DEVELOPER_HANDOFF_TASKS_VARIABLE
-from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
@@ -905,35 +903,26 @@ async def test_an_explicit_termination_of_a_drained_seat_releases_its_claim(
 
 
 @pytest.mark.usefixtures("_local_machine_identity")
-def test_a_drained_seat_keeps_its_developer_handoff_binding(
+def test_a_drained_seat_keeps_its_claim_while_waiting_for_revival(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    """A seat whose pane exited during a daemon stop keeps the tasks it handed off.
-
-    The developer handoff guards read ``_developer_handoff_tasks``. Expiry must
-    leave that binding in place, so the resumed seat can still finish its handoff.
-    """
+    """A seat whose pane exited during a daemon stop retains its owned task."""
     bound: list[Task] = []
 
-    def bind_handoff(owner: str) -> None:
+    def bind_claim(owner: str) -> None:
         task = _claimed_task(temp_db, sample_project, claimed_by=owner)
         bound.append(task)
-        SessionVariableManager(temp_db).merge_variables(
-            owner, {DEVELOPER_HANDOFF_TASKS_VARIABLE: [task.id]}
-        )
 
     _sessions, session_id = _expire_seat_whose_native_pane_exited(
         temp_db,
         sample_project,
         live_host_epoch=None,
-        before_expiry=bind_handoff,
+        before_expiry=bind_claim,
     )
 
     assert sweep_stale_claims(temp_db, project_id=sample_project["id"]) == 0
     assert _claim(temp_db, bound[0].id) == session_id
-    variables = read_session_variables(temp_db, session_id) or {}
-    assert variables[DEVELOPER_HANDOFF_TASKS_VARIABLE] == [bound[0].id]
 
 
 @pytest.mark.usefixtures("_local_machine_identity")
