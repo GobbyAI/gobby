@@ -185,6 +185,20 @@ HOOK_TEMPLATES = {
 # - Runs pre-commit framework if available
 # - Restages auto-fixes into the in-progress commit; never commits on its own
 # - Task/memory JSONL sync moved to pre-push
+# - Never stashes: pre-commit runs on the staged paths only (--files). Its default
+#   stash checks out every unstaged path in the checkout and restores them after
+#   the hooks, which dropped or rolled back concurrent writes from other sessions.
+#   Hooks that take filenames see only the staged paths; hooks that take none see
+#   the live checkout. A fixer that rewrites a partially staged path edits its
+#   unstaged hunks in place, and the wrapper then refuses the commit without
+#   restaging it. A write by another session during the hook makes pre-commit report
+#   a modified file; the wrapper ignores paths outside the staged set and re-runs
+#   the hooks. With no staged paths to check, pre-commit is skipped rather than
+#   run without files, which would stash. Names are read NUL-delimited, so git
+#   never C-quotes a name with " or \ into a literal pre-commit cannot find. A
+#   changed path whose name contains a newline is refused, because no line list can
+#   carry it. A commit that only deletes paths has no file to check, so pre-commit
+#   is skipped there and always_run hooks do not fire.
 
 # Run Gobby verification commands for pre-commit stage
 if command -v gobby >/dev/null 2>&1; then
@@ -207,30 +221,62 @@ if command -v pre-commit >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
 
     # git reads GIT_INDEX_FILE, the index this commit is built from, so plain,
     # -a, and path-limited commits each snapshot and restage their own path set.
+    # -z keeps each name raw; tr turns the list into lines for the commands below.
     _gobby_paths() {
-        git -c core.quotePath=false diff --name-only --ignore-submodules "$@" | LC_ALL=C sort
+        git diff -z --name-only --ignore-submodules "$@" | LC_ALL=C tr '\0' '\n' | LC_ALL=C sort
     }
     # "<worktree blob> <path>" for each unstaged path, to see what pre-commit rewrote
     _gobby_worktree_states() {
         _gobby_paths --diff-filter=d >"$GOBBY_SCRATCH/paths"
         [ -s "$GOBBY_SCRATCH/paths" ] || return 0
-        git hash-object --stdin-paths <"$GOBBY_SCRATCH/paths" >"$GOBBY_SCRATCH/blobs"
+        # A quote-leading path triggers git's C-unquoting. Prefix only the hash
+        # inputs; the original names still identify paths in the state records.
+        sed 's|^|./|' "$GOBBY_SCRATCH/paths" >"$GOBBY_SCRATCH/hash-paths"
+        git hash-object --stdin-paths <"$GOBBY_SCRATCH/hash-paths" \
+            >"$GOBBY_SCRATCH/blobs" || return 1
         paste -d ' ' "$GOBBY_SCRATCH/blobs" "$GOBBY_SCRATCH/paths" | LC_ALL=C sort
     }
 
+    # A newline would split one name into two fragments, and pre-commit would check
+    # the wrong files. Refuse before any hook runs; nothing is restaged or committed.
+    { git diff --cached -z --name-only --ignore-submodules
+      git diff -z --name-only --ignore-submodules
+    } | LC_ALL=C tr -cd '\n' >"$GOBBY_SCRATCH/newline-names"
+    if [ -s "$GOBBY_SCRATCH/newline-names" ]; then
+        echo ""
+        echo "Gobby pre-commit cannot check a changed path whose name contains a newline."
+        echo "Rename that path, then retry. Nothing was committed."
+        exit 1
+    fi
+
     _gobby_paths --cached >"$GOBBY_SCRATCH/staged-before"
     _gobby_paths >"$GOBBY_SCRATCH/unstaged-before"
-    _gobby_worktree_states >"$GOBBY_SCRATCH/states-before"
+    _gobby_worktree_states >"$GOBBY_SCRATCH/states-before" || exit 1
 
-    pre-commit run --hook-stage pre-commit
+    # Explicit files keep pre-commit from stashing; a deleted path has no file to check.
+    # A commit that only deletes paths runs no hooks here (see the header).
+    _gobby_paths --cached --diff-filter=d >"$GOBBY_SCRATCH/framework-paths"
+    set --
+    while IFS= read -r GOBBY_PATH; do
+        set -- "$@" "$GOBBY_PATH"
+    done <"$GOBBY_SCRATCH/framework-paths"
+    [ $# -gt 0 ] || exit 0
+
+    pre-commit run --hook-stage pre-commit --files "$@"
     PRECOMMIT_EXIT=$?
 
     if [ $PRECOMMIT_EXIT -ne 0 ]; then
-        _gobby_worktree_states >"$GOBBY_SCRATCH/states-after"
-        AUTO_FIXED=$(LC_ALL=C comm -13 "$GOBBY_SCRATCH/states-before" \
+        _gobby_worktree_states >"$GOBBY_SCRATCH/states-after" || exit 1
+        CHANGED=$(LC_ALL=C comm -13 "$GOBBY_SCRATCH/states-before" \
             "$GOBBY_SCRATCH/states-after" | cut -d ' ' -f 2- | LC_ALL=C sort)
+        # Only staged paths can be fixes. A changed path outside the staged set was
+        # written by another session during the hook; pre-commit reports it as a
+        # modified file, so it is never restaged and the hooks are re-run instead.
+        AUTO_FIXED=$(printf '%s\n' "$CHANGED" | LC_ALL=C comm -12 - "$GOBBY_SCRATCH/framework-paths")
         if [ -z "$AUTO_FIXED" ]; then
-            exit $PRECOMMIT_EXIT
+            [ -n "$CHANGED" ] || exit $PRECOMMIT_EXIT
+            pre-commit run --hook-stage pre-commit --files "$@"
+            exit $?
         fi
 
         # A fix may join the commit only if its path was fully staged; anything
@@ -249,7 +295,8 @@ if command -v pre-commit >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
 
         echo ""
         echo "Pre-commit auto-fixed staged files. Restaging the fixes into this commit..."
-        printf '%s\n' "$AUTO_FIXED" | git --literal-pathspecs add --pathspec-from-file=- || exit 1
+        printf '%s\n' "$AUTO_FIXED" | tr '\n' '\0' |
+            git --literal-pathspecs add --pathspec-from-file=- --pathspec-file-nul || exit 1
 
         # A path-limited commit is built from a temporary index while git holds
         # the caller's real index at index.lock, to install after the commit.
@@ -258,12 +305,12 @@ if command -v pre-commit >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
         if [ -n "${GIT_INDEX_FILE:-}" ] && [ -f "$REAL_INDEX.lock" ] \
             && ! [ "$GIT_INDEX_FILE" -ef "$REAL_INDEX" ] \
             && ! [ "$GIT_INDEX_FILE" -ef "$REAL_INDEX.lock" ]; then
-            printf '%s\n' "$AUTO_FIXED" | GIT_INDEX_FILE="$REAL_INDEX.lock" \
-                git --literal-pathspecs add --pathspec-from-file=- || exit 1
+            printf '%s\n' "$AUTO_FIXED" | tr '\n' '\0' | GIT_INDEX_FILE="$REAL_INDEX.lock" \
+                git --literal-pathspecs add --pathspec-from-file=- --pathspec-file-nul || exit 1
         fi
 
         # Re-run so failures pre-commit could not fix still block the commit
-        pre-commit run --hook-stage pre-commit || exit $?
+        pre-commit run --hook-stage pre-commit --files "$@" || exit $?
     fi
     ) || exit $?
 fi

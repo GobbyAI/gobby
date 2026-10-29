@@ -21,6 +21,7 @@ from gobby.storage.memories import Memory, MemoryType
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
+from gobby.workflows.memory_review_conditions import pending_memory_reviews
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import insert_isolated_machine
 
@@ -142,7 +143,7 @@ async def test_review_returns_candidates_and_records_success(candidate_count: in
     assert search_kwargs["project_id"] == PROJECT_ID
     assert search_kwargs["include_global"] is True
     state_manager_cls.assert_called_once_with(session_manager.db)
-    state_manager.upsert_bounded_list_variable.assert_called_once()
+    state_manager.record_memory_review.assert_called_once()
     assert result["pending_reviews_complete"] is True
     assert result["pending_reviews"] == []
     state_manager.set_variable.assert_not_called()
@@ -154,6 +155,7 @@ CLOSURE_ID = f"{TASK_ID}:2026-08-25T00:00:00+00:00"
 def _state_manager(variables: dict[str, Any]) -> tuple[MagicMock, MagicMock]:
     state_manager = MagicMock()
     state_manager.get_variable_subset.return_value = variables
+    state_manager.record_memory_review.return_value = variables
     return state_manager, MagicMock(return_value=state_manager)
 
 
@@ -178,13 +180,7 @@ async def test_reviewing_every_queued_closure_releases_the_stop_gate() -> None:
     assert result["success"] is True
     assert result["pending_reviews_complete"] is True
     assert result["pending_reviews"] == []
-    state_manager.upsert_bounded_list_variable.assert_called_once()
-    state_manager.get_variable_subset.assert_any_call(
-        SESSION_ID, ("_memory_pending_task_reviews", "_memory_task_review_records")
-    )
-    state_manager.set_variable.assert_called_once_with(
-        SESSION_ID, "_memory_review_stop_delivered", True
-    )
+    state_manager.record_memory_review.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -373,7 +369,7 @@ async def test_search_failure_records_no_review_completion() -> None:
 
     assert result["error"] == "memory_search_failed"
     assert "embedding service unavailable" in result["message"]
-    state_manager_cls.return_value.upsert_bounded_list_variable.assert_not_called()
+    state_manager_cls.return_value.record_memory_review.assert_not_called()
     state_manager_cls.return_value.set_variable.assert_not_called()
 
 
@@ -706,3 +702,95 @@ async def test_search_tier_deduped_against_accessed(review_world: _ReviewWorld) 
         "_memory_task_review_records"
     ]
     assert records[-1]["candidate_ids"] == [fetched.id, found.id]
+
+
+@pytest.mark.parametrize("other_pending", [False, True])
+@pytest.mark.parametrize("queue_timing", ["before", "during", "after"])
+async def test_coordinator_review_releases_implementer_closure(
+    review_world: _ReviewWorld,
+    monkeypatch: pytest.MonkeyPatch,
+    other_pending: bool,
+    queue_timing: str,
+) -> None:
+    """The closer's review satisfies the same closure queued on its implementer."""
+    world = review_world
+    task_id = world.claim("Coordinator lands implementer work")
+    coordinator = world.sessions.register(
+        external_id="review-coordinator",
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=world.project_id,
+    )
+    world.close(task_id, session_id=str(coordinator.id))
+    task = LocalTaskManager(world.db).get_task(task_id)
+    state = SessionVariableManager(world.db)
+    assert task.closed_at is not None
+    closure_id = f"{task_id}:{task.closed_at.isoformat()}"
+    if other_pending:
+        state.queue_memory_review(
+            world.session_id,
+            {"closure_id": "other:closure", "task_id": "other", "task_ref": "#999"},
+        )
+
+    def enqueue() -> None:
+        state.queue_memory_review(
+            world.session_id,
+            {"closure_id": closure_id, "task_id": task_id, "task_ref": f"#{task.seq_num}"},
+        )
+
+    if queue_timing == "before":
+        enqueue()
+    elif queue_timing == "during":
+        original_fetch = world.db.fetchall
+        injected = False
+
+        def fetch_with_late_queue(query: str, *args: Any, **kwargs: Any) -> Any:
+            nonlocal injected
+            rows = original_fetch(query, *args, **kwargs)
+            if "WHERE variables->'_memory_pending_task_reviews'" in query and not injected:
+                injected = True
+                enqueue()
+            return rows
+
+        monkeypatch.setattr(world.db, "fetchall", fetch_with_late_queue)
+
+    result = await world.registry.call(
+        "review_task_memories",
+        {
+            "task_id": task_id,
+            "changes_summary": "Implemented, reviewed, and landed by the coordinator.",
+            "session_id": str(coordinator.id),
+        },
+    )
+
+    assert result["success"] is True, result
+    if queue_timing == "after":
+        enqueue()
+    resumed = SessionVariableManager(world.db).get_variables(world.session_id)
+    assert pending_memory_reviews(resumed) == (
+        [{"task_id": "other", "task_ref": "#999"}] if other_pending else []
+    )
+    assert resumed["_memory_review_stop_delivered"] is (not other_pending)
+    records = resumed["_memory_task_review_records"]
+    assert [record["closure_id"] for record in records] == [closure_id]
+
+
+async def test_review_history_bound_keeps_acknowledgments_for_the_pending_batch(
+    review_world: _ReviewWorld,
+) -> None:
+    world = review_world
+    state = SessionVariableManager(world.db)
+    closer = world.child_session()
+    for index in range(52):
+        state.queue_memory_review(
+            world.session_id,
+            {"closure_id": f"closure-{index}", "task_id": f"task-{index}", "task_ref": f"#{index}"},
+        )
+    for index in range(52):
+        state.record_memory_review(closer, {"closure_id": f"closure-{index}"}, max_records=50)
+
+    resumed = SessionVariableManager(world.db).get_variables(world.session_id)
+    assert pending_memory_reviews(resumed) == []
+    assert resumed["_memory_review_stop_delivered"] is True
+    assert len(resumed["_memory_task_review_records"]) == 52
+    assert len(state.get_variables(closer)["_memory_task_review_records"]) == 50

@@ -28,6 +28,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import yaml
 
+from gobby.adapters.codex_impl.execution_chain import ExecutionChainCorrelator
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -418,8 +419,14 @@ def test_script_write_in_task_worktree_is_owned_before_next_mutation(
 
 
 @pytest.mark.parametrize("operation", ["format", "check --fix"])
+@pytest.mark.parametrize("correlation", ["provider", "execution"])
+@pytest.mark.parametrize("completion_order", ["sequential", "reader_first", "formatter_first"])
 def test_literal_ruff_write_remains_owned(
-    mock_dependencies: dict[str, Any], task_worktree: Checkout, operation: str
+    mock_dependencies: dict[str, Any],
+    task_worktree: Checkout,
+    operation: str,
+    correlation: str,
+    completion_order: str,
 ) -> None:
     """Literal formatter targets keep provenance through the next structured Edit."""
     checkout = task_worktree
@@ -429,19 +436,131 @@ def test_literal_ruff_write_remains_owned(
     )
     command = f"uv run ruff {operation} format_me.py"
     handlers = _handlers(mock_dependencies, checkout.db)
-    assert not _shell_write_refused(
-        handlers, checkout.tool_event(HookEventType.BEFORE_TOOL, command)
-    )
+    reader = checkout.tool_event(HookEventType.BEFORE_TOOL, "uv run mypy format_me.py")
+    if correlation == "execution":
+        reader = replace(
+            reader,
+            source=SessionSource.CODEX,
+            request_id=None,
+            data={**reader.data, "verification_execution_id": "exec-reader"},
+        )
+    if completion_order != "sequential":
+        assert not _shell_write_refused(handlers, reader)
+    before = checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    if correlation == "execution":
+        before = replace(
+            before,
+            source=SessionSource.CODEX,
+            request_id=None,
+            data={**before.data, "verification_execution_id": "exec-formatter"},
+        )
+    assert not _shell_write_refused(handlers, before)
     subprocess.run(
         [sys.executable, "-m", "ruff", *operation.split(), "format_me.py"],
         cwd=checkout.repo,
         check=True,
         capture_output=True,
     )
-    handlers.handle_after_tool(checkout.tool_event(HookEventType.AFTER_TOOL, command))
+    # A fresh handler reconstructs the persisted observation after a daemon restart.
+    resumed = _handlers(mock_dependencies, checkout.db)
+    if completion_order == "reader_first":
+        resumed.handle_after_tool(
+            replace(reader, event_type=HookEventType.AFTER_TOOL, timestamp=datetime.now(UTC))
+        )
+    resumed.handle_after_tool(
+        replace(before, event_type=HookEventType.AFTER_TOOL, timestamp=datetime.now(UTC))
+    )
+    if completion_order == "formatter_first":
+        resumed.handle_after_tool(
+            replace(reader, event_type=HookEventType.AFTER_TOOL, timestamp=datetime.now(UTC))
+        )
 
     assert checkout.rule_3_reason("format_me.py") == ""
     assert "format_me.py" in checkout.ledger()
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_yielded_codex_formatter_keeps_snapshot_until_terminal_poll(
+    mock_dependencies: dict[str, Any], task_worktree: Checkout, wrapped: bool
+) -> None:
+    checkout = task_worktree
+    checkout.write("format_me.py", "x=1\n")
+    manager = SessionVariableManager(checkout.db)
+    manager.record_edited_files(
+        checkout.session_id, ["format_me.py"], checkout_root=str(checkout.repo)
+    )
+    before = replace(
+        checkout.tool_event(HookEventType.BEFORE_TOOL, "uv run ruff format format_me.py"),
+        source=SessionSource.CODEX,
+        request_id=None,
+    )
+    before.data["verification_execution_id"] = "yield-formatter"
+    handlers = _handlers(mock_dependencies, checkout.db)
+    assert not _shell_write_refused(handlers, before)
+    chain = ExecutionChainCorrelator()
+    pending = chain.correlate(
+        {
+            "tool_name": "functions.exec" if wrapped else "exec_command",
+            "call_id": "yield-formatter",
+            "arguments": (
+                'text(await tools.exec_command({cmd: "uv run ruff format format_me.py"}))'
+                if wrapped
+                else {"cmd": "uv run ruff format format_me.py"}
+            ),
+            "tool_output": "Script running with cell ID format-cell"
+            if wrapped
+            else "Chunk ID: first\nWall time: 1s\nProcess running with session ID 99\nOutput:\n",
+        }
+    )
+    assert pending["_verification_pending"] is True
+    handlers.handle_after_tool(replace(before, event_type=HookEventType.AFTER_TOOL, data=pending))
+    if wrapped:
+        running = chain.correlate(
+            {
+                "tool_name": "functions.wait",
+                "call_id": "formatter-cell-poll",
+                "arguments": {"cell_id": "format-cell"},
+                "tool_output": {"session_id": 99},
+            }
+        )
+        handlers.handle_after_tool(
+            replace(before, event_type=HookEventType.AFTER_TOOL, data=running)
+        )
+    truncated = chain.correlate(
+        {
+            "tool_name": "write_stdin",
+            "call_id": "truncated-poll",
+            "arguments": {"session_id": 99},
+            "tool_output": "Output chunk without a terminal receipt",
+        }
+    )
+    handlers.handle_after_tool(replace(before, event_type=HookEventType.AFTER_TOOL, data=truncated))
+    subprocess.run(
+        [sys.executable, "-m", "ruff", "format", "format_me.py"],
+        cwd=checkout.repo,
+        check=True,
+        capture_output=True,
+    )
+    resumed_chain = ExecutionChainCorrelator()
+    resumed_chain.hydrate_state(chain.snapshot_state())
+    terminal = resumed_chain.correlate(
+        {
+            "tool_name": "write_stdin",
+            "call_id": "formatter-poll",
+            "arguments": {"session_id": 99},
+            "tool_output": {"exit_code": 0}
+            if wrapped
+            else "Chunk ID: last\nWall time: 1s\nProcess exited with code 0\nOutput:\n",
+        }
+    )
+    assert terminal["verification_execution_id"] == "yield-formatter"
+    _handlers(mock_dependencies, checkout.db).handle_after_tool(
+        replace(before, event_type=HookEventType.AFTER_TOOL, data=terminal)
+    )
+
+    assert checkout.rule_3_reason("format_me.py") == ""
+    assert not manager.get_variables(checkout.session_id).get("claimed_shell_snapshots")
+    assert manager.worktree_shell_call_root(checkout.session_id, "yield-formatter") is None
 
 
 def test_script_call_does_not_adopt_another_sessions_write(

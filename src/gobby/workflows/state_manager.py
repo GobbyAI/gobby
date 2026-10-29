@@ -218,6 +218,71 @@ class SessionVariableManager(SessionEditLedger, WorktreeShellCallRegistry):
                 "_memory_task_review_records",
             ),
         )
+        # Enqueue first, then check reviews. Review records first, then discovers
+        # queues, so either side observes the other even when close and review race.
+        rows = self.db.fetchall(
+            "SELECT session_id FROM session_variables "
+            "WHERE variables->'_memory_task_review_records' @> %s::jsonb",
+            (json.dumps([{"closure_id": candidate["closure_id"]}]),),
+        )
+        for row in rows:
+            records = (
+                self.get_variable_subset(
+                    str(row["session_id"]), ("_memory_task_review_records",)
+                ).get("_memory_task_review_records")
+                or []
+            )
+            for record in records:
+                if isinstance(record, dict) and record.get("closure_id") == candidate["closure_id"]:
+                    self.record_memory_review(session_id, record, max_records=50)
+                    return
+
+    def record_memory_review(
+        self, session_id: str, record: dict[str, Any], *, max_records: int
+    ) -> dict[str, Any]:
+        """Acknowledge a reviewed closure on the caller and every session awaiting it."""
+        closure_id = record["closure_id"]
+        keys = (
+            "_memory_pending_task_reviews",
+            "_memory_task_review_records",
+            "_memory_review_stop_delivered",
+        )
+
+        def acknowledge(
+            variables: dict[str, Any], *, queued_only: bool = False
+        ) -> tuple[None, bool]:
+            pending = variables.get("_memory_pending_task_reviews") or []
+            pending_ids = {item.get("closure_id") for item in pending if isinstance(item, Mapping)}
+            # A reopen or newer closure can withdraw the obligation before the lock.
+            if queued_only and closure_id not in pending_ids:
+                return None, False
+            stored = variables.get("_memory_task_review_records") or []
+            records = [
+                item
+                for item in stored
+                if isinstance(item, Mapping) and item.get("closure_id") != closure_id
+            ]
+            records.append(dict(record))
+            required = [item for item in records if item.get("closure_id") in pending_ids]
+            history = [item for item in records if item.get("closure_id") not in pending_ids]
+            variables["_memory_task_review_records"] = history[-max_records:] + required
+            if pending_memory_reviews_complete(variables):
+                variables["_memory_review_stop_delivered"] = True
+            return None, True
+
+        self._mutate_variables(session_id, acknowledge, keys=keys)
+        rows = self.db.fetchall(
+            "SELECT session_id FROM session_variables "
+            "WHERE variables->'_memory_pending_task_reviews' @> %s::jsonb",
+            (json.dumps([{"closure_id": closure_id}]),),
+        )
+        for row in rows:
+            recipient = str(row["session_id"])
+            if recipient != session_id:
+                self._mutate_variables(
+                    recipient, lambda values: acknowledge(values, queued_only=True), keys=keys
+                )
+        return self.get_variable_subset(session_id, keys[:2])
 
     def withdraw_memory_reviews(self, task_id: str) -> None:
         """Withdraw a reopened task's queued closure after its transition commits."""
@@ -397,24 +462,24 @@ class SessionVariableManager(SessionEditLedger, WorktreeShellCallRegistry):
         """
         from gobby.workflows.task_claim_state import record_task_content_hashes
 
-        entry = self._pending_shell_calls(session_id).get(call_id)
-        if not isinstance(entry, dict):
-            return
-        root = str(entry["checkout_root"])
-        owned: dict[str, dict[str, Any]] = entry["owned"]
-        now = path_fingerprints(Path(root), owned)
-        changed: dict[str, dict[str, str | None]] = {}
-        kept: dict[str, dict[str, Any]] = {}
-        for path, state in owned.items():
-            if path not in now:
-                kept[path] = state
-                continue
-            if now[path] != state["digest"]:
-                changed.setdefault(state["task_id"], {})[path] = now[path]
-            kept[path] = {**state, "digest": now[path]}
-
         def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
             entries = dict(variables.get("claimed_shell_snapshots") or {})
+            entry = entries.get(call_id)
+            if not isinstance(entry, dict):
+                return None, False
+            root = str(entry["checkout_root"])
+            owned: dict[str, dict[str, Any]] = entry["owned"]
+            # Serialize the observation with every other edit-ledger update.
+            now = path_fingerprints(Path(root), owned)
+            changed: dict[str, dict[str, str | None]] = {}
+            kept: dict[str, dict[str, Any]] = {}
+            for path, state in owned.items():
+                if path not in now:
+                    kept[path] = state
+                    continue
+                if now[path] != state["digest"]:
+                    changed.setdefault(state["task_id"], {})[path] = now[path]
+                kept[path] = {**state, "digest": now[path]}
             if output_path is None:
                 entries.pop(call_id, None)
             else:
