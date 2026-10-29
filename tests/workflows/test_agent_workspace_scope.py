@@ -13,6 +13,7 @@ import yaml
 
 from gobby.agents.agent_workspaces import predecessor_folder_readable
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -688,6 +689,73 @@ async def test_shell_wrapped_reads_of_other_session_folders_stay_refused(
     data = _shell(f'bash -c "cat {own}"', project)
     response = await _decide(engine, data, dict(developer), caller)
     assert response.decision == "allow", (data, response.reason)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "header",
+    [
+        "cat <<'EOF' > {target}",
+        "cat <<'EOF' >> {target}",
+        "tee {target} <<'EOF'",
+        "git commit --only -F - -- {target} <<'EOF'",
+    ],
+)
+@pytest.mark.parametrize("target_kind", ["config", "foreign"])
+async def test_quoted_data_heredoc_still_checks_real_write_targets(
+    engine: RuleEngine, root: Path, tmp_path: Path, header: str, target_kind: str
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    target = (
+        own / ".gobby" / "project.json"
+        if target_kind == "config"
+        else root / PROJECT / "developer" / "session-99" / "notes.md"
+    )
+    command = header.format(target=target) + "\nLiteral commit or document content\nEOF"
+    data = _shell(command, project)
+    normalize_tool_fields(data)
+
+    response = await _decide(engine, data, variables)
+
+    assert response.decision == "block", (command, response.reason)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("arguments", "decision"),
+    [
+        ("--only -- .gobby/project.json", "block"),
+        ("--only .gobby/project.json", "block"),
+        ("-o -- .git/config", "block"),
+        ("--only -- ../session-99/notes.md", "block"),
+        ("--only -- .gobby/plans/plan.md", "allow"),
+        ("--only -- notes.md", "allow"),
+        ("-m '.gobby/project.json' -- notes.md", "allow"),
+        ("-m.git/config -- notes.md", "allow"),
+        ("--only -- ':(top).gobby/project.json'", "block"),
+        ("--only -- '.gobby/*'", "block"),
+        ("--pathspec-from-file=paths.txt", "block"),
+        ("--only -- '$TARGET'", "block"),
+    ],
+)
+async def test_git_commit_pathspec_workspace_scope(
+    engine: RuleEngine, root: Path, tmp_path: Path, arguments: str, decision: str
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    message_option = "" if arguments.startswith("-m") else "-F - "
+    command = f"git -C {own} commit {message_option}{arguments} <<'EOF'\nLiteral .git/config\nEOF"
+    data = _shell(command, project)
+    normalize_tool_fields(data)
+
+    response = await _decide(engine, data, variables)
+
+    assert response.decision == decision, (command, response.reason)
 
 
 @pytest.mark.asyncio

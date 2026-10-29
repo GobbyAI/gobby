@@ -15,6 +15,10 @@ from gobby.hooks._path_scope import (
 )
 from gobby.hooks.checkout_reads import CheckoutReadUnavailable
 from gobby.workflows.condition_helpers import _event_and_tool_paths, touches_docker_policy_path
+from gobby.workflows.git_commit_parsing import (
+    parse_git_commit_invocations,
+    resolve_commit_inspect_cwd,
+)
 
 
 def _resolved_write_paths(event_data: Mapping[str, Any] | None, tool_input: Any) -> list[Path]:
@@ -124,21 +128,40 @@ def agent_workspace_write_violation(
     """True when a write lands under the workspace root outside the seat's own or epic folder.
 
     Inside those folders Git metadata and Gobby config are refused; Markdown plan
-    documents under ``.gobby/plans`` remain writable. Other tools are not writes here:
-    a read of a predecessor folder is the read rule's concern.
+    documents under ``.gobby/plans`` remain writable. Explicit Git commit pathspecs
+    obey the same boundary; literal message text is not a pathspec. A read of a
+    predecessor folder is the read rule's concern.
     """
     from gobby.agents.agent_workspaces import workspaces_root
 
     data = event_data or {}
-    if data.get("tool_name") not in WORKSPACE_WRITE_TOOLS and (
-        data.get("canonical_tool_kind") != "write"
-    ):
+    command = tool_input.get("command") if isinstance(tool_input, Mapping) else None
+    commits = parse_git_commit_invocations(command) if isinstance(command, str) else ()
+    is_write = (
+        data.get("tool_name") in WORKSPACE_WRITE_TOOLS or data.get("canonical_tool_kind") == "write"
+    )
+    if not is_write and not commits:
         return False
     root = resolve_tool_path(str(workspaces_root()), None)
-    paths = _resolved_write_paths(event_data, tool_input)
-    if root is None or not paths:
+    if root is None:
         return False
     base = current_tool_cwd(data) or current_project_root(data)
+    paths = _resolved_write_paths(event_data, tool_input) if is_write else []
+    for invocation in commits:
+        if invocation.cwd_unverified:
+            return True
+        if not invocation.pathspecs:
+            continue
+        if base is None:
+            return True
+        commit_cwd = resolve_commit_inspect_cwd(
+            invocation, event_cwd=str(base), project_path=str(base)
+        )
+        for pathspec in invocation.pathspecs:
+            path = resolve_tool_path(pathspec, Path(commit_cwd))
+            if path is None:
+                return True
+            paths.append(path)
     allowed = [
         directory
         for directory in (
