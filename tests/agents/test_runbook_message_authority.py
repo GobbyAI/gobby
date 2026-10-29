@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any, Literal
 
 import pytest
 
 from gobby.sessions.mailbox import MailboxSendResult, MailboxService
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.definitions.agents import AgentDefinitionManager, AgentDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager, system_session_id
@@ -353,6 +354,54 @@ async def test_unavailable_recipient_definition_refuses_delivery(
     assert temp_db.fetchone(
         "SELECT count(*) AS n FROM inter_session_messages WHERE to_session = %s", (recipient,)
     ) == {"n": 0}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("broken_role", ["reporter", "inbox"])
+async def test_retired_definition_fields_refuse_delivery_without_aborting_fanout(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    broken_role: Literal["reporter", "inbox"],
+) -> None:
+    project = sample_project["id"]
+    sender = _seat(session_manager, project, "reporter", "reporter", capabilities=("send_reports",))
+    recipient = _seat(
+        session_manager, project, "inbox", "inbox", required_senders=("send_reports",)
+    )
+    peer = _seat(session_manager, project, "peer", "open-inbox")
+    definitions = AgentDefinitionManager(temp_db)
+    row = definitions.get_by_name(broken_role, project)
+    assert row is not None
+    stored = replace(row, definition_json={**row.definition_json, "terminal_backend": "tmux"})
+    original_lookup = AgentDefinitionManager.get_by_name
+
+    def lookup(
+        manager: AgentDefinitionManager,
+        name: str,
+        project_id: str | None = None,
+        include_deleted: bool = False,
+    ) -> AgentDefinitionRow | None:
+        if name == broken_role and project_id == project:
+            return stored
+        return original_lookup(manager, name, project_id, include_deleted)
+
+    monkeypatch.setattr(AgentDefinitionManager, "get_by_name", lookup)
+    wakes = _Wakes()
+    mailbox = _mailbox(temp_db, session_manager, wakes)
+
+    direct = await mailbox.send(
+        from_session_id=sender, target="session", target_id=recipient, content="report"
+    )
+    assert direct.error_code == REFUSED
+    assert direct.messages == []
+    assert wakes.calls == []
+
+    fanout = await mailbox.send(from_session_id=sender, target="project", content="broadcast")
+    assert fanout.success is True
+    assert recipient not in fanout.recipient_session_ids
+    assert peer in fanout.recipient_session_ids
 
 
 @pytest.mark.asyncio

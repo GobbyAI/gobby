@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from gobby.storage.hub.protocol import HubDatabase, Row
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, system_session_id
 from gobby.workflows.agent_models import AgentDefinitionBody
-from gobby.workflows.agent_resolver import resolve_agent_with_row, session_has_capability
+from gobby.workflows.agent_resolver import (
+    AgentResolutionError,
+    resolve_agent_with_row,
+    session_has_capability,
+)
 
 RECIPIENT_REFUSED = "message_recipient_not_allowed"
 REFUSAL = "The recipient definition does not admit this sender's capabilities."
@@ -35,7 +39,10 @@ def _definition(db: HubDatabase, row: Row) -> AgentDefinitionBody | None:
     role = row["role"]
     if not isinstance(role, str) or not role:
         return None
-    resolved = resolve_agent_with_row(role, db, project_id=row["project_id"])
+    try:
+        resolved = resolve_agent_with_row(role, db, project_id=row["project_id"])
+    except AgentResolutionError:
+        return None
     return resolved[0] if resolved is not None and resolved[1].enabled else None
 
 
