@@ -48,7 +48,7 @@ _TOOL_RESULT_BINDING_RE = re.compile(
 _OUTPUT_CALL_RE = re.compile(r"(?<![$\w.])(?:text|console\.[$\w]+)\s*\(")
 _STRINGIFY_RE = re.compile(r"JSON\.stringify\s*\(")
 _REPEATED_EXEC_SCAFFOLD_RE = re.compile(
-    r"\b(?:do|for|while)\b|\.(?:forEach|map|reduce)\s*\(|\bPromise\.all(?:Settled)?\s*\("
+    r"\b(?:do|for|while)\b|\.(?:forEach|map|reduce)\s*\(|\bPromise\.(?:all|allSettled|race|any)\s*\("
 )
 _WRITE_STDIN_CALL_RE = re.compile(r"\btools\.write_stdin\s*\(")
 _WRITE_STDIN_ARGS_RE = re.compile(
@@ -631,7 +631,11 @@ class ExecutionChainCorrelator:
                     expects_serialized_result=_prints_whole_tool_results(arguments),
                     workdir=extract_functions_exec_workdir(arguments),
                 )
-            elif session_id is not None:
+            # A poll beside an unattributable launch stays opaque, so the launch
+            # still poisons every concurrent cwd proof.
+            elif session_id is not None and not (
+                isinstance(arguments, str) and _EXEC_COMMAND_CALL_RE.search(arguments)
+            ):
                 execution = self._sessions.get(session_id)
                 if execution is not None:
                     # Each poll cell prints its own way, so trust follows this cell.
