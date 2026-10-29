@@ -1,6 +1,6 @@
 """Pre-flight plan validation gate for agent spawns.
 
-When a ``plan-adversary`` is spawned against a task
+When a definition granting ``track_plan_consensus`` is spawned against a task
 that carries a ``plan_file_path`` artifact, the spawn pipeline validates the
 plan against the Plan-Coverage Contract before letting the runner start. This
 catches structural drift the parser silently drops (phase headings whose IDs
@@ -20,16 +20,13 @@ from typing import Any
 import psycopg
 
 from gobby.utils.project_context import get_project_context
+from gobby.workflows.definitions import AgentDefinitionBody
 
 logger = logging.getLogger(__name__)
 
-# Agent names whose spawn must be gated by plan validation. Centralized so the
-# spawn pipeline and tests share one source of truth.
-PLANNING_AGENTS = frozenset({"plan-adversary"})
-
 
 def validate_plan_for_agent_spawn(
-    agent_name: str | None,
+    agent_body: AgentDefinitionBody | None,
     task_id: str | None,
     task_manager: Any | None,
     code_index: Any | None = None,
@@ -37,7 +34,7 @@ def validate_plan_for_agent_spawn(
     """Validate a recorded plan, skipping the gate on transient database errors."""
     try:
         return _validate_plan_for_agent_spawn(
-            agent_name,
+            agent_body,
             task_id,
             task_manager,
             code_index,
@@ -46,7 +43,7 @@ def validate_plan_for_agent_spawn(
         logger.warning(
             "Skipping plan validation gate for %s spawn on task %s because database "
             "access failed: %s",
-            agent_name,
+            agent_body.name if agent_body is not None else None,
             task_id,
             exc,
         )
@@ -54,7 +51,7 @@ def validate_plan_for_agent_spawn(
 
 
 def _validate_plan_for_agent_spawn(
-    agent_name: str | None,
+    agent_body: AgentDefinitionBody | None,
     task_id: str | None,
     task_manager: Any | None,
     code_index: Any | None = None,
@@ -62,8 +59,8 @@ def _validate_plan_for_agent_spawn(
     """Validate a planning agent's plan artifact before spawn.
 
     Args:
-        agent_name: The agent definition name being spawned. Only ``plan-adversary``
-            triggers the gate; other agents pass through.
+        agent_body: The resolved definition being spawned. The existing
+            ``track_plan_consensus`` capability enables this plan-review gate.
         task_id: The task the agent will work against. Without a task there is
             nothing to look up a plan artifact from, so the gate no-ops.
         task_manager: ``LocalTaskManager`` used to fetch task artifacts.
@@ -72,7 +69,7 @@ def _validate_plan_for_agent_spawn(
         ``None`` when the gate does not apply or the plan validates clean.
         A structured failure when validation blocks the role.
     """
-    if agent_name not in PLANNING_AGENTS:
+    if agent_body is None or "track_plan_consensus" not in agent_body.capabilities:
         return None
     if not task_id or task_manager is None:
         return None
@@ -112,7 +109,7 @@ def _validate_plan_for_agent_spawn(
     symbol_validation = result.get("symbol_validation")
     logger.warning(
         "Refusing %s spawn for task %s: PlanValidationError: %s",
-        agent_name,
+        agent_body.name,
         task_id,
         error_summary,
     )

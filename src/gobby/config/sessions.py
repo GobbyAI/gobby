@@ -193,6 +193,10 @@ class SessionLifecycleConfig(BaseModel):
 class FeedbackReviewConfig(FeatureDefaultConfig):
     """Nightly review loop over unreviewed session_feedback rows."""
 
+    agent: str | None = Field(
+        default=None,
+        description="Enabled agent definition to run for feedback review; must be configured",
+    )
     enabled: bool = Field(
         default=True,
         description="Enable the scheduled session-feedback review job",

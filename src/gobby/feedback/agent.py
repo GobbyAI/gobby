@@ -20,7 +20,7 @@ from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import require_root
 from gobby.utils.machine_id import require_machine_id
-from gobby.workflows.agent_resolver import resolve_agent
+from gobby.workflows.agent_resolver import resolve_agent_with_row
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
     from gobby.worktrees.git import WorktreeGitManager
 
-FEEDBACK_REVIEWER_AGENT_NAME = "feedback-reviewer"
 FEEDBACK_REVIEWER_LAUNCHER_SOURCE = "feedback-review"
 COMPLETION_GRACE_SECONDS = 30.0
 
@@ -183,7 +182,7 @@ def validate_feedback_findings(
 
 
 class FeedbackReviewerAgent:
-    """Resolve, launch, await, and decode the configured feedback-reviewer agent."""
+    """Resolve, launch, await, and decode the configured feedback review agent."""
 
     def __init__(
         self,
@@ -196,6 +195,7 @@ class FeedbackReviewerAgent:
         project_path: str | None,
         git_manager: WorktreeGitManager | None,
         daemon_config: DaemonConfig,
+        agent_name: str | None,
     ) -> None:
         self.db = db
         self.runner = runner
@@ -205,12 +205,19 @@ class FeedbackReviewerAgent:
         self.project_path = project_path
         self.git_manager = git_manager
         self.daemon_config = daemon_config
+        self.agent_name = agent_name.strip() if agent_name is not None else None
 
     async def review(
         self, prompt: str, *, run_id: str, timeout_seconds: float
     ) -> FeedbackReviewerResult:
         """Run the reviewer and read its separately submitted report."""
         review_run_id = run_id
+        agent_name = self.agent_name
+        if not agent_name:
+            raise FeedbackReviewerLaunchError(
+                "feedback reviewer launch failed: configure session_feedback.review.agent "
+                "with an enabled agent definition"
+            )
         runner = self.runner
         project_id = self.project_id
         if runner is None:
@@ -223,9 +230,9 @@ class FeedbackReviewerAgent:
             )
 
         try:
-            agent_body = await asyncio.to_thread(
-                resolve_agent,
-                FEEDBACK_REVIEWER_AGENT_NAME,
+            resolved = await asyncio.to_thread(
+                resolve_agent_with_row,
+                agent_name,
                 self.db,
                 project_id=project_id,
             )
@@ -233,9 +240,14 @@ class FeedbackReviewerAgent:
             raise FeedbackReviewerLaunchError(
                 f"feedback reviewer launch failed: agent resolution failed: {exc}"
             ) from exc
-        if agent_body is None:
+        if resolved is None:
             raise FeedbackReviewerLaunchError(
-                f"feedback reviewer launch failed: agent {FEEDBACK_REVIEWER_AGENT_NAME!r} not found"
+                f"feedback reviewer launch failed: agent {agent_name!r} not found"
+            )
+        agent_body, agent_row = resolved
+        if not agent_row.enabled or not agent_body.enabled:
+            raise FeedbackReviewerLaunchError(
+                f"feedback reviewer launch failed: agent {agent_name!r} is disabled"
             )
 
         project_path = self.project_path
@@ -284,7 +296,7 @@ class FeedbackReviewerAgent:
                 prompt,
                 runner,
                 agent_body=agent_body,
-                agent_lookup_name=FEEDBACK_REVIEWER_AGENT_NAME,
+                agent_lookup_name=agent_name,
                 checkout_mode="none",
                 git_manager=self.git_manager,
                 timeout=timeout_seconds,

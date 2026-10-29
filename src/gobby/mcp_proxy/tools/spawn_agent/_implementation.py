@@ -232,7 +232,7 @@ async def spawn_agent_impl(
 
     gate_result = await asyncio.to_thread(
         validate_plan_for_agent_spawn,
-        agent_lookup_name,
+        agent_body,
         task_id,
         task_manager,
         code_index=code_index,
