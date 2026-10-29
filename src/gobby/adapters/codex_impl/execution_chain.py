@@ -48,7 +48,7 @@ _TOOL_RESULT_BINDING_RE = re.compile(
 _OUTPUT_CALL_RE = re.compile(r"(?<![$\w.])(?:text|console\.[$\w]+)\s*\(")
 _STRINGIFY_RE = re.compile(r"JSON\.stringify\s*\(")
 _REPEATED_EXEC_SCAFFOLD_RE = re.compile(
-    r"\b(?:do|for|while)\b|\.(?:forEach|map|reduce)\s*\(|\bPromise\.all\s*\("
+    r"\b(?:do|for|while)\b|\.(?:forEach|map|reduce)\s*\(|\bPromise\.(?:all|allSettled|race|any)\s*\("
 )
 _WRITE_STDIN_CALL_RE = re.compile(r"\btools\.write_stdin\s*\(")
 _WRITE_STDIN_ARGS_RE = re.compile(
@@ -147,7 +147,7 @@ def _prints_tool_result(arguments: str, output: re.Match[str], names: list[str])
 
 
 def validate_functions_exec_wrapper(arguments: Any) -> str | None:
-    """Reject ambiguous nested shell wrappers before they execute."""
+    """Explain why a wrapper cannot supply literal shell provenance."""
     if isinstance(arguments, dict) and "arguments" in arguments:
         return validate_functions_exec_wrapper(arguments["arguments"])
     if not isinstance(arguments, str):
@@ -604,6 +604,7 @@ class ExecutionChainCorrelator:
         self._ambiguous_sessions: dict[str, None] = {}
         self._live_sequence = 0
         self._overflowed = False
+        self._pending_overflowed = False
 
     def register_call(
         self,
@@ -630,7 +631,11 @@ class ExecutionChainCorrelator:
                     expects_serialized_result=_prints_whole_tool_results(arguments),
                     workdir=extract_functions_exec_workdir(arguments),
                 )
-            elif session_id is not None:
+            # A poll beside an unattributable launch stays opaque, so the launch
+            # still poisons every concurrent cwd proof.
+            elif session_id is not None and not (
+                isinstance(arguments, str) and _EXEC_COMMAND_CALL_RE.search(arguments)
+            ):
                 execution = self._sessions.get(session_id)
                 if execution is not None:
                     # Each poll cell prints its own way, so trust follows this cell.
@@ -844,10 +849,12 @@ class ExecutionChainCorrelator:
             "ambiguous_cells": list(self._ambiguous_cells),
             "ambiguous_sessions": list(self._ambiguous_sessions),
             "complete": not self._overflowed,
+            "pending_complete": not self._pending_overflowed,
         }
 
     def hydrate_state(self, state: Mapping[str, Any]) -> None:
         self._overflowed = state.get("complete") is False
+        self._pending_overflowed = state.get("pending_complete", state.get("complete")) is False
         self._calls = self._hydrate_map(state.get("calls"))
         self._cells = self._hydrate_map(state.get("cells"))
         self._sessions = self._hydrate_map(state.get("sessions"))
@@ -893,6 +900,8 @@ class ExecutionChainCorrelator:
             pending.pop(key, None)
             if len(ambiguous) >= self._max_pending and key not in ambiguous:
                 self._overflowed = True
+                if pending is not self._sessions:
+                    self._pending_overflowed = True
                 ambiguous.pop(next(iter(ambiguous)))
             ambiguous[key] = None
             return
@@ -900,6 +909,8 @@ class ExecutionChainCorrelator:
             return
         if key not in pending and len(pending) >= self._max_pending:
             self._overflowed = True
+            if pending is not self._sessions:
+                self._pending_overflowed = True
             pending.pop(next(iter(pending)))
         pending[key] = execution
 

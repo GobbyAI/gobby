@@ -16,13 +16,45 @@ from gobby.cli.rules import rules
 from gobby.mcp_proxy.tools.workflows._import import reload_cache
 from gobby.runner import GobbyRunner
 from gobby.runner_init.storage import run_startup_content_sync
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+from gobby.workflows.imports import sync_imported_definition
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, init_git_checkout
 
 pytestmark = pytest.mark.integration
+
+
+def test_startup_reports_unmarked_global_agent_copy_without_changing_bundled_row(
+    temp_db: HubDatabase, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    payload = {
+        "type": "agent",
+        "name": "orchestrator",
+        "prompts": {"agent": "Coordinate tasks."},
+        "workflows": {"rule_selectors": {"include": []}},
+        "task_step_writes": ["implementation"],
+        "read_all_agent_workspaces": True,
+    }
+    row = sync_imported_definition(temp_db, payload, None)
+    manager = AgentDefinitionManager(temp_db)
+    bundled = manager.update(row.id, tags=["gobby"])
+    agents = tmp_path / "global" / "agents"
+    agents.mkdir(parents=True)
+    copied = agents / "orchestrator.yaml"
+    copied.write_text(
+        yaml.safe_dump({**payload, "task_step_writes": [], "read_all_agent_workspaces": False})
+    )
+    (agents / "sibling.yaml").write_text(yaml.safe_dump({**payload, "name": "sibling"}))
+
+    _startup(temp_db)
+
+    assert manager.get(row.id) == bundled
+    assert manager.get_by_name("sibling") is not None
+    assert str(copied) in caplog.text
+    assert "override: true" in caplog.text
 
 
 @pytest.fixture(autouse=True)

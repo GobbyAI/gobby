@@ -53,6 +53,9 @@ function agentDefinition(): AgentDefInfo {
       send_message_targets: ["parent", "session"],
       operator_messaging: true,
       communications_admin: true,
+      persistent_workspace: true,
+      read_all_agent_workspaces: true,
+      task_step_writes: ["implementation"],
     },
     source: "installed",
     source_path: null,
@@ -164,6 +167,9 @@ describe("AgentsTabActions", () => {
     expect(body).not.toHaveProperty("send_message_targets");
     expect(body).not.toHaveProperty("operator_messaging");
     expect(body).not.toHaveProperty("communications_admin");
+    expect(body).not.toHaveProperty("persistent_workspace");
+    expect(body).not.toHaveProperty("read_all_agent_workspaces");
+    expect(body).not.toHaveProperty("task_step_writes");
   });
 
   it("round-trips nested step_workflow through draft and save body", () => {

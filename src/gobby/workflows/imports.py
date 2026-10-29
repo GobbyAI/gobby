@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from stat import S_ISDIR, S_ISREG
+from types import SimpleNamespace
 from typing import Any
 
 import yaml
@@ -32,6 +33,7 @@ from gobby.workflows.definitions import (
     normalize_workflow_definition_enabled,
     validate_workflow_definition_data,
 )
+from gobby.workflows.pipeline_loader import detect_override_conflict
 from gobby.workflows.sync_rules import sync_rule_file
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,23 @@ _KIND_MANAGERS: dict[
     "variable": SessionVariableDefaultManager,
     "pipeline": PipelineDefinitionManager,
 }
+
+
+def _check_import_override(db: Any, kind: str, name: str, data: dict[str, Any]) -> None:
+    """Require explicit intent even when an existing project row hides the bundle."""
+    bundled = _KIND_MANAGERS[kind](db).get_by_name(name)
+    detect_override_conflict(SimpleNamespace(name=name, definition_json=data), bundled)
+
+
+def _preserve_bundled_tag(existing: Any, fields: dict[str, Any]) -> None:
+    """An intentional override must not make later unmarked imports look unrelated."""
+    if "gobby" not in (existing.tags or []):
+        return
+    tags = fields.get("tags")
+    if tags is None:
+        fields["tags"] = ["gobby"]
+    elif isinstance(tags, list) and "gobby" not in tags:
+        fields["tags"] = [*tags, "gobby"]
 
 
 def _lookup_existing_kind(db: Any, name: str, project_id: str | None) -> str | None:
@@ -128,6 +147,7 @@ def _upsert_rule(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
         "tags": data.get("tags"),
     }
     if existing is not None and existing.project_id == project_id:
+        _preserve_bundled_tag(existing, fields)
         return manager.update(existing.id, **fields)
     return manager.create(name=name, project_id=project_id, source="installed", **fields)
 
@@ -171,6 +191,7 @@ def _upsert_pipeline(db: Any, data: dict[str, Any], project_id: str | None) -> A
         "tags": definition.tags,
     }
     if existing is not None and existing.project_id == project_id:
+        _preserve_bundled_tag(existing, fields)
         return manager.update(existing.id, **fields)
     return manager.create(name=name, project_id=project_id, source="installed", **fields)
 
@@ -197,6 +218,7 @@ def sync_imported_definition(
         )
 
     name = _imported_definition_name(data, declared_type)
+    _check_import_override(db, declared_type, name, data)
     validate_registry_regexes(db, name, data)
     _refuse_kind_change(name, _lookup_existing_kind(db, name, project_id), declared_type)
 
@@ -235,6 +257,10 @@ def sync_imported_workflow_file(
     if isinstance(data, dict) and "name" not in data and isinstance(data.get("rules"), dict):
         # A rule file in the `gobby rules import` format: file-level group and
         # tags over a `rules` mapping. Import it through that same path.
+        # Check the entire file before its first row or provenance write.
+        for name, rule_data in data["rules"].items():
+            if isinstance(name, str) and isinstance(rule_data, dict):
+                _check_import_override(db, "rule", name, {**data, **rule_data})
         result = sync_rule_file(db, rule_file=path, project_id=project_id)
         if on_disk is not None:
             for name in data["rules"]:

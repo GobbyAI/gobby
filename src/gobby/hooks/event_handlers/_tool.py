@@ -145,14 +145,17 @@ class ToolEventHandlerMixin(EventHandlersBase):
         else:
             self.logger.debug("BEFORE_TOOL: %s", tool_name)
 
-        if event.source.value == "codex" and tool_name in FUNCTIONS_EXEC_NAMES:
+        # Managed app-server calls deliver this boundary. Native Codex delivers
+        # only the inner Bash hook, where the cwd-proof guard above applies.
+        if (
+            event.source.value == "codex"
+            and tool_name in FUNCTIONS_EXEC_NAMES
+            and event.metadata.get("_native_hook_type") != "PreToolUse"
+        ):
             wrapper_error = validate_functions_exec_wrapper(
                 input_data.get("arguments", input_data.get("tool_input"))
             )
-            if (
-                wrapper_error is not None
-                and event.metadata.get("_native_shell_wrapper_read_only") is not True
-            ):
+            if wrapper_error is not None:
                 return HookResponse(decision="block", reason=wrapper_error)
 
         # Intercept Skill tool calls to resolve gobby skills

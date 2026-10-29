@@ -100,6 +100,8 @@ class CreateAgentDefinitionRequest(BaseModel):
 
     Unknown keys are rejected: a field the agent body does not carry would
     otherwise be dropped silently.
+    Lifetime and authority fields (including persistent_workspace,
+    read_all_agent_workspaces and task_step_writes) are operator-configured.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -141,7 +143,7 @@ class CreateAgentDefinitionRequest(BaseModel):
 
 
 class UpdateAgentDefinitionRequest(BaseModel):
-    """Request body for updating an agent definition; unknown keys are rejected."""
+    """Editable definition fields; operator lifetime/authority keys are rejected."""
 
     model_config = ConfigDict(extra="forbid")
 
