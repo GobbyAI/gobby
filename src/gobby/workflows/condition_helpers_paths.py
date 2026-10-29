@@ -151,16 +151,15 @@ def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> boo
     return True
 
 
-def _archive_workspace_write_refused(
+def _tree_workspace_write_refused(
     data: Mapping[str, Any], root: Path, allowed: list[Path], base: Path | None
 ) -> bool:
-    """A destination directory does not prove its archive members exclude seat metadata."""
-    if data.get("canonical_archive_extract_scope_unknown") or (
-        data.get("canonical_archive_extract_paths")
-        and data.get("canonical_repo_mutation_scope_unknown")
+    """A destination does not prove copied or extracted members exclude seat metadata."""
+    if data.get("canonical_tree_write_scope_unknown") or (
+        data.get("canonical_tree_write_paths") and data.get("canonical_repo_mutation_scope_unknown")
     ):
         return True
-    for raw in data.get("canonical_archive_extract_paths", ()):
+    for raw in data.get("canonical_tree_write_paths", ()):
         path = resolve_tool_path(raw, base)
         if path is None:
             return True
@@ -199,6 +198,10 @@ def agent_workspace_write_violation(
     from gobby.agents.agent_workspaces import workspaces_root
 
     data = event_data or {}
+    # Opaque execution wrappers may write paths supplied by stdin or changed cwd.
+    # Their normalizer already records the failed proof; do not reinterpret argv.
+    if data.get("canonical_unresolved_execution"):
+        return True
     command = tool_input.get("command") if isinstance(tool_input, Mapping) else None
     # Structured patches may carry prose in command; only shell tools execute it.
     commits = (
@@ -239,7 +242,7 @@ def agent_workspace_write_violation(
         if directory is not None
     ]
     return any(_workspace_write_refused(path, root, allowed) for path in paths) or (
-        _archive_workspace_write_refused(data, root, allowed, base)
+        _tree_workspace_write_refused(data, root, allowed, base)
     )
 
 

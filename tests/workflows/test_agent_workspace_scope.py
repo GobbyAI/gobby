@@ -403,6 +403,12 @@ SEATS = ("researcher", "assistant", "archivist", "developer", None)
         "unrar x -op{destination} archive.rar",
         "rar e -op{destination} archive.rar",
         "ditto -x -k archive.zip {destination}",
+        "ditto -xk archive.zip {destination}",
+        "ditto -kx archive.zip {destination}",
+        "ditto -Vxk archive.zip {destination}",
+        "ditto -V -xk archive.zip {destination}",
+        "ditto --rsrc -xk archive.zip {destination}",
+        "ditto -xk --sequesterRsrc archive.zip {destination}",
         "cd {destination} && jar xf archive.jar",
         "cd {destination} && jar xf --dir=/tmp/out",
     ],
@@ -434,6 +440,114 @@ async def test_archive_extraction_requires_a_checkout_in_seat_folders(
         variables,
     )
     assert response.decision == ("block" if target == "seat" else "allow"), response.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "xargs touch {destination}",
+        "xargs -0 -I ITEM touch {destination}/ITEM",
+        "sudo touch {destination}",
+        "sudo -u root -- touch {destination}",
+        "sudo -D /tmp touch {destination}",
+        "sudo xargs touch {destination}",
+        "sh -c 'sudo touch {destination}'",
+        "env xargs touch {destination}",
+        "printf x | xargs touch {destination}",
+        "sudo touch {destination} && cat README.md",
+        "cat README.md && xargs touch {destination}",
+        "xargs time -o {destination} cat README.md",
+        "xargs env time -o {destination} cat README.md",
+    ],
+)
+@pytest.mark.parametrize("metadata", [".git", ".gobby"])
+async def test_unresolved_wrapped_writes_cannot_plant_seat_metadata(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    command: str,
+    metadata: str,
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    destination = Path(variables["_agent_workspace_dir"]) / metadata / "x"
+    response = await _decide(
+        workspace_write_engine,
+        _shell(command.format(destination=destination), tmp_path),
+        variables,
+    )
+    assert response.decision == "block", response.reason
+    assert "agent-workspace-write-scope" in (response.reason or "")
+
+
+@pytest.mark.parametrize("flags", ["", "-V", "--rsrc", "--bom -xk", "--arch arm64"])
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        (".git/x", "block"),
+        (".gobby/x", "block"),
+        ("candidate", "block"),
+        ("task-checkout/unpacked", "allow"),
+        ("scratch", "allow"),
+    ],
+)
+async def test_ditto_copy_enforces_destination_and_unknown_member_scope(
+    workspace_write_engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    flags: str,
+    target: str,
+    expected: str,
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    (own / "task-checkout/.git").mkdir(parents=True)
+    destination = tmp_path / "scratch" if target == "scratch" else own / target
+    event = _shell(f"ditto {flags} source {destination}", tmp_path)
+    normalize_tool_fields(event)
+    assert event["canonical_tool_kind"] == "write"
+    assert event["canonical_file_paths"] == [str(destination)]
+    assert event["canonical_write_file_paths"] == [str(destination)]
+
+    response = await _decide(workspace_write_engine, event, variables)
+    assert response.decision == expected, response.reason
+
+
+@pytest.mark.parametrize("flags", ["-ck", "-c -k", "-Vck"])
+async def test_ditto_archive_creation_allows_an_ordinary_seat_file(
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, flags: str
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    destination = Path(variables["_agent_workspace_dir"]) / "candidate.zip"
+    event = _shell(f"ditto {flags} source {destination}", tmp_path)
+    normalize_tool_fields(event)
+    assert event["canonical_tool_kind"] == "write"
+    assert event["canonical_file_paths"] == [str(destination)]
+
+    response = await _decide(workspace_write_engine, event, variables)
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.parametrize("option", ["--outBom", "--keepBinariesList"])
+async def test_ditto_auxiliary_outputs_cannot_write_seat_metadata(
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, option: str
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    destination = Path(variables["_agent_workspace_dir"]) / ".gobby/x"
+    response = await _decide(
+        workspace_write_engine,
+        _shell(f"ditto -ck {option} {destination} source {tmp_path}/archive.zip", tmp_path),
+        variables,
+    )
+    assert response.decision == "block", response.reason
+
+
+@pytest.mark.parametrize("command", ["sudo --help", "xargs --help", "xargs cat", "cat README.md"])
+async def test_proven_reads_and_wrapper_help_keep_workspace_access(
+    workspace_write_engine: RuleEngine, root: Path, tmp_path: Path, command: str
+) -> None:
+    variables = _seat(root / PROJECT, "fixture-seat", 12)
+    response = await _decide(workspace_write_engine, _shell(command, tmp_path), variables)
+    assert response.decision == "allow", response.reason
 
 
 @pytest.mark.parametrize(

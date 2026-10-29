@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from gobby.hooks._normalization_archives import classify_archive_command
+from gobby.hooks._normalization_archives import classify_archive_command, classify_ditto_command
 from gobby.hooks._normalization_operands import (
     _SORT_VALUE_OPTIONS,
     _file_command_operands,
@@ -24,6 +24,8 @@ from gobby.hooks._perl_arguments import perl_inplace_operands
 def classify_file_command(
     cmd: str, parts: list[str], cwd: str | None, base_cwd: Path | None
 ) -> _ShellSegmentMetadata:
+    if cmd == "ditto":
+        return classify_ditto_command(parts, cwd)
     archive = classify_archive_command(cmd, parts, cwd)
     if archive is not None:
         return archive

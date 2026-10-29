@@ -1,6 +1,6 @@
-"""Archive destinations are known; the paths stored inside an archive are not."""
+"""Archive and tree-copy destinations do not prove the member paths they write."""
 
-from gobby.hooks._normalization_operands import _tar_extract_paths
+from gobby.hooks._normalization_operands import _shell_positional_args_after, _tar_extract_paths
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import _rebase_shell_paths
 
@@ -101,8 +101,6 @@ def _other_archive_destinations(cmd: str, parts: list[str], cwd: str | None) -> 
         return _option_directories(parts, cwd, "-o", "--output-directory") or _rebase_shell_paths(
             ["."], cwd
         )
-    if cmd == "ditto" and "-x" in parts[1:]:
-        return _rebase_shell_paths(parts[-1:] if len(parts) > 3 else ["$UNRESOLVED"], cwd)
     if cmd in {"cpio", "pax", "jar"}:
         flags, directories = _archive_options(
             parts,
@@ -146,6 +144,74 @@ def _other_archive_destinations(cmd: str, parts: list[str], cwd: str | None) -> 
     return None
 
 
+def classify_ditto_command(parts: list[str], cwd: str | None) -> _ShellSegmentMetadata:
+    value_options = frozenset(
+        {
+            "--arch",
+            "--bom",
+            "--lang",
+            "--outBom",
+            "--zlibCompressionLevel",
+            "--keepBinariesList",
+            "--keepBinariesPattern",
+        }
+    )
+    flags, outputs = _archive_options(
+        parts,
+        short_values="",
+        long_values=value_options,
+        directory_options=frozenset({"--outBom", "--keepBinariesList"}),
+    )
+    if not flags.isdisjoint({"h", "--help"}):
+        return _ShellSegmentMetadata("execute", read_only=True)
+    operands = _shell_positional_args_after(parts, 1, option_args=set(value_options))
+    destinations = _rebase_shell_paths(operands[-1:] if len(operands) > 1 else ["$UNRESOLVED"], cwd)
+    paths = tuple(dict.fromkeys([*destinations, *_rebase_shell_paths(outputs, cwd)]))
+    # Copy mode can copy a directory; extraction restores unknown archive members.
+    tree_paths = destinations if "c" not in flags or "x" in flags else []
+    known_flags = (
+        set("hvVXcxzjk")
+        | value_options
+        | {
+            "--keepParent",
+            "--rsrc",
+            "--norsrc",
+            "--extattr",
+            "--noextattr",
+            "--qtn",
+            "--noqtn",
+            "--acl",
+            "--noacl",
+            "--sequesterRsrc",
+            "--password",
+            "--hfsCompression",
+            "--nohfsCompression",
+            "--preserveHFSCompression",
+            "--nopreserveHFSCompression",
+            "--nocache",
+            "--nonAtomicCopies",
+            "--segmentLargeFiles",
+            "--persistRootless",
+            "--nopersistRootless",
+            "--clone",
+            "--noclone",
+        }
+    )
+    # Unknown switches (including --keepBinaries) can add destinations not proved here.
+    unknown = bool(flags - known_flags) or {"c", "x"}.issubset(flags)
+    return _ShellSegmentMetadata(
+        "write",
+        paths=paths,
+        write_paths=paths,
+        repo_mutation=True,
+        extra={
+            "canonical_tree_write_paths": tree_paths,
+            "canonical_tree_write_scope_unknown": unknown,
+            "_canonical_repo_mutation_scope_unknown": unknown,
+        },
+    )
+
+
 def classify_archive_command(
     cmd: str, parts: list[str], cwd: str | None
 ) -> _ShellSegmentMetadata | None:
@@ -176,11 +242,11 @@ def classify_archive_command(
         write_paths=tuple(paths),
         repo_mutation=True,
         extra={
-            "canonical_archive_extract_paths": paths,
+            "canonical_tree_write_paths": paths,
             **(
                 {
                     "_canonical_repo_mutation_scope_unknown": True,
-                    "canonical_archive_extract_scope_unknown": True,
+                    "canonical_tree_write_scope_unknown": True,
                 }
                 if unknown
                 else {}

@@ -383,7 +383,8 @@ def classify_base_command(
             )
         return search
 
-    if cmd == "xargs" and _unwrap(parts)[:1] == ["cat"]:
+    if cmd == "xargs" and parts[1:2] == ["cat"]:
+        # Only direct cat is proven read-only; nested wrappers may write their own outputs.
         # Stdin supplies file operands, not source contents; their scope is unknown.
         navigation = {
             "canonical_code_navigation_action": "read",
