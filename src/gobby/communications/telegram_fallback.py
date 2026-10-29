@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from gobby.communications.agent_labels import agent_label
+from gobby.communications.operator_routing import can_auto_attach
 from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.storage.sessions._contested_expiry import read_session_variables
@@ -17,20 +17,6 @@ if TYPE_CHECKING:
     from gobby.storage.session_models import Session
 
 logger = logging.getLogger(__name__)
-
-
-def _is_assistant(session: Session) -> bool:
-    if (
-        session.status not in LIVE_SESSION_STATUSES
-        or session.source in {"comms", "web-chat", "web_chat", "system"}
-        or session.agent_depth != 0
-        or session.agent_run_id is not None
-    ):
-        return False
-    label = agent_label(session).casefold()
-    return label == "assistant" or label.startswith(
-        ("assistant ", "assistant:", "assistant -", "assistant —")
-    )
 
 
 def _switch_if_current(
@@ -94,7 +80,7 @@ async def _fallback_telegram_targets(
             transition.session_id,
             keys=(CLEAR_ATTEMPT_VARIABLE,),
         )
-        # Marker-bearing clears retain the existing Assistant-pool fallback.
+        # Marker-bearing clears can fall back to a definition-authorized seat.
         resumable = not isinstance((variables or {}).get(CLEAR_ATTEMPT_VARIABLE), dict)
     if resumable and session is not None:
         children = await asyncio.to_thread(
@@ -143,18 +129,21 @@ async def _fallback_telegram_targets(
         statuses=list(LIVE_SESSION_STATUSES),
         limit=1000,
     )
-    assistants = sorted(
-        (session for session in sessions if _is_assistant(session)),
+    eligible = await asyncio.to_thread(
+        lambda: [candidate for candidate in sessions if can_auto_attach(manager, candidate)]
+    )
+    candidates = sorted(
+        eligible,
         key=lambda session: session.project_id != transition.project_id,
     )
-    targets = ([successor] if successor is not None else []) + assistants
+    targets = ([successor] if successor is not None else []) + candidates
     for channel_id, conversation_id in attached:
         try:
             channel = await asyncio.to_thread(manager.get_channel, channel_id)
             if channel is None or channel.channel_type != "telegram":
                 continue
             rebound = False
-            for assistant in targets:
+            for candidate in targets:
                 try:
                     switched = await asyncio.to_thread(
                         _switch_if_current,
@@ -163,7 +152,7 @@ async def _fallback_telegram_targets(
                         channel.id,
                         conversation_id,
                         transition.session_id,
-                        assistant.id,
+                        candidate.id,
                     )
                 except ValueError:
                     continue
@@ -192,9 +181,9 @@ async def _fallback_telegram_targets(
             if kind == "topic" and thread_id:
                 metadata["thread_id"] = thread_id
             notice = (
-                "No Assistant is available for this chat. Use /agent to choose another agent."
-                if assistants
-                else "No Assistant is running. Use /agent when one is available."
+                "No eligible agent is available for this chat. Use /agent to choose another agent."
+                if candidates
+                else "No eligible agent is running. Use /agent when one is available."
             )
             await manager.send_message(channel.name, notice, metadata=metadata)
         except Exception:

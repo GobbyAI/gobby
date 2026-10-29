@@ -23,7 +23,6 @@ from gobby.voice.tts import TTSProvider
 logger = logging.getLogger(__name__)
 
 _TYPING_REFRESH_SECONDS = 4.0
-_DEFAULT_AGENT = "comms-agent"
 _DEFAULT_CHAT_MODE = "normal"
 _PASSIVE_CONTEXT_MESSAGE_LIMIT = 20
 _PASSIVE_CONTEXT_CHARACTER_LIMIT = 8_000
@@ -136,6 +135,9 @@ class ChatSessionCommsBackend:
 
     async def run_turn(self, context: ResponderContext) -> str | None:
         """Run one inbound message through its comms-session ChatSession."""
+        agent_name = _string_setting(context, "agent")
+        if agent_name is None:
+            return "Configure responder.agent with an enabled agent definition before sending messages."
         session_key = _session_key(context)
         current = asyncio.current_task()
         if current is not None:
@@ -153,7 +155,7 @@ class ChatSessionCommsBackend:
             await self._host.configure_chat_session(
                 session_key,
                 chat_mode=_string_setting(context, "chat_mode") or _DEFAULT_CHAT_MODE,
-                agent_name=_string_setting(context, "agent") or _DEFAULT_AGENT,
+                agent_name=agent_name,
                 project_id=project_id,
             )
             typing_task = await self._start_typing(context)

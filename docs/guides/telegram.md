@@ -71,7 +71,8 @@ authenticated read-modify-write procedure in
 ```json
 {
   "responder": {
-    "enabled": true
+    "enabled": true,
+    "agent": "comms-agent"
   }
 }
 ```
@@ -174,7 +175,7 @@ Preconfigure one owner:
 
 ```json
 {
-  "responder": {"enabled": true},
+  "responder": {"enabled": true, "agent": "comms-agent"},
   "allow_from": ["123456789"]
 }
 ```
@@ -183,7 +184,7 @@ Allow several trusted users:
 
 ```json
 {
-  "responder": {"enabled": true},
+  "responder": {"enabled": true, "agent": "comms-agent"},
   "allow_from": ["123456789", "987654321"]
 }
 ```
@@ -192,7 +193,7 @@ Allow every DM sender:
 
 ```json
 {
-  "responder": {"enabled": true},
+  "responder": {"enabled": true, "agent": "comms-agent"},
   "allow_from": ["*"]
 }
 ```
@@ -227,13 +228,13 @@ ownership and foreign projects are rejected before target persistence.
 The enrolled operator's DM must never move to a `web_chat` or communications
 fallback runtime, even when the responder is enabled. Ordinary input goes to
 the live terminal attachment. If that holder expires, disappears, or is an
-invalid saved chat runtime, Gobby selects a live root Assistant in the bound
-project by its installed seat role (`_agent_type=assistant`). If none is
+invalid saved chat runtime, Gobby selects a live root terminal seat in the bound
+project whose enabled definition grants `auto_attach_operator_conversations`. If none is
 available, input stays durably queued without creating a session. Polling,
 startup restoration, and session status changes retry delivery. A successful
 mailbox delivery removes the pending marker.
 
-Completed typed Assistant replies mirror once, in full, under the live attached
+Completed typed replies mirror once, in full, under the live attached
 session. Thinking indicators and unfinished deltas are not completed replies.
 The operator can use `/agent` and select another live terminal seat to override
 an unresponsive holder without that holder's cooperation. Web-chat runtimes
@@ -264,7 +265,7 @@ their channel defaults.
 
 ```json
 {
-  "responder": {"enabled": true},
+  "responder": {"enabled": true, "agent": "comms-agent"},
   "allow_from": ["123456789"],
   "group_policy": "allowlist",
   "require_mention": true,
@@ -287,6 +288,7 @@ in any other group it joins; omit that entry to accept only the named groups:
 {
   "responder": {
     "enabled": true,
+    "agent": "comms-agent",
     "provider": "codex",
     "model": "<model-id>"
   },
@@ -312,7 +314,7 @@ in any other group it joins; omit that entry to accept only the named groups:
 
 ```json
 {
-  "responder": {"enabled": true},
+  "responder": {"enabled": true, "agent": "comms-agent"},
   "group_policy": "open",
   "require_mention": true,
   "groups": {
@@ -372,7 +374,7 @@ CHANNEL_JSON="$(
 CHANNEL_ID="$(jq -r '.id' <<<"$CHANNEL_JSON")"
 CURRENT_CONFIG="$(jq -c '.config_json' <<<"$CHANNEL_JSON")"
 UPDATED_CONFIG="$(
-  jq -c '.responder = ((.responder // {}) + {"enabled": true})' \
+  jq -c '.responder = ((.responder // {}) + {"enabled": true, "agent": "comms-agent"})' \
     <<<"$CURRENT_CONFIG"
 )"
 
@@ -413,10 +415,11 @@ rotates it.
 
 Telegram uses the shared communications responder:
 
-- The default agent is `comms-agent` in normal chat mode. Its installed persona
-  instructs it to answer operational questions and delegate edits and shell work;
-  this instruction is not itself a tool-permission boundary. Inspect the installed
-  agent definition and applicable rules when checking enforcement.
+- `responder.agent` must name the selected agent definition. The examples choose
+  the bundled `comms-agent`; replace it with your own enabled definition as needed.
+  Missing, blank, or non-string values return configuration guidance without
+  starting a chat turn. Chat mode defaults to normal. Inspect the selected
+  definition and applicable rules when checking enforcement.
 - The default project is Gobby's Personal project.
 - `responder.provider` and `responder.model` override the daemon's provider and
   model selection.
@@ -433,6 +436,7 @@ Example responder configuration:
 {
   "responder": {
     "enabled": true,
+    "agent": "comms-agent",
     "provider": "codex",
     "model": "<model-id>",
     "tts_enabled": false

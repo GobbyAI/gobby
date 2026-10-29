@@ -38,8 +38,18 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.agent_definitions import seed_seat
 
 _FIXED_TS = datetime(2024, 1, 1, tzinfo=UTC)
+
+
+def _grant_fallback(db: HubDatabase, session: Session | None) -> None:
+    if session is None:
+        return
+    definition = f"fixture-inbox-{session.id}"
+    seed_seat(db, definition, capabilities=["auto_attach_operator_conversations"])
+    SessionVariableManager(db).set_variable(session.id, "_agent_type", definition)
 
 
 @pytest.mark.asyncio
@@ -538,6 +548,7 @@ async def test_restore_releases_target_deleted_while_daemon_was_down(
         if assistant_available
         else None
     )
+    _grant_fallback(temp_db, assistant)
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(
         channel_type="telegram",
@@ -585,7 +596,7 @@ async def test_restore_releases_target_deleted_while_daemon_was_down(
         adapter.send_message.assert_not_awaited()
     else:
         adapter.send_message.assert_awaited_once()
-        assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
+        assert "No eligible agent is running" in adapter.send_message.await_args.args[0].content
 
 
 @pytest.mark.integration
@@ -619,6 +630,7 @@ async def test_hard_deleted_session_releases_telegram_target_after_commit(
         if assistant_available
         else None
     )
+    _grant_fallback(temp_db, assistant)
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
     channel.config_json["operator_project_id"] = str(sample_project["id"])
@@ -663,7 +675,7 @@ async def test_hard_deleted_session_releases_telegram_target_after_commit(
         adapter.send_message.assert_not_awaited()
     else:
         adapter.send_message.assert_awaited_once()
-        assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
+        assert "No eligible agent is running" in adapter.send_message.await_args.args[0].content
 
 
 @pytest.fixture
@@ -827,6 +839,7 @@ async def test_legacy_delete_releases_telegram_target_after_commit(
         if assistant_available
         else None
     )
+    _grant_fallback(temp_db, assistant)
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
     channel.config_json["operator_project_id"] = str(sample_project["id"])
@@ -870,7 +883,7 @@ async def test_legacy_delete_releases_telegram_target_after_commit(
         adapter.send_message.assert_not_awaited()
     else:
         adapter.send_message.assert_awaited_once()
-        assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
+        assert "No eligible agent is running" in adapter.send_message.await_args.args[0].content
 
 
 @pytest.mark.integration
@@ -920,6 +933,8 @@ async def test_offline_deleted_restore_prefers_same_project_assistant(
         project_id=other_project.id,
         title="Assistant",
     )
+    _grant_fallback(temp_db, same_project)
+    _grant_fallback(temp_db, other)
     # list() returns the newer foreign Assistant first; project preference must win.
     assert sessions.list(statuses=["active"])[0].id == other.id
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
@@ -4257,13 +4272,14 @@ async def test_native_clear_transfers_dm_only_to_same_depth_successor(
         terminal_context=context,
     )
     # An unrelated Assistant must not take precedence over the linked successor.
-    sessions.register(
+    unrelated = sessions.register(
         external_id="native-clear-other-assistant",
         machine_id=None,
         source="claude",
         project_id=sample_project["id"],
         title="Assistant",
     )
+    _grant_fallback(temp_db, unrelated)
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
     channel.config_json["operator_project_id"] = str(sample_project["id"])
@@ -4461,6 +4477,9 @@ async def test_ended_target_falls_back_to_real_assistant_clear_successor(
         parent_session_id=target.id if linked_successor else predecessor.id,
         agent_depth=0,
     )
+    _grant_fallback(temp_db, predecessor)
+    if not linked_successor:
+        _grant_fallback(temp_db, successor)
     if not linked_successor or not assistant_available:
         assert sessions.update_session_status(predecessor.id, "expired")
     if not assistant_available:
@@ -4511,7 +4530,7 @@ async def test_ended_target_falls_back_to_real_assistant_clear_successor(
         assert manager.attached_session(channel.id, "dm:99") is None
         assert stored.config_json["telegram_agent_targets"] == {}
         adapter.send_message.assert_awaited_once()
-        assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
+        assert "No eligible agent is running" in adapter.send_message.await_args.args[0].content
 
 
 def test_atomic_channel_config_update_preserves_telegram_target(
@@ -4538,7 +4557,9 @@ def test_atomic_channel_config_update_preserves_telegram_target(
 
 
 @pytest.mark.parametrize("assistant_project", ["project-1", "foreign-project"])
-async def test_ended_target_falls_back_to_live_assistant(assistant_project: str) -> None:
+async def test_ended_target_falls_back_to_live_assistant(
+    assistant_project: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from gobby.sessions.status_events import SessionStatusTransition
 
     channel = make_channel(channel_type="telegram")
@@ -4561,6 +4582,14 @@ async def test_ended_target_falls_back_to_live_assistant(assistant_project: str)
         target if session_id == target.id else assistant if session_id == assistant.id else None
     )
     sessions.list.return_value = [assistant]
+
+    def has_grant(_db: HubDatabase, session_id: str, capability: str) -> bool:
+        return session_id == assistant.id and capability == "auto_attach_operator_conversations"
+
+    monkeypatch.setattr(
+        "gobby.communications.operator_routing.session_has_capability",
+        has_grant,
+    )
     store = make_store([channel])
     store.get_channel.return_value = channel
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
@@ -4620,7 +4649,7 @@ async def test_ended_target_with_no_assistant_replies_without_switching() -> Non
     )
 
     assert manager.attached_session(channel.id, "dm:99") is None
-    assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
+    assert "No eligible agent is running" in adapter.send_message.await_args.args[0].content
 
 
 async def test_group_attachment_does_not_fall_back_to_assistant() -> None:

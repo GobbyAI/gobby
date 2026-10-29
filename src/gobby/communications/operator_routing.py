@@ -44,6 +44,19 @@ def is_terminal_session(session: Session) -> bool:
     )
 
 
+def can_auto_attach(manager: CommunicationsManager, session: Session) -> bool:
+    """Read the current definition's grant for an eligible terminal seat."""
+    return (
+        session.status in LIVE_SESSION_STATUSES
+        and is_terminal_session(session)
+        and session.agent_depth == 0
+        and session.agent_run_id is None
+        and session_has_capability(
+            manager.store.db, session.id, "auto_attach_operator_conversations"
+        )
+    )
+
+
 def reconcile_operator_target(manager: CommunicationsManager, channel: ChannelConfig) -> str | None:
     """Retain an operator selection, otherwise attach a live definition-authorized seat."""
     if _operator_sender(channel) is None:
@@ -72,15 +85,7 @@ def reconcile_operator_target(manager: CommunicationsManager, channel: ChannelCo
         if holder_id:
             manager.clear_conversation_target(channel.name, conversation, holder_id)
         for session in sessions:
-            if (
-                not is_terminal_session(session)
-                or session.agent_depth != 0
-                or session.agent_run_id is not None
-            ):
-                continue
-            if not session_has_capability(
-                manager.store.db, session.id, "auto_attach_operator_conversations"
-            ):
+            if not can_auto_attach(manager, session):
                 continue
             try:
                 manager.attach_conversation(channel.name, conversation, session.id)

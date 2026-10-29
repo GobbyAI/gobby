@@ -1162,7 +1162,10 @@ async def _answer_route(
     manager.get_channel_by_name.return_value = decision.channel
     manager.get_channel.return_value = replace(
         decision.channel,
-        config_json={"responder": {"enabled": True}, "allow_from": ["1111111"]},
+        config_json={
+            "responder": {"enabled": True, "agent": "fixture-responder"},
+            "allow_from": ["1111111"],
+        },
     )
     manager.handle_session_action = TelegramActionController(manager, sessions, mailbox).handle
     host = _ChatHost(failed_turns, gate)

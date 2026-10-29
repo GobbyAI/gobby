@@ -271,8 +271,8 @@ The responder turns approved inbound messages into persistent `ChatSession`
 turns and streams the result back through the originating channel. It is
 configured per channel inside `config`.
 
-Telegram adds first-`/start` owner binding, passive group context, a default
-coordinator persona, persistent channel project selection, STT/TTS, and platform
+Telegram adds first-`/start` owner binding, passive group context, a configured
+responder persona, persistent channel project selection, STT/TTS, and platform
 commands. Those operator-facing details are authoritative in
 [Telegram responder, projects, and models](telegram.md#responder-projects-and-models).
 
@@ -281,12 +281,16 @@ Minimal direct-message configuration:
 ```json
 {
   "responder": {
-    "enabled": true
+    "enabled": true,
+    "agent": "comms-agent"
   },
   "allow_from": ["123456789"]
 }
 ```
 
+`responder.agent` must name the agent definition to use. `comms-agent` above is
+a bundled example; choose your own enabled definition as needed. Missing, blank,
+or non-string values return configuration guidance without starting a chat turn.
 Optional `responder.provider` and `responder.model` select the chat backend.
 Omitting them uses daemon defaults. The standard WebSocket server must be
 enabled because it provides the `ChatSession` runtime.
@@ -313,7 +317,8 @@ Example:
 ```json
 {
   "responder": {
-    "enabled": true
+    "enabled": true,
+    "agent": "comms-agent"
   },
   "allow_from": ["42"],
   "group_policy": "allowlist",
