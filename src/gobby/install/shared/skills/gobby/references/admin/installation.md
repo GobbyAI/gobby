@@ -11,8 +11,9 @@ uses maintenance ownership while publishing its identity. Local installation
 provisions managed PostgreSQL, Qdrant, and FalkorDB through Docker Compose.
 
 1. Inspect the existing bootstrap and installation status without displaying
-   credentials. Coordinate a quiet window before operations requiring the
-   stopped-daemon singleton.
+   credentials. Announce daemon downtime globally before operations requiring
+   the stopped-daemon singleton. Wait only for configured quiet hours or an
+   operation that can kill agent panes.
 2. Run the full installer with `--files-home` on initial local setup. Bare
    installation detects supported provider CLIs, configures hooks, establishes
    account identity, and reconciles optional sections. Noninteractive execution
