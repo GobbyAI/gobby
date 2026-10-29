@@ -13,7 +13,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from gobby.mcp_proxy.tools.workflows._auto_export import require_exportable_endpoint_token
+from gobby.mcp_proxy.tools.workflows._auto_export import (
+    auto_export_definition,
+    require_exportable_endpoint_token,
+)
 from gobby.storage.definitions import AgentDefinitionManager, AgentDefinitionRow
 from gobby.workflows.agent_detail import agent_definition_detail
 from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody
@@ -40,6 +43,25 @@ def _export_row(row: AgentDefinitionRow) -> Any:
         tags=row.tags,
         definition_json=json.dumps(body),
     )
+
+
+def _auto_export_agent(
+    def_manager: AgentDefinitionManager,
+    row: AgentDefinitionRow,
+    project_path: Path | None,
+    make_global: bool,
+) -> None:
+    """Persist an agent row to YAML; export failures never fail the MCP call."""
+    try:
+        auto_export_definition(
+            _export_row(row),
+            project_path,
+            db=def_manager.db,
+            kind="agent",
+            make_global=make_global,
+        )
+    except Exception as e:
+        logger.warning("Failed to auto-export agent '%s': %s", row.name, e)
 
 
 def _agent_summary(row: AgentDefinitionRow) -> dict[str, Any]:
@@ -175,18 +197,7 @@ def create_agent_definition(
     logger.info("Created agent definition '%s' (id=%s)", name, row.id)
 
     # Auto-export to YAML for persistence
-    try:
-        from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
-
-        auto_export_definition(
-            _export_row(row),
-            project_path,
-            db=def_manager.db,
-            kind="agent",
-            make_global=make_global_template,
-        )
-    except Exception as e:
-        logger.warning("Failed to auto-export agent '%s': %s", name, e)
+    _auto_export_agent(def_manager, row, project_path, make_global_template)
 
     return {"success": True, "agent": agent_definition_detail(row)}
 
@@ -315,18 +326,7 @@ def update_agent_rules(
     updated = def_manager.update(row.id, definition_json=json.dumps(body))
     logger.info("Updated rules for agent '%s': %s", name, rules)
 
-    try:
-        from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
-
-        auto_export_definition(
-            _export_row(updated),
-            project_path,
-            db=def_manager.db,
-            kind="agent",
-            make_global=make_global_template,
-        )
-    except Exception as e:
-        logger.warning("Failed to auto-export agent '%s': %s", name, e)
+    _auto_export_agent(def_manager, updated, project_path, make_global_template)
 
     return {"success": True, "rules": rules}
 
@@ -375,18 +375,7 @@ def update_agent_variables(
     updated = def_manager.update(row.id, definition_json=json.dumps(body))
     logger.info("Updated variables for agent '%s': %s", name, list(variables.keys()))
 
-    try:
-        from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
-
-        auto_export_definition(
-            _export_row(updated),
-            project_path,
-            db=def_manager.db,
-            kind="agent",
-            make_global=make_global_template,
-        )
-    except Exception as e:
-        logger.warning("Failed to auto-export agent '%s': %s", name, e)
+    _auto_export_agent(def_manager, updated, project_path, make_global_template)
 
     return {"success": True, "variables": variables}
 
@@ -420,18 +409,7 @@ def update_agent_step_workflow(
         0 if steps is None else len(steps),
     )
 
-    try:
-        from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
-
-        auto_export_definition(
-            _export_row(updated),
-            project_path,
-            db=def_manager.db,
-            kind="agent",
-            make_global=make_global_template,
-        )
-    except Exception as e:
-        logger.warning("Failed to auto-export agent '%s': %s", name, e)
+    _auto_export_agent(def_manager, updated, project_path, make_global_template)
 
     return {
         "success": True,

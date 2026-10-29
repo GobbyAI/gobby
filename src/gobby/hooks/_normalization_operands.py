@@ -217,7 +217,7 @@ def _tar_extract_paths(parts: list[str], cwd: str | None) -> tuple[bool, list[st
     unknown = absolute_names or unmodelled
     return (
         extracts and (unknown or not to_stdout),
-        [] if unknown else list(dict.fromkeys(directories or _rebase_shell_paths(["."], cwd))),
+        list(dict.fromkeys(directories or _rebase_shell_paths(["."], cwd))),
         unknown,
     )
 
@@ -558,14 +558,18 @@ def _shell_positional_args_after(
     *,
     cmd: str = "",
     option_args: set[str] | None = None,
+    long_options: list[tuple[str, str | None]] | None = None,
 ) -> list[str]:
     positional: list[str] = []
     skip_next = False
+    pending_option = ""
     after_options = False
     if option_args is None:
         option_args = _search_value_options(cmd)
     for part in parts[start:]:
         if skip_next:
+            if long_options is not None and pending_option.startswith("--"):
+                long_options.append((pending_option, part))
             skip_next = False
             continue
         if part in _SHELL_CONTROL_TOKENS or not part:
@@ -575,18 +579,38 @@ def _shell_positional_args_after(
             continue
         if not after_options and part in option_args:
             skip_next = True
+            pending_option = part
             continue
         if not after_options and part.startswith("--") and "=" in part:
+            if long_options is not None:
+                option, _, value = part.partition("=")
+                long_options.append((option, value))
             continue
         if not after_options and part.startswith("-") and part != "-":
+            if long_options is not None and part.startswith("--"):
+                long_options.append((part, None))
             if not part.startswith("--"):
                 for index, option in enumerate(part[1:], start=1):
                     if f"-{option}" in option_args:
                         skip_next = index == len(part) - 1
+                        pending_option = f"-{option}"
                         break
             continue
         positional.append(part)
     return positional
+
+
+def rg_preprocessor(parts: list[str]) -> str | None:
+    """Return the active executable from rg's ordered preprocessor options."""
+    options: list[tuple[str, str | None]] = []
+    _shell_positional_args_after(parts, 1, cmd="rg", long_options=options)
+    preprocessor = None
+    for option, value in options:
+        if option == "--pre":
+            preprocessor = value or None
+        elif option == "--no-pre":
+            preprocessor = None
+    return preprocessor
 
 
 def _git_add_positional_args_after(parts: list[str], start: int) -> list[str]:

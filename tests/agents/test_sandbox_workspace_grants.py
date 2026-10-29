@@ -38,6 +38,7 @@ from gobby.agents.spawn_models import SpawnRequest
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.agents.srt_settings import render_srt_settings
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -120,13 +121,15 @@ async def _workspace_decision(
         world.case.project_id, request.agent_name, _seq(world.case.db, seat)
     )
     variables = {"_agent_type": request.agent_name, WORKSPACE_DIR_VARIABLE: str(own)}
+    data: dict[str, Any] = {"tool_name": tool_name, "cwd": request.cwd, "tool_input": tool_input}
+    normalize_tool_fields(data)
     event = HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id=seat,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         metadata={"_platform_session_id": seat},
-        data={"tool_name": tool_name, "cwd": request.cwd, "tool_input": tool_input},
+        data=data,
     )
     result = await RuleEngine(world.case.db).evaluate(event, session_id=seat, variables=variables)
     return result.decision
@@ -173,6 +176,12 @@ async def test_associated_seat_can_launch_in_developer_task_worktree(
         ("Bash", "command", "cat {worktree}/tests/*.py", "allow"),
         ("Bash", "command", "uv run pytest {worktree}/tests/test_candidate.py", "allow"),
         ("Bash", "command", "cat {worktree}/../private.txt", "block"),
+        ("Bash", "command", "tar -xf archive.tar -C {worktree}/unpacked", "allow"),
+        ("Bash", "command", "git archive HEAD | tar -x -C {worktree}/../export", "block"),
+        ("Bash", "command", "tar -xf archive.tar -C {worktree}/.git", "block"),
+        ("Bash", "command", "xargs touch {worktree}/generated.txt", "allow"),
+        ("Bash", "command", "xargs touch {worktree}/.git/config", "block"),
+        ("Bash", "command", 'tar -xf archive.tar -C "$DEST"', "allow"),
     ],
 )
 async def test_associated_checkout_hook_boundaries(

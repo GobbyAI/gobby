@@ -21,6 +21,7 @@ from gobby.hooks._normalization_operands import (
     _find_has_mutation_predicate,
     _search_command_paths,
     _shell_positional_args_after,
+    rg_preprocessor,
 )
 from gobby.hooks._normalization_sed import classify_sed_segment
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
@@ -239,6 +240,44 @@ def _formatter_mutates(parts: list[str]) -> bool:
     return False
 
 
+def unresolved_execution_metadata(
+    item: _ShellSegmentMetadata,
+    cwd: str | None,
+    *,
+    outputs: list[str] | None = None,
+    stdin_arguments: bool = False,
+) -> _ShellSegmentMetadata:
+    """Keep write evidence while withholding execution and stdin scope proof."""
+    child_is_read_only = item.proven_read_only
+    # An output-producing wrapper does not mutate its child's read operands.
+    mutation_paths = item.paths if item.repo_mutation or not outputs else ()
+    paths = tuple(dict.fromkeys([*mutation_paths, *(outputs or ())]))
+    extra = dict(item.extra or {})
+    extra.pop("canonical_tree_write_cwds", None)
+    scope = [
+        *extra.get("canonical_unresolved_execution_paths", ()),
+        *extra.pop("canonical_tree_write_paths", ()),
+        *(outputs or () if child_is_read_only else paths),
+    ]
+    if cwd and not child_is_read_only:
+        scope.append(cwd)
+    extra.update(
+        canonical_unresolved_execution=True,
+        canonical_unresolved_execution_paths=list(dict.fromkeys(scope)),
+    )
+    if stdin_arguments and (item.repo_mutation or outputs):
+        extra["_canonical_repo_mutation_scope_unknown"] = True
+    return replace(
+        item,
+        kind="write" if outputs else item.kind,
+        paths=paths,
+        write_paths=tuple(dict.fromkeys([*item.write_paths, *(outputs or ())])),
+        repo_mutation=item.repo_mutation or bool(outputs),
+        read_only=False,
+        extra=extra,
+    )
+
+
 def classify_base_command(
     parts: list[str],
     cwd: str | None,
@@ -246,6 +285,7 @@ def classify_base_command(
     shell_stdin: bool = False,
     base_cwd: Path | None = None,
     raw_parts: tuple[str, ...] | None = None,
+    preprocessor_read_only: bool = False,
 ) -> _ShellSegmentMetadata:
     if not parts:
         return _ShellSegmentMetadata("execute")
@@ -276,6 +316,11 @@ def classify_base_command(
         return _ShellSegmentMetadata("execute", read_only=True)
     if cmd in {"pwd", "ls", "wc", "stat", "true", "false", "echo", "printf"}:
         return _ShellSegmentMetadata("execute", read_only=True)
+    # Delegate mode prints file scope and review rules; its only write is ocr's
+    # own update-check stamp under ~/.opencodereview.
+    delegate_read = parts[2:3] in (["preview"], ["rule"])
+    if cmd == "ocr" and parts[1:2] in (["delegate"], ["d"]) and delegate_read:
+        return _ShellSegmentMetadata("execute", read_only=True)
 
     if cmd == "pre-commit":
         index = _wrapper_options_end(parts, 1, frozenset({"-c", "--config", "--color"}))
@@ -292,8 +337,8 @@ def classify_base_command(
                 parts, index + 1, cwd, interspersed=True, value_options=value_options
             )
             if parsed is None:
-                return _ShellSegmentMetadata(
-                    "execute", extra={"canonical_unresolved_execution": True}
+                return unresolved_execution_metadata(
+                    _ShellSegmentMetadata("execute"), cwd or (str(base_cwd) if base_cwd else None)
                 )
             _, _, flags = parsed
             if operation == ["format"] and flags.isdisjoint({"--check", "--diff", "--help", "-h"}):
@@ -377,13 +422,15 @@ def classify_base_command(
 
     if cmd in {"rg", "grep", "git"}:
         search = classify_search_segment(cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin)
-        if cmd == "rg" and any(word.partition("=")[0] == "--pre" for word in parts[1:]):
-            return replace(
-                search, extra={**(search.extra or {}), "canonical_unresolved_execution": True}
+        if cmd == "rg" and rg_preprocessor(parts) is not None:
+            return unresolved_execution_metadata(
+                replace(search, read_only=preprocessor_read_only),
+                cwd or (str(base_cwd) if base_cwd else None),
             )
         return search
 
-    if cmd == "xargs" and _unwrap(parts)[:1] == ["cat"]:
+    if cmd == "xargs" and parts[1:2] == ["cat"]:
+        # Only direct cat is proven read-only; nested wrappers may write their own outputs.
         # Stdin supplies file operands, not source contents; their scope is unknown.
         navigation = {
             "canonical_code_navigation_action": "read",
@@ -400,7 +447,9 @@ def classify_base_command(
         # Privilege/policy changes and stdin-supplied arguments cannot prove a read-only launch.
         if parts[1:] in (["--help"], ["--version"]):
             return _ShellSegmentMetadata("execute")
-        return _ShellSegmentMetadata("execute", extra={"canonical_unresolved_execution": True})
+        return unresolved_execution_metadata(
+            _ShellSegmentMetadata("execute"), cwd or (str(base_cwd) if base_cwd else None)
+        )
 
     if cmd == "awk" and parts[1:2] == ["1"]:
         # The constant-true program prints every input record.

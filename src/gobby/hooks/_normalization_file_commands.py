@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from gobby.hooks._normalization_archives import classify_archive_command, classify_ditto_command
 from gobby.hooks._normalization_operands import (
     _SORT_VALUE_OPTIONS,
     _file_command_operands,
@@ -9,7 +10,6 @@ from gobby.hooks._normalization_operands import (
     _resolve_long_option,
     _shell_positional_args_after,
     _sort_output_paths,
-    _tar_extract_paths,
     _truncate_positional_paths,
 )
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
@@ -24,6 +24,12 @@ from gobby.hooks._perl_arguments import perl_inplace_operands
 def classify_file_command(
     cmd: str, parts: list[str], cwd: str | None, base_cwd: Path | None
 ) -> _ShellSegmentMetadata:
+    if cmd == "ditto":
+        return classify_ditto_command(parts, cwd)
+    archive = classify_archive_command(cmd, parts, cwd)
+    if archive is not None:
+        return archive
+
     if cmd == "uniq":
         value_options = {"-f", "--skip-fields", "-s", "--skip-chars", "-w", "--check-chars"}
         abbreviations = {
@@ -62,17 +68,6 @@ def classify_file_command(
 
     if cmd in {"cut", "jq", "tr"}:
         return _ShellSegmentMetadata("execute", read_only=True)
-
-    if cmd == "tar":
-        extracts, paths, unknown = _tar_extract_paths(parts, cwd)
-        if extracts:
-            return _ShellSegmentMetadata(
-                "write",
-                paths=tuple(paths),
-                write_paths=tuple(paths),
-                repo_mutation=True,
-                extra={"_canonical_repo_mutation_scope_unknown": True} if unknown else None,
-            )
 
     inplace = perl_inplace_operands(parts) if cmd == "perl" else None
     if inplace is not None:
