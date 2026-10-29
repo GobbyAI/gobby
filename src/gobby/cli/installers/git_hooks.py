@@ -229,7 +229,11 @@ if command -v pre-commit >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
     _gobby_worktree_states() {
         _gobby_paths --diff-filter=d >"$GOBBY_SCRATCH/paths"
         [ -s "$GOBBY_SCRATCH/paths" ] || return 0
-        git hash-object --stdin-paths <"$GOBBY_SCRATCH/paths" >"$GOBBY_SCRATCH/blobs"
+        # A quote-leading path triggers git's C-unquoting. Prefix only the hash
+        # inputs; the original names still identify paths in the state records.
+        sed 's|^|./|' "$GOBBY_SCRATCH/paths" >"$GOBBY_SCRATCH/hash-paths"
+        git hash-object --stdin-paths <"$GOBBY_SCRATCH/hash-paths" \
+            >"$GOBBY_SCRATCH/blobs" || return 1
         paste -d ' ' "$GOBBY_SCRATCH/blobs" "$GOBBY_SCRATCH/paths" | LC_ALL=C sort
     }
 
@@ -247,7 +251,7 @@ if command -v pre-commit >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
 
     _gobby_paths --cached >"$GOBBY_SCRATCH/staged-before"
     _gobby_paths >"$GOBBY_SCRATCH/unstaged-before"
-    _gobby_worktree_states >"$GOBBY_SCRATCH/states-before"
+    _gobby_worktree_states >"$GOBBY_SCRATCH/states-before" || exit 1
 
     # Explicit files keep pre-commit from stashing; a deleted path has no file to check.
     # A commit that only deletes paths runs no hooks here (see the header).
@@ -262,7 +266,7 @@ if command -v pre-commit >/dev/null 2>&1 && [ -f .pre-commit-config.yaml ]; then
     PRECOMMIT_EXIT=$?
 
     if [ $PRECOMMIT_EXIT -ne 0 ]; then
-        _gobby_worktree_states >"$GOBBY_SCRATCH/states-after"
+        _gobby_worktree_states >"$GOBBY_SCRATCH/states-after" || exit 1
         CHANGED=$(LC_ALL=C comm -13 "$GOBBY_SCRATCH/states-before" \
             "$GOBBY_SCRATCH/states-after" | cut -d ' ' -f 2- | LC_ALL=C sort)
         # Only staged paths can be fixes. A changed path outside the staged set was

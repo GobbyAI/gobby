@@ -316,8 +316,12 @@ class TestPreCommitAutoFixBoundary:
             "base\nstaged\nunstaged\nauto-fixed\n"
         )
 
-    def test_refusal_restages_nothing_when_fixes_are_mixed(self, tmp_path: Path) -> None:
-        repo = _init_hook_repo(tmp_path, ["A.txt", "F.txt"])
+    @pytest.mark.parametrize("foreign_name", ["U.txt", '"U.txt'])
+    def test_refusal_restages_nothing_when_fixes_are_mixed(
+        self, tmp_path: Path, foreign_name: str
+    ) -> None:
+        repo = _init_hook_repo(tmp_path, ["A.txt", "F.txt", foreign_name])
+        (repo / foreign_name).write_text("foreign unstaged\n", encoding="utf-8")
         (repo / "F.txt").write_text("base\nedit-f\n", encoding="utf-8")
         (repo / "A.txt").write_text("base\nstaged\n", encoding="utf-8")
         _git_out(repo, "add", "A.txt", "F.txt")
@@ -333,6 +337,7 @@ class TestPreCommitAutoFixBoundary:
         assert _git_out(repo, "show", ":F.txt") == "base\nedit-f\n"
         assert _git_out(repo, "show", ":A.txt") == "base\nstaged\n"
         assert (repo / "F.txt").read_text(encoding="utf-8") == "base\nedit-f\nauto-fixed\n"
+        assert (repo / foreign_name).read_text(encoding="utf-8") == "foreign unstaged\n"
 
     @pytest.mark.parametrize("linked_worktree", [False, True])
     def test_path_limited_commit_keeps_exactly_its_path_set(
@@ -433,7 +438,7 @@ _APPEND_AUTO_FIX = (
     "        status = 1\n"
     "sys.exit(status)\n"
 )
-_NAMES_GIT_QUOTES_OR_CONTROL = ["plain.txt", 'q"x.txt', "a\\b.txt"]
+_NAMES_GIT_QUOTES_OR_CONTROL = ["plain.txt", 'q"x.txt', "a\\b.txt", '"leading.txt']
 
 
 def _use_real_precommit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -472,7 +477,7 @@ def _committed_names(repo: Path) -> list[str]:
     return output.split("\0")[:-1]
 
 
-@pytest.mark.parametrize("name", _NAMES_GIT_QUOTES_OR_CONTROL, ids=["plain", "quote", "backslash"])
+@pytest.mark.parametrize("name", _NAMES_GIT_QUOTES_OR_CONTROL)
 def test_precommit_filename_hook_receives_each_staged_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
@@ -496,7 +501,7 @@ def test_precommit_filename_hook_receives_each_staged_name(
     assert _subjects(repo) == ["local hook config", "baseline"]
 
 
-@pytest.mark.parametrize("name", _NAMES_GIT_QUOTES_OR_CONTROL, ids=["plain", "quote", "backslash"])
+@pytest.mark.parametrize("name", _NAMES_GIT_QUOTES_OR_CONTROL)
 def test_precommit_auto_fix_to_each_staged_name_is_restaged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
