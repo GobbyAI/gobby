@@ -10,6 +10,7 @@ import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -21,6 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -180,6 +182,69 @@ class TestWorkerSafetySync:
                 body = RuleDefinitionBody.model_validate(row.definition_json)
                 assert body.event.value == "before_tool"
                 assert _first_effect(body).type == "block"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("rule_name", "agent_type", "tool_name", "tool_input"),
+    [
+        ("no-push-for-workers", "developer", "Bash", {"command": "git push origin topic"}),
+        ("no-push-for-workers", "custom-builder", "Bash", {"command": "git push origin topic"}),
+        (
+            "no-agent-spawn-for-merge",
+            "merge",
+            "mcp__gobby__call_tool",
+            {
+                "server_name": "gobby-agents",
+                "tool_name": "spawn_agent",
+                "arguments": {"agent": "custom-builder"},
+            },
+        ),
+        (
+            "no-agent-spawn-for-merge",
+            "custom-integrator",
+            "mcp__gobby__call_tool",
+            {
+                "server_name": "gobby-agents",
+                "tool_name": "spawn_agent",
+                "arguments": {"agent": "custom-builder"},
+            },
+        ),
+    ],
+)
+@pytest.mark.parametrize("selected", [False, True])
+@pytest.mark.parametrize("spawned", [False, True])
+async def test_strict_policies_follow_definition_selection(
+    db: HubDatabase,
+    rule_name: str,
+    agent_type: str,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    selected: bool,
+    spawned: bool,
+) -> None:
+    _sync_bundled(db)
+    db.execute("UPDATE rule_definitions SET enabled = (name = %s)", (rule_name,))
+    seed_seat(
+        db,
+        agent_type,
+        include=["tag:worker-safety", *([f"name:{rule_name}"] if selected else [])],
+    )
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={"tool_name": tool_name, "tool_input": tool_input},
+    )
+
+    response = await RuleEngine(db).evaluate(
+        event,
+        session_id=SESSION_ID,
+        variables={"_agent_type": agent_type, "is_spawned_agent": spawned, "team_manager": True},
+    )
+
+    assert (response.decision == "block") is selected
 
 
 class TestNoPushRule:
