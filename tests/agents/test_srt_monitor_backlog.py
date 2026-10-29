@@ -23,6 +23,126 @@ __all__ = ["monitor_harness"]
 pytestmark = pytest.mark.unit
 
 
+def test_duplicate_denial_storm_keeps_counts_with_bounded_backlog(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    client, stream = _subscribe(harness.socket_path, "_storm_SBX")
+    healthy, healthy_stream = _subscribe(harness.socket_path, "_healthy_SBX")
+    message = "Sandbox: xcodebuild(123) deny(1) system-info vfs.disk-space _storm_SBX"
+    count = 20_000
+    try:
+        harness.events.write((json.dumps({"eventMessage": message}) + "\n") * count)
+        harness.events.flush()
+        healthy_message = "Sandbox: git(234) deny(1) file-read-data /healthy _healthy_SBX"
+        harness.event(healthy_message)
+        assert json.loads(healthy_stream.readline())["message"] == healthy_message
+        received = []
+        occurrences = 0
+        while occurrences < count:
+            record = json.loads(stream.readline())
+            received.append(record)
+            occurrences += record.get("occurrences", 1)
+        assert occurrences == count
+        assert len(received) < 20
+        assert all(record["message"] == message for record in received)
+        assert received[-1]["lastObserved"] >= received[-1]["firstObserved"]
+        backlog = Path(harness.socket_path).parent / "storm_SBX.srt-backlog.jsonl.active"
+        assert backlog.stat().st_size < 16 * 1024
+    finally:
+        stream.close()
+        client.close()
+        healthy_stream.close()
+        healthy.close()
+
+
+def test_normal_disconnect_retains_unacknowledged_summary(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    client, stream = _subscribe(harness.socket_path, "_tail_SBX")
+    healthy, healthy_stream = _subscribe(harness.socket_path, "_barrier_SBX")
+    message = "Sandbox: git(123) deny(1) system-info vfs.disk-space _tail_SBX"
+    try:
+        harness.event(message)
+        harness.event(message)
+        harness.event("Sandbox: git(456) deny(1) file-read-data /barrier _barrier_SBX")
+        assert json.loads(healthy_stream.readline())["message"].endswith("_barrier_SBX")
+        first = json.loads(stream.readline())
+        client.sendall((json.dumps({"ack": first["id"]}) + '\n{"done":true}\n').encode())
+        client.shutdown(socket.SHUT_WR)
+        stream.close()
+        client.close()
+        retained = Path(harness.socket_path).parent / "tail_SBX.srt-backlog.jsonl"
+        _wait_path(retained)
+        records = [json.loads(line) for line in retained.read_text().splitlines()][1:]
+        assert len(records) == 1
+        assert records[0]["aggregated"] is True
+        assert records[0]["occurrences"] == 1
+        assert records[0]["message"] == message
+    finally:
+        stream.close()
+        client.close()
+        healthy_stream.close()
+        healthy.close()
+
+
+@pytest.mark.parametrize("monitor_harness", ["small-backlog"], indirect=True)
+def test_eviction_at_backlog_capacity_counts_pending_repeat_once(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    client, stream = _subscribe(harness.socket_path, "_eviction_SBX")
+    messages = [f"Sandbox: git(123) deny(1) file-read-data /{i} _eviction_SBX" for i in range(64)]
+    used = sum(
+        len(json.dumps({"id": index + 1, "message": message}, separators=(",", ":"))) + 1
+        for index, message in enumerate(messages)
+    )
+    prefix, suffix = "Sandbox: git(123) deny(1) file-read-data /", " _eviction_SBX"
+    overhead = len(json.dumps({"id": 65, "message": prefix + suffix}, separators=(",", ":"))) + 1
+    filler = prefix + "x" * (32768 - used - overhead - 64) + suffix
+    events = [*messages, messages[0], filler, prefix + "trigger" + suffix]
+    try:
+        harness.events.write(
+            "".join(json.dumps({"eventMessage": message}) + "\n" for message in events)
+        )
+        harness.events.flush()
+        retained = Path(harness.socket_path).parent / "eviction_SBX.srt-backlog.jsonl"
+        _wait_path(retained)
+        records = [json.loads(line) for line in retained.read_text().splitlines()][1:]
+        repeated = [record for record in records if record["message"] == messages[0]]
+        assert sum(record.get("occurrences", 1) for record in repeated) == 2
+        assert len(records) == 66
+        assert all("trigger" not in record["message"] for record in records)
+    finally:
+        stream.close()
+        client.close()
+
+
+def test_duplicate_summary_reaches_runner_journal(monitor_harness: MonitorHarness) -> None:
+    harness = monitor_harness
+    child = harness.launch("_summary_SBX")
+    message = "Sandbox: xcodebuild(123) deny(1) system-info vfs.disk-space _summary_SBX"
+    try:
+        assert child.stdout is not None
+        with selectors.DefaultSelector() as selector:
+            selector.register(child.stdout, selectors.EVENT_READ)
+            assert selector.select(timeout=15)
+            assert json.loads(child.stdout.readline()) is None
+        harness.events.write((json.dumps({"eventMessage": message}) + "\n") * 10)
+        harness.events.flush()
+        journal = harness.root / "_summary_SBX.jsonl"
+        _wait_path(journal, minimum_bytes=2 * len(message))
+        records = [json.loads(line) for line in journal.read_text().splitlines()]
+        assert sum(record.get("occurrences", 1) for record in records) == 10
+        assert len(records) == 2
+        assert records[-1]["source"] == "srt-monitor"
+        assert all(record["line"] == message for record in records)
+    finally:
+        harness.finish()
+        child.communicate(timeout=15)
+
+
 def test_stopped_runner_replays_large_backlog_without_stopping_provider(
     monitor_harness: MonitorHarness,
 ) -> None:

@@ -1,7 +1,8 @@
 tags: [roles, seat, enforcement, gobby, default]
 
 # Agent workspace scope (addendum P9.2). A write under the workspace root goes only to the
-# caller's own session folder or its epic folder, never into a `.git` or `.gobby` component.
+# caller's own session folder or its epic folder. Git metadata and `.gobby` config stay
+# protected; Markdown plans under the seat's own `.gobby/plans` are writable.
 # A read there is allowed in those folders, in the project README, and, for a persistent seat,
 # in the eligible predecessor folders of its own definition.
 rules:

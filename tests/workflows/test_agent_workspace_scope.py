@@ -270,6 +270,40 @@ async def test_write_isolation(
 
 
 @pytest.mark.asyncio
+async def test_plan_documents_in_owned_worktrees_are_writable(
+    engine: RuleEngine, root: Path, tmp_path: Path
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    worktree = own / "task-25298"
+    plans = worktree / ".gobby" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "config.md").symlink_to(worktree / ".gobby" / "project.json")
+
+    for path, expected in (
+        (plans / "runbook-devteam-addendum.md", "allow"),
+        (plans / "nested" / "design.md", "allow"),
+        (plans / "config.md", "block"),
+        (plans / ".." / "project.json", "block"),
+        (plans / "settings.json", "block"),
+        (plans / ".git" / "config.md", "block"),
+        (plans / ".gobby" / "config.md", "block"),
+        (root / PROJECT / "developer" / "session-99" / ".gobby" / "plans" / "a.md", "block"),
+    ):
+        event = {
+            "tool_name": "apply_patch",
+            "canonical_tool_kind": "write",
+            "tool_input": {"file_path": str(path), "content": "# Plan"},
+            "cwd": str(worktree),
+            "project_path": str(project),
+        }
+        response = await _decide(engine, event, dict(variables))
+        assert response.decision == expected, (path, response.reason)
+
+
+@pytest.mark.asyncio
 async def test_read_scope_by_persistence(
     engine: RuleEngine,
     root: Path,
@@ -679,13 +713,16 @@ async def test_quoted_heredoc_bodies_and_quoted_text_judge_concrete_foreign_path
         persistent=False,
     )
     # A shell that reads a quoted heredoc body runs it, so the body is judged as shell code.
-    # Text no shell reads, and quoted text, is judged word by word and still refuses a concrete path.
+    # Literal heredoc data does not read the paths it describes.
     sibling = anchor / "developer" / "session-51" / "notes.md"
     for command in (
         f"bash <<'EOF'\ncat {sibling}\nEOF",
         f"sh -s <<'EOF'\ncat {sibling}\nEOF",
         f"cat <<'EOF' | bash\ncat {sibling}\nEOF",
-        f"git commit -F - <<'EOF'\nAnchor: {sibling}\nEOF",
+        f"python - <<'EOF'\npath = '{sibling}'\nprint(open(path).read())\nEOF",
+        f"ruby <<'EOF'\npath = '{sibling}'\nputs File.read(path)\nEOF",
+        f"cat <<'EOF' | python -\npath = '{sibling}'\nprint(open(path).read())\nEOF",
+        f"cat <<'DATA'\nliteral\nDATA\npython - <<'PY'\npath = '{sibling}'\nprint(open(path).read())\nPY",
         f'git commit -m "see {sibling}"',
     ):
         data = _shell(command, project)
@@ -694,6 +731,12 @@ async def test_quoted_heredoc_bodies_and_quoted_text_judge_concrete_foreign_path
         assert "agent workspace folder is outside" in (response.reason or ""), command
     # The caller's own folder stays readable in the same positions.
     own = anchor / "developer" / "session-50" / "notes.md"
+    for command in (
+        f"git commit -F - <<'EOF'\nAnchor: {sibling}\nEOF",
+        f"cat > {own} <<'EOF'\n# Handoff\nPrior evidence: {sibling}\nEOF",
+    ):
+        response = await _decide(engine, _shell(command, project), dict(developer), caller)
+        assert response.decision != "block", (command, response.reason)
     for command in (
         f"bash <<'EOF'\ncat {own}\nEOF",
         f"git commit -F - <<'EOF'\nAnchor: {own}\nEOF",

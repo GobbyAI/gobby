@@ -86,7 +86,6 @@ def write_paths_match(
 
 WORKSPACE_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 # Daemon-owned repository metadata and project config never live in a seat's folder.
-_WORKSPACE_PROTECTED_NAMES = frozenset({".git", ".gobby"})
 
 
 def agent_workspace_write_dirs(variables: Mapping[str, Any]) -> list[str]:
@@ -101,8 +100,18 @@ def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> boo
         return False
     for directory in allowed:
         if path.is_relative_to(directory):
-            return any(
-                part in _WORKSPACE_PROTECTED_NAMES for part in path.relative_to(directory).parts
+            parts = path.relative_to(directory).parts
+            if ".git" in parts:
+                return True
+            if ".gobby" not in parts:
+                return False
+            # Plan documents are repository content, not daemon configuration.
+            index = parts.index(".gobby")
+            return not (
+                parts.count(".gobby") == 1
+                and parts[index + 1 : index + 2] == ("plans",)
+                and len(parts) > index + 2
+                and path.suffix == ".md"
             )
     return True
 
@@ -114,8 +123,9 @@ def agent_workspace_write_violation(
 ) -> bool:
     """True when a write lands under the workspace root outside the seat's own or epic folder.
 
-    Inside those folders a ``.git`` or ``.gobby`` component is refused as well. Other tools
-    are not writes here: a read of a predecessor folder is the read rule's concern.
+    Inside those folders Git metadata and Gobby config are refused; Markdown plan
+    documents under ``.gobby/plans`` remain writable. Other tools are not writes here:
+    a read of a predecessor folder is the read rule's concern.
     """
     from gobby.agents.agent_workspaces import workspaces_root
 

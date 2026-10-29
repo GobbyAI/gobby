@@ -451,8 +451,8 @@ def _path_words(tokens: list[str]) -> list[str]:
 def _shell_path_words(command: Any) -> list[str]:
     """Shell words that look like paths: operators split outside quotes, env vars expanded.
 
-    A quoted-delimiter heredoc body is shell code when a shell reads it, and text otherwise. A
-    command string that a shell wrapper or `eval` runs is parsed the same way.
+    Only known data consumers may omit literal heredoc bodies. Interpreters and
+    unknown consumers still need path checks. Shell wrappers and `eval` recurse.
     """
     if not isinstance(command, str):
         return []
@@ -463,8 +463,16 @@ def _shell_path_words(command: Any) -> list[str]:
         tokens = _SHELL_OPERATORS.sub(" ", text).split()
     shell_reads = any(os.path.basename(os.path.expandvars(t)) in _BODY_CONSUMERS for t in tokens)
     words = _path_words(tokens)
-    for body in bodies:
-        words.extend(_shell_path_words(body) if shell_reads else _path_words(body.split()))
+    command_name = os.path.basename(os.path.expandvars(tokens[0])) if tokens else ""
+    data_consumer = command_name in {"cat", "tee"} or (
+        command_name == "git" and tokens[1:2] == ["commit"]
+    )
+    compound = "\n" in text.strip() or any(
+        token in {"|", "||", "&", "&&", ";", "(", ")"} for token in tokens
+    )
+    if shell_reads or compound or not data_consumer:
+        for body in bodies:
+            words.extend(_shell_path_words(body))
     for wrapped in _wrapped_commands(tokens):
         words.extend(_shell_path_words(wrapped))
     return words

@@ -452,8 +452,8 @@ def bind_session_workspace(
     """Bind the session's folder once and return it.
 
     A session keeps the folder it already holds, so compaction and resume reuse it. A persistent
-    definition's clear successor takes its predecessor's folder, which keeps the lineage's first
-    sequence number. Any other session gets ``<definition>/session-<seq>/``.
+    definition's clear successor takes its predecessor's folder. Sandboxed clears also keep it:
+    the live process still has its original folder grant. Other sessions get their own sequence.
     """
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -470,12 +470,16 @@ def bind_session_workspace(
     definition = definition if isinstance(definition, str) and definition else None
     persistent = _definition_persistent(db, definition, location["project_id"])
     folder: Path | None = None
-    if persistent and inherit_from is not None:
-        inherited = variables.get_variable_subset(inherit_from, [WORKSPACE_DIR_VARIABLE]).get(
-            WORKSPACE_DIR_VARIABLE
-        )
-        if isinstance(inherited, str) and inherited:
-            folder = Path(inherited)
+    if inherit_from is not None:
+        predecessor = db.execute(
+            "SELECT sandbox_enabled FROM sessions WHERE id = %s", (inherit_from,)
+        ).fetchone()
+        if persistent or (predecessor is not None and predecessor["sandbox_enabled"]):
+            inherited = variables.get_variable_subset(inherit_from, [WORKSPACE_DIR_VARIABLE]).get(
+                WORKSPACE_DIR_VARIABLE
+            )
+            if isinstance(inherited, str) and inherited:
+                folder = Path(inherited)
     if folder is None:
         folder = session_workspace_dir(location["project_id"], definition, location["seq_num"])
     folder.mkdir(parents=True, exist_ok=True)
@@ -537,13 +541,25 @@ def spawn_workspace_write_paths(
 ) -> list[str]:
     """The folders a spawned seat may write: its own session folder and its epic folder.
 
-    Computed at spawn, before the session starts and binds its folder, from the same
-    definition and sequence number that ``bind_session_workspace`` uses.
+    Reuse a bound folder on resume, including a clear predecessor's grant. Before the first
+    SessionStart binding, derive it from the definition and sequence number.
     """
+    from gobby.workflows.state_manager import SessionVariableManager
+
     location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
     if location is None or location["project_id"] is None or location["seq_num"] is None:
         return []
-    folders = [session_workspace_dir(location["project_id"], definition, location["seq_num"])]
+    bound = (
+        SessionVariableManager(db)
+        .get_variable_subset(session_id, [WORKSPACE_DIR_VARIABLE])
+        .get(WORKSPACE_DIR_VARIABLE)
+    )
+    folder = (
+        Path(bound)
+        if isinstance(bound, str) and bound
+        else session_workspace_dir(location["project_id"], definition, location["seq_num"])
+    )
+    folders = [folder]
     epic = _seat_epic_folder(db, session_id)
     if epic is not None:
         folders.append(epic)

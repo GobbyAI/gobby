@@ -768,8 +768,6 @@ pub(super) fn assert_credential_read_contract(
     Ok(())
 }
 
-/// `compute_sandbox_paths`: the resolved grants for one `srt` run, from the
-/// effective sandbox config and the run environment.
 #[cfg(target_os = "macos")]
 fn darwin_user_dirs() -> Result<[PathBuf; 2]> {
     fn location(key: libc::c_int) -> Result<PathBuf> {
@@ -818,6 +816,8 @@ fn darwin_toolchain_write_paths(inputs: &PolicyInputs) -> Result<Vec<String>> {
         .collect()
 }
 
+/// `compute_sandbox_paths`: the resolved grants for one `srt` run, from the
+/// effective sandbox config and the run environment.
 pub(super) fn compute(
     config: &Sandbox,
     inputs: &PolicyInputs,
@@ -836,10 +836,10 @@ pub(super) fn compute(
     let write_paths = canonical_paths(
         default_write_paths(config, &workspace, home)
             .into_iter()
+            .chain(darwin_toolchain_write_paths(inputs)?)
             .chain(git_paths)
             .chain(gcode_runtime_write_exceptions(&workspace, gobby, home))
             .chain(provider_write_exceptions(provider, home))
-            .chain(darwin_toolchain_write_paths(inputs)?)
             .chain(rtk.write.iter().map(|path| text(path))),
         None,
         home,

@@ -375,6 +375,7 @@ async def resume_agent_run(
     # A cancelled verifier thread finishes on its own; it reads only the SRT install.
     # A snapshot from before the seat's workspace grants names no folder of its own. Grant
     # them as spawn does, and create the grant directories before the sandbox starts.
+    from gobby.agents.agent_workspaces import spawn_workspace_write_paths
     from gobby.agents.spawn_executor_providers import ensure_sandbox_write_directories
 
     try:
@@ -386,11 +387,17 @@ async def resume_agent_run(
             spawn_context.session_id,
             agent_name,
         )
+        seat_directories = await asyncio.to_thread(
+            spawn_workspace_write_paths,
+            runner.run_storage.db,
+            spawn_context.session_id,
+            agent_name,
+        )
+        directories = _str_list(resume_metadata.get("sandbox_directory_write_paths"))
         await asyncio.to_thread(
             ensure_sandbox_write_directories,
-            sandbox_config,
+            [*directories, *seat_directories],
             cwd,
-            _metadata_str(resume_metadata, "project_path"),
         )
     except asyncio.CancelledError:
         await run_to_completion(park())
