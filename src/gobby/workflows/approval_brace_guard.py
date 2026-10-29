@@ -49,7 +49,7 @@ _DATA_COMMANDS = frozenset(
 _DATA_BASENAME_HEADS = (_DATA_COMMANDS - {"git"}) | {"cd", "curl", "test", "["}
 # Interpreter flags that cannot load code. PYTHONPATH and similar can load a shadowing module.
 _PYTHON_FLAG = re.compile(r"(PYTHONDONTWRITEBYTECODE|PYTHONUNBUFFERED|PYTHONUTF8)=[01]")
-# A literal uv environment path selects the environment, leaving Python's stdin as source.
+# Literal path syntax for uv's environment selector; this does not verify the interpreter.
 _UV_ENVIRONMENT = re.compile(r"UV_PROJECT_ENVIRONMENT=[\w./-]+")
 # Git subcommands whose operands are revisions or pathspecs. Git runs a program
 # from a positional only for subcommands such as `bisect run`, so these stay data.

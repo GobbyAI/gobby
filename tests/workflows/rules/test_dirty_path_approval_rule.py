@@ -381,6 +381,9 @@ print(queries)
 PY""",
 )
 ENV_PREFIXED_HEREDOC_REFUSED = (
+    """UV_PROJECT_ENVIRONMENT=.venv python - <<'PY'
+gobby {tasks,sessions} list
+PY""",
     """UV_PROJECT_ENVIRONMENT=/repo/gobby/.venv uv run --no-sync python - <<'PY'
 print(1)
 PY
@@ -409,7 +412,7 @@ gobby sessions {approve,list}-dirty-paths s7""",
 print(1)
 PY
 gobby {tasks,sessions} list""",
-    # Only interpreter flags are data-safe; another prefix can redirect the launch.
+    # PATH can replace the launcher and stays outside the literal-prefix allowlist.
     """PATH=/opt/shim uv run python - <<'PY'
 gobby {tasks,sessions} list
 PY""",
