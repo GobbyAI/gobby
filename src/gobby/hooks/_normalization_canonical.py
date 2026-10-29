@@ -785,7 +785,7 @@ def _classify_shell_segment_without_redirection(
     if not parts:
         return _ShellSegmentMetadata("execute")
 
-    executed, execution_cwd, project_mutation = unwrap_execution_command(
+    executed, execution_cwd = unwrap_execution_command(
         parts, cwd or (str(base_cwd) if base_cwd is not None else None)
     )
     if executed is None:
@@ -796,7 +796,7 @@ def _classify_shell_segment_without_redirection(
             executed, execution_raw, base_cwd
         )
         executed = git_environment_parts(executed, _strip_shell_wrappers(executed))
-        result = _classify_shell_segment_without_redirection(
+        return _classify_shell_segment_without_redirection(
             executed,
             execution_cwd,
             depth=depth,
@@ -804,13 +804,6 @@ def _classify_shell_segment_without_redirection(
             base_cwd=Path(execution_cwd) if execution_cwd else base_cwd,
             raw_parts=execution_raw[-len(executed) :] if executed else None,
         )
-        if project_mutation:
-            return replace(
-                result,
-                repo_mutation=True,
-                extra={**(result.extra or {}), "_canonical_repo_mutation_scope_unknown": True},
-            )
-        return result
 
     cmd = shell_command_name(parts[0])
 

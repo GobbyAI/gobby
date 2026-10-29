@@ -60,7 +60,7 @@ _UV_VALUE_OPTIONS = frozenset(
     "--python-preference --python-downloads".split()
 )
 _UV_FLAG_OPTIONS = frozenset(
-    "--all-extras --no-dev --only-dev --no-default-groups --all-groups -m --module "
+    "--all-extras --dev --no-dev --only-dev --no-default-groups --all-groups -m --module "
     "--no-editable --exact --no-env-file --isolated --active --no-sync --locked --frozen "
     "-s --script --gui-script --all-packages --no-project --no-index -U --upgrade "
     "--no-sources --reinstall --compile-bytecode --no-build-isolation --no-build --no-binary "
@@ -126,17 +126,18 @@ def _wrapper_options_end(parts: list[str], start: int, value_options: frozenset[
 
 def unwrap_execution_command(
     parts: list[str], cwd: str | None
-) -> tuple[list[str] | None, str | None, bool]:
+) -> tuple[list[str] | None, str | None]:
     """Expose package-runner argv and its explicit working directory for normal classification."""
-    project_mutation = False
+    # Implicit runner setup must not require write authority for read-only audits.
+    # Explicit project changes such as uv sync/lock are classified separately.
     while parts:
         command = shell_command_name(parts[0])
         if command in {"uv", "uvx"}:
             tool_run = command == "uvx"
             parsed = _uv_options(parts, 1, cwd)
             if parsed is None:
-                return None, cwd, project_mutation
-            index, cwd, flags = parsed
+                return None, cwd
+            index, cwd, _ = parsed
             if command == "uv":
                 if parts[index : index + 2] == ["tool", "run"]:
                     tool_run = True
@@ -145,13 +146,8 @@ def unwrap_execution_command(
                     break
                 parsed = _uv_options(parts, index + 1, cwd)
                 if parsed is None:
-                    return None, cwd, project_mutation
-                index, cwd, run_flags = parsed
-                flags.update(run_flags)
-                # Running a command may refresh uv.lock before the child starts.
-                project_mutation |= not tool_run and flags.isdisjoint(
-                    {"--no-sync", "--locked", "--frozen", "--no-project", "--help", "-h"}
-                )
+                    return None, cwd
+                index, cwd, _ = parsed
             if tool_run and index < len(parts):
                 parts = [*parts[:index], parts[index].partition("@")[0], *parts[index + 1 :]]
         elif command in {"npx", "bunx"}:
@@ -159,7 +155,7 @@ def unwrap_execution_command(
             parts = parts[index:]
             if parts and (parts[0] == "-c" or parts[0].partition("=")[0] == "--call"):
                 # A shell program string is not an executable argv; submit must fail closed.
-                return None, cwd, project_mutation
+                return None, cwd
             if parts and "/" not in parts[0] and not parts[0].startswith("@"):
                 parts = [parts[0].partition("@")[0], *parts[1:]]
             continue
@@ -173,7 +169,7 @@ def unwrap_execution_command(
         else:
             break
         parts = parts[index:]
-    return parts, cwd, project_mutation
+    return parts, cwd
 
 
 def _formatter_mutates(parts: list[str]) -> bool:

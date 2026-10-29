@@ -990,7 +990,7 @@ class TestCanonicalToolMetadata:
     def test_exec_command_unclassified_shell_sets_canonical_execute_kind(self) -> None:
         data: dict[str, Any] = {
             "tool_name": "exec_command",
-            "tool_input": {"command": "uv run --no-sync gobby build #15117"},
+            "tool_input": {"command": "uv run gobby build #15117"},
         }
 
         normalize_tool_fields(data)
@@ -999,6 +999,28 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "execute"
         assert data["canonical_tool_confidence"] == "high"
         assert "canonical_repo_mutation" not in data
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "uv run pytest tests/test_example.py -q",
+            "uv run gobby test-quality audit tests/test_example.py",
+            "uv run gobby test-types audit tests/test_example.py",
+            "uv run gobby test-types suppressions .",
+            "uv run ruff check src/",
+            "uv run mypy src/",
+            "uv run gobby start --verbose",
+            "uv run --dev pytest tests/test_example.py -q",
+        ],
+    )
+    def test_uv_audits_do_not_require_repository_write_authority(self, command: str) -> None:
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert not data.get("canonical_repo_mutation")
+        assert not data.get("canonical_unresolved_execution")
 
     @pytest.mark.parametrize(
         ("command", "expected_kind"),
@@ -3008,14 +3030,14 @@ class TestExternalNavigationScope:
         "command",
         [
             "ruby -ryaml -e 'puts YAML.safe_load_file(\"config.yaml\")'",
-            "uv run --no-sync ruby -ryaml -e 'puts YAML.safe_load_file(\"config.yaml\")'",
+            "uv run ruby -ryaml -e 'puts YAML.safe_load_file(\"config.yaml\")'",
             "node -e \"console.log(require('fs').readFileSync('config.json'))\"",
-            "uv run --no-sync node --eval \"console.log(require('fs').readFileSync('config.json'))\"",
+            "uv run node --eval \"console.log(require('fs').readFileSync('config.json'))\"",
             "ruby -e \"File.open('config.yaml', 'r') { |file| puts file.read }\"",
             "ruby - <<'RUBY'\nputs File.read('config.yaml')\nRUBY",
             "node - <<'NODE'\nconsole.log(require('fs').readFileSync('config.json'))\nNODE",
             (
-                'uv run --no-sync python -c "from pathlib import Path; '
+                'uv run python -c "from pathlib import Path; '
                 "print(Path('~/.gobby/bootstrap.yaml').expanduser().read_text())\""
             ),
         ],
@@ -3281,9 +3303,7 @@ class TestExternalNavigationScope:
     def test_python_script_execution_is_execute(self) -> None:
         data: dict[str, Any] = {
             "tool_name": "Bash",
-            "tool_input": {
-                "command": "uv run --no-sync python scripts/generate_schema_identity.py --check"
-            },
+            "tool_input": {"command": "uv run python scripts/generate_schema_identity.py --check"},
         }
 
         normalize_tool_fields(data)
