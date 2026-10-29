@@ -99,8 +99,7 @@ async def reconcile_team_teardowns(
             logger.exception("Leaf %s teardown failed; the next pass retries", leaf.binding.task_id)
     for runbook in await asyncio.to_thread(_due_runbook_seats, db, cutoff):
         try:
-            live = [run for run in runbook.seats if run.status in ACTIVE_AGENT_RUN_STATUSES]
-            ended, refusal = await _end_seats(db, terminate, live)
+            ended, refusal = await _end_seats(db, terminate, runbook.seats)
             actions += sum(ended)
             if refusal is None and all(ended):
                 await asyncio.to_thread(_expire_runs, db, runbook.seats)
@@ -160,7 +159,7 @@ AND NOT EXISTS (
             logger.warning("Runbook %s has an unresolved task %r", row["id"], ref)
             continue
         if task.closed_at is not None and task.closed_at <= cutoff:
-            seats = runs.list_all_by_parent(str(row["session_id"]))
+            seats = runs.list_all_by_parent(str(row["session_id"]), limit=None)
             due.append(
                 _DueRunbook(
                     str(row["id"]),
@@ -348,9 +347,7 @@ async def _tear_down(
     eligible = await asyncio.to_thread(
         _eligible_seats, db, [*seats, *dispatched], team.binding.task_id
     )
-    ended, refusal = await _end_seats(
-        db, terminate, [r for r in eligible if r.status in ACTIVE_AGENT_RUN_STATUSES]
-    )
+    ended, refusal = await _end_seats(db, terminate, eligible)
     if refusal is not None:
         label = f"team-{team.binding.team_id}"
         outcome = await asyncio.to_thread(_refuse, db, team.binding, refusal, label)
@@ -360,9 +357,6 @@ async def _tear_down(
         logger.warning("Team %s keeps live seats; the next pass retries", team.binding.team_id)
         return sum(ended)
     await asyncio.to_thread(_expire_seats, db, team)
-    await asyncio.to_thread(
-        _expire_runs, db, [r for r in eligible if r.status not in ACTIVE_AGENT_RUN_STATUSES]
-    )
     if await asyncio.to_thread(_protected_seats_remain, db, [*seats, *dispatched], eligible):
         logger.info("Team %s waits for seats on other tasks", team.binding.team_id)
         return sum(ended)
@@ -406,18 +400,13 @@ async def _tear_down_leaf(
         _dispatched_runs, db, seats, leaf.binding.worktree_path, leaf.binding.task_id
     )
     eligible = await asyncio.to_thread(_eligible_seats, db, dispatched, leaf.binding.task_id)
-    ended, refusal = await _end_seats(
-        db, terminate, [r for r in eligible if r.status in ACTIVE_AGENT_RUN_STATUSES]
-    )
+    ended, refusal = await _end_seats(db, terminate, eligible)
     label = f"leaf-{leaf.binding.worktree_id}"
     if refusal is not None:
         await asyncio.to_thread(_refuse, db, leaf.binding, refusal, label)
         return sum(ended)
     if not all(ended):
         return sum(ended)
-    await asyncio.to_thread(
-        _expire_runs, db, [r for r in eligible if r.status not in ACTIVE_AGENT_RUN_STATUSES]
-    )
     if await asyncio.to_thread(_protected_seats_remain, db, dispatched, eligible):
         return sum(ended)
     if await asyncio.to_thread(_occupied, db, dispatched):
@@ -434,10 +423,15 @@ async def _tear_down_leaf(
 async def _end_seats(
     db: HubDatabase, terminate: TeamRunTerminator, runs: list[AgentRun]
 ) -> tuple[list[bool], WorktreeDeletionResult | None]:
-    """End each run; the first seat that cannot be ended becomes the refusal."""
+    """Retire stopped seats even if a live seat refuses to end."""
+    await asyncio.to_thread(
+        _expire_runs, db, [run for run in runs if run.status not in ACTIVE_AGENT_RUN_STATUSES]
+    )
     ended: list[bool] = []
     refusal: WorktreeDeletionResult | None = None
     for run in runs:
+        if run.status not in ACTIVE_AGENT_RUN_STATUSES:
+            continue
         try:
             await asyncio.to_thread(_stage_teardown_handoff, db, run)
             ended.append(await terminate(run))
@@ -486,7 +480,7 @@ def _team_seats(db: HubDatabase, team: _DueTeam) -> list[AgentRun]:
     for execution_id in team.executions:
         execution = executions.get_execution(execution_id)
         if execution is not None and execution.session_id is not None:
-            seats.extend(runs.list_all_by_parent(execution.session_id))
+            seats.extend(runs.list_all_by_parent(execution.session_id, limit=None))
     if seats:
         current = db.fetchall(
             "SELECT r.* FROM agent_runs r JOIN sessions s ON s.agent_run_id = r.id "
@@ -529,7 +523,7 @@ def _dispatched_runs(
         run
         for seat in seats
         if seat.child_session_id is not None
-        for run in runs.list_all_by_parent(seat.child_session_id)
+        for run in runs.list_all_by_parent(seat.child_session_id, limit=None)
     ]
     if not children:
         return []
@@ -537,7 +531,7 @@ def _dispatched_runs(
         row["id"]: row["workspace_path"]
         for row in db.fetchall(
             "SELECT id::text AS id, workspace_path FROM sessions WHERE id = ANY(%s)",
-            ([str(run.child_session_id) for run in children],),
+            ([run.child_session_id for run in children if run.child_session_id is not None],),
         )
     }
     inside = {
@@ -597,8 +591,11 @@ def _expire_runs(db: HubDatabase, runs: list[AgentRun]) -> None:
     rows = db.fetchall(
         "SELECT DISTINCT s.id::text AS id FROM agent_runs r "
         "JOIN sessions s ON s.id = r.child_session_id "
-        "WHERE r.id = ANY(%s) AND s.status = ANY(%s)",
-        (run_ids, list(LIVE_SESSION_STATUS_ORDER)),
+        "WHERE r.id = ANY(%s) AND s.status = ANY(%s) "
+        "AND NOT EXISTS (SELECT 1 FROM agent_runs live "
+        "WHERE live.id = s.agent_run_id AND live.status = ANY(%s) "
+        "AND NOT (live.id = ANY(%s)))",
+        (run_ids, list(LIVE_SESSION_STATUS_ORDER), list(ACTIVE_AGENT_RUN_STATUSES), run_ids),
     )
     sessions = SessionManager(db)
     for row in rows:
