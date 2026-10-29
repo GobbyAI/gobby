@@ -1,5 +1,6 @@
 """Missing native cwd can be tolerated only for a whole-program read-only proof."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -46,7 +47,21 @@ pytestmark = pytest.mark.unit
         ("patch -i --dry-run file.py", False),
         ("uv run --no-sync ruff format file.py", False),
         ("uv run --no-sync ruff check --fix file.py", False),
-        ("uv run python -c 'print(1)'", True),
+        ("uv run python -c 'print(1)'", False),
+        ("uv run --frozen python -c 'print(1)'", True),
+        ("uv run --locked python -c 'print(1)'", True),
+        ("uv run --no-sync python -c 'print(1)'", True),
+        ("uv run -U python -c 'print(1)'", False),
+        ("uv run --upgrade python -c 'print(1)'", False),
+        ("uv run --locked -U python -c 'print(1)'", False),
+        ("uv run --frozen --upgrade-package example python -c 'print(1)'", False),
+        ("uv run --frozen --env-file .env python -c 'print(1)'", False),
+        ("uv run --package --frozen python -c 'print(1)'", False),
+        ("uv run ruff format --diff file.py", False),
+        ("cat file.py | uv run python -c 'print(1)'", False),
+        ("uv run python - <<'PY'\nprint(1)\nPY", False),
+        ("uv run --frozen python - <<'PY'\nprint(1)\nPY", True),
+        ("uv run --frozen uv run python -c 'print(1)'", False),
         ("uv run python -c 'unknown()'", False),
         ('uv run python -c \'open("file.py", "w").write("x")\'', False),
         ("python - <<'PY'\nprint(1)\nPY", True),
@@ -72,6 +87,10 @@ pytestmark = pytest.mark.unit
         ("cat file.py > other.py", False),
         ("find . -type f", True),
         ("find . -delete", False),
+        ("find . -fprint out.txt", False),
+        ("find . -fprint0 out.txt", False),
+        ("find . -fls out.txt", False),
+        ("find . -fprintf out.txt '%p'", False),
         ("find . -exec touch out.txt ';'", False),
         ("touch file.py", False),
         ("unknown-program", False),
@@ -80,6 +99,118 @@ pytestmark = pytest.mark.unit
 def test_whole_shell_read_only_proof(command: str, read_only: bool) -> None:
     data = normalize_tool_fields({"tool_name": "Bash", "tool_input": {"command": command}})
     assert data.get("canonical_read_only", False) is read_only
+
+
+@pytest.mark.parametrize(
+    ("command", "read_only"),
+    [
+        ("GIT_EXTERNAL_DIFF=./x git diff", False),
+        ("env GIT_EXTERNAL_DIFF=./x git diff", False),
+        (
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.external GIT_CONFIG_VALUE_0=./x git diff",
+            False,
+        ),
+        (
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=./x git status",
+            False,
+        ),
+        ("GIT_TRACE=out.txt git log -1", False),
+        ("RIPGREP_CONFIG_PATH=./cfg rg x", False),
+        ('BASH_ENV=./x bash -c "cat f"', False),
+        ("LD_PRELOAD=./x.so cat f", False),
+        ("env -S 'LD_PRELOAD=./x.so cat f'", False),
+        ("env -- LANG=C LD_PRELOAD=./x.so cat f", False),
+        ("cat f | LD_PRELOAD=./x.so wc -l", False),
+        ("LD_PRELOAD=./x.so python - <<'PY'\nprint(1)\nPY", False),
+        ("uv run --frozen env GIT_TRACE=out.txt git log -1", False),
+        ("LANG=C LD_PRELOAD=./x.so gcode outline f", False),
+        ("GIT_TRACE=out.txt; git log -1", False),
+        ("LANG=C git status --short", True),
+        ("env LANG=C LC_ALL=C cat f", True),
+        ("cat f | env LC_ALL=C sort", True),
+        ("echo GIT_TRACE=out.txt", True),
+    ],
+)
+def test_environment_participates_in_read_only_proof(command: str, read_only: bool) -> None:
+    data = normalize_tool_fields({"tool_name": "Bash", "tool_input": {"command": command}})
+    assert data.get("canonical_read_only", False) is read_only
+
+
+@pytest.mark.parametrize("flags", [[], ["--frozen"], ["--locked"], ["--no-sync"], ["-U"]])
+def test_uv_run_lockfile_effects(tmp_path: Path, flags: list[str]) -> None:
+    project = tmp_path / "pyproject.toml"
+    project.write_text('[project]\nname = "proof-fixture"\nversion = "0.1.0"\n')
+    environment = {
+        **{key: value for key, value in os.environ.items() if not key.startswith("UV_")},
+        "UV_PROJECT_ENVIRONMENT": str(tmp_path / ".venv"),
+        "UV_CACHE_DIR": str(tmp_path / "cache"),
+        "UV_PYTHON": sys.executable,
+    }
+    lock = subprocess.run(
+        ["uv", "lock", "--offline", "--no-config", "--no-python-downloads"],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert lock.returncode == 0, lock.stderr
+    lockfile = tmp_path / "uv.lock"
+    before = lockfile.read_bytes()
+    project.write_text('[project]\nname = "proof-fixture"\nversion = "0.2.0"\n')
+    run = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--offline",
+            "--no-config",
+            "--no-python-downloads",
+            *flags,
+            "python",
+            "-c",
+            "print(1)",
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if flags == ["--locked"]:
+        assert run.returncode != 0
+        assert "lockfile" in run.stderr
+    else:
+        assert run.returncode == 0, run.stderr
+    assert (lockfile.read_bytes() != before) is (flags in ([], ["-U"]))
+
+
+@pytest.mark.parametrize("via_environment", [False, True])
+def test_uv_env_file_can_change_nested_runner_directory(
+    tmp_path: Path, via_environment: bool
+) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    env_file = first / ".env"
+    env_file.write_text(f"UV_WORKING_DIR={second}\n")
+    environment = {
+        **{key: value for key, value in os.environ.items() if not key.startswith("UV_")},
+        "UV_CACHE_DIR": str(tmp_path / "cache"),
+    }
+    flags = [] if via_environment else ["--env-file", str(env_file)]
+    if via_environment:
+        environment["UV_ENV_FILE"] = str(env_file)
+    runner = ["uv", "run", "--no-project", "--no-sync", "--offline", "--no-config"]
+    run = subprocess.run(
+        [*runner, *flags, *runner, sys.executable, "-c", "import os; print(os.getcwd())"],
+        cwd=first,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run.returncode == 0, run.stderr
+    assert Path(run.stdout.strip()) == second
 
 
 def test_nested_script_keeps_unknown_execution_in_read_only_proof(tmp_path: Path) -> None:

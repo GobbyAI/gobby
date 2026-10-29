@@ -7,7 +7,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from gobby.hooks._normalization_base_commands import classify_base_command, unwrap_execution_command
+from gobby.hooks._normalization_base_commands import (
+    classify_base_command,
+    execution_context_is_read_only,
+    unwrap_execution_command,
+)
 from gobby.hooks._normalization_bindings import (
     _literal_assignment_bindings,
     _literal_assignment_values,
@@ -537,6 +541,12 @@ def _classify_shell_command(
         directory.apply_opaque_change(parts)
 
     metadata = _classify_stdin_python(metadata, heredoc_bodies)
+    metadata = [
+        item
+        if execution_context_is_read_only(list(item.shell_words))
+        else replace(item, read_only=False)
+        for item in metadata
+    ]
     result = _merge_shell_segment_metadata(_gate_rewritable_scripts(metadata))
     if compound_directory_change and result.get("canonical_repo_mutation"):
         # Without whole-stage ownership, neither inner nor followup cwd is proven.
@@ -800,9 +810,10 @@ def _classify_shell_segment_without_redirection(
     if not parts:
         return _ShellSegmentMetadata("execute")
 
-    executed, execution_cwd = unwrap_execution_command(
+    runner = unwrap_execution_command(
         parts, cwd or (str(base_cwd) if base_cwd is not None else None)
     )
+    executed, execution_cwd = runner.parts, runner.cwd
     if executed is None:
         return _ShellSegmentMetadata("execute", extra={"canonical_unresolved_execution": True})
     if executed != parts:

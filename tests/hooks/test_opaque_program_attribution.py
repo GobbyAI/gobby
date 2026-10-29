@@ -798,7 +798,9 @@ def test_native_codex_outer_and_inner_have_one_shell_owner(
     [
         ("git status --short", True),
         ("rg -n value format_me.py", True),
-        ("uv run python -c 'print(1)'", True),
+        ("uv run --frozen python -c 'print(1)'", True),
+        ("uv run python -c 'print(1)'", False),
+        ("GIT_TRACE=out.txt git log -1", False),
         ("cat format_me.py; unknown-program", False),
         ("rg --pre ./preprocess value format_me.py", False),
         ("bash misleading.sh", False),

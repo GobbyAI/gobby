@@ -36,9 +36,16 @@ from gobby.adapters.degradation import (
     record_unsupported_response_fields,
     truncate_context_for_adapter,
 )
+from gobby.hooks._normalization_base_commands import unwrap_execution_command
+from gobby.hooks._normalization_bindings import _raw_shell_word_is_literal
+from gobby.hooks._normalization_env import env_directory_operands
+from gobby.hooks._normalization_segments import _split_shell_segments
+from gobby.hooks._normalization_shell import _literal_cd_target, scan_shell_command
 from gobby.hooks._path_scope import current_tool_cwd
+from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.shell_execution import shell_execution, starts_elsewhere
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -52,6 +59,64 @@ logger = logging.getLogger(__name__)
 _TRANSCRIPT_READ_CHUNK_BYTES = 64 * 1024
 
 
+def _node_shell_workdir(input_data: dict[str, Any]) -> str | None:
+    """Prove a node command's directory without accessing its provider transcript.
+
+    Only `cd /literal && one-command` is admitted. Extra control flow could run
+    after a failed cd; nested shells and directory wrappers need a different proof.
+    """
+    tool_input = input_data.get("tool_input")
+    command = (
+        tool_input.get("command", tool_input.get("cmd")) if isinstance(tool_input, dict) else None
+    )
+    if not isinstance(command, str):
+        return None
+    try:
+        scan = scan_shell_command(command)
+    except ValueError:
+        return None
+    segments = _split_shell_segments(scan.tokens)
+    if scan.heredocs or len(segments) != 2 or segments[1].separator_before != "&&":
+        return None
+    first, second = segments
+    first_words = [token.value for token in first.tokens]
+    if first_words[:1] != ["cd"] or not (
+        len(first_words) == 2 or (len(first_words) == 3 and first_words[1] == "--")
+    ):
+        return None
+    target = _literal_cd_target(first_words)
+    if target is None or not Path(target).is_absolute():
+        return None
+    # Exactly one separator, including trailing control operators. Expansion and
+    # grouping must not hide commands before cd or inside the remaining command.
+    if len(scan.tokens) != len(first.tokens) + len(second.tokens) + 1:
+        return None
+    for token, (start, end) in zip(scan.tokens, scan.spans, strict=True):
+        if not _raw_shell_word_is_literal(command[start:end]):
+            return None
+        if not token.quoted and any(char in token.value for char in "(){}"):
+            return None
+    words = [token.value for token in second.tokens]
+    assignments: set[str] = set()
+    while words:
+        if env_directory_operands(words) or starts_elsewhere(words):
+            return None
+        unwrapped = _unwrap(words, assignments=assignments)
+        if not assignments.isdisjoint({"UV_WORKING_DIR", "UV_ENV_FILE"}):
+            return None
+        execution = unwrap_execution_command(unwrapped, None)
+        if execution.parts is None or execution.cwd is not None or not execution.directory_proven:
+            return None
+        if execution.parts == words:
+            break
+        words = execution.parts
+    if not words or words[0].rsplit("/", 1)[-1] in {"cd", "pushd", "popd", "eval"}:
+        return None
+    if shell_execution(words) is not None:
+        return None
+    return target
+
+
 def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
     """Borrow cwd only from one proven, still-pending provider shell call.
 
@@ -60,7 +125,7 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
     session's task or the most recent matching historical command.
     """
     if node_origin():
-        return None
+        return _node_shell_workdir(input_data)
     transcript_path = input_data.get("transcript_path")
     tool_input = input_data.get("tool_input")
     if not isinstance(transcript_path, str) or not isinstance(tool_input, dict):

@@ -1,7 +1,7 @@
 """Classify plain shell commands independently of recursive shell execution."""
 
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from gobby.hooks._inline_interpreter_classifier import (
@@ -92,6 +92,7 @@ def _uv_options(
             return start + 1, cwd, flags
         option, separator, value = word.partition("=")
         if option in value_options:
+            flags.add(option)
             if not separator:
                 start += 1
                 if start >= len(parts):
@@ -102,7 +103,7 @@ def _uv_options(
         elif word in _UV_FLAG_OPTIONS:
             flags.add(word)
         elif not word.startswith("--") and len(word) > 2 and word[:2] in value_options:
-            pass  # Attached short-option value, e.g. -p3.13.
+            flags.add(word[:2])  # Attached short-option value, e.g. -p3.13.
         elif re.fullmatch(r"-[qv]+", word):
             pass
         else:
@@ -124,12 +125,20 @@ def _wrapper_options_end(parts: list[str], start: int, value_options: frozenset[
     return start
 
 
-def unwrap_execution_command(
-    parts: list[str], cwd: str | None
-) -> tuple[list[str] | None, str | None]:
+@dataclass(frozen=True, slots=True)
+class ExecutionCommand:
+    parts: list[str] | None
+    cwd: str | None
+    read_only: bool = True
+    directory_proven: bool = True
+
+
+def unwrap_execution_command(parts: list[str], cwd: str | None) -> ExecutionCommand:
     """Expose package-runner argv and its explicit working directory for normal classification."""
     # Implicit runner setup must not require write authority for read-only audits.
     # Explicit project changes such as uv sync/lock are classified separately.
+    read_only = True
+    directory_proven = True
     while parts:
         command = shell_command_name(parts[0])
         if (
@@ -144,8 +153,8 @@ def unwrap_execution_command(
             tool_run = command == "uvx"
             parsed = _uv_options(parts, 1, cwd)
             if parsed is None:
-                return None, cwd
-            index, cwd, _ = parsed
+                return ExecutionCommand(None, cwd, read_only=False, directory_proven=False)
+            index, cwd, flags = parsed
             if command == "uv":
                 if parts[index : index + 2] == ["tool", "run"]:
                     tool_run = True
@@ -154,8 +163,16 @@ def unwrap_execution_command(
                     break
                 parsed = _uv_options(parts, index + 1, cwd)
                 if parsed is None:
-                    return None, cwd
-                index, cwd, _ = parsed
+                    return ExecutionCommand(None, cwd, read_only=False, directory_proven=False)
+                index, cwd, run_flags = parsed
+                flags |= run_flags
+                if not tool_run:
+                    # --no-sync implies --frozen. Ordinary uv run may update uv.lock.
+                    read_only &= not flags.isdisjoint({"--frozen", "--locked", "--no-sync"})
+            read_only &= flags.isdisjoint(
+                {"-U", "--upgrade", "-P", "--upgrade-package", "--upgrade-group", "--env-file"}
+            )
+            directory_proven &= "--env-file" not in flags
             if tool_run and index < len(parts):
                 parts = [*parts[:index], parts[index].partition("@")[0], *parts[index + 1 :]]
         elif command in {"npx", "bunx"}:
@@ -163,7 +180,7 @@ def unwrap_execution_command(
             parts = parts[index:]
             if parts and (parts[0] == "-c" or parts[0].partition("=")[0] == "--call"):
                 # A shell program string is not an executable argv; submit must fail closed.
-                return None, cwd
+                return ExecutionCommand(None, cwd, read_only=False, directory_proven=False)
             if parts and "/" not in parts[0] and not parts[0].startswith("@"):
                 parts = [parts[0].partition("@")[0], *parts[1:]]
             continue
@@ -177,7 +194,26 @@ def unwrap_execution_command(
         else:
             break
         parts = parts[index:]
-    return parts, cwd
+    return ExecutionCommand(parts, cwd, read_only, directory_proven)
+
+
+def execution_context_is_read_only(parts: list[str]) -> bool:
+    """Keep environment and runner effects in the proof before argv is discarded."""
+    assignments: set[str] = set()
+    while parts:
+        unwrapped = _unwrap(parts, assignments=assignments)
+        # Only presentation/locale variables have known harmless effects here.
+        if not assignments.issubset({"LANG", "LC_ALL", "LC_CTYPE", "NO_COLOR", "FORCE_COLOR"}):
+            return False
+        if unwrapped and "=" in unwrapped[0]:
+            return False  # env also accepts names outside the shell assignment grammar.
+        execution = unwrap_execution_command(unwrapped, None)
+        if not execution.read_only or execution.parts is None:
+            return False
+        if execution.parts == parts:
+            break
+        parts = execution.parts
+    return True
 
 
 def _formatter_mutates(parts: list[str]) -> bool:

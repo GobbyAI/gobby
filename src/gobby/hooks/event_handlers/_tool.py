@@ -117,13 +117,18 @@ class ToolEventHandlerMixin(EventHandlersBase):
         session_id = event.metadata.get("_platform_session_id")
         unproven_shell_cwd = event.metadata.get("_native_shell_cwd_unproven") is True
         if unproven_shell_cwd and event.metadata.get("_native_shell_read_only") is not True:
+            retry = (
+                "On this node, retry with a command beginning cd '/absolute/task/worktree' && "
+                "followed by one command, with no additional directory changes or subshells."
+                if node_origin()
+                else "Retry with one exec_command call whose cmd and absolute workdir are literal "
+                "strings in the functions.exec source; do not use load() or a variable for workdir."
+            )
             return HookResponse(
                 decision="block",
                 reason=(
                     "Shell command blocked before execution: Gobby cannot prove its working "
-                    "directory and the command is not proven read-only. Retry with one "
-                    "exec_command call whose cmd and absolute workdir are literal strings "
-                    "in the functions.exec source; do not use load() or a variable for workdir."
+                    "directory and the command is not proven read-only. " + retry
                 ),
             )
         project_id = event.project_id or self._resolve_project_id(event.project_id, event.cwd)
