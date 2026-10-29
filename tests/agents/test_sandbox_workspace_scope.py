@@ -79,16 +79,20 @@ async def test_config_read_grant_cannot_override_workspace_boundary(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("component", ["*", "?", "[ab]", "{a,b}"])
 async def test_workspace_scope_cannot_be_interpreted_as_a_glob(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    component: str,
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby"))
     root = tmp_path / "gobby" / "agents_workspaces"
     root.mkdir(parents=True)
     checkout = tmp_path / "checkout"
     checkout.mkdir()
-    config = SandboxConfig(enabled=True, backend="srt").with_workspace_scope([str(root / "*")], [])
+    config = SandboxConfig(enabled=True, backend="srt").with_workspace_scope(
+        [str(root / component)], []
+    )
     with pytest.raises(ValueError, match="workspace scope contains glob syntax"):
         await compute_sandbox_paths(config, str(checkout))
 

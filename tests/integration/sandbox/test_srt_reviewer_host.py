@@ -42,7 +42,7 @@ def _make_writable(root: Path) -> None:
 
 @pytest.fixture
 def reviewer_launch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> Iterator[tuple[SandboxLaunch, Path, dict[str, str]]]:
     source = os.environ.get("GOBBY_SRT_TEST_ROOT")
     if source is None:
@@ -80,8 +80,11 @@ def reviewer_launch(
     for folder in (own, epic, prior):
         folder.mkdir(parents=True)
     (anchor / "README.md").write_text("Shared guidance")
+    reads = [str(own), str(epic), str(prior), str(anchor / "README.md")]
+    if getattr(request, "param", False):
+        reads = [str(anchor.parent)]
     config = SandboxConfig(enabled=True, backend="srt", allow_network=False).with_workspace_scope(
-        [str(own), str(epic), str(prior), str(anchor / "README.md")], [str(own), str(epic)]
+        reads, [str(own), str(epic)]
     )
     if not (workspace / "pyproject.toml").exists():
         (workspace / "pyproject.toml").write_text(
@@ -158,6 +161,15 @@ def test_workspace_read_boundary_beneath_shell_expansion(
 
     alias = anchor.parent / "PROOF-PROJECT" / "OTHER-SEAT" / "SESSION-99" / "sentinel.txt"
     assert alias.samefile(foreign / "sentinel.txt"), "macOS host proof needs a case alias"
+    root_alias = (
+        anchor.parent.parent
+        / "AGENTS_WORKSPACES"
+        / "proof-project"
+        / "other-seat"
+        / "session-99"
+        / "sentinel.txt"
+    )
+    assert root_alias.samefile(foreign / "sentinel.txt")
     # Keep the proof in one running sandbox and violation-monitor lifetime.
     script = """
 set -eu
@@ -170,7 +182,7 @@ test "$(cat "$anchor/epics/epic-1/sentinel.txt")" = allowed-content
 test "$(cat "$anchor/proof-seat/session-10/sentinel.txt")" = allowed-content
 for target in "$anchor/other-seat/session-99/sentinel.txt" \
               "$anchor/proof-seat/session-40/foreign-link/sentinel.txt" \
-              "$2" "$anchor"/other-*/session-*/sentinel.txt; do
+              "$2" "$3" "$anchor"/other-*/session-*/sentinel.txt; do
     if cat "$target"; then
         printf 'Unexpected foreign read: %s\\n' "$target" >&2
         exit 1
@@ -182,11 +194,25 @@ printf workspace-boundary-ok
         launch,
         workspace,
         environment,
-        ["/bin/bash", "-c", script, "proof", str(anchor), str(alias)],
+        ["/bin/bash", "-c", script, "proof", str(anchor), str(alias), str(root_alias)],
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == "workspace-boundary-ok"
     assert "Operation not permitted" in result.stderr
+
+
+@pytest.mark.parametrize("reviewer_launch", [True], indirect=True)
+def test_workspace_read_all_authority_allows_foreign_read(
+    reviewer_launch: tuple[SandboxLaunch, Path, dict[str, str]],
+) -> None:
+    launch, workspace, environment = reviewer_launch
+    root = Path(environment["GOBBY_HOME"]) / "agents_workspaces"
+    foreign = root / "other-project" / "other-seat" / "session-99" / "sentinel.txt"
+    foreign.parent.mkdir(parents=True)
+    foreign.write_text("foreign-content")
+    result = _run(launch, workspace, environment, ["/bin/cat", str(foreign)])
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "foreign-content"
 
 
 def test_reviewer_cached_settings_and_python_environment(

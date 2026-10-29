@@ -822,6 +822,7 @@ pub(super) fn compute(
     config: &Sandbox,
     inputs: &PolicyInputs,
     env: &BTreeMap<String, String>,
+    workspace_scope: &super::workspace_scope::WorkspaceScope,
 ) -> Result<ResolvedPaths> {
     let home = inputs.home.as_path();
     let gobby = inputs.gobby_home.as_path();
@@ -856,7 +857,7 @@ pub(super) fn compute(
         Some(&workspace),
         home,
     );
-    let deny_read_paths = deny_paths(
+    let mut deny_read_paths = deny_paths(
         sensitive_roots(gobby, home, env)
             .into_iter()
             .chain(credential_denies.iter().cloned())
@@ -903,6 +904,12 @@ pub(super) fn compute(
         &provider_credential_read_exceptions(provider, home),
         home,
     )?;
+    let read_paths = workspace_scope.restrict(read_paths, &write_paths)?;
+    deny_read_paths = dedupe(
+        deny_read_paths
+            .into_iter()
+            .chain(once(text(&workspace_scope.root))),
+    );
 
     Ok(ResolvedPaths {
         read_paths,

@@ -1,6 +1,6 @@
 //! Python `str.casefold` for every code point it changes (#24382). Generated with CPython 3.13
 //! (Unicode 15.1.0) by `chr(cp).casefold()` over all code points; regenerate the same way.
-//! `casefold` in `regions.rs` looks each character up here and keeps the rest unchanged.
+//! `casefold` looks each character up here and keeps the rest unchanged.
 
 /// `(character, folded)` pairs in code point order, for characters whose folding differs.
 #[rustfmt::skip]

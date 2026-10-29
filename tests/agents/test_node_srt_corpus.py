@@ -22,7 +22,12 @@ from typing import Any
 
 import pytest
 
-from gobby.agents.agent_workspaces import epic_workspace_dir, session_workspace_dir
+from gobby.agents.agent_workspaces import (
+    epic_workspace_dir,
+    session_workspace_dir,
+    workspace_anchor,
+    workspaces_root,
+)
 from gobby.agents.cargo_target import (
     ensure_agent_cargo_target_dir,
     sandbox_checkout_cargo_target_dir,
@@ -122,6 +127,8 @@ def _case(
     definition: str | None = None,
     session_seq: int | None = None,
     epic_seq: int | None = None,
+    read_all_agent_workspaces: bool = False,
+    predecessor_workspace_folders: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -135,6 +142,8 @@ def _case(
             "definition": definition,
             "session_seq": session_seq,
             "epic_seq": epic_seq,
+            "read_all_agent_workspaces": read_all_agent_workspaces,
+            "predecessor_workspace_folders": list(predecessor_workspace_folders),
             "workspace": "{workspace}",
             "run_id": _RUN_ID,
             "daemon_port": _DAEMON_PORT,
@@ -208,6 +217,26 @@ def _case_templates() -> list[dict[str, Any]]:
             definition=_WORKSPACE_DEFINITION,
             session_seq=_WORKSPACE_SESSION_SEQ,
             epic_seq=_WORKSPACE_EPIC_SEQ,
+        )
+    )
+    cases.append(
+        _case(
+            "claude-workspace-read-all",
+            "claude",
+            definition="custom-admin",
+            session_seq=7,
+            read_all_agent_workspaces=True,
+        )
+    )
+    cases.append(
+        _case(
+            "claude-workspace-predecessor",
+            "claude",
+            definition="persistent-seat",
+            session_seq=7,
+            predecessor_workspace_folders=(
+                "{gobby_home}/agents_workspaces/node-srt-project/persistent-seat/session-2",
+            ),
         )
     )
     return cases
@@ -352,13 +381,29 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
         config = config.model_copy(
             update={"extra_write_paths": [*config.extra_write_paths, nextest_store]}
         )
-    workspace_paths = [
-        path for path in _workspace_write_paths(inputs) if path not in config.extra_write_paths
+    # Replay grant_seat_workspace_paths after the hub has resolved definition
+    # authority and eligible predecessors. These inputs are outside user config.
+    workspace_paths = _workspace_write_paths(inputs)
+    reads = list(workspace_paths)
+    if inputs["session_seq"] is not None:
+        reads.append(str(workspace_anchor(str(inputs["project_id"])) / "README.md"))
+        if inputs.get("read_all_agent_workspaces", False):
+            reads = [str(workspaces_root())]
+        else:
+            reads.extend(inputs.get("predecessor_workspace_folders", []))
+    config = config.with_workspace_scope(reads, workspace_paths)
+    config.restrict_workspace_paths([], [])
+    for folder in workspace_paths:
+        Path(folder).mkdir(parents=True, exist_ok=True)
+    root = workspaces_root().resolve()
+    retained = [
+        path
+        for path in config.extra_write_paths
+        if not Path(path).expanduser().resolve().is_relative_to(root)
     ]
-    if workspace_paths:
-        config = config.model_copy(
-            update={"extra_write_paths": [*config.extra_write_paths, *workspace_paths]}
-        )
+    config = config.model_copy(
+        update={"extra_write_paths": list(dict.fromkeys([*retained, *workspace_paths]))}
+    )
 
     env["CARGO_TARGET_DIR"] = ensure_agent_cargo_target_dir(workspace, str(inputs["project_id"]))
     spawned = sandbox_config_for_spawn(
@@ -597,13 +642,43 @@ def test_agent_workspace_case_grants_only_the_seats_folders(
     """The oracle grants the seat's own folder and its epic folder, and nothing wider."""
     template = next(case for case in _case_templates() if case["name"] == _WORKSPACE_CASE)
     settings, _env, layout = _evaluate(template, tmp_path / "workspace-case", monkeypatch)
-    writes: list[str] = json.loads(settings)["filesystem"]["allowWrite"]
+    filesystem = json.loads(settings)["filesystem"]
+    writes: list[str] = filesystem["allowWrite"]
     root = Path(layout["gobby_home"]) / "agents_workspaces"
     anchor = root / _PROJECT_ID
     own = anchor / _WORKSPACE_DEFINITION / f"session-{_WORKSPACE_SESSION_SEQ}"
     epic = anchor / "epics" / f"epic-{_WORKSPACE_EPIC_SEQ}"
     granted = {entry for entry in writes if entry == str(root) or entry.startswith(f"{root}/")}
     assert granted == {str(own), str(epic)}
+    assert str(root) in filesystem["denyRead"]
+    reads = {
+        entry
+        for entry in filesystem["allowRead"]
+        if entry == str(root) or entry.startswith(f"{root}/")
+    }
+    assert reads == {str(own), str(epic), str(anchor / "README.md")}
     # The Rust replay reads the same recorded case, so the corpus must carry it.
     recorded = {case["name"] for case in _load_corpus()["cases"]}
     assert _WORKSPACE_CASE in recorded, sorted(recorded)
+
+
+@pytest.mark.parametrize("case_name", ["claude-workspace-read-all", "claude-workspace-predecessor"])
+def test_workspace_read_authority_does_not_expand_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case_name: str
+) -> None:
+    template = next(case for case in _case_templates() if case["name"] == case_name)
+    settings, _env, layout = _evaluate(template, tmp_path / case_name, monkeypatch)
+    filesystem = json.loads(settings)["filesystem"]
+    root = Path(layout["gobby_home"]) / "agents_workspaces"
+    anchor = root / _PROJECT_ID
+    own = anchor / template["inputs"]["definition"] / "session-7"
+    writes = {entry for entry in filesystem["allowWrite"] if entry.startswith(f"{root}/")}
+    assert writes == {str(own)}
+    assert str(root) not in filesystem["allowWrite"]
+    if case_name == "claude-workspace-read-all":
+        assert str(root) in filesystem["allowRead"]
+    else:
+        prior = own.parent / "session-2"
+        assert str(prior) in filesystem["allowRead"]
+        assert str(prior) not in writes
+        assert str(root) not in filesystem["allowRead"]
