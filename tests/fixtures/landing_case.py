@@ -65,7 +65,7 @@ def grant_orchestrator(db: HubDatabase, session_id: str, project_id: str) -> Non
         project_id,
         ORCHESTRATOR,
         TASK_STEPS,
-        capabilities=("coordinate_tasks", "manage_task_claims", "land_tasks"),
+        capabilities=("coordinate_tasks", "manage_task_claims", "land_tasks", "close_without_work"),
     )
 
 

@@ -39,6 +39,7 @@ from gobby.tasks.state_semantics import (
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.git import descends_from_all
 from gobby.utils.session_context import get_current_session_id
+from gobby.workflows.agent_resolver import session_has_capability_or_operator
 
 
 def _researcher_close_refusal(task: Task, closer: str, reason: str) -> tuple[str, str] | None:
@@ -88,7 +89,7 @@ async def _evaluate_close(
     except ValueError as exc:
         return evaluation.refuse("session_resolution_failed", str(exc))
     evaluation.resolved_session_id = session_id
-    # No-work reasons are Orchestrator overrides; an unseated operator session keeps them too.
+    # No-work reasons require a declared grant; the unseated operator keeps them too.
     # The Consolidator applies Orchestrator-directed folds and retirements, nothing else.
     closer_role = (
         await asyncio.to_thread(
@@ -101,15 +102,13 @@ async def _evaluate_close(
         )
         if fold_refusal:
             return evaluation.refuse(*fold_refusal)
-    elif reason.casefold() in NO_WORK_CLOSE_REASONS and closer_role not in (
-        None,
-        "default",
-        "orchestrator",
+    elif reason.casefold() in NO_WORK_CLOSE_REASONS and not await asyncio.to_thread(
+        session_has_capability_or_operator, ctx.task_manager.db, session_id, "close_without_work"
     ):
         return evaluation.refuse(
-            "no_work_close_orchestrator_only",
-            f"Only the Orchestrator closes a task as {reason}. Close with reason done, "
-            "or send the request to the Orchestrator.",
+            "no_work_close_forbidden",
+            f"Closing a task as {reason} requires the close_without_work capability. "
+            "Close with reason done, or send the request to an authorized coordinator.",
         )
     if closer_role == "researcher":
         researcher_refusal = _researcher_close_refusal(task, session_id, reason)

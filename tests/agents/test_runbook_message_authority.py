@@ -405,6 +405,31 @@ async def test_retired_definition_fields_refuse_delivery_without_aborting_fanout
 
 
 @pytest.mark.asyncio
+async def test_unseated_child_has_no_operator_message_exemption(
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    project = sample_project["id"]
+    parent = _seat(session_manager, project, "parent", "reporter")
+    child = session_manager.register(
+        external_id="unseated-child",
+        source="codex",
+        project_id=project,
+        machine_id=AGENT_TEST_MACHINE_ID,
+        parent_session_id=parent,
+    )
+    recipient = _seat(session_manager, project, "recipient", "inbox", required_senders=("report",))
+    wakes = _Wakes()
+
+    result = await _mailbox(temp_db, session_manager, wakes).send(
+        from_session_id=child.id, target="session", target_id=recipient, content="report"
+    )
+
+    assert result.error_code == REFUSED
+    assert result.messages == []
+    assert wakes.calls == []
+
+
+@pytest.mark.asyncio
 async def test_operator_recipient_needs_no_agent_definition(
     temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:

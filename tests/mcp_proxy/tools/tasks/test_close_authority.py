@@ -15,6 +15,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._crud import create_crud_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.sessions import SessionManager
@@ -41,13 +42,27 @@ class Closing:
     task: Task
 
 
-def _seat(db: HubDatabase, project_id: str, agent_type: str) -> str:
+def _seat(
+    db: HubDatabase, project_id: str, agent_type: str, *, capabilities: tuple[str, ...] = ()
+) -> str:
     session = SessionManager(db).register(
         external_id=f"close-authority-{agent_type}",
         machine_id=require_machine_id(),
         source="codex",
         project_id=project_id,
     )
+    definitions = AgentDefinitionManager(db)
+    if definitions.get_by_name(agent_type, project_id) is None:
+        definitions.create(
+            agent_type,
+            {
+                "name": agent_type,
+                "prompts": {"agent": "Apply the declared task close policy."},
+                "workflows": {"rule_selectors": {"include": []}},
+                "capabilities": list(capabilities),
+            },
+            project_id=project_id,
+        )
     SessionVariableManager(db).set_variable(session.id, "_agent_type", agent_type)
     return session.id
 
@@ -89,6 +104,27 @@ def _statuses(evaluation: CloseEvaluation) -> dict[int, str]:
     return {gate.item: gate.status for gate in evaluation.checklist.gates}
 
 
+@pytest.mark.parametrize("name", ["orchestrator", "custom-disposer"])
+@pytest.mark.parametrize("granted", [True, False])
+@pytest.mark.parametrize("reason", NO_WORK_REASONS)
+@pytest.mark.asyncio
+async def test_no_work_close_uses_declared_permission(
+    closing: Closing, name: str, granted: bool, reason: str
+) -> None:
+    caller = _seat(
+        closing.db,
+        closing.project_id,
+        name,
+        capabilities=("close_without_work",) if granted else (),
+    )
+
+    evaluation = await _evaluate(closing, caller, reason)
+
+    assert evaluation.ready is granted
+    if not granted:
+        assert evaluation.error == "no_work_close_forbidden"
+
+
 @pytest.mark.parametrize("reason", NO_WORK_REASONS)
 @pytest.mark.asyncio
 async def test_dev_manager_cannot_close_with_a_no_work_reason(
@@ -99,8 +135,39 @@ async def test_dev_manager_cannot_close_with_a_no_work_reason(
     evaluation = await _evaluate(closing, dev_manager, reason)
 
     assert not evaluation.ready
-    assert "Orchestrator" in (evaluation.message or "")
+    assert "close_without_work" in (evaluation.message or "")
     assert closing.manager.get_task(closing.task.id).closed_at is None
+
+
+@pytest.mark.parametrize("case", ["operator", "spawned", "disabled"])
+@pytest.mark.asyncio
+async def test_no_work_operator_exemption_and_disabled_grant(closing: Closing, case: str) -> None:
+    if case == "disabled":
+        caller = _seat(
+            closing.db, closing.project_id, "disposer", capabilities=("close_without_work",)
+        )
+        definitions = AgentDefinitionManager(closing.db)
+        definition = definitions.get_by_name("disposer", closing.project_id)
+        assert definition is not None
+        definitions.update(definition.id, enabled=False)
+    else:
+        caller = (
+            SessionManager(closing.db)
+            .register(
+                external_id="unseated-caller",
+                machine_id=require_machine_id(),
+                source="codex",
+                project_id=closing.project_id,
+                parent_session_id=closing.task.claimed_by_session_id if case == "spawned" else None,
+            )
+            .id
+        )
+
+    evaluation = await _evaluate(closing, caller, "moot")
+
+    assert evaluation.ready is (case == "operator")
+    if case != "operator":
+        assert evaluation.error == "no_work_close_forbidden"
 
 
 @pytest.mark.asyncio
@@ -127,7 +194,9 @@ async def test_orchestrator_no_work_close_skips_commit_and_step_gates(
     closing: Closing, monkeypatch: pytest.MonkeyPatch, reason: str
 ) -> None:
     monkeypatch.setattr(lifecycle, "step_requirements", AsyncMock(return_value=MISSING_STEPS))
-    orchestrator = _seat(closing.db, closing.project_id, "orchestrator")
+    orchestrator = _seat(
+        closing.db, closing.project_id, "orchestrator", capabilities=("close_without_work",)
+    )
 
     evaluation = await _evaluate(closing, orchestrator, reason)
 
@@ -154,7 +223,9 @@ async def test_orchestrator_no_work_close_still_waits_for_open_children(
         parent_task_id=closing.task.id,
         validation_criteria="Still open.",
     )
-    orchestrator = _seat(closing.db, closing.project_id, "orchestrator")
+    orchestrator = _seat(
+        closing.db, closing.project_id, "orchestrator", capabilities=("close_without_work",)
+    )
 
     evaluation = await _evaluate(closing, orchestrator, "moot")
 
@@ -167,7 +238,9 @@ async def test_orchestrator_no_work_close_records_its_reason_and_caller(
     closing: Closing, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(lifecycle, "step_requirements", AsyncMock(return_value=MISSING_STEPS))
-    orchestrator = _seat(closing.db, closing.project_id, "orchestrator")
+    orchestrator = _seat(
+        closing.db, closing.project_id, "orchestrator", capabilities=("close_without_work",)
+    )
     evaluation = await _evaluate(closing, orchestrator, "moot")
     assert evaluation.ready
 

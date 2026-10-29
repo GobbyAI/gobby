@@ -57,7 +57,8 @@ def session_has_capability_or_operator(db: HubDatabase, session_id: str, capabil
         return False
     role = SessionVariableManager(db).get_variable_subset(session_id, ("_agent_type",))
     if (
-        not session.agent_run_id
+        session.parent_session_id is None
+        and not session.agent_run_id
         and not session.agent_depth
         and role.get("_agent_type")
         in (

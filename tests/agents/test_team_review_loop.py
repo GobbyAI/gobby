@@ -1060,10 +1060,17 @@ async def test_moot_task_reviewer_records_disposition_and_closes(world: TeamWorl
     # Only the Orchestrator closes a no-work disposition; the Dev Manager's closing record is refused.
     with session_context_for_test(team.manager):
         refused = await task_tools.call("close_task", {"task_id": task_id, "reason": "moot"})
-    assert refused["error"] == "no_work_close_orchestrator_only", refused
+    assert refused["error"] == "no_work_close_forbidden", refused
     assert LocalTaskManager(db).get_task(task_id).closed_at is None
     orchestrator = world.case.session("orchestrator")
-    SessionVariableManager(db).set_variable(orchestrator, "_agent_type", "orchestrator")
+    grant_step_writes(
+        db,
+        orchestrator,
+        world.case.project_id,
+        "orchestrator",
+        (),
+        capabilities=("close_without_work",),
+    )
     with session_context_for_test(orchestrator):
         closed = await task_tools.call("close_task", {"task_id": task_id, "reason": "moot"})
     assert closed.get("closed") is True, closed
