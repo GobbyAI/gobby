@@ -241,6 +241,8 @@ def _layout(case_dir: Path) -> dict[str, str]:
         "main": root / "main",
         "bin": root / "bin",
         "tmp": root / "tmp",
+        "darwin_temp": root / "darwin-temp",
+        "darwin_cache": root / "darwin-cache",
     }
     named = {name: str(path) for name, path in layout.items()}
     named["run_root"] = str(root / "gobby-home" / "run" / "sandbox" / _RUN_ID)
@@ -356,7 +358,7 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
 
     env["CARGO_TARGET_DIR"] = ensure_agent_cargo_target_dir(workspace, str(inputs["project_id"]))
     spawned = sandbox_config_for_spawn(
-        config, env, agent_name=None, project_path=str(main), resume_metadata_json=None
+        config, env, agent_name=None, project_config=main_config, resume_metadata_json=None
     )
     assert spawned is not None
 
@@ -404,6 +406,9 @@ def _evaluate(
     _materialize(inputs, layout)
     _pin_environment(monkeypatch, inputs["env"])
     monkeypatch.setattr(tempfile, "tempdir", layout["tmp"])
+    monkeypatch.setattr(
+        os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
+    )
     _pin_checkout(layout)
     settings, env = _run_chain(inputs)
     return settings, env, layout
@@ -417,6 +422,9 @@ def _refusal(
     _materialize(inputs, layout)
     _pin_environment(monkeypatch, inputs["env"])
     monkeypatch.setattr(tempfile, "tempdir", layout["tmp"])
+    monkeypatch.setattr(
+        os, "confstr", lambda key: layout[{65537: "darwin_temp", 65538: "darwin_cache"}[key]]
+    )
     _pin_checkout(layout)
     try:
         _run_chain(inputs)
