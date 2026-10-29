@@ -166,15 +166,9 @@ class ChatLifecycleMixin:
         # Normalize MCP fields using shared logic (same as CLI adapters)
         if data:
             from gobby.hooks.normalization import normalize_tool_fields
-            from gobby.workflows.task_claim_state import effective_tool_cwd
 
             if isinstance(project_path, str) and project_path:
                 data = {"cwd": project_path, **data}
-            tool_input = data.get("tool_input")
-            if isinstance(tool_input, dict):
-                tool_cwd = effective_tool_cwd(data.get("cwd"), data)
-                if tool_cwd and any(key in tool_input for key in ("workdir", "cwd")):
-                    data = {**data, "tool_input": {**tool_input, "workdir": tool_cwd}}
             # Shell command analysis can run Git; keep it off the event loop.
             data = await asyncio.to_thread(normalize_tool_fields, data)
 

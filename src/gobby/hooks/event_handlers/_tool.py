@@ -180,6 +180,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         self._event_loop,
                         self.logger,
                         label="begin_git_operation",
+                        raise_errors=True,
                     )
                     if started is not True:
                         raise ValueError(
@@ -210,7 +211,11 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     )
                 return HookResponse(
                     decision="block",
-                    reason=str(exc)
+                    reason=(
+                        f"Git operation ownership preflight failed: {exc}"
+                        if isinstance(roots, list)
+                        else str(exc)
+                    )
                     if isinstance(exc, ValueError)
                     else (
                         "Git operation blocked: operation ownership preflight failed. "

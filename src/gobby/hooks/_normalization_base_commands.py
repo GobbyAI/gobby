@@ -132,7 +132,15 @@ def unwrap_execution_command(
     # Explicit project changes such as uv sync/lock are classified separately.
     while parts:
         command = shell_command_name(parts[0])
-        if command in {"uv", "uvx"}:
+        if (
+            command == "rtk"
+            and parts[1:2]
+            and parts[1] in {"uv", "ruff", "npx", "bunx", "prettier"}
+        ):
+            # These RTK routes preserve the runner/formatter argv. Other RTK
+            # subcommands (e.g. format, read, recall) have their own semantics.
+            index = 1
+        elif command in {"uv", "uvx"}:
             tool_run = command == "uvx"
             parsed = _uv_options(parts, 1, cwd)
             if parsed is None:

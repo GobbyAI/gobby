@@ -204,6 +204,22 @@ def extract_functions_exec_workdir(arguments: Any) -> str | None:
     return _literal_workdir(fields.get("workdir")) if fields is not None else None
 
 
+def functions_exec_shell_input(arguments: Any) -> dict[str, str] | None:
+    """Normalize one proven literal shell call for native and managed before hooks."""
+    if isinstance(arguments, dict):
+        arguments = arguments.get("arguments")
+    if validate_functions_exec_wrapper(arguments) is not None:
+        return None
+    command = extract_functions_exec_command(arguments)
+    if command is None:
+        return None
+    tool_input = {"command": command}
+    workdir = extract_functions_exec_workdir(arguments)
+    if workdir is not None:
+        tool_input["workdir"] = workdir
+    return tool_input
+
+
 def _functions_exec_arguments(arguments: Any) -> dict[str, Any] | None:
     """Read a single literal argument object, rejecting computed or overwritten fields."""
     if not isinstance(arguments, str):
@@ -587,6 +603,7 @@ class ExecutionChainCorrelator:
         self._ambiguous_cells: dict[str, None] = {}
         self._ambiguous_sessions: dict[str, None] = {}
         self._live_sequence = 0
+        self._overflowed = False
 
     def register_call(
         self,
@@ -826,9 +843,11 @@ class ExecutionChainCorrelator:
             "sessions": {key: value.to_state() for key, value in self._sessions.items()},
             "ambiguous_cells": list(self._ambiguous_cells),
             "ambiguous_sessions": list(self._ambiguous_sessions),
+            "complete": not self._overflowed,
         }
 
     def hydrate_state(self, state: Mapping[str, Any]) -> None:
+        self._overflowed = state.get("complete") is False
         self._calls = self._hydrate_map(state.get("calls"))
         self._cells = self._hydrate_map(state.get("cells"))
         self._sessions = self._hydrate_map(state.get("sessions"))
@@ -873,12 +892,14 @@ class ExecutionChainCorrelator:
         ):
             pending.pop(key, None)
             if len(ambiguous) >= self._max_pending and key not in ambiguous:
+                self._overflowed = True
                 ambiguous.pop(next(iter(ambiguous)))
             ambiguous[key] = None
             return
         if ambiguous is not None and key in ambiguous:
             return
         if key not in pending and len(pending) >= self._max_pending:
+            self._overflowed = True
             pending.pop(next(iter(pending)))
         pending[key] = execution
 
