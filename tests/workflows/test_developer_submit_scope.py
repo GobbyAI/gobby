@@ -57,6 +57,10 @@ async def _submit_seat(db: HubDatabase) -> SeatRun:
         "python3 -I -m black --check src/example.py",
         "npx --package prettier prettier --check src/example.ts",
         "uv run --no-sync git status --short",
+        "python3.14 -I -m ruff format --check src/example.py",
+        "npx prettier@3 --check src/example.ts",
+        "npx prettier -c src/example.ts",
+        "cargo +nightly fmt --check",
         "GOBBY_TEST_PROTECT=1 uv run --no-sync pytest tests/test_example.py -q",
     ],
 )
@@ -92,6 +96,12 @@ async def test_submit_allows_read_and_audit_commands(temp_db: HubDatabase, comma
         "python3 -I -m black src/example.py",
         "npx --package prettier prettier --write src/example.ts",
         "uv run --no-sync git add src/example.py",
+        "python3.14 -I -m ruff format src/example.py",
+        "npx prettier@3 --write src/example.ts",
+        "cargo +nightly fmt",
+        "npx --package prettier -c 'prettier --write src/example.ts'",
+        "npx --package prettier --call 'prettier --write src/example.ts'",
+        "npx --package prettier --call='prettier --write src/example.ts'",
     ],
 )
 async def test_submit_refuses_candidate_mutation(temp_db: HubDatabase, command: str) -> None:

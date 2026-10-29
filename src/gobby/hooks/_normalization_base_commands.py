@@ -1,5 +1,6 @@
 """Classify plain shell commands independently of recursive shell execution."""
 
+import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -45,7 +46,6 @@ from gobby.hooks.code_navigation import (
     source_read_navigation_metadata,
 )
 
-
 _UV_VALUE_OPTIONS = frozenset(
     "--extra --no-extra --group --no-group --only-group --no-editable-package "
     "--env-file -w --with --with-editable --with-requirements --package --python-platform "
@@ -63,13 +63,13 @@ def _wrapper_options_end(parts: list[str], start: int, value_options: frozenset[
     while start < len(parts) and parts[start].startswith("-"):
         if parts[start] == "--":
             return start + 1
-        if parts[start] in {"-m", "-c"}:
+        if parts[start] in {"-m", "-c"} or parts[start].partition("=")[0] == "--call":
             break
         start += 2 if parts[start] in value_options else 1
     return start
 
 
-def _execution_command(parts: list[str]) -> list[str]:
+def _execution_command(parts: list[str]) -> list[str] | None:
     """Expose the executable behind package runners without changing generic write scope."""
     while parts:
         command = shell_command_name(parts[0])
@@ -82,7 +82,14 @@ def _execution_command(parts: list[str]) -> list[str]:
                 index += 1
         elif command in {"npx", "bunx"}:
             index = _wrapper_options_end(parts, 1, frozenset({"--package", "-p"}))
-        elif command in {"python", "python3"}:
+            parts = parts[index:]
+            if parts and (parts[0] == "-c" or parts[0].partition("=")[0] == "--call"):
+                # A shell program string is not an executable argv; submit must fail closed.
+                return None
+            if parts and "/" not in parts[0] and not parts[0].startswith("@"):
+                parts = [parts[0].partition("@")[0], *parts[1:]]
+            continue
+        elif re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", command):
             index = _wrapper_options_end(
                 parts, 1, frozenset({"-W", "-X", "--check-hash-based-pycs"})
             )
@@ -111,7 +118,10 @@ def _formatter_mutates(parts: list[str]) -> bool:
         return not {"--check", "--check-only", "--diff"}.intersection(arguments)
     if command == "prettier":
         return bool({"--write", "-w"}.intersection(arguments))
-    return command == "cargo" and parts[1:2] == ["fmt"] and "--check" not in arguments
+    if command == "cargo":
+        index = 2 if len(parts) > 1 and parts[1].startswith("+") else 1
+        return parts[index : index + 1] == ["fmt"] and "--check" not in arguments
+    return False
 
 
 def classify_base_command(
@@ -140,6 +150,8 @@ def classify_base_command(
         return git_metadata
 
     executed = _execution_command(parts)
+    if executed is None:
+        return _ShellSegmentMetadata("execute", extra={"canonical_unresolved_execution": True})
     if (
         executed
         and shell_command_name(executed[0]) == "git"
