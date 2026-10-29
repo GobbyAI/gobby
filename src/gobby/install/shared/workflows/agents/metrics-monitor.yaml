@@ -1,4 +1,5 @@
 name: metrics-monitor
+monitor_report_recipients: [triage, log-monitor]
 capabilities: [accept_resume_retype]
 description: |
   Metrics Monitor seat. Observe daemon RSS, CPU and uptime through local Prometheus
@@ -79,10 +80,7 @@ step_workflow:
     required_skills_loaded: false
     tick_done: false
     tick_window: null
-    triage_session: null
-    log_monitor_session: null
-    triage_reported: false
-    log_monitor_reported: false
+    _reported_to: []
 
   steps:
     - name: load_skills
@@ -151,7 +149,7 @@ step_workflow:
       description: "Report the same window to both observers"
       status_message: |
         Send the same Systems nominal or EVENT=ALARM evidence to both
-        vars.triage_session and vars.log_monitor_session with target="session".
+        Triage and Log Monitor with target="session".
         Both sends must succeed before the next tick.
       allowed_tools:
         - "mcp__gobby__call_tool"
@@ -167,4 +165,4 @@ step_workflow:
           action: advance_seat
       transitions:
         - to: tick
-          when: "vars.triage_reported and vars.log_monitor_reported"
+          when: "not vars.tick_done"

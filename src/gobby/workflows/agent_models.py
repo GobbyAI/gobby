@@ -200,6 +200,10 @@ class AgentDefinitionBody(BaseModel):
             "The daemon and the operator's own terminal are exempt."
         ),
     )
+    monitor_report_recipients: list[StrictStr] = Field(
+        default_factory=list,
+        description="Enabled definitions that must receive the same report to finish a monitor tick.",
+    )
     task_step_writes: list[Literal["test", "implementation", "review", "closing"]] = Field(
         default_factory=list,
         description="Task step records this definition may write through dedicated tools.",

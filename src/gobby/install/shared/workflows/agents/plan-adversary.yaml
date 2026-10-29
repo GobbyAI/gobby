@@ -1,5 +1,5 @@
 name: plan-adversary
-capabilities: [accept_resume_retype]
+capabilities: [accept_resume_retype, track_plan_consensus]
 description: |
   Plan Adversary seat for the team-planning runbook. Attacks the plan the writer
   passes it, reaches consensus with the writer over send_message, and stamps

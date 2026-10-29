@@ -1,4 +1,5 @@
 name: log-monitor
+monitor_report_recipients: [triage]
 capabilities: [accept_resume_retype]
 description: |
   Log Monitor seat. Monitor-only: every ten minutes it checks daemon health,
