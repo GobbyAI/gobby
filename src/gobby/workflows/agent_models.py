@@ -172,6 +172,17 @@ class AgentDefinitionBody(BaseModel):
     # Grants only the configured, enrolled operator destination, never arbitrary recipients.
     operator_messaging: StrictBool = False
     communications_admin: StrictBool = False
+    capabilities: list[StrictStr] = Field(
+        default_factory=list,
+        description="Permissions granted to this definition, independent of its name.",
+    )
+    message_sender_capabilities: list[StrictStr] = Field(
+        default_factory=list,
+        description=(
+            "Incoming seat messages require any listed sender capability; empty allows all. "
+            "The daemon and the operator's own terminal are exempt."
+        ),
+    )
     task_step_writes: list[Literal["test", "implementation", "review", "closing"]] = Field(
         default_factory=list,
         description="Task step records this definition may write through dedicated tools.",

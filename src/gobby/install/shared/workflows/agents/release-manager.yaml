@@ -1,4 +1,5 @@
 name: release-manager
+capabilities: [follow_relaunch]
 description: |
   Release Manager seat. Rebuilds and promotes the Rust binaries whose crates
   changed. The Orchestrator owns every daemon restart and activation.

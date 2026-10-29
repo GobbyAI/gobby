@@ -1,4 +1,6 @@
 name: orchestrator
+capabilities: [reset_review_epoch, message_restricted_seats, follow_relaunch]
+message_sender_capabilities: [message_restricted_seats]
 description: |
   Orchestrator seat. Sets priority and owners, rules on contracts, launches the
   Support and DevTeam runbooks, and runs restarts and cutovers with notices

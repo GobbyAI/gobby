@@ -6,7 +6,6 @@ Handles reopen, escalate, and de_escalate tool registrations.
 import logging
 from typing import Any
 
-from gobby.agents.team_communications import triage_or_operator
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -24,6 +23,7 @@ from gobby.tasks.state_semantics import (
     get_claimed_session_id,
     projected_task_state,
 )
+from gobby.workflows.agent_resolver import session_has_capability_or_operator
 
 logger = logging.getLogger(__name__)
 
@@ -307,15 +307,17 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
             )
 
         if task.review_fail_count >= REVIEW_REJECTION_LIMIT:
-            # Resetting an exhausted review starts a new epoch: an audited Triage or operator act.
+            # Resetting an exhausted review requires a declared permission or the operator.
             try:
                 caller = ctx.resolve_session_id(session_id)
             except ValueError:
                 caller = None
-            if caller is None or not triage_or_operator(ctx.task_manager.db, caller):
+            if caller is None or not session_has_capability_or_operator(
+                ctx.task_manager.db, caller, "reset_review_epoch"
+            ):
                 return task_error(
-                    f"Task {task_id} exhausted its review epoch; only Triage or the operator "
-                    "resets it.",
+                    f"Task {task_id} exhausted its review epoch; resetting requires the "
+                    "reset_review_epoch capability or the operator's terminal.",
                     TaskToolErrorCode.REVIEW_RESET_FORBIDDEN,
                 )
 

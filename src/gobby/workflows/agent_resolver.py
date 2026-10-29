@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 
@@ -9,9 +10,64 @@ from gobby.storage.definitions.agents import (
     reject_terminal_backend,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
+from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import AgentDefinitionBody, AgentSelector, AgentWorkflows
+from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger(__name__)
+
+
+def session_agent_definition(
+    db: HubDatabase, session: Session
+) -> tuple[AgentDefinitionBody, str] | None:
+    """Resolve a session's enabled installed definition and its content digest."""
+    agent_type = (
+        SessionVariableManager(db)
+        .get_variable_subset(session.id, ("_agent_type",))
+        .get("_agent_type")
+    )
+    if not isinstance(agent_type, str) or not agent_type or session.project_id is None:
+        return None
+    row = AgentDefinitionManager(db).get_by_name(agent_type, session.project_id)
+    if row is None or not row.enabled:
+        return None
+    try:
+        body = AgentDefinitionBody.model_validate({**row.definition_json, "name": row.name})
+    except ValidationError:
+        logger.warning("Invalid active agent definition for session %s", session.id)
+        return None
+    digest = hashlib.sha256(
+        json.dumps(row.definition_json, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return body, digest
+
+
+def session_has_capability(db: HubDatabase, session_id: str, capability: str) -> bool:
+    """Whether a known session's enabled definition grants this permission."""
+    session = SessionManager(db).get(session_id)
+    resolved = session_agent_definition(db, session) if session is not None else None
+    return resolved is not None and capability in resolved[0].capabilities
+
+
+def session_has_capability_or_operator(db: HubDatabase, session_id: str, capability: str) -> bool:
+    """Recognize a declared permission or the operator's own unspawned terminal."""
+    session = SessionManager(db).get(session_id)
+    if session is None:
+        return False
+    role = SessionVariableManager(db).get_variable_subset(session_id, ("_agent_type",))
+    if (
+        not session.agent_run_id
+        and not session.agent_depth
+        and role.get("_agent_type")
+        in (
+            None,
+            "default",
+        )
+    ):
+        return True
+    resolved = session_agent_definition(db, session)
+    return resolved is not None and capability in resolved[0].capabilities
 
 
 class AgentResolutionError(Exception):

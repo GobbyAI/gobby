@@ -39,7 +39,7 @@ from gobby.tasks.landing_policy import (
     read_freeze,
     requires_project_sync,
 )
-from gobby.tasks.lifecycle_access import is_operator_coordinator, session_agent_definition
+from gobby.tasks.lifecycle_access import is_operator_coordinator
 from gobby.tasks.step_records import (
     SECURITY_REVIEWER,
     TaskStepRecord,
@@ -48,6 +48,7 @@ from gobby.tasks.step_records import (
 )
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 from gobby.utils.git import git_subprocess_env
+from gobby.workflows.agent_resolver import session_agent_definition
 
 __all__ = ["LandingResult", "land_candidate", "main_checkout_target"]
 

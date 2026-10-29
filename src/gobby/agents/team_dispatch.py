@@ -31,7 +31,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.storage.team_records import EPIC_MODE
-from gobby.tasks.lifecycle_access import session_agent_definition
+from gobby.workflows.agent_resolver import session_agent_definition
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
 

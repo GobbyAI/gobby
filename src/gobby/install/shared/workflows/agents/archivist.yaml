@@ -1,4 +1,5 @@
 name: archivist
+capabilities: [follow_relaunch]
 description: |
   Archivist seat. Keeps the daily digest from the Orchestrator's updates
   and sends each report as a markdown attachment to the configured operator destination.

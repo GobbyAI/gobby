@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-
-from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.utils.machine_id import require_machine_id
-from gobby.workflows.agent_models import AgentDefinitionBody
-from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.agent_resolver import session_agent_definition
 
 
 class CrossProjectTaskForbidden(ValueError):
@@ -25,29 +20,6 @@ class CrossProjectTaskForbidden(ValueError):
 
 
 OPERATOR_ROLES = frozenset({"assistant", "orchestrator"})
-
-
-def session_agent_definition(
-    db: HubDatabase, session: Session
-) -> tuple[AgentDefinitionBody, str] | None:
-    """The enabled installed definition a session runs as, with its content digest."""
-    agent_type = (
-        SessionVariableManager(db)
-        .get_variable_subset(session.id, ("_agent_type",))
-        .get("_agent_type")
-    )
-    if not isinstance(agent_type, str) or not agent_type or session.project_id is None:
-        return None
-    definition = AgentDefinitionManager(db).get_by_name(agent_type, session.project_id)
-    if definition is None or not definition.enabled:
-        return None
-    body = AgentDefinitionBody.model_validate(
-        {**definition.definition_json, "name": definition.name}
-    )
-    digest = hashlib.sha256(
-        json.dumps(definition.definition_json, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    return body, digest
 
 
 def session_grants(db: HubDatabase, session_id: str, step: str) -> bool:

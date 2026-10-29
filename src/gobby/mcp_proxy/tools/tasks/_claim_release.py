@@ -21,11 +21,11 @@ from gobby.storage.team_records import EPIC_MODE
 from gobby.tasks.attributed_roots import is_ignorable_attributed_root
 from gobby.tasks.lifecycle_access import (
     is_operator_coordinator,
-    session_agent_definition,
     session_grants,
 )
 from gobby.tasks.step_records import fixer_round, list_task_step_records
 from gobby.utils.session_context import get_current_session_id
+from gobby.workflows.agent_resolver import session_agent_definition
 from gobby.workflows.task_claim_state import task_edited_checkout_paths, task_edited_file_set
 from gobby.workflows.task_dirty_state import task_dirty_paths
 

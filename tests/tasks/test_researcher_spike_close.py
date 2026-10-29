@@ -11,7 +11,6 @@ from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.lifecycle_access import session_agent_definition
 from gobby.tasks.step_records import (
     StepRecordError,
     StepSubmission,
@@ -22,6 +21,7 @@ from gobby.tasks.step_records import (
 )
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.agent_resolver import session_agent_definition
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.agent_definitions import seed_seat
 from tests.tasks.test_close_invariants import _set_close_policy, git

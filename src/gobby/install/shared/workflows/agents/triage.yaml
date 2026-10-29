@@ -1,4 +1,5 @@
 name: triage
+capabilities: [reset_review_epoch, message_restricted_seats, follow_relaunch]
 description: Triage seat. Receives the reports meant for the Orchestrator, bundles them, and wakes the Orchestrator with one digest so it is not the message bottleneck.
 version: "1.0"
 tags: [gobby, seat]

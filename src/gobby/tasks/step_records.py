@@ -28,11 +28,11 @@ from gobby.storage.tasks._updates import update_task
 from gobby.tasks.lifecycle_access import (
     CrossProjectTaskForbidden,
     resolve_lifecycle_task,
-    session_agent_definition,
 )
 from gobby.utils.datetime import utc_now
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.agent_resolver import session_agent_definition
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import task_edited_file_set
 
