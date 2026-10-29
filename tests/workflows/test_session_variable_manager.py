@@ -822,6 +822,62 @@ def test_record_edited_file_tracks_the_active_claimed_task(db: Any, tmp_path: Pa
     assert variables["task_edited_file_checkouts"] == {"task-1": {str(tmp_path): ["src/app.py"]}}
 
 
+@pytest.mark.parametrize("observation", ["edit", "shell"])
+def test_delayed_edit_observation_keeps_latest_content(
+    db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, observation: str
+) -> None:
+    """An earlier hook waiting for the variable lock must not publish an older blob."""
+    from gobby.workflows.dirty_edit_grants import content_recorded_paths
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    manager = SessionVariableManager(db)
+    manager.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}, "active_task_id": "task-1"})
+    path = tmp_path / "app.py"
+    if observation == "shell":
+        path.write_text("before shell\n")
+        manager.merge_variables(
+            S1,
+            {
+                "claimed_shell_snapshots": {
+                    "format-call": {
+                        "checkout_root": str(tmp_path),
+                        "owned": {"app.py": {"task_id": "task-1", "digest": "before"}},
+                        "output_path": None,
+                    }
+                }
+            },
+        )
+    path.write_text("first edit\n")
+    first_waiting = threading.Event()
+    second_finished = threading.Event()
+    original_mutate = manager._mutate_variables
+
+    def delayed_mutate(*args: Any, **kwargs: Any) -> Any:
+        first_waiting.set()
+        assert second_finished.wait(timeout=10), "newer edit did not complete"
+        return original_mutate(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "_mutate_variables", delayed_mutate)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        if observation == "shell":
+            first = pool.submit(manager.adopt_claimed_shell_edits, S1, "format-call")
+        else:
+            first = pool.submit(
+                manager.record_edited_file, S1, "app.py", checkout_root=str(tmp_path)
+            )
+        try:
+            assert first_waiting.wait(timeout=10), "earlier edit did not reach ledger lock"
+            path.write_text("second edit\n")
+            SessionVariableManager(db).record_edited_file(S1, "app.py", checkout_root=str(tmp_path))
+        finally:
+            second_finished.set()
+        first.result(timeout=10)
+
+    # A new manager models the daemon reconstructing its state after restart.
+    variables = SessionVariableManager(db).get_variables(S1)
+    assert content_recorded_paths(variables, str(tmp_path), ["app.py"]) == {"app.py"}
+
+
 def test_record_edited_files_atomically_preserves_order_and_deduplicates(db: Any) -> None:
     from gobby.workflows.state_manager import SessionVariableManager
 
