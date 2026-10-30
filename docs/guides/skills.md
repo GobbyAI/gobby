@@ -109,7 +109,7 @@ Gobby reads this namespace for context-aware skill selection:
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `audience` | string | Exactly `all`, `interactive`, `autonomous`, `orchestrator`, or `worker` |
+| `audience` | string | A non-empty audience name, such as `all`, `interactive`, `autonomous`, or a custom name |
 | `depth` | int/list/string | Exact depth, list of depths, or range such as `"0-2"` |
 | `steps` | list | Workflow step names where the skill applies |
 | `task_categories` | list | Task categories such as `code`, `docs`, or `research` |
@@ -118,7 +118,7 @@ Gobby reads this namespace for context-aware skill selection:
 | `priority` | int | Lower values inject earlier |
 | `internal` | boolean | Alternate location for the internal-skill flag |
 
-The parser recognizes these audience fields and rejects other audience names.
+The parser recognizes these audience fields and rejects blank or non-string audience values.
 They describe intended selection context; they are not proof of automatic body
 injection. See [Instruction selection](#instruction-selection).
 

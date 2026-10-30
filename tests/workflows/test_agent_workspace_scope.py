@@ -17,6 +17,7 @@ import yaml
 from gobby.agents.agent_workspaces import predecessor_folder_readable
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -1298,6 +1299,11 @@ def test_glob_scope_checks_do_not_enumerate_directories(
         r"grep -E 'import (os|sys)*(\.path/)' src/x.py",
         "grep -E '(a|b)*(c)' README.md",
         "grep -E 'v?(1|2)' README.md",
+        'rg -n "(_agent_type|agent_name|agent_type|agent_definition|\\.name|\\.role|audience)'
+        ".*(==|!=| in | not in ).*(triage|orchestrator|dev-manager|assistant|developer|"
+        'researcher|reviewer|test-writer)|(_agent_type|agent_name|agent_type).*get\\(" '
+        "src/gobby/agents src/gobby/workflows src/gobby/mcp_proxy src/gobby/tasks "
+        "src/gobby/install/shared/workflows --glob '*.py' --glob '*.yaml' -m 50",
     ],
 )
 def test_regex_data_operands_are_not_extglob_paths(
@@ -1845,6 +1851,17 @@ async def test_exemptions_and_variable_protection(
     )
     sessions = SessionManager(temp_db)
     for role in ("assistant", "orchestrator", "default"):
+        AgentDefinitionManager(temp_db).create(
+            role,
+            {
+                "name": role,
+                "prompts": {"agent": "Maintain assigned session state."},
+                "workflows": {"rule_selectors": {"include": []}},
+                "capabilities": ["write_session_variables"],
+            },
+            project_id=sample_project["id"],
+        )
+        SessionVariableManager(temp_db).set_variable(caller, "_agent_type", role)
         for key in (
             "_agent_workspace_dir",
             "_agent_workspace_epic_dir",

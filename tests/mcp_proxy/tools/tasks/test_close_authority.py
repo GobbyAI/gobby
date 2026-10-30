@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,14 +16,17 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._crud import create_crud_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.step_records import StepRequirements
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.isolated_checkout import write_project_marker
 
 pytestmark = pytest.mark.unit
 
@@ -41,15 +45,204 @@ class Closing:
     task: Task
 
 
-def _seat(db: HubDatabase, project_id: str, agent_type: str) -> str:
+def _seat(
+    db: HubDatabase,
+    project_id: str,
+    agent_type: str,
+    *,
+    capabilities: tuple[str, ...] = (),
+    definition_fields: dict[str, Any] | None = None,
+) -> str:
     session = SessionManager(db).register(
         external_id=f"close-authority-{agent_type}",
         machine_id=require_machine_id(),
         source="codex",
         project_id=project_id,
     )
+    definitions = AgentDefinitionManager(db)
+    if definitions.get_by_name(agent_type, project_id) is None:
+        definitions.create(
+            agent_type,
+            {
+                "name": agent_type,
+                "prompts": {"agent": "Apply the declared task close policy."},
+                "workflows": {"rule_selectors": {"include": []}},
+                "capabilities": list(capabilities),
+                **(definition_fields or {}),
+            },
+            project_id=project_id,
+        )
     SessionVariableManager(db).set_variable(session.id, "_agent_type", agent_type)
     return session.id
+
+
+def _protected_seat(closing: Closing, name: str) -> str:
+    return _seat(
+        closing.db,
+        closing.project_id,
+        name,
+        capabilities=("close_without_work",),
+        definition_fields={
+            "respect_task_protections": True,
+            "task_close_reasons": ["moot", "superseded"],
+        },
+    )
+
+
+def _protection_policy(closing: Closing, policy: dict[str, object]) -> None:
+    checkout = LocalProjectCheckoutManager(closing.db).get(require_machine_id(), closing.project_id)
+    assert checkout is not None
+    marker = Path(checkout.root_path) / ".gobby" / "project.json"
+    data = json.loads(marker.read_text())
+    marker.write_text(json.dumps({**data, "task_protection_policy": policy}))
+
+
+@pytest.mark.parametrize("name", ["consolidator", "fixture-backlog"])
+@pytest.mark.parametrize("operation", ["update_task", "close_task"])
+@pytest.mark.asyncio
+async def test_task_protection_is_declared_in_definition_and_project(
+    closing: Closing, name: str, operation: str
+) -> None:
+    closing.manager.release_task_claim(closing.task.id)
+    closing.manager.update_task(closing.task.id, labels=["fixture-held"])
+    _protection_policy(closing, {"labels": ["fixture-held"]})
+    seat = _protected_seat(closing, name)
+    with session_context_for_test(seat):
+        if operation == "update_task":
+            update = create_crud_registry(closing.context).get_tool("update_task")
+            assert update is not None
+            result = update(task_id=closing.task.id, title="Should not change")
+            assert result.get("error"), result
+        else:
+            evaluation = await _evaluate(closing, seat, "moot")
+            assert not evaluation.ready
+    assert closing.manager.get_task(closing.task.id).title == closing.task.title
+
+
+@pytest.mark.asyncio
+async def test_consolidator_name_does_not_impose_undeclared_protection(closing: Closing) -> None:
+    closing.manager.release_task_claim(closing.task.id)
+    closing.manager.update_task(closing.task.id, labels=["deferred-by-josh"])
+    seat = _seat(
+        closing.db, closing.project_id, "consolidator", capabilities=("close_without_work",)
+    )
+    evaluation = await _evaluate(closing, seat, "moot")
+    assert evaluation.ready
+
+
+@pytest.mark.parametrize("root_identity", ["number", "uuid", "uppercase_uuid"])
+@pytest.mark.asyncio
+async def test_project_protection_selects_custom_subtree_roots(
+    closing: Closing, root_identity: str
+) -> None:
+    closing.manager.release_task_claim(closing.task.id)
+    root = closing.manager.create_task(
+        closing.project_id,
+        "Custom protected root",
+        task_type="epic",
+        category="code",
+        validation_criteria="Protect descendants.",
+    )
+    closing.manager.update_task(closing.task.id, parent_task_id=root.id)
+    reference = f"#{root.seq_num}" if root_identity == "number" else root.id
+    if root_identity == "uppercase_uuid":
+        reference = reference.upper()
+    _protection_policy(closing, {"subtree_roots": [reference]})
+    seat = _protected_seat(closing, "fixture-root-policy")
+    evaluation = await _evaluate(closing, seat, "moot")
+    assert evaluation.error == "task_protected"
+    assert evaluation.message is not None
+    assert "ancestor task" in evaluation.message
+    _protection_policy(closing, {"subtree_roots": []})
+    unprotected = await _evaluate(closing, seat, "moot")
+    assert unprotected.ready
+
+
+@pytest.mark.parametrize("foreign_claims", [True, False])
+def test_project_controls_foreign_claim_protection(closing: Closing, foreign_claims: bool) -> None:
+    _protection_policy(closing, {"foreign_claims": foreign_claims})
+    seat = _protected_seat(closing, "fixture-claim-policy")
+    update = create_crud_registry(closing.context).get_tool("update_task")
+    assert update is not None
+    with session_context_for_test(seat):
+        result = update(task_id=closing.task.id, title="Policy-approved edit")
+    assert bool(result.get("error")) is foreign_claims
+    expected_title = closing.task.title if foreign_claims else "Policy-approved edit"
+    assert closing.manager.get_task(closing.task.id).title == expected_title
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [{"labels": "held"}, {"subtree_roots": ["invalid"]}, {"foreign_claims": "false"}],
+)
+@pytest.mark.parametrize("operation", ["update_task", "close_task"])
+@pytest.mark.asyncio
+async def test_invalid_project_protection_refuses_mutation(
+    closing: Closing, policy: dict[str, object], operation: str
+) -> None:
+    closing.manager.release_task_claim(closing.task.id)
+    _protection_policy(closing, policy)
+    seat = _protected_seat(closing, "fixture-invalid-policy")
+    with session_context_for_test(seat):
+        if operation == "update_task":
+            update = create_crud_registry(closing.context).get_tool("update_task")
+            assert update is not None
+            result = update(task_id=closing.task.id, title="Should not change")
+            assert "policy unavailable" in result["error"]
+        else:
+            evaluation = await _evaluate(closing, seat, "moot")
+            assert evaluation.error == "task_protection_policy_unavailable"
+    assert closing.manager.get_task(closing.task.id).title == closing.task.title
+
+
+def test_disabled_definition_does_not_bypass_mutation_policy(closing: Closing) -> None:
+    seat = _protected_seat(closing, "fixture-disabled-policy")
+    definitions = AgentDefinitionManager(closing.db)
+    definition = definitions.get_by_name("fixture-disabled-policy", closing.project_id)
+    assert definition is not None
+    definitions.update(definition.id, enabled=False)
+    update = create_crud_registry(closing.context).get_tool("update_task")
+    assert update is not None
+    with session_context_for_test(seat):
+        result = update(task_id=closing.task.id, title="Should not change")
+    assert "enabled, valid active definition" in result["error"]
+    assert closing.manager.get_task(closing.task.id).title == closing.task.title
+
+
+@pytest.mark.parametrize("operation", ["update_task", "close_task"])
+@pytest.mark.asyncio
+async def test_ancestor_uses_its_own_project_protection_policy(
+    closing: Closing, tmp_path: Path, operation: str
+) -> None:
+    other = LocalProjectManager(closing.db).create("ancestor-project")
+    root = tmp_path / "ancestor-project"
+    write_project_marker(root, project_id=other.id, name=other.name)
+    LocalProjectCheckoutManager(closing.db).register(require_machine_id(), other.id, str(root))
+    ancestor = closing.manager.create_task(
+        other.id,
+        "Protected foreign ancestor",
+        task_type="epic",
+        category="code",
+        labels=["other-project-held"],
+        validation_criteria="Respect ancestor project policy.",
+    )
+    other_closing = Closing(closing.db, other.id, closing.manager, closing.context, ancestor)
+    _protection_policy(other_closing, {"labels": ["other-project-held"]})
+    _protection_policy(closing, {"labels": []})
+    closing.manager.release_task_claim(closing.task.id)
+    closing.manager.update_task(closing.task.id, parent_task_id=ancestor.id)
+    seat = _protected_seat(closing, "fixture-cross-project")
+    with session_context_for_test(seat):
+        if operation == "update_task":
+            update = create_crud_registry(closing.context).get_tool("update_task")
+            assert update is not None
+            result = update(task_id=closing.task.id, title="Should not change")
+            assert "other-project-held" in result.get("error", "")
+        else:
+            evaluation = await _evaluate(closing, seat, "moot")
+            assert evaluation.error == "task_protected"
+    assert closing.manager.get_task(ancestor.id).closed_at is None
+    assert closing.manager.get_task(closing.task.id).title == closing.task.title
 
 
 @pytest.fixture
@@ -69,7 +262,12 @@ def closing(temp_db: HubDatabase, sample_git_project: dict[str, Any]) -> Closing
         validation_criteria="Close authority.",
     )
     task = manager.claim_task(created.id, developer)
-    return Closing(temp_db, project_id, manager, RegistryContext(task_manager=manager), task)
+    result = Closing(temp_db, project_id, manager, RegistryContext(task_manager=manager), task)
+    _protection_policy(
+        result,
+        {"labels": ["deferred-by-josh"], "subtree_roots": ["#22978", "#22225"]},
+    )
+    return result
 
 
 async def _evaluate(closing: Closing, seat: str, reason: str) -> CloseEvaluation:
@@ -89,6 +287,27 @@ def _statuses(evaluation: CloseEvaluation) -> dict[int, str]:
     return {gate.item: gate.status for gate in evaluation.checklist.gates}
 
 
+@pytest.mark.parametrize("name", ["orchestrator", "custom-disposer"])
+@pytest.mark.parametrize("granted", [True, False])
+@pytest.mark.parametrize("reason", NO_WORK_REASONS)
+@pytest.mark.asyncio
+async def test_no_work_close_uses_declared_permission(
+    closing: Closing, name: str, granted: bool, reason: str
+) -> None:
+    caller = _seat(
+        closing.db,
+        closing.project_id,
+        name,
+        capabilities=("close_without_work",) if granted else (),
+    )
+
+    evaluation = await _evaluate(closing, caller, reason)
+
+    assert evaluation.ready is granted
+    if not granted:
+        assert evaluation.error == "no_work_close_forbidden"
+
+
 @pytest.mark.parametrize("reason", NO_WORK_REASONS)
 @pytest.mark.asyncio
 async def test_dev_manager_cannot_close_with_a_no_work_reason(
@@ -99,8 +318,44 @@ async def test_dev_manager_cannot_close_with_a_no_work_reason(
     evaluation = await _evaluate(closing, dev_manager, reason)
 
     assert not evaluation.ready
-    assert "Orchestrator" in (evaluation.message or "")
+    assert "close_without_work" in (evaluation.message or "")
     assert closing.manager.get_task(closing.task.id).closed_at is None
+
+
+@pytest.mark.parametrize(
+    "case", ["operator", "default_operator", "spawned", "default_spawned", "disabled"]
+)
+@pytest.mark.asyncio
+async def test_no_work_operator_exemption_and_disabled_grant(closing: Closing, case: str) -> None:
+    if case == "disabled":
+        caller = _seat(
+            closing.db, closing.project_id, "disposer", capabilities=("close_without_work",)
+        )
+        definitions = AgentDefinitionManager(closing.db)
+        definition = definitions.get_by_name("disposer", closing.project_id)
+        assert definition is not None
+        definitions.update(definition.id, enabled=False)
+    else:
+        caller = (
+            SessionManager(closing.db)
+            .register(
+                external_id="unseated-caller",
+                machine_id=require_machine_id(),
+                source="codex",
+                project_id=closing.project_id,
+                parent_session_id=closing.task.claimed_by_session_id if "spawned" in case else None,
+                agent_depth=1 if "spawned" in case else 0,
+            )
+            .id
+        )
+        if case.startswith("default_"):
+            SessionVariableManager(closing.db).set_variable(caller, "_agent_type", "default")
+
+    evaluation = await _evaluate(closing, caller, "moot")
+
+    assert evaluation.ready is ("operator" in case)
+    if "operator" not in case:
+        assert evaluation.error == "no_work_close_forbidden"
 
 
 @pytest.mark.asyncio
@@ -127,7 +382,9 @@ async def test_orchestrator_no_work_close_skips_commit_and_step_gates(
     closing: Closing, monkeypatch: pytest.MonkeyPatch, reason: str
 ) -> None:
     monkeypatch.setattr(lifecycle, "step_requirements", AsyncMock(return_value=MISSING_STEPS))
-    orchestrator = _seat(closing.db, closing.project_id, "orchestrator")
+    orchestrator = _seat(
+        closing.db, closing.project_id, "orchestrator", capabilities=("close_without_work",)
+    )
 
     evaluation = await _evaluate(closing, orchestrator, reason)
 
@@ -154,7 +411,9 @@ async def test_orchestrator_no_work_close_still_waits_for_open_children(
         parent_task_id=closing.task.id,
         validation_criteria="Still open.",
     )
-    orchestrator = _seat(closing.db, closing.project_id, "orchestrator")
+    orchestrator = _seat(
+        closing.db, closing.project_id, "orchestrator", capabilities=("close_without_work",)
+    )
 
     evaluation = await _evaluate(closing, orchestrator, "moot")
 
@@ -167,7 +426,9 @@ async def test_orchestrator_no_work_close_records_its_reason_and_caller(
     closing: Closing, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(lifecycle, "step_requirements", AsyncMock(return_value=MISSING_STEPS))
-    orchestrator = _seat(closing.db, closing.project_id, "orchestrator")
+    orchestrator = _seat(
+        closing.db, closing.project_id, "orchestrator", capabilities=("close_without_work",)
+    )
     evaluation = await _evaluate(closing, orchestrator, "moot")
     assert evaluation.ready
 
@@ -192,7 +453,7 @@ async def test_consolidator_closes_unclaimed_task_without_commit(
 ) -> None:
     closing.manager.release_task_claim(closing.task.id)
     monkeypatch.setattr(lifecycle, "step_requirements", AsyncMock(return_value=MISSING_STEPS))
-    seat = _seat(closing.db, closing.project_id, "consolidator")
+    seat = _protected_seat(closing, "fixture-backlog")
     close = create_lifecycle_registry(closing.context).get_tool("close_task")
     assert close is not None
     with session_context_for_test(seat):
@@ -214,7 +475,7 @@ async def test_consolidator_closes_unclaimed_task_without_commit(
 @pytest.mark.asyncio
 async def test_consolidator_cannot_use_other_close_reasons(closing: Closing, reason: str) -> None:
     closing.manager.release_task_claim(closing.task.id)
-    seat = _seat(closing.db, closing.project_id, "consolidator")
+    seat = _protected_seat(closing, "fixture-backlog")
     evaluation = await _evaluate(closing, seat, reason)
     assert evaluation.error is not None
     assert not evaluation.ready
@@ -224,7 +485,7 @@ async def test_consolidator_cannot_use_other_close_reasons(closing: Closing, rea
 @pytest.mark.asyncio
 async def test_consolidator_superseded_requires_survivor(closing: Closing) -> None:
     closing.manager.release_task_claim(closing.task.id)
-    seat = _seat(closing.db, closing.project_id, "consolidator")
+    seat = _protected_seat(closing, "fixture-backlog")
     with session_context_for_test(seat):
         evaluation = await lifecycle._evaluate_close(
             closing.context,
@@ -251,7 +512,7 @@ async def test_consolidator_no_work_close_preserves_child_gate(
         validation_criteria="Still open.",
     )
     monkeypatch.setattr(lifecycle, "step_requirements", AsyncMock(return_value=MISSING_STEPS))
-    seat = _seat(closing.db, closing.project_id, "consolidator")
+    seat = _protected_seat(closing, "fixture-backlog")
     evaluation = await _evaluate(closing, seat, "moot")
     assert evaluation.error is None
     assert _statuses(evaluation)[1] == "failed"
@@ -264,7 +525,7 @@ async def test_consolidator_no_work_close_preserves_cleanliness_gate(
 ) -> None:
     closing.manager.release_task_claim(closing.task.id)
     monkeypatch.setattr(lifecycle, "step_requirements", AsyncMock(return_value=MISSING_STEPS))
-    seat = _seat(closing.db, closing.project_id, "consolidator")
+    seat = _protected_seat(closing, "fixture-backlog")
     repo = Path(sample_git_project["repo_path"])
     (repo / "unfinished.py").write_text("unfinished = True\n")
     SessionVariableManager(closing.db).merge_variables(
@@ -283,10 +544,15 @@ async def test_consolidator_no_work_close_preserves_cleanliness_gate(
 
 @pytest.mark.parametrize("protection", ("foreign_claim", "deferred-by-josh", "22978", "22225"))
 @pytest.mark.parametrize("operation", ("update_task", "close_task"))
+@pytest.mark.parametrize("policy_source", ("fixture", "repository"))
 @pytest.mark.asyncio
 async def test_consolidator_cannot_mutate_protected_tasks(
-    closing: Closing, protection: str, operation: str
+    closing: Closing, protection: str, operation: str, policy_source: str
 ) -> None:
+    if policy_source == "repository":
+        marker = Path(__file__).resolve().parents[4] / ".gobby" / "project.json"
+        policy = json.loads(marker.read_text()).get("task_protection_policy", {})
+        _protection_policy(closing, policy)
     if protection != "foreign_claim":
         closing.manager.release_task_claim(closing.task.id)
     if protection == "deferred-by-josh":
@@ -315,7 +581,7 @@ async def test_consolidator_cannot_mutate_protected_tasks(
         )
         closing.manager.update_task(closing.task.id, parent_task_id=parent.id)
     before = closing.manager.get_task(closing.task.id)
-    seat = _seat(closing.db, closing.project_id, "consolidator")
+    seat = _protected_seat(closing, "fixture-backlog")
     with session_context_for_test(seat):
         if operation == "update_task":
             update = create_crud_registry(closing.context).get_tool("update_task")
@@ -336,7 +602,7 @@ async def test_consolidator_cannot_mutate_protected_tasks(
 
 def test_consolidator_updates_unprotected_survivor(closing: Closing) -> None:
     closing.manager.release_task_claim(closing.task.id)
-    seat = _seat(closing.db, closing.project_id, "consolidator")
+    seat = _protected_seat(closing, "fixture-backlog")
     update = create_crud_registry(closing.context).get_tool("update_task")
     assert update is not None
     with session_context_for_test(seat):
@@ -378,7 +644,7 @@ async def test_consolidator_cannot_mutate_under_protected_ancestor(
     closing.manager.update_task(closing.task.id, parent_task_id=epic_id)
     monkeypatch.setattr(lifecycle, "step_requirements", AsyncMock(return_value=MISSING_STEPS))
     before = closing.manager.get_task(closing.task.id)
-    seat = _seat(closing.db, closing.project_id, "consolidator")
+    seat = _protected_seat(closing, "fixture-backlog")
     with session_context_for_test(seat):
         if operation == "update_task":
             update = create_crud_registry(closing.context).get_tool("update_task")
@@ -424,7 +690,7 @@ async def test_consolidator_cannot_reparent_across_protected_parent(
             validation_criteria="Unprotected parent.",
         ).id
     before = closing.manager.get_task(closing.task.id)
-    seat = _seat(closing.db, closing.project_id, "consolidator")
+    seat = _protected_seat(closing, "fixture-backlog")
     update = create_crud_registry(closing.context).get_tool("update_task")
     assert update is not None
     with session_context_for_test(seat):

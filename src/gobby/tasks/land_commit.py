@@ -38,9 +38,8 @@ from gobby.tasks.landing_policy import (
     missing_schema_carriers,
     read_freeze,
 )
-from gobby.tasks.lifecycle_access import is_operator_coordinator, session_agent_definition
+from gobby.tasks.lifecycle_access import is_operator_coordinator
 from gobby.tasks.step_records import (
-    SECURITY_REVIEWER,
     TaskStepRecord,
     approved_task_step,
     independent_review_approval,
@@ -48,6 +47,7 @@ from gobby.tasks.step_records import (
 )
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 from gobby.utils.git import git_subprocess_env
+from gobby.workflows.agent_resolver import session_agent_definition
 
 __all__ = ["LandingResult", "land_candidate", "main_checkout_target"]
 
@@ -66,7 +66,6 @@ _LANDING_TIMEOUT = 120.0
 _SECURITY_REVIEW_LABEL = "security-review"
 # Conflicts go to Triage; every other blocker is the caller's to fix.
 _CONFLICTS = frozenset({"base_update_required", "merge_conflict"})
-_ORCHESTRATOR = frozenset({"orchestrator"})
 
 
 class LandingResult(TypedDict, total=False):
@@ -355,20 +354,20 @@ def _refused(refusal: LandingResult, error: str, message: str | None = None) -> 
 
 
 def _manages_task(db: HubDatabase, task: Task, caller_session_id: str) -> bool:
-    """The task's bound Dev Manager lands it; the root Orchestrator is the last resort."""
+    """A definition grants landing to the task's bound manager or a local root."""
     from gobby.agents.team_lifecycle import managed_task_team
 
-    if managed_task_team(db, caller_session_id, task.id) is not None:
-        return True
     caller = SessionManager(db).get(caller_session_id)
     if caller is None:
         return False
     run = LocalAgentRunManager(db).get_by_session(caller.id)
     definition = session_agent_definition(db, caller)
-    if run is not None and run.task_id == task.id and definition is not None:
-        if definition[0].name != "researcher" and "closing" in definition[0].task_step_writes:
+    if definition is not None and "land_tasks" in definition[0].capabilities:
+        if (run is not None and run.task_id == task.id) or managed_task_team(
+            db, caller_session_id, task.id
+        ) is not None:
             return True
-    return is_operator_coordinator(LocalTaskManager(db), caller, roles=_ORCHESTRATOR)
+    return is_operator_coordinator(LocalTaskManager(db), caller, capability="land_tasks")
 
 
 def _review_blockers(
@@ -393,7 +392,7 @@ def _review_blockers(
         and record.status == "approved"
         and record.epoch == task.review_epoch
         and record.commit_sha == sha
-        and record.agent_definition == SECURITY_REVIEWER
+        and "approve_security_review" in record.agent_capabilities
         and record.session_id not in {caller, *claimants}
         for record in records
     ):

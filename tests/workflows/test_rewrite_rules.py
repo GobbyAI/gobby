@@ -75,6 +75,7 @@ def _insert_rule(
 ) -> str:
     row = manager.create(
         name=name,
+        tags=["default"],
         definition_json=body.model_dump_json(),
         priority=priority,
         enabled=enabled,

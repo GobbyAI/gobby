@@ -1,4 +1,4 @@
-"""gobby-agents cold_start_admin: the /gobby admin and /gobby assistant pane cold start.
+"""Definition-configured interactive pane cold starts.
 
 The counterpart's role is the duplicate guard. A live counterpart session, or a live
 pane with the counterpart role in the caller's tab, is reused and never opened twice.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import shlex
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
@@ -23,9 +23,12 @@ from gobby.storage.workspaces import WorkspaceManager, WorkspaceTarget
 from gobby.terminals.session_pane import session_pane
 from gobby.terminals.workspace_contract import WorkspaceOpError
 from gobby.utils.session_context import get_session_context
+from gobby.workflows.agent_resolver import (
+    AgentResolutionError,
+    resolve_agent_with_row,
+    resolve_cold_start_command,
+)
 
-# Each operator pane's counterpart role and the router command that cold starts it.
-_COUNTERPARTS = {"orchestrator": ("assistant", "assistant"), "assistant": ("orchestrator", "admin")}
 # The argv that opens each provider's interactive UI on an initial prompt. A bare AGY
 # prompt is not accepted; -i keeps it interactive.
 _PANE_LAUNCH = {
@@ -86,8 +89,6 @@ def _session_ref(db: HubDatabase, terminal_id: str | None) -> str | None:
 
 async def cold_start_admin_impl(ctx: AgentsRegistryContext, role: str) -> dict[str, Any]:
     """Apply ``role`` to the calling pane, then reuse or open its counterpart pane."""
-    if role not in _COUNTERPARTS:
-        return _refusal("invalid_role", f"Role must be orchestrator or assistant, not {role!r}")
     ops = ctx.workspace_ops_resolver() if ctx.workspace_ops_resolver is not None else None
     db = ctx.db
     context = get_session_context()
@@ -96,18 +97,44 @@ async def cold_start_admin_impl(ctx: AgentsRegistryContext, role: str) -> dict[s
     caller = await asyncio.to_thread(_caller, db, context.session_id) if context else None
     if caller is None:
         return _refusal("session_unavailable", "No session context")
+    try:
+        resolved = await asyncio.to_thread(
+            resolve_agent_with_row, role, db, project_id=caller.session.project_id
+        )
+        if resolved is None:
+            return _refusal("invalid_role", f"Agent definition {role!r} is unavailable")
+        body, row = resolved
+        if not row.enabled or not body.supports_cold_start():
+            return _refusal("invalid_role", "The definition cannot cold start interactively")
+        counterpart = body.cold_start_counterpart
+        command = None
+        if counterpart is not None:
+            paired = await asyncio.to_thread(
+                resolve_agent_with_row, counterpart, db, project_id=caller.session.project_id
+            )
+            if paired is None or not paired[1].enabled or not paired[0].supports_cold_start():
+                return _refusal("invalid_counterpart", "The counterpart cannot cold start")
+            command = paired[0].cold_start_commands[0]
+            routed = await asyncio.to_thread(
+                resolve_cold_start_command, db, command, project_id=caller.session.project_id
+            )
+            if routed != counterpart:
+                return _refusal("invalid_counterpart", "The counterpart command is unavailable")
+    except AgentResolutionError as exc:
+        return _refusal("invalid_role", str(exc))
     applied = await apply_agent_definition_impl(
         agent=role, db=db, session_id=caller.session.id, task_manager=ctx.task_manager
     )
     if not applied.get("success"):
         return applied
-    counterpart, command = _COUNTERPARTS[role]
     report: dict[str, Any] = {
         "success": True,
         "role": role,
         "definition": applied["status"],
         "session": caller.ref,
     }
+    if counterpart is None:
+        return {**report, "created": False, "counterpart": None}
     holder = await asyncio.to_thread(_live_holder, db, caller.session, counterpart)
     if holder is not None:
         pane_id = holder[1]
@@ -162,12 +189,12 @@ def register_admin_cold_start_tools(
     @registry.tool(
         name="cold_start_admin",
         description=(
-            "Cold start this operator pane as the Orchestrator or Assistant: apply that "
-            "definition to the calling session, then reuse the live counterpart (a live "
+            "Cold start this pane using an enabled definition's declared cold-start commands. "
+            "Apply the definition, then reuse its configured counterpart (a live "
             "session with the other role, or a pane with that role in this tab) or split "
             "this pane once and launch the same provider CLI with the counterpart's "
-            "/gobby command. Re-runnable; returns both seat refs and created."
+            "/gobby command. Re-runnable; returns available seat refs and created."
         ),
     )
-    async def cold_start_admin(role: Literal["orchestrator", "assistant"]) -> dict[str, Any]:
+    async def cold_start_admin(role: str) -> dict[str, Any]:
         return await cold_start_admin_impl(ctx, role)

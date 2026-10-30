@@ -613,16 +613,18 @@ phase sub-epic, so a declared root there has no effect and its leaves keep every
 
 The single category policy is:
 
-- `code` entries must include `implementation_domain`. Expansion maps every
-  domain to `developer` unless a privileged/manual override is present; the
-  developer reads the domain to pick its skills.
+- `code` entries must include `implementation_domain`. Expansion selects the
+  unique enabled spawn definition whose `task_categories` includes the entry's
+  category and whose `implementation_domains` is empty or includes its code
+  domain. Explicit privileged/manual overrides remain available. Missing or
+  ambiguous matches leave the task unassigned with an Agent Selection diagnostic.
 - The manifest emitter derives `implementation_domain` from Targets paths.
   `web/` and `crates/gclient/` are frontend. `src/gobby/` and every other
   `crates/` path are backend. The root `Cargo.toml` and `Cargo.lock` carry no
   signal, because every shipped crate change lists them for its version bump.
   Targets of both kinds make `fullstack`. Keyword signals decide only when no
   Target classifies. Non-code entries carry no `implementation_domain`; a
-  `category: test` entry routes to `developer` whatever its Targets.
+  `category: test` entry uses its declared category route whatever its Targets.
 - `code` and `config` are TDD-eligible. Manifest entries for these categories
   may set `tdd: true`, which makes expansion emit one implementation leaf with
   `additional_skills: ["test-driven-development"]`, label `tdd:required`, and

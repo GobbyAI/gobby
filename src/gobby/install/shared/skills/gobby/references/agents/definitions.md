@@ -21,6 +21,13 @@ fields are rejected. Use strict strings/booleans for model, reasoning, fallback,
 and endpoint fields. A definition can inherit execution settings; runtime spawn
 arguments select concrete isolation.
 
+Automatic expansion assignment uses `task_categories` (`code`, `config`, `docs`,
+`refactor`, `test`). For code, `implementation_domains` can restrict the accepted
+domains to `backend`, `frontend`, or `fullstack`; an empty list accepts all.
+Only enabled spawn definitions participate. A unique matching definition is
+selected; absent or ambiguous matches leave the task unassigned for explicit
+selection. Project overrides, including disabled ones, shadow global definitions.
+
 Keep reusable policy in rules and phased restrictions in steps. Step and rule
 restrictions both apply. After definition sync, the next tool call resolves the
 installed definition (project row first, then global row) for step permissions,

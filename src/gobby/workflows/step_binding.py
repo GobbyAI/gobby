@@ -10,6 +10,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.tasks.state_semantics import is_task_claimed_by_session
 from gobby.workflows.agent_models import AgentStepWorkflowBody
+from gobby.workflows.agent_resolver import session_has_capability
 from gobby.workflows.step_instances import (
     AgentStepInstance,
     AgentStepInstanceManager,
@@ -114,14 +115,14 @@ def release_lost_binding(
 
 
 def recover_rejected_submission(db: HubDatabase, instance: AgentStepInstance) -> AgentStepInstance:
-    """Recover a developer whose current candidate was rejected without a message read.
+    """Recover an opted-in workflow whose candidate was rejected without a message read.
 
     Review records are authoritative even when a hold delayed the reviewer or its
     notification. Require evidence from this submission; a previous round must not
     reopen a freshly resubmitted candidate.
     """
     if (
-        instance.agent_name != "developer"
+        not session_has_capability(db, instance.session_id, "recover_rejected_submission")
         or instance.current_step != "submit"
         or instance.workflow.get_step("implement") is None
         or instance.step_entered_at is None

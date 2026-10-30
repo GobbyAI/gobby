@@ -33,7 +33,12 @@ def option_word_count(
 
 
 def _env_split_string(
-    option: str, words: list[str], value_options: Collection[str], *, start: int = 0
+    option: str,
+    words: list[str],
+    value_options: Collection[str],
+    *,
+    start: int = 0,
+    environment_changes: list[tuple[str | None, str | None]] | None = None,
 ) -> list[str] | None:
     """The words env's -S option reads as a command string, or None without -S.
 
@@ -43,12 +48,26 @@ def _env_split_string(
     """
     if option.startswith("--"):
         flag, separator, attached = option.partition("=")
+        if environment_changes is not None:
+            if flag == "--ignore-environment":
+                environment_changes.append((None, None))
+            elif flag == "--unset" and (separator or len(words) > start):
+                environment_changes.append((attached if separator else words[start], None))
         if len(flag) > 2 and "--split-string".startswith(flag):
             rest = words[start:]
             return [attached, *rest] if separator else rest
         return None
+    if option == "-" and environment_changes is not None:
+        environment_changes.append((None, None))
     for index in range(1, len(option)):
         letter = "-" + option[index]
+        if environment_changes is not None:
+            if letter == "-i":
+                environment_changes.append((None, None))
+            elif letter == "-u":
+                attached = option[index + 1 :]
+                if attached or len(words) > start:
+                    environment_changes.append((attached or words[start], None))
         if letter == "-S":
             attached = option[index + 1 :]
             rest = words[start:]
@@ -172,6 +191,8 @@ def _unwrap(
     words: list[str],
     *,
     stop_at_xargs: bool = False,
+    environment_changes: list[tuple[str | None, str | None]] | None = None,
+    stop_at_eval: bool = False,
     assignments: set[str] | None = None,
     effects: list[tuple[str, str]] | None = None,
 ) -> list[str]:
@@ -217,6 +238,9 @@ def _unwrap(
         ):
             advance(3)
         elif _ASSIGNMENT.match(peek()):
+            if environment_changes is not None:
+                key, _, value = peek().partition("=")
+                environment_changes.append((key.removesuffix("+"), value))
             if assignments is not None:
                 assignments.add(peek().partition("=")[0].removesuffix("+"))
             advance()
@@ -325,9 +349,15 @@ def _unwrap(
                     break
                 if name == "command" and any(flag in option for flag in "vV"):
                     return []
+                if name == "env" and option in {"--help", "--version"}:
+                    return []
                 following = [peek(1)] if name == "env" and remaining() > 1 else []
                 script = (
-                    _env_split_string(option, following, takes_value) if name == "env" else None
+                    _env_split_string(
+                        option, following, takes_value, environment_changes=environment_changes
+                    )
+                    if name == "env"
+                    else None
                 )
                 if script is not None:
                     if not script:
@@ -355,9 +385,18 @@ def _unwrap(
                     if effect is not None:
                         effects.append(effect)
                 advance(count)
+            if name in {"env", "sudo"} and effects is not None:
+                # The first unresolved operand may expand to a name=value pair.
+                # Keep it available to consumers without guessing its expansion.
+                for word in tail():
+                    effects.append(("environment", word))
+                    if "=" not in word:
+                        break
             if name == "timeout" and remaining():
                 advance()
         elif name == "eval":
+            if stop_at_eval:
+                break
             advance()
             return ["sh", "-c", " ".join(tail())]
         else:

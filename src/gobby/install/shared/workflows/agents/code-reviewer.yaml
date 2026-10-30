@@ -1,4 +1,5 @@
 name: code-reviewer
+capabilities: [accept_resume_retype]
 description: |
   Code Reviewer seat. Reviews the CANDIDATEs routed to it against the current
   project integration head and returns LAND or BOUNCE with rated findings. The
@@ -58,6 +59,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "name:require-seat-procedure"
       - "tag:default"
       # The second-rejection fixer edits and commits like a developer.

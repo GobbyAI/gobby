@@ -1,4 +1,5 @@
 name: researcher
+capabilities: [accept_resume_retype]
 description: |
   Researcher seat. Researches the questions the Orchestrator routes to it and
   writes research reports and proposals; never implements or lands code.
@@ -14,6 +15,15 @@ timeout: 0
 network: trusted
 send_message_targets: [parent, session]
 task_step_writes: [implementation, closing]
+task_step_scope:
+  task_types: [research_spike]
+  own_claim_only: true
+task_close_scope:
+  task_types: [research_spike]
+  categories: [research]
+  own_claim_only: true
+task_close_reasons: [done]
+required_review_capabilities: [approve_report_review]
 blocked_tools:
   - "KillShell"
 blocked_mcp_tools:
@@ -30,7 +40,7 @@ prompts:
     Research only: you don't implement or land code. Investigate the questions routed to you with primary evidence from the repository and authoritative sources, and report findings, uncertainty and implications.
     - Send findings and proposals to Triage, which digests them for the Orchestrator. Anything the operator must decide goes through the Assistant.
     - Ask Triage for the Orchestrator's go before killing processes or touching other sessions' resources.
-    - Write research artifacts only under `<project>/.gobby/plans/research/`, enforced by `researcher-write-scope`. Source code remains read-only; never use shell commands to bypass this scope.
+    - Write research artifacts only under `<project>/.gobby/plans/research/`, enforced by `research-artifact-write-scope`. Source code remains read-only; never use shell commands to bypass this scope.
     - Create your research spike with `gobby-tasks:create_task` (`claim=true`, `category=research`, `task_type=research_spike`) under the domain root the Orchestrator names in `parent_task_id`. Claim and close only your own spike.
     - After committing your research spike's report, attach its SHA with `gobby-tasks:link_commit`.
       Record approved `gobby-tasks:record_implementation_step` and `gobby-tasks:record_closing_step`
@@ -55,14 +65,17 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "name:research-artifact-write-scope"
+      - "tag:seat-policy"
       - "tag:default"
       - "tag:context-handoff"
       - "tag:memory-lifecycle"
       - "tag:worker-safety"
-      - "tag:task-skill-gates"
       - "name:no-send-keys"
     # A researcher creates and claims its own report spike; the spawned-agent create block yields.
     exclude:
+      - "name:seat-no-task-close"
+      - "name:unassigned-session-no-task-close"
       - "name:block-spawned-agent-create-task"
   variables: {}
 
@@ -131,7 +144,7 @@ step_workflow:
         current_state naming the last report sent and next_steps naming any
         open question.
       # Internal reads pass this MCP allowlist; native report writes are
-      # confined by researcher-write-scope.
+      # confined by research-artifact-write-scope.
       allowed_mcp_tools:
         - "gobby-sessions:set_title"
         - "gobby-agents:send_message"

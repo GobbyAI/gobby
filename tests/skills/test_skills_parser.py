@@ -298,20 +298,36 @@ Content
         assert skill.audience_config is not None
         assert skill.audience_config.sources == ["claude"]
 
-    def test_invalid_audience_raises_error(self) -> None:
-        text = """---
-name: bad-audience
-description: Skill with an unsupported audience
+    @pytest.mark.parametrize("audience", ["agent", "custom-auditor"])
+    def test_custom_audience_is_preserved(self, audience: str) -> None:
+        text = f"""---
+name: custom-audience
+description: Skill for a user-defined audience
 metadata:
   gobby:
-    audience: agent
+    audience: {audience}
+---
+# Custom audience
+"""
+        skill = parse_skill_text(text)
+        assert skill.audience_config is not None
+        assert skill.audience_config.audience == audience
+
+    @pytest.mark.parametrize("audience", ['""', '"  "', "null", "12", "[all]", "{}"])
+    def test_invalid_audience_raises_error(self, audience: str) -> None:
+        text = f"""---
+name: bad-audience
+description: Skill with a malformed audience
+metadata:
+  gobby:
+    audience: {audience}
 ---
 # Bad audience
 """
 
         with pytest.raises(
             SkillParseError,
-            match="metadata.gobby.audience must be one of",
+            match="metadata.gobby.audience must be a non-empty string",
         ):
             parse_skill_text(text)
 

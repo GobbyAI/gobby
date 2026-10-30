@@ -6,11 +6,10 @@ tags: [roles, seat, enforcement, gobby, default]
 # whose agent definition did not resolve.
 rules:
   query-readonly-seat-scope:
-    description: "Only the Assistant and Orchestrator may run read-only daemon DB queries"
+    description: "Deny daemon DB queries unless the definition excludes this rule"
     event: before_tool
     enabled: true
     priority: 10
-    when: "variables.get('_agent_type') not in ['assistant', 'orchestrator']"
     effects:
       - type: block
         mcp_tools: ["gobby-sessions:query_readonly"]

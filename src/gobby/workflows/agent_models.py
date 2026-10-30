@@ -12,11 +12,13 @@ from pydantic import (
     PositiveInt,
     StrictBool,
     StrictStr,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
 
 from gobby.agents.reasoning import normalize_reasoning_effort
+from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES, IMPLEMENTATION_DOMAINS
 from gobby.workflows.definitions import WorkflowStep
 
 # The spawnable_agents value that lets a spawned agent spawn any agent.
@@ -84,6 +86,15 @@ class AgentPromptBlocks(BaseModel):
         if not value.strip():
             raise ValueError("prompt blocks must be non-empty strings")
         return value
+
+
+class AgentTaskScope(BaseModel):
+    """Optional task constraints for a definition's step writes or closes."""
+
+    model_config = ConfigDict(extra="forbid")
+    task_types: list[StrictStr] | None = None
+    categories: list[StrictStr] | None = None
+    own_claim_only: StrictBool = False
 
 
 class AgentDefinitionBody(BaseModel):
@@ -165,6 +176,9 @@ class AgentDefinitionBody(BaseModel):
     # limit-spawnable-agents rule: [SPAWN_ANY_AGENT] for any, named agents, or
     # empty (the default) for none.
     spawnable_agents: list[str] = Field(default_factory=list)
+    # Existing seats this definition may resume within its admitted team. Fresh
+    # spawns still require spawnable_agents; team membership and stored type are checked.
+    resumable_team_agents: list[str] = Field(default_factory=list)
     # Agent-level tool restrictions (applied regardless of step workflow)
     blocked_tools: list[str] = Field(default_factory=list)
     blocked_mcp_tools: list[str] = Field(default_factory=list)
@@ -174,9 +188,60 @@ class AgentDefinitionBody(BaseModel):
     # Grants only the configured, enrolled operator destination, never arbitrary recipients.
     operator_messaging: StrictBool = False
     communications_admin: StrictBool = False
+    cold_start_commands: list[StrictStr] = Field(
+        default_factory=list,
+        description="Bare Gobby command aliases that start this interactive definition.",
+    )
+    cold_start_counterpart: StrictStr | None = Field(
+        default=None,
+        description="Optional enabled definition to reuse or open beside this cold-started pane.",
+    )
+    capabilities: list[StrictStr] = Field(
+        default_factory=list,
+        description="Permissions granted to this definition, independent of its name.",
+    )
+    task_categories: list[StrictStr] = Field(
+        default_factory=list,
+        description="Expansion categories this definition accepts for automatic assignment.",
+    )
+    implementation_domains: list[StrictStr] = Field(
+        default_factory=list,
+        description="Optional code-domain restriction for automatic assignment; empty accepts all.",
+    )
+    message_sender_capabilities: list[StrictStr] = Field(
+        default_factory=list,
+        description=(
+            "Incoming seat messages require any listed sender capability; empty allows all. "
+            "The daemon and the operator's own terminal are exempt."
+        ),
+    )
+    monitor_report_recipients: list[StrictStr] = Field(
+        default_factory=list,
+        description="Enabled definitions that must receive the same report to finish a monitor tick.",
+    )
     task_step_writes: list[Literal["test", "implementation", "review", "closing"]] = Field(
         default_factory=list,
         description="Task step records this definition may write through dedicated tools.",
+    )
+    task_step_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)
+    task_close_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)
+    respect_task_protections: StrictBool = Field(
+        default=False,
+        description="Apply the project's protected-task policy to mutations and their ancestors.",
+    )
+    task_close_reasons: list[StrictStr] | None = Field(
+        default=None, description="Allowed close reasons; None leaves reasons unrestricted."
+    )
+    required_review_capabilities: list[StrictStr] = Field(
+        default_factory=list,
+        description="All permissions the approved review must record before this definition closes.",
+    )
+    supplemental_review: StrictBool = Field(
+        default=False,
+        description=(
+            "Review approvals supplement the primary review without changing its verdict. "
+            "They require a running agent seat and cannot reject a candidate."
+        ),
     )
     step_workflow: AgentStepWorkflowBody | None = None
 
@@ -276,9 +341,41 @@ class AgentDefinitionBody(BaseModel):
         """Whether a spawned run of this definition may spawn ``agent``."""
         return self.spawnable_agents == [SPAWN_ANY_AGENT] or agent in self.spawnable_agents
 
+    @field_validator("task_categories", "implementation_domains")
+    @classmethod
+    def _validate_task_routing(cls, value: list[str], info: ValidationInfo) -> list[str]:
+        allowed = (
+            DEVELOPMENT_FORWARD_LEAF_CATEGORIES
+            if info.field_name == "task_categories"
+            else IMPLEMENTATION_DOMAINS
+        )
+        unknown = set(value) - allowed
+        if unknown:
+            raise ValueError(f"Unsupported {info.field_name}: {sorted(unknown)}")
+        return list(dict.fromkeys(value))
+
+    @field_validator("cold_start_commands")
+    @classmethod
+    def _normalize_cold_start_commands(cls, value: list[str]) -> list[str]:
+        if any(not name or any(char.isspace() for char in name) for name in value):
+            raise ValueError("cold_start_commands entries must be nonempty single words")
+        normalized = list(dict.fromkeys(name.casefold() for name in value))
+        if any(name in {"help", "skill"} for name in normalized):
+            raise ValueError("cold_start_commands cannot replace help or skill")
+        return normalized
+
     def supports_surface(self, surface: Literal["spawn", "persona"]) -> bool:
         """Return True when the definition explicitly supports the requested usage surface."""
         return surface in self.surfaces
+
+    def supports_cold_start(self) -> bool:
+        """Whether aliases may activate this definition in an interactive pane."""
+        return (
+            self.enabled
+            and self.supports_surface("persona")
+            and not self.workflows.pipeline
+            and bool(self.cold_start_commands)
+        )
 
     def prompt_for(
         self,

@@ -1,4 +1,5 @@
 name: recovery-steward
+capabilities: [accept_resume_retype]
 description: |
   Recovery Steward seat. The watchdog. Patrols every live seat every 10 minutes
   or on each Triage message, classifies each one, resumes idle stalled composers with
@@ -55,6 +56,7 @@ workflows:
     # Terminal control is the steward's job: it resumes stalled composers with
     # send_keys, so it does not select no-send-keys.
     include:
+      - "tag:seat-policy"
       - "tag:default"
       - "tag:worker-safety"
   variables: {}

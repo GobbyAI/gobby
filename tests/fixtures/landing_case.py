@@ -39,7 +39,15 @@ def bind_task_manager(
     db: HubDatabase, *, manager: str, parent: str, project_id: str, task: Task
 ) -> None:
     """Run ``manager`` as a Dev Manager whose active agent run is bound to ``task``."""
-    grant_step_writes(db, manager, project_id, DEV_MANAGER, ("closing",))
+    grant_step_writes(
+        db,
+        manager,
+        project_id,
+        DEV_MANAGER,
+        ("closing",),
+        capabilities=("manage_task_claims", "land_tasks"),
+        team_manager=True,
+    )
     LocalAgentRunManager(db).create(
         parent_session_id=parent,
         provider="claude",
@@ -52,7 +60,14 @@ def bind_task_manager(
 
 def grant_orchestrator(db: HubDatabase, session_id: str, project_id: str) -> None:
     """Run a registered root session as the project's Orchestrator, which writes every step."""
-    grant_step_writes(db, session_id, project_id, ORCHESTRATOR, TASK_STEPS)
+    grant_step_writes(
+        db,
+        session_id,
+        project_id,
+        ORCHESTRATOR,
+        TASK_STEPS,
+        capabilities=("coordinate_tasks", "manage_task_claims", "land_tasks", "close_without_work"),
+    )
 
 
 @dataclass
@@ -167,21 +182,41 @@ class LandingCase:
         grant_review_writes(self.db, self.reviewer, self.project_id)
         reject_review(self.db, task_id=task.id, reviewer_session_id=self.reviewer, commit_sha=sha)
 
-    def security_seat(self) -> str:
+    def security_seat(
+        self,
+        name: str = SECURITY_REVIEWER,
+        *,
+        granted: bool = True,
+        supplemental: bool = True,
+    ) -> str:
         """A session running as the installed security-reviewer definition, with no agent run."""
-        session = self.session("security-reviewer", parent=self.creator)
-        grant_step_writes(self.db, session, self.project_id, SECURITY_REVIEWER, ("review",))
+        session = self.session(name, parent=self.creator)
+        grant_step_writes(
+            self.db,
+            session,
+            self.project_id,
+            name,
+            ("review",),
+            capabilities=("approve_security_review",) if granted else (),
+            supplemental_review=supplemental,
+        )
         return session
 
-    def security_reviewer(self) -> str:
+    def security_reviewer(
+        self,
+        name: str = SECURITY_REVIEWER,
+        *,
+        granted: bool = True,
+        supplemental: bool = True,
+    ) -> str:
         """A running Security Reviewer seat: its definition plus a running agent run."""
-        session = self.security_seat()
+        session = self.security_seat(name, granted=granted, supplemental=supplemental)
         runs = LocalAgentRunManager(self.db)
         run = runs.create(
             parent_session_id=self.creator,
             provider="claude",
             prompt="Review the candidate for security.",
-            agent_name=SECURITY_REVIEWER,
+            agent_name=name,
             child_session_id=session,
         )
         runs.start(run.id)

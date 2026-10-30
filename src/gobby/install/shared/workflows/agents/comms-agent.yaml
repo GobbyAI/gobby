@@ -66,5 +66,7 @@ blocked_mcp_tools:
 workflows:
   rule_selectors:
     include:
+      - "name:seat-no-task-close"
+      - "name:seat-no-project-create"
       - "tag:default"
       - "name:no-send-keys"

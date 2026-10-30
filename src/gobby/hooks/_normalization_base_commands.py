@@ -23,6 +23,7 @@ from gobby.hooks._normalization_operands import (
     _shell_positional_args_after,
     rg_preprocessor,
 )
+from gobby.hooks._normalization_patch import classify_patch
 from gobby.hooks._normalization_sed import classify_sed_segment
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import (
@@ -326,7 +327,6 @@ def classify_base_command(
 
     # Ruff check may fix from project configuration, add noqa, or write a report.
     # Only format's explicit inspection modes prove no writes without that cwd.
-    options = parts[1 : parts.index("--")] if "--" in parts else parts[1:]
     if cmd == "ruff" and parts[1:2] == ["format"] and parts[2:3] in (["--check"], ["--diff"]):
         return _ShellSegmentMetadata("execute", read_only=True)
     if cmd in {"pwd", "ls", "wc", "stat", "true", "false", "echo", "printf"}:
@@ -376,10 +376,7 @@ def classify_base_command(
                 return _ShellSegmentMetadata("write", repo_mutation=True)
 
     if cmd == "patch":
-        if "--dry-run" in options:
-            # A later option-like word can be an operand of -i/-o, not a flag.
-            return _ShellSegmentMetadata("execute", read_only=parts[1:2] == ["--dry-run"])
-        return _ShellSegmentMetadata("write", repo_mutation=True)
+        return classify_patch(parts, cwd, base_cwd)
 
     interpreter_parts = _inline_interpreter_parts(parts)
     if interpreter_parts:

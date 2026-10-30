@@ -4,46 +4,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
-import yaml
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.step_records import StepSubmission, record_task_step, task_step_requirements
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.tasks.test_close_invariants import _set_close_policy, git
 from tests.tasks.test_step_records import _Seats
 from tests.workflows.test_seat_rules import _decide, _load_roles, _proxy_call
-from tests.workflows.test_seat_step_loops import SeatRun
 
 pytestmark = pytest.mark.unit
-AGENTS = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
-
-
-@pytest.mark.parametrize("tool", ["create_task", "claim_task", "close_task"])
-async def test_researcher_serve_admits_report_task_lifecycle(
-    temp_db: HubDatabase, tool: str
-) -> None:
-    definition = yaml.safe_load((AGENTS / "researcher.yaml").read_text())
-    run = SeatRun(temp_db, "researcher", definition=definition)
-    await run.load(*run.vars["required_skills"])
-    assert run.step == "serve"
-    assert await run.admits(
-        "gobby-tasks",
-        tool,
-        {
-            "task_id": "#25238",
-            "title": "Investigate the routed question",
-            "task_type": "research_spike",
-            "category": "research",
-            "claim": True,
-            "reason": "done",
-        },
-    ), f"researcher serve must admit {tool} for its report"
 
 
 async def test_seat_close_rule_admits_researcher_done_request(temp_db: HubDatabase) -> None:
@@ -54,11 +31,6 @@ async def test_seat_close_rule_admits_researcher_done_request(temp_db: HubDataba
         {"_agent_type": "researcher"},
     )
     assert result.decision == "allow", result.reason
-
-
-def test_bundled_orchestrator_can_record_report_review() -> None:
-    definition = yaml.safe_load((AGENTS / "orchestrator.yaml").read_text())
-    assert "review" in definition["task_step_writes"]
 
 
 @dataclass
@@ -73,14 +45,31 @@ class Report:
     sha: str
 
 
-@pytest.fixture
-def report(temp_db: HubDatabase, sample_git_project: dict[str, Any]) -> Report:
+@pytest.fixture(params=[("researcher", "orchestrator"), ("fixture-author", "fixture-approver")])
+def report(
+    temp_db: HubDatabase, sample_git_project: dict[str, Any], request: pytest.FixtureRequest
+) -> Report:
     project_id = sample_git_project["id"]
     repo = Path(sample_git_project["repo_path"])
     _set_close_policy(temp_db, project_id, {"enforce_step_records": True})
     seats = _Seats(temp_db, project_id)
-    researcher = seats.add("researcher", ["implementation", "closing"])
-    orchestrator = seats.add("orchestrator", ["review"])
+    author_name, approver_name = cast(tuple[str, str], request.param)
+    researcher = seats.add(
+        author_name,
+        ["implementation", "closing"],
+        capabilities=("close_without_work",),
+        definition_fields={
+            "task_step_scope": {"task_types": ["research_spike"], "own_claim_only": True},
+            "task_close_scope": {
+                "task_types": ["research_spike"],
+                "categories": ["research"],
+                "own_claim_only": True,
+            },
+            "task_close_reasons": ["done"],
+            "required_review_capabilities": ["approve_report_review"],
+        },
+    )
+    orchestrator = seats.add(approver_name, ["review"], capabilities=("approve_report_review",))
     peer = seats.add("research-reviewer", ["review"])
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
@@ -205,6 +194,72 @@ async def test_research_reviewer_approval_does_not_authorize_researcher_close(
         )
     assert result.get("closed") is not True, result
     assert report.manager.get_task(report.task.id).closed_at is None
+
+
+@pytest.mark.parametrize("revoke_after_review", [False, True])
+async def test_report_review_grant_is_captured_at_approval(
+    report: Report, revoke_after_review: bool
+) -> None:
+    await _link_and_record_owner_steps(report)
+    definitions = AgentDefinitionManager(report.db)
+    role = SessionVariableManager(report.db).get_variables(report.orchestrator)["_agent_type"]
+    definition = definitions.get_by_name(role, report.task.project_id)
+    assert definition is not None
+    if revoke_after_review:
+        _review(report, author=report.orchestrator)
+    definitions.update(
+        definition.id, definition_json={**definition.definition_json, "capabilities": []}
+    )
+    if not revoke_after_review:
+        _review(report, author=report.orchestrator)
+    with session_context_for_test(report.researcher):
+        result = await create_task_registry(report.manager).call(
+            "close_task", {"task_id": report.task.id, "commit_sha": report.sha}
+        )
+    assert (result.get("closed") is True) is revoke_after_review
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_close_uses_enabled_definition_policy_instead_of_author_name(
+    report: Report, enabled: bool
+) -> None:
+    await _link_and_record_owner_steps(report)
+    _review(report, author=report.peer)
+    definitions = AgentDefinitionManager(report.db)
+    role = SessionVariableManager(report.db).get_variables(report.researcher)["_agent_type"]
+    definition = definitions.get_by_name(role, report.task.project_id)
+    assert definition is not None
+    definitions.update(
+        definition.id,
+        enabled=enabled,
+        definition_json={
+            **definition.definition_json,
+            "task_close_scope": {},
+            "required_review_capabilities": [],
+        },
+    )
+    report.manager.claim_task(report.task.id, report.peer, force=True)
+    with session_context_for_test(report.researcher):
+        result = await create_task_registry(report.manager).call(
+            "close_task", {"task_id": report.task.id, "commit_sha": report.sha}
+        )
+    assert (result.get("closed") is True) is enabled
+
+
+async def test_own_claim_close_replay_survives_claim_release(report: Report) -> None:
+    await _link_and_record_owner_steps(report)
+    _review(report, author=report.orchestrator)
+    registry = create_task_registry(report.manager)
+    with session_context_for_test(report.researcher):
+        first = await registry.call(
+            "close_task", {"task_id": report.task.id, "commit_sha": report.sha}
+        )
+        assert first.get("closed") is True
+        assert report.manager.get_task(report.task.id).claimed_by_session_id is None
+        replay = await registry.call(
+            "close_task", {"task_id": report.task.id, "commit_sha": report.sha}
+        )
+    assert replay.get("closed") is True
 
 
 @pytest.mark.parametrize("target", ["foreign_spike", "code_task", "research_non_spike"])

@@ -1,4 +1,5 @@
 name: dev-manager
+capabilities: [manage_task_claims, land_tasks, accept_resume_retype]
 description: |
   Dev Manager seat. Runs one task's DevTeam: moves the task claim between its
   seats through the review loop, keeps them working, and lands and closes the
@@ -14,6 +15,7 @@ send_message_targets: [parent, session, project]
 # An epic team's seats: makers and the reviewers the team binds. The epic scope in
 # team_dispatch decides which of them a spawn may take.
 spawnable_agents: [developer, test-writer, code-reviewer, docs-reviewer, research-reviewer, researcher]
+resumable_team_agents: [test-writer, developer, code-reviewer, docs-reviewer, research-reviewer, researcher]
 blocked_tools:
   - "Edit"
   - "KillShell"
@@ -60,9 +62,14 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "name:require-seat-procedure"
       - "tag:default"
       - "tag:worker-safety"
+    exclude:
+      - "name:block-unclaimed-found-work"
+      - "name:seat-no-task-close"
+      - "name:unassigned-session-no-task-close"
   variables:
     _seat_procedure: gobby:references/agents/procedures/dev-manager.md
     # The manager places its team's panes.

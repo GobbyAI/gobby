@@ -7,6 +7,9 @@ def review_status_sql(task: str) -> str:
     """SQL for the review status the task's current-epoch review record implies.
 
     NULL when the epoch has no review record, so callers fall back to the stored copy.
+    Supplemental or unknown authority alone is pending for open work; closed historical
+    records without primary authority retain the stored status. A primary record always
+    takes precedence over supplemental or unknown records, as ``current_task_steps`` does.
     An approval counts at ``closed_commit_sha`` once the task is closed, and while it is
     open only at the latest linked commit, as ``approved_task_step`` does for open tasks.
     ``approved_task_step`` still reads the tip for closed tasks. Reopening clears
@@ -21,6 +24,8 @@ def review_status_sql(task: str) -> str:
     sha = "latest.record ->> 'commit_sha'"
     return f"""(
         SELECT CASE
+            WHEN latest.record -> 'supplemental_review' IS DISTINCT FROM 'false'::jsonb
+                THEN CASE WHEN {task}.closed_at IS NULL THEN 'pending' END
             WHEN latest.record ->> 'status' = 'rejected' THEN 'invalid'
             WHEN latest.record ->> 'status' = 'approved'
               AND (
@@ -42,10 +47,10 @@ def review_status_sql(task: str) -> str:
                 WHERE c.task_id = {task}.id AND c.author_type = 'task_step'
             ) steps
             WHERE steps.record ->> 'step' = 'review'
-              AND steps.record ->> 'agent_definition' <> 'security-reviewer'
               AND steps.record ->> 'epoch' = {task}.review_epoch::text
               AND steps.record ->> 'sequence' ~ '^[0-9]{{1,9}}$'
-            ORDER BY (steps.record ->> 'sequence')::int DESC
+            ORDER BY (steps.record -> 'supplemental_review' = 'false'::jsonb) DESC NULLS LAST,
+                     (steps.record ->> 'sequence')::int DESC
             LIMIT 1
         ) latest
     )"""

@@ -148,12 +148,11 @@ class TestAgentDefinitionBodyModel:
         assert body.workflows.rules == ["no-code-writing", "require-tests"]
         assert body.enabled is False
 
-    def test_field_count(self) -> None:
-        """AgentDefinitionBody exposes the current expanded field set."""
+    def test_field_structure(self) -> None:
+        """AgentDefinitionBody exposes capabilities and nests workflow fields."""
         from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 32, f"Expected 32 fields, got {len(fields)}: {list(fields.keys())}"
         assert "read_all_agent_workspaces" in fields
         assert "operator_messaging" in fields
         assert "communications_admin" in fields

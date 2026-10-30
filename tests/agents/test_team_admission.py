@@ -45,6 +45,38 @@ def tree_id_of(binding: TeamBinding) -> str:
     return binding.worktree_id
 
 
+async def test_runbook_admission_preserves_its_declared_tab(world: TeamWorld) -> None:
+    task = world.case.task("A custom team tab")
+    runbook = world.child(task)
+    tab_title = f"Product Studio - #{task.seq_num}"
+    with session_context_for_test(runbook.id):
+        result = await world.tools.call("admit_team", {"task": task.id, "tab_title": tab_title})
+    assert result["success"], result
+    assert result["team"]["tab_title"] == tab_title
+    assert (await world.admit(runbook, task)).tab_title == tab_title
+    replacement = world.child(task)
+    joined = await world.admit(replacement, task, team_id=result["team"]["team_id"])
+    assert joined.tab_title == tab_title
+    for caller in (runbook, world.child(task)):
+        with session_context_for_test(caller.id):
+            drift = await world.tools.call(
+                "admit_team",
+                {"task": task.id, "team_id": result["team"]["team_id"], "tab_title": "Other"},
+            )
+        assert drift["error_code"] == "team_binding_drift", drift
+    assert (await world.admit(runbook, task)).tab_title == tab_title
+
+
+@pytest.mark.parametrize("tab_title", ["", "  "])
+async def test_team_admission_rejects_a_blank_tab(world: TeamWorld, tab_title: str) -> None:
+    task = world.case.task("No blank team tab")
+    runbook = world.child(task)
+    with session_context_for_test(runbook.id):
+        result = await world.tools.call("admit_team", {"task": task.id, "tab_title": tab_title})
+    assert result["error_code"] == "team_tab_invalid", result
+    assert world.tree_ids() == []
+
+
 @pytest.fixture
 def world(
     temp_db: HubDatabase,

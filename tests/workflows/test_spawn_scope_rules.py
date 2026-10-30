@@ -26,6 +26,7 @@ from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.fixtures.agent_definitions import seed_seat
 from tests.fixtures.landing_case import make_landing_case
@@ -92,11 +93,15 @@ def _define_agent(
     fallback: str | None = None,
     *,
     variables: dict[str, Any] | None = None,
+    capabilities: tuple[str, ...] = (),
+    resumable: tuple[str, ...] = (),
 ) -> None:
     body: dict[str, Any] = {
         "name": name,
         "prompts": {"agent": "Work."},
         "workflows": {"rule_selectors": {"include": ["tag:default"]}, "variables": variables or {}},
+        "capabilities": list(capabilities),
+        "resumable_team_agents": list(resumable),
     }
     if spawnable is not None:
         body["spawnable_agents"] = spawnable
@@ -329,6 +334,100 @@ class TestLimitSpawnableAgents:
 
 
 class TestLimitSpawnNetworkOverride:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["default", "orchestrator", "custom-network-manager"])
+    @pytest.mark.parametrize("granted", [True, False])
+    async def test_spawned_network_authority_is_declared(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+        name: str,
+        granted: bool,
+    ) -> None:
+        _define_agent(
+            temp_db,
+            name,
+            ["*"],
+            capabilities=("override_spawn_network",) if granted else (),
+        )
+        root = _register(session_manager, str(sample_project["id"]), "root")
+        caller = _spawned(temp_db, session_manager, root, "caller", name)
+        _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE)
+
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(caller.id, "spawn_agent", "spawn-scope-worker", network="trusted"),
+            session_id=caller.id,
+            variables={},
+        )
+
+        assert response.decision == ("allow" if granted else "block")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("granted", [True, False])
+    async def test_root_seat_needs_its_declared_network_grant(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+        granted: bool,
+    ) -> None:
+        _define_agent(
+            temp_db,
+            "custom-admin",
+            ["*"],
+            capabilities=("override_spawn_network",) if granted else (),
+        )
+        caller = _register(session_manager, str(sample_project["id"]), "root-seat")
+        SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", "custom-admin")
+        _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE)
+
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(caller.id, "spawn_agent", "spawn-scope-worker", network="trusted"),
+            session_id=caller.id,
+            variables={},
+        )
+
+        assert response.decision == ("allow" if granted else "block")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case", ["disabled", "forged-variable", "lineage-root"])
+    async def test_network_grant_requires_enabled_verified_definition(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        callers: dict[str, Session],
+        case: str,
+    ) -> None:
+        if case == "disabled":
+            definitions = AgentDefinitionManager(temp_db)
+            definition = definitions.get_by_name("orchestrator")
+            assert definition is not None
+            definitions.update(definition.id, enabled=False)
+            caller = callers["orchestrator"]
+        elif case == "lineage-root":
+            root = callers["root"]
+            caller = session_manager.register(
+                external_id="lineage-root-at-depth-zero",
+                source="codex",
+                machine_id=root.machine_id,
+                project_id=root.project_id,
+                parent_session_id=root.id,
+            )
+            SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", "orchestrator")
+        else:
+            caller = callers["worker"]
+            SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", "orchestrator")
+        _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE)
+
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(caller.id, "spawn_agent", "spawn-scope-worker", network="trusted"),
+            session_id=caller.id,
+            variables={},
+        )
+
+        assert response.decision == ("allow" if case == "lineage-root" else "block")
+
     @pytest.fixture
     def callers(
         self,
@@ -337,6 +436,11 @@ class TestLimitSpawnNetworkOverride:
         sample_project: dict[str, Any],
     ) -> dict[str, Session]:
         """A root session, spawned runs with and without authority, and broken identities."""
+        for name in ("default", "orchestrator"):
+            seed_seat(
+                temp_db, name, spawnable_agents=["*"], capabilities=["override_spawn_network"]
+            )
+        seed_seat(temp_db, "spawn-scope-worker")
         root = _register(session_manager, str(sample_project["id"]), "root")
         return {
             "root": root,
@@ -577,7 +681,6 @@ class TestLimitSpawnNetworkOverride:
         session_manager: SessionManager,
         callers: dict[str, Session],
     ) -> None:
-        seed_seat(temp_db, "default", spawnable_agents=["*"])
         _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS, LIMIT_SPAWN_NETWORK_OVERRIDE)
         caller_id = callers["default"].id
 
@@ -590,27 +693,39 @@ class TestLimitSpawnNetworkOverride:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_override_authority_spawns_past_seat_no_spawn_for_the_orchestrator(
+    async def test_network_authority_does_not_bypass_a_selected_spawn_policy(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
         callers: dict[str, Session],
     ) -> None:
         _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE, SEAT_NO_SPAWN)
-        caller_id = callers["orchestrator"].id
+        for name, include in (
+            ("free-network-coordinator", []),
+            ("restricted-network-coordinator", [f"name:{SEAT_NO_SPAWN}"]),
+        ):
+            seed_seat(
+                temp_db,
+                name,
+                include=include,
+                spawnable_agents=["*"],
+                capabilities=["override_spawn_network"],
+            )
+            callers[name] = _spawned(temp_db, session_manager, callers["root"], name, name)
         engine = RuleEngine(temp_db, session_manager=session_manager)
-        event = _spawn_event(caller_id, "spawn_agent", "spawn-scope-worker", network="trusted")
-
-        exempt = await engine.evaluate(
-            event, session_id=caller_id, variables={"_agent_type": "orchestrator"}
-        )
-        seat = await engine.evaluate(
-            event, session_id=caller_id, variables={"_agent_type": "developer"}
-        )
-
-        assert exempt.decision == "allow"
-        assert seat.decision == "block"
-        assert SEAT_NO_SPAWN in (seat.reason or "")
+        for name, decision in (
+            ("free-network-coordinator", "allow"),
+            ("restricted-network-coordinator", "block"),
+        ):
+            caller_id = callers[name].id
+            response = await engine.evaluate(
+                _spawn_event(caller_id, "spawn_agent", "spawn-scope-worker", network="trusted"),
+                session_id=caller_id,
+                variables={"_agent_type": name},
+            )
+            assert response.decision == decision
+            if decision == "block":
+                assert SEAT_NO_SPAWN in (response.reason or "")
 
 
 @pytest.mark.asyncio
@@ -629,11 +744,12 @@ async def test_spawn_rules_let_a_team_manager_resume_a_session(
         SEAT_NO_SPAWN,
         LIMIT_SPAWNABLE_AGENTS,
         LIMIT_SPAWN_NETWORK_OVERRIDE,
-        "no-agent-spawn-for-merge",
+        "no-agent-spawn",
     )
-    seat = _register(session_manager, str(sample_project["id"]), "seat-dev-manager")
+    seed_seat(temp_db, "custom-team-manager", include=[f"name:{SEAT_NO_SPAWN}"])
+    seat = _register(session_manager, str(sample_project["id"]), "custom-team-manager")
     engine = RuleEngine(temp_db, session_manager=session_manager)
-    variables = {"_agent_type": "dev-manager", "team_manager": True}
+    variables = {"_agent_type": "custom-team-manager", "team_manager": True}
 
     resumed = await engine.evaluate(
         _spawn_event(seat.id, "spawn_agent", "developer", resume_session_id="gobby#15771"),
@@ -662,7 +778,7 @@ def test_spawn_any_wildcard_stands_alone() -> None:
         )
 
 
-TEAM_SEAT_TYPES = ("test-writer", "developer", "code-reviewer")
+TEAM_SEAT_TYPES = ("test-writer", "developer", "code-reviewer", "custom-maker")
 
 
 @dataclass
@@ -735,7 +851,9 @@ async def test_team_manager_resumes_a_seat_of_its_own_team(
     teams: _Teams, session_manager: SessionManager, seat_type: str
 ) -> None:
     _only_rules_enabled(teams.db, LIMIT_SPAWNABLE_AGENTS)
-    _define_agent(teams.db, "dev-manager", None, variables={"team_manager": True})
+    _define_agent(
+        teams.db, "dev-manager", None, variables={"team_manager": True}, resumable=TEAM_SEAT_TYPES
+    )
     engine = RuleEngine(teams.db, session_manager=session_manager)
 
     resumed = await engine.evaluate(
@@ -753,6 +871,23 @@ async def test_team_manager_resumes_a_seat_of_its_own_team(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("seat_type", ["developer", "custom-maker"])
+async def test_team_resume_requires_a_declared_target(
+    teams: _Teams, session_manager: SessionManager, seat_type: str
+) -> None:
+    _only_rules_enabled(teams.db, LIMIT_SPAWNABLE_AGENTS)
+    _define_agent(teams.db, "dev-manager", None, variables={"team_manager": True})
+    response = await RuleEngine(teams.db, session_manager=session_manager).evaluate(
+        _spawn_event(
+            teams.manager.id, "spawn_agent", seat_type, resume_session_id=teams.seats[seat_type].id
+        ),
+        session_id=teams.manager.id,
+        variables={},
+    )
+    assert response.decision == "block"
+
+
+@pytest.mark.asyncio
 @_REFUSED_RESUMES
 async def test_team_manager_refuses_another_teams_seat_a_retype_or_a_fresh_spawn(
     teams: _Teams,
@@ -763,7 +898,13 @@ async def test_team_manager_refuses_another_teams_seat_a_retype_or_a_fresh_spawn
     team_manager: bool,
 ) -> None:
     _only_rules_enabled(teams.db, LIMIT_SPAWNABLE_AGENTS)
-    _define_agent(teams.db, "dev-manager", None, variables={"team_manager": team_manager})
+    _define_agent(
+        teams.db,
+        "dev-manager",
+        None,
+        variables={"team_manager": team_manager},
+        resumable=TEAM_SEAT_TYPES,
+    )
     engine = RuleEngine(teams.db, session_manager=session_manager)
 
     refused = await engine.evaluate(
@@ -796,7 +937,9 @@ async def test_team_manager_admission_resumes_its_own_teams_seat(
     session_manager: SessionManager,
     seat_type: str,
 ) -> None:
-    _define_agent(teams.db, "dev-manager", None, variables={"team_manager": True})
+    _define_agent(
+        teams.db, "dev-manager", None, variables={"team_manager": True}, resumable=TEAM_SEAT_TYPES
+    )
     _admit_as(monkeypatch, teams.manager)
 
     caller = await _spawn_guards.enforce_spawn_caller(
@@ -820,7 +963,13 @@ async def test_team_manager_admission_refuses_other_teams_retypes_and_fresh_spaw
     agent: str,
     team_manager: bool,
 ) -> None:
-    _define_agent(teams.db, "dev-manager", None, variables={"team_manager": team_manager})
+    _define_agent(
+        teams.db,
+        "dev-manager",
+        None,
+        variables={"team_manager": team_manager},
+        resumable=TEAM_SEAT_TYPES,
+    )
     _admit_as(monkeypatch, teams.manager)
 
     with pytest.raises(ValueError, match="caller may not spawn"):

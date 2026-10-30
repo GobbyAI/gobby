@@ -33,7 +33,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.storage.team_records import EPIC_MODE
-from gobby.tasks.lifecycle_access import session_agent_definition
+from gobby.workflows.agent_resolver import session_agent_definition
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -254,7 +254,7 @@ def _reviewer(
 
 
 def _is_bound_dev_manager(db: HubDatabase, caller_session_id: str, epic_id: str) -> bool:
-    """The caller's run is bound to the epic, and its definition writes the closing record."""
+    """The caller's bound run declares team management and closing records."""
     caller = SessionManager(db).get(caller_session_id)
     if caller is None:
         return False
@@ -264,7 +264,7 @@ def _is_bound_dev_manager(db: HubDatabase, caller_session_id: str, epic_id: str)
         run is not None
         and run.task_id == epic_id
         and definition is not None
-        and definition[0].name != "researcher"
+        and definition[0].workflows.variables.get("team_manager") is True
         and "closing" in definition[0].task_step_writes
     )
 

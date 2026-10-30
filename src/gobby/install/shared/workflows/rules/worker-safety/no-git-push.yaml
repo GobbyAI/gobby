@@ -1,11 +1,10 @@
-tags: [worker-safety, enforcement, agents, gobby]
+tags: [git-push-policy]
 
 rules:
-  no-push-for-workers:
-    description: "Block git push for developer agents"
+  no-git-push:
+    description: "Block git push for definitions that select this policy"
     event: before_tool
     enabled: true
-    agent_scope: [developer]
     effects:
       - type: block
         tools: [Bash]

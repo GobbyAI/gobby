@@ -1,0 +1,11 @@
+tags: [agent-spawn-policy]
+
+rules:
+  no-agent-spawn:
+    description: "Block agent spawning for definitions that select this policy"
+    event: before_tool
+    enabled: true
+    effects:
+      - type: block
+        mcp_tools: ["gobby-agents:spawn_agent"]
+        reason: "Spawning agents is not allowed by this agent definition's selected policy."

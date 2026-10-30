@@ -487,6 +487,55 @@ async def test_resume_by_reference_routes_to_owner(
     impl.assert_not_awaited()
 
 
+@pytest.mark.parametrize("requested", ["orchestrator", "custom-seat"])
+@pytest.mark.parametrize("granted", [False, True])
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_remote_resume_retype_uses_definition_grant(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    runner: MagicMock,
+    requested: str,
+    granted: bool,
+    enabled: bool,
+) -> None:
+    target = _insert_session(temp_db, sample_project["id"], remote_machine, status="expired")
+    SessionVariableManager(temp_db).set_variable(target, "_agent_type", "worker")
+    body = make_agent_definition(
+        name=requested,
+        prompts={"agent": "Continue"},
+        enabled=enabled,
+        capabilities=["accept_resume_retype"] if granted else [],
+    )
+    result = await spawn_remote_route(
+        temp_db,
+        routed=_routed(remote_machine),
+        session_manager=SessionManager(temp_db),
+        task_manager=LocalTaskManager(temp_db),
+        runner=runner,
+        daemon_config=DaemonConfig(),
+        placement=None,
+        request=_request(
+            remote_parent,
+            sample_project["id"],
+            agent_name=requested,
+            agent_body=body,
+            resume_session_id=target,
+        ),
+    )
+    assert result["success"] is (granted and enabled)
+    if granted and enabled:
+        node.send.assert_awaited_once()
+        payload = node.send.await_args.args[2]
+        assert payload["resume_session_id"] == f"remote-spawn-{target}"
+    else:
+        assert result["error_code"] == "resume_refused"
+        node.send.assert_not_awaited()
+        assert _run_count(temp_db) == 0
+
+
 async def test_closed_task_spawn_refused(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

@@ -1,16 +1,15 @@
-tags: [roles, seat, enforcement, gobby, default]
+tags: [roles, seat, enforcement, gobby]
 
 # Writes with no resolvable target path fail closed: both helpers return False
 # for an empty path set.
 rules:
-  developer-submit-write-scope:
-    description: "Keep the submitted Developer candidate frozen while allowing reads and audits"
+  submitted-candidate-write-scope:
+    description: "Keep a submitted candidate frozen while allowing reads and audits"
     event: before_tool
     enabled: true
     priority: 15
     when: >
-      variables.get('_agent_type') == 'developer'
-      and variables.get('current_step') == 'submit'
+      variables.get('current_step') == 'submit'
       and (
         event.data.get('canonical_tool_kind') == 'write'
         or event.data.get('canonical_repo_mutation')
@@ -26,14 +25,13 @@ rules:
           a needed change to your Dev Manager. Run commands directly when a
           package runner's shell-command mode cannot be classified.
 
-  researcher-write-scope:
-    description: "The Researcher writes only research artifacts and its agent workspace folder"
+  research-artifact-write-scope:
+    description: "Restrict writes to research artifacts and the session workspace"
     event: before_tool
     enabled: true
     priority: 15
     when: >
-      variables.get('_agent_type') == 'researcher'
-      and event.data.get('canonical_tool_kind') == 'write'
+      event.data.get('canonical_tool_kind') == 'write'
       and not write_paths_within(event.data, tool_input, ['.gobby/plans/research/'])
       and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
     effects:
@@ -43,14 +41,13 @@ rules:
           agent workspace folder (named in your Agent Workspace section). Name the target
           with a literal path inside one of them. Source code remains read-only.
 
-  assistant-write-scope:
-    description: "The Assistant writes only under docs/ and its agent workspace folder"
+  documentation-write-scope:
+    description: "Restrict writes to docs/ and the session workspace"
     event: before_tool
     enabled: true
     priority: 15
     when: >
-      variables.get('_agent_type') == 'assistant'
-      and event.data.get('canonical_tool_kind') == 'write'
+      event.data.get('canonical_tool_kind') == 'write'
       and not write_paths_within(event.data, tool_input, ['docs/'])
       and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
     effects:
@@ -60,14 +57,13 @@ rules:
           in your Agent Workspace section). Name the target with a literal path inside
           one of them.
 
-  archivist-write-scope:
-    description: "The Archivist writes only dated workspace reports and its agent workspace folder"
+  digest-write-scope:
+    description: "Restrict writes to dated reports and the session workspace"
     event: before_tool
     enabled: true
     priority: 15
     when: >
-      variables.get('_agent_type') == 'archivist'
-      and event.data.get('canonical_tool_kind') == 'write'
+      event.data.get('canonical_tool_kind') == 'write'
       and not (
         write_paths_match(event.data, tool_input,
           './\\.gobby/reports/gobby-digest-[0-9]{4}-[0-9]{2}-[0-9]{2}\\.md(?:\\.tmp\\.[0-9]{1,10}\\.[0-9a-f]{12})?')

@@ -25,6 +25,7 @@ from gobby.skills.formatting import (
     skill_fetch_directive,
     skill_fetch_proxy_path,
 )
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
@@ -34,6 +35,7 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import sync_bundled_rules
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -139,11 +141,13 @@ def manager(db: HubDatabase) -> RuleDefinitionManager:
     return RuleDefinitionManager(db)
 
 
-def _sync_bundled(db: HubDatabase) -> object:
+def _sync_bundled(db: HubDatabase, *, include_task_gate: bool = True) -> object:
     """Sync bundled rules from the real rules directory."""
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
+    if include_task_gate and AgentDefinitionManager(db).get_by_name("default") is None:
+        seed_seat(db, "default", include=["tag:default", "name:require-tasks-skill-for-mutations"])
     # Mark templates as installed so get_by_name() finds them
     db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
     return result
@@ -363,6 +367,39 @@ class TestTaskEnforcementSync:
 
 class TestBlockUnresolvedScopeShellWrite:
     """Unknown-target shell mutations must stop before provider execution."""
+
+    @pytest.mark.asyncio
+    async def test_literal_script_with_unresolved_writes_explains_remedy(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        script = tmp_path / "install-agent.sh"
+        script.write_text('#!/bin/sh\nprintf config > "$TARGET_DIR/agent.plist"\n')
+        script.chmod(0o755)
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": f"{shlex.quote(str(script))} --keep-cron"},
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"task_claimed": True, "loaded_skills": ["restraint"]},
+        )
+
+        assert response.decision == "block"
+        reason = response.reason or ""
+        assert "script whose body writes to unresolved targets" in reason
+        assert "run its steps with literal paths" in reason
+        assert "ask the operator to run it" in reason
 
     def test_rule_uses_canonical_unknown_scope_metadata(
         self, db: HubDatabase, manager: RuleDefinitionManager
@@ -1739,7 +1776,7 @@ class TestRequireTasksSkillForMutations:
 
         assert task_mutation_requires_tasks_skill(tool_input, event_data) is False
 
-    def test_rule_uses_normalized_helper_and_default_agent_scope(
+    def test_rule_uses_normalized_helper(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _sync_bundled(db)
@@ -1749,7 +1786,6 @@ class TestRequireTasksSkillForMutations:
         assert body.effects
 
         assert body.event.value == "before_tool"
-        assert "variables.get('_agent_type') == 'default'" in (body.when or "")
         assert "task_mutation_requires_tasks_skill(tool_input, event.data)" in (body.when or "")
         assert body.effects[0].reason is not None
         assert "gobby:references/tasks/overview.md" in body.effects[0].reason
@@ -1757,25 +1793,36 @@ class TestRequireTasksSkillForMutations:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("agent_type", "loaded_skill_references", "expected"),
+        ("agent_type", "selected", "loaded_skill_references", "expected"),
         [
-            pytest.param("default", [], "block", id="interactive-default"),
+            pytest.param("default", True, [], "block", id="interactive-default"),
             pytest.param(
-                "default", ["gobby:references/tasks/overview.md"], "allow", id="already-loaded"
+                "default",
+                True,
+                ["gobby:references/tasks/overview.md"],
+                "allow",
+                id="already-loaded",
             ),
-            pytest.param("backend-developer", [], "allow", id="specialized-developer"),
-            pytest.param("qa-reviewer", [], "allow", id="specialized-reviewer"),
-            pytest.param("pipeline", [], "allow", id="pipeline"),
+            pytest.param("backend-developer", True, [], "block", id="custom-selection"),
+            pytest.param("default", False, [], "allow", id="familiar-name-without-selection"),
+            pytest.param("qa-reviewer", False, [], "allow", id="specialized-reviewer"),
+            pytest.param("pipeline", False, [], "allow", id="pipeline"),
         ],
     )
-    async def test_rule_excludes_specialized_agents_and_loaded_sessions(
+    async def test_rule_applies_to_selected_definitions_and_unloaded_sessions(
         self,
         db: HubDatabase,
         agent_type: str,
+        selected: bool,
         loaded_skill_references: list[str],
         expected: str,
     ) -> None:
-        _sync_bundled(db)
+        _sync_bundled(db, include_task_gate=False)
+        seed_seat(
+            db,
+            agent_type,
+            include=["name:require-tasks-skill-for-mutations"] if selected else [],
+        )
         with db.transaction() as conn:
             conn.execute("UPDATE rule_definitions SET enabled = FALSE")
             conn.execute(
@@ -2619,7 +2666,6 @@ class TestRequireTasksSkillOnMutationSchema:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "before_tool"
         assert "task_mutation_requires_tasks_skill" in (body.when or "")
-        assert "_agent_type" in (body.when or "")
         assert "not skill_loaded('gobby:references/tasks/overview.md')" in (body.when or "")
         assert body.effects is not None
         assert len(body.effects) == 1
@@ -2927,7 +2973,7 @@ class TestWriteRouteParity:
                 "task_claimed": False,
                 "plan_mode": False,
             },
-            "event": type("Event", (), {"data": data})(),
+            "event": type("Event", (), {"data": data, "metadata": {}})(),
             "tool_input": data["tool_input"],
             "source": "claude_code",
         }
@@ -3247,7 +3293,7 @@ def test_edits_need_a_claim_that_receives_them(
     normalize_tool_fields(data)
     context = {
         "variables": {"require_task_before_edit": True, "plan_mode": False, **claim_state},
-        "event": type("Event", (), {"data": data})(),
+        "event": type("Event", (), {"data": data, "metadata": {}})(),
         "tool_input": data["tool_input"],
         "source": "claude_code",
     }

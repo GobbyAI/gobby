@@ -68,6 +68,7 @@ def _load_interactive_only_block_rule(db: HubDatabase) -> None:
     }
     RuleDefinitionManager(db).create(
         name="interactive-only-close-block",
+        tags=["default"],
         definition_json=json.dumps(body),
         priority=32,
         enabled=True,

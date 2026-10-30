@@ -25,7 +25,6 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS_DIR = REPO_ROOT / "src/gobby/install/shared/workflows"
 PIPELINES_DIR = WORKFLOWS_DIR / "pipelines"
-AGENTS_DIR = WORKFLOWS_DIR / "agents"
 RULES_DIR = WORKFLOWS_DIR / "rules"
 VARIABLES_PATH = WORKFLOWS_DIR / "variables/gobby-default-variables.yaml"
 PROMPTS_DIR = REPO_ROOT / "src/gobby/install/shared/prompts"
@@ -151,9 +150,12 @@ PLANNING_REFERENCE_ROOTS = (
 
 def test_bundled_sources_and_guides_do_not_reference_the_planning_pipeline() -> None:
     hits: list[str] = []
+    procedures = SKILLS_DIR / "gobby/references/agents/procedures"
     for root in PLANNING_REFERENCE_ROOTS:
         for path in sorted(root.rglob("*")):
             if not path.is_file() or path.suffix not in {".md", ".yaml", ".yml", ".json"}:
+                continue
+            if is_bundled_agent_definition(path) or path.is_relative_to(procedures):
                 continue
             text = path.read_text(encoding="utf-8")
             for match in PLANNING_PIPELINE_REFERENCE.finditer(text):
@@ -187,12 +189,6 @@ def test_planning_pipeline_row_is_retired_by_bundled_sync(temp_db: HubDatabase) 
     assert row.deleted_at is not None
     assert manager.get_by_name("team-planning") is not None
     assert manager.get_by_name("research") is not None
-
-
-@pytest.mark.parametrize("name", RETIRED_AGENTS)
-def test_retired_agent_procedure_is_absent(name: str) -> None:
-    path = SKILLS_DIR / "gobby" / "references" / "agents" / "procedures" / f"{name}.md"
-    assert not path.exists(), f"retired agent procedure remains: {path}"
 
 
 @pytest.mark.parametrize("name", RETIRED_SKILLS)

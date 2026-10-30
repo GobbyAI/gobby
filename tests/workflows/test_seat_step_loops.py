@@ -244,6 +244,7 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
     },
     "plan-adversary": {
         "name": "plan-adversary",
+        "capabilities": ["track_plan_consensus"],
         "prompts": {"agent": "Synthetic plan-adversary seat."},
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         "step_workflow": {
@@ -275,6 +276,7 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
     },
     "log-monitor": {
         "name": "log-monitor",
+        "monitor_report_recipients": ["triage"],
         "prompts": {"agent": "Synthetic log-monitor seat."},
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         "step_workflow": {
@@ -283,8 +285,7 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
                 "tick_done": False,
                 "tick_window": None,
                 "_window_report": None,
-                "triage_reported": False,
-                "log_monitor_reported": False,
+                "_reported_to": [],
             },
             "steps": [
                 {"name": "tick", "on_mcp_success": [_advance("gobby-agents", "send_message")]}
@@ -293,6 +294,7 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
     },
     "metrics-monitor": {
         "name": "metrics-monitor",
+        "monitor_report_recipients": ["triage", "log-monitor"],
         "prompts": {"agent": "Synthetic metrics-monitor seat."},
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         "step_workflow": {
@@ -301,14 +303,13 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
                 "tick_done": False,
                 "tick_window": None,
                 "_window_report": None,
-                "triage_reported": False,
-                "log_monitor_reported": False,
+                "_reported_to": [],
             },
             "steps": [
                 {
                     "name": "tick",
                     "on_mcp_success": [_advance("gobby-agents", "send_message")],
-                    "transitions": [{"to": "report", "when": "vars.tick_window"}],
+                    "transitions": [{"to": "report", "when": "vars.tick_done"}],
                 },
                 {
                     "name": "report",
@@ -599,6 +600,7 @@ class SeatRun:
                 "version": "1.0",
                 "prompts": {"agent": "Coordinate the seat protocol."},
                 "workflows": {"rule_selectors": {"include": []}},
+                "capabilities": ["manage_task_claims"],
                 "task_step_writes": ["review"],
             },
             project_id=project_id,
@@ -1645,10 +1647,23 @@ async def test_developer_declared_candidate_survives_a_production_unlink(
     assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
 
 
+@pytest.mark.parametrize("also_reviews", [False, True])
 async def test_developer_bounce_requires_incoming_assigned_reviewer(
     linked_developer: tuple[SeatRun, Task, str, str],
+    also_reviews: bool,
 ) -> None:
     run, task, sha, unlinked_sha = linked_developer
+    if also_reviews:
+        definitions = AgentDefinitionManager(run.db)
+        definition = definitions.get_by_name("developer", run.project_id)
+        assert definition is not None
+        definitions.update(
+            definition.id,
+            definition_json={
+                **definition.definition_json,
+                "task_step_writes": ["implementation", "review"],
+            },
+        )
     line = f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=BOUNCE"
     await run.send(line)
     assert run.step == "submit"
@@ -2020,6 +2035,7 @@ async def reviewer_authorities(
             "version": "1.0",
             "prompts": {"agent": "Manage the team."},
             "workflows": {"rule_selectors": {"include": []}},
+            "capabilities": ["manage_task_claims"],
             "task_step_writes": ["closing"],
         },
         project_id=PROJECT_ID,
@@ -2043,6 +2059,7 @@ async def reviewer_authorities(
             project_id=PROJECT_ID,
             machine_id=AUTHORITY_MACHINE_ID,
             parent_session_id=teams[team],
+            agent_depth=1,
         )
         actors[name] = actor_session.id
         SessionVariableManager(temp_db).set_variable(actor_session.id, "_agent_type", "dev-manager")
@@ -2145,25 +2162,147 @@ async def test_reviewer_withdrawal_refuses_another_unit(
     assert run.step == step
 
 
+@pytest.mark.parametrize("name", ["developer", "fixture-builder"])
+@pytest.mark.parametrize("grant", [True, False])
+async def test_skill_routing_requires_definition_grant(
+    temp_db: HubDatabase, name: str, grant: bool
+) -> None:
+    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["developer"]))
+    definition.update(name=name, task_step_writes=["implementation"] if grant else [])
+    run = SeatRun(temp_db, name, definition=definition)
+    task = run.task(owner=SESSION_ID, skills=["python"])
+    instance = run.instances.get_for_session(SESSION_ID)
+    assert instance is not None
+    instance.current_step = "route_skills"
+    instance.variables["assigned_task_id"] = task.id
+    run.instances.save(instance)
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id})
+    assert run.vars["skills_routed"] is grant
+    assert run.vars["additional_skills"] == (["python"] if grant else [])
+
+
+@pytest.mark.parametrize("name", ["plan-adversary", "fixture-plan-review"])
+@pytest.mark.parametrize("grant", [True, False])
+@pytest.mark.parametrize("monitor", [True, False])
+async def test_consensus_tracking_requires_declared_capability(
+    temp_db: HubDatabase, name: str, grant: bool, monitor: bool
+) -> None:
+    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["plan-adversary"]))
+    definition.update(name=name, capabilities=["track_plan_consensus"] if grant else [])
+    definition["monitor_report_recipients"] = ["fixture-observer"] if monitor else []
+    run = SeatRun(temp_db, name, definition=definition)
+    await run.load(*run.vars["required_skills"])
+    await run.send(f"EVENT=CONSENSUS SHA={SHA} NOTE=approved")
+    assert run.vars["consensus"] is grant
+    assert run.step == ("stamp" if grant else "review")
+
+
+@pytest.mark.parametrize("target_enabled", [True, False])
+async def test_monitor_routing_uses_declared_recipients(
+    temp_db: HubDatabase, target_enabled: bool
+) -> None:
+    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["metrics-monitor"]))
+    targets = ["fixture-observer-a", "fixture-observer-b"]
+    definition.update(name="fixture-monitor", monitor_report_recipients=targets)
+    run = SeatRun(temp_db, "fixture-monitor", definition=definition)
+    for recipient, name in zip((COORDINATOR_ID, PEER_ID), targets, strict=True):
+        AgentDefinitionManager(temp_db).create(
+            name,
+            {
+                "name": name,
+                "prompts": {"agent": "Observe reports."},
+                "workflows": {"rule_selectors": {"include": []}},
+            },
+            project_id=run.project_id,
+        )
+        SessionVariableManager(temp_db).set_variable(recipient, "_agent_type", name)
+    await run.load(*run.vars["required_skills"])
+    definitions = AgentDefinitionManager(temp_db)
+    recipient_definition = definitions.get_by_name(targets[0], run.project_id)
+    assert recipient_definition is not None
+    if not target_enabled:
+        definitions.update(recipient_definition.id, enabled=False)
+        await run.send("Systems nominal | custom window", COORDINATOR_ID)
+        assert run.step == "tick"
+        assert run.vars["tick_window"] is None
+        definitions.update(recipient_definition.id, enabled=True)
+    await run.send("Systems nominal | custom window", COORDINATOR_ID)
+    assert run.step == "report"
+    await run.send("Systems nominal | custom window", PEER_ID)
+    assert run.step == "tick"
+    assert run.vars["tick_done"] is False
+
+
+def _declare_report_recipient(run: SeatRun, recipient: str, name: str) -> None:
+    definitions = AgentDefinitionManager(run.db)
+    if definitions.get_by_name(name, run.project_id) is None:
+        definitions.create(
+            name,
+            {
+                "name": name,
+                "prompts": {"agent": "Observe the monitor report."},
+                "workflows": {"rule_selectors": {"include": []}},
+            },
+            project_id=run.project_id,
+        )
+    SessionVariableManager(run.db).set_variable(recipient, "_agent_type", name)
+
+
+@pytest.mark.parametrize("name", ["log-monitor", "metrics-monitor"])
+async def test_monitor_name_has_no_undeclared_reporting_handler(
+    temp_db: HubDatabase, name: str
+) -> None:
+    definition = json.loads(json.dumps(_SYNTHETIC_SEATS[name]))
+    definition["monitor_report_recipients"] = []
+    run = SeatRun(temp_db, name, definition=definition)
+    _declare_report_recipient(run, COORDINATOR_ID, "triage")
+    await run.load(*run.vars["required_skills"])
+    await run.send("Systems nominal | ignored window", COORDINATOR_ID)
+    assert run.vars["tick_window"] is None
+    assert run.step == "tick"
+
+
+async def test_monitor_fanout_counts_every_delivered_recipient(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "metrics-monitor")
+    _declare_report_recipient(run, COORDINATOR_ID, "triage")
+    _declare_report_recipient(run, PEER_ID, "log-monitor")
+    await run.load(*run.vars["required_skills"])
+    window = "Systems nominal | shared fanout window"
+    messages = InterSessionMessageManager(temp_db)
+    message_ids = [
+        messages.create_message(SESSION_ID, recipient, window).id
+        for recipient in (COORDINATOR_ID, PEER_ID)
+    ]
+    await run.call(
+        *SEND,
+        {"target": "project", "content": window},
+        {"success": True, "message_ids": message_ids},
+    )
+    assert run.vars["tick_done"] is False
+    assert set(run.vars["_reported_to"]) == {"triage", "log-monitor"}
+    assert set(message_ids).issubset(run.vars["_seat_consumed_messages"])
+    assert run.step == "tick"
+
+
 @pytest.mark.parametrize("name", ["log-monitor", "metrics-monitor"])
 async def test_monitor_windows_complete_from_durable_reports(
     temp_db: HubDatabase, name: str
 ) -> None:
     run = SeatRun(temp_db, name)
-    SessionVariableManager(run.db).set_variable(PEER_ID, "_agent_type", "log-monitor")
+    _declare_report_recipient(run, PEER_ID, "log-monitor")
     # Monitors report to Triage; a report to the Orchestrator completes nothing.
     SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "orchestrator")
     await run.load(*run.vars["required_skills"])
     await run.send("Systems nominal | sample window", COORDINATOR_ID)
     assert run.step == "tick" and run.vars["tick_window"] is None
-    SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "triage")
+    _declare_report_recipient(run, COORDINATOR_ID, "triage")
     for _ in range(2):
         await run.send("Systems nominal | sample window", COORDINATOR_ID)
         if name == "metrics-monitor":
             assert run.step == "report"
             await run.send("Systems nominal | a different window", PEER_ID)
             assert run.step == "report"
-            assert run.vars["log_monitor_reported"] is False
+            assert "log-monitor" not in run.vars["_reported_to"]
             await run.send("Systems nominal | sample window", PEER_ID)
         assert run.step == "tick"
         assert run.vars["tick_done"] is False
@@ -2175,8 +2314,8 @@ async def test_metrics_monitor_window_needs_both_delivered_recipients(
     temp_db: HubDatabase, target_form: str
 ) -> None:
     run = SeatRun(temp_db, "metrics-monitor")
-    SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "triage")
-    SessionVariableManager(run.db).set_variable(PEER_ID, "_agent_type", "log-monitor")
+    _declare_report_recipient(run, COORDINATOR_ID, "triage")
+    _declare_report_recipient(run, PEER_ID, "log-monitor")
     await run.load(*run.vars["required_skills"])
     window = "Systems nominal | sample window"
 
@@ -2203,12 +2342,12 @@ async def test_metrics_monitor_window_needs_both_delivered_recipients(
     # A delivered triage report opens the window and still waits on the log monitor.
     await deliver(COORDINATOR_ID)
     assert run.step == "report"
-    assert run.vars["triage_reported"] is True
+    assert "triage" in run.vars["_reported_to"]
     # A failed log-monitor delivery and a non-recipient target leave the window open.
     await deliver(PEER_ID, succeeded=False)
     await deliver(OWNER_ID)
     assert run.step == "report"
-    assert run.vars["log_monitor_reported"] is False
+    assert "log-monitor" not in run.vars["_reported_to"]
     # Only a delivered log-monitor report completes the window.
     await deliver(PEER_ID)
     assert run.step == "tick"

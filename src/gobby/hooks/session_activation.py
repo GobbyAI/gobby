@@ -317,16 +317,13 @@ def _fallback_agent_updates(
 def _active_rule_name_updates(db: Any, variables: dict[str, Any], session: Any) -> dict[str, Any]:
     agent_name = variables.get("_agent_type")
     if not isinstance(agent_name, str) or not agent_name:
-        return {}
+        agent_name = ""
 
     active_rules = _resolve_active_rule_names(
         db,
         agent_name,
         getattr(session, "project_id", None),
     )
-    if active_rules is None:
-        return {}
-
     current = variables.get("_active_rule_names")
     if isinstance(current, list) and set(current) == active_rules:
         return {}
@@ -338,7 +335,7 @@ def _resolve_active_rule_names(
     db: Any,
     agent_name: str,
     project_id: str | None,
-) -> set[str] | None:
+) -> set[str]:
     from gobby.storage.definitions.agents import AgentDefinitionManager
     from gobby.storage.definitions.rules import RuleDefinitionManager
     from gobby.workflows.definitions import AgentDefinitionBody
@@ -353,21 +350,20 @@ def _resolve_active_rule_names(
 
     agent_manager = AgentDefinitionManager(db)
     row = agent_manager.get_by_name(agent_name, project_id=project_id)
-    if row is None or not row.definition_json:
-        return None
-
-    try:
-        data = row.definition_json
-        if isinstance(data, str):
-            data = json.loads(data)
-        if isinstance(data, dict):
-            data.setdefault("name", row.name)
-        agent = AgentDefinitionBody.model_validate(data)
-    except (json.JSONDecodeError, TypeError, KeyError, ValidationError) as exc:
-        raise ValueError(f"Invalid active agent definition {agent_name!r}: {exc}") from exc
-
     rules = RuleDefinitionManager(db).list_all(project_id=project_id, enabled=True)
-    active_rules = resolve_rules_for_agent(agent, rules)
+    if row is None or not row.enabled:
+        active_rules = {rule.name for rule in rules if "default" in (rule.tags or [])}
+    else:
+        try:
+            data = row.definition_json
+            if isinstance(data, str):
+                data = json.loads(data)
+            if isinstance(data, dict):
+                data.setdefault("name", row.name)
+            agent = AgentDefinitionBody.model_validate(data)
+        except (json.JSONDecodeError, TypeError, KeyError, ValidationError) as exc:
+            raise ValueError(f"Invalid active agent definition {agent_name!r}: {exc}") from exc
+        active_rules = resolve_rules_for_agent(agent, rules)
     with _ACTIVE_RULE_NAMES_CACHE_LOCK:
         _ACTIVE_RULE_NAMES_CACHE.pop(cache_key, None)
         _evict_active_rule_names_cache_to_limit()

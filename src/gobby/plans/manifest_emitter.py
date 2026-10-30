@@ -29,7 +29,6 @@ from gobby.plans.parser import (
     resolve_plan_id,
 )
 from gobby.tasks.categories import (
-    AGENT_BY_IMPLEMENTATION_DOMAIN,
     DEVELOPMENT_FORWARD_LEAF_CATEGORIES,
     TDD_ELIGIBLE_CATEGORIES,
 )
@@ -66,16 +65,6 @@ _FRONTEND_TARGET_PREFIXES = ("web/", "crates/gclient/")
 # Cargo.lock carry no signal: every shipped crate change lists them for its version bump.
 _BACKEND_TARGET_PREFIXES = ("src/gobby/", "crates/")
 _DEFAULT_CATEGORY = "code"
-_AGENT_BY_CATEGORY: dict[str, str] = {
-    "code": "developer",
-    "config": "developer",
-    "docs": "tech-writer",
-    "refactor": "developer",
-    # Test leaves route to the developer and carry no implementation_domain,
-    # whatever their Targets (Rust or Python).
-    "test": "developer",
-}
-_DEFAULT_AGENT_FALLBACK = "developer"
 _DEFAULT_TASK_TYPE = "feature"
 _ROUTING_FIELDS = frozenset(
     {
@@ -194,19 +183,12 @@ def derive_manifest_entries(
                     "use assigned_agent"
                 )
             agent = decision.get("assigned_agent")
-            if agent is None:
-                agent = _agent_for(
-                    category,
-                    document,
-                    section,
-                    str(entry["title"]),
-                    str(entry["validation_criteria"]),
-                )
-            elif not isinstance(agent, str) or not agent:
+            if agent is not None and (not isinstance(agent, str) or not agent):
                 raise ManifestSynthesisError(
                     f"routing decision for {section.section_id!r} has invalid assigned_agent"
                 )
-            entry["assigned_agent"] = agent
+            if agent is not None:
+                entry["assigned_agent"] = agent
         entry["tdd"] = decision.get("tdd", category in TDD_ELIGIBLE_CATEGORIES)
         entries.append(entry)
     return entries
@@ -421,8 +403,6 @@ def _synthesize_entry(
     if category == "code":
         domain = _implementation_domain_for(document, section, title, validation)
         entry["implementation_domain"] = domain
-    else:
-        entry["assigned_agent"] = _agent_for(category, document, section, title, validation)
     return entry
 
 
@@ -576,20 +556,6 @@ def _phase_parent_id(
             return parent.section_id
         current = parent
     return None
-
-
-def _agent_for(
-    category: str,
-    document: PlanDocument,
-    section: PlanSection,
-    title: str,
-    validation: str,
-) -> str:
-    if category == "code":
-        return AGENT_BY_IMPLEMENTATION_DOMAIN[
-            _implementation_domain_for(document, section, title, validation)
-        ]
-    return _AGENT_BY_CATEGORY.get(category, _DEFAULT_AGENT_FALLBACK)
 
 
 def _implementation_domain_for(

@@ -1,14 +1,16 @@
-"""Plan 3.4: who may address the Orchestrator, and Triage digest delivery (mailbox level)."""
+"""Definition-controlled recipient admission, direct wakes, and relaunch routing."""
 
 from __future__ import annotations
 
 import json
-from typing import Any
+from dataclasses import replace
+from typing import Any, Literal
 
 import pytest
 
 from gobby.sessions.mailbox import MailboxSendResult, MailboxService
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions.agents import AgentDefinitionManager, AgentDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager, system_session_id
@@ -38,7 +40,22 @@ def _seat(
     role: str,
     *,
     parent: str | None = None,
+    capabilities: tuple[str, ...] = (),
+    required_senders: tuple[str, ...] = (),
 ) -> str:
+    definitions = AgentDefinitionManager(sessions.db)
+    if definitions.get_by_name(role, project_id) is None:
+        definitions.create(
+            role,
+            {
+                "name": role,
+                "prompts": {"agent": "Coordinate the assigned work."},
+                "workflows": {"rule_selectors": {"include": []}},
+                "capabilities": list(capabilities),
+                "message_sender_capabilities": list(required_senders),
+            },
+            project_id=project_id,
+        )
     session = sessions.register(
         external_id=name,
         machine_id=AGENT_TEST_MACHINE_ID,
@@ -74,10 +91,26 @@ async def test_resolved_role_routing(
     temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:
     project = sample_project["id"]
-    orchestrator = _seat(session_manager, project, "orchestrator", "orchestrator")
-    assistant = _seat(session_manager, project, "assistant", "assistant")
+    orchestrator = _seat(
+        session_manager,
+        project,
+        "orchestrator",
+        "orchestrator",
+        capabilities=("send_reports",),
+        required_senders=("send_reports",),
+    )
+    assistant = _seat(
+        session_manager, project, "assistant", "assistant", capabilities=("send_reports",)
+    )
     operator = _seat(session_manager, project, "operator", "default")
-    triage = _seat(session_manager, project, "triage", "triage", parent=orchestrator)
+    triage = _seat(
+        session_manager,
+        project,
+        "triage",
+        "triage",
+        parent=orchestrator,
+        capabilities=("send_reports",),
+    )
     manager = _seat(session_manager, project, "dev-manager", "dev-manager", parent=orchestrator)
     developer = _seat(session_manager, project, "developer", "developer", parent=orchestrator)
     worker = _seat(session_manager, project, "worker", "default", parent=orchestrator)
@@ -134,14 +167,28 @@ async def test_resolved_role_routing(
 
 
 @pytest.mark.asyncio
-async def test_triage_digest_is_queued_and_relaunch_safe(
+async def test_declared_standing_seats_relaunch_and_direct_messages_wake(
     temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:
     project = sample_project["id"]
-    stale_orchestrator = _seat(session_manager, project, "orchestrator-old", "orchestrator")
+    stale_orchestrator = _seat(
+        session_manager,
+        project,
+        "orchestrator-old",
+        "orchestrator",
+        capabilities=("follow_relaunch",),
+        required_senders=("send_reports",),
+    )
     session_manager.update_status(stale_orchestrator, "expired")
     orchestrator = _seat(session_manager, project, "orchestrator-new", "orchestrator")
-    stale_triage = _seat(session_manager, project, "triage-old", "triage", parent=orchestrator)
+    stale_triage = _seat(
+        session_manager,
+        project,
+        "triage-old",
+        "triage",
+        parent=orchestrator,
+        capabilities=("follow_relaunch", "send_reports"),
+    )
     session_manager.update_status(stale_triage, "expired")
     triage = _seat(session_manager, project, "triage-new", "triage", parent=orchestrator)
     stale_developer = _seat(
@@ -155,7 +202,7 @@ async def test_triage_digest_is_queued_and_relaunch_safe(
     mailbox = _mailbox(temp_db, session_manager, wakes)
 
     # wake=None is a sender that omitted wake. The digest to a stale Orchestrator ref
-    # reaches the relaunched Orchestrator and stays queued.
+    # reaches the relaunched Orchestrator and wakes it.
     digest = await mailbox.send(
         from_session_id=triage,
         target="session",
@@ -164,12 +211,12 @@ async def test_triage_digest_is_queued_and_relaunch_safe(
         wake=None,
     )
     assert digest.recipient_session_ids == [orchestrator]
-    assert digest.wake_results == []
-    assert wakes.calls == []
+    assert digest.wake_results[0]["delivered"] is True
+    assert wakes.calls == [orchestrator]
     metadata = _metadata(temp_db, digest)
     assert (metadata["redirected_from"], metadata["wake_requested"]) == (
         stale_orchestrator,
-        False,
+        True,
     )
 
     # An operator-requested immediate wake is honoured.
@@ -181,7 +228,7 @@ async def test_triage_digest_is_queued_and_relaunch_safe(
         wake=True,
     )
     assert urgent.recipient_session_ids == [orchestrator]
-    assert wakes.calls == [orchestrator]
+    assert wakes.calls == [orchestrator, orchestrator]
 
     # A seat's report to a stale Triage ref follows the relaunch and keeps the direct wake.
     report = await mailbox.send(
@@ -192,7 +239,7 @@ async def test_triage_digest_is_queued_and_relaunch_safe(
         wake=None,
     )
     assert report.recipient_session_ids == [triage]
-    assert wakes.calls == [orchestrator, triage]
+    assert wakes.calls == [orchestrator, orchestrator, triage]
 
     # Team roles have no project-wide binding: a stale developer ref never lands on
     # another team's developer.
@@ -215,3 +262,209 @@ async def test_triage_digest_is_queued_and_relaunch_safe(
         wake=None,
     )
     assert ambiguous.recipient_session_ids == [stale_orchestrator]
+
+
+@pytest.mark.asyncio
+async def test_recipient_permissions_follow_definitions_not_names(
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    project = sample_project["id"]
+    recipient = _seat(
+        session_manager, project, "gate", "custom-inbox", required_senders=("send_reports",)
+    )
+    admitted = _seat(
+        session_manager, project, "reporter", "custom-reporter", capabilities=("send_reports",)
+    )
+    refused = _seat(session_manager, project, "ordinary", "triage", parent=recipient)
+    wakes = _Wakes()
+    mailbox = _mailbox(temp_db, session_manager, wakes)
+
+    denied = await mailbox.send(
+        from_session_id=refused,
+        target="session",
+        target_id=recipient,
+        content="not authorized by the definition",
+        wake=None,
+    )
+    assert denied.error_code == REFUSED
+    assert denied.messages == []
+    delivered = await mailbox.send(
+        from_session_id=admitted,
+        target="session",
+        target_id=recipient,
+        content="report",
+        wake=None,
+    )
+    assert delivered.recipient_session_ids == [recipient]
+    assert wakes.calls == [recipient]
+    fanout = await mailbox.send(from_session_id=refused, target="project", content="broadcast")
+    assert recipient not in fanout.recipient_session_ids
+    assert admitted in fanout.recipient_session_ids
+
+    definitions = AgentDefinitionManager(temp_db)
+    definition = definitions.get_by_name("custom-reporter", project)
+    assert definition is not None
+    definitions.toggle_enabled(definition.id)
+    disabled = await mailbox.send(
+        from_session_id=admitted, target="session", target_id=recipient, content="disabled grant"
+    )
+    assert disabled.error_code == REFUSED
+    assert disabled.messages == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["missing", "disabled", "malformed"])
+async def test_unavailable_recipient_definition_refuses_delivery(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    state: Literal["missing", "disabled", "malformed"],
+) -> None:
+    project = sample_project["id"]
+    recipient = _seat(
+        session_manager,
+        project,
+        "gated-recipient",
+        "gated-inbox",
+        required_senders=("send_reports",),
+    )
+    sender = _seat(session_manager, project, "ordinary-sender", "ordinary-sender")
+    definitions = AgentDefinitionManager(temp_db)
+    definition = definitions.get_by_name("gated-inbox", project)
+    assert definition is not None
+    if state == "missing":
+        definitions.delete(definition.id)
+    elif state == "disabled":
+        definitions.toggle_enabled(definition.id)
+    else:
+        definitions.update(
+            definition.id,
+            definition_json={**definition.definition_json, "message_sender_capabilities": [1]},
+        )
+    wakes = _Wakes()
+    mailbox = _mailbox(temp_db, session_manager, wakes)
+
+    result = await mailbox.send(
+        from_session_id=sender, target="session", target_id=recipient, content="report"
+    )
+
+    assert result.error_code == REFUSED
+    assert result.messages == []
+    assert wakes.calls == []
+    assert temp_db.fetchone(
+        "SELECT count(*) AS n FROM inter_session_messages WHERE to_session = %s", (recipient,)
+    ) == {"n": 0}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("broken_role", ["reporter", "inbox"])
+async def test_retired_definition_fields_refuse_delivery_without_aborting_fanout(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    broken_role: Literal["reporter", "inbox"],
+) -> None:
+    project = sample_project["id"]
+    sender = _seat(session_manager, project, "reporter", "reporter", capabilities=("send_reports",))
+    recipient = _seat(
+        session_manager, project, "inbox", "inbox", required_senders=("send_reports",)
+    )
+    peer = _seat(session_manager, project, "peer", "open-inbox")
+    definitions = AgentDefinitionManager(temp_db)
+    row = definitions.get_by_name(broken_role, project)
+    assert row is not None
+    stored = replace(row, definition_json={**row.definition_json, "terminal_backend": "tmux"})
+    original_lookup = AgentDefinitionManager.get_by_name
+
+    def lookup(
+        manager: AgentDefinitionManager,
+        name: str,
+        project_id: str | None = None,
+        include_deleted: bool = False,
+    ) -> AgentDefinitionRow | None:
+        if name == broken_role and project_id == project:
+            return stored
+        return original_lookup(manager, name, project_id, include_deleted)
+
+    monkeypatch.setattr(AgentDefinitionManager, "get_by_name", lookup)
+    wakes = _Wakes()
+    mailbox = _mailbox(temp_db, session_manager, wakes)
+
+    direct = await mailbox.send(
+        from_session_id=sender, target="session", target_id=recipient, content="report"
+    )
+    assert direct.error_code == REFUSED
+    assert direct.messages == []
+    assert wakes.calls == []
+
+    fanout = await mailbox.send(from_session_id=sender, target="project", content="broadcast")
+    assert fanout.success is True
+    assert recipient not in fanout.recipient_session_ids
+    assert peer in fanout.recipient_session_ids
+
+
+@pytest.mark.asyncio
+async def test_spawned_child_has_no_operator_message_exemption(
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    project = sample_project["id"]
+    parent = _seat(session_manager, project, "parent", "reporter")
+    child = session_manager.register(
+        external_id="unseated-child",
+        source="codex",
+        project_id=project,
+        machine_id=AGENT_TEST_MACHINE_ID,
+        parent_session_id=parent,
+        agent_depth=1,
+    )
+    recipient = _seat(session_manager, project, "recipient", "inbox", required_senders=("report",))
+    wakes = _Wakes()
+
+    result = await _mailbox(temp_db, session_manager, wakes).send(
+        from_session_id=child.id, target="session", target_id=recipient, content="report"
+    )
+
+    assert result.error_code == REFUSED
+    assert result.messages == []
+    assert wakes.calls == []
+
+
+@pytest.mark.asyncio
+async def test_operator_recipient_needs_no_agent_definition(
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    project = sample_project["id"]
+    sender = _seat(session_manager, project, "sender-to-operator", "ordinary-sender")
+    operator = session_manager.register(
+        external_id="bare-operator",
+        machine_id=AGENT_TEST_MACHINE_ID,
+        source="codex",
+        project_id=project,
+    )
+    mailbox = _mailbox(temp_db, session_manager, _Wakes())
+
+    result = await mailbox.send(
+        from_session_id=sender, target="session", target_id=operator.id, content="report"
+    )
+
+    assert result.recipient_session_ids == [operator.id]
+
+
+@pytest.mark.asyncio
+async def test_definition_can_follow_a_relaunched_custom_seat(
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    project = sample_project["id"]
+    previous = _seat(
+        session_manager, project, "previous", "custom-inbox", capabilities=("follow_relaunch",)
+    )
+    session_manager.update_status(previous, "expired")
+    current = _seat(session_manager, project, "current", "custom-inbox")
+    sender = _seat(session_manager, project, "sender", "custom-sender")
+    mailbox = _mailbox(temp_db, session_manager, _Wakes())
+    result = await mailbox.send(
+        from_session_id=sender, target="session", target_id=previous, content="report", wake=None
+    )
+    assert result.recipient_session_ids == [current]
+    assert _metadata(temp_db, result)["redirected_from"] == previous

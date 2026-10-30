@@ -1,4 +1,6 @@
 name: developer
+task_categories: [code, config, refactor, test]
+capabilities: [accept_resume_retype, recover_rejected_submission]
 description: |
   Developer seat. Implements one DevTeam task against the Test Writer's
   failing tests, submits a CANDIDATE to the Dev Manager and the assigned Code
@@ -58,9 +60,12 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
+      - "name:no-git-push"
+      - "name:submitted-candidate-write-scope"
 
 step_workflow:
   variables:

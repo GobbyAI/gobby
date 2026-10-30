@@ -9,7 +9,9 @@ from typing import Any, cast
 
 import pytest
 
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
+from gobby.agents.runbook_seats import check_runbook_seats
+from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding, managed_task_team
+from gobby.mcp_proxy.tools.runbook_seat_tools import runbook_seat_stores
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions import AgentDefinitionManager
@@ -17,7 +19,9 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.workspaces import WorkspaceManager
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.worktrees.deletion import (
     DeletionSurface,
@@ -148,25 +152,86 @@ def new_task(
     )
 
 
-async def epic_team(world: TeamWorld, epic: Task) -> EpicTeam:
+async def epic_team(
+    world: TeamWorld,
+    epic: Task,
+    tab_title: str | None = None,
+    *,
+    manager_name: str = "dev-manager",
+) -> EpicTeam:
     """An admitted epic team with its running Dev Manager seat, which never claims."""
     db = world.case.db
     runbook = world.child(epic)
-    binding = await world.admit(runbook, epic)
-    manager = world.case.session("dev-manager", parent=runbook.id)
+    binding = await world.admit(runbook, epic, tab_title=tab_title or f"Dev Team - #{epic.seq_num}")
+    manager = world.case.session(manager_name, parent=runbook.id)
     runs = LocalAgentRunManager(db)
     run = runs.create(
         parent_session_id=runbook.id,
         provider="claude",
         prompt="Manage the epic team.",
-        agent_name="dev-manager",
+        agent_name=manager_name,
         child_session_id=manager,
         task_id=epic.id,
     )
     runs.start(run.id)
-    SessionVariableManager(db).merge_variables(manager, {"_agent_type": "dev-manager"})
+    SessionVariableManager(db).merge_variables(manager, {"_agent_type": manager_name})
     SessionManager(db).update_terminal_pickup_metadata(manager, agent_run_id=run.id)
     return EpicTeam(world, epic, runbook, binding, manager)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("manager_name", ["researcher", "fixture-manager"])
+@pytest.mark.parametrize("granted", [True, False])
+async def test_managed_task_team_uses_declared_manager_policy(
+    world: TeamWorld, manager_name: str, granted: bool
+) -> None:
+    body = synthetic_manager_body()
+    body["name"] = manager_name
+    body["workflows"]["variables"]["team_manager"] = granted
+    AgentDefinitionManager(world.case.db).create(
+        manager_name, body, project_id=world.case.project_id
+    )
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic, manager_name=manager_name)
+
+    managed = managed_task_team(world.case.db, team.manager, leaf.id)
+
+    if granted:
+        assert managed is not None
+        assert managed.team_id == team.binding.team_id
+    else:
+        assert managed is None
+
+
+@pytest.mark.asyncio
+async def test_pod_inherits_declared_manager_with_renamed_catalogue_seats(world: TeamWorld) -> None:
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    world.finish(team.runbook)
+    pod_run = world.child(leaf, parent=team.manager)
+    pod_title = f"Fixture Pod - #{leaf.seq_num}"
+    pod = await world.admit(pod_run, leaf, parent_team_id=team.binding.team_id, tab_title=pod_title)
+    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "fixture-pod")[0]
+
+    admitted = check_runbook_seats(
+        runbook_seat_stores(world.case.db),
+        caller_session_id=pod_run.id,
+        workspace=workspace.id,
+        requested="fixture-lead,dev-manager",
+        catalogue=[
+            {"name": "fixture-lead", "title": "Lead", "agent": "dev-manager"},
+            {"name": "dev-manager", "title": "Maker", "agent": "developer"},
+        ],
+        skip_live_seats=True,
+        team_id=pod.team_id,
+        tab_title="Fallback title",
+    )
+
+    assert admitted.launch == ("dev-manager",)
+    assert admitted.live["fixture-lead"] == team.manager
+    assert admitted.tab_title == pod_title
 
 
 def reviewer_bindings(team: EpicTeam) -> dict[str, str]:

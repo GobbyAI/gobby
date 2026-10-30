@@ -23,7 +23,7 @@ async def _submit_seat(db: HubDatabase) -> SeatRun:
     run, _ = await _submitted(db)
     bundle = yaml.safe_load(_RULES.read_text())
     for name, rule in bundle["rules"].items():
-        if name.startswith("developer-submit-"):
+        if name == "submitted-candidate-write-scope":
             body = {
                 key: value
                 for key, value in rule.items()

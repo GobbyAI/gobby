@@ -1,4 +1,5 @@
 name: plan-adversary
+capabilities: [accept_resume_retype, track_plan_consensus]
 description: |
   Plan Adversary seat for the team-planning runbook. Attacks the plan the writer
   passes it, reaches consensus with the writer over send_message, and stamps
@@ -102,11 +103,15 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
+      - "name:guard-durable-memory-writes"
+      - "name:inject-plan-reviewer-lessons"
     exclude:
       - "tag:task-skill-gates"
+      - "name:guard-plan-memory-writes"
 
 step_workflow:
   variables:

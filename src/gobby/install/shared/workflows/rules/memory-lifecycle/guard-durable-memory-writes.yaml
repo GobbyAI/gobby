@@ -1,0 +1,21 @@
+tags: [memory-write-policy]
+
+rules:
+  guard-durable-memory-writes:
+    description: "Confirm memory writes are durable in any mode"
+    event: before_tool
+    enabled: true
+    priority: 11
+    when: "not variables.get('plan_memory_write_nudge_fired')"
+    effects:
+      - type: block
+        delivery: on_receipt
+        mcp_tools:
+          - "gobby-memory:create_memory"
+          - "gobby-memory:update_memory"
+        acknowledge_variable: plan_memory_write_nudge_fired
+        reason: >-
+          Use the plan artifact or evidence for plan drafts, enhancement
+          suggestions, and review findings. Memory is reserved for explicit
+          durable user preferences and finalized decisions. Retry only when the
+          write satisfies that boundary.

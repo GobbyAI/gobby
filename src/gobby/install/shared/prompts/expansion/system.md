@@ -69,13 +69,13 @@ Return ONLY valid JSON. No prose, no markdown, no code fences.
 5. Put only real dependencies in `dependencies`.
 6. Include `affected_files` when you can infer them from the current repo.
 7. `implementation_domain` is required for every `category: "code"` task and must be one of `backend`, `frontend`, or `fullstack`.
-8. Derive code task routing from `implementation_domain`: every domain routes to `developer`, which reads the domain to pick its skills. Do not set a different code `assigned_agent` unless the caller explicitly requested a privileged manual override.
+8. Preserve `implementation_domain` for code tasks. Automatic assignment uses enabled spawn definitions whose `task_categories` includes the category and whose `implementation_domains` is empty or includes the code domain. Only set an explicit code `assigned_agent` when the caller requests a privileged manual override.
 9. For TDD-required code/config work, emit one implementation task with `additional_skills: ["test-driven-development"]`, a `tdd:required` label if labels are present, and validation criteria requiring red, green, refactor/final-green, exact test command, test-quality audit evidence, and test-types audit (mypy ratchet) evidence for Python test changes.
 10. Do not create separate `[TEST]`, `[IMPL]`, or `[REF]` tasks yourself.
 11. Do not invent optional scope or extra features.
-12. Assign every `config`, `docs`, `refactor`, or `test` leaf to an available agent using
-    the agent-selection heuristics in `gobby:references/plan/expansion.md`. Use `developer` as the default
-    fallback and include `additional_skills` as an array.
+12. Follow definition-declared routing in `gobby:references/plan/expansion.md`.
+    Leave `assigned_agent` unset when no unique available route exists; never invent a
+    default definition. Include `additional_skills` as an array.
 13. Do not emit discovery-stage leaves from an approved plan.
 14. When repository context includes `Related existing test files`, use those exact
     paths in `test_intent.suggested_test_files` for behavior they already cover and make

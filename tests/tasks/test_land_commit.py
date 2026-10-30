@@ -17,6 +17,7 @@ import psycopg
 import pytest
 
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -33,7 +34,7 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import add_claimed_task
 from tests.fixtures.landing_case import LandingCase, make_landing_case
-from tests.fixtures.review_approvals import reject_review
+from tests.fixtures.review_approvals import grant_step_writes, reject_review
 
 pytestmark = pytest.mark.unit
 
@@ -98,6 +99,33 @@ async def test_approved_review_record_at_exact_tip_lands(case: LandingCase) -> N
     assert landed["landed"] is True
     assert landed["landed_tip"] == sha
     assert case.git("rev-parse", "trunk") == sha
+
+
+@pytest.mark.parametrize("name", ["researcher", "custom-lander"])
+@pytest.mark.parametrize("granted", [True, False])
+async def test_task_bound_landing_requires_declared_permission(
+    case: LandingCase, name: str, granted: bool
+) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "reviewed record"})
+    task = case.reviewed(sha)
+    manager = case.manager_for(task)
+    grant_step_writes(
+        case.db,
+        manager,
+        case.project_id,
+        name,
+        ("closing",),
+        capabilities=("land_tasks",) if granted else (),
+    )
+
+    result = await case.land(task, sha, caller=manager)
+
+    assert result["landed"] is granted
+    if granted:
+        assert case.git("rev-parse", "trunk") == sha
+    else:
+        assert result["blockers"] == ["caller_not_task_manager"]
+        assert case.git("rev-parse", "trunk") == case.base
 
 
 async def test_land_preview_follows_the_approval_not_a_drifted_stored_status(
@@ -165,6 +193,66 @@ async def test_security_review_task_refuses_code_only_approval(case: LandingCase
     assert case.git("rev-parse", "trunk") == case.base
 
 
+@pytest.mark.parametrize("name", ["security-reviewer", "fixture-specialist"])
+@pytest.mark.parametrize("supplemental", [True, False])
+def test_review_classification_comes_from_definition(
+    case: LandingCase, name: str, supplemental: bool
+) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "review me"})
+    task = case.task()
+    case.link(task, sha)
+    reviewer = case.security_reviewer(name, granted=False, supplemental=supplemental)
+    case.approve_as(task, sha, reviewer)
+
+    stored = LocalTaskManager(case.db).get_task(task.id)
+    assert stored.review_status == ("pending" if supplemental else "valid")
+
+
+@pytest.mark.parametrize("name", ["security-reviewer", "fixture-specialist"])
+@pytest.mark.parametrize("granted", [True, False])
+async def test_security_approval_uses_declared_capability(
+    case: LandingCase, name: str, granted: bool
+) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "review me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.approve(task, sha)
+    case.approve_as(task, sha, case.security_reviewer(name, granted=granted))
+
+    result = await case.land(task, sha)
+    assert result["landed"] is granted
+    if granted:
+        assert case.git("rev-parse", "trunk") == sha
+    else:
+        assert result["blockers"] == ["security_review_missing"]
+
+
+@pytest.mark.parametrize("name", ["security-reviewer", "fixture-specialist"])
+def test_supplemental_review_requires_running_definition_seat(case: LandingCase, name: str) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "review me"})
+    task = case.task()
+    case.link(task, sha)
+    with pytest.raises(StepRecordError, match="running"):
+        case.approve_as(task, sha, case.security_seat(name, granted=False))
+
+
+async def test_recorded_security_authority_survives_definition_disable(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "review me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.approve(task, sha)
+    specialist = case.security_reviewer("fixture-specialist")
+    case.approve_as(task, sha, specialist)
+    definitions = AgentDefinitionManager(case.db)
+    definition = definitions.get_by_name("fixture-specialist", case.project_id)
+    assert definition is not None
+    definitions.update(definition.id, enabled=False)
+
+    result = await case.land(task, sha)
+    assert result["landed"] is True
+    assert case.git("rev-parse", "trunk") == sha
+
+
 async def test_security_review_task_lands_with_code_and_security_approvals(
     case: LandingCase,
 ) -> None:
@@ -225,7 +313,7 @@ async def test_security_reviewer_records_only_approvals(case: LandingCase) -> No
     sha = case.candidate("lane", {"docs/change.md": "land me"})
     task = case.task(labels=["security-review"])
     case.link(task, sha)
-    with pytest.raises(StepRecordError, match="security-reviewer"):
+    with pytest.raises(StepRecordError, match="supplemental review records only approvals"):
         reject_review(
             case.db, task_id=task.id, reviewer_session_id=case.security_reviewer(), commit_sha=sha
         )
@@ -237,7 +325,7 @@ async def test_security_approval_needs_a_running_security_reviewer_seat(case: La
     task = case.task(labels=["security-review"])
     case.link(task, sha)
     case.approve(task, sha)
-    with pytest.raises(StepRecordError, match="running security-reviewer seat"):
+    with pytest.raises(StepRecordError, match="running definition seat"):
         case.approve_as(task, sha, case.security_seat())
     refused = await case.land(task, sha)
     assert refused["landed"] is False

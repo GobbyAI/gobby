@@ -13,8 +13,10 @@ Features:
 """
 
 import logging
+import shlex
 import shutil
 import stat
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -85,9 +87,10 @@ def _landing_guard_hook() -> str:
     return (
         r"""
 # Gobby protected-branch guard. The branch checked out in the main worktree
-# takes code only through gobby-tasks-ops:land_commit. A direct update may
-# change only Markdown at the root or under the listed directories, and
-# coverage manifests. POSIX sh: no interpreter start per ref update.
+# takes code through gobby-tasks-ops:land_commit unless its committed project
+# marker enables allow_direct_integration_commits.
+# Otherwise direct updates are limited to the listed Markdown/coverage paths.
+# POSIX sh; JSON parsing uses the interpreter that installed this hook.
 GOBBY_REF_LINES=$(cat)
 gobby_refuse() {
     echo "Gobby refused the update of ${GOBBY_PROTECTED_REF:-the protected branch}: $1." >&2
@@ -154,10 +157,40 @@ if [ -n "$GOBBY_PROTECTED_REF" ]; then
         # A zero old value is a creation or a forced update; read the ref to tell.
         case $gobby_old in
         *[!0]*) ;;
-        *) gobby_old=$(git rev-parse -q --verify "$gobby_ref^{commit}") || continue ;;
+        *) gobby_old=$(git --no-replace-objects rev-parse -q --verify "$gobby_ref^{commit}") ||
+            continue ;;
         esac
+        # Only the policy already landed on the protected branch can authorize
+        # an update. The index, worktrees and incoming commit are not authority.
+        gobby_marker=$(git --no-replace-objects ls-tree "$gobby_old" -- .gobby/project.json) ||
+            gobby_refuse "cannot locate the committed project policy"
+        if [ -n "$gobby_marker" ]; then
+            # Preserve the blob bytes: shell substitution would strip NULs.
+            """
+        + shlex.quote(sys.executable)
+        + r""" -I -S -c '
+import json, subprocess, sys
+try:
+    project = json.loads(subprocess.check_output([
+        "git", "--no-replace-objects", "show", sys.argv[1] + ":.gobby/project.json"
+    ]))
+except (ValueError, OSError, subprocess.CalledProcessError):
+    sys.exit(2)
+if not isinstance(project, dict):
+    sys.exit(2)
+policy = project.get("allow_direct_integration_commits", False)
+if type(policy) is not bool:
+    sys.exit(2)
+sys.exit(0 if policy else 1)
+' "$gobby_old"
+            case $? in
+            0) continue ;;
+            1) ;; # False or an absent key retains the path allowance.
+            *) gobby_refuse "invalid or unreadable allow_direct_integration_commits policy" ;;
+            esac
+        fi
         # Unquoted non-ASCII matches the policy; git still quotes control characters.
-        gobby_paths=$(git -c core.quotePath=false diff --name-only --no-renames \
+        gobby_paths=$(git --no-replace-objects -c core.quotePath=false diff --name-only --no-renames \
             "$gobby_old" "$gobby_new") ||
             gobby_refuse "cannot list the paths changed by $gobby_old..$gobby_new"
         printf '%s\n' "$gobby_paths" | while IFS= read -r gobby_path; do

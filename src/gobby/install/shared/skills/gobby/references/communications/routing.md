@@ -35,7 +35,8 @@ An operator-owned terminal session retains its selection while expired and
 receives messages again once resumed with the same session ID. Expired sessions
 receive no live delivery. A clear continuation (staged or consumed), or a managed
 agent run ending, or deleting the target session releases the selection and may
-return the DM to a live Assistant. Restore reconciles permanent ends that happened
+return the DM to a live terminal whose definition grants
+`auto_attach_operator_conversations`. Restore reconciles permanent ends that happened
 while the daemon was down before Telegram polling begins.
 `list_conversation_attachments()` lists current live holders for coordination;
 an attached agent needs no Assistant relay.
@@ -57,7 +58,8 @@ conversation; attaching elsewhere fails until you detach. Group bindings are
 in-process; DM/topic bindings persist until detach, replacement, or permanent end.
 In an authorized private Telegram chat, `/agent` can select a live root agent.
 That selection persists across daemon restarts. When its session permanently ends, the chat
-targets a live Assistant if one is available; otherwise the bot clears the
+targets an eligible live terminal with `auto_attach_operator_conversations`
+if one is available; otherwise the bot clears the
 selection and prompts for `/agent`.
 `detach_conversation` with the same arguments releases it, holder only.
 `send_message` exposes no arbitrary metadata; HTTP send and MCP attachment

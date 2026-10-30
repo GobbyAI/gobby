@@ -65,12 +65,13 @@ directed recovery, never to bypass validation, committing, or closing.
 
 ## Release a parked claim
 
-The Orchestrator or the task's Dev Manager can call
+A locally owned root session with an enabled definition granting
+`manage_task_claims`, or the task's authorized team manager, can call
 `gobby-tasks:release_task_claim(task_id, holder_session_ref, reason)` to release
 a named seat's claim on an open task. Discover the schema first. The caller,
 holder, and task must belong to the same project, and the holder must be on the
-caller's machine. A Dev Manager may release only a seat of its own team, on the
-task that team was admitted for; an ordinary agent cannot release claims.
+caller's machine. A team manager may release only a seat of its own team, on the
+task that team was admitted for. A definition name alone grants no authority.
 
 The call checks that the named holder still owns the task and refuses dirty
 task-attributed paths, naming them. An unavailable attributed checkout also

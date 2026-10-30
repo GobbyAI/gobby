@@ -122,7 +122,7 @@ steps:
             agent: developer
           - name: code-reviewer
             title: Code Reviewer
-            agent: code-reviewer
+            agent: "${{ inputs.reviewer_agent }}"
 
   - id: admit
     mcp:
@@ -130,6 +130,7 @@ steps:
       tool: admit_team
       arguments:
         task: "${{ inputs.task }}"
+        tab_title: "${{ steps.guard.output.tab_title }}"
         team_id: "${{ inputs.team_id }}"
         fresh_reviewer: "${{ inputs.fresh_reviewer }}"
         parent_team_id: "${{ inputs.parent_team_id }}"

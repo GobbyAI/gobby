@@ -219,7 +219,7 @@ async def team_in_review(world: TeamWorld, title: str = TITLE) -> ReviewTeam:
     db, project_id = world.case.db, world.case.project_id
     task = world.case.task(title)
     runbook = world.child(task, DEVTEAM)
-    binding = await world.admit(runbook, task)
+    binding = await world.admit(runbook, task, tab_title=f"Dev Team - #{task.seq_num}")
     manager = seat(world, runbook, "dev-manager", manages=task)
     developer, sol = (seat(world, runbook, role) for role in ("developer", "code-reviewer"))
     grant_step_writes(db, developer, project_id, "fixture-developer", ("implementation",))
@@ -285,7 +285,15 @@ async def team_in_moot_review(world: TeamWorld, title: str = "Moot scroll") -> M
     grant_step_writes(db, tester, project_id, "fixture-test-writer", ("test",))
     grant_step_writes(db, developer, project_id, "fixture-developer", ("implementation",))
     grant_review_writes(db, sol, project_id)
-    grant_step_writes(db, manager, project_id, "fixture-dev-manager", ("closing",))
+    grant_step_writes(
+        db,
+        manager,
+        project_id,
+        "fixture-dev-manager",
+        ("closing",),
+        capabilities=("manage_task_claims", "land_tasks"),
+        team_manager=True,
+    )
     LocalTaskManager(db).claim_task(task.id, developer, force=True)
     submit_moot(db, tester, task.id, "test", 1)
     submit_moot(db, developer, task.id, "implementation", 1)
@@ -477,7 +485,14 @@ async def test_hand_off_keeps_the_closer_and_the_reviewer_eligible(world: TeamWo
     team = await team_in_review(world)
     task_id = team.task.id
     closer = seat(world, team.runbook, "closer")
-    grant_step_writes(db, closer, world.case.project_id, "fixture-closer", ("closing",))
+    grant_step_writes(
+        db,
+        closer,
+        world.case.project_id,
+        "fixture-closer",
+        ("closing",),
+        capabilities=("land_tasks",),
+    )
     # A former claimant never lands, so the seats that close the task never take its claim.
     refused = await hand_off(tools, team.manager, team.task, team.developer, team.manager)
     assert refused.get("error_code") == "closer_claim_forbidden", refused
@@ -926,7 +941,9 @@ def _reviewer_step_workflow() -> dict[str, Any]:
 def reviewer_at_await(db: HubDatabase, session_id: str) -> None:
     """Run ``session_id`` as a code-reviewer step instance waiting for a candidate."""
     workflow = _reviewer_step_workflow()
-    SessionVariableManager(db).set_variable(session_id, "_agent_type", "code-reviewer")
+    reviewer = SessionManager(db).get(session_id)
+    assert reviewer is not None and reviewer.project_id is not None
+    grant_step_writes(db, session_id, reviewer.project_id, "code-reviewer", ("review",))
     AgentStepInstanceManager(db).save(
         AgentStepInstance(
             id=str(uuid.uuid4()),
@@ -1094,10 +1111,17 @@ async def test_moot_task_reviewer_records_disposition_and_closes(world: TeamWorl
     # Only the Orchestrator closes a no-work disposition; the Dev Manager's closing record is refused.
     with session_context_for_test(team.manager):
         refused = await task_tools.call("close_task", {"task_id": task_id, "reason": "moot"})
-    assert refused["error"] == "no_work_close_orchestrator_only", refused
+    assert refused["error"] == "no_work_close_forbidden", refused
     assert LocalTaskManager(db).get_task(task_id).closed_at is None
     orchestrator = world.case.session("orchestrator")
-    SessionVariableManager(db).set_variable(orchestrator, "_agent_type", "orchestrator")
+    grant_step_writes(
+        db,
+        orchestrator,
+        world.case.project_id,
+        "orchestrator",
+        (),
+        capabilities=("close_without_work",),
+    )
     with session_context_for_test(orchestrator):
         closed = await task_tools.call("close_task", {"task_id": task_id, "reason": "moot"})
     assert closed.get("closed") is True, closed

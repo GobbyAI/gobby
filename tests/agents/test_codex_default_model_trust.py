@@ -121,30 +121,26 @@ def _codex_models(defaults: dict[str, Any]) -> set[str]:
     return models
 
 
-def _default_codex_launch_models() -> set[str]:
-    root = Path(__file__).resolve().parents[2]
-    policy_file = root / ".gobby/workflows/rules/project-operating-policy.yaml"
-    document = yaml.safe_load(policy_file.read_text())
-    effects = document["rules"]["project-operating-policy"]["effects"]
-    policy = next(
-        effect["value"] for effect in effects if effect.get("variable") == "project_policy"
-    )
-    models = _codex_models(policy["launch_defaults"])
-    models.update(_codex_models(policy["role_launch_defaults"]))
-    agents = root / "src/gobby/install/shared/workflows/agents"
-    for definition_file in agents.glob("*.yaml"):
-        definition = cast(dict[str, Any], yaml.safe_load(definition_file.read_text()))
-        models.update(_codex_models(definition))
-    return models
+@pytest.fixture(autouse=True)
+def synthetic_agents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "custom.yaml").write_text("provider: codex\nmodel: synthetic-codex-model\n")
+    (agents / "other.yaml").write_text("provider: claude\nmodel: synthetic-other-model\n")
+    monkeypatch.setattr("gobby.agents.sync.get_bundled_agents_path", lambda: agents)
+    return agents
 
 
 @pytest.mark.parametrize("entrypoint", ["workspace", "install"])
-def test_fresh_codex_home_acknowledges_every_default_launch_model(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entrypoint: str
+def test_fresh_codex_home_acknowledges_packaged_and_custom_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entrypoint: str,
+    synthetic_agents: Path,
 ) -> None:
-    """Adding a Codex model to policy or a bundled seat must also seed its NUX."""
-    models = _default_codex_launch_models()
-    assert "gpt-6.1-terra" in models
+    """Both entrypoints combine packaged defaults with arbitrary Codex definitions."""
+    models = _codex_models(json.loads(_packaged_defaults_path().read_text()))
+    models.add("synthetic-codex-model")
     monkeypatch.delenv("CODEX_HOME", raising=False)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -158,11 +154,11 @@ def test_fresh_codex_home_acknowledges_every_default_launch_model(
 
     config = tomllib.loads((tmp_path / ".codex/config.toml").read_text())
     acknowledgements = config["tui"]["model_availability_nux"]
-    assert {model: acknowledgements.get(model) for model in models} == dict.fromkeys(models, 4)
+    assert acknowledgements == dict.fromkeys(models, 4)
 
 
 def test_packaged_codex_models_seed_without_checkout_or_policy_row(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_agents: Path
 ) -> None:
     """A fresh home with no active policy row acknowledges the packaged launch models.
 
@@ -176,9 +172,8 @@ def test_packaged_codex_models_seed_without_checkout_or_policy_row(
     installed = tmp_path / "site-packages/gobby"
     (installed / "data").mkdir(parents=True)
     shutil.copyfile(_packaged_defaults_path(), installed / "data/codex_launch_defaults.json")
-    agents = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents"
     installed_agents = installed / "install/shared/workflows/agents"
-    shutil.copytree(agents, installed_agents)
+    shutil.copytree(synthetic_agents, installed_agents)
     resource_root = MagicMock(return_value=installed)
     monkeypatch.setattr("gobby.agents.trust.files", resource_root)
     monkeypatch.setattr("gobby.agents.sync.get_bundled_agents_path", lambda: installed_agents)
@@ -191,8 +186,7 @@ def test_packaged_codex_models_seed_without_checkout_or_policy_row(
     resource_root.assert_called_once_with("gobby")
     config = tomllib.loads((tmp_path / ".codex/config.toml").read_text())
     models = _codex_models(json.loads(_packaged_defaults_path().read_text()))
-    for path in agents.glob("*.yaml"):
-        models.update(_codex_models(yaml.safe_load(path.read_text())))
+    models.add("synthetic-codex-model")
     assert config["tui"]["model_availability_nux"] == dict.fromkeys(models, 4)
 
 

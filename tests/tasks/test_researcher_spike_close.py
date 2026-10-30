@@ -11,7 +11,6 @@ from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.lifecycle_access import session_agent_definition
 from gobby.tasks.step_records import (
     StepRecordError,
     StepSubmission,
@@ -22,6 +21,7 @@ from gobby.tasks.step_records import (
 )
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.agent_resolver import session_agent_definition
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.agent_definitions import seed_seat
 from tests.tasks.test_close_invariants import _set_close_policy, git
@@ -37,8 +37,22 @@ async def test_researcher_records_its_spike_steps_and_closes_it(
     project_id = sample_git_project["id"]
     repo = Path(sample_git_project["repo_path"])
     _set_close_policy(temp_db, project_id, {"enforce_step_records": True})
-    seed_seat(temp_db, "researcher", task_step_writes=["implementation", "closing"])
-    seed_seat(temp_db, "orchestrator", task_step_writes=["review"])
+    seed_seat(
+        temp_db,
+        "researcher",
+        task_step_writes=["implementation", "closing"],
+        task_step_scope={"task_types": ["research_spike"], "own_claim_only": True},
+        task_close_scope={
+            "task_types": ["research_spike"],
+            "categories": ["research"],
+            "own_claim_only": True,
+        },
+        task_close_reasons=["done"],
+        required_review_capabilities=["approve_report_review"],
+    )
+    seed_seat(
+        temp_db, "orchestrator", task_step_writes=["review"], capabilities=["approve_report_review"]
+    )
     sessions = SessionManager(temp_db)
     session = sessions.register(
         external_id="researcher-spike-close",
@@ -161,8 +175,22 @@ async def test_researcher_spike_close_needs_orchestrator_review_under_any_policy
     project_id = sample_git_project["id"]
     repo = Path(sample_git_project["repo_path"])
     _set_close_policy(temp_db, project_id, policy)
-    seed_seat(temp_db, "researcher", task_step_writes=["implementation", "closing"])
-    seed_seat(temp_db, "orchestrator", task_step_writes=["review"])
+    seed_seat(
+        temp_db,
+        "researcher",
+        task_step_writes=["implementation", "closing"],
+        task_step_scope={"task_types": ["research_spike"], "own_claim_only": True},
+        task_close_scope={
+            "task_types": ["research_spike"],
+            "categories": ["research"],
+            "own_claim_only": True,
+        },
+        task_close_reasons=["done"],
+        required_review_capabilities=["approve_report_review"],
+    )
+    seed_seat(
+        temp_db, "orchestrator", task_step_writes=["review"], capabilities=["approve_report_review"]
+    )
     sessions = SessionManager(temp_db)
     session = sessions.register(
         external_id="researcher-policy-close",
@@ -192,7 +220,9 @@ async def test_researcher_spike_close_needs_orchestrator_review_under_any_policy
         linked = await registry.call("link_commit", {"task_id": task.id, "commit_sha": sha})
         assert "error" not in linked, linked
         task = manager.get_task(task.id)
-        required = task_step_requirements(temp_db, task, closer_definition="researcher").required
+        definition = session_agent_definition(temp_db, session)
+        assert definition is not None
+        required = task_step_requirements(temp_db, task, closer_definition=definition[0]).required
         assert "review" in required, "a researcher's spike needs the Orchestrator's review"
         for step in (step for step in required if step != "review"):
             recorded = await registry.call(
@@ -260,7 +290,13 @@ def test_researcher_records_only_its_own_research_spike(
 ) -> None:
     project_id = sample_project["id"]
     seats = _Seats(temp_db, project_id)
-    researcher = seats.add("researcher", ["implementation", "closing"])
+    researcher = seats.add(
+        "researcher",
+        ["implementation", "closing"],
+        definition_fields={
+            "task_step_scope": {"task_types": ["research_spike"], "own_claim_only": True}
+        },
+    )
     other = seats.add("researcher-peer", ["implementation", "closing"])
     manager = LocalTaskManager(temp_db)
     if target == "code_task":

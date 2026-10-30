@@ -26,6 +26,7 @@ from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 from gobby.skills.capability_catalog import load_capability_catalog
 from gobby.skills.capability_routing import capability_menu, route_gobby_request, standalone_menu
 from gobby.skills.parser import ParsedSkill
+from gobby.workflows.agent_resolver import resolve_cold_start_command
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
     assert_task_edit_paths_available,
@@ -383,6 +384,13 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 ),
                 catalog=catalog,
                 operator_commands=skill_name == "gobby",
+                resolve_cold_start=lambda name: (
+                    resolve_cold_start_command(
+                        self._session_manager.db, name, project_id=project_id
+                    )
+                    if self._session_manager is not None
+                    else None
+                ),
             )
             context = route.context
             if route.kind in ("help", "unknown"):

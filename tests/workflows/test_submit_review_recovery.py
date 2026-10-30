@@ -53,7 +53,12 @@ async def _admits(run: SeatRun, tool: str, tool_input: dict[str, Any] | None = N
 
 
 async def _submitted(
-    db: HubDatabase, *, project_id: str | None = None, task: Task | None = None
+    db: HubDatabase,
+    *,
+    project_id: str | None = None,
+    task: Task | None = None,
+    agent_name: str = "developer",
+    recovery_granted: bool = True,
 ) -> tuple[SeatRun, Task]:
     definition = _seat(
         {
@@ -63,10 +68,12 @@ async def _submitted(
             }
         }
     )
+    definition["name"] = agent_name
+    definition["capabilities"] = ["recover_rejected_submission"] if recovery_granted else []
     run = (
-        SeatRun(db, "developer", definition=definition, project_id=project_id)
+        SeatRun(db, agent_name, definition=definition, project_id=project_id)
         if project_id is not None
-        else SeatRun(db, "developer", definition=definition)
+        else SeatRun(db, agent_name, definition=definition)
     )
     task = (
         LocalTaskManager(db).claim_task(task.id, SESSION_ID)
@@ -105,14 +112,18 @@ async def _submitted(
     return run, task
 
 
-async def test_recorded_rejection_returns_submit_without_message_read(temp_db: HubDatabase) -> None:
-    run, task = await _submitted(temp_db)
+@pytest.mark.parametrize("agent_name", ["developer", "fixture-maker"])
+@pytest.mark.parametrize("recovery_granted", [True, False])
+async def test_recorded_rejection_returns_submit_without_message_read(
+    temp_db: HubDatabase, agent_name: str, recovery_granted: bool
+) -> None:
+    run, task = await _submitted(temp_db, agent_name=agent_name, recovery_granted=recovery_granted)
     reject_review(temp_db, task_id=task.id, reviewer_session_id=PEER_ID, commit_sha=SHA)
 
     assert await _admits(run, "Bash")
-    assert run.step == "implement"
-    assert run.vars["bounced"] is True
-    assert run.vars["implementation_complete"] is False
+    assert run.step == ("implement" if recovery_granted else "submit")
+    assert run.vars["bounced"] is recovery_granted
+    assert run.vars["implementation_complete"] is (not recovery_granted)
 
 
 @pytest.mark.parametrize("stale", ["epoch", "sha", "implementation", "submit", "owner"])
@@ -150,8 +161,10 @@ async def test_epic_hold_clears_before_rejection_recovers_developer(world: TeamW
     epic = new_task(world, "Recovery epic", epic=True)
     leaf = new_task(world, "Recovery leaf", parent=epic)
     team = await epic_team(world, epic)
-    run, task = await _submitted(db, project_id=world.case.project_id, task=leaf)
-    for session_id, role in ((SESSION_ID, "developer"), (PEER_ID, "code-reviewer")):
+    run, task = await _submitted(
+        db, project_id=world.case.project_id, task=leaf, agent_name="fixture-recovery"
+    )
+    for session_id, role in ((SESSION_ID, "fixture-recovery"), (PEER_ID, "code-reviewer")):
         runs = LocalAgentRunManager(db)
         agent_run = runs.create(
             parent_session_id=team.runbook.id,

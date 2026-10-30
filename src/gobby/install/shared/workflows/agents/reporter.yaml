@@ -1,4 +1,5 @@
 name: reporter
+capabilities: [accept_resume_retype]
 description: |
   Reporter seat. Short-lived run delivering scheduled delta and full
   queue status as markdown directly to the configured operator destination,
@@ -45,11 +46,14 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "name:require-seat-procedure"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
     exclude:
+      - "name:block-unclaimed-found-work"
       - "name:no-comms-attach"
   variables:
     _seat_procedure: gobby:references/agents/procedures/reporter.md
+    operator_relay_agent: assistant

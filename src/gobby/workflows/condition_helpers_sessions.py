@@ -15,17 +15,22 @@ from gobby.hooks._normalization_shell import scan_shell_command
 from gobby.hooks._path_scope import current_project_root, current_tool_cwd, resolve_tool_path
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.session_resolution import is_session_uuid
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.agent_resolver import (
     AgentResolutionError,
+    is_operator_session,
     resolve_agent,
     resolve_agent_with_row,
+    session_has_capability,
+    session_has_capability_or_operator,
 )
 from gobby.workflows.condition_helpers_paths import (
     agent_workspace_write_violation,
     workspace_contains,
 )
+from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -172,20 +177,6 @@ def _spawn_caller(session_manager: SessionManager, caller_ref: Any) -> tuple[Ses
     return caller, run.agent_name
 
 
-_TEAM_SEAT_TYPES = frozenset(
-    {
-        "test-writer",
-        "developer",
-        "code-reviewer",
-        "docs-reviewer",
-        "research-reviewer",
-        "researcher",
-    }
-)
-# The devteam runbook titles its team tab "Dev Team"; an epic team's tab is "<this> - #<seq>".
-_DEV_TEAM_TAB = "Dev Team"
-
-
 def own_seat_resume(
     session_manager: SessionManager, caller_ref: Any, agent: Any, resume_session_id: Any
 ) -> bool:
@@ -208,54 +199,55 @@ def own_team_tab(session_manager: SessionManager, caller_ref: Any, agent: Any) -
     """The team tab a running epic team manager's fresh seat may open into, or None.
 
     Placement admits an autonomous fresh seat only where its spawn is for the caller's own
-    epic team: the caller is a running team manager, the seat is a team seat type, and the
-    caller's team is an epic. The tab is the one the devteam runbook titles for that epic.
+    epic team: the caller is a running team manager whose definition permits the target,
+    and the caller's team is an epic. Admission owns the runbook's declared tab title.
     A single-task team and any other spawn get no tab.
     """
     from gobby.agents.team_lifecycle import seat_team
-    from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.team_records import EPIC_MODE
 
-    if agent not in _TEAM_SEAT_TYPES:
+    if not isinstance(agent, str) or not agent:
         return None
     try:
         caller, agent_name = _spawn_caller(session_manager, caller_ref)
     except (ValueError, AgentResolutionError):
         return None
-    if not _running_team_manager(session_manager, caller, agent_name):
+    definition = _running_team_manager_definition(session_manager, caller, agent_name)
+    if definition is None or not definition.may_spawn(agent):
         return None
     team = seat_team(session_manager.db, caller.id)
     if team is None or team.mode != EPIC_MODE:
         return None
-    seq_num = LocalTaskManager(session_manager.db).get_task(team.task_id).seq_num
-    return None if seq_num is None else f"{_DEV_TEAM_TAB} - #{seq_num}"
+    return team.tab_title
 
 
-def _running_team_manager(
+def _running_team_manager_definition(
     session_manager: SessionManager, caller: Session, agent_name: str | None
-) -> bool:
-    """Whether the caller runs as an enabled team manager definition, bound to its run.
+) -> AgentDefinitionBody | None:
+    """The caller's enabled team manager definition, if bound to its running run.
 
     The definition must set the ``team_manager`` variable, so a session variable alone
     never grants it. The caller's running run must be bound to the caller.
     """
     if agent_name is None:
-        return False
+        return None
     found = resolve_agent_with_row(agent_name, session_manager.db, project_id=caller.project_id)
     if found is None or not found[1].enabled:
-        return False
+        return None
     if found[0].workflows.variables.get("team_manager") is not True:
-        return False
+        return None
     manager_run = (
         LocalAgentRunManager(session_manager.db).get(caller.agent_run_id)
         if caller.agent_run_id
         else None
     )
-    return (
-        manager_run is not None
-        and manager_run.status == "running"
-        and manager_run.child_session_id == caller.id
-    )
+    if (
+        manager_run is None
+        or manager_run.status != "running"
+        or manager_run.child_session_id != caller.id
+    ):
+        return None
+    return found[0]
 
 
 def _manager_resumes_own_seat(
@@ -269,8 +261,8 @@ def _manager_resumes_own_seat(
 
     The caller's enabled installed definition must set the ``team_manager`` variable,
     so a session variable alone never grants it. The caller's running run must be
-    bound to the caller, and the seat's run to the seat. The seat must be an allowed
-    team seat in the caller's project and machine, launched
+    bound to the caller, and the seat's run to the seat. The definition must list
+    the seat in resumable_team_agents. It must share the caller's project and machine, launched
     by a runbook of the caller's admitted team. The resume must name the seat's stored
     type, so a resume cannot re-type it. A fresh spawn has no resume reference.
     """
@@ -279,7 +271,8 @@ def _manager_resumes_own_seat(
 
     if not isinstance(resume_session_id, str) or not resume_session_id:
         return False
-    if not _running_team_manager(session_manager, caller, agent_name):
+    definition = _running_team_manager_definition(session_manager, caller, agent_name)
+    if definition is None:
         return False
     runs = LocalAgentRunManager(session_manager.db)
     team = seat_team(session_manager.db, caller.id)
@@ -295,7 +288,7 @@ def _manager_resumes_own_seat(
         .get_variable_subset(seat.id, ("_agent_type",))
         .get("_agent_type")
     )
-    if seat_type not in _TEAM_SEAT_TYPES or agent != seat_type:
+    if seat_type not in definition.resumable_team_agents or agent != seat_type:
         return False
     seat_run = runs.get(seat.agent_run_id) if seat.agent_run_id else None
     if seat_run is None or seat_run.child_session_id != seat.id:
@@ -347,23 +340,27 @@ def spawn_target_allowed(
     return all(body.may_spawn(name) for name in names)
 
 
-# Spawned definitions that may choose a spawn's network profile; a root session always may.
-_NETWORK_OVERRIDE_AGENTS = frozenset({"default", "orchestrator"})
-
-
 def network_override_allowed(session_manager: SessionManager | None, caller_ref: Any) -> bool:
     """Whether the caller may pass an explicit ``network`` profile to a spawn.
 
-    A root session may. A spawned caller may only when its agent run names
-    ``default`` or ``orchestrator``; other spawned callers still spawn with the
-    inherited profile. Identity comes from the verified caller session, never a
-    caller-supplied ``parent_session_id``. Anything unresolvable raises, and a
-    raising block condition fails closed.
+    The operator terminal or an enabled definition with override_spawn_network may.
+    A spawned caller's definition comes from its verified run, never a caller-supplied
+    parent_session_id. Other callers inherit the definition's network profile.
+    Anything unresolvable raises, and a raising block condition fails closed.
     """
     if session_manager is None:
         raise RuntimeError("network override scope needs a session manager")
-    _, agent_name = _spawn_caller(session_manager, caller_ref)
-    return agent_name is None or agent_name in _NETWORK_OVERRIDE_AGENTS
+    caller, agent_name = _spawn_caller(session_manager, caller_ref)
+    if agent_name is None:
+        return session_has_capability_or_operator(
+            session_manager.db, caller.id, "override_spawn_network"
+        )
+    resolved = resolve_agent_with_row(agent_name, session_manager.db, project_id=caller.project_id)
+    return (
+        resolved is not None
+        and resolved[1].enabled
+        and "override_spawn_network" in resolved[0].capabilities
+    )
 
 
 _SHELL_OPERATORS = re.compile(r"[<>|;&()]")
@@ -883,6 +880,19 @@ def agent_workspace_read_violation(
     return False
 
 
+def operator_session(session_manager: SessionManager | None, caller_id: Any) -> bool:
+    """Resolve the stored caller identity before granting the operator exemption."""
+    if session_manager is None or not isinstance(caller_id, str) or not is_session_uuid(caller_id):
+        return False
+    session = session_manager.get(caller_id)
+    if session is None:
+        return False
+    variables = SessionVariableManager(session_manager.db).get_variable_subset(
+        caller_id, ("_agent_type",)
+    )
+    return is_operator_session(session, variables.get("_agent_type"))
+
+
 def _assigned_workspace_checkout(
     session_manager: SessionManager | None, caller_id: str | None
 ) -> Path | None:
@@ -902,6 +912,14 @@ def session_condition_helpers(
     from gobby.workflows.engine.idle_declaration import readiness_message_completed
 
     return {
+        "operator_session": lambda caller_id: operator_session(session_manager, caller_id),
+        "session_has_capability": lambda caller_id, capability: (
+            session_manager is not None
+            and isinstance(caller_id, str)
+            and is_session_uuid(caller_id)
+            and isinstance(capability, str)
+            and session_has_capability(session_manager.db, caller_id, capability)
+        ),
         "dev_pod_launch_allowed": lambda caller_id, tool_name, arguments: dev_pod_launch_allowed(
             session_manager, caller_id, tool_name, arguments
         ),
@@ -968,7 +986,7 @@ def dev_pod_launch_allowed(
         if not isinstance(parent_id, str) or not isinstance(task_ref, str):
             return False
         caller, agent = _spawn_caller(sessions, caller_ref)
-        if not _running_team_manager(sessions, caller, agent):
+        if _running_team_manager_definition(sessions, caller, agent) is None:
             return False
         task_id = LocalTaskManager(sessions.db).resolve_task_reference(task_ref, caller.project_id)
         pod_parent(sessions.db, caller.id, task_id, parent_id)

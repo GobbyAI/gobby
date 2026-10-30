@@ -16,12 +16,10 @@ from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.tasks.attributed_roots import is_ignorable_attributed_root
-from gobby.tasks.lifecycle_access import (
-    is_operator_coordinator,
-    session_agent_definition,
-)
+from gobby.tasks.lifecycle_access import is_operator_coordinator
 from gobby.tasks.step_records import fixer_round, list_task_step_records
 from gobby.utils.session_context import get_current_session_id
+from gobby.workflows.agent_resolver import session_agent_definition
 from gobby.workflows.task_claim_state import task_edited_checkout_paths, task_edited_file_set
 from gobby.workflows.task_dirty_state import task_dirty_paths
 
@@ -32,12 +30,11 @@ _STALE_HOLDER = {
 
 
 def _can_release(ctx: RegistryContext, caller: Session, holder: Session, task_id: str) -> bool:
-    """The Orchestrator, or the Dev Manager of the task's team when the holder is its seat."""
+    """A declared coordinator, or the task's team manager when the holder is its seat."""
     if caller.project_id != holder.project_id or caller.machine_id != holder.machine_id:
         return False
-    role = ctx.session_var_manager.get_variable_subset(caller.id, ("_agent_type",))
-    if role.get("_agent_type") == "orchestrator":
-        return is_operator_coordinator(ctx.task_manager, caller)
+    if is_operator_coordinator(ctx.task_manager, caller, capability="manage_task_claims"):
+        return True
     team = _managed_team(ctx, caller, task_id)
     return team is not None and seat_team(ctx.task_manager.db, holder.id) == team
 
@@ -172,6 +169,9 @@ def _managed_team(ctx: RegistryContext, caller: Session, task_id: str) -> TeamBi
     db = ctx.task_manager.db
     from gobby.agents.team_lifecycle import managed_task_team
 
+    definition = session_agent_definition(db, caller)
+    if definition is None or "manage_task_claims" not in definition[0].capabilities:
+        return None
     return managed_task_team(db, caller.id, task_id)
 
 
@@ -185,9 +185,7 @@ def _recipient_refusal(
     """
     definition = session_agent_definition(db, recipient)
     if recipient.id == caller_id or (
-        definition is not None
-        and definition[0].name != "researcher"
-        and "closing" in definition[0].task_step_writes
+        definition is not None and "land_tasks" in definition[0].capabilities
     ):
         return {
             "error": "The seat that closes the task cannot hold its claim",

@@ -30,7 +30,9 @@ from gobby.hooks._normalization_shell import (
     scan_shell_command,
 )
 from gobby.providers.path_policy import is_project_plan_artifact_path
+from gobby.storage.session_resolution import is_session_uuid
 from gobby.utils.daemon_git import GitOk, daemon_git
+from gobby.workflows.agent_resolver import session_has_capability
 from gobby.workflows.git_commit_parsing import GitCommitInvocation, resolve_commit_inspect_cwd
 from gobby.workflows.git_utils import resolve_git_worktree_root_async
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
@@ -444,13 +446,20 @@ async def inspect_commit_review_scope(
         if variables is not None
         else None
     )
-    writer = variables is not None and variables.get("_agent_type") == "plan-writer"
+    caller_id = event.metadata.get("_platform_session_id")
+    exempt_plan_artifacts = (
+        db is not None
+        and isinstance(caller_id, str)
+        and is_session_uuid(caller_id)
+        and session_has_capability(db, caller_id, "commit_plan_artifacts_without_review")
+    )
     reviewable = {
         path
         for path in paths
         if PurePosixPath(path).suffix.lower() not in NON_REVIEWABLE_EXTENSIONS
         and not (
-            writer and is_project_plan_artifact_path(path, checkout_root, include_coverage=True)
+            exempt_plan_artifacts
+            and is_project_plan_artifact_path(path, checkout_root, include_coverage=True)
         )
     }
     records_only_plan_paths = all(path.startswith(".gobby/plans/") for path in paths)

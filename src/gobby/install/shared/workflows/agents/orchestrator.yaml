@@ -1,4 +1,8 @@
 name: orchestrator
+cold_start_commands: [admin]
+cold_start_counterpart: assistant
+capabilities: [reset_review_epoch, message_restricted_seats, follow_relaunch, coordinate_tasks, manage_task_claims, land_tasks, close_without_work, override_spawn_network, write_session_variables, approve_report_review]
+message_sender_capabilities: [message_restricted_seats]
 description: |
   Orchestrator seat. Sets priority and owners, rules on contracts, launches the
   Support and DevTeam runbooks, and runs restarts and cutovers with notices
@@ -47,11 +51,21 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "tag:default"
     # The Orchestrator edits tasks as needed, reads seats' report folders to review them,
     # and lands approved work in shared checkouts that hold other sessions' staged paths.
     # It also approves seats' lost dirty-path ownership itself (operator ruling).
     exclude:
+      - "name:block-unclaimed-found-work"
+      - "name:query-readonly-seat-scope"
+      - "name:seat-no-spawn"
+      - "name:seat-no-pipeline-launch"
+      - "name:seat-no-pipeline-cli"
+      - "name:seat-no-project-create"
+      - "name:non-operator-no-project-create"
+      - "name:seat-no-task-close"
+      - "name:unassigned-session-no-task-close"
       - "name:block-update-task"
       - "name:agent-workspace-read-scope"
       - "name:block-cross-session-foreign-staged-commit"

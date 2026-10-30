@@ -26,6 +26,7 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import sync_bundled_rules
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -80,7 +81,9 @@ PLAN_MODE_RULES = {
 class TestPlanModeSync:
     """Test that plan-mode rules sync correctly."""
 
-    def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
+    def test_bundled_file_syncs_all_rules(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """All bundled plan-mode rules should sync to rule_definitions."""
         _sync_bundled(db)
 
@@ -89,7 +92,7 @@ class TestPlanModeSync:
 
         assert PLAN_MODE_RULES.issubset(rule_names), f"Missing: {PLAN_MODE_RULES - rule_names}"
 
-    def test_all_rules_have_group(self, db, manager) -> None:
+    def test_all_rules_have_group(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """All plan-mode rules should have group='plan-mode'."""
         _sync_bundled(db)
 
@@ -99,7 +102,9 @@ class TestPlanModeSync:
                 body = row.definition_json
                 assert body.get("group") == "plan-mode", f"{row.name} missing group"
 
-    def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
+    def test_all_rules_are_valid_pydantic(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
@@ -115,7 +120,9 @@ class TestPlanModeSync:
                         "set_variable",
                     }
 
-    def test_inject_plan_skill_rule_deleted(self, db, manager) -> None:
+    def test_inject_plan_skill_rule_deleted(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """inject-plan-skill (redundant duplicate) should not exist after sync."""
         _sync_bundled(db)
 
@@ -125,9 +132,11 @@ class TestPlanModeSync:
 
 
 class TestHandlePlanModeEntry:
-    """Verify the interactive-only, one-shot skill directives."""
+    """Verify the selected, one-shot skill directives."""
 
-    def test_fires_on_turn_start_with_plan_mode_guard(self, db, manager) -> None:
+    def test_fires_on_turn_start_with_plan_mode_guard(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Should fire on turn_start when plan_mode is set."""
         _sync_bundled(db)
 
@@ -136,15 +145,18 @@ class TestHandlePlanModeEntry:
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "turn_start"
-        assert body.agent_scope == ["default"]
+        assert body.agent_scope is None
         assert body.when is not None
         assert "plan_mode" in body.when
         assert "plan_skill_directive_delivered" in body.when
         assert "skill_loaded('plan')" not in body.when
 
-    def test_effects_load_plan_and_set_guard(self, db, manager) -> None:
+    def test_effects_load_plan_and_set_guard(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("handle-plan-mode-entry")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
         effects = body.resolved_effects
         assert len(effects) == 2
@@ -157,9 +169,13 @@ class TestHandlePlanModeEntry:
         assert effects[1].delivery == "on_receipt"
 
     @pytest.mark.asyncio
-    async def test_skill_directive_fires_once_for_default_agent(self, db) -> None:
+    @pytest.mark.parametrize("agent_type", ["default", "custom-planner"])
+    async def test_skill_directive_fires_once_for_selected_agent(
+        self, db: HubDatabase, agent_type: str
+    ) -> None:
         _sync_bundled(db)
-        variables = {"_agent_type": "default", "plan_mode": True}
+        seed_seat(db, agent_type, include=["name:handle-plan-mode-entry"])
+        variables = {"_agent_type": agent_type, "plan_mode": True}
         event = HookEvent(
             event_type=HookEventType.BEFORE_AGENT,
             session_id=SESSION_ID,
@@ -181,12 +197,22 @@ class TestHandlePlanModeEntry:
         assert variables["plan_skill_directive_delivered"] is True
 
     @pytest.mark.asyncio
-    async def test_first_plan_prompt_resolves_mode_before_directive_rule(self, db) -> None:
+    async def test_first_plan_prompt_resolves_mode_before_directive_rule(
+        self, db: HubDatabase
+    ) -> None:
         _sync_bundled(db)
+        seed_seat(
+            db,
+            "custom-planner",
+            include=[
+                "name:handle-plan-mode-entry",
+                "name:reset-plan-directive-on-resolved-mode-exit",
+            ],
+        )
         _create_session(db)
         SessionVariableManager(db).merge_variables(
             SESSION_ID,
-            {"_agent_type": "default"},
+            {"_agent_type": "custom-planner"},
         )
         session = SimpleNamespace(
             session_type="terminal",
@@ -254,13 +280,14 @@ class TestHandlePlanModeEntry:
         assert skill_fetch_directive("gobby:references/plan/overview.md") in reentry.context
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("agent_type", ["developer", "planner", "qa-reviewer"])
-    async def test_spawned_agent_types_receive_no_skill_directive(
+    @pytest.mark.parametrize("agent_type", ["default", "custom-planner"])
+    async def test_unselected_agents_receive_no_skill_directive(
         self,
-        db,
+        db: HubDatabase,
         agent_type: str,
     ) -> None:
         _sync_bundled(db)
+        seed_seat(db, agent_type, include=["tag:default"])
         variables = {"_agent_type": agent_type, "plan_mode": True}
         event = HookEvent(
             event_type=HookEventType.BEFORE_AGENT,
@@ -286,7 +313,9 @@ class TestHandlePlanModeEntry:
 class TestHandlePlanModeExit:
     """Verify handle-plan-mode-exit: after_tool on approved ExitPlanMode."""
 
-    def test_fires_on_after_tool_for_exit_plan_mode(self, db, manager) -> None:
+    def test_fires_on_after_tool_for_exit_plan_mode(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         """Should fire on after_tool when ExitPlanMode succeeds."""
         _sync_bundled(db)
 
@@ -308,6 +337,7 @@ class TestHandlePlanModeExit:
         _sync_bundled(db)
 
         row = manager.get_by_name("handle-plan-mode-exit")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         effects = body.resolved_effects
@@ -328,13 +358,40 @@ class TestHandlePlanModeExit:
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.event.value == "turn_start"
-        assert body.agent_scope == ["default"]
+        assert body.agent_scope is None
         assert body.when is not None
         assert "not variables.get('plan_mode')" in body.when
         assert "plan_skill_directive_delivered" in body.when
         effect = body.resolved_effects[0]
         assert effect.variable == "plan_skill_directive_delivered"
         assert effect.value is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_type", ["default", "custom-planner"])
+@pytest.mark.parametrize("tool_exit", [False, True])
+async def test_unselected_plan_directive_reset_keeps_universal_tool_exit(
+    db: HubDatabase, agent_type: str, tool_exit: bool
+) -> None:
+    _sync_bundled(db)
+    seed_seat(db, agent_type, include=["tag:default"])
+    variables = {
+        "_agent_type": agent_type,
+        "plan_mode": tool_exit,
+        "plan_skill_directive_delivered": True,
+    }
+    event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL if tool_exit else HookEventType.BEFORE_AGENT,
+        session_id=SESSION_ID,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={"tool_name": "ExitPlanMode"} if tool_exit else {"prompt": "continue"},
+    )
+
+    await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
+
+    assert variables["plan_skill_directive_delivered"] is not tool_exit
+    assert variables["plan_mode"] is False
 
 
 class TestResetPlanModeOnSessionStart:

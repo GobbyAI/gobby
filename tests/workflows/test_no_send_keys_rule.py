@@ -70,16 +70,17 @@ def _spawned_variables(agent_type: str) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mcp_tool", TERMINAL_TOOLS)
+@pytest.mark.parametrize("agent_type", ["seat-with-rule", "default"])
 async def test_selected_rule_blocks_spawned_agent_terminal_tools(
-    temp_db: HubDatabase, mcp_tool: str
+    temp_db: HubDatabase, mcp_tool: str, agent_type: str
 ) -> None:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
-    _define_agent(temp_db, "seat-with-rule", ["tag:default", "name:no-send-keys"])
+    _define_agent(temp_db, agent_type, ["tag:default", "name:no-send-keys"])
 
     response = await RuleEngine(temp_db).evaluate(
         _call_tool_event(mcp_tool),
         session_id=SESSION_ID,
-        variables=_spawned_variables("seat-with-rule"),
+        variables=_spawned_variables(agent_type),
     )
 
     assert response.decision == "block"

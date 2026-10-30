@@ -10,8 +10,9 @@ fallback; an explicit value applies to a copy for that launch. Stored definition
 and later launches retain their original profile; resume keeps the saved
 effective sandbox configuration. `trusted` remains an SRT allowlist.
 
-Root sessions and the local operator may override. Spawned callers need a
-verified `default` or `orchestrator` run; all others use inheritance. Pipeline
+The operator's own terminal may override. Other callers need
+`override_spawn_network` in their enabled definition; spawned callers resolve
+that definition through their verified run. Other callers inherit. Pipeline
 MCP steps enforce the same boundary. Daemon-internal callers cannot override.
 Spawn scope and seat-spawn policy remain in force. Direct HTTP spawn accepts
 operator credentials only and refuses explicit network for `web_chat`.

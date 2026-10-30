@@ -5,16 +5,14 @@ tags: [send-keys, gobby]
 # "name:no-send-keys" in workflows.rule_selectors.include. It carries no
 # default tag, so a definition that omits the selector keeps both tools.
 #
-# The engine applies every enabled rule to a session with no resolved agent
-# definition, so the guard keeps the rule off sessions that never selected it,
-# including a root session typed `default` whose definition failed to resolve.
+# Unresolved definitions use the baseline tags and therefore never select this
+# opt-in rule. Every definition that selects it receives the same restriction.
 rules:
   no-send-keys:
     description: "Block send_keys and capture_output for agents whose definition selects this rule"
     event: before_tool
     enabled: true
     priority: 10
-    when: "variables.get('_agent_type') not in (None, '', 'default')"
     effects:
       - type: block
         mcp_tools: ["gobby-sessions:send_keys", "gobby-sessions:capture_output"]

@@ -904,7 +904,7 @@ class RuleEngine(
         *,
         project_id: str | None = None,
     ) -> list[tuple[RuleDefinitionRow, RuleDefinitionBody]]:
-        """Filter rules using the current agent definition, falling back to session metadata."""
+        """Use enabled definition selectors, or baseline rules when no definition resolves."""
         agent = self._load_active_agent_definition(
             variables.get("_agent_type"),
             project_id=project_id,
@@ -912,11 +912,8 @@ class RuleEngine(
         if agent is not None:
             return [(row, body) for row, body in rules if rule_matches_agent(agent, row)]
 
-        active_names = variables.get("_active_rule_names")
-        if active_names is None:
-            return rules  # no filter — current behavior preserved
-        active_set = set(active_names)
-        return [(row, body) for row, body in rules if row.name in active_set]
+        # The cached names are a projection, not authority after definition removal.
+        return [(row, body) for row, body in rules if "default" in (row.tags or [])]
 
     def _load_active_agent_definition(
         self,
@@ -938,7 +935,7 @@ class RuleEngine(
 
         agent: AgentDefinitionBody | None = None
         row = self.agent_manager.get_by_name(agent_type, project_id=project_id)
-        if row is not None:
+        if row is not None and row.enabled:
             try:
                 data = row.definition_json
                 if isinstance(data, str):

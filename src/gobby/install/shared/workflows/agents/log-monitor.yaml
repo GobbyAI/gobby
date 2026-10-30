@@ -1,4 +1,6 @@
 name: log-monitor
+monitor_report_recipients: [triage]
+capabilities: [accept_resume_retype]
 description: |
   Log Monitor seat. Monitor-only: every ten minutes it checks daemon health,
   status and the log window, reports Systems nominal or EVENT=ALARM to
@@ -57,6 +59,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "tag:default"
       - "tag:context-handoff"
       - "tag:memory-lifecycle"

@@ -14,7 +14,7 @@ from gobby.agents.team_communications import (
     RECIPIENT_REFUSED,
     REFUSAL,
     recipient_policy,
-    relaunched_admin_seat,
+    relaunched_seat,
 )
 from gobby.sessions.clear_continuation import resolve_clear_successor
 from gobby.sessions.mailbox_delivery import WakeDispatcherProtocol, dispatch_mailbox_wakes
@@ -135,9 +135,8 @@ class MailboxService:
         """Send a mailbox message to an explicit resolved target selector.
 
         ``wake=None`` takes the target default: direct targets wake and fanout stays
-        queued, except that Triage's direct sends to the Orchestrator stay queued. A
-        sender that may not address the Orchestrator is refused on a direct target, and
-        fanout withholds the Orchestrator from it.
+        queued. Recipient definitions declare required sender capabilities; direct
+        targets refuse unauthorized senders and fanout withholds those recipients.
         """
         if not preserve_content:
             content = content.strip()
@@ -179,7 +178,7 @@ class MailboxService:
                     },
                 )
             if wake is None:
-                wake = not resolution.fanout and not policy.queued
+                wake = not resolution.fanout
             if message_id is not None and (resolution.fanout or len(recipient_ids) != 1):
                 raise ValueError("message_id requires exactly one direct recipient")
             broadcast_id = str(uuid.uuid4()) if resolution.fanout else None
@@ -406,7 +405,7 @@ class MailboxService:
                 recipient = successor
                 to_session_id = successor.id
         if recipient.status in TERMINAL_SESSION_STATUSES:
-            holder = relaunched_admin_seat(self._db, to_session_id, recipient.project_id)
+            holder = relaunched_seat(self._db, to_session_id, recipient.project_id)
             relaunched = self._session_manager.get(holder) if holder else None
             if relaunched is not None:
                 recipient = relaunched

@@ -11,6 +11,10 @@ from gobby.cli.installers.skill_install import (
 from gobby.skills.capability_catalog import load_capability_catalog
 from gobby.skills.capability_routing import GobbyRoute, route_gobby_request, standalone_menu
 from gobby.skills.parser import ParsedSkill
+from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.agent_resolver import AgentResolutionError, resolve_cold_start_command
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -93,19 +97,77 @@ def test_provider_carriers_use_catalog_without_reference_bodies(tmp_path: Path) 
 
 @pytest.mark.parametrize("prefix", ["$gobby", "/gobby"])
 @pytest.mark.parametrize(
-    ("command", "role"), [("admin", "orchestrator"), ("Assistant", "assistant")]
+    ("command", "role"),
+    [("admin", "orchestrator"), ("Assistant", "assistant"), ("Guide", "custom")],
 )
 def test_bare_operator_command_cold_starts_its_pane(prefix: str, command: str, role: str) -> None:
     """A bare admin or assistant names one deterministic tool call for that pane's role."""
-    route = route_gobby_request(command, resolve_skill=_NO_SKILLS.get, command_prefix=prefix)
+    route = route_gobby_request(
+        command,
+        resolve_skill=_NO_SKILLS.get,
+        command_prefix=prefix,
+        resolve_cold_start=lambda name: {command.casefold(): role}.get(name.casefold()),
+    )
     assert route.kind == "cold_start"
     assert route.arguments == ""
     assert 'get_tool_schema(server_name="gobby-agents", tool_name="cold_start_admin")' in (
         route.context
     )
     assert f'call_tool("gobby-agents", "cold_start_admin", {{"role": "{role}"}})' in route.context
-    assert "both seat refs" in route.context
+    assert "report the seat refs" in route.context
     assert "references/admin/overview.md" not in route.context
+
+
+def test_no_builtin_cold_start_without_definition_resolution() -> None:
+    assert route_gobby_request("assistant", resolve_skill=_NO_SKILLS.get).kind == "unknown"
+    assert route_gobby_request("admin", resolve_skill=_NO_SKILLS.get).kind == "reference"
+
+
+def test_cold_start_alias_uses_enabled_definitions_and_rejects_ambiguity(
+    temp_db: HubDatabase,
+) -> None:
+    seed_seat(
+        temp_db,
+        "custom-guide",
+        surfaces=["persona"],
+        prompts={"persona": "Guide this project."},
+        cold_start_commands=["Guide"],
+    )
+    assert resolve_cold_start_command(temp_db, "GUIDE") == "custom-guide"
+    definitions = AgentDefinitionManager(temp_db)
+    row = definitions.get_by_name("custom-guide")
+    assert row is not None
+    definitions.update(row.id, enabled=False)
+    assert resolve_cold_start_command(temp_db, "guide") is None
+    definitions.update(row.id, enabled=True)
+    seed_seat(
+        temp_db,
+        "other-guide",
+        surfaces=["persona"],
+        prompts={"persona": "Another guide."},
+        cold_start_commands=["guide"],
+    )
+    with pytest.raises(AgentResolutionError, match="multiple definitions"):
+        resolve_cold_start_command(temp_db, "guide")
+
+
+def test_disabled_project_override_hides_global_cold_start_alias(
+    temp_db: HubDatabase, sample_project: dict[str, object]
+) -> None:
+    seed_seat(
+        temp_db,
+        "guide",
+        surfaces=["persona"],
+        prompts={"persona": "Guide this project."},
+        cold_start_commands=["guide"],
+    )
+    definitions = AgentDefinitionManager(temp_db)
+    global_row = definitions.get_by_name("guide")
+    assert global_row is not None
+    project_id = str(sample_project["id"])
+    definitions.create("guide", global_row.definition_json, project_id=project_id, enabled=False)
+    assert resolve_cold_start_command(temp_db, "guide") == "guide"
+    assert resolve_cold_start_command(temp_db, "guide", project_id=project_id) is None
 
 
 def test_admin_requests_and_capability_loads_keep_the_admin_capability() -> None:

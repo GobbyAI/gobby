@@ -176,8 +176,10 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `base_branch` | Branch used for new isolation, or `inherit` |
 | `timeout` | Runtime limit in seconds; `0` means unlimited |
 | `workflows` | Rule, skill, variable, and pipeline selectors |
+| `capabilities` | Explicit permissions and workflow opt-ins; a definition's name grants no authority. Rule applicability and exemptions belong in `workflows.rule_selectors`. |
 | `blocked_tools` / `blocked_mcp_tools` | Definition-level restrictions |
 | `spawnable_agents` | What a spawned run of this definition may spawn: `["*"]` any agent, named agents, or empty (the default) none. See [Spawn Scope](#spawn-scope) |
+| `resumable_team_agents` | Existing agent definitions a running team manager may resume within its own admitted team, retaining the seat's stored type. Empty by default; fresh spawns still use `spawnable_agents`. |
 | `send_message_targets` | `send_message` target modes a spawned agent may use (default `["parent"]`), enforced by the `scope-spawned-agent-send-message` rule |
 | `step_workflow` | Optional nested object with `steps`, `variables`, and `exit_condition` |
 | `enabled` | Whether the definition is active |
@@ -187,6 +189,12 @@ Every declared surface requires its prompt block. Legacy `role`, `goal`,
 Use `workflows.skill_selectors` for discovery and
 `step_workflow.variables.required_skills` for required loads. Use `surfaces`
 plus the runtime tool choice instead of the retired `mode` field.
+
+`recover_rejected_submission` opts a definition into recovery from `submit` to
+`implement` when the current candidate receives a recorded rejection. Recovery
+requires the caller's claim and matching implementation and review records; a
+team hold postpones it. The bundled Developer declares this capability. Custom
+definitions using the same submission workflow must declare it explicitly.
 
 ### Versioning
 

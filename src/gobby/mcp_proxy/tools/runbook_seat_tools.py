@@ -104,7 +104,8 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "reviewed in the epoch, and the claim already handed to one of them. "
             "checkout_mode=none admits a treeless team with no branch or tree; its seats run "
             "in the main checkout, and a re-admit for the task joins it. Returns the "
-            "team plus task_id, branch, worktree and project_path for the seat steps."
+            "team plus task_id, branch, worktree and project_path for the seat steps. "
+            "Pass the seat guard's resolved tab_title to bind later team seats to that tab."
         ),
     )
     async def admit_team_tool(
@@ -115,6 +116,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         exclude_reviewers: str | None = None,
         reviewer_agent: str | None = None,
         checkout_mode: str = "worktree",
+        tab_title: str | None = None,
     ) -> dict[str, Any]:
         caller_ref = ctx.get_current_session_id()
         if ctx.db is None or not caller_ref:
@@ -136,6 +138,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 ],
                 reviewer_agent=reviewer_agent,
                 checkout_mode=checkout_mode,
+                tab_title=tab_title,
             )
         except TeamAdmissionRefused as exc:
             return {"success": False, "error": str(exc), "error_code": exc.code}

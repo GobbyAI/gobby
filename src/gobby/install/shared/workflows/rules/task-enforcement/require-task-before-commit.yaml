@@ -11,7 +11,7 @@ rules:
       and source != 'pipeline'
       and not variables.get('task_claimed')
       and not (
-        variables.get('_agent_type') == 'plan-writer'
+        session_has_capability(event.metadata.get('_platform_session_id'), 'write_plan_artifacts_without_task')
         and commit_records_only_plan_paths
       )
     effects:

@@ -53,7 +53,14 @@ class _Seats:
         self.project_id = project_id
         self.next_seq = 1700
 
-    def add(self, definition: str, writes: list[str]) -> str:
+    def add(
+        self,
+        definition: str,
+        writes: list[str],
+        *,
+        capabilities: tuple[str, ...] = (),
+        definition_fields: dict[str, Any] | None = None,
+    ) -> str:
         definitions = AgentDefinitionManager(self.db)
         if definitions.get_by_name(definition, self.project_id) is None:
             definitions.create(
@@ -64,6 +71,8 @@ class _Seats:
                     "prompts": {"agent": "Record the assigned task step."},
                     "workflows": {"rule_selectors": {"include": []}},
                     "task_step_writes": writes,
+                    "capabilities": list(capabilities),
+                    **(definition_fields or {}),
                 },
                 project_id=self.project_id,
             )
@@ -143,6 +152,36 @@ def _step(
             commit_sha=sha,
         ),
     )
+
+
+@pytest.mark.parametrize("definition", ["researcher", "fixture-author"])
+@pytest.mark.parametrize(
+    "scope",
+    [
+        {},
+        {"task_types": ["research_spike"]},
+        {"categories": ["research"]},
+        {"own_claim_only": True},
+    ],
+)
+def test_step_task_scope_is_declared_by_definition(
+    temp_db: HubDatabase, task: Task, seats: _Seats, definition: str, scope: dict[str, object]
+) -> None:
+    writer = seats.add(
+        definition,
+        ["implementation"],
+        definition_fields={"task_step_scope": scope},
+    )
+    if scope:
+        with pytest.raises(StepRecordError):
+            _step(temp_db, task, writer, "implementation", "approved")
+    else:
+        record, created = _step(temp_db, task, writer, "implementation", "approved")
+        assert created
+        assert (
+            approved_task_step(task, list_task_step_records(temp_db, task.id), "implementation")
+            == record
+        )
 
 
 def test_review_record_is_atomic_and_idempotent(
@@ -286,8 +325,8 @@ def test_three_rejections_and_audited_reset(
     assert manager.get_task(task.id).review_status == "valid"
 
 
-@pytest.mark.parametrize("authority", ["triage", "operator"])
-async def test_only_triage_or_the_operator_resets_an_exhausted_review(
+@pytest.mark.parametrize("authority", ["custom-coordinator", "orchestrator", "operator"])
+async def test_declared_capability_or_operator_resets_an_exhausted_review(
     temp_db: HubDatabase, task: Task, team: dict[str, str], seats: _Seats, authority: str
 ) -> None:
     manager = LocalTaskManager(temp_db)
@@ -311,8 +350,12 @@ async def test_only_triage_or_the_operator_resets_an_exhausted_review(
     assert held.is_escalated
     assert (held.review_epoch, held.review_fail_count) == (1, 3)
 
-    if authority == "triage":
-        resetter = seats.add("triage", [])
+    # A familiar seat name carries no authority without a declaration.
+    unprivileged = seats.add("triage", [])
+    assert (await de_escalate(unprivileged)).get("error_code") == "REVIEW_RESET_FORBIDDEN"
+
+    if authority != "operator":
+        resetter = seats.add(authority, [], capabilities=("reset_review_epoch",))
     else:
         # The operator's own terminal: a root session with no agent run and no seat role.
         resetter = str(uuid4())

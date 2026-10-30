@@ -56,6 +56,7 @@ def test_review_status_uses_closed_candidate_only_after_closure(
         "commit_sha": _APPROVED,
         "sequence": 1,
         "agent_definition": "code-reviewer",
+        "supplemental_review": False,
         "session_id": "reviewer-session",
     }
     temp_db.execute(

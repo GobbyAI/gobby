@@ -6,16 +6,16 @@ tagged `runbook` whose steps place agent seats. Find one with
 `gobby pipelines list --tag runbook`.
 
 Launch from an operator surface (CLI, web, gclient), an authorized cron
-`pipeline` job, or the Orchestrator seat; the Assistant seat launches only
-while the Orchestrator is down. Every other agent seat is blocked from
-`run_pipeline`, the exposed `pipeline:<name>` tools and a shell
-`gobby pipelines run`, and sends the request to Triage. Pass every
+`pipeline` job, or a definition whose installed rule selectors permit pipeline
+launches. The selected launch rules cover `run_pipeline`, exposed
+`pipeline:<name>` tools and shell `gobby pipelines run`; a refused seat sends
+the request to its authorized coordinator. Pass every
 project-specific value as an input, plus the runbook's entry under the project
 policy's `launch_defaults`.
 
-Admin is not a runbook. `/gobby admin` (`$gobby admin` in Codex) makes the
-typing pane the Orchestrator and opens the Assistant beside it in the same tab;
-`/gobby assistant` does the same from the Assistant's side.
+Cold start is separate from runbooks. Bare commands declared in an installed
+definition's `cold_start_commands` activate it and reuse or open its declared
+`cold_start_counterpart`. The bundled examples use `admin` and `assistant`.
 
 | Runbook | Seats | Required inputs |
 | --- | --- | --- |
@@ -25,8 +25,9 @@ typing pane the Orchestrator and opens the Assistant beside it in the same tab;
 
 ## Support
 
-Only the Assistant and Triage can message the Orchestrator, so Triage goes
-first: `seats=triage` with `report_to=<Orchestrator ref>`. Once Triage reports
+The bundled recipient policy requires `message_restricted_seats`, which the
+example Triage definition declares. Launch it first: `seats=triage` with
+`report_to=<Orchestrator ref>`. Once Triage reports
 its ref, run `support` again with `report_to=<Triage ref>`. Its guard skips each
 seat whose agent already runs live in the project on this machine, so a re-run
 launches only the missing seats into the one Support tab. The Orchestrator

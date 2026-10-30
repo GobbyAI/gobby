@@ -71,6 +71,8 @@ class ShellExecution:
     pipeline_subshell: bool = False
     # Under -n (noexec) a non-interactive shell parses its program and runs none of it.
     parse_only: bool = False
+    # None preserves the inherited option; explicit -k/+k overrides it.
+    keyword_mode: bool | None = None
 
 
 def preserves_directory(words: list[str]) -> bool:
@@ -220,18 +222,25 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
     stdin_program = False
     noexec = False
     interactive = False
+    keyword_mode: bool | None = None
     while index < len(words):
         arg = words[index]
         if arg == "--":
             index += 1
             break
         if arg == "-":
-            return ShellExecution(script_file=True)
+            index += 1
+            stdin_program |= index == len(words)
+            break
         if not arg.startswith(("-", "+")):
             break
         short = not arg.startswith(("--", "++"))
+        if short and "k" in arg[1:]:
+            keyword_mode = arg[0] == "-"
         if short and "o" in arg:
             noexec = _noexec_after_option(arg[0], words[index + 1 : index + 2], noexec)
+            if words[index + 1 : index + 2] == ["keyword"]:
+                keyword_mode = arg[0] == "-"
         if arg in {"-o", "+o", "--rcfile", "--init-file"} or (bash_options and arg in {"-O", "+O"}):
             if arg == "-O" and words[index + 1 : index + 2] == ["lastpipe"]:
                 pipeline_subshell = False
@@ -258,6 +267,7 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
                         command=program[0],
                         pipeline_subshell=pipeline_subshell,
                         parse_only=noexec and not interactive,
+                        keyword_mode=keyword_mode,
                     )
                     if program
                     else ShellExecution()
@@ -268,7 +278,8 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
         script_file=stdin_program or index < len(words) or stdin,
         script_word=words[index] if operand else None,
         pipeline_subshell=pipeline_subshell,
-        parse_only=noexec and not interactive and operand,
+        parse_only=noexec and not interactive and (operand or stdin_program or stdin),
+        keyword_mode=keyword_mode,
     )
 
 
