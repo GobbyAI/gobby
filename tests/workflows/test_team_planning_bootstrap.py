@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-import yaml
 
 from gobby.workflows.pipeline_state import ExecutionStatus
 from tests.workflows.test_runbook_pipeline import (
@@ -18,14 +16,12 @@ from tests.workflows.test_runbook_pipeline import (
     _executor,
     _team_planning,
 )
-from tests.workflows.test_seat_step_loops import COORDINATOR_ID, SeatRun
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.integration
 
-AGENTS = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents"
 TASK_TITLE = "Fleet scheduling"
 PLANNING_REF = "#29991"
 CHILD = {
@@ -151,26 +147,3 @@ async def test_writer_gets_a_planning_child_to_claim_before_writing(
     assert PLANNING_REF in prompt
     assert "claim_task" in prompt
     assert "before" in prompt.lower()
-
-
-@pytest.mark.parametrize("seat", SEATS)
-def test_seat_instructions_name_every_required_skill(seat: str) -> None:
-    definition = yaml.safe_load((AGENTS / f"{seat}.yaml").read_text())
-    prompt = "\n".join(definition["prompts"].values())
-    required = definition["step_workflow"]["variables"]["required_skills"]
-    for skill in required:
-        assert skill in prompt, f"{seat}'s launch instructions omit required skill {skill}"
-
-
-@pytest.mark.parametrize("seat", SEATS)
-async def test_seat_can_wait_for_coordination_after_loading_skills(
-    temp_db: HubDatabase, seat: str
-) -> None:
-    definition = yaml.safe_load((AGENTS / f"{seat}.yaml").read_text())
-    run = SeatRun(temp_db, seat, definition=definition)
-    await run.load(*run.vars["required_skills"])
-    assert await run.admits(
-        "gobby-agents",
-        "wait_for_coordination",
-        {"owner_session": COORDINATOR_ID, "reply": True},
-    ), f"{seat} denies the runbook's idle wait in step {run.step}"

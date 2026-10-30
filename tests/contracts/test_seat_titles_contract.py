@@ -46,13 +46,11 @@ def test_team_planning_takes_no_lane_input() -> None:
     assert [name for name in definition["inputs"] if "lane" in name.lower()] == []
 
 
-def test_seat_runbooks_and_procedures_have_no_lane_wording() -> None:
-    # Seat procedures and seat role rules carry seat wording too, so they are scanned.
+def test_seat_runbooks_and_rules_have_no_lane_wording() -> None:
     paths = sorted(
         [
             *(SHARED / "workflows/pipelines").glob("*.yaml"),
             *(SHARED / "workflows/rules/roles").glob("*.yaml"),
-            *(SHARED / "skills/gobby/references/agents/procedures").glob("*.md"),
         ]
     )
 

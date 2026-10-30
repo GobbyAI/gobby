@@ -158,6 +158,35 @@ _SUDO_FLAG_OPTIONS = frozenset(
 )
 
 
+def _wrapper_path_effect(
+    name: str, option: str, following: str, value_options: Collection[str]
+) -> tuple[str, str] | None:
+    """Report path effects using the same option grammar as wrapper removal."""
+    key, separator, value = option.partition("=")
+    if option.startswith("--"):
+        matches = [candidate for candidate in value_options if candidate.startswith(key)]
+        if key not in value_options:
+            if len(matches) != 1:
+                return None
+            key = matches[0]
+        value = value if separator else following
+    else:
+        for index, flag in enumerate(option[1:], 2):
+            key = "-" + flag
+            if key in value_options:
+                value = option[index:] or following
+                break
+        else:
+            return None
+    if (name == "sudo" and key in {"-D", "--chdir"}) or (
+        name == "env" and key in {"-C", "--chdir"}
+    ):
+        return "cwd", value
+    if name == "time" and key in {"-o", "--output"}:
+        return "output", value
+    return None
+
+
 def _unwrap(
     words: list[str],
     *,
@@ -165,6 +194,7 @@ def _unwrap(
     environment_changes: list[tuple[str | None, str | None]] | None = None,
     stop_at_eval: bool = False,
     assignments: set[str] | None = None,
+    effects: list[tuple[str, str]] | None = None,
 ) -> list[str]:
     """Common literal execution wrappers; never treat query operands as launches."""
     i = 0
@@ -244,6 +274,8 @@ def _unwrap(
             "xargs",
         }:
             advance()
+            if name == "xargs" and effects is not None:
+                effects.append(("stdin", ""))
             takes_value = {
                 # BSD env adds -P; GNU env adds -a/--argv0. -S is handled below.
                 "env": {
@@ -346,6 +378,12 @@ def _unwrap(
                     infer_long_options=True,
                     flag_options=_SUDO_FLAG_OPTIONS if name == "sudo" else (),
                 )
+                if effects is not None:
+                    effect = _wrapper_path_effect(
+                        name, option, peek(1) if remaining() > 1 else "$UNRESOLVED", takes_value
+                    )
+                    if effect is not None:
+                        effects.append(effect)
                 advance(count)
             if name == "timeout" and remaining():
                 advance()

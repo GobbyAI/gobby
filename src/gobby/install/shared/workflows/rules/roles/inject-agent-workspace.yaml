@@ -18,7 +18,7 @@ rules:
         template: |
           ## Agent Workspace
           Your session folder: {{ variables.get('_agent_workspace_dir') }}
-          Write literal paths only, under that folder.
+          Write literal paths only, under that folder or your run's assigned registered task worktree. The worktree grant does not include its containing seat folder.
           {% if variables.get('_agent_workspace_epic_dir') %}
           Your epic folder, shared by your team: {{ variables.get('_agent_workspace_epic_dir') }}
           Write literal paths only, under that folder, one file per topic. Append to an existing file with Edit.

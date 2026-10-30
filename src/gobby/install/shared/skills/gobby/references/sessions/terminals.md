@@ -17,8 +17,7 @@ blocks both terminal tools for a definition; spawned status alone does not.
 The selected `block-cross-project-send-keys` rule restricts targets to the caller,
 its project, or its ancestor/descendant tree, and `block-web-chat-send-keys`
 blocks both tools for web-chat callers. Seat guidance permits stalled-session
-resume; a definition declaring `steer_session_terminals` may also steer seats
-within these policies. No seat may enter credentials or type into a password
+resume only, never steering. No seat may enter credentials or type into a password
 or credential prompt. These permissions do not authorize answering a user's approval dialog.
 Use the session target intentionally; do not use raw tmux to evade a refusal.
 

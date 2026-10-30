@@ -701,10 +701,31 @@ def _seat_epic_folder(db: HubDatabase, session_id: str) -> Path | None:
     return _epic_folder(db, binding)
 
 
+def assigned_task_worktree(db: HubDatabase, session_id: str) -> Path | None:
+    """Resolve a run's registered task checkout without granting its containing seat."""
+    from gobby.storage.worktrees import LocalWorktreeManager
+    from gobby.utils.git import run_git_command
+
+    worktree = LocalWorktreeManager(db).get_for_session_run(session_id)
+    if worktree is None:
+        return None
+    path = Path(worktree.worktree_path)
+    root = workspaces_root()
+    if not path.is_relative_to(root):
+        return None
+    resolved = path.resolve()
+    if resolved != root.resolve() / path.relative_to(root):
+        return None
+    checkout = run_git_command(["git", "rev-parse", "--show-toplevel"], path)
+    if checkout is None or Path(checkout).resolve() != resolved:
+        return None
+    return path
+
+
 def spawn_workspace_write_paths(
     db: HubDatabase, session_id: str, definition: str | None
 ) -> list[str]:
-    """The folders a spawned seat may write: its own session folder and its epic folder.
+    """The seat's own folder, epic folder, and assigned existing task worktree.
 
     Reuse a bound folder on resume, including a clear predecessor's grant. Before the first
     SessionStart binding, derive it from the definition and sequence number.
@@ -728,6 +749,9 @@ def spawn_workspace_write_paths(
     epic = _seat_epic_folder(db, session_id)
     if epic is not None:
         folders.append(epic)
+    worktree = assigned_task_worktree(db, session_id)
+    if worktree is not None:
+        folders.append(worktree)
     return [str(folder) for folder in folders]
 
 

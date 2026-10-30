@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+from gobby.hooks._normalization_metadata import _path_is_unresolved
 from gobby.hooks._path_scope import (
     _is_temp_path,
     checkout_root,
@@ -115,7 +116,9 @@ def workspace_contains(path: Path, directory: Path) -> bool | None:
         return None
 
 
-def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> bool:
+def _workspace_write_refused(
+    path: Path, root: Path, allowed: list[Path], task_worktree: Path | None = None
+) -> bool:
     within_root = workspace_contains(path, root)
     if within_root is not True:
         return within_root is None
@@ -145,18 +148,62 @@ def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> boo
                 return True
             return not (
                 checkout is not None
-                and len(checkout.parts) > len(directory.parts)
+                and (len(checkout.parts) > len(directory.parts) or checkout == task_worktree)
                 and workspace_contains(checkout, directory) is True
             )
     return True
+
+
+def _tree_workspace_write_refused(
+    data: Mapping[str, Any],
+    root: Path,
+    allowed: list[Path],
+    base: Path | None,
+    task_worktree: Path | None,
+) -> bool:
+    """A destination does not prove copied or extracted members exclude seat metadata."""
+    candidates: list[Path] = []
+    for raw in data.get("canonical_tree_write_paths", ()):
+        if _path_is_unresolved(raw, str(base) if base else None):
+            # Unknown members/destinations remain unknown for the general write
+            # gates. This rule needs evidence that this operation targets a seat.
+            for cwd in data.get("canonical_tree_write_cwds", {}).get(raw, ()):
+                if not _path_is_unresolved(cwd, str(base) if base else None):
+                    path = resolve_tool_path(cwd, base)
+                    if path is not None:
+                        candidates.append(path)
+        else:
+            path = resolve_tool_path(raw, base)
+            if path is not None:
+                candidates.append(path)
+    for path in candidates:
+        within_root = workspace_contains(path, root)
+        if within_root is None:
+            return True
+        if not within_root:
+            continue
+        try:
+            checkout = checkout_root(path)
+        except (OSError, CheckoutReadUnavailable):
+            return True
+        if checkout is None or not any(
+            workspace_contains(path, directory) is True
+            and (len(checkout.parts) > len(directory.parts) or checkout == task_worktree)
+            and workspace_contains(checkout, directory) is True
+            for directory in allowed
+        ):
+            return True
+    return False
 
 
 def agent_workspace_write_violation(
     event_data: Mapping[str, Any] | None,
     tool_input: Any,
     variables: Mapping[str, Any],
+    *,
+    task_worktree: Path | None = None,
 ) -> bool:
-    """True when a write lands under the workspace root outside the seat's own or epic folder.
+    """Refuse writes outside the seat's own/epic folders or assigned task checkout.
 
     Git metadata stays refused. Gobby config is writable only in a nested
     repository checkout; Markdown plan documents under ``.gobby/plans`` also
@@ -177,7 +224,8 @@ def agent_workspace_write_violation(
     is_write = (
         data.get("tool_name") in WORKSPACE_WRITE_TOOLS or data.get("canonical_tool_kind") == "write"
     )
-    if not is_write and not commits:
+    unresolved_paths = data.get("canonical_unresolved_execution_paths", ())
+    if not is_write and not commits and not unresolved_paths:
         return False
     root = resolve_tool_path(str(workspaces_root()), None)
     if root is None:
@@ -206,7 +254,25 @@ def agent_workspace_write_violation(
         )
         if directory is not None
     ]
-    return any(_workspace_write_refused(path, root, allowed) for path in paths)
+    if task_worktree is not None:
+        allowed.append(task_worktree)
+    # Uncertainty alone is not evidence of a workspace write. Check only
+    # literal argv/cwd paths that actually resolve inside this workspace root.
+    for raw in unresolved_paths:
+        if _path_is_unresolved(raw, str(base) if base else None):
+            continue
+        path = resolve_tool_path(raw, base)
+        if path is None or workspace_contains(path, root) is not True:
+            continue
+        if _workspace_write_refused(
+            path, root, allowed, task_worktree
+        ) or _tree_workspace_write_refused(
+            {"canonical_tree_write_paths": [str(path)]}, root, allowed, base, task_worktree
+        ):
+            return True
+    return any(_workspace_write_refused(path, root, allowed, task_worktree) for path in paths) or (
+        _tree_workspace_write_refused(data, root, allowed, base, task_worktree)
+    )
 
 
 # Provider scratchpads and per-user temp dirs live under /private/var/folders on macOS.

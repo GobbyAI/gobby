@@ -115,7 +115,7 @@ async def test_researcher_title_and_report_writes_follow_step_and_path_scope(
 
 
 @pytest.mark.asyncio
-async def test_code_reviewer_leaves_load_skills_only_after_every_final_page(
+async def test_custom_agent_leaves_load_skills_only_after_every_final_page(
     db: "HubDatabase",
     manager: AgentDefinitionManager,
     engine: RuleEngine,
@@ -129,17 +129,16 @@ async def test_code_reviewer_leaves_load_skills_only_after_every_final_page(
     from gobby.utils.session_context import session_context_for_test
     from gobby.workflows.state_manager import SessionVariableManager
 
-    shared = Path(__file__).parents[2] / "src/gobby/install/shared"
     definition: dict[str, Any] = {
-        "name": "code-reviewer",
+        "name": "custom-paged-agent",
         "steps": [
             {
                 "name": "load_skills",
                 "transitions": [
-                    {"to": "await", "when": "'restraint' in vars.get('loaded_skills', [])"}
+                    {"to": "await", "when": "'paged-skill' in vars.get('loaded_skills', [])"}
                 ],
             },
-            {"name": "await", "status_message": "Read a routed CANDIDATE"},
+            {"name": "await", "status_message": "Ready for custom work"},
         ],
     }
     _setup_step_workflow(
@@ -149,13 +148,13 @@ async def test_code_reviewer_leaves_load_skills_only_after_every_final_page(
         current_step="load_skills",
         workflow_data=definition,
     )
-    stored = manager.get_by_name("code-reviewer")
+    stored = manager.get_by_name("custom-paged-agent")
     assert stored is not None and stored.step_workflow_id is not None
     variables = SessionVariableManager(db)
     storage = LocalSkillManager(db)
     router = storage.create_skill(name="gobby", description="Router", content="# Router")
-    procedure = "references/agents/procedures/code-reviewer.md"
-    content = (shared / "skills/gobby" / procedure).read_text()
+    procedure = "references/custom-procedure.md"
+    content = "# Custom procedure\n\nLoad the required skills before starting.\n"
     encoded = content.encode()
     storage.set_skill_files(
         router.id,
@@ -171,10 +170,10 @@ async def test_code_reviewer_leaves_load_skills_only_after_every_final_page(
             )
         ],
     )
-    for name in ("code-review", "restraint"):
-        content = (shared / "skills" / name / "SKILL.md").read_text()
+    for name in ("short-skill", "paged-skill"):
+        content = f"# {name}\n\nSynthetic skill instructions.\n"
         # Exercise the real final-page tracking boundary, not a manual loaded-variable write.
-        if name == "restraint":
+        if name == "paged-skill":
             content += "\n\nAdditional review context.\n" * 2_000
         storage.create_skill(name=name, description=name, content=content)
     registry = create_skills_registry(db)
@@ -206,15 +205,15 @@ async def test_code_reviewer_leaves_load_skills_only_after_every_final_page(
         arguments = {"name": "gobby", "path": procedure}
         result = await get_file(**arguments)
         await after_load("get_skill_file", arguments, result)
-        result = await get_skill(name="code-review")
-        await after_load("get_skill", {"name": "code-review"}, result)
+        result = await get_skill(name="short-skill")
+        await after_load("get_skill", {"name": "short-skill"}, result)
         instance = instance_mgr.get_for_session(SESSION_ID)
         assert instance is not None and instance.current_step == "load_skills"
-        assert "restraint" not in variables.get_variables(SESSION_ID)["loaded_skills"]
+        assert "paged-skill" not in variables.get_variables(SESSION_ID)["loaded_skills"]
 
-        result = await get_skill(name="restraint")
+        result = await get_skill(name="paged-skill")
         assert result["page"]["complete"] is False
-        await after_load("get_skill", {"name": "restraint"}, result)
+        await after_load("get_skill", {"name": "paged-skill"}, result)
         partial = instance_mgr.get_for_session(SESSION_ID)
         assert partial is not None and partial.current_step == "load_skills"
 
@@ -228,7 +227,7 @@ async def test_code_reviewer_leaves_load_skills_only_after_every_final_page(
     assert complete is not None and complete.current_step == "await"
     assert transition.context is not None
     assert "Step transition: load_skills -> await" in transition.context
-    assert "Read a routed CANDIDATE" in transition.context
+    assert "Ready for custom work" in transition.context
 
 
 def _setup_load_then_review(

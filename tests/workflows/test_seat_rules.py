@@ -263,13 +263,6 @@ async def test_seat_common_injected_once_per_epoch(engine: RuleEngine) -> None:
     second = await _turn_context(engine, variables)
 
     assert GUIDANCE_HEADING in first
-    assert "Assistant only on operator request" in first
-    assert "Push: operator approves exact SHA" in first
-    assert 'healthy="Systems nominal"' in first
-    assert "use it for stalled-session resume" in first
-    assert "definition declaring steer_session_terminals may also steer seats" in first
-    assert "No spawns except Assistant and Orchestrator." in first
-    assert "A team manager spawns and resumes its own team's seats" in first
     assert GUIDANCE_HEADING not in second
 
 

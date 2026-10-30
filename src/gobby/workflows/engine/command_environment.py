@@ -62,9 +62,11 @@ def _program(
     depth: int,
     *,
     syntax: Literal["program", "argv"] = "program",
+    literal_reference: bool = False,
 ) -> tuple[bool, _Modes]:
     if depth >= SHELL_WRAPPER_DEPTH:
-        return bool(token.search(source)), modes
+        return literal_reference or bool(token.search(source)), modes
+    literal_reference = literal_reference or bool(token.search(source))
     # Substitutions cannot change the parent's shell options. Their independently
     # executable bodies remain conservative; discard correlated data projections.
     projected = _resolve_substitutions(source, depth, [], "subjects")
@@ -73,6 +75,9 @@ def _program(
     source = projected[0]
     try:
         scan = scan_shell_command(source, dialect=dialect)
+        literal_reference = literal_reference or any(
+            token.search(word.value) for word in scan.tokens
+        )
         if scan.heredocs:
             if any(
                 not heredoc.quoted and _parameter_sets(heredoc.text, variable, quoting="heredoc")
@@ -125,7 +130,15 @@ def _program(
                     if token.search(" ".join(words)):
                         return True, modes
                 elif words[0].endswith(")"):
-                    if _program(words[0][1:-1], variable, token, modes, dialect, depth + 1)[0]:
+                    if _program(
+                        words[0][1:-1],
+                        variable,
+                        token,
+                        modes,
+                        dialect,
+                        depth + 1,
+                        literal_reference=literal_reference,
+                    )[0]:
                         return True, modes
                 elif token.search(text):
                     return True, modes
@@ -136,7 +149,18 @@ def _program(
                 if token.search(source):
                     return True, modes
             environment_changes: list[tuple[str | None, str | None]] = []
-            command = _unwrap(words, environment_changes=environment_changes, stop_at_eval=True)
+            wrapper_effects: list[tuple[str, str]] = []
+            command = _unwrap(
+                words,
+                environment_changes=environment_changes,
+                stop_at_eval=True,
+                effects=wrapper_effects,
+            )
+            # Input may become an argument or variable name through a pipe,
+            # here-string/document, or file written earlier in this program.
+            # Retain the original reference even after heredoc projection.
+            if literal_reference and any(kind == "stdin" for kind, _ in wrapper_effects):
+                return True, modes
             # An assigned value can later become an environment name through
             # export/env expansion or a nameref. Do not require local dataflow
             # proof before rejecting a possible indirect setter.
@@ -148,6 +172,8 @@ def _program(
             if not command:
                 continue
             name, args = shell_command_name(command[0]), command[1:]
+            if literal_reference and name in {"read", "readarray", "mapfile", "getopts"}:
+                return True, modes
             if (
                 syntax == "program"
                 and any(mode.keyword for mode in modes)
@@ -164,7 +190,13 @@ def _program(
                 stage_modes = _keyword_options(name, args, modes)
             if name == "eval":
                 found, stage_modes = _program(
-                    " ".join(args), variable, token, modes, dialect, depth + 1
+                    " ".join(args),
+                    variable,
+                    token,
+                    modes,
+                    dialect,
+                    depth + 1,
+                    literal_reference=literal_reference,
                 )
                 if found:
                     return True, modes
@@ -197,6 +229,7 @@ def _program(
                         child_dialect,
                         depth + 1,
                         syntax="program" if name in _SHELLS | {"watch", "su", "ssh"} else "argv",
+                        literal_reference=literal_reference,
                     )[0]:
                         return True, modes
                 if (
