@@ -25,6 +25,7 @@ pub struct FakeGterm {
     task: JoinHandle<()>,
     requests: Arc<Mutex<Vec<Value>>>,
     drop_next_list: Arc<AtomicBool>,
+    reject_next_commit: Arc<AtomicBool>,
     events: broadcast::Sender<Value>,
 }
 
@@ -62,6 +63,7 @@ impl FakeGterm {
         };
         let requests = Arc::new(Mutex::new(Vec::new()));
         let drop_next_list = Arc::new(AtomicBool::new(false));
+        let reject_next_commit = Arc::new(AtomicBool::new(false));
         let (events, _) = broadcast::channel(16);
         let script = Arc::new(Mutex::new(HostScript {
             inventory,
@@ -71,6 +73,7 @@ impl FakeGterm {
         let task = tokio::spawn({
             let requests = requests.clone();
             let drop_next_list = drop_next_list.clone();
+            let reject_next_commit = reject_next_commit.clone();
             let events = events.clone();
             let pid = process.id();
             async move {
@@ -81,6 +84,7 @@ impl FakeGterm {
                             let Ok((stream, _)) = accepted else { return };
                             let requests = requests.clone();
                             let drop_next_list = drop_next_list.clone();
+                            let reject_next_commit = reject_next_commit.clone();
                             let mut events = events.subscribe();
                             let script = script.clone();
                             connections.spawn(async move {
@@ -114,6 +118,8 @@ impl FakeGterm {
                                         } else { json!({"ok":false,"error":"token_mismatch"}) }
                                     } else if !authenticated {
                                         json!({"ok":false,"error":"authentication_failure"})
+                                    } else if method == "spawn_commit" && reject_next_commit.swap(false, Ordering::SeqCst) {
+                                        json!({"ok":false,"error":"spawn_key_mismatch"})
                                     } else {
                                         subscribed |= method == "subscribe_events";
                                         script.lock().expect("fixture inventory").reply(&request, pid)
@@ -133,6 +139,7 @@ impl FakeGterm {
             task,
             requests,
             drop_next_list,
+            reject_next_commit,
             events,
         })
     }
@@ -143,6 +150,10 @@ impl FakeGterm {
 
     pub fn drop_next_list(&self) {
         self.drop_next_list.store(true, Ordering::SeqCst);
+    }
+
+    pub fn reject_next_commit(&self) {
+        self.reject_next_commit.store(true, Ordering::SeqCst);
     }
 
     pub fn terminal_exited(&self) -> Result<()> {
