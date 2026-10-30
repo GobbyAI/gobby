@@ -104,6 +104,8 @@ async def test_pane_pid_identity_accepts_provider_inside_srt_argv() -> None:
 @pytest.mark.asyncio
 async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
     session_manager = MagicMock()
+    # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
+    session_manager._storage.db.fetchone.return_value = None
     run_manager = MagicMock()
     request = SpawnRequest(
         prompt="work",
@@ -172,6 +174,8 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
 @pytest.mark.asyncio
 async def test_srt_preflight_failure_prevents_tmux_spawn() -> None:
     session_manager = MagicMock()
+    # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
+    session_manager._storage.db.fetchone.return_value = None
     run_manager = MagicMock()
     request = SpawnRequest(
         prompt="work",

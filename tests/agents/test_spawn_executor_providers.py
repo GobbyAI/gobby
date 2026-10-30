@@ -201,6 +201,8 @@ async def test_sandbox_policy_grants_only_declared_main_nextest_store(
         )
     request, spawn_context, _ = _sandbox_request()
     manager = MagicMock()
+    # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
+    manager._storage.db.fetchone.return_value = None
     request.session_manager = manager
     request.machine_id = "machine"
     request.project_path = str(lane)
@@ -257,6 +259,8 @@ async def test_spawn_creates_absent_directory_write_grants_before_the_sandbox_st
     )
     request, spawn_context, _ = _sandbox_request()
     request.session_manager = MagicMock()
+    # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
+    request.session_manager._storage.db.fetchone.return_value = None
 
     # The seat's own folder is named from its session row, which spawn reads at spawn time.
     def fetch_session_row(sql: str, _params: object) -> MagicMock:
