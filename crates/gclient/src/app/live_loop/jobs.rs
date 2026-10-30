@@ -24,6 +24,8 @@ use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
 use super::super::attention::{PendingAttention, ResponseSubmission};
+use super::super::live::relist::Relist;
+use super::super::live::RosterSnapshot;
 use super::super::{PaneId, Workspace};
 use super::focus_hints::{self, FocusMemo, ShownFocus};
 use super::outage_grant::{self, GrantOutcome};
@@ -47,6 +49,11 @@ pub enum JobKey {
     Op,
     /// The read that opens a placed terminal no pane shows; one per terminal.
     Terminal(String),
+    /// A project's roster read; one per project, so a read for one project
+    /// never displaces another's.
+    Roster(String),
+    /// The attention roster read; the latest one wins.
+    Attention,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,6 +136,20 @@ pub enum JobResult {
         terminal_id: String,
         elapsed: Duration,
         result: Result<TerminalRow, DaemonError>,
+    },
+    /// A project's roster read. `apply_relist` installs it only while that
+    /// project is focused, so a read that lands after a switch is dropped.
+    /// `elapsed` spans the read, for the WARN when it fails.
+    Roster {
+        project: String,
+        elapsed: Duration,
+        result: Result<Relist, DaemonError>,
+    },
+    /// The attention roster read. An attention event newer than it wins.
+    /// `elapsed` spans the read, for the WARN when it fails.
+    Attention {
+        elapsed: Duration,
+        result: Result<RosterSnapshot, DaemonError>,
     },
 }
 
@@ -266,6 +287,8 @@ pub(super) enum Pending {
     Scroll(PaneId, u32),
     HostGrant(PaneId),
     Open(String),
+    Roster(String),
+    Attention,
 }
 
 /// One entry of the geometry pass: a shown pane, its inner rect and the
@@ -323,6 +346,27 @@ impl LoopJobs {
         let generation = self.sync_generation(workspace.daemon().generation());
         let issued = self.ledger.issue(key, generation, pending);
         self.start(workspace, chrome, issued);
+    }
+
+    /// Issues the roster and attention reads live events flagged. Each read
+    /// is a coalesced job, so a flag raised while one is in flight waits for it.
+    pub(super) fn drain_pending_refetch(
+        &mut self,
+        workspace: &mut Workspace<LiveDaemon>,
+        chrome: &mut Chrome,
+    ) {
+        let pending = std::mem::take(&mut workspace.pending_refetch);
+        for project in pending.rosters {
+            self.offer(
+                workspace,
+                chrome,
+                JobKey::Roster(project.clone()),
+                Pending::Roster(project),
+            );
+        }
+        if pending.attention {
+            self.offer(workspace, chrome, JobKey::Attention, Pending::Attention);
+        }
     }
 
     /// Start each issued job. A wish with nothing left to send settles its
@@ -444,6 +488,31 @@ impl LoopJobs {
                         attachment,
                         grant,
                         revoked,
+                    }
+                });
+                true
+            }
+            Pending::Roster(project) => {
+                let read = workspace.issue_roster_fetch(project.clone());
+                spawn_job(&self.tx, tag.clone(), async move {
+                    let started = Instant::now();
+                    let result = read.await;
+                    JobResult::Roster {
+                        project,
+                        elapsed: started.elapsed(),
+                        result,
+                    }
+                });
+                true
+            }
+            Pending::Attention => {
+                let daemon = workspace.daemon().clone();
+                spawn_job(&self.tx, tag.clone(), async move {
+                    let started = Instant::now();
+                    let result = daemon.attention_roster().await;
+                    JobResult::Attention {
+                        elapsed: started.elapsed(),
+                        result,
                     }
                 });
                 true

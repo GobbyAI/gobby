@@ -10,6 +10,7 @@ Provides tools for linking git commits to tasks:
 Extracted from tasks.py using Strangler Fig pattern for code decomposition.
 """
 
+import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
@@ -22,6 +23,7 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
 )
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.workspace_machine_scope import require_local_machine_id
+from gobby.tasks.commit_order import link_candidate
 from gobby.tasks.commit_ownership import assert_task_commit_paths_available_async
 from gobby.tasks.commit_unlink import unlink_commit_audited
 from gobby.tasks.diff_paging import (
@@ -195,7 +197,13 @@ def create_commit_registry(
                 repo_path,
                 [normalized],
             )
-            task = task_manager.link_commit(resolved_task_id, normalized)
+            task = (
+                await asyncio.to_thread(
+                    link_candidate, task_manager, resolved_task_id, normalized, repo_path
+                )
+                if candidate
+                else task_manager.link_commit(resolved_task_id, normalized)
+            )
             return {
                 "task_id": task.id,
                 "commits": task.commits or [],

@@ -304,6 +304,18 @@ pending-pull clause in the installed `when`. 4.1 needs no live check.
   pull guard as new deliverable 2.3. The adversary's two minor corrections (E1 lint scope
   and report routing) were applied at `6bd7de5`. Writer and adversary reached consensus
   on this revision.
+- 2026-10-28: The Orchestrator's review of the stamped plan (`26facd9`) returned it with
+  ORCH-REV-HSG-1. The 4.1 pre-push `--ignore` would drop the parity test from
+  `Release Branch CI`, the only workflow that covers `release/**` and later version
+  branches. The Writer's repair at `898f582` adds
+  `.github/workflows/postgres-pgsearch-smoke.yml` and its workflow test to the 4.1
+  Targets, adds acceptance 4.1.6, and corrects the research claim about the `CI`
+  variable. The stale M1 is withdrawn for a fresh derivation by Plan Adversary
+  gobby#18349.
+- 2026-10-28: gobby#18349 ended before re-stamping, and the Orchestrator relaunched the
+  seat as Plan Adversary gobby#18400. It re-reviewed `9d51b37` and found no blocking
+  findings, no nits and no unresolved decisions. Writer gobby#18340 and Plan Adversary
+  gobby#18400 reached consensus on this revision.
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -311,7 +323,7 @@ pending-pull clause in the installed `when`. 4.1 needs no live check.
 ```yaml
 - title: Guard the plan-mode skill directive on a pending pull
   category: config
-  task_type: bug
+  task_type: chore
   depends_on: []
   validation_criteria: '2.3.1: The plan-mode entry rule''s when starts with `not variables.get(''handoff_pull_pending'')`
     and keeps the plan-mode and directive-delivered clauses. file: `src/gobby/install/shared/workflows/rules/plan-mode/handle-plan-mode-entry.yaml`.
@@ -343,13 +355,18 @@ pending-pull clause in the installed `when`. 4.1 needs no live check.
     test: `tests/ci/test_postgres_test_stack.py::test_pre_push_excludes_live_opt_in_tests_by_default`.
 
     4.1.5: No `GOBBY_RUN_BUILD_CANARY` branch or build-canary deselect remains in
-    the pre-push script, and the registry test no longer asserts either. file: `pre-push-test.sh`.'
+    the pre-push script, and the registry test no longer asserts either. file: `pre-push-test.sh`.
+
+    4.1.6: The `release-branch-ci` job env in `.github/workflows/postgres-pgsearch-smoke.yml`
+    exports `GOBBY_RUN_WHEEL_MANIFEST_PARITY: "1"`, and the release-workflow test
+    asserts it. test: `tests/ci/test_release_branch_prerequisites.py::test_release_workflow_provisions_pre_push_tools_and_falkor`.'
   labels:
   - covers:handoff-stop-gates-and-pull-order:4.1:4.1.1
   - covers:handoff-stop-gates-and-pull-order:4.1:4.1.2
   - covers:handoff-stop-gates-and-pull-order:4.1:4.1.3
   - covers:handoff-stop-gates-and-pull-order:4.1:4.1.4
   - covers:handoff-stop-gates-and-pull-order:4.1:4.1.5
+  - covers:handoff-stop-gates-and-pull-order:4.1:4.1.6
   tdd: false
   source_section: '4.1'
   assigned_agent: developer

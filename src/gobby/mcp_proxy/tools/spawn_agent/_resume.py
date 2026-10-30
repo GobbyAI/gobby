@@ -19,7 +19,6 @@ from gobby.workflows.state_manager import SessionVariableManager
 
 from ._provider_resolution import concrete_provider
 
-_RETYPE_REFUSED = frozenset({"assistant", "orchestrator", "default"})
 # Bounds the resume-chain walk for a placement recorded before resumes dropped it.
 _RESUME_CHAIN_LIMIT = 32
 # Recorded split axes back to the ``placement`` input spelling.
@@ -64,6 +63,7 @@ def resolve_resume_target(
     run_storage: Any,
     agent_type: str,
     *,
+    allow_retype: bool = False,
     live_host_epoch: str | None = None,
 ) -> Session:
     if session_manager is None or not project_id:
@@ -98,16 +98,14 @@ def resolve_resume_target(
         or (thread == session.id and session.source != "claude")
     ):
         raise ValueError(f"Resume target {ref} has no recorded provider thread")
-    # A resume merges the requested definition's variables into the session, so it
-    # re-types the seat. Moving onto another seat definition stays open; becoming the
-    # Assistant or Orchestrator would bypass seat rules, and the 'default' an omitted
-    # agent resolves to would silently drop the seat's definition.
+    # A resume merges the requested definition's variables into the session.
+    # Replacing the stored definition needs the destination's explicit permission.
     stored_type = (
         SessionVariableManager(session_manager.db)
         .get_variable_subset(session.id, ("_agent_type",))
         .get("_agent_type")
     ) or "default"
-    if agent_type != stored_type and agent_type in _RETYPE_REFUSED:
+    if agent_type != stored_type and not allow_retype:
         raise ValueError(
             f"Resume target {ref} is a {stored_type!r} session; resume it with "
             f"agent={stored_type!r}, not {agent_type!r}"
@@ -143,6 +141,11 @@ async def resolve_seat_resume(
         concrete_provider(provider),
         run_storage,
         agent_body.name if agent_body is not None else "default",
+        allow_retype=(
+            agent_body is not None
+            and agent_body.enabled
+            and "accept_resume_retype" in agent_body.capabilities
+        ),
         live_host_epoch=live_host_epoch,
     )
 

@@ -545,11 +545,14 @@ class WorkspaceOps(WorkspacePaneIOMixin):
         """Move a pane beside ``beside`` in ``tab``; its source split collapses.
 
         Each workspace's event carries only its own tabs; both carry the moved pane,
-        as ``tab.move`` hands the source workspace the tab that left it.
+        as ``tab.move`` hands the source workspace the tab that left it. A destination
+        in another project is refused as ``invalid_move``.
         """
         target = await self._enter(pane, node)
-        moving = _pane_of(target, pane)[1]
+        source, moving = _pane_of(target, pane)
         destination = _tab_of(await self._db(self._resolve, tab, node), tab)
+        if destination.project_id != source.project_id:
+            raise WorkspaceOpError("invalid_move", "destination belongs to another project")
         beside_id = (
             None
             if beside is None

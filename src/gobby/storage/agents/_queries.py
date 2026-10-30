@@ -567,9 +567,9 @@ class _AgentRunQueryMixin:
         )
 
     def list_all_by_parent(
-        self: _AgentRunQueryHost, parent_session_id: str, limit: int = 100
+        self: _AgentRunQueryHost, parent_session_id: str, limit: int | None = 100
     ) -> list[AgentRun]:
-        """Every agent run a parent session spawned, whether or not it has ended."""
+        """Every child run, ended or not; ``None`` removes the result limit."""
         return self._fetch_runs_with_live_stats(
             "WHERE ar.parent_session_id = %s",
             [parent_session_id],

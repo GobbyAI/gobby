@@ -99,6 +99,9 @@ const VALUE_FLAGS: &[&str] = &[
     "--interval",
     "--tab-ref",
     "--kind",
+    "--layout",
+    "--to-tab",
+    "--beside",
 ];
 const SWITCH_FLAGS: &[&str] = &["--json", "--right", "--down", "--enter", "--help", "-h"];
 

@@ -28,22 +28,34 @@ hub-to-node command channel; a background task inside the lease-scoped
 the CLI. No new
 process, database, schema migration, queue or executable is added.
 
-Outcome when every leaf closes:
+Outcome when every leaf closes. Every Sessions surface ends fully in Rust and
+its Python implementation is deleted (Decision Record item 15). A deleted
+Python surface is recorded as `dropped by decision #25253` with a note citing
+its native evidence: `scripts/generate_parity_ledger.py` inventories live
+Python registrations and keeps only dropped rows for absent surfaces
+(Orchestrator ruling 2026-10-28, as the projects plan records removed
+routes).
 
-- 29 HTTP rows are `delegated`. 26 switch at 7.2 and are recorded by 7.4;
-  `GET /api/sessions` (resumability, 8.5) and the two ACP rows (8.4) switch
-  in their P8 leaves. `POST /api/sessions/{session_id}/release-composer`
+- 29 HTTP rows are served natively and their Python routes are deleted. 26
+  switch at 7.2 and 7.3 deletes their Python routes; `GET /api/sessions`
+  (ACP enrichment and resumability, 8.5) and the two ACP rows (8.4) switch
+  and delete in their P8 leaves. `POST /api/sessions/{session_id}/release-composer`
   stays `proxied` with a #25276 owner note (Decision 6).
-- 9 CLI rows are `delegated` through `gclient sessions`. `renumber` and
-  `backfill-context-windows` are `dropped by decision #25253`.
+- 8 CLI verbs are served by `gclient sessions <verb>`, and 7.3 deletes their
+  Python commands. `renumber` and `backfill-context-windows` are dropped with
+  no replacement. The `gobby sessions` group keeps only #21565's
+  `terminate-terminal`, so its row stays `proxied` with a #21565 owner note.
 - 20 MCP rows get native handlers, descriptors and proven schema/result parity.
-  #21570 activates them, so they stay `proxied` with #21570 owner notes.
+  #21570 activates them; 8.8 then deletes their Python tools.
   `gobby-sessions:release_composer` stays `proxied` with a #25276 owner note.
-- `WS message stop_request` is `delegated` after 8.7.
+- `WS message stop_request` is served natively and its Python handler deleted
+  by 8.7.
 - One native extension, `DELETE /api/sessions/{session_id}`, serves
   `gclient sessions delete` under a waiver.
 
 Native construction is passive in production until 7.2 switches the family.
+Proxy and Compare remain rollback selections only until 7.3 deletes the Python
+routes and loops; after that, rollback means the prior coherent release.
 Gated surfaces follow in P8 without holding the family's activation.
 
 ## Decision Record
@@ -74,14 +86,14 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
    `src/gobby/sessions/machine_scope.py::require_local_session_ownership` is kept
    as the routing test: where Python refuses a remote owner, the native
    service routes the request to it (Debt B9).
-3. **CLI host (C1).** The 9 kept CLI rows ship as `gclient sessions <verb>` over
+3. **CLI host (C1).** The eight kept CLI verbs ship as `gclient sessions <verb>` over
    the hub's public HTTP API, one path for hub, standalone and node. The native
-   `DELETE /api/sessions/{session_id}` serves `delete`. Python `gobby sessions`
-   becomes a thin Click group with one forwarding subcommand per verb (never one
-   catch-all forwarder), so `generate_parity_ledger` keeps each CLI key
-   (Skills #25006, criterion 5.4.3), until the S3.2 naming switch removes it.
-   `terminate-terminal` stays a Python callback in that group because #21565
-   owns its row. `summarize` needs notes, a code-only fallback and a
+   `DELETE /api/sessions/{session_id}` serves `delete`. 7.3 deletes the Python
+   verbs; no Python forwarding layer survives (item 15), so their ledger rows
+   become `dropped by decision #25253` with `gclient` evidence notes. The
+   `gobby sessions` group keeps only `terminate-terminal`, whose row #21565
+   owns; #21565's plan removes the group with that verb, and the S3.2 naming
+   switch makes `gobby` the native binary. `summarize` needs notes, a code-only fallback and a
    file-only output that the generate-summary route lacks, so the native
    route accepts an optional request body for them (4.1, waiver
    `sessions.http-generate-summary.cli-request-options`, documented in
@@ -119,12 +131,19 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
    node-to-hub route exists. Ownership switches once at the restart boundary
    from the bootstrap `front_door.routes.sessions` selection (Cron 4.1
    precedent): Native starts the native jobs and Python skips the two loops;
-   Proxy and Compare keep Python as the owner. Expiry is hub-only, so the
-   hub's selection decides it. Two expiry steps write tables owned by epics
-   that #21562 blocks: `src/gobby/storage/hook_receipts.py::retire_expired_session_hook_effects`
-   (#24151) and `src/gobby/storage/session_lifecycle.py::prune_stale_compact_workflow_instances`
-   (#21567). Those two steps stay in Python's sweep in every mode (Orchestrator
-   ruling 2026-10-28); the switch-off is per step. Processing follows each machine's own
+   Proxy and Compare keep Python as the owner until 7.3 deletes the Python
+   Sessions loops. Expiry is hub-only, so the
+   hub's selection decides it. Three expiry pieces write tables owned by
+   epics that #21562 blocks: `src/gobby/storage/hook_receipts.py::retire_expired_session_hook_effects`
+   (#24151), `src/gobby/storage/session_lifecycle.py::prune_stale_compact_workflow_instances`
+   (#21567) and the `pending_interactions` update inside
+   `session_lifecycle.py::cleanup_expired_session_state` (#21592). They are
+   those families' pieces: they stay in Python's shared sweep in every mode
+   (Orchestrator ruling 2026-10-28), so the switch-off is per step, and 7.3
+   leaves them running. The hooks plan
+   (`.gobby/plans/s2-11-hub-hooks-rules.md`, #24151), the Workflows, rules
+   and pipelines plan (#25279 under #21567) and #21592 each carry an
+   explicit edge naming its piece for its own Rust port. Processing follows each machine's own
    selection for the transcripts it holds: a node whose selection is not
    Native refuses `transcript.process`, so its Python runner stays the single
    owner of those sessions.
@@ -132,8 +151,13 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
    (8.5), web-chat handoff delivery (8.6) and `WS message stop_request` (8.7)
    are small leaves gated on #21592. Web-chat session creation is native here
    (2.1). These leaves run after activation (P8) and each claims only its own
-   routes, so activation waits on none of those epics. Until 8.5,
-   `GET /api/sessions` claims only requests without `include_resumability`.
+   routes, so activation waits on none of those epics. `GET /api/sessions`
+   is claimed only from 8.5: every listed ACP web-chat row carries an `acp`
+   block that `src/gobby/sessions/acp_lifecycle.py::attach_acp_block` builds
+   from the live web-chat runtime (`acp_backends`, `acp_session_capabilities`,
+   `get_acp_session_info`), which #21592 owns, and resumability needs the same
+   registry. 1.1 builds the list service, which the MCP `list_sessions` tool
+   uses without that block.
    Composer release is not ported here: #24571 keeps the composer ledger in
    the Python write client (Orchestrator ruling 2026-10-15, recorded in
    `.gobby/plans/daemon-side-gterm-adoption-and-terminal-ws.md`), so
@@ -161,8 +185,10 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
    - **Port traits** for owners that depend on Sessions or that #21562
      blocks: agent runs and worktrees (gagents depends on gsessions,
      `.gobby/plans/agents-family.md`), memories (gmemory depends on 2.4 per
-     Decision 10), pipeline executions (#21567) and the web-chat registry
-     (#21592). `crates/gsessions/src/ports.rs` declares each trait; gdaemon
+     Decision 10), session skill loads (gskills,
+     `.gobby/plans/gdaemon-skills-family.md` 1.6, writes session state),
+     Workflows' audit log and agent step instances, pipeline executions
+     (all #21567) and the web-chat registry (#21592). `crates/gsessions/src/ports.rs` declares each trait; gdaemon
      binds an adapter that calls the owner crate's public functions. The
      Tasks plan's `AssignmentNotifier` port is the precedent. Before an
      adapter lands, tests bind fixture adapters and production stays passive.
@@ -170,16 +196,29 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
      exports (ORCH-REV-AF-7): `run_rows(tx, selector)`,
      `move_run_lineage(tx, session_ids, successor_id)` and
      `containing_worktree_id(tx, project_id, workspace_path)`. 7.2 binds the
-     gagents and gmemory adapters and depends on `agents-family 3.6` as a
-     cross-plan edge the Orchestrator converts at expansion. The pipeline and
-     web-chat adapters land in their P8 leaves.
+     gagents, gmemory and gskills adapters. It depends on `agents-family 3.6`
+     and `gdaemon-skills-family 1.6` as cross-plan edges the Orchestrator
+     converts at expansion, and on `memory-family 1.1`, which creates
+     gmemory. Where an owner crate lacks a function an adapter needs, 7.2
+     adds one narrow function there. Two Workflows reads are needed before
+     any Workflows crate exists, because #21567 waits on #21562: 2.2's
+     retained-reference check over `workflow_audit_log` and 2.4's
+     step-scoped variables over `agent_step_instances`. For those, 7.2 binds
+     transitional Rust adapters in gdaemon that run only those statements;
+     gsessions never reads the tables. #25279's crate exports the functions,
+     replaces the adapter bodies and deletes the adapters (Orchestrator
+     ruling A, 2026-10-28). The pipeline and web-chat adapters land in
+     their P8 leaves.
    Each consuming leaf names its foreign operations.
 8. **Ownership boundaries (S6).** Sessions owns session variables, dirty-path
    grants and claim holds. `SessionVariableMutation` takes its explicit
    advisory-lock key from #25262.
 9. **Browser admission and security review (S7).** 7.1 registers the Sessions
    HTTP rows for `Caller::Browser` through #24967's shared verifier and #24964's
-   CORS/preflight boundary. The Orchestrator approved `security-review` on 7.1
+   CORS/preflight boundary. It also binds the two variables rows, the only
+   Sessions entries in `src/gobby/servers/auth_service.py::_AGENT_CAPABILITY_MATRIX`,
+   to #25068's agent-token seam, which every Stage 2 family uses for its
+   agent-token rows. The Orchestrator approved `security-review` on 7.1
    and on 2.5, which ports the two operator-only routes. The Orchestrator
    applies the label after expansion and verifies it before dispatch; cookie
    activation and operator-route activation wait for a Security Reviewer's
@@ -243,6 +282,36 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
     wait on activation and the published ledger, never on the P8 leaves
     that #21592, #21565 and #21567 gate (Orchestrator ruling 2026-10-28).
     This plan names no task edit.
+15. **No Python (operator ruling via the Orchestrator, 2026-10-28).** The
+    port ends with every Sessions surface fully in Rust: no Python policy
+    layer, loopback client, rollback route or direct-storage writer stays in
+    a Sessions surface's path. Deletions:
+    - 7.3 deletes the Python CLI verbs and dropped commands, the Python
+      routes of the 26 rows that switch at 7.2, and Python's Sessions-owned
+      expiry steps and transcript-processing loop with their storage
+      functions.
+    - 8.4, 8.5 and 8.7 each delete the Python route or handler they replace.
+    - 8.8 deletes the Python MCP tools, set_handoff and the Python delivery
+      and continuation modules once #21570 serves the tools and the hooks
+      plan's native path calls the native delivery services.
+
+    Pieces that belong to other families stay with them, each through an
+    explicit edge naming it in the owning Rust plan:
+    - `gobby sessions terminate-terminal` (#21565);
+    - both release-composer rows (#25276);
+    - `retire_expired_session_hook_effects` (the hooks plan, #24151);
+    - `prune_stale_compact_workflow_instances` (#25279);
+    - the `pending_interactions` update of `cleanup_expired_session_state`
+      (#21592);
+    - the transitional `workflow_audit_log` and `agent_step_instances`
+      adapters that 7.2 binds (#25279 replaces and deletes them);
+    - the wake-replay registrant of 2.2's status-notification bridge
+      (`.gobby/plans/agents-family.md` D1.3);
+    - the gagents port functions (`agents-family 3.6`).
+
+    The Orchestrator converts these at expansion. Other families' Python
+    modules that import the Python Sessions storage layer keep it until
+    their own ports; 7.3 names each importing family's removal owner.
 
 ## Debt not to port
 `kind: framing`
@@ -271,6 +340,7 @@ No whole surface is masked or skipped.
 | W4 | Python CLI verbs open the database directly (`delete_session` uses `SessionManager`). | Not ported: `gclient` uses the public HTTP API. | No contract change; 6.1 |
 | W5 | Synchronous storage calls inside async handlers. | Not applicable to native async code. | None |
 | W6 | `src/gobby/mcp_proxy/tools/sessions/_terminal_clear.py::execute_clear_session` has no production caller; delivery runs through `deliver_staged_clear_session`. | Not ported. | No contract change; 8.3 |
+| W7 | `src/gobby/storage/session_lifecycle.py::_EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS` names `pending_approvals`, a table the schema lacks, so the retained-reference guard skips it. | Not ported (Orchestrator ruling 2026-10-28). | No contract change; 2.2 |
 
 KEEP (ported exactly): MCP HTTP-200 error envelopes; exact machine ownership;
 rendered messages answer 413 when too large while the raw transcript streams;
@@ -346,10 +416,12 @@ Consumer evidence:
 
 Statuses are exactly `proxied`, `delegated` or `dropped by decision #N`. A row
 changes only after its owner's parity proof and 7.4 or its P8 leaf records it.
+A row whose Python surface is deleted reads `dropped by decision #25253` with
+a note citing its native evidence (Decision Record item 15).
 
 | Ledger row | Implementation | Final status owner |
 | --- | --- | --- |
-| CLI gobby sessions | 6.1 | 7.4 |
+| CLI gobby sessions | 6.1 | 7.4 (proxied, #21565) |
 | CLI gobby sessions approve-dirty-paths | 6.1 | 7.4 |
 | CLI gobby sessions backfill-context-windows | dropped (B2), 7.3 | 7.4 |
 | CLI gobby sessions delete | 2.2, 6.1 | 7.4 |
@@ -390,27 +462,27 @@ changes only after its owner's parity proof and 7.4 or its P8 leaf records it.
 | HTTP POST /api/sessions/{session_id}/variables/set | 2.4 | 7.4 |
 | HTTP POST /api/sessions/{session_ref}/dirty-path-approvals | 2.5 | 7.4 |
 | HTTP POST /api/sessions/{session_ref}/native-terminal-binding | 2.5 | 7.4 |
-| MCP gobby-hub:list_cross_project_sessions | 2.7, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:feedback | 2.6, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:get_current_session | 1.1, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:get_handoff | 2.8, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:get_session | 1.3, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:get_session_commits | 1.3, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:get_session_messages | 3.7, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:get_transcript_status | 3.6, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:get_usage_breakdown | 1.2, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:hold_session_claims | 2.6, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:list_sessions | 1.1, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:mark_loop_complete | 2.2, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:query_readonly | 2.7, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:register_session | 2.1, 5.1 | 7.4 (proxied, #21570) |
+| MCP gobby-hub:list_cross_project_sessions | 2.7, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:feedback | 2.6, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:get_current_session | 1.1, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:get_handoff | 2.8, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:get_session | 1.3, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:get_session_commits | 1.3, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:get_session_messages | 3.7, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:get_transcript_status | 3.6, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:get_usage_breakdown | 1.2, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:hold_session_claims | 2.6, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:list_sessions | 1.1, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:mark_loop_complete | 2.2, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:query_readonly | 2.7, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:register_session | 2.1, 5.1 | 7.4 (proxied, #21570), then 8.8 |
 | MCP gobby-sessions:release_composer | not ported (Decision 6) | 7.4 (proxied, #25276) |
-| MCP gobby-sessions:release_session_claims_hold | 2.6, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:restore_session_transcript | 3.6, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:search_session_messages | 3.7, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:session_stats | 1.2, 5.1 | 7.4 (proxied, #21570) |
-| MCP gobby-sessions:set_handoff | 8.1, 8.2, 8.3, 8.6 | 8.6 (proxied, #21570) |
-| MCP gobby-sessions:set_title | 2.2, 5.1 | 7.4 (proxied, #21570) |
+| MCP gobby-sessions:release_session_claims_hold | 2.6, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:restore_session_transcript | 3.6, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:search_session_messages | 3.7, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:session_stats | 1.2, 5.1 | 7.4 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:set_handoff | 8.1, 8.2, 8.3, 8.6 | 8.6 (proxied, #21570), then 8.8 |
+| MCP gobby-sessions:set_title | 2.2, 5.1 | 7.4 (proxied, #21570), then 8.8 |
 | WS message stop_request | 8.7 | 8.7 |
 | Native extension DELETE /api/sessions/{session_id} | 2.2 | no ledger key; waiver and 7.4 docs |
 
@@ -551,8 +623,13 @@ Targets:
 - `crates/gsessions/src/store.rs`
 - `crates/gsessions/src/lookup.rs`
 - `crates/gsessions/src/http.rs`
+- `crates/gsessions/src/ports.rs`
 - `crates/gsessions/tests/common/mod.rs`
 - `crates/gsessions/tests/lookup.rs`
+- `crates/gprojects/src/lib.rs`
+- `crates/gprojects/src/names.rs`
+- `crates/gtasks/src/lib.rs`
+- `crates/gtasks/src/session_refs.rs`
 - `crates/gdaemon/Cargo.toml`
 - `crates/gdaemon/src/serve.rs::*` — scope-reason: push the Sessions family into the runtime family vector in both cfg-gated run entry points, as RuntimeFamily is pushed
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: declare the Sessions composition module
@@ -563,9 +640,19 @@ Targets:
 - Python sources:
   - `src/gobby/servers/routes/sessions/core.py::list_sessions` takes
     `project_id`, `status`, `status_in`, `source`, `sources`, `machine_id`,
-    `mode`, `exclude_subagents`, `current_session_id`, `limit` (1..1000,
-    default 100) and the keyset cursor `cursor_updated_at` + `cursor_id`.
-  - `core.py::_bind_worktrees` adds worktree binding fields to listed rows.
+    `mode`, `model`, `exclude_subagents`, `include_resumability`,
+    `current_session_id`, `session_seq_min`, `session_seq_max`,
+    `task_ref_min`, `task_ref_max`, `task_ref_role`, `created_after`,
+    `created_before`, `limit` (1..1000, default 100) and the keyset cursor
+    `cursor_updated_at` + `cursor_id`.
+  - `core.py::_bind_worktrees` sets each row's `worktree_id` only for rows of
+    the serving machine with a workspace path, from that project's worktree
+    roots; other rows get null.
+  - Foreign reads in the list: `project_name` joins the projects table;
+    `src/gobby/storage/sessions/_query.py::fetch_task_refs_by_session` loads
+    claimed, created and closed task sequence numbers per session from the
+    tasks table; the task-ref range filter is an `EXISTS` over tasks in the
+    same file's list query (default role `claimed`).
   - `src/gobby/servers/routes/sessions/lifecycle.py::find_current_session` and
     `lifecycle.py::find_session_by_terminal_context` own the two lookup routes.
   - The MCP tools are `src/gobby/mcp_proxy/tools/sessions/_crud.py::list_sessions`
@@ -586,10 +673,33 @@ Targets:
   `crates/gdaemon/src/front_door/routes.rs::reports_native_routes_for_families_gdaemon_lacks`
   stay as they are.
 - Claims: the family claims only implemented method/path pairs for API-key
-  callers. Browser-cookie requests stay with the proxy until 7.1. `claims(parts)`
-  sees the query string, so a `GET /api/sessions` carrying
-  `include_resumability` is never claimed until 8.5; the per-request
-  `HeaderClaimFamily` test in `routes.rs` is the precedent.
+  callers. Browser-cookie and agent-token requests stay with the proxy until
+  7.1.
+  `GET /api/sessions` is not claimed in any mode until 8.5, because every
+  listed row carries the ACP block that
+  `src/gobby/sessions/acp_lifecycle.py::attach_acp_block` reads from the live
+  web-chat runtime (#21592). This leaf builds the list service and every
+  filter; 8.5 adds the ACP block and resumability and claims the route.
+- Foreign owners (Decision 7):
+  - `crates/gprojects/src/names.rs` adds `project_names(conn, project_ids)`,
+    an id-to-name map read from the projects table only.
+  - `crates/gtasks/src/session_refs.rs` adds
+    `task_refs_by_session(conn, session_ids)` (the per-role sequence lists)
+    and `sessions_with_task_refs(conn, project_id, roles, min, max)` (a
+    session-id set). The list query filters its own rows with
+    `id = ANY(...)`, so keyset pages are unchanged.
+  - Both crates' `lib.rs` export the new function. Each reads only its own
+    tables. Cross-plan edges: `gdaemon-projects-files-docs-family 1.2`
+    creates gprojects and `tasks-family 1.1` creates gtasks; the
+    Orchestrator converts both at expansion.
+  - `ports.rs` declares the gagents port trait (Decision 7):
+    `run_rows`, `move_run_lineage` and `containing_worktree_id`. The list
+    keeps the serving-machine check and calls `containing_worktree_id` for
+    each local row. Tests bind a fixture adapter; 7.2 binds the real one.
+- `store.rs` exports `session_rows(tx, selector, lock)` for the agents
+  family (Decision 10). The selector is a set of session ids or a set of
+  agent run ids matched on `sessions.agent_run_id`; `lock` takes
+  `FOR UPDATE` on the selected rows.
 - `crates/gdaemon/src/front_door/sessions.rs` builds the family from the shared
   gcore pool and the owner channel adapter that 1.3 fills in. Domain errors map
   through #24970's adapter; no local transport mapping is added.
@@ -600,17 +710,22 @@ Targets:
   hub, per-test schema). That fixture skips when `DATABASE_URL` is unset, so
   planned verification always sets it; a skipped DB case is not evidence.
 
-**Granularity:** Creating the crate, its composition and three read routes is
-one usable outcome. The production-file count passes six because composition
-crosses the crate boundary; usage and git views are separate leaves.
+**Granularity:** Creating the crate, its composition, the list service and
+two lookup routes is one usable outcome. The production-file count passes six
+because composition crosses the crate boundary and the list's foreign reads
+need one narrow export each in gprojects and gtasks. The acceptance count
+passes six because `session_rows` and the owner exports are the crate's
+first public reads. Usage and git views are separate leaves.
 
 **Acceptance:**
 
-- 1.1.1 - `HTTP GET /api/sessions` without `include_resumability` matches the
-  corpus for every filter, limit bound and keyset cursor page.
-  test: `crates/gsessions/tests/lookup.rs::list_matches_python`.
-- 1.1.2 - A list request carrying `include_resumability` is not claimed in any
-  backend mode. test: `crates/gsessions/tests/lookup.rs::resumability_list_is_not_claimed`.
+- 1.1.1 - The list service matches the corpus `GET /api/sessions` rows,
+  without the ACP block and resumability, for every filter (including model,
+  sequence, task-ref and creation-time bounds), limit bound and keyset cursor
+  page. test: `crates/gsessions/tests/lookup.rs::list_service_matches_python`.
+- 1.1.2 - `GET /api/sessions` is not claimed in any backend mode, with or
+  without `include_resumability`.
+  test: `crates/gsessions/tests/lookup.rs::list_route_is_not_claimed`.
 - 1.1.3 - `HTTP POST /api/sessions/find_current` and
   `HTTP POST /api/sessions/find_by_terminal_context` match found, not-found and
   validation cases. test: `crates/gsessions/tests/lookup.rs::find_routes_match_python`.
@@ -622,6 +737,15 @@ crosses the crate boundary; usage and git views are separate leaves.
   test: `crates/gsessions/tests/lookup.rs::mcp_lookup_services_match_python`.
 - 1.1.6 - Serve composes the family only when a pool exists, and browser-cookie
   requests are not claimed. test: `crates/gdaemon/tests/sessions_family.rs::family_composes_only_with_a_pool`.
+- 1.1.7 - `session_rows` returns the rows selected by session ids and by
+  agent run ids, and with `lock` set a second transaction's update of a
+  selected row waits until the first commits.
+  test: `crates/gsessions/tests/lookup.rs::session_rows_select_and_lock`.
+- 1.1.8 - Listed rows take project names from `project_names`, task refs and
+  the task-ref filter from the two gtasks functions, and `worktree_id` from
+  the gagents port for serving-machine rows only, matching the corpus with a
+  fixture port adapter.
+  test: `crates/gsessions/tests/lookup.rs::list_foreign_reads_use_owner_apis`.
 
 Planned verification:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-sessions --test lookup`;
@@ -667,8 +791,10 @@ Targets:
 - `crates/gsessions/src/family.rs`
 - `crates/gsessions/src/http.rs`
 - `crates/gsessions/src/owner.rs`
+- `crates/gsessions/src/ports.rs`
 - `crates/gsessions/src/git_views.rs`
 - `crates/gsessions/tests/git_views.rs`
+- `crates/gtasks/src/session_refs.rs`
 - `crates/gdaemon/src/front_door/sessions.rs`
 - `docs/contracts/parity-waivers.json::*` — scope-reason: add the B5 and W3 Sessions waiver entries
 
@@ -683,6 +809,16 @@ Targets:
     `changes.py::session_change_diff` over `src/gobby/servers/session_changes.py`.
   - `src/gobby/sessions/machine_scope.py::require_local_session_ownership`
     refuses a session owned by another machine.
+- Foreign reads in `_get_session_stats` (Decision 7): `tasks_closed` counts
+  `session_tasks` rows with action `closed`; `memories_created` counts
+  `memories` by `source_session_id`; `skills_used` counts distinct
+  `session_skills` names. Native reads them through
+  `closed_task_count(conn, session_id)`, added to
+  `crates/gtasks/src/session_refs.rs`, and two port functions in `ports.rs`:
+  `memories_created(session_id)` for gmemory and `skills_used(session_id)`
+  for gskills, which owns `session_skills`
+  (`.gobby/plans/gdaemon-skills-family.md` 1.6). Tests bind fixture
+  adapters; 7.2 binds the real ones.
 - Ownership seam: `owner.rs` defines the `OwnerChannel` trait the git views and
   transcript leaves share. The hub resolves the owning machine from the session
   row. The serving machine runs git in-process in the session's checkout. A
@@ -719,6 +855,9 @@ Targets:
 - 1.3.5 - An injected statistics storage fault returns the shared internal
   error and reports its exact W3 waiver.
   test: `crates/gsessions/tests/git_views.rs::stats_storage_errors_propagate`.
+- 1.3.6 - Detail statistics take the closed-task count from gtasks and the
+  memory and skill counts from the ports, matching the corpus with fixture
+  adapters. test: `crates/gsessions/tests/git_views.rs::detail_counts_use_owner_apis`.
 
 Planned verification: the `git_views` test binary with the 1.1 DB prefix, using
 a temporary git checkout and a doubled owner channel. Nothing has run during
@@ -763,7 +902,10 @@ Targets:
 - Public API: `register_session` and `create_session` are exported for Cron
   2.4's cron parent sessions (`.gobby/plans/gdaemon-cron-family.md`) and for the
   hooks family's node session registration
-  (`.gobby/plans/s2-11-hub-hooks-rules.md` item 8).
+  (`.gobby/plans/s2-11-hub-hooks-rules.md` item 8). `create_session` also
+  takes the child-session fields the agents family sets when it spawns a
+  run (Decision 10): parent session id, agent run id, agent depth and a
+  pre-created external id, written in the caller's transaction.
 
 **Acceptance:**
 
@@ -777,6 +919,10 @@ Targets:
 - 2.1.4 - Each committed write publishes one `session_event` with Python's
   project filter, and a rolled-back write publishes none.
   test: `crates/gsessions/tests/register.rs::events_publish_after_commit_only`.
+- 2.1.5 - `create_session` with child fields writes the parent session,
+  agent run, depth and pre-created external id in the caller's transaction,
+  and a rolled-back caller leaves no row.
+  test: `crates/gsessions/tests/register.rs::create_session_writes_child_fields`.
 
 Planned verification: the `register` test binary with the 1.1 DB prefix and a
 doubled event sink; `cargo nextest run -p gobby-daemon --test sessions_family`.
@@ -791,7 +937,9 @@ Targets:
 - `crates/gsessions/src/http.rs`
 - `crates/gsessions/src/events.rs`
 - `crates/gsessions/src/mutate.rs`
+- `crates/gsessions/src/ports.rs`
 - `crates/gsessions/tests/mutate.rs`
+- `crates/gtasks/src/session_refs.rs`
 - `docs/contracts/parity-waivers.json::*` — scope-reason: add the B6, B7 and native DELETE waiver entries
 - `src/gobby/storage/sessions/status_notifications.py`
 - `src/gobby/sessions/lifecycle.py::*` — scope-reason: start and stop the session status notification bridge with the hub's background jobs
@@ -811,6 +959,19 @@ Targets:
     calls `src/gobby/storage/sessions/_identity_crud.py::delete`, which refuses
     a session with retained references, hard-deletes the row and emits
     `session_deleted` plus a `deleted` status transition.
+- Retained references (`src/gobby/storage/session_lifecycle.py::session_has_retained_references`
+  over `_EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS`): child sessions are read
+  from the Sessions table. The foreign references go through their owners
+  (Decision 7):
+  - tasks: `referenced_session_ids(conn, session_ids)`, added to
+    `crates/gtasks/src/session_refs.rs`;
+  - memories: the gmemory port;
+  - agent runs: the gagents port's `run_rows` over the three session
+    columns;
+  - `workflow_audit_log`: the workflow-audit port.
+  The `pending_approvals` entry names a table the schema lacks, so Python
+  skips it and native omits it. `mutate.rs` exports the check for 4.2's
+  empty-session prune.
 - B7: `update_status` validates the transition under a row lock; an invalid
   transition returns 400 under `sessions.http-update-status.invalid-transition`.
   B6: bulk-move reports per-row failures through #24970's classes under
@@ -832,16 +993,19 @@ Targets:
   status-transition listeners. Python's own writes keep in-process dispatch,
   so no transition is dispatched twice. `SessionLifecycleManager` starts the
   bridge with its hub jobs and stops it on shutdown. No schema change.
-- Retirement edge: the bridge is deleted when the last registrant ports:
-  wake replay with #21564 and status communications with #21583. The
-  Orchestrator records that edge from those porting leaves to this section.
+- Retirement edge: the bridge is deleted when the last registrant ports.
+  The wake-replay registrant retires with `.gobby/plans/agents-family.md`
+  D1.3, and status communications with #21583 (Decision 15). The
+  Orchestrator records those edges to this section.
 - Public API: status update, expiry, rename and delete services; 4.1's expiry
   job calls the same expiry service.
 
 **Granularity:** Eight rows share one row-locked mutation service and one event
 and notification path; splitting them would duplicate both. The production
-files are the mutation service, its routes, the shared event module and the
-one Python bridge.
+files are the mutation service, its routes, the shared event module, the
+port declarations, the one gtasks read and the one Python bridge. Delete
+cannot ship without its retained-reference check, which is the eighth
+acceptance item.
 
 **Acceptance:**
 
@@ -866,6 +1030,10 @@ one Python bridge.
 - 2.2.7 - The Python bridge dispatches each notification once to every
   registered listener, reconnects after a dropped connection and stops cleanly.
   test: `tests/storage/sessions/test_status_notifications.py::test_bridge_dispatches_native_transitions_once`.
+- 2.2.8 - The retained-reference check refuses a session referenced by a
+  child session, a task, a memory, an agent run or a workflow audit row,
+  reading each foreign table only through its owner function or fixture
+  port adapter. test: `crates/gsessions/tests/mutate.rs::retained_references_use_owner_apis`.
 
 Planned verification: the `mutate` test binary with the 1.1 DB prefix; the
 bridge test with
@@ -918,13 +1086,15 @@ Targets:
 - `crates/gsessions/src/http.rs`
 - `crates/gsessions/src/variables.rs`
 - `crates/gsessions/src/clear_lineage.rs`
+- `crates/gsessions/src/ports.rs`
 - `crates/gsessions/tests/variables.rs`
 
 **Research context:**
 - `src/gobby/servers/routes/sessions/variables.py::set_variable`,
   `variables.py::get_variable` and `variables.py::_bound_session_id` resolve the
   authenticated caller apart from the path's target session (verified agent
-  claims). `_bound_session_id` follows a run's live binding through
+  claims). Natively the claims are the bound identity in the admitted value
+  that 7.1 receives from #25068. `_bound_session_id` follows a run's live binding through
   `src/gobby/sessions/clear_run_lineage.py::current_run_session_id`, which this
   leaf ports into the new `clear_lineage.rs`; 2.9 adds the rest of that module.
   The routes then call
@@ -938,10 +1108,26 @@ Targets:
   change (memory 38321642).
 - Locking: each mutation takes the explicit `SessionVariableMutation`
   advisory-lock key that #25262 assigns.
+- Foreign reads and writes (Decision 7):
+  - `current_run_session_id` reads the run through the gagents port's
+    `run_rows`.
+  - A `session_task` value resolves through gtasks' `refs.rs` `resolve_read`
+    (`.gobby/plans/tasks-family.md` 1.1).
+  - `scope: "step"` reads and merges the session's `agent_step_instances`
+    row (`src/gobby/workflows/step_instances.py::AgentStepInstanceManager`),
+    which Workflows owns. It goes through a step-instance port. At 7.2
+    gdaemon binds a transitional Rust adapter that runs those two
+    statements; #25279's crate exports them, replaces the adapter body and
+    deletes the adapter (the Orchestrator's ruling A for owners that
+    #21562 blocks).
 - The gobby-workflows MCP variable tools belong to their own family and are not
-  ported here. This leaf owns the HTTP rows and exports a key-scoped variable
-  read and mutation API for the rule-engine seam adapters
-  (`.gobby/plans/rust-rule-evaluation.md` D1.2).
+  ported here. This leaf owns the HTTP rows and exports a general key-scoped
+  variable read and mutation API: a value set and a bounded-list upsert for
+  any non-reserved key, under the `SessionVariableMutation` key at priority
+  950 (Decision 10). The rule-engine seam adapters
+  (`.gobby/plans/rust-rule-evaluation.md` D1.2) and Memory 6.1 call it. It
+  absorbs the narrow writer that Memory 6.1 planned in
+  `crates/gmemory/src/session_vars.rs`.
 
 **Acceptance:**
 
@@ -953,6 +1139,14 @@ Targets:
   test: `crates/gsessions/tests/variables.rs::get_variable_matches_python`.
 - 2.4.3 - Concurrent mutations of one session serialize on the #25262 key and
   lose no write. test: `crates/gsessions/tests/variables.rs::concurrent_mutations_serialize`.
+- 2.4.4 - The public API sets an arbitrary non-reserved key and upserts a
+  bounded list without losing a concurrent upsert to the same list, and
+  refuses a reserved key.
+  test: `crates/gsessions/tests/variables.rs::general_writer_handles_arbitrary_keys`.
+- 2.4.5 - Caller binding reads runs through the gagents port, `session_task`
+  values resolve through gtasks, and step-scoped reads and writes go through
+  the step-instance port, with fixture adapters.
+  test: `crates/gsessions/tests/variables.rs::foreign_variable_paths_use_owner_apis`.
 
 Planned verification: the `variables` test binary with the 1.1 DB prefix.
 Nothing has run during drafting.
@@ -1023,9 +1217,10 @@ Targets:
   `src/gobby/storage/sessions/_operator_claim_hold.py`.
 - Feedback: `src/gobby/mcp_proxy/tools/sessions/_handoff.py::feedback`
   normalizes observations with
-  `src/gobby/sessions/handoff.py::normalize_feedback_observations` (task and
-  claimant resolution read task rows with read-only SQL, ruling C2.3), writes
-  them with `handoff.py::write_feedback_batch` and merges
+  `src/gobby/sessions/handoff.py::normalize_feedback_observations`. Its task
+  and claimant resolution read task rows (ruling C2.3); native resolves them
+  through gtasks' `refs.rs` `resolve_read`, whose row carries the claimant
+  (Decision 7). It writes them with `handoff.py::write_feedback_batch` and merges
   `_gobby_feedback_epoch_submitted` into the caller's variables in the same
   transaction, through 2.4's variable service.
 - These are MCP-only rows; 5.1 publishes the descriptors.
@@ -1036,7 +1231,8 @@ Targets:
   match authorization, held-by-other and release cases.
   test: `crates/gsessions/tests/claim_hold.rs::claim_hold_services_match_python`.
 - 2.6.2 - The `feedback` service matches normalization, invalid-feedback
-  errors, written rows and the variable merge, all in one transaction.
+  errors, written rows and the variable merge, all in one transaction, and
+  resolves tasks and claimants only through gtasks.
   test: `crates/gsessions/tests/claim_hold.rs::feedback_service_matches_python`.
 
 Planned verification: the `claim_hold` test binary with the 1.1 DB prefix.
@@ -1057,7 +1253,11 @@ Targets:
   `_run` under `SET ROLE gobby_query_readonly` (migration 482) with a row cap
   and a statement timeout.
 - `src/gobby/mcp_proxy/tools/hub.py::list_cross_project_sessions` lists
-  sessions across projects on the hub.
+  sessions across projects on the hub. Native takes project names from
+  1.1's gprojects `project_names` (Decision 7).
+- `query_readonly` runs the caller's own SQL under the read-only role. It is
+  a query surface over the whole schema, so its catalog refusals stay and no
+  owner API applies.
 - Both are MCP-only rows; 5.1 publishes the descriptors.
 
 **Acceptance:**
@@ -1106,6 +1306,9 @@ Targets:
   caller sees that interim refusal.
 - Python `set_handoff` keeps staging handoffs until 8.1, so the native reader
   reads the same rows and variables; the corpus covers each mode.
+- Agent runs: the `agent_run_id` mode's run lookup and its descendant walk
+  (depth below 5) read `agent_runs` through the gagents port's `run_rows`
+  (Decision 7, `agents-family 3.6`).
 - MCP-only row; 5.1 publishes the descriptor.
 
 **Granularity:** One reader with four modes over one marker state machine;
@@ -1116,7 +1319,8 @@ staging stays in 8.1 and delivery in 8.2, 8.3 and 8.6.
 - 2.8.1 - The no-argument read consumes exactly one pending handoff, and a
   second read finds none. test: `crates/gsessions/tests/handoff_read.rs::pending_handoff_is_consumed_once`.
 - 2.8.2 - `agent_run_id` reads are idempotent for the parent and its clear
-  successor and refused for any other caller.
+  successor and refused for any other caller, with runs read through a
+  fixture gagents port adapter.
   test: `crates/gsessions/tests/handoff_read.rs::agent_end_handoff_reads_match_python`.
 - 2.8.3 - `failed_attempt_id` and `reconcile_late_compact` match the corpus,
   including late, untimely and mismatched notifications.
@@ -1136,6 +1340,8 @@ Targets:
 - `crates/gsessions/src/hook_rows.rs`
 - `crates/gsessions/src/clear_lineage.rs`
 - `crates/gsessions/tests/hook_rows.rs`
+- `crates/gterminals/src/lib.rs::*` — scope-reason: declare the session-link module that holds the narrow terminal functions Sessions calls
+- `crates/gterminals/src/session_links.rs`
 
 **Research context:**
 - Ruling C5 (a): the hooks plan's handlers reach session rows through
@@ -1175,6 +1381,16 @@ Targets:
   `clear_lineage.rs`; this leaf adds `clear_run_lineage.py::earlier_clear_session_id`
   and `clear_run_lineage.py::move_clear_run_lineage`, and exports all three.
   8.3's clear path calls the same functions.
+- `move_clear_run_lineage` writes three owners' tables in one transaction.
+  Native keeps that atomicity by passing the caller's transaction to each
+  owner (Decision 7):
+  - the two `agent_runs` updates go through the gagents port's
+    `move_run_lineage(tx, session_ids, successor_id)`, which returns the
+    moved run ids;
+  - the `terminals` update (pending and live rows of each moved run) goes
+    through `rebind_run_terminals(tx, run_id, successor_id)`, a narrow
+    function this leaf adds to `crates/gterminals/src/session_links.rs`;
+  - the `sessions` updates stay in `clear_lineage.rs`.
 - Every status change goes through 2.2's notifying write path, and every
   committed write publishes through 2.1's event sink.
 - Receipts and staged effects stay with the hooks plan's 3.4. The hooks plan
@@ -1207,7 +1423,9 @@ would only spread the shared row lock and event path.
 - 2.9.4 - Usage, context-usage, edit and transcript-reset counters match the
   storage results. test: `crates/gsessions/tests/hook_rows.rs::counter_updates_match_storage`.
 - 2.9.5 - Clear-run lineage returns the current and earlier run sessions and
-  moves lineage exactly as `clear_run_lineage.py` does.
+  moves lineage exactly as `clear_run_lineage.py` does, writing runs through
+  the gagents port and terminals through `rebind_run_terminals` in one
+  transaction; a failure in any owner's write rolls back all three.
   test: `crates/gsessions/tests/hook_rows.rs::clear_run_lineage_matches_python`.
 
 Planned verification: the `hook_rows` test binary with the 1.1 DB prefix.
@@ -1778,7 +1996,9 @@ Targets:
 - `crates/gsessions/src/summary_format.rs`
 - `crates/gsessions/src/analyzer.rs`
 - `crates/gsessions/src/analyzer_turns.rs`
+- `crates/gsessions/src/ports.rs`
 - `crates/gsessions/tests/summaries.rs`
+- `crates/gtasks/src/session_refs.rs`
 - `docs/contracts/parity-waivers.json::*` — scope-reason: add the generate-summary request-options and prompt-template waiver entries
 
 **Research context:**
@@ -1817,14 +2037,19 @@ Targets:
     `--output db|file|all`, `--path` (default `.gobby/session_summaries/`) and
     notes. When generation fails it warns and builds a code-only summary from
     the analyzer context, `git status --short` and `git log -10`.
-- Reads: task and memory rows are read-only SQL over the hub pool (Decision
-  Record item 7). Turns come from 3.7's reader and git status and diff from
-  1.3's git service, so a remote owner is served through `OwnerChannel` like
-  every owner-routed read.
+- Reads (Decision 7): claimed tasks come from gtasks, through a narrow
+  `claimed_tasks(conn, session_id)` this leaf adds to
+  `crates/gtasks/src/session_refs.rs`; session memories come from the gmemory
+  port's `session_memories(session_id)`. Turns come from 3.7's reader and git
+  status and diff from 1.3's git service, so a remote owner is served through
+  `OwnerChannel` like every owner-routed read.
 - Prompt: `summary_context.py::load_summary_prompt_template` loads
   `handoff/session_end` through
   `src/gobby/storage/prompts.py::LocalPromptManager.get_by_name` with no
-  project and falls back to the configured prompt.
+  project and falls back to the configured prompt. Native loads it through
+  `crates/gruntime/src/prompts.rs`, the prompts owner, with the same
+  no-project lookup and fallback. `gdaemon-runtime-family 5.4` creates that
+  module; the Orchestrator converts this cross-plan edge at expansion.
   `src/gobby/llm/prompt_rendering.py::render_summary_prompt` uses Jinja when
   the template contains `{{`, `{%` or `{#`, and `str.format` otherwise. The
   bundled template uses only `{{ name }}` placeholders, and no Rust template
@@ -1869,7 +2094,9 @@ stay in separate files to keep each under 1,000 lines.
   test: `crates/gsessions/tests/summaries.rs::generate_summary_route_matches_python`.
 - 4.1.2 - Transcript and delivered-handoff summaries build the same prompt
   context as Python for the fixture sessions, locally and through the doubled
-  owner channel. test: `crates/gsessions/tests/summaries.rs::summary_context_matches_python`.
+  owner channel, reading tasks through gtasks, memories through a fixture
+  gmemory adapter and the prompt through gruntime.
+  test: `crates/gsessions/tests/summaries.rs::summary_context_matches_python`.
 - 4.1.3 - Rendering matches Python for `{{ name }}` and `{name}` templates,
   and other Jinja syntax is refused without a model call under its waiver.
   test: `crates/gsessions/tests/summaries.rs::prompt_rendering_matches_python_subset`.
@@ -1894,6 +2121,7 @@ Targets:
 - `crates/gsessions/src/lib.rs`
 - `crates/gsessions/src/jobs.rs`
 - `crates/gsessions/tests/jobs.rs`
+- `crates/gterminals/src/session_links.rs`
 - `crates/gdaemon/src/lib.rs`
 - `crates/gdaemon/src/sessions_jobs.rs`
 - `crates/gdaemon/src/state.rs::RuntimeState::run`
@@ -1931,10 +2159,32 @@ Targets:
   `src/gobby/storage/hook_receipts.py::retire_expired_session_hook_effects`,
   `session_lifecycle.py::expire_empty_sessions` (2 hours) and
   `session_lifecycle.py::prune_empty_sessions` (1 hour), every
-  `expire_check_interval_minutes`. The hooks plan's 3.4 owns the hook-effects
-  table; the job issues the same statement. Every status change the job
-  writes sends 2.2's `gobby_session_status` notification in the same
-  transaction.
+  `expire_check_interval_minutes`.
+- Native steps: the job runs the Sessions-owned steps in that order with
+  Python's thresholds: pause, orphaned-handoff expiry, the session-variable
+  delete of `cleanup_expired_session_state`, stale expiry, empty expiry and
+  empty prune. Every status change the job writes sends 2.2's
+  `gobby_session_status` notification in the same transaction.
+- Foreign pieces stay in Python's shared sweep in every mode (Decision 5),
+  and the native job runs none of them:
+  - `prune_stale_compact_workflow_instances` (#25279);
+  - `retire_expired_session_hook_effects` (the hooks plan's 3.4 table,
+    #24151);
+  - the `pending_interactions` update inside `cleanup_expired_session_state`,
+    whose table the web-chat family owns (#21592).
+  Each native step selects by the session row's own status and age, so
+  splitting the cleanup from the `pending_interactions` update loses no
+  correctness: each half is idempotent.
+- Foreign reads (Decision 7):
+  - `expire_orphaned_handoff_sessions` expires an `awaiting_handoff`
+    terminal session only when its recorded native terminal has exited and
+    it holds no pending or live terminal. Native asks gterminals through
+    `released_handoff_sessions(tx, candidates)`, a narrow function this leaf
+    adds to `crates/gterminals/src/session_links.rs`, and filters its update
+    with `id = ANY(...)`.
+  - `prune_empty_sessions` refuses retained sessions through 2.2's exported
+    retained-reference check.
+  - Status events carry `project_name` from 1.1's `project_names`.
 - Processing: `src/gobby/sessions/transcript_processing.py::TranscriptProcessingMixin._process_pending_transcripts`
   reads machine-local pages from
   `src/gobby/storage/sessions/_transcript.py::_TranscriptMixin.get_pending_transcript_sessions`
@@ -1961,8 +2211,9 @@ splitting the two loops would compose the host twice.
 
 **Acceptance:**
 
-- 4.2.1 - One expiry cycle applies the eight steps in Python's order with
-  Python's thresholds and notifies every status change.
+- 4.2.1 - One expiry cycle applies the six Sessions-owned steps in Python's
+  order with Python's thresholds, notifies every status change, and leaves
+  workflow instances, hook effects and pending interactions untouched.
   test: `crates/gsessions/tests/jobs.rs::expiry_cycle_matches_python`.
 - 4.2.2 - One processing cycle writes the same statistics, token events,
   summaries, processed marks and failure counts as Python for local
@@ -1975,6 +2226,10 @@ splitting the two loops would compose the host twice.
   `sessions`, runs on one daemon at a time under its owner lock, and stops
   with `ActiveServices::stop`.
   test: `crates/gdaemon/tests/sessions_jobs.rs::job_runs_only_when_native_and_single_owner`.
+- 4.2.5 - Orphaned-handoff expiry reads terminals only through
+  `released_handoff_sessions`, and the empty prune keeps every session the
+  retained-reference check names.
+  test: `crates/gsessions/tests/jobs.rs::expiry_foreign_reads_use_owner_apis`.
 
 Planned verification: the `jobs` test binary with the 1.1 DB prefix,
 `cargo nextest run -p gobby-daemon -E 'binary(sessions_jobs) | test(explicit_drain_stops_host_default_stop_preserves_it)'`
@@ -2169,8 +2424,7 @@ run during drafting.
 `kind: framing`
 
 6.1 ports the nine kept CLI rows to `gclient sessions <verb>` over the hub's
-public HTTP API (Decision Record item 3). 7.3 turns the Python group into
-per-verb forwarding.
+public HTTP API (Decision Record item 3). 7.3 deletes the Python verbs.
 
 ### 6.1 gclient sessions verbs [category: code] (depends: 5.1)
 `kind: deliverable`
@@ -2256,20 +2510,22 @@ against `crates/gclient/tests/mock_daemon/mod.rs`, and
 ## P7: Admission, activation and retirement
 `kind: framing`
 
-7.1 admits browser callers through the shared verifier. 7.2 is the family's
+7.1 admits browser callers through the shared verifier and agent-token
+callers through #25068's seam. 7.2 is the family's
 shipping commit: it makes Native the Sessions default, switches the Python
-loops off and releases the binaries. 7.3 turns the Python CLI into per-verb
-forwarding and deletes the dropped surfaces. 7.4 records the ledger and
-documentation.
+loops off and releases the binaries. 7.3 deletes Sessions-owned Python: the
+CLI verbs and dropped commands, the routes of the 26 switched rows, and the
+Python expiry and processing loops (Decision Record item 15). 7.4 records the
+ledger and documentation.
 
-### 7.1 Sessions browser admission through the shared verifier [category: code] (depends: 6.1, #24967, #24964)
+### 7.1 Sessions browser and agent-token admission [category: code] (depends: 6.1, #24967, #24964, #25068)
 `kind: deliverable`
 
 Targets:
 - `crates/gsessions/src/family.rs`
 - `crates/gdaemon/src/front_door/sessions.rs`
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: register the Sessions browser-admission predicate in the existing FrontDoor::handle dispatch boundary, keeping the file-wide scope 1.1 uses
-- `crates/gdaemon/tests/sessions_browser.rs`
+- `crates/gdaemon/tests/sessions_admission.rs`
 - `docs/contracts/sessions-native.md`
 
 **Research context:**
@@ -2287,10 +2543,9 @@ Targets:
   `browser-testing.` cookies keep the managed rules: live capability,
   loopback peer and host, Python's per-route allowance, and project and
   session selectors that match the verified managed session.
-- Rows registered for `Caller::Browser`, exactly these 25 method and path
+- Rows registered for `Caller::Browser`, exactly these 24 method and path
   pairs:
-  - GET: `/api/sessions` without `include_resumability`,
-    `/api/sessions/usage`, `/api/sessions/{session_id}`,
+  - GET: `/api/sessions/usage`, `/api/sessions/{session_id}`,
     `/api/sessions/{session_id}/changes`,
     `/api/sessions/{session_id}/changes/diff`,
     `/api/sessions/{session_id}/messages`,
@@ -2311,48 +2566,74 @@ Targets:
   - DELETE: `/api/sessions/{session_id}/stop`.
 - Never browser-admitted: the two operator-only routes (2.5) and the native
   `DELETE /api/sessions/{session_id}`, which serves API-key callers only.
-  The P8 rows register their own browser admission.
+  The P8 rows, `GET /api/sessions` among them (8.5), register their own
+  browser admission.
+- Agent tokens: `src/gobby/servers/auth_service.py::_AGENT_CAPABILITY_MATRIX`
+  lists exactly two Sessions rows, `POST /api/sessions/*/variables/get` and
+  `POST /api/sessions/*/variables/set`, both with `bind_identity` true; the
+  stdio proxy's `get_variable` and `set_variable`
+  (`src/gobby/mcp_proxy/stdio_proxy.py`) call them. No Sessions row appears
+  in `src/gobby/servers/grant_auth.py::_GRANT_ROUTES`. #25068 owns the one
+  native seam that verifies the token through #24452 and exposes its bound
+  session identity; this leaf declares the two rows' agent-token class and
+  passes that identity to 2.4's caller binding. It writes no verifier.
+  Every other Sessions row refuses agent tokens, as Python does.
 - Until this leaf ships with Security approval of its exact SHA, every
-  Sessions cookie request stays proxied in every switch state. Once
-  admitted, a verifier denial never falls through to a native handler.
+  Sessions cookie request and every agent-token request to the two
+  variables rows stays proxied in every switch state. Once admitted, a
+  verifier denial never falls through to a native handler.
 - Security: the Orchestrator applies `security-review` to this leaf after
-  expansion and checks the label before dispatch. Cookie activation waits
-  for a Security Reviewer's approval of the exact implementation SHA.
+  expansion and checks the label before dispatch. Cookie and agent-token
+  activation wait for a Security Reviewer's approval of the exact
+  implementation SHA.
 
 **Acceptance:**
 
 - 7.1.1 - Ordinary cookies reproduce Python's admission, payloads and errors
-  on each of the 25 rows through the shared verifier only.
-  test: `crates/gdaemon/tests/sessions_browser.rs::ordinary_cookie_routes_match_python`.
+  on each of the 24 rows through the shared verifier only.
+  test: `crates/gdaemon/tests/sessions_admission.rs::ordinary_cookie_routes_match_python`.
 - 7.1.2 - Managed cookies keep loopback, live-capability, per-route and
   selector checks, and refused requests reach no Sessions effect.
-  test: `crates/gdaemon/tests/sessions_browser.rs::managed_cookie_authority_matches_python`.
+  test: `crates/gdaemon/tests/sessions_admission.rs::managed_cookie_authority_matches_python`.
 - 7.1.3 - The operator-only routes, the native DELETE and unlisted routes
   gain no cookie authority; API-key callers are unchanged.
-  test: `crates/gdaemon/tests/sessions_browser.rs::browser_admission_is_exact`.
+  test: `crates/gdaemon/tests/sessions_admission.rs::browser_admission_is_exact`.
 - 7.1.4 - Both cookie classes keep the observed credentialed CORS, preflight
   and refusal headers through #24964's boundary.
-  test: `crates/gdaemon/tests/sessions_browser.rs::cors_and_preflight_match_python`.
+  test: `crates/gdaemon/tests/sessions_admission.rs::cors_and_preflight_match_python`.
 - 7.1.5 - The security gate (label, pre-dispatch check, exact-SHA approval)
   is documented. behavior: "Sessions browser admission security gate" in `docs/contracts/sessions-native.md`.
+- 7.1.6 - A valid agent token reaches the two variables rows with its bound
+  identity as the caller binding; forged, revoked, expired and
+  identity-mismatched tokens, and agent tokens on any other Sessions row,
+  are refused before any Sessions effect, matching Python.
+  test: `crates/gdaemon/tests/sessions_admission.rs::agent_token_rows_match_python`.
 
-Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test sessions_browser`
-with isolated session and capability state and a counting Python backend
-stub. Nothing has run during drafting.
+Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test sessions_admission`
+with isolated session, capability and token state and a counting Python
+backend stub. Nothing has run during drafting.
 
 ### 7.2 Sessions activation and coherent release [category: code] (depends: 7.1, #24963)
 `kind: deliverable`
 
 Targets:
 - `crates/gsessions/src/family.rs`
-- `src/gobby/sessions/lifecycle.py::*` — scope-reason: skip the transcript-processing loop and the stale-session expiry step when this machine's bootstrap selects Native for sessions
+- `src/gobby/sessions/lifecycle.py::*` — scope-reason: skip the transcript-processing loop and the Sessions-owned expiry steps when this machine's bootstrap selects Native for sessions
+- `crates/gdaemon/src/front_door/sessions.rs`
+- `crates/gdaemon/src/sessions_ports.rs`
+- `crates/gdaemon/src/lib.rs`
+- `crates/gmemory/src/lib.rs`
+- `crates/gmemory/src/session_reads.rs`
+- `crates/gskills/src/lib.rs`
+- `crates/gskills/src/session_reads.rs`
 - `crates/gdaemon/Cargo.toml`
 - `crates/gcode/Cargo.toml`
 - `crates/ghook/Cargo.toml`
 - `crates/gclient/Cargo.toml`
 - `Cargo.lock`
-- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+- `src/gobby/install/version_pins.py::*` — scope-reason: keep the managed release pins coherent with the four bumped binaries
 - `crates/gdaemon/tests/sessions_cutover.rs`
+- `crates/gdaemon/tests/sessions_ports.rs`
 - `tests/sessions/test_lifecycle_native_owner.py`
 - `tests/e2e/test_sessions_native.py`
 - `docs/contracts/sessions-native.md`
@@ -2384,17 +2665,37 @@ Consumers unchanged:
 **Research context:**
 - Switch: `crates/gcore/src/route_family.rs::RouteFamily` supplies
   `default_backend`; this leaf makes Native the Sessions default. Proxy and
-  Compare stay selectable through `front_door.routes` for rollback. The
-  Sessions jobs (4.2) and the node's `transcript.process` (3.9) follow the
-  effective selection.
+  Compare stay selectable through `front_door.routes` for rollback only
+  until 7.3 deletes the Python routes and loops; after that, rollback means
+  the prior coherent release (Decision 15). The Sessions jobs (4.2) and the
+  node's `transcript.process` (3.9) follow the effective selection.
+- Port adapters (Decision 7): the new `crates/gdaemon/src/sessions_ports.rs`
+  implements the `crates/gsessions/src/ports.rs` traits, and `sessions.rs`
+  binds them when it builds the family:
+  - gagents: `run_rows`, `move_run_lineage` and `containing_worktree_id`
+    from `agents-family 3.6`'s `session_port.rs`.
+  - gmemory: the memory count, session memories and retained-reference
+    reads, added as narrow functions in `crates/gmemory/src/session_reads.rs`
+    (`memory-family 1.1` creates the crate).
+  - gskills: the distinct skill count, added in
+    `crates/gskills/src/session_reads.rs` (`gdaemon-skills-family 1.6` owns
+    `session_skills`).
+  - Workflows: the transitional adapters for the `workflow_audit_log`
+    reference check and the `agent_step_instances` step-variable statements
+    (Orchestrator ruling A). They run only those statements, and #25279
+    replaces and deletes them.
+  The three cross-plan edges (`agents-family 3.6`, `memory-family 1.1`,
+  `gdaemon-skills-family 1.6`) are converted by the Orchestrator at
+  expansion. The pipeline and web-chat adapters land in 8.4 and 8.5.
 - Python switch-off (Decision Record item 5): `src/gobby/config/bootstrap.py`
   types `front_door.routes` as `proxy`, `native` or `compare`.
   `SessionLifecycleManager.start` skips `_process_loop`, and
-  `SessionLifecycleManager._sweep_shared_rows` skips `_expire_stale_sessions`,
-  when this machine's bootstrap selects Native for `sessions`; an absent key
-  means Native, matching the new family default, and a test pins both
-  defaults together. The other sweeps, the knowledge-graph queue and
-  prompt-file cleanup keep running. `src/gobby/runner_lifecycle_subsystems.py`
+  `SessionLifecycleManager._sweep_shared_rows` skips the Sessions-owned steps
+  of `_expire_stale_sessions`, when this machine's bootstrap selects Native
+  for `sessions`; an absent key means Native, matching the new family
+  default, and a test pins both defaults together. The three foreign expiry
+  pieces (Decision 5), the other sweeps, the knowledge-graph queue and
+  prompt-file cleanup keep running in every mode. `src/gobby/runner_lifecycle_subsystems.py`
   needs no edit: its hub and node paths both call `start`. 2.2's status
   notification bridge keeps running in both modes.
 - Readiness: consume #24963's shared manifest and readiness result. Every
@@ -2403,9 +2704,9 @@ Consumers unchanged:
   Zero-Passed, all-Skipped, unwaived-Skipped, stale or unknown IDs and
   unmatched diffs fail activation. Compare runs safe reads only; mutating
   routes are tested against isolated cloned state.
-- Gates: the two operator-only routes (2.5) and cookie traffic (7.1) activate
-  only with their Security approvals for the exact SHA; until then they stay
-  proxied and the runbook records the remainder.
+- Gates: the two operator-only routes (2.5), cookie traffic and agent-token
+  traffic (7.1) activate only with their Security approvals for the exact
+  SHA; until then they stay proxied and the runbook records the remainder.
 - Release: `src/gobby/install/bin_release_identity.py::workspace_source_identity`
   hashes the root `Cargo.toml` for every managed binary, and 1.1 added a
   workspace member, so gdaemon, gcode and ghook each bump 0.0.1. gclient's
@@ -2419,8 +2720,9 @@ Consumers unchanged:
   Orchestrator delegates cutover. No push is authorized here.
 
 **Granularity:** The targets and acceptance items belong to one activation
-and release state machine; 7.3 and 7.4 record the retirement and ledger
-separately.
+and release state machine. The family cannot activate with unbound ports,
+so the adapters and the owners' narrow functions ship in the same release;
+7.3 and 7.4 record the retirement and ledger separately.
 
 **Acceptance:**
 
@@ -2431,95 +2733,219 @@ separately.
   unknown or stale waivers, and accepts the family's exact waivers with
   ordinary parity Passed. test: `crates/gdaemon/tests/sessions_cutover.rs::waiver_readiness_gates_activation`.
 - 7.2.3 - With Native selected or the key absent, Python starts neither
-  transcript processing nor stale-session expiry and keeps its other
-  sweeps; with Proxy or Compare it keeps both loops.
+  transcript processing nor the Sessions-owned expiry steps and keeps the
+  three foreign pieces and its other sweeps; with Proxy or Compare it keeps
+  both loops.
   test: `tests/sessions/test_lifecycle_native_owner.py::test_native_selection_moves_both_loops`.
 - 7.2.4 - With the Python backend unavailable, the 26 HTTP rows and the
-  nine CLI verbs work natively on a hub and a standalone daemon, and remote
-  transcript reads reach a node. test: `tests/e2e/test_sessions_native.py::test_rows_work_without_python_backend`.
+  eight `gclient sessions` verbs work natively on a hub and a standalone
+  daemon, and remote transcript reads reach a node.
+  test: `tests/e2e/test_sessions_native.py::test_rows_work_without_python_backend`.
 - 7.2.5 - Shipping manifests, `Cargo.lock` and pins agree at the required
   patch increments. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 - 7.2.6 - The runbook records build and installed hashes, compared cases,
   the rollback selection, the announcement, health, the Security approvals
   and native smoke evidence.
   behavior: "Sessions activation evidence" in `docs/contracts/sessions-native.md`.
+- 7.2.7 - Each bound adapter answers its port call from its owner's
+  function, the transitional Workflows adapters run only their named
+  statements, and an owner error propagates as the shared internal error.
+  test: `crates/gdaemon/tests/sessions_ports.rs::adapters_call_owner_functions`.
 
-Planned verification: `cargo nextest run -p gobby-daemon --test sessions_cutover`;
+Planned verification: `cargo nextest run -p gobby-daemon --test sessions_cutover --test sessions_ports`;
 `tests/sessions/test_lifecycle_native_owner.py` and the e2e test with the
 protected Python prefix; scoped Ruff and mypy; the version-pin test; the
 release build and Orchestrator-directed cutover. These are execution gates,
 not drafting results.
 
-### 7.3 Python CLI forwarding and dropped surfaces [category: code] (depends: 7.2)
+### 7.3 Delete Sessions-owned Python [category: code] (depends: 7.2)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/cli/__init__.py::*` — scope-reason: point the lazy sessions registration at the forwarding module
-- `src/gobby/cli/sessions_forwarding.py`
-- `src/gobby/cli/sessions.py::*` — operation: delete — scope-reason: retire the Python sessions CLI implementation, which the forwarding group replaces
-- `src/gobby/cli/sessions_dirty_paths.py::*` — operation: delete — scope-reason: retire the Python dirty-path approval command, which gclient serves
+- `src/gobby/servers/routes/sessions/analytics.py::*` — operation: delete — scope-reason: its update-summary, generate-summary and stop rows are native from 7.2
+- `src/gobby/servers/routes/sessions/changes.py::*` — operation: delete — scope-reason: the changes and diff rows are native from 7.2
+- `src/gobby/servers/routes/sessions/messages.py::*` — operation: delete — scope-reason: the messages, transcript, transcript-status and restore rows are native from 7.2
+- `src/gobby/servers/routes/sessions/variables.py::*` — operation: delete — scope-reason: both variables rows are native from 7.2, agent tokens included (7.1)
+- `src/gobby/servers/routes/sessions/dirty_paths.py::*` — operation: delete — scope-reason: the operator dirty-path approval row is native from 7.2 (2.5)
+- `src/gobby/servers/routes/sessions/terminal_binding.py::*` — operation: delete — scope-reason: the break-glass terminal attach row is native from 7.2 (2.5)
+- `src/gobby/servers/routes/sessions/core.py::*` — scope-reason: delete the web-chat, register, usage and token-events routes and `_get_commit_count`, whose only caller is the deleted detail route; keep the list route with `_bind_worktrees` and `_compute_resumability` until 8.5
+- `src/gobby/servers/routes/sessions/lifecycle.py::*` — scope-reason: keep only the release-composer route (#25276); delete every other route, the retired statusline guard and `_get_session_stats`
+- `src/gobby/servers/routes/sessions/__init__.py::*` — scope-reason: drop the deleted modules' registrations and re-exports
+- `src/gobby/servers/auth_service.py::_AGENT_CAPABILITY_MATRIX`
+- `src/gobby/cli/sessions.py::*` — operation: delete-lines — base-blob: f929cb811a8ccc08ebdbadc756f339fe1335c96b — lines: 5-8, 10, 16-18, 20-26, 89-202, 209-211, 222-886 — scope-reason: keep only the sessions group, terminate-terminal, the session-tool caller, its error type and their imports (#21565); delete the eight verbs, renumber, backfill-context-windows, their helpers and imports
+- `src/gobby/cli/sessions_dirty_paths.py::*` — operation: delete — scope-reason: `gclient sessions approve-dirty-paths` (6.1) replaces it
+- `src/gobby/install/shared/workflows/rules/task-enforcement/block-dirty-path-approval-cli.yaml::*` — scope-reason: change only the dirty-path rule's relay text and list exemption to gclient
 - `src/gobby/storage/sessions/_renumber.py::*` — operation: delete — scope-reason: drop renumbering (B1)
 - `src/gobby/storage/sessions/_manager.py::*` — scope-reason: drop the renumber mixin from SessionManager's bases
 - `src/gobby/sessions/context_usage.py::backfill_session_context_windows`
 - `src/gobby/sessions/context_usage.py::ContextWindowBackfillResult`
-- `tests/cli/test_cli_sessions.py::*` — operation: delete — scope-reason: callback tests of the retired module, rehomed to 0.1's corpus and 6.1
-- `tests/cli/test_cli_sessions_coverage.py::*` — operation: delete — scope-reason: callback coverage tests of the retired module
-- `tests/cli/test_sessions_coverage.py::*` — operation: delete — scope-reason: callback coverage tests of the retired module
-- `tests/cli/test_cli_sessions_termination.py::*` — scope-reason: import terminate-terminal from the forwarding module
+- `src/gobby/sessions/lifecycle.py::*` — scope-reason: delete the transcript-processing loop, the Sessions-owned expiry steps and 7.2's selection branch; keep the three foreign expiry pieces, the other sweeps, the knowledge-graph queue and prompt-file cleanup
+- `src/gobby/sessions/transcript_processing.py::*` — operation: delete — scope-reason: 4.2's native processing job replaces the mixin
+- `src/gobby/storage/session_lifecycle.py::*` — scope-reason: delete the six Sessions expiry functions, reduce `cleanup_expired_session_state` to its `pending_interactions` update (#21592) and keep `prune_stale_compact_workflow_instances`, `rebind_agent_run` and `session_has_retained_references`
+- `src/gobby/storage/sessions/_lifecycle_delegate.py::*` — scope-reason: delete the delegates of the deleted functions and keep the two foreign delegates
+- `src/gobby/storage/sessions/_transcript.py::_TranscriptMixin.get_pending_transcript_sessions`
+- `src/gobby/storage/sessions/_transcript.py::_TranscriptMixin.mark_transcript_processed`
+- `src/gobby/storage/sessions/_transcript.py::_TranscriptMixin.record_transcript_processing_failure`
+- `tests/sessions/test_python_retirement.py`
+- `tests/sessions/test_lifecycle_native_owner.py` — edit the file created by 7.2 to assert the foreign pieces run and no Sessions step exists in any selection
+- `tests/e2e/test_sessions_native.py` — edit the file created by 7.2 to verify the rows after the Python deletion
+- `tests/servers/routes/test_servers_routes_sessions_routes.py::*` — scope-reason: keep only the list and release-composer cases; delete the cases of the deleted routes, `_get_session_stats` and `_get_commit_count`
+- `tests/servers/routes/test_session_changes_routes.py::*` — operation: delete — scope-reason: 1.3's native tests cover the deleted changes routes
+- `tests/servers/routes/test_session_variables.py::*` — operation: delete — scope-reason: 2.4's native tests cover the deleted variables routes
+- `tests/servers/routes/test_statusline_endpoint.py::*` — operation: delete — scope-reason: tests only the deleted retired-route guard
+- `tests/servers/routes/test_dirty_path_approval_routes.py::*` — operation: delete — scope-reason: 2.5's native tests cover the deleted approval route
+- `tests/servers/routes/test_session_termination.py::*` — operation: delete — scope-reason: both cases drive the deleted expire route, which 2.2's native tests cover
+- `tests/servers/test_servers_sessions_routes.py::*` — scope-reason: keep only the list cases until 8.5
+- `tests/servers/test_session_endpoints.py::*` — scope-reason: keep only the list cases until 8.5
+- `tests/servers/test_sessions_rendered_messages.py::*` — operation: delete — scope-reason: every case drives the deleted messages and transcript-status routes
+- `tests/servers/test_project_endpoints.py::*` — operation: delete — scope-reason: every case drives the deleted register, find_current and detail routes
+- `tests/servers/test_managed_clear_identity.py::test_successor_hook_and_variables_follow_run`
+- `tests/servers/test_auth_service.py::test_agent_capability_matrix`
+- `tests/servers/test_auth_service.py::test_agent_capability_survives_ref_spelled_path_segment`
+- `tests/config/test_live_policy_consumers.py::test_voice_and_route_consumers_use_runtime`
+- `tests/mcp_proxy/tools/sessions/test_registration_terminal_binding.py::*` — scope-reason: drop the deleted terminal-binding route case
 - `tests/mcp_proxy/tools/test_session_reporting.py::test_cli_session_reads_hydrate_claims`
-- `tests/sessions/test_machine_scoped_consumers.py::test_session_filesystem_surfaces_refuse_remote_owner`
-- `tests/storage/sessions/test_storage_sessions_lifecycle.py::TestSessionManagerLifecycle.test_renumber_project_sessions_dry_run_leaves_rows_unchanged`
-- `tests/storage/sessions/test_storage_sessions_lifecycle.py::TestSessionManagerLifecycle.test_renumber_project_sessions_apply_is_project_scoped_and_tails_deleted`
-- `tests/storage/test_sessions_import.py::EXPECTED_PUBLIC_METHOD_SIGNATURES`
-- `tests/sessions/test_context_usage.py::test_backfill_bumps_under_counted_windows_and_recomputes_ratio`
-- `tests/sessions/test_context_usage.py::test_backfill_dry_run_writes_nothing`
+- `tests/workflows/rules/test_dirty_path_approval_rule.py::*` — scope-reason: add gclient spellings and the gclient relay text
+- `tests/cli/test_cli_sessions.py::*` — operation: delete — scope-reason: callback tests of the deleted verbs, rehomed to 0.1's corpus and 6.1
+- `tests/cli/test_cli_sessions_coverage.py::*` — operation: delete — scope-reason: callback coverage tests of the deleted verbs
+- `tests/cli/test_sessions_coverage.py::*` — operation: delete — scope-reason: callback coverage tests of the deleted verbs
 - `tests/workflows/test_dirty_edit_grants.py::test_approve_dirty_paths_cli_refuses_without_an_operator_key`
 - `tests/workflows/test_dirty_edit_grants.py::test_approve_dirty_paths_cli_ignores_managed_credentials_without_an_operator_key`
 - `tests/workflows/test_dirty_edit_grants.py::test_approve_dirty_paths_cli_sends_only_the_operator_key`
 - `tests/workflows/test_dirty_edit_grants.py::test_approve_dirty_paths_cli_reports_the_daemon_refusal`
-- `tests/cli/test_sessions_forwarding.py`
+- `tests/sessions/test_context_usage.py::test_backfill_bumps_under_counted_windows_and_recomputes_ratio`
+- `tests/sessions/test_context_usage.py::test_backfill_dry_run_writes_nothing`
+- `tests/sessions/test_machine_scoped_consumers.py::*` — scope-reason: drop the deleted route and CLI surfaces and keep the rest
+- `tests/sessions/test_sessions_lifecycle.py::*` — scope-reason: drop the cases of the deleted loop, steps and storage functions and keep the foreign pieces' cases
+- `tests/sessions/test_sessions_manager.py::*` — scope-reason: drop the deleted delegate and transcript methods
+- `tests/sessions/test_sessions_processor_unit.py::*` — scope-reason: drop the `mark_transcript_processed` fixture use
+- `tests/sessions/test_summary_retries.py::*` — scope-reason: drop the cases of the deleted processing loop
+- `tests/sessions/test_token_tracker_attribution.py::*` — scope-reason: drop fixtures that call the deleted processing loop
+- `tests/sessions/test_token_usage.py::*` — scope-reason: drop fixtures that call the deleted processing loop
+- `tests/communications/test_communications_manager.py::*` — scope-reason: drop fixtures that call the deleted expiry functions
+- `tests/config/test_runtime_loop_consumers.py::*` — scope-reason: drop the deleted loops' runtime-snapshot cases
+- `tests/hooks/test_session_activation_reconciliation.py::*` — scope-reason: drop fixtures that call the deleted expiry functions
+- `tests/storage/sessions/test_delete_guard.py::*` — scope-reason: drop the `prune_empty_sessions` case
+- `tests/storage/sessions/test_edge_cases.py::*` — scope-reason: drop the cases of the deleted storage functions
+- `tests/storage/sessions/test_lifecycle_expiry.py::*` — scope-reason: drop the cases of the deleted expiry steps
+- `tests/storage/sessions/test_pruning.py::*` — scope-reason: drop the cases of the deleted storage functions and keep the workflow-instance and `pending_interactions` cases
+- `tests/storage/sessions/test_storage_sessions_lifecycle.py::*` — scope-reason: drop the renumber and deleted expiry cases
+- `tests/storage/sessions/test_storage_sessions_registration.py::*` — scope-reason: drop the cases of the deleted storage functions
+- `tests/storage/tasks/test_operator_claim_hold.py::*` — scope-reason: drop fixtures that call the deleted expiry functions
+- `tests/storage/tasks/test_sweep_stale_claims.py::*` — scope-reason: drop fixtures that call the deleted expiry functions
+- `tests/storage/test_sessions_import.py::*` — scope-reason: drop the deleted methods from the public-surface expectations
+- `tests/storage/test_token_event_retention.py::*` — scope-reason: drop fixtures that call the deleted expiry functions
+- `docs/contracts/sessions-native.md`
+
+Consumers unchanged:
+- `src/gobby/cli/__init__.py` — no-edit-reason: lazily registers the kept `sessions` group.
+- `src/gobby/servers/routes/__init__.py` — no-edit-reason: imports only `create_sessions_router`.
+- `src/gobby/mcp_proxy/stdio_proxy.py` — no-edit-reason: calls the variables rows over HTTP; 7.1 admits its agent tokens natively.
+- `src/gobby/servers/routes/admin/_config.py` — no-edit-reason: advertises paths the native family still serves.
+- `src/gobby/workflows/approval_brace_guard.py` — no-edit-reason: guards the `approve-dirty-paths` command word under any launcher.
+- `tests/cli/test_cli_sessions_termination.py` — no-edit-reason: drives the kept group and `terminate-terminal`.
+- `tests/servers/test_auth_middleware.py` — no-edit-reason: asserts unauthenticated refusal through a catch-all app, independent of route registration.
+- `tests/servers/test_http_middleware.py` — no-edit-reason: asserts path protection independent of route registration.
+- `tests/servers/routes/test_runtime_handshake.py` — no-edit-reason: asserts only the runtime handshake entry of the agent matrix, which stays.
+- `tests/servers/routes/test_session_composer_release.py` — no-edit-reason: the release-composer route stays (#25276).
+- `tests/servers/routes/test_sessions_acp_routes.py` — no-edit-reason: the ACP routes stay until 8.4.
+- `tests/worktrees/test_containment.py` — no-edit-reason: exercises `core._bind_worktrees`, which stays until 8.5.
+- `tests/e2e/conftest.py` — no-edit-reason: drives the isolated gdaemon supervisor, which serves the rows natively.
 
 **Research context:**
-- Decision Record item 3: `src/gobby/cli/sessions_forwarding.py` is a Click
-  group with one subcommand per kept verb (`list`, `show`, `messages`,
-  `delete`, `stats`, `summarize`, `restore`, `approve-dirty-paths`), so
-  `generate_parity_ledger` keeps each CLI key. Each subcommand disables
-  option parsing and runs `gclient sessions <verb>` with literal arguments,
-  the working directory and inherited streams, resolved through
-  `src/gobby/utils/native_bin.py::resolve_native_bin`, and exits with the
-  native status; a missing binary keeps the existing diagnostic.
-  `terminate-terminal` moves into the group unchanged with its
-  `_call_session_tool` callback (#21565 owns it).
-- Drops (Debt B1, B2): `renumber` and `backfill-context-windows` have no
-  forwarding subcommand. The renumber mixin, the backfill function and its
-  result type, and their tests are deleted with no data migration. Consumers
-  are listed in `## Constraints`; `_coerce_positive_int` stays.
-- The four dirty-path CLI tests move to 6.1.9. The CLI claim-hydration test
-  is deleted because 1.1's corpus covers hydration through the routes. The
-  remote-owner test drops the retired CLI surfaces and keeps the rest.
+- Precondition: 7.2's activation evidence shows all 26 rows active natively
+  for API keys, cookies and agent tokens, with the Security approvals for
+  2.5 and 7.1. This leaf does not start while any of them stays proxied.
+- Model: Cron 4.2 (`.gobby/plans/gdaemon-cron-family.md`). No Python HTTP
+  route, CLI verb, loop or rollback branch survives for a switched row.
+  Rollback before this leaf uses the same binaries and the
+  `front_door.routes` edit; after it, rollback means the prior coherent
+  release (Decision 15), and `sessions-native.md` says a Proxy or Compare
+  selection for `sessions` is unsupported.
+- Routes: `src/gobby/servers/routes/sessions/` keeps only the list route in
+  `core.py` (8.5), `acp.py` (8.4) and the release-composer route in
+  `lifecycle.py` (#25276). The front door still proxies those unclaimed
+  pairs. The retired `POST /statusline` guard goes with the module's other
+  routes; an unclaimed path now reaches no Python route.
+- Agent tokens: the two variables rows are the only Sessions entries in
+  `_AGENT_CAPABILITY_MATRIX`; this leaf removes them, because no Python
+  route serves those paths. `test_agent_capability_matrix` keeps its other
+  rows; the ref-spelled path case moves to 7.1.6.
+- CLI (Decision Record item 3): `gclient sessions <verb>` (6.1) serves the
+  eight kept verbs; the Python group keeps only `terminate-terminal`, which
+  #21565 owns, so `generate_parity_ledger` keeps the group key. `renumber`
+  and `backfill-context-windows` (Debt B1, B2) are deleted with their
+  storage mixin, function, result type and tests; no data migration.
+  `_coerce_positive_int` stays. The four dirty-path CLI tests are covered
+  by 6.1.9; the CLI claim-hydration test is covered by 1.1's corpus.
+- `src/gobby/cli/sessions.py` has 886 lines, so its change is a typed
+  pure deletion bound to the current blob. The kept lines are the module
+  docstring, the `JSONDecodeError`, `typing`, `click`, `httpx`,
+  `get_daemon_url`, `json_dumps` and `daemon_auth_headers` imports, the
+  timeout constant, `SessionToolError`, `_call_session_tool`, the group
+  and `terminate-terminal`. If an upstream landing changes the file,
+  re-resolve the same ranges and refresh the proof before execution; a
+  stale proof never authorizes a different deletion.
+- Dirty-path rule: `block-dirty-path-approval-cli` already matches
+  `sessions approve-dirty-paths` under any launcher. Its reason relays
+  `gclient sessions approve-dirty-paths ...` and its list exemption names
+  `gclient sessions list`. The bundled template syncs to the rule registry
+  on install.
+- Loops: `SessionLifecycleManager` loses the `TranscriptProcessingMixin`
+  base, `_process_loop` and the Sessions steps of `_expire_stale_sessions`.
+  The three foreign expiry pieces (Decision 5) keep running in every mode.
+  `_TranscriptMixin.reset_transcript_processed` and
+  `reset_transcript_processing_failures` stay; the hooks and summary paths
+  call them. No production module outside the deleted set calls the six
+  deleted storage functions or the three deleted transcript methods.
+- Remaining Python after this leaf: the MCP tools, set_handoff, and the
+  delivery and continuation modules (8.8); the list route (8.5); the ACP
+  routes (8.4); the WS stop handler (8.7). Other families' Python modules
+  that import `src/gobby/storage/sessions/` keep it until their own ports.
+  `sessions-native.md` lists each importer by path with its removal owner:
+  agents (#21564), Workflows, rules and pipelines (#21567), hooks (#24151),
+  web-chat (#21592), terminals (#21565), communications (#21583), tasks
+  (#21560), CLI and MCP (#21571, #21570), and the runner (Stage 3).
 - Cross-plan edge: `node-mode 2.7` (`.gobby/plans/node-mode.md` at
-  `cbafbe253f`) owns the CLI inventory; the Orchestrator converts the edge at
-  expansion.
+  `cbafbe253f`) owns the CLI inventory; the Orchestrator converts the edge
+  at expansion.
 
-**Granularity:** One ownership switch: the forwarding group replaces the
-Python implementation, and the deletions are that switch's cleanup.
+**Granularity:** One retirement switch for one Python owner: routes, CLI
+verbs, loops and their storage functions are deleted together, because a
+split would leave broken imports and registrations between commits. Native
+behavior already has its own tests in P1–P7; this leaf proves absence, the
+kept boundaries and the post-deletion rows.
 
 **Acceptance:**
 
-- 7.3.1 - Each kept verb forwards literal arguments, the working directory
-  and the exit status to the resolved `gclient`, and the group imports no
-  Sessions storage or business module.
-  test: `tests/cli/test_sessions_forwarding.py::test_verbs_forward_to_gclient`.
-- 7.3.2 - `gobby sessions renumber` and `gobby sessions backfill-context-windows`
-  no longer exist, and no production import names the deleted modules or
-  functions. test: `tests/cli/test_sessions_forwarding.py::test_dropped_surfaces_are_gone`.
-- 7.3.3 - `terminate-terminal` keeps its Python behavior.
-  test: `tests/cli/test_cli_sessions_termination.py::test_terminate_terminal_calls_session_tool`.
+- 7.3.1 - The deleted route, CLI, loop and storage modules and functions
+  are absent, and no production import names them.
+  test: `tests/sessions/test_python_retirement.py::test_removed_sessions_python_has_no_readers`.
+- 7.3.2 - The Python sessions router registers only the list, ACP and
+  release-composer routes.
+  test: `tests/sessions/test_python_retirement.py::test_python_router_keeps_only_unported_rows`.
+- 7.3.3 - The Python lifecycle runs the three foreign expiry pieces and its
+  other sweeps, with no transcript processing or Sessions expiry step in any
+  selection. test: `tests/sessions/test_lifecycle_native_owner.py::test_python_runs_only_foreign_expiry_pieces`.
+- 7.3.4 - The Python CLI group holds only `terminate-terminal`, and
+  `renumber` and `backfill-context-windows` no longer exist.
+  test: `tests/sessions/test_python_retirement.py::test_cli_group_keeps_only_terminate_terminal`.
+- 7.3.5 - `_AGENT_CAPABILITY_MATRIX` names no Sessions row.
+  test: `tests/sessions/test_python_retirement.py::test_agent_matrix_has_no_sessions_rows`.
+- 7.3.6 - The dirty-path rule blocks `gclient sessions approve-dirty-paths`
+  and relays the `gclient` command.
+  test: `tests/workflows/rules/test_dirty_path_approval_rule.py::test_gclient_approval_is_blocked_and_relayed`.
+- 7.3.7 - The 26 rows and the eight verbs work on a hub and a standalone
+  daemon after the deletion, with no proxy fallback.
+  test: `tests/e2e/test_sessions_native.py::test_retired_python_is_unnecessary`.
+- 7.3.8 - `sessions-native.md` lists each remaining importer of the Python
+  Sessions storage layer with its removal owner, and states the
+  post-deletion rollback. behavior: "Remaining Python importers" in `docs/contracts/sessions-native.md`.
 
 Planned verification: the changed Python tests with
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest`,
-scoped Ruff and mypy, and a changed-test type audit. Nothing has run during
-drafting.
+the e2e test, scoped Ruff, `uv run mypy src/` and a changed-test type audit.
+No full pytest suite. Nothing has run during drafting.
 
 ### 7.4 Publish Sessions parity ownership [category: docs] (depends: 7.3)
 `kind: deliverable`
@@ -2530,24 +2956,41 @@ Targets:
 - `docs/contracts/parity-ledger.md`
 - `docs/contracts/sessions-native.md`
 - `docs/guides/sessions.md`
+- `src/gobby/install/shared/skills/gobby/references/sessions/discovery.md`
+- `src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md`
 - `ROADMAP.md`
 
 **Research context:**
 - `docs/contracts/parity-ledger.md` is generated by
   `scripts/generate_parity_ledger.py`, whose status check accepts `proxied`,
   `delegated` or a recorded `dropped by decision #N`.
-- Statuses (## Parity ownership): 26 HTTP rows and nine CLI rows become
-  `delegated`; `renumber` and `backfill-context-windows` become
-  `dropped by decision #25253`; the 19 MCP rows that 5.1 covers stay
-  `proxied` with notes naming their native handler, evidence and #21570 as
-  activation owner. Each note keeps its exact waiver IDs. The two
-  release-composer rows stay `proxied` with an owner note citing #25276
-  (Decision Record item 6). The other P8 rows keep their current status for
-  their leaves.
+- Statuses (## Parity ownership, Decision Record item 15, the Orchestrator's
+  ruling on deleted rows):
+  - The 26 HTTP rows that 7.3 deleted and the eight kept CLI verbs become
+    `dropped by decision #25253`. Each note names the native handler or
+    `gclient sessions` verb, its passing test and its exact waiver IDs.
+  - `renumber` and `backfill-context-windows` become
+    `dropped by decision #25253` (Debt B1, B2) with no native replacement.
+  - The `CLI gobby sessions` group row stays `proxied` with a note naming
+    `terminate-terminal` and its owner #21565.
+  - The 19 MCP rows that 5.1 covers stay `proxied` with notes naming their
+    native handler, evidence, #21570 as activation owner and 8.8 as the
+    Python deletion. `set_handoff` keeps its status for 8.6.
+  - The two release-composer rows stay `proxied` with an owner note citing
+    #25276 (Decision Record item 6).
+  - The other P8 rows (`GET /api/sessions`, the two ACP rows and the WS
+    `stop_request` row) keep their current status for their leaves.
 - `docs/contracts/sessions-native.md` documents the native DELETE extension
   (Decision Record item 12), the generate-summary request body (item 3),
   the family and job controls, rollback, and hub, node and standalone
   placement. `docs/guides/sessions.md` replaces the Python CLI references.
+- The bundled Sessions skill references name deleted commands:
+  `discovery.md` cites `sessions renumber`, `backfill-context-windows`,
+  `gobby sessions approve-dirty-paths` and
+  `src/gobby/cli/sessions_dirty_paths.py::approve_dirty_paths`, and
+  `transcripts.md` cites `gobby sessions summarize`. Each moves to its
+  `gclient sessions` verb or its native source, and the dropped commands
+  are removed. The templates sync to the skill registry on install.
 - ROADMAP: the "Ports and the proxied surface" note that lists
   `include_resumability` as a deferred boundary is corrected (Decision
   Record item 1); resumability is computed on the hub through Decision
@@ -2566,6 +3009,9 @@ Targets:
   boundary. behavior: "include_resumability" in `ROADMAP.md`.
 - 7.4.5 - Both release-composer rows stay `proxied` and their notes cite
   #25276 as owner. behavior: "#25276" in `docs/contracts/parity-ledger-status.d/sessions-agents.json`.
+- 7.4.6 - The bundled Sessions skill references name `gclient sessions`
+  verbs and no deleted command or module.
+  behavior: "gclient sessions approve-dirty-paths" in `src/gobby/install/shared/skills/gobby/references/sessions/discovery.md`.
 
 Planned verification: `uv run python scripts/generate_parity_ledger.py` twice
 and a key-set diff against 0.1's frozen inventory. Nothing has run during

@@ -1,50 +1,67 @@
-"""The opt-in ``no-send-keys`` rule gates terminal control for spawned agents.
+"""The default ``no-send-keys`` rule withholds ``send_keys`` unless a caller holds it.
 
-``send_keys`` and ``capture_output`` are operator tools: they bypass step and
-agent MCP allow-lists. Spawned Gobby agents are no longer refused by enforcement
-itself, so the only thing that withholds them is this rule, selected per agent
-definition through ``workflows.rule_selectors``. These tests run the real rule
-engine over the synced bundled rules to prove the bypass does not skip it.
+``send_keys`` is granted to the operator's own unspawned terminal and to a
+definition that declares the ``send_keys`` capability. Every other caller is
+refused, including a caller whose session cannot be resolved. ``capture_output``
+is not withheld by this rule. These tests run the real rule engine over the
+synced bundled rules.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.definitions import AgentSelector
 from gobby.workflows.engine.block_batching import operator_event_is_subagent
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 
 pytestmark = pytest.mark.unit
 
-SESSION_ID = "11111111-1111-4111-8111-111111111111"
-TERMINAL_TOOLS = ("send_keys", "capture_output")
+UNREGISTERED_CALLER_ID = "11111111-1111-4111-8111-111111111111"
+CAPABLE_DEFINITION = "orchestrator-like"
+SEAT_DEFINITION = "developer-like"
 
 
-def _define_agent(db: HubDatabase, name: str, include: list[str]) -> None:
+def _register(session_manager: SessionManager, project_id: str, name: str, depth: int) -> str:
+    return session_manager.register(
+        external_id=f"no-send-keys-{name}",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=project_id,
+        agent_depth=depth,
+    ).id
+
+
+def _define_agent(db: HubDatabase, name: str, *, capabilities: tuple[str, ...] = ()) -> None:
     body = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
+        capabilities=list(capabilities),
         workflows=make_agent_workflows(
             rules=[],
-            rule_selectors=AgentSelector(include=include, exclude=[]),
+            rule_selectors=AgentSelector(include=["tag:default"], exclude=[]),
         ),
     )
     AgentDefinitionManager(db).create(name=name, definition_json=body.model_dump(), source="custom")
 
 
-def _call_tool_event(mcp_tool: str) -> HookEvent:
+def _call_tool_event(caller_id: str, target_id: str, mcp_tool: str) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id=SESSION_ID,
+        session_id=caller_id,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={
@@ -52,89 +69,118 @@ def _call_tool_event(mcp_tool: str) -> HookEvent:
             "tool_input": {
                 "server_name": "gobby-sessions",
                 "tool_name": mcp_tool,
-                "arguments": {"session_id": "22222222-2222-4222-8222-222222222222"},
+                "arguments": {"session_id": target_id},
             },
         },
+        metadata={"_platform_session_id": caller_id},
     )
 
 
-def _spawned_variables(agent_type: str) -> dict[str, Any]:
-    return {
-        "_agent_type": agent_type,
-        "is_spawned_agent": True,
-        # An agent block-list that would otherwise cover the terminal tools: the
-        # operator-tool bypass must not skip YAML rule evaluation.
-        "_agent_blocked_mcp_tools": ["gobby-sessions:*"],
+@pytest.fixture
+def sessions(
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> dict[str, str]:
+    """Callers of each kind, plus an in-project target that is in scope for all of them."""
+    project_id = sample_project["id"]
+    _define_agent(temp_db, CAPABLE_DEFINITION, capabilities=("send_keys",))
+    _define_agent(temp_db, SEAT_DEFINITION)
+    callers = {
+        "operator": _register(session_manager, project_id, "operator", depth=0),
+        "capable": _register(session_manager, project_id, "capable", depth=1),
+        "seat": _register(session_manager, project_id, "seat", depth=1),
+        "unmanaged": _register(session_manager, project_id, "unmanaged", depth=1),
+        "target": _register(session_manager, project_id, "target", depth=0),
+    }
+    variables = SessionVariableManager(temp_db)
+    variables.set_variable(callers["capable"], "_agent_type", CAPABLE_DEFINITION)
+    variables.set_variable(callers["seat"], "_agent_type", SEAT_DEFINITION)
+    callers["unregistered"] = UNREGISTERED_CALLER_ID
+    return callers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("operator", "allow"),
+        ("capable", "allow"),
+        ("seat", "block"),
+        ("unmanaged", "block"),
+        ("unregistered", "block"),
+    ],
+)
+async def test_send_keys_needs_the_capability_or_the_operator_terminal(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sessions: dict[str, str],
+    caller: str,
+    expected: str,
+) -> None:
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    caller_id = sessions[caller]
+
+    response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+        _call_tool_event(caller_id, sessions["target"], "send_keys"),
+        session_id=caller_id,
+        variables={},
+    )
+
+    assert response.decision == expected
+    if expected == "block":
+        assert "no-send-keys" in (response.reason or "")
+        assert "gobby-agents:send_message" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("caller", ["operator", "capable", "seat", "unmanaged", "unregistered"])
+async def test_capture_output_is_not_withheld_by_this_rule(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sessions: dict[str, str],
+    caller: str,
+) -> None:
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    caller_id = sessions[caller]
+
+    response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+        _call_tool_event(caller_id, sessions["target"], "capture_output"),
+        session_id=caller_id,
+        variables={},
+    )
+
+    assert "no-send-keys" not in (response.reason or "")
+
+
+def _bundled_definitions() -> dict[str, dict[str, Any]]:
+    agents_dir = Path(get_bundled_rules_path()).parent / "agents"
+    definitions: dict[str, dict[str, Any]] = {}
+    for path in sorted(agents_dir.glob("*.yaml")):
+        data = yaml.safe_load(path.read_text())
+        definitions[data["name"]] = data
+    return definitions
+
+
+def test_only_orchestrator_and_assistant_carry_the_send_keys_capability() -> None:
+    granted = {
+        name
+        for name, data in _bundled_definitions().items()
+        if "send_keys" in (data.get("capabilities") or [])
     }
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("mcp_tool", TERMINAL_TOOLS)
-async def test_selected_rule_blocks_spawned_agent_terminal_tools(
-    temp_db: HubDatabase, mcp_tool: str
-) -> None:
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-    _define_agent(temp_db, "seat-with-rule", ["tag:default", "name:no-send-keys"])
-
-    response = await RuleEngine(temp_db).evaluate(
-        _call_tool_event(mcp_tool),
-        session_id=SESSION_ID,
-        variables=_spawned_variables("seat-with-rule"),
-    )
-
-    assert response.decision == "block"
-    assert "does not grant terminal control" in (response.reason or "")
+    assert granted == {"orchestrator", "assistant"}
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("mcp_tool", TERMINAL_TOOLS)
-async def test_unselected_rule_leaves_spawned_agent_terminal_tools(
-    temp_db: HubDatabase, mcp_tool: str
-) -> None:
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-    _define_agent(temp_db, "seat-without-rule", ["tag:default"])
+def test_every_bundled_definition_selects_the_no_send_keys_rule() -> None:
+    unselected = [
+        name
+        for name, data in _bundled_definitions().items()
+        if not (
+            {"tag:default", "name:no-send-keys"}
+            & set(data["workflows"]["rule_selectors"]["include"])
+        )
+    ]
 
-    response = await RuleEngine(temp_db).evaluate(
-        _call_tool_event(mcp_tool),
-        session_id=SESSION_ID,
-        variables=_spawned_variables("seat-without-rule"),
-    )
-
-    assert response.decision == "allow"
-    assert "operator-tool-enforcement" not in (response.reason or "")
-    assert "does not grant terminal control" not in (response.reason or "")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("mcp_tool", TERMINAL_TOOLS)
-async def test_unresolved_default_root_session_keeps_terminal_tools(
-    temp_db: HubDatabase, mcp_tool: str
-) -> None:
-    # No `default` definition row: the engine applies every enabled rule, so the
-    # rule's own guard must keep it off the operator's root session.
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-
-    response = await RuleEngine(temp_db).evaluate(
-        _call_tool_event(mcp_tool),
-        session_id=SESSION_ID,
-        variables={"_agent_type": "default"},
-    )
-
-    assert "does not grant terminal control" not in (response.reason or "")
-
-
-@pytest.mark.asyncio
-async def test_selected_rule_leaves_other_session_tools(temp_db: HubDatabase) -> None:
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-    _define_agent(temp_db, "seat-with-rule", ["tag:default", "name:no-send-keys"])
-
-    response = await RuleEngine(temp_db).evaluate(
-        _call_tool_event("list_sessions"),
-        session_id=SESSION_ID,
-        variables={"_agent_type": "seat-with-rule", "is_spawned_agent": True},
-    )
-
-    assert "does not grant terminal control" not in (response.reason or "")
+    assert unselected == []
 
 
 @pytest.mark.parametrize(

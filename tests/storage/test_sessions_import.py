@@ -151,7 +151,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "workflow_name: 'str | None' = None, session_type: 'str' = 'terminal', "
     "is_local: 'bool' = False, sandbox_enabled: 'bool | None' = None, "
     "sandbox_policy_hash: 'str | None' = None, "
-    "title_source: 'str | None | UnsetType' = UNSET, workspace_path: 'str | None' = None) "
+    "title_source: 'str | None | UnsetType' = UNSET, workspace_path: 'str | None' = None, "
+    "routed_machine_id: 'str | None' = None) "
     "-> 'Session'",
     "register_session": "(self, external_id: 'str', machine_id: 'str | None', source: 'str', "
     "project_id: 'str | None', parent_session_id: 'str | None | UnsetType' = UNSET, "
@@ -159,7 +160,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "git_branch: 'str | None' = None, project_path: 'str | None' = None, "
     "terminal_context: 'dict[str, Any] | None' = None, "
     "workflow_name: 'str | None' = None, agent_depth: 'int' = 0, "
-    "is_local: 'bool' = False, sandbox_enabled: 'bool | None' = None) -> 'str'",
+    "is_local: 'bool' = False, sandbox_enabled: 'bool | None' = None, "
+    "routed_machine_id: 'str | None' = None) -> 'str'",
     "register_session_change_listener": "(self, listener: 'SessionChangeCallback') -> 'None'",
     "register_status_transition_listener": "(self, listener: "
     "'SessionStatusTransitionCallback') -> 'None'",

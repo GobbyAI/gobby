@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from gobby.storage.workflow_audit import WorkflowAuditManager
 
 import click
+import yaml
 
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils_config import get_daemon_client
@@ -264,8 +265,8 @@ def import_rules(file: str) -> None:
 
     FILE is a path to a rule YAML file with the standard format:
     group, rules dict with event/effect fields. Run inside a registered
-    project, the rules belong to that project (the same scope ``gobby
-    install`` gives ``.gobby/workflows/rules/``); elsewhere they are global.
+    project, the rules belong to that project; elsewhere they are global.
+    Canonical .gobby/workflows/rules files also sync on daemon startup.
     """
     path = Path(file)
 
@@ -278,11 +279,35 @@ def import_rules(file: str) -> None:
         sys.exit(1)
 
     from gobby.cli.installers.shared import registered_project_id
+    from gobby.workflows.imports import get_project_workflows_root, sync_imported_workflow_file
     from gobby.workflows.sync_rules import sync_rule_file
 
     db = require_cli_database()
     project_id = registered_project_id(db, Path.cwd())
-    result = sync_rule_file(db, rule_file=path, project_id=project_id)
+    workflows_root = get_project_workflows_root(db, project_id) if project_id else None
+    canonical = (
+        workflows_root is not None
+        and path.suffix in {".yaml", ".yml"}
+        and path.parent.resolve() == (workflows_root / "rules").resolve()
+    )
+    try:
+        if canonical:
+            with path.open(encoding="utf-8") as rule_file:
+                data = yaml.safe_load(rule_file)
+            if (
+                not isinstance(data, dict)
+                or "name" in data
+                or not isinstance(data.get("rules"), dict)
+            ):
+                raise ValueError("Rule file must contain a rules mapping without a top-level name")
+            # Share the canonical scanner's provenance without scanning siblings
+            # or retiring definitions during a single-file import.
+            result = sync_imported_workflow_file(db, path, project_id, on_disk=set())
+        else:
+            result = sync_rule_file(db, rule_file=path, project_id=project_id)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
 
     if result.get("errors"):
         for err in result["errors"]:

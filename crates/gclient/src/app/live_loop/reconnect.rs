@@ -73,7 +73,7 @@ pub(super) async fn handle_live_event(
         apply_live_write_outcome(workspace, message);
     }
     let workspace_event = matches!(event, DaemonEvent::Workspace(_));
-    workspace.apply_live_event(event).await?;
+    workspace.apply_live_event(event);
     if workspace_event {
         for terminal_id in workspace.unresolved_terminal_ids() {
             let key = JobKey::Terminal(terminal_id.clone());

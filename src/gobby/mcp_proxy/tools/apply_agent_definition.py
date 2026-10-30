@@ -414,7 +414,9 @@ async def apply_agent_definition_impl(
     resolved = resolve_agent_with_row(agent, db, cli_source=source, project_id=project_id)
     if resolved is None:
         return _refusal("unknown_agent_definition", f"Agent definition '{agent}' not found")
-    body, _ = resolved
+    body, row = resolved
+    if not row.enabled or not body.enabled:
+        return _refusal("agent_definition_disabled", f"Agent definition '{agent}' is disabled")
     if not body.supports_surface("persona"):
         return _refusal("persona_surface_missing", f"Agent '{agent}' lacks the persona surface")
     if body.workflows.pipeline:

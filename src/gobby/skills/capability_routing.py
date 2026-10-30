@@ -12,18 +12,15 @@ from typing import Literal
 from gobby.skills.capability_catalog import Capability, CapabilityCatalog, load_capability_catalog
 from gobby.skills.instruction_requirements import instruction_fetch_directive
 from gobby.skills.parser import ParsedSkill
+from gobby.workflows.agent_resolver import AgentResolutionError
 
 
 @dataclass(frozen=True)
 class GobbyRoute:
-    kind: Literal["cold_start", "help", "menu", "reference", "skill", "unknown"]
+    kind: Literal["cold_start", "help", "menu", "reference", "skill", "unknown", "refused"]
     context: str
     arguments: str = ""
     unknown_name: str | None = None
-
-
-# Bare operator commands that cold start an operator pane, mapped to that pane's role.
-_COLD_START_ROLES = {"admin": "orchestrator", "assistant": "assistant"}
 
 
 def _cold_start_directive(role: str) -> str:
@@ -33,7 +30,7 @@ def _cold_start_directive(role: str) -> str:
         "context, first call "
         'get_tool_schema(server_name="gobby-agents", tool_name="cold_start_admin") '
         "in a separate outer tool result. Then call "
-        f'call_tool("gobby-agents", "cold_start_admin", {parameters}) and report both seat '
+        f'call_tool("gobby-agents", "cold_start_admin", {parameters}) and report the seat '
         "refs from its result. It is safe to re-run; never spawn agents for it."
     )
 
@@ -103,13 +100,14 @@ def route_gobby_request(
     command_prefix: str = "/gobby",
     catalog: CapabilityCatalog | None = None,
     operator_commands: bool = True,
+    resolve_cold_start: Callable[[str], str | None] | None = None,
 ) -> GobbyRoute:
     """Resolve arguments after the router trigger without executing operations.
 
     Agents evaluate natural-language loading conditions. The router exposes their
     metadata instead of guessing relevance from keywords or loading all bodies.
-    ``operator_commands`` lets a bare ``admin`` or ``assistant`` cold start the pane;
-    carriers that name the admin capability itself pass False.
+    ``operator_commands`` enables installed definition aliases for bare commands;
+    carriers that name a capability itself pass False.
     """
     catalog = catalog if catalog is not None else load_capability_catalog()
     parts = request.strip().split(None, 1)
@@ -124,9 +122,17 @@ def route_gobby_request(
             return GobbyRoute("help", capability_menu(catalog, command_prefix))
         name = parts[0]
         arguments = parts[1] if len(parts) > 1 else ""
-    role = _COLD_START_ROLES.get(name.lower())
-    if operator_commands and not explicit_skill and not arguments and role is not None:
-        return GobbyRoute("cold_start", _cold_start_directive(role))
+    if operator_commands and not explicit_skill and not arguments and resolve_cold_start:
+        try:
+            role = resolve_cold_start(name)
+        except AgentResolutionError as exc:
+            return GobbyRoute(
+                "refused",
+                f"Cold start refused: {exc}. Report this conflict; do not start a definition "
+                "until its command alias resolves uniquely.",
+            )
+        if role is not None:
+            return GobbyRoute("cold_start", _cold_start_directive(role))
     capability = next((item for item in catalog.capabilities if item.name == name.lower()), None)
     if capability is not None and not explicit_skill:
         parts = arguments.split(None, 1)

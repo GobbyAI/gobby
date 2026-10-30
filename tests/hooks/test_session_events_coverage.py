@@ -178,6 +178,7 @@ class _TestHandler(SessionEventHandlerMixin):
         self._session_manager.update.return_value = None
         self._session_coordinator = MagicMock()
         self._session_end_auto_link_worker = None
+        self._event_loop = None
         message_processor = MagicMock()
         self._message_processor_resolver: Callable[[], MagicMock] = lambda: message_processor
         self._task_manager = MagicMock()
@@ -239,8 +240,7 @@ class TestHandleSessionEnd:
         resp = handler.handle_session_end(event)
         assert resp.decision == "allow"
 
-        # Should call auto_link_commits and complete_agent_run
-        handler._task_manager = MagicMock()
+        # Complete the agent run and unregister the bound processor.
         handler._session_coordinator.complete_agent_run.assert_called_once()
         processor.unregister_session.assert_called_with("sess-1")
         assert "sess-1" not in handler._session_message_processors
@@ -281,18 +281,27 @@ class TestHandleSessionEnd:
         event = _make_event(event_type=HookEventType.SESSION_END)
         event.metadata["_platform_session_id"] = "sess-1"
 
-        # Setting up exceptions
+        worker = MagicMock()
+        worker.submit.side_effect = RuntimeError("test link")
+        processor = MagicMock()
+        processor.unregister_session.side_effect = RuntimeError("test proc")
+        handler._session_message_processors["sess-1"] = processor
         handler._session_coordinator.complete_agent_run.side_effect = Exception("test run")
-        handler._message_processor_resolver().unregister_session.side_effect = Exception(
-            "test proc"
-        )
         handler._session_manager.update_status_if_non_terminal.side_effect = Exception(
             "test storage"
         )
 
-        with patch("gobby.tasks.commits.auto_link_commits", side_effect=Exception("test link")):
+        with patch.object(handler, "_session_end_auto_link_worker", worker):
             resp = handler.handle_session_end(event)
-            assert resp.decision == "allow"  # Exceptions are swallowed
+
+        assert resp.decision == "allow"
+        assert "sess-1" not in handler._session_message_processors
+        worker.submit.assert_called_once()
+        handler._session_coordinator.complete_agent_run.assert_called_once()
+        processor.unregister_session.assert_called_once_with("sess-1")
+        handler._session_manager.update_status_if_non_terminal.assert_called_once_with(
+            "sess-1", "expired"
+        )
 
     def test_handle_session_end_releases_interactive_lock_labels(self) -> None:
         """When a session ends, remove its interactive-plan lock labels across

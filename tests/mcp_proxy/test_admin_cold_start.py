@@ -13,6 +13,7 @@ import pytest
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.servers.websocket.server import WebSocketServer
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.session_models import Session
@@ -77,12 +78,17 @@ def _local_machine_identity() -> Iterator[None]:
 @pytest.fixture
 async def stack(temp_db: HubDatabase, sample_project: dict[str, Any]) -> AsyncIterator[_Stack]:
     LocalMachineManager(temp_db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID, hostname="local")
-    for seat in ("assistant", "orchestrator"):
+    for seat, command, counterpart in (
+        ("assistant", "assistant", "orchestrator"),
+        ("orchestrator", "admin", "assistant"),
+    ):
         seed_seat(
             temp_db,
             seat,
             surfaces=["spawn", "persona"],
             prompts={"agent": f"Synthetic {seat} seat.", "persona": f"Synthetic {seat} persona."},
+            cold_start_commands=[command],
+            cold_start_counterpart=counterpart,
         )
     config = MagicMock(host="localhost", port=60888, ping_interval=30, ping_timeout=10)
     config.max_message_size = 1024
@@ -222,6 +228,99 @@ async def test_cold_start_twice_from_each_side_opens_one_counterpart_pane(stack:
         "orchestrator",
         "assistant",
     )
+
+
+async def test_custom_definition_controls_counterpart_and_command(stack: _Stack) -> None:
+    for name, command, counterpart in (
+        ("guide", "guide-start", "helper"),
+        ("helper", "helper-start", "guide"),
+    ):
+        seed_seat(
+            stack.db,
+            name,
+            surfaces=["persona"],
+            prompts={"persona": "Coordinate this workspace."},
+            cold_start_commands=[command],
+            cold_start_counterpart=counterpart,
+        )
+    _, pane = await _operator_pane(stack)
+    caller = _pane_session(stack, pane, "custom-pane", "codex")
+    result = await _cold_start(stack, caller, "guide")
+    assert result["success"] is True, result
+    assert result["counterpart"]["role"] == "helper"
+    assert result["launch"]["command"] == "codex '$gobby helper-start'"
+    assert _agent_type(stack, caller) == "guide"
+
+
+@pytest.mark.parametrize("enabled,configured", [(False, True), (True, False)])
+async def test_builtin_name_needs_enabled_cold_start_configuration(
+    stack: _Stack, enabled: bool, configured: bool
+) -> None:
+    definitions = AgentDefinitionManager(stack.db)
+    row = definitions.get_by_name("orchestrator")
+    assert row is not None
+    body = dict(row.definition_json)
+    body["cold_start_commands"] = ["admin"] if configured else []
+    definitions.update(row.id, definition_json=body, enabled=enabled)
+    _, pane = await _operator_pane(stack)
+    caller = _pane_session(stack, pane, "unconfigured-pane", "claude")
+    spawns = stack.native.create_calls
+    result = await _cold_start(stack, caller, "orchestrator")
+    assert result["success"] is False
+    assert stack.native.create_calls == spawns
+    assert _agent_type(stack, caller) is None
+
+
+async def test_definition_without_counterpart_applies_without_opening_a_pane(stack: _Stack) -> None:
+    seed_seat(
+        stack.db,
+        "solo",
+        surfaces=["persona"],
+        prompts={"persona": "Work in this pane."},
+        cold_start_commands=["solo"],
+    )
+    _, pane = await _operator_pane(stack)
+    caller = _pane_session(stack, pane, "solo-pane", "claude")
+    spawns = stack.native.create_calls
+    result = await _cold_start(stack, caller, "solo")
+    assert result["success"] is True, result
+    assert result["created"] is False
+    assert result["counterpart"] is None
+    assert stack.native.create_calls == spawns
+    assert _agent_type(stack, caller) == "solo"
+
+
+async def test_ambiguous_counterpart_alias_does_not_apply_or_split(stack: _Stack) -> None:
+    seed_seat(
+        stack.db,
+        "other-companion",
+        surfaces=["persona"],
+        prompts={"persona": "Another companion."},
+        cold_start_commands=["assistant"],
+    )
+    _, pane = await _operator_pane(stack)
+    caller = _pane_session(stack, pane, "ambiguous-pair", "claude")
+    spawns = stack.native.create_calls
+    result = await _cold_start(stack, caller, "orchestrator")
+    assert result["success"] is False
+    assert stack.native.create_calls == spawns
+    assert _agent_type(stack, caller) is None
+
+
+async def test_pipeline_counterpart_refuses_before_applying_or_splitting(stack: _Stack) -> None:
+    definitions = AgentDefinitionManager(stack.db)
+    row = definitions.get_by_name("assistant")
+    assert row is not None
+    body = dict(row.definition_json)
+    body["workflows"] = {**body["workflows"], "pipeline": "custom-pipeline"}
+    definitions.update(row.id, definition_json=body)
+    _, pane = await _operator_pane(stack)
+    caller = _pane_session(stack, pane, "pipeline-pair", "claude")
+    spawns = stack.native.create_calls
+    result = await _cold_start(stack, caller, "orchestrator")
+    assert result["success"] is False
+    assert stack.native.create_calls == spawns
+    assert _agent_type(stack, caller) is None
 
 
 async def test_a_dead_counterpart_pane_is_replaced(stack: _Stack) -> None:

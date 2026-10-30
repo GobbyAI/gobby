@@ -158,10 +158,12 @@ async def _handle_write_text_file(
 ) -> AsyncIterator[StreamEvent]:
     path = params.get("path")
     tool_input = {"path": path, "content": params.get("content")}
+    call_id = str(request.get("id") or f"fs-write-{_make_id()}")
     pre_tool_response = await _apply_pre_tool_decision(
         pre_tool_callback,
         tool_name="write_text_file",
         tool_input=tool_input,
+        tool_execution_id=call_id,
     )
     if is_pre_tool_decision_denied(pre_tool_response):
         await write_json_rpc_error(
@@ -172,7 +174,6 @@ async def _handle_write_text_file(
         )
         return
 
-    call_id = str(request.get("id") or f"fs-write-{_make_id()}")
     yield StreamEvent(
         event_type="tool_call",
         data={
@@ -254,11 +255,15 @@ async def _apply_pre_tool_decision(
     *,
     tool_name: str,
     tool_input: dict[str, Any],
+    tool_execution_id: str | None = None,
 ) -> dict[str, Any] | None:
     if pre_tool_callback is None:
         return None
     try:
-        return await pre_tool_callback({"tool_name": tool_name, "tool_input": tool_input})
+        payload = {"tool_name": tool_name, "tool_input": tool_input}
+        if tool_execution_id:
+            payload["tool_use_id"] = tool_execution_id
+        return await pre_tool_callback(payload)
     except Exception:
         logger.exception(
             "ACP pre-tool callback failed for %s with input keys %s",
@@ -269,7 +274,7 @@ async def _apply_pre_tool_decision(
 
 
 def _permission_tool_details(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    tool_call = params.get("toolCall")
+    tool_call = params.get("toolCall") if isinstance(params, dict) else None
     if not isinstance(tool_call, dict):
         return "acp_tool", {}
 
@@ -352,10 +357,13 @@ async def _handle_request_permission_request(
         return
 
     tool_name, tool_input = _permission_tool_details(params if isinstance(params, dict) else {})
+    tool_call = params.get("toolCall") if isinstance(params, dict) else None
+    tool_call_id = tool_call.get("toolCallId") if isinstance(tool_call, dict) else None
     pre_tool_response = await _apply_pre_tool_decision(
         pre_tool_callback,
         tool_name=tool_name,
         tool_input=tool_input,
+        tool_execution_id=tool_call_id if isinstance(tool_call_id, str) else None,
     )
     if is_pre_tool_decision_denied(pre_tool_response):
         reason = pre_tool_denial_reason(pre_tool_response)
@@ -492,6 +500,7 @@ async def _handle_terminal_create(
         pre_tool_callback,
         tool_name="run_terminal_command",
         tool_input=tool_input,
+        tool_execution_id=call_id,
     )
     if is_pre_tool_decision_denied(pre_tool_response):
         await write_json_rpc_error(

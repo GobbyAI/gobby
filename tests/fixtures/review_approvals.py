@@ -20,7 +20,15 @@ REVIEW_WRITER = "fixture-review-writer"
 
 
 def grant_step_writes(
-    db: HubDatabase, session_id: str, project_id: str, name: str, steps: Sequence[TaskStep]
+    db: HubDatabase,
+    session_id: str,
+    project_id: str,
+    name: str,
+    steps: Sequence[TaskStep],
+    *,
+    capabilities: Sequence[str] = (),
+    supplemental_review: bool = False,
+    team_manager: bool = False,
 ) -> None:
     """Run a registered session as an installed definition that writes ``steps``."""
     definitions = AgentDefinitionManager(db)
@@ -31,8 +39,13 @@ def grant_step_writes(
                 "name": name,
                 "version": "1.0",
                 "prompts": {"agent": "Record the assigned task steps."},
-                "workflows": {"rule_selectors": {"include": []}},
+                "workflows": {
+                    "rule_selectors": {"include": []},
+                    "variables": {"team_manager": team_manager},
+                },
                 "task_step_writes": list(steps),
+                "capabilities": list(capabilities),
+                "supplemental_review": supplemental_review,
             },
             project_id=project_id,
         )

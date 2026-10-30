@@ -38,6 +38,7 @@ from gobby.storage.projects import (
     LocalProjectManager,
 )
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+from gobby.utils.daemon_git import GitFailed, daemon_git
 from gobby.utils.machine_id import require_machine_id
 from gobby.worktrees.executor import WorktreeDeleteExecutor
 from tests.fixtures.isolated_checkout import (
@@ -510,6 +511,74 @@ class TestGetProjectManager:
 
 
 class TestGetStatus:
+    def test_non_git_status_uses_stable_git_language(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def localized_git(
+            args: list[str], *, cwd: str, timeout: int, env: dict[str, str] | None = None
+        ) -> GitFailed:
+            stderr = (
+                "fatal: not a git repository (or any of the parent directories): .git"
+                if env is not None and env.get("LC_ALL") == "C"
+                else "fatal : ni ceci ni aucun de ses parents n'est un dépôt git : .git"
+            )
+            return GitFailed("failed", ("git", *args), 128, "", stderr)
+
+        monkeypatch.setattr(sc_module, "_resolve_project", lambda *_args: "/tmp/plain-folder")
+        monkeypatch.setattr(daemon_git, "run", localized_git)
+        response = client.get("/api/source-control/status")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["current_branch"] is None
+        assert response.json()["branch_count"] == 0
+
+    @pytest.mark.parametrize(
+        "stderr",
+        ["fatal: detected dubious ownership in repository", "fatal: not a git repository: /bad"],
+    )
+    def test_git_failures_remain_unavailable(self, client: TestClient, stderr: str) -> None:
+        failure = subprocess.CompletedProcess(["git", "for-each-ref"], 128, "", stderr)
+        with (
+            patch("gobby.servers.routes.source_control._resolve_project", return_value="/tmp/repo"),
+            patch("gobby.servers.routes.source_control._run_git", return_value=failure),
+        ):
+            response = client.get("/api/source-control/status")
+
+        assert response.status_code == 503
+        assert response.json() == {"detail": f"Branch status unavailable: {stderr}"}
+        assert sc_module._get_cached(sc_git_module._status_cache_key("/tmp/repo"), 60) is None
+
+    @pytest.mark.parametrize("language", ["C", "fr_FR.UTF-8"])
+    def test_non_git_directory_returns_neutral_status(
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        language: str,
+    ) -> None:
+        monkeypatch.setenv("LC_ALL", language)
+        monkeypatch.setenv("LANGUAGE", language)
+        mock_server.services.worktree_storage = MagicMock()
+        mock_server.services.clone_storage = MagicMock()
+        mock_server.services.worktree_storage.list_worktrees.return_value = [MagicMock()]
+        mock_server.services.clone_storage.list_clones.return_value = [MagicMock(), MagicMock()]
+        with patch(
+            "gobby.servers.routes.source_control._resolve_project", return_value=str(tmp_path)
+        ):
+            response = client.get("/api/source-control/status")
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "current_branch": None,
+            "branch_count": 0,
+            "worktree_count": 1,
+            "clone_count": 2,
+            "repo_path": str(tmp_path),
+            "ahead": None,
+            "behind": None,
+        }
+
     def test_status_no_repo_path(self, client: TestClient, mock_server: MagicMock) -> None:
         """When no project resolves, returns minimal status."""
         with patch(

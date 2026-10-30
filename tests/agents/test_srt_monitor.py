@@ -220,6 +220,12 @@ def monitor_harness(
             .replace("execFileAsync('/bin/ps',", f"execFileAsync({json.dumps(str(fake_ps))},")
             .replace("function sharedTransport(", "export function sharedTransport(")
             .replace(
+                "const backlogLimit = 32 * 1024 * 1024",
+                "const backlogLimit = 32768"
+                if getattr(request, "param", None) == "small-backlog"
+                else "const backlogLimit = 32 * 1024 * 1024",
+            )
+            .replace(
                 "const monitorRegistrationTimeoutMs = 30000",
                 f"const monitorRegistrationTimeoutMs = {request.param if isinstance(getattr(request, 'param', None), int) else 30000}",
             )

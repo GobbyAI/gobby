@@ -90,10 +90,17 @@ invocation blocks. A planned Gobby stop or restart is a separate case: a fresh
 shutdown marker makes `ghook` return a continue response for Stop hooks so an
 intentional daemon shutdown cannot strand an agent.
 
-Turn-level `Stop` is never critical. A daemon outage fails open on every
-provider's Stop, PreToolUse, and other turn-level hooks so an unreachable
-daemon cannot freeze the CLI on every turn. Session-lifecycle hooks still fail
-closed:
+Spawned agent sessions pause instead: on a connection failure every hook except
+Stop, SubagentStop, and Codex Interrupt exits 2 with
+`[Gobby] Daemon down. Please wait.`. During a planned restart (a fresh marker
+with `intent: restart`), Claude's `post-tool-batch` continues, so the restart
+does not end the turn; the next tool call still pauses at PreToolUse. The
+ghook user guide has the marker rules.
+
+Turn-level `Stop` is never critical. In operator sessions, a daemon outage
+fails open on every provider's Stop, PreToolUse, and other turn-level hooks so
+an unreachable daemon cannot freeze the CLI on every turn. Session-lifecycle
+hooks still fail closed:
 
 | Source / CLI | Terminal Hook | Daemon-Down Posture |
 | --- | --- | --- |

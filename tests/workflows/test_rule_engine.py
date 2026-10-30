@@ -124,7 +124,7 @@ def _insert_rule(
         priority=priority,
         enabled=enabled,
         sources=sources,
-        tags=tags,
+        tags=["default"] if tags is None else tags,
     )
     return row.id
 
@@ -773,7 +773,7 @@ class TestSetVariableEffect:
                 event=RuleTriggerEvent.NOTIFICATION,
                 effects=[RuleEffect(type="set_variable", variable=name, value="changed")],
             ),
-            tags=["gobby", "user"],
+            tags=["gobby", "user", "default"],
         )
 
         variables: dict[str, Any] = {name: "original"}
@@ -803,7 +803,7 @@ class TestSetVariableEffect:
                     )
                 ],
             ),
-            tags=["gobby"],
+            tags=["gobby", "default"],
         )
 
         variables: dict[str, Any] = {"unlocked_tools": []}
@@ -3650,6 +3650,44 @@ class TestLiveActiveRuleSelection:
     """Rules should be selected from the current agent definition at evaluation time."""
 
     @pytest.mark.asyncio
+    async def test_definition_enablement_invalidates_privileged_selector_cache(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+    ) -> None:
+        project = isolated_checkout_factory(db, "selector-enablement").project
+        _insert_agent(manager, "fixture-policy", include=["name:opt-in-rule"])
+        definition_id = _insert_agent(
+            manager,
+            "fixture-policy",
+            include=[],
+            project_id=project.id,
+        )
+        for name, tags in (("baseline-rule", ["default"]), ("opt-in-rule", [])):
+            _insert_rule(
+                manager,
+                name,
+                RuleDefinitionBody(
+                    event=RuleTriggerEvent.BEFORE_TOOL,
+                    effects=[RuleEffect(type="set_variable", variable=name, value=True)],
+                ),
+                tags=tags,
+            )
+        engine = RuleEngine(db)
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+        event.project_id = project.id
+        for enabled in (True, False, True):
+            AgentDefinitionManager(db).update(definition_id, enabled=enabled)
+            variables: dict[str, Any] = {
+                "_agent_type": "fixture-policy",
+                "_active_rule_names": ["opt-in-rule"],
+            }
+            await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+            assert variables.get("baseline-rule", False) is (not enabled)
+            assert "opt-in-rule" not in variables
+
+    @pytest.mark.asyncio
     async def test_stale_active_rule_names_do_not_hide_new_default_rule(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
@@ -3859,38 +3897,56 @@ class TestLiveActiveRuleSelection:
         assert second is first
 
     @pytest.mark.asyncio
-    async def test_active_rule_names_remain_fallback_when_agent_cannot_resolve(
-        self, db: HubDatabase, manager: RuleDefinitionManager
+    @pytest.mark.parametrize("agent_name", [None, "missing-agent", "disabled-agent"])
+    @pytest.mark.parametrize("snapshot", [None, [], ["opt-in-rule"]])
+    async def test_unresolved_definition_uses_baseline_without_cached_authority(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        agent_name: str | None,
+        snapshot: list[str] | None,
     ) -> None:
-        """Fall back to stored active rule names when the live agent is missing."""
+        """Cached selections cannot grant or remove rules after a definition vanishes."""
+        if agent_name == "disabled-agent":
+            AgentDefinitionManager(db).create(
+                name=agent_name,
+                definition_json={
+                    "name": agent_name,
+                    "prompts": {"agent": "Disabled policy."},
+                    "workflows": {"rule_selectors": {"include": ["name:opt-in-rule"]}},
+                },
+                enabled=False,
+            )
         _insert_rule(
             manager,
-            "allowed-by-fallback",
+            "baseline-rule",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
-                effects=[RuleEffect(type="set_variable", variable="allowed", value=True)],
+                effects=[RuleEffect(type="set_variable", variable="baseline", value=True)],
             ),
+            tags=["default"],
         )
         _insert_rule(
             manager,
-            "blocked-by-fallback",
+            "opt-in-rule",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
-                effects=[RuleEffect(type="set_variable", variable="blocked", value=True)],
+                effects=[RuleEffect(type="set_variable", variable="opt_in", value=True)],
             ),
+            tags=[],
         )
 
         engine = RuleEngine(db)
         variables: dict[str, Any] = {
-            "_agent_type": "missing-agent",
-            "_active_rule_names": ["allowed-by-fallback"],
+            "_agent_type": agent_name,
+            "_active_rule_names": snapshot,
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
 
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        assert variables.get("allowed") is True
-        assert variables.get("blocked") is None
+        assert variables.get("baseline") is True
+        assert variables.get("opt_in") is None
 
     @pytest.mark.asyncio
     async def test_invalid_agent_definition_fails_loudly(

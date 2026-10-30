@@ -96,6 +96,7 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
         "code_index_prune_dirty_projects",
         "code_communities",
         "code_overlay_pins",
+        "code_overlay_pin_gaps",
     }
     assert relations["code_overlay_pins"] == {
         "relation": "code_overlay_pins",
@@ -107,6 +108,12 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
             "across all machines for retention; mutations remain limited to the bound "
             "write project and issuing machine"
         ),
+    }
+    assert relations["code_overlay_pin_gaps"] == {
+        "relation": "code_overlay_pin_gaps",
+        "operations": ["SELECT", "INSERT", "DELETE"],
+        "scope_column": "overlay_project_id",
+        "machine_scope_column": "machine_id",
     }
     assert relations["projects"]["operations"] == ["SELECT"]
     assert "columns" not in relations["projects"]

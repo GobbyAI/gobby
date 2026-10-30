@@ -279,6 +279,7 @@ def register_terminal_tools(
         registry,
         session_manager,
         terminal_manager=terminal_manager,
+        terminal_runtime_registry=terminal_runtime_registry,
         write_coordinator=write_coordinator,
     )
     register_terminate_terminal_tool(

@@ -711,7 +711,7 @@ fn context_menu_renders_anchored_and_clamped() {
         chrome.palette.overlay0,
     );
     let item = |label: &'static str, enabled: bool| MenuItem {
-        label,
+        label: label.into(),
         action: MenuAction::Act(Action::NewTab),
         enabled,
     };

@@ -348,8 +348,8 @@ Manifest rules:
 - Every `kind: deliverable` section must have exactly one manifest entry.
 - `depends_on` values reference manifest `source_section` IDs, not phase IDs.
 - `labels` use structured `covers:<plan-id>:<section-id>:<item-id>` records.
-- `implementation_domain` is required for `category: code` and drives
-  deterministic developer routing.
+- `implementation_domain` is required for `category: code` and participates in
+  definition-declared routing.
 - `tdd: true` is valid only for `code` and `config` categories.
 - Plan authors write narrative sections; the coordinator applies the final
   server-derived manifest through approval tools before expansion.
@@ -396,8 +396,10 @@ Rules worth knowing:
   `tdd:required`, and validation criteria for red, green,
   refactor/final-green, exact command, and supported test-quality audit or
   unsupported-language fallback evidence.
-- Code leaves require `implementation_domain`, which routes to
-  `developer`, which reads the domain to pick its skills.
+- Automatic assignment selects the unique enabled spawn definition declaring
+  the category in `task_categories`. For code leaves, its `implementation_domains`
+  must be empty or include the leaf's domain. Missing or ambiguous routes stay
+  unassigned with a diagnostic; explicit manual assignments remain available.
 - Non-TDD categories `docs`, `refactor`, and `test` expand as single tasks.
   Automated manifests reject `research`, `planning`, and `manual`.
 - Dependencies follow manifest `depends_on` edges directly between leaves.
