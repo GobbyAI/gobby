@@ -26,6 +26,9 @@ SESSION_ID = "33333333-3333-4333-8333-333333333333"
 TERMINAL_ID = "terminal-1"
 # The framed Claude composer the provider manifest reads as empty (corpus claude.composer_empty).
 IDLE_COMPOSER = "────────────────────\n❯ \n────────────────────"
+# Hook-denial scrollback that the bundled stop_hook_blocked rule matches first.
+STOP_HOOK_DENIAL = "Stop hook error: validation failed"
+GOBBY_RULE_DENIAL = "Rule enforced by Gobby: validation required"
 
 
 class _Manager:
@@ -125,6 +128,26 @@ REFUSALS = [
         {"snapshot": IDLE_COMPOSER + "\nesc to interrupt"},
         "send_keys_composer_not_idle",
         id="stale-composer-turn-in-flight",
+    ),
+    pytest.param(
+        {"snapshot": f"{STOP_HOOK_DENIAL}\n{IDLE_COMPOSER}\nesc to interrupt"},
+        "send_keys_composer_not_idle",
+        id="stop-hook-over-live-turn",
+    ),
+    pytest.param(
+        {"snapshot": f"{STOP_HOOK_DENIAL}\n{IDLE_COMPOSER}\nRunning tests..."},
+        "send_keys_composer_not_idle",
+        id="stop-hook-over-active-work",
+    ),
+    pytest.param(
+        {"snapshot": f"{GOBBY_RULE_DENIAL}\n{IDLE_COMPOSER}\nesc to interrupt"},
+        "send_keys_composer_not_idle",
+        id="gobby-rule-over-live-turn",
+    ),
+    pytest.param(
+        {"snapshot": f"{GOBBY_RULE_DENIAL}\n{IDLE_COMPOSER}\nRunning tests..."},
+        "send_keys_composer_not_idle",
+        id="gobby-rule-over-active-work",
     ),
     pytest.param(
         {"lookup_error": RuntimeError("terminal table unavailable")},

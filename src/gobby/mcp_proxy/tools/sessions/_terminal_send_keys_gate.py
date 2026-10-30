@@ -34,6 +34,9 @@ _CREDENTIAL_PROMPT = re.compile(
     r"\b(password|passphrase|passcode|pin|api[ _-]?key|token|secret|otp)\b[^\n]*:\s*$",
     re.IGNORECASE,
 )
+# Live-turn rules. A first-match verdict ranks an idle hook-denial line above them, so
+# each one is checked by name and vetoes on its own, whatever its priority.
+_BUSY_RULE_IDS = ("turn_in_flight", "active_work")
 
 
 @dataclass(frozen=True)
@@ -148,9 +151,13 @@ async def send_keys_target_refusal(
         # pane too, so provider activity or blocking prompts override that frame.
         # Status bars include the frame rules and do not establish activity.
         activity = manifest.match(text)
+        busy = any(
+            manifest.match_rule(rule_id, text).match is not None for rule_id in _BUSY_RULE_IDS
+        )
         if (
             activity.issues
             or activity.match is None
+            or busy
             or (activity.match.state != "idle" and activity.match.rule_id != "status_bar")
             or read_frame(snapshot).state != "empty"
         ):
