@@ -481,6 +481,12 @@ def test_real_cargo_stale_checkout_and_incremental_rebuild(tmp_path: Path) -> No
         "CARGO_TARGET_DIR": str(target),
         "CARGO_BUILD_JOBS": "3",
         "TMPDIR": str(temp),
+        # The unsandboxed baseline must not inherit the caller's sccache wrapper: its
+        # socket path can exceed the limit under this long tmp path. Blank, as the launch
+        # environment does, so the cache directory is never the caller's.
+        "RUSTC_WRAPPER": "",
+        "SCCACHE_DIR": "",
+        "SCCACHE_SERVER_UDS": "",
     }
     env.pop("CARGO_BUILD_TARGET_DIR", None)
     args = ["test", "--offline", "--manifest-path"]
