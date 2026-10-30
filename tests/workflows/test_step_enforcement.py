@@ -2534,8 +2534,8 @@ async def test_spawned_agent_operator_tools_follow_the_payload_identity(
 ) -> None:
     """A spawned agent is not a subagent; only a payload-named native subagent is blocked.
 
-    Withholding terminal tools from a spawned agent is the opt-in no-send-keys
-    rule's decision, not operator-tool enforcement's.
+    Withholding terminal tools from a spawned agent is the no-send-keys rule's
+    capability decision, not operator-tool enforcement's.
     """
     _setup_operator_tool_session(db, manager, instance_mgr, None)
 

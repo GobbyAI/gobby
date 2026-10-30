@@ -444,7 +444,7 @@ class EnforcementCheckMixin:
             return HookResponse(decision="block", reason=reason)
 
         # Operator terminal channels bypass allow-lists, but a provider-native
-        # subagent never drives them. A spawned Gobby agent is gated by the opt-in
+        # subagent never drives them. A spawned Gobby agent is gated by the
         # no-send-keys rule instead. The payload's agent id decides a native
         # subagent; the session flag is only the fallback for a CLI that sends no
         # per-event identity.

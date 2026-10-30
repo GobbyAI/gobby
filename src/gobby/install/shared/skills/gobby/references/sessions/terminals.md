@@ -12,8 +12,14 @@ fallback for capture. Inspect `via` and truncation metadata when present: a
 transcript tail is not proof of a live terminal screen. Missing pane/transcript
 errors require restoring the actual runtime or using transcript diagnostics.
 
-`send_keys` requires current caller context. The selected `no-send-keys` rule
-blocks both terminal tools for a definition; spawned status alone does not.
+`send_keys` requires current caller context. The `no-send-keys` rule (default tag)
+withholds it from every definition except the Orchestrator and Assistant, which
+carry the `send_keys` capability; the operator's own unspawned terminal stays
+exempt. `capture_output` is not withheld by that rule. Before any key is written,
+the target must show an idle agent CLI composer: a bare shell, an empty or dead
+terminal, a session with no live agent CLI, a draft or held composer, and a
+credential prompt are refused, and undeterminable state fails closed. A tmux
+target without a process group is refused as unconfirmed.
 The selected `block-cross-project-send-keys` rule restricts targets to the caller,
 its project, or its ancestor/descendant tree, and `block-web-chat-send-keys`
 blocks both tools for web-chat callers. Seat guidance permits stalled-session
