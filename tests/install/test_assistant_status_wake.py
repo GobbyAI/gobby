@@ -53,21 +53,34 @@ def test_wake_pipeline_has_no_cadence_literal() -> None:
     assert "1800" not in WAKE.read_text(encoding="utf-8")
 
 
-def test_wake_pipeline_resolves_assistant_then_wakes_that_session() -> None:
+def test_wake_pipeline_resolves_each_live_status_then_wakes_that_session() -> None:
     data: dict[str, Any] = yaml.safe_load(WAKE.read_text(encoding="utf-8"))
 
     steps = {step["id"]: step for step in data["steps"]}
-    assert list(steps) == ["resolve", "wake"]
+    resolve_ids = [step_id for step_id in steps if step_id.startswith("resolve_")]
+    assert list(steps) == [*resolve_ids, "wake"]
 
-    resolve = steps["resolve"]["mcp"]
-    assert (resolve["server"], resolve["tool"]) == ("gobby-sessions", "list_sessions")
-    assert resolve["arguments"]["project_id"] == "${{ project_id }}"
-    assert resolve["arguments"]["agent_type"] == "${{ inputs.agent_type }}"
+    statuses: list[str] = []
+    for step_id in resolve_ids:
+        resolve = steps[step_id]["mcp"]
+        assert (resolve["server"], resolve["tool"]) == ("gobby-sessions", "list_sessions")
+        assert resolve["arguments"]["project_id"] == "${{ project_id }}"
+        assert resolve["arguments"]["agent_type"] == "${{ inputs.agent_type }}"
+        statuses.append(resolve["arguments"]["status"])
+    assert statuses == [
+        "active",
+        "paused",
+        "interrupted",
+        "awaiting_input",
+        "awaiting_approval",
+        "awaiting_handoff",
+    ]
 
     wake = steps["wake"]["mcp"]
     assert (wake["server"], wake["tool"]) == ("gobby-agents", "send_message")
     assert wake["arguments"]["target"] == "session"
     assert wake["arguments"]["wake"] is True
-    assert "steps.resolve.output" in steps["wake"]["condition"]
+    for step_id in resolve_ids:
+        assert f"steps.{step_id}.output" in steps["wake"]["condition"]
 
     assert data["inputs"]["agent_type"]["default"] == "assistant"

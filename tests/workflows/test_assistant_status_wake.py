@@ -1,18 +1,27 @@
-"""The status-report tick wakes the one live Assistant session and refuses otherwise."""
+"""The status-report tick wakes the one live Assistant session and refuses otherwise.
+
+The session listing runs the real gobby-sessions list_sessions tool over temp_db, so the
+per-status filter and the listing limit apply as they do in production.
+"""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.sessions._crud import register_crud_tools
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.pipeline_executor import PipelineExecutor
 from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 from gobby.workflows.templates import TemplateEngine
 
@@ -20,15 +29,27 @@ pytestmark = pytest.mark.integration
 
 PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 PIPELINE = "assistant-status-wake"
-LIVE_STATUSES = ("active", "paused", "interrupted", "awaiting_input", "awaiting_approval")
+LIVE_STATUSES = (
+    "active",
+    "paused",
+    "interrupted",
+    "awaiting_input",
+    "awaiting_approval",
+    "awaiting_handoff",
+)
+LISTING_LIMIT = 500
+HISTORICAL_ROWS = LISTING_LIMIT + 1
 
 
 class StatusTickProxy:
-    """Stub gobby-sessions and gobby-agents proxy: answers the listing and records sends."""
+    """Stub gobby-sessions and gobby-agents proxy: list_sessions is real, sends are recorded."""
 
-    def __init__(self, sessions: list[dict[str, Any]], total: int | None = None) -> None:
-        self.sessions = sessions
-        self.total = len(sessions) if total is None else total
+    def __init__(self, temp_db: HubDatabase) -> None:
+        registry = InternalToolRegistry(name="gobby-sessions", description="status tick tests")
+        register_crud_tools(registry, SessionManager(temp_db))
+        list_sessions = registry.get_tool("list_sessions")
+        assert list_sessions is not None
+        self.list_sessions: Callable[..., dict[str, Any]] = list_sessions
         self.calls: list[dict[str, Any]] = []
 
     async def get_tool_schema(
@@ -47,12 +68,7 @@ class StatusTickProxy:
     ) -> dict[str, Any]:
         self.calls.append({"tool": f"{server}:{tool}", "arguments": arguments})
         if tool == "list_sessions":
-            return {
-                "sessions": self.sessions,
-                "count": len(self.sessions),
-                "total": self.total,
-                "limit": arguments["limit"],
-            }
+            return self.list_sessions(**arguments)
         if tool == "send_message":
             return {"success": True, "delivery_status": "sent", "message_ids": ["m-1"]}
         return {"success": True}
@@ -64,14 +80,18 @@ class StatusTickProxy:
         return [call["arguments"] for call in self.calls if call["tool"].endswith("send_message")]
 
 
-def _session(session_id: str, status: str, agent_type: str = "assistant") -> dict[str, Any]:
-    return {
-        "id": session_id,
-        "ref": f"gobby#{session_id}",
-        "status": status,
-        "title": agent_type,
-        "title_source": "definition",
-    }
+def _register(temp_db: HubDatabase, external_id: str, agent_type: str, status: str) -> str:
+    manager = SessionManager(temp_db)
+    session = manager.register(
+        external_id=external_id,
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=PROJECT_ID,
+    )
+    SessionVariableManager(temp_db).set_variable(session.id, "_agent_type", agent_type)
+    if status != "active":
+        manager.update_status(session.id, status)
+    return session.id
 
 
 def _executor(temp_db: HubDatabase, proxy: StatusTickProxy) -> PipelineExecutor:
@@ -103,28 +123,51 @@ def _step_statuses(temp_db: HubDatabase, execution_id: str) -> dict[str, StepSta
 async def test_single_live_assistant_is_woken_by_session_id(
     temp_db: HubDatabase, status: str
 ) -> None:
-    proxy = StatusTickProxy(
-        [_session("old-assistant", "expired"), _session("live-assistant", status)]
-    )
+    _register(temp_db, "old-assistant", "assistant", "expired")
+    live_id = _register(temp_db, "live-assistant", "assistant", status)
+    proxy = StatusTickProxy(temp_db)
 
     result = await _tick(temp_db, proxy)
 
     assert result.status == ExecutionStatus.COMPLETED
-    assert proxy.listings()[0]["project_id"] == PROJECT_ID
-    assert proxy.listings()[0]["agent_type"] == "assistant"
+    listings = proxy.listings()
+    assert {listing["status"] for listing in listings} == set(LIVE_STATUSES)
+    assert all(listing["project_id"] == PROJECT_ID for listing in listings)
+    assert all(listing["agent_type"] == "assistant" for listing in listings)
     sends = proxy.sends()
     assert len(sends) == 1
     assert sends[0]["target"] == "session"
-    assert sends[0]["target_id"] == "live-assistant"
+    assert sends[0]["target_id"] == live_id
     assert sends[0]["wake"] is True
     assert sends[0]["content"]
 
 
 @pytest.mark.asyncio
-async def test_no_live_assistant_refuses_without_sending(temp_db: HubDatabase) -> None:
-    proxy = StatusTickProxy(
-        [_session("old-assistant", "expired"), _session("gone-assistant", "archived")]
+async def test_live_assistant_wakes_behind_historical_rows_past_listing_limit(
+    temp_db: HubDatabase,
+) -> None:
+    live_id = _register(temp_db, "live-assistant", "assistant", "active")
+    for index in range(HISTORICAL_ROWS):
+        _register(temp_db, f"old-assistant-{index}", "assistant", "expired")
+    proxy = StatusTickProxy(temp_db)
+    unfiltered = proxy.list_sessions(
+        project_id=PROJECT_ID, agent_type="assistant", limit=LISTING_LIMIT
     )
+    assert unfiltered["total"] == HISTORICAL_ROWS + 1
+    assert live_id not in {row["id"] for row in unfiltered["sessions"]}
+
+    result = await _tick(temp_db, proxy)
+
+    assert result.status == ExecutionStatus.COMPLETED
+    assert [send["target_id"] for send in proxy.sends()] == [live_id]
+
+
+@pytest.mark.asyncio
+async def test_no_live_assistant_refuses_without_sending(temp_db: HubDatabase) -> None:
+    _register(temp_db, "old-assistant", "assistant", "expired")
+    _register(temp_db, "gone-assistant", "assistant", "closed")
+    _register(temp_db, "live-dev-manager", "dev-manager", "active")
+    proxy = StatusTickProxy(temp_db)
 
     result = await _tick(temp_db, proxy)
 
@@ -135,7 +178,9 @@ async def test_no_live_assistant_refuses_without_sending(temp_db: HubDatabase) -
 
 @pytest.mark.asyncio
 async def test_two_live_assistants_refuse_without_guessing(temp_db: HubDatabase) -> None:
-    proxy = StatusTickProxy([_session("first", "active"), _session("second", "paused")])
+    _register(temp_db, "first", "assistant", "active")
+    _register(temp_db, "second", "assistant", "paused")
+    proxy = StatusTickProxy(temp_db)
 
     result = await _tick(temp_db, proxy)
 
@@ -146,7 +191,9 @@ async def test_two_live_assistants_refuse_without_guessing(temp_db: HubDatabase)
 
 @pytest.mark.asyncio
 async def test_incomplete_listing_refuses_without_guessing(temp_db: HubDatabase) -> None:
-    proxy = StatusTickProxy([_session("live", "active")], total=2)
+    for index in range(HISTORICAL_ROWS):
+        _register(temp_db, f"live-{index}", "assistant", "active")
+    proxy = StatusTickProxy(temp_db)
 
     result = await _tick(temp_db, proxy)
 
