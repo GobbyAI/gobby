@@ -676,8 +676,8 @@
     },
     {
       "activation": "managed",
-      "default": 768,
-      "description": "Dimensionality of embedding vectors. Must match the model's output: 768 for nomic-embed-text (default), 1536 for text-embedding-3-small, 1024 for BGE-M3.",
+      "default": 1024,
+      "description": "Dimensionality of embedding vectors. Must match the model's output: 1024 for qwen3-embedding:0.6b-q8_0 (default), 768 for nomic-embed-text, 1536 for text-embedding-3-small.",
       "key": "ai.embeddings.dim",
       "machineExport": true,
       "namespace": "ai.embeddings",
@@ -687,7 +687,7 @@
     },
     {
       "activation": "managed",
-      "default": "nomic-embed-text",
+      "default": "qwen3-embedding:0.6b-q8_0",
       "description": "Embedding model for semantic search",
       "key": "ai.embeddings.model",
       "machineExport": true,
