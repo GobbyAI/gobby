@@ -647,10 +647,9 @@ def _classify_shell_segment_impl(
     stdin_parts = git_environment_parts(shell_token_values(tokens), stdin_parts)
     if stdin_parts and shell_command_name(stdin_parts[0]) == "rg" and input_paths == ["/dev/null"]:
         shell_stdin, cwd = False, cwd or str(search_base_cwd or base_cwd or ".")
-    if (
-        stdin_parts
-        and shell_command_name(stdin_parts[0]) in {"sudo", "xargs", "rg"}
-        and cwd is None
+    name = shell_command_name(stdin_parts[0]) if stdin_parts else ""
+    if cwd is None and (
+        name in {"sudo", "xargs"} or (name == "rg" and rg_preprocessor(stdin_parts) is not None)
     ):
         # Script-inspection proof may be lost while the invocation cwd is unchanged.
         cwd = str(search_base_cwd) if search_base_cwd else None
