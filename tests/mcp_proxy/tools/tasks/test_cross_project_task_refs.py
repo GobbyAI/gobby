@@ -19,13 +19,13 @@ from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.step_records import list_task_step_records
+from gobby.tasks.step_records import StepSubmission, list_task_step_records, record_task_step
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.memory_review_conditions import pending_memory_reviews_complete
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.fixtures.landing_case import grant_orchestrator
-from tests.fixtures.review_approvals import grant_review_writes
+from tests.fixtures.review_approvals import grant_review_writes, grant_step_writes
 
 pytestmark = pytest.mark.unit
 
@@ -155,6 +155,26 @@ async def approve(world: CrossProjectWorld, caller_id: str, ref: str) -> dict[st
         return dict(await registry.call("record_review_step", review))
 
 
+def record_implementation(world: CrossProjectWorld) -> None:
+    """The worker that claimed the task approves its implementation of the linked commit."""
+    grant_step_writes(
+        world.db, world.child_id, world.task.project_id, "fixture-developer", ("implementation",)
+    )
+    record_task_step(
+        world.db,
+        task_id=world.task.id,
+        session_id=world.child_id,
+        step="implementation",
+        submission=StepSubmission(
+            status="approved",
+            epoch=world.tasks.get_task(world.task.id).review_epoch,
+            round_number=1,
+            feedback="Candidate implementation is complete.",
+            commit_sha=world.sha,
+        ),
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("form", ["qualified", "uuid", "project_uuid"])
 async def test_land_commit_resolves_child_task_in_other_project(
@@ -164,6 +184,7 @@ async def test_land_commit_resolves_child_task_in_other_project(
     approval = await approve(world, world.caller_id, world.ref(form))
     assert "error" not in approval, approval
     assert approval["record"]["task_id"] == world.task.id
+    record_implementation(world)
     grant_orchestrator(world.db, world.stranger_id, world.caller_project_id)
     registry = create_task_ops_registry(world.tasks)
     with session_context_for_test(world.stranger_id):
@@ -311,6 +332,7 @@ async def test_declared_coordinator_can_approve_other_project(
 
 @pytest.mark.asyncio
 async def test_cross_project_land_still_needs_review_approval(world: CrossProjectWorld) -> None:
+    record_implementation(world)
     grant_orchestrator(world.db, world.stranger_id, world.caller_project_id)
     registry = create_task_ops_registry(world.tasks)
     with session_context_for_test(world.stranger_id):

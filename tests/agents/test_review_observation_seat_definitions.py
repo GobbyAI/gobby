@@ -20,9 +20,15 @@ from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import get_machine_id
 from gobby.workflows.condition_helpers_sessions import session_refs_equal
 from gobby.workflows.definitions import AgentDefinitionBody
-from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import patch_local_machine_id
-from tests.workflows.test_seat_step_loops import COORDINATOR_ID, SESSION_ID, SHA, SeatRun
+from tests.fixtures.review_approvals import grant_step_writes
+from tests.workflows.test_seat_step_loops import (
+    COORDINATOR_ID,
+    PROJECT_ID,
+    SESSION_ID,
+    SHA,
+    SeatRun,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -108,7 +114,13 @@ VERDICT_STEPS: list[dict[str, Any]] = [
 ]
 
 # A minimal reviewer for the malformed-SHA case: only the verdict-completion transition.
-MALFORMED_SHA_REVIEWER = _seat("code-reviewer", VERDICT_STEPS, REVIEWER_VARIABLES)
+# Candidate intake and verdict resets are read only from a definition that writes review.
+MALFORMED_SHA_REVIEWER = _seat(
+    "code-reviewer",
+    VERDICT_STEPS,
+    REVIEWER_VARIABLES,
+    task_step_writes=["review"],
+)
 
 # A log monitor whose report step leaves for tick only on a durable report.
 MONITOR = _seat(
@@ -123,6 +135,8 @@ MONITOR = _seat(
         {"name": "tick", "allowed_tools": [CALL]},
     ],
     {"tick_done": False, "tick_window": None},
+    # Monitors report to Triage; only a report to a declared recipient ends the window.
+    monitor_report_recipients=["triage"],
 )
 
 
@@ -499,13 +513,21 @@ async def test_monitor_leaves_report_only_on_a_nominal_or_alarm_report(
 ) -> None:
     run = SeatRun(temp_db, "log-monitor", definition=MONITOR)
     # Monitors report to Triage; only a durable report to Triage counts.
-    SessionVariableManager(temp_db).set_variable(COORDINATOR_ID, "_agent_type", "triage")
-    _set_state(run, "report", tick_done=True, tick_window="previous-window")
+    grant_step_writes(temp_db, COORDINATOR_ID, PROJECT_ID, "triage", ())
+    # The window's first report is already recorded; a durable report must match it.
+    _set_state(
+        run,
+        "report",
+        tick_done=True,
+        tick_window="previous-window",
+        _window_report=content,
+    )
     before = run.vars
     await run.send(content)
     assert run.step == ("tick" if resets else "report")
     if resets:
         assert run.vars["tick_done"] is False
-        assert run.vars["tick_window"] != "previous-window"
+        # The closing report keeps the window that the first report opened.
+        assert run.vars["tick_window"] == "previous-window"
     else:
         assert run.vars == before
