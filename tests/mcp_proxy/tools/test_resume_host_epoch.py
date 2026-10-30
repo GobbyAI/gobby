@@ -19,6 +19,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager, native_locator_key
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
@@ -67,6 +68,7 @@ def _paused_seat(
     )
     assert runs.cancel(run.id) is not None
     assert session_manager.update_terminal_pickup_metadata(seat.id, agent_run_id=run.id)
+    SessionVariableManager(db).set_variable(seat.id, "_agent_type", "developer")
     session_manager.update_status(seat.id, "paused")
 
     terminals = TerminalManager(db)

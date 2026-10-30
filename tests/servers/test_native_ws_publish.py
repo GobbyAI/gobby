@@ -23,8 +23,10 @@ from gobby.servers.websocket.native_publish import (
     NativePublisher,
     native_publisher_from_environment,
 )
+from gobby.servers.websocket.proxy_relay import ProxyHub
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.session_control import SessionControlMixin
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.json_helpers import json_dumps
 
 pytestmark = pytest.mark.unit
@@ -35,6 +37,77 @@ BASE_URL = "http://127.0.0.1:60887"
 GEN1 = f"{1:032x}"
 GEN2 = f"{2:032x}"
 CONFIG = WebSocketConfig(max_message_size=4096, ping_interval=7, ping_timeout=3)
+
+
+@pytest.mark.parametrize("stage", ["bind", "rebind"])
+@pytest.mark.parametrize("error", [TimeoutError(), httpx.ReadTimeout("front door stalled")])
+async def test_bind_failure_logs_exception_type_and_recovers(
+    stage: str,
+    error: Exception,
+    supervisor_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Exceptions with empty str() retain a useful diagnostic during recovery."""
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.01)
+    attempts = 0
+    failed_attempt = 1 if stage == "bind" else 2
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        if request.url.path == native_publish.BIND_PATH:
+            attempts += 1
+            if attempts == failed_attempt:
+                raise error
+            return httpx.Response(200, json={"generation": GEN1 if attempts == 1 else GEN2})
+        return httpx.Response(204)
+
+    publisher = NativePublisher(
+        secret=SECRET,
+        base_url=BASE_URL,
+        config=CONFIG,
+        transport=httpx.MockTransport(handle),
+    )
+    try:
+        await publisher.start()
+        if stage == "rebind":
+            publisher.fail_generation(GEN1)
+        await _until(lambda: publisher.generation == GEN2)
+        await asyncio.wait_for(publisher.publish({"type": "agent_event"}), 1.0)
+        messages = [record.getMessage() for record in caplog.records]
+        diagnostic = next(message for message in messages if f"Native WS {stage} failed" in message)
+        assert type(error).__name__ in diagnostic
+        if str(error):
+            assert str(error) in diagnostic
+    finally:
+        await publisher.stop()
+
+
+async def test_publish_requests_stay_within_a_deadline_sized_batch(supervisor_token: str) -> None:
+    """A POST's body must finish inside REQUEST_TIMEOUT however much queued during a stall."""
+    publish_bodies: list[int] = []
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == native_publish.BIND_PATH:
+            return httpx.Response(200, json={"generation": GEN1})
+        publish_bodies.append(len(request.content))
+        return httpx.Response(204)
+
+    publisher = NativePublisher(
+        secret=SECRET,
+        base_url=BASE_URL,
+        config=CONFIG,
+        transport=httpx.MockTransport(handle),
+    )
+    frame = {"type": "terminal_output", "data": "x" * (1 << 20)}
+    try:
+        await publisher.start()
+        pending = [publisher.publish({"type": "terminal_output"}, [frame]) for _ in range(4)]
+        await asyncio.wait_for(asyncio.gather(*pending), 5.0)
+    finally:
+        await publisher.stop()
+    assert len(publish_bodies) > 1
+    assert max(publish_bodies) <= 2 * (1 << 20)
 
 
 class _Daemon:
@@ -129,6 +202,24 @@ class _Socket:
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
         self.log.append(f"close:{code}")
+
+
+class _RelaySocket:
+    """A terminal relay's client socket: sends stall until its leg is retired."""
+
+    def __init__(self, hub: ProxyHub, sending: asyncio.Event) -> None:
+        self.hub = hub
+        self.sending = sending
+        self.closed: list[int] = []
+
+    async def send(self, _raw: str) -> None:
+        self.sending.set()
+        await asyncio.Event().wait()
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        self.closed.append(code)
+        # A closed leg ends its client handler, which drops the socket's relays as ws_close.
+        await self.hub.drop_socket(self, "ws_close")
 
 
 class _PythonOnlySocket:
@@ -331,6 +422,71 @@ async def test_ambiguous_publish_retires_generation_without_retry(
         await asyncio.wait_for(publisher.publish(after), 1.0)
         assert daemon.ops(GEN2) == [_publish_op(after)]
         assert newer.closed == []
+    finally:
+        await publisher.stop()
+
+
+async def test_stalled_publish_retires_relay_legs_without_fencing_lifecycle(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timed-out publish retires the legs its terminal relays ride; lifecycle keeps publishing."""
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", 0.2)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.3)
+    monkeypatch.setattr(native_publish, "LEG_CLOSE_TIMEOUT", 0.2)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    registry = TerminalLeaseRegistry()
+    hub = ProxyHub(SimpleNamespace(_leases=lambda: registry))
+    sending = asyncio.Event()
+    socket = _RelaySocket(hub, sending)
+    await publisher.start()
+    try:
+        assert publisher.register_leg(GEN1, socket)
+        exited = asyncio.create_task(
+            hub.emit_lifecycle(socket, {"type": "terminal_event", "event": "exited"})
+        )
+        await asyncio.wait_for(sending.wait(), 1.0)
+        daemon.gate = asyncio.Event()
+        stalled = publisher.publish({"type": "agent_event", "n": 1})
+        await _until(lambda: 1011 in socket.closed, timeout=2.0)
+        await asyncio.wait_for(exited, 1.0)
+        await asyncio.wait_for(stalled, 1.0)
+
+        daemon.gate = None
+        await _until(lambda: publisher.generation == GEN2, timeout=2.0)
+        later = {"type": "agent_event", "n": 2}
+        await asyncio.wait_for(publisher.publish(later), 1.0)
+        assert daemon.ops(GEN2) == [_publish_op(later)]
+
+        async def record(_stamped: dict[str, Any]) -> None:
+            return None
+
+        pending = {"type": "terminal_event", "event": "pending"}
+        stamped = await asyncio.wait_for(registry.publish_lifecycle(pending, record), 1.0)
+        assert stamped["event"] == "pending"
+    finally:
+        await publisher.stop()
+
+
+async def test_publish_timeout_logs_batch_size_and_elapsed_time(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A timed-out publish names its batch and how long it ran, so production can size the stall."""
+    monkeypatch.setattr(native_publish, "REQUEST_TIMEOUT", 0.2)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.3)
+    monkeypatch.setattr(native_publish, "LEG_CLOSE_TIMEOUT", 0.2)
+    daemon = _Daemon()
+    daemon.mode = "blackholed"
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        await asyncio.wait_for(publisher.publish({"type": "agent_event", "n": 1}), 2.0)
+        messages = [record.getMessage() for record in caplog.records]
+        diagnostic = next(m for m in messages if "Native WS publish failed" in m)
+        assert "after 0.2" in diagnostic
+        assert "with 1 ops" in diagnostic
+        assert f"{daemon.body_sizes[0]} body bytes" in diagnostic
+        assert "TimeoutError" in diagnostic
     finally:
         await publisher.stop()
 

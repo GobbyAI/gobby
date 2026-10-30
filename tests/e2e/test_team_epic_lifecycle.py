@@ -11,7 +11,6 @@ import json
 import os
 import subprocess
 from dataclasses import dataclass
-from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -46,14 +45,6 @@ from gobby.tasks.step_records import (
 )
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.worktrees.deletion import (
-    DeletionSurface,
-    WorktreeDeletionRequest,
-    WorktreeDeletionResult,
-    delete_worktree_transaction,
-)
-from gobby.worktrees.executor import run_worktree_delete
-from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.review_approvals import grant_step_writes
 from tests.fixtures.team_case import (
@@ -61,6 +52,7 @@ from tests.fixtures.team_case import (
     TeamWorld,
     git_in,
     make_team_world,
+    running_seat,
     synthetic_manager_body,
 )
 from tests.fixtures.team_teardown_case import (
@@ -107,20 +99,14 @@ class EpicTeam:
 
     @property
     def tree(self) -> Path:
+        assert self.binding.worktree_path is not None
         return Path(self.binding.worktree_path)
 
     def seat(self, definition: str, step: TaskStep) -> str:
         """A running seat the runbook launched as ``definition``, granted only ``step``."""
-        session = self.world.case.session(definition, parent=self.runbook.id)
-        LocalAgentRunManager(self.db).create(
-            parent_session_id=self.runbook.id,
-            provider="claude",
-            prompt=f"Run the {definition} seat.",
-            agent_name=definition,
-            child_session_id=session,
-        )
-        grant_step_writes(self.db, session, self.world.case.project_id, definition, (step,))
-        return session
+        session = running_seat(self.world, self.runbook, definition)
+        grant_step_writes(self.db, session.id, self.world.case.project_id, definition, (step,))
+        return session.id
 
     async def spawn(self, agent: str, **target: Any) -> dict[str, Any]:
         return await self.world.direct_spawn(self.manager, agent=agent, **target)
@@ -297,29 +283,6 @@ def sub_worktree(team: EpicTeam, leaf: Task) -> tuple[str, Path, str]:
     return row.id, path, branch
 
 
-async def delete_tree(
-    world: TeamWorld, worktree_id: str, merged_into: str
-) -> WorktreeDeletionResult:
-    """The existing deletion path a Dev Manager uses for a finished sub-worktree."""
-    db = world.case.db
-
-    def git(_tree: Any) -> WorktreeGitManager:
-        return WorktreeGitManager(str(world.case.repo))
-
-    return await run_worktree_delete(
-        None,
-        partial(
-            delete_worktree_transaction,
-            request=WorktreeDeletionRequest(
-                worktree_id, DeletionSurface.MCP, merged_into=merged_into
-            ),
-            worktree_storage=LocalWorktreeManager(db),
-            resolve_git_manager=git,
-            task_manager=LocalTaskManager(db),
-        ),
-    )
-
-
 def teardown_outcome(world: TeamWorld, runbook: Session) -> dict[str, Any]:
     """The teardown outcome the pass recorded on the team's admission output."""
     record = world.admit_step_output(runbook).get(TEARDOWN_KEY)
@@ -343,7 +306,7 @@ def workspace_subjects(project_id: str) -> list[str]:
 
 @pytest.mark.asyncio
 async def test_complete_epic_team(world: TeamWorld, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The six-leaf nested epic completes from admission to exactly one teardown (8.6.1)."""
+    """Six leaves use real pods, test review, per-leaf landing and scoped teardown (8.6.1)."""
     adopt_close_policy(world)
     db = world.case.db
     tasks = LocalTaskManager(db)
@@ -367,6 +330,8 @@ async def test_complete_epic_team(world: TeamWorld, monkeypatch: pytest.MonkeyPa
         (survey, "research"),
     ):
         tasks.update_task(leaf.id, category=category)
+    tasks.update_task(backend.id, implementation_domain="backend")
+    tasks.update_task(frontend.id, implementation_domain="frontend")
     deps = TaskDependencyManager(db)
     deps.add_dependency(wire.id, backend.id, "blocks")
     deps.add_dependency(wire.id, frontend.id, "blocks")
@@ -375,154 +340,175 @@ async def test_complete_epic_team(world: TeamWorld, monkeypatch: pytest.MonkeyPa
     team = await epic_team(world, epic)
     tree, manager = team.tree, team.manager
     writer = team.seat("test-writer", "test")
-    backend_dev = team.seat("developer", "implementation")
-    frontend_dev = team.seat("developer", "implementation")
     primary = team.seat("developer", "implementation")
     code_reviewer = team.seat("code-reviewer", "review")
-    docs_reviewer = team.seat("docs-reviewer", "review")
-    research_reviewer = team.seat("research-reviewer", "review")
-
-    # The epic's workspace folder is bound before any seat writes its notes.
+    primary_seats = {manager, writer, primary, code_reviewer}
     folder = epic_dir(world, epic)
     assert bind_epic_workspace(db, manager) == folder
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / "decisions.md").write_text("Two sub-worktrees feed one primary leaf.\n")
+    (folder / "decisions.md").write_text("Two Dev Pods feed one primary leaf.\n")
+    integration_tip = world.case.git("rev-parse", "trunk")
 
-    # Test phase: the Test Writer commits each code leaf's tests, then hands the claim over.
-    for leaf in (backend, frontend, wire):
-        tasks.claim_task(leaf.id, writer, force=True)
-        tests_sha = commit_work(db, tree, leaf, f"tests/test_{leaf.seq_num}.py")
-        submit(db, writer, leaf, "test", "approved", 1, sha=tests_sha)
-    await hand_off(world, team, backend, writer, backend_dev)
-    await hand_off(world, team, frontend, writer, frontend_dev)
+    # Admit both pods before either works, so their branches genuinely diverge.
+    pods: list[EpicTeam] = []
+    for leaf in (backend, frontend):
+        runbook = world.child(leaf, parent=manager)
+        binding = await world.admit(runbook, leaf, parent_team_id=team.binding.team_id)
+        pods.append(EpicTeam(world, leaf, runbook, binding, manager))
+    assert pods[0].tree != pods[1].tree != tree
 
-    # Test commits are registered commits, but they finish nothing: the dependent stays blocked.
-    assert wire.id not in ready_ids(world)
+    async def deliver(
+        scope: EpicTeam,
+        leaf: Task,
+        maker: str,
+        reviewer: str,
+        test_writer: str | None,
+        *,
+        fix_rounds: bool = False,
+    ) -> tuple[str, set[str]]:
+        seats = {maker, reviewer}
+        if test_writer is not None:
+            seats.add(test_writer)
+            tasks.claim_task(leaf.id, test_writer, force=True)
+            tests_sha = commit_work(db, scope.tree, leaf, f"tests/test_{leaf.seq_num}.py")
+            submit(db, test_writer, leaf, "test", "approved", 1, sha=tests_sha)
+            submit(db, reviewer, leaf, "review", "approved", 1, sha=tests_sha)
+            assert approved(db, leaf, "review")
+            await hand_off(world, team, leaf, test_writer, maker)
+        else:
+            tasks.claim_task(leaf.id, maker, force=True)
+        sha = commit_work(db, scope.tree, leaf, f"leaf_{leaf.seq_num}.py")
+        submit(db, maker, leaf, "implementation", "approved", 1, sha=sha)
+        if fix_rounds:
+            for round_number in (1, 2):
+                submit(db, reviewer, leaf, "review", "rejected", round_number, sha=sha)
+                if round_number == 1:
+                    assert tasks.get_task(leaf.id).claimed_by_session_id == maker
+                else:
+                    await hand_off(world, team, leaf, maker, reviewer)
+                    maker = reviewer
+                    fresh_runbook = world.child(leaf, parent=manager)
+                    fresh_binding = await world.admit(
+                        fresh_runbook,
+                        leaf,
+                        scope.binding.team_id,
+                        fresh_reviewer=True,
+                        exclude_reviewers=[reviewer],
+                    )
+                    fresh = EpicTeam(world, leaf, fresh_runbook, fresh_binding, manager)
+                    reviewer = fresh.seat("code-reviewer", "review")
+                    seats.add(reviewer)
+                sha = commit_work(db, scope.tree, leaf, f"fix_{leaf.seq_num}_{round_number}.py")
+                submit(db, maker, leaf, "implementation", "approved", round_number + 1, sha=sha)
+        submit(db, reviewer, leaf, "review", "approved", 3 if fix_rounds else 1, sha=sha)
+        assert approved(db, leaf, "review")
+        submit(db, manager, leaf, "closing", "approved", 1, sha=sha)
+        landed = await world.case.land(tasks.get_task(leaf.id), sha, caller=manager)
+        assert landed.get("landed") is True, landed
+        assert world.case.git("rev-parse", "trunk") == integration_tip
+        with session_context_for_test(manager):
+            closed = await create_task_registry(tasks).call(
+                "close_task", {"task_id": leaf.id, "commit_sha": sha, "reason": "done"}
+            )
+        assert closed.get("closed") is True, closed
+        assert tasks.get_task(leaf.id).closed_at is not None
+        return str(landed["mode"]), seats
 
-    # Two parallel code leaves each get a sub-worktree; each merges back with a no-ff merge.
-    backend_row, backend_path, backend_branch = sub_worktree(team, backend)
-    backend_sha = commit_work(db, backend_path, backend, "backend.py")
-    submit(db, backend_dev, backend, "implementation", "approved", 1, sha=backend_sha)
-    git_in(tree, "merge", "--no-ff", backend_branch, "-m", "Merge backend leaf into epic main")
-    merged = await delete_tree(world, backend_row, team.binding.branch)
-    assert merged.success, merged
-    assert not backend_path.exists()
-    # One finished blocker does not unlock a dependent that still waits on its parallel pair.
-    assert wire.id not in ready_ids(world)
-
-    frontend_row, frontend_path, frontend_branch = sub_worktree(team, frontend)
-    frontend_sha = commit_work(db, frontend_path, frontend, "frontend.py")
-    submit(db, frontend_dev, frontend, "implementation", "approved", 1, sha=frontend_sha)
-    git_in(tree, "merge", "--no-ff", frontend_branch, "-m", "Merge frontend leaf into epic main")
-    merged = await delete_tree(world, frontend_row, team.binding.branch)
-    assert merged.success, merged
-    assert not frontend_path.exists()
-    # Both parallel blockers finished, so the dependent is ready and goes to the primary.
+    modes = set()
+    for index, pod in enumerate(pods):
+        pod_writer = pod.seat("test-writer", "test")
+        pod_maker = pod.seat("developer", "implementation")
+        pod_reviewer = pod.seat("code-reviewer", "review")
+        for seat in (pod_writer, pod_maker, pod_reviewer):
+            assert bind_epic_workspace(db, seat) == folder
+        assert wire.id not in ready_ids(world)
+        mode, seats = await deliver(
+            pod, pod.epic, pod_maker, pod_reviewer, pod_writer, fix_rounds=index == 1
+        )
+        modes.add(mode)
+        assert (
+            await teardown_pass(
+                db, daemon(db), closed_at(tasks.get_task(pod.epic.id)) + TEARDOWN_GRACE
+            )
+            > 0
+        )
+        assert seats <= set(terminations.ended())
+        assert not primary_seats & set(terminations.ended())
+        assert not pod.tree.exists()
+        assert not branch_exists(world, pod.binding.branch)
+        assert all(session_status(db, seat) == "active" for seat in primary_seats)
+    assert modes == {"ff", "merge"}
     assert wire.id in ready_ids(world)
-    await hand_off(world, team, wire, writer, primary)
 
-    # The primary works the dependent leaf in the epic worktree itself.
-    wire_sha = commit_work(db, tree, wire, "wire.py")
-    submit(db, primary, wire, "implementation", "approved", 1, sha=wire_sha)
+    await deliver(team, wire, primary, code_reviewer, writer)
+    assert tasks.get_task(phase.id).closed_at is not None
+    assert tasks.get_task(epic.id).closed_at is None
+    assert (
+        await teardown_pass(db, daemon(db), closed_at(tasks.get_task(wire.id)) + TEARDOWN_GRACE)
+        == 0
+    )
 
-    # The no-work leaf records its disposition; the docs leaf it blocks unlocks with it.
+    # No-work is reviewed, then the operator closes it; the dependent docs leaf unlocks.
     assert document.id not in ready_ids(world)
-    submit(db, primary, retire, "implementation", "approved", 1, disposition="moot")
-    assert document.id in ready_ids(world)
-    tasks.claim_task(document.id, primary, force=True)
-    doc_sha = commit_work(db, tree, document, "docs/scroll-flag.md")
-    submit(db, primary, document, "implementation", "approved", 1, sha=doc_sha)
-    tasks.claim_task(survey.id, primary, force=True)
-    survey_sha = commit_work(db, tree, survey, "research/scroll-libraries.md")
-    submit(db, primary, survey, "implementation", "approved", 1, sha=survey_sha)
-
-    # Per-leaf review: each leaf goes to its routed reviewer; one code rejection returns to a
-    # developer, who fixes the leaf in the epic worktree and is re-reviewed by the same seat.
-    submit(db, code_reviewer, backend, "review", "approved", 1, sha=backend_sha)
-    submit(db, code_reviewer, frontend, "review", "rejected", 1, sha=frontend_sha)
-    await hand_off(world, team, frontend, frontend_dev, primary)
-    frontend_fix = commit_work(db, tree, frontend, "frontend_fix.py")
-    submit(db, primary, frontend, "implementation", "approved", 2, sha=frontend_fix)
-    submit(db, code_reviewer, frontend, "review", "approved", 2, sha=frontend_fix)
-    submit(db, code_reviewer, wire, "review", "approved", 1, sha=wire_sha)
     submit(db, code_reviewer, retire, "review", "approved", 1, disposition="moot")
-    submit(db, docs_reviewer, document, "review", "approved", 1, sha=doc_sha)
-    submit(db, research_reviewer, survey, "review", "approved", 1, sha=survey_sha)
+    assert {record.step for record in list_task_step_records(db, retire.id)} == {"review"}
+    with session_context_for_test(world.case.creator):
+        closed = await create_task_registry(tasks).call(
+            "close_task", {"task_id": retire.id, "reason": "moot"}
+        )
+    assert closed.get("closed") is True, closed
+    assert document.id in ready_ids(world)
+    docs_reviewer = team.seat("docs-reviewer", "review")
+    research_reviewer = team.seat("research-reviewer", "review")
+    await deliver(team, document, primary, docs_reviewer, None)
+    await deliver(team, survey, primary, research_reviewer, None)
+    assert all(
+        tasks.get_task(leaf.id).closed_at is not None
+        for leaf in (backend, frontend, wire, retire, document, survey)
+    )
+    assert not primary_seats & set(terminations.ended())
 
-    state = sync_epic_review(db, team.binding.team_id)
-    assert not state.held and not state.epic_tip_ready
-    assert state.next_reviewers == {
-        backend.id: "code-reviewer",
-        frontend.id: "code-reviewer",
-        wire.id: "code-reviewer",
-        retire.id: "code-reviewer",
-        document.id: "docs-reviewer",
-        survey.id: "research-reviewer",
-    }
-
-    # The 0.5.0 merge lands in epic main before the epic-tip review (Decision 19).
+    # Final integration and exact-tip review happen after each leaf has already closed.
     world.case.direct({"release/0.5.0.txt": "Released while the epic ran.\n"})
     git_in(tree, "merge", "--no-ff", "trunk", "-m", "Merge 0.5.0 into epic main")
     tip = git_in(tree, "rev-parse", "HEAD")
     tasks.link_commit(epic.id, tip)
-    tip_reviewer = team.seat("code-reviewer", "review")
     assert sync_epic_review(db, team.binding.team_id).epic_tip_ready
-    submit(db, tip_reviewer, epic, "review", "approved", 1, sha=tip)
-
-    # Only the Dev Manager lands; the epic-tip reviewer may not.
-    refused = await world.case.land(tasks.get_task(epic.id), tip, caller=tip_reviewer)
+    submit(db, code_reviewer, epic, "review", "approved", 1, sha=tip)
+    refused = await world.case.land(tasks.get_task(epic.id), tip, caller=code_reviewer)
     assert refused["landed"] is False, refused
     assert "caller_not_task_manager" in refused["blockers"], refused
+    submit(db, manager, epic, "closing", "approved", 1, sha=tip)
     landed = await world.case.land(tasks.get_task(epic.id), tip, caller=manager)
     assert (landed["landed"], landed["worktree_merged"]) == (True, True), landed
     assert world.case.git("rev-parse", "trunk") == tip
-
-    # Leaves close bottom-up: no-work first, then work-bearing; the phase epic closes by cascade.
-    submit(db, manager, retire, "closing", "approved", 1, disposition="moot")
-    tasks.close_task(retire.id, reason="moot", closed_in_session_id=manager)
-    for leaf, sha in ((backend, backend_sha), (frontend, frontend_fix)):
-        submit(db, manager, leaf, "closing", "approved", 1, sha=sha)
-        tasks.close_task(
-            leaf.id, reason="done", closed_in_session_id=manager, closed_commit_sha=sha
+    with session_context_for_test(manager):
+        closed = await create_task_registry(tasks).call(
+            "close_task", {"task_id": epic.id, "commit_sha": tip, "reason": "done"}
         )
-    submit(db, manager, wire, "closing", "approved", 1, sha=wire_sha)
-    tasks.close_task(
-        wire.id, reason="done", closed_in_session_id=manager, closed_commit_sha=wire_sha
-    )
-    assert tasks.get_task(phase.id).closed_at is not None
-    assert tasks.get_task(epic.id).closed_at is None
-    # A leaf's close queues no teardown while the bound epic is open.
-    leaf_closed = closed_at(tasks.get_task(wire.id))
-    assert await teardown_pass(db, daemon(db), leaf_closed + TEARDOWN_GRACE) == 0
-    for leaf, sha in ((document, doc_sha), (survey, survey_sha)):
-        submit(db, manager, leaf, "closing", "approved", 1, sha=sha)
-        tasks.close_task(
-            leaf.id, reason="done", closed_in_session_id=manager, closed_commit_sha=sha
-        )
-    tasks.close_task(epic.id, reason="done", closed_in_session_id=manager, closed_commit_sha=tip)
+    assert closed.get("closed") is True, closed
 
-    # Exactly one teardown runs, keyed on the bound epic's close.
     epic_closed = closed_at(tasks.get_task(epic.id))
     runner = daemon(db)
     assert await teardown_pass(db, runner, epic_closed) == 0
     assert await teardown_pass(db, runner, epic_closed + TEARDOWN_GRACE) > 0
     assert await teardown_pass(db, runner, epic_closed + TEARDOWN_GRACE) == 0
     assert teardown_outcome(world, team.runbook) == {"outcome": "cleaned"}
-    assert manager in terminations.ended()
+    assert primary_seats <= set(terminations.ended())
     assert session_status(db, manager) == "expired"
     assert not tree.exists()
+    assert team.binding.worktree_id is not None
     assert LocalWorktreeManager(db).get(team.binding.worktree_id) is None
     assert not branch_exists(world, team.binding.branch)
-
-    # The epic folder's final commit lands in the workspace repository.
     await drain_workspace_commits()
-    subjects = workspace_subjects(world.case.project_id)
-    assert any(f"epic-{epic.seq_num}" in subject for subject in subjects)
+    assert any(
+        f"epic-{epic.seq_num}" in subject for subject in workspace_subjects(world.case.project_id)
+    )
 
 
 @pytest.mark.asyncio
-async def test_escalated_leaf_holds_then_lands(world: TeamWorld) -> None:
-    """A third leaf rejection holds the epic until Triage's audited reset, then it lands (8.6.2)."""
+async def test_ready_tip_lands_while_sibling_is_escalated(world: TeamWorld) -> None:
+    """Ready siblings land before an isolated rejected leaf is reset and merged."""
     adopt_close_policy(world)
     db = world.case.db
     tasks = LocalTaskManager(db)
@@ -534,11 +520,12 @@ async def test_escalated_leaf_holds_then_lands(world: TeamWorld) -> None:
     tree, manager = team.tree, team.manager
     developer = team.seat("developer", "implementation")
     reviewer = team.seat("code-reviewer", "review")
+    _, stuck_tree, stuck_branch = sub_worktree(team, stuck)
 
     # Three implementation rounds, each rejected: the third rejection escalates the leaf.
     tasks.claim_task(stuck.id, developer, force=True)
     for number in (1, 2, 3):
-        sha = commit_work(db, tree, stuck, f"stuck_round_{number}.py")
+        sha = commit_work(db, stuck_tree, stuck, f"stuck_round_{number}.py")
         submit(db, developer, stuck, "implementation", "approved", number, sha=sha)
         submit(db, reviewer, stuck, "review", "rejected", number, sha=sha)
     assert tasks.get_task(stuck.id).escalated_at is not None
@@ -546,46 +533,41 @@ async def test_escalated_leaf_holds_then_lands(world: TeamWorld) -> None:
     tasks.claim_task(done.id, developer, force=True)
     done_sha = commit_work(db, tree, done, "done.py")
     submit(db, developer, done, "implementation", "approved", 1, sha=done_sha)
+    submit(db, reviewer, done, "review", "approved", 1, sha=done_sha)
 
-    # The escalated leaf holds the epic: the epic escalates once, and dispatch stops.
+    # The rejected branch and unstarted sibling never hold the ready epic tip.
     state = sync_epic_review(db, team.binding.team_id)
-    assert state.held and stuck.id in state.holds
-    held_epic = tasks.get_task(epic.id)
-    assert held_epic.escalated_at is not None
-    assert held_epic.claimed_by_session_id is None
-    assert stuck.id in (held_epic.escalation_reason or "")
-    assert sync_epic_review(db, team.binding.team_id).held
-    before = len(world.launches)
-    refused = await team.spawn("developer", task_id=waiting.id, checkout_mode="worktree")
-    assert refused.get("success") is not True, refused
-    assert len(world.launches) == before
+    assert (state.held, state.holds) == (False, (stuck.id,))
+    assert tasks.get_task(epic.id).escalated_at is None
 
-    # Nothing lands while held: no epic-tip approval can exist before every leaf is approved.
+    # The tip still requires its own review, then lands while the sibling stays escalated.
     tip = git_in(tree, "rev-parse", "HEAD")
     tasks.link_commit(epic.id, tip)
-    assert not sync_epic_review(db, team.binding.team_id).epic_tip_ready
-    held_land = await world.case.land(tasks.get_task(epic.id), tip, caller=manager)
-    assert held_land["landed"] is False, held_land
-    assert "review_approval_missing" in held_land["blockers"], held_land
+    assert sync_epic_review(db, team.binding.team_id).epic_tip_ready
+    unreviewed = await world.case.land(tasks.get_task(epic.id), tip, caller=manager)
+    assert unreviewed["landed"] is False, unreviewed
+    assert "review_approval_missing" in unreviewed["blockers"], unreviewed
+    tip_reviewer = team.seat("code-reviewer", "review")
+    submit(db, tip_reviewer, epic, "review", "approved", 1, sha=tip)
+    landed = await world.case.land(tasks.get_task(epic.id), tip, caller=manager)
+    assert (landed["landed"], landed["worktree_merged"]) == (True, True), landed
+    assert world.case.git("rev-parse", "trunk") == tip
+    assert tasks.get_task(stuck.id).escalated_at is not None
+    assert not tasks.get_task(waiting.id).commits
 
-    # Triage's audited reset starts a new review epoch for the leaf and de-escalates the epic.
+    # Triage's audited reset starts a new review epoch for only the rejected leaf.
     epoch = tasks.get_task(stuck.id).review_epoch
     tasks.de_escalate_task(stuck.id, reason="Triage audited reset")
     assert tasks.get_task(stuck.id).review_epoch == epoch + 1
-    tasks.de_escalate_task(epic.id, reason="Triage audited reset")
     lifted = sync_epic_review(db, team.binding.team_id)
     assert (lifted.held, lifted.holds) == (False, ())
-    allowed = await team.spawn("developer", task_id=waiting.id, checkout_mode="worktree")
-    assert allowed.get("success") is True, allowed
-
-    # A held team refuses new review rounds, so the finished leaf is reviewed once the hold lifts.
-    submit(db, reviewer, done, "review", "approved", 1, sha=done_sha)
 
     # The reset leaf is worked again in its new epoch, and the waiting leaf finishes.
     tasks.claim_task(stuck.id, developer, force=True)
-    fix = commit_work(db, tree, stuck, "stuck_fix.py")
+    fix = commit_work(db, stuck_tree, stuck, "stuck_fix.py")
     submit(db, developer, stuck, "implementation", "approved", 1, sha=fix)
     submit(db, reviewer, stuck, "review", "approved", 1, sha=fix)
+    git_in(tree, "merge", "--no-ff", stuck_branch, "-m", "Merge repaired leaf")
     waiting_dev = team.seat("developer", "implementation")
     tasks.claim_task(waiting.id, waiting_dev, force=True)
     waiting_sha = commit_work(db, tree, waiting, "waiting.py")
@@ -595,7 +577,6 @@ async def test_escalated_leaf_holds_then_lands(world: TeamWorld) -> None:
     # The epic tip is approved by the epic-tip reviewer and lands through the Dev Manager.
     tip = git_in(tree, "rev-parse", "HEAD")
     tasks.link_commit(epic.id, tip)
-    tip_reviewer = team.seat("code-reviewer", "review")
     assert sync_epic_review(db, team.binding.team_id).epic_tip_ready
     submit(db, tip_reviewer, epic, "review", "approved", 1, sha=tip)
     landed = await world.case.land(tasks.get_task(epic.id), tip, caller=manager)

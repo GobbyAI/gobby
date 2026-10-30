@@ -36,12 +36,14 @@ from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.native_publish import native_publisher_from_environment
 from gobby.servers.websocket.server import WebSocketServer
+from gobby.storage.hub.postgres_pool import is_pool_unavailable
+from gobby.storage.managed_credential_types import CredentialRotationLostRaceError
 from gobby.storage.model_metadata import ModelMetadataStore
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
     from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal, PostgresDirect
-    from gobby.storage.managed_credential_types import ManagedCredential, SecretStore
+    from gobby.storage.managed_credential_types import ManagedCredential, OwnerKind, SecretStore
     from gobby.storage.managed_credentials import ManagedCredentialManager
     from gobby.storage.terminals import AttachLocator
     from gobby.terminals.frame_client import FrameClient
@@ -410,6 +412,70 @@ def init_servers(runner: GobbyRunner) -> None:
         )
 
 
+# In-request backoff for a transient managed rotation failure. A principal that
+# stays due is re-attempted by ManagedCredentialManager.rotate_due on each sweep.
+_ROTATION_RETRY_DELAYS_SECONDS = (0.25, 0.5, 1.0)
+
+
+def _transient_rotation_failure(error: BaseException) -> bool:
+    """Whether a retry can outlast a managed rotation failure."""
+    if isinstance(error, TimeoutError | CredentialRotationLostRaceError):
+        return True
+    return is_pool_unavailable(error)
+
+
+def _issue_managed_with_retry(
+    credentials: ManagedCredentialManager,
+    principal: GrantPrincipal,
+    *,
+    execution_id: UUID,
+    session_id: UUID,
+    expires_at: datetime,
+) -> ManagedCredential:
+    """Issue or rotate a managed principal, retrying transient failures in-request.
+
+    Every attempt re-reads the live binding, so a retry after a lost race reuses the
+    successor the competing request published instead of rotating past it.
+    """
+    owner_kind: OwnerKind = "tool_chat" if principal.kind == "tool_chat" else "agent_run"
+
+    def attempt() -> ManagedCredential:
+        if credentials.get_live_binding_generation(execution_id) is None:
+            return credentials.issue(
+                managed_execution_id=execution_id,
+                owner_kind=owner_kind,
+                session_id=session_id,
+                agent_run_id=(execution_id if principal.kind == "agent_run" else None),
+                expires_at=expires_at,
+            )
+        reusable = credentials.reuse_current_during_drain(
+            managed_execution_id=execution_id,
+            owner_kind=owner_kind,
+            session_id=session_id,
+            project_id=UUID(principal.project_id),
+        )
+        if reusable is not None:
+            return reusable
+        return credentials.rotate(managed_execution_id=execution_id, expires_at=expires_at)
+
+    for delay in _ROTATION_RETRY_DELAYS_SECONDS:
+        try:
+            return attempt()
+        except Exception as error:
+            if not _transient_rotation_failure(error):
+                raise
+            logger.warning(
+                "managed credential rotation transient failure; retrying",
+                extra={
+                    "execution_id": str(execution_id),
+                    "error_type": type(error).__name__,
+                    "retry_in_seconds": delay,
+                },
+            )
+            time.sleep(delay)
+    return attempt()
+
+
 def issue_grant_postgres(
     principal: GrantPrincipal,
     *,
@@ -470,29 +536,13 @@ def issue_grant_postgres(
                 "managed grant requires execution and session identity",
                 code="claims_mismatch",
             )
-        execution_id = UUID(principal.execution_id)
-        if credentials.get_live_binding_generation(execution_id) is None:
-            managed = credentials.issue(
-                managed_execution_id=execution_id,
-                owner_kind="tool_chat" if principal.kind == "tool_chat" else "agent_run",
-                session_id=UUID(principal.session_id),
-                agent_run_id=(execution_id if principal.kind == "agent_run" else None),
-                expires_at=expires_at,
-            )
-        else:
-            reusable = credentials.reuse_current_during_drain(
-                managed_execution_id=execution_id,
-                owner_kind="tool_chat" if principal.kind == "tool_chat" else "agent_run",
-                session_id=UUID(principal.session_id),
-                project_id=UUID(principal.project_id),
-            )
-            if reusable is None:
-                managed = credentials.rotate(
-                    managed_execution_id=execution_id,
-                    expires_at=expires_at,
-                )
-            else:
-                managed = reusable
+        managed = _issue_managed_with_retry(
+            credentials,
+            principal,
+            execution_id=UUID(principal.execution_id),
+            session_id=UUID(principal.session_id),
+            expires_at=expires_at,
+        )
         return PostgresDirect(
             dsn=managed_bootstrap_dsn(managed.bootstrap_path),
             role_name=managed.role_name,

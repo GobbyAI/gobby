@@ -37,7 +37,9 @@ assistant's internal planning posture and does not satisfy this gate.
 
 Use `EnterPlanMode` when the runtime provides it. When no direct Plan Mode tool
 is exposed, use `gobby-sessions:send_keys(session_id, keys, literal=true)` to
-send the provider's native Gobby plan command:
+send the provider's native Gobby plan command. Only the Orchestrator and
+Assistant hold `send_keys`; any other seat without a direct Plan Mode tool reports
+the gap to Triage:
 
 - Codex: `$gobby plan\n`
 - Claude sessions whose installed router is slash-based:
@@ -87,8 +89,9 @@ reason in `Reason/Planned Fix`. Do not silently drop stale comments.
 ## Workflow
 
 1. If not already in native Plan Mode, enter Plan Mode with `EnterPlanMode` or
-   the provider-aware `gobby-sessions:send_keys` fallback; verify native Plan
-   Mode is active, then complete read-only triage before implementation.
+   the provider-aware `gobby-sessions:send_keys` fallback where your definition
+   holds it; verify native Plan Mode is active, then complete read-only triage
+   before implementation.
 2. Create or claim a `gobby-tasks` task before edits.
 3. Ingest all supplied findings and every `./reports/coderabbit-*.md` file.
 4. For each report, identify whether it contains actionable findings or only a

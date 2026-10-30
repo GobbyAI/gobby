@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 169,
+  "site_count": 168,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -591,16 +591,6 @@
         "method-assign"
       ],
       "statement": "manager . _load_from_db = MagicMock ( return_value = [ ] )"
-    },
-    {
-      "fingerprint": "441313df9467b0c96c046606b079dcb914ac1736ef174fd1a97662135be30fcf",
-      "path": "tests/hooks/test_skill_manager.py",
-      "symbol": "TestProjectScopedSkillCache.test_filesystem_fallback_is_never_cached",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "manager . _load_from_db = MagicMock ( side_effect = RuntimeError ( \"transient\" ) )"
     },
     {
       "fingerprint": "e793753a7f7c7cdf41c8a8d111279d8060d9d395a606ed8ae61484ccb20c716e",

@@ -471,7 +471,9 @@ Generated files live outside the workspace under
 
 - `assets/settings.json` is mode `0600` and its canonical bytes determine the effective
   policy hash.
-- `logs/violations.jsonl` is mode `0600` and receives SRT violation events.
+- `logs/violations.jsonl` is mode `0600` and receives SRT violation events and
+  proxy CONNECT failures (`source: srt-proxy`). The proxy shares the agent's
+  terminal, so it never writes these records to stdout or stderr.
 
 Agent-run records expose the backend, enforcement state, SRT version, policy
 hash, violation count, and up to the 100 most recent violation events. They do

@@ -8263,6 +8263,10 @@
       "definition": "CREATE INDEX idx_completion_subscribers_completion ON $schema.completion_subscribers USING btree (completion_id)"
     },
     {
+      "name": "idx_completion_subscribers_session",
+      "definition": "CREATE INDEX idx_completion_subscribers_session ON $schema.completion_subscribers USING btree (session_id)"
+    },
+    {
       "name": "idx_config_store_source",
       "definition": "CREATE INDEX idx_config_store_source ON $schema.config_store USING btree (source)"
     },
@@ -8385,6 +8389,10 @@
     {
       "name": "idx_ism_completion_lookup",
       "definition": "CREATE INDEX idx_ism_completion_lookup ON $schema.inter_session_messages USING btree (to_session, message_type) WHERE (metadata_json IS NOT NULL)"
+    },
+    {
+      "name": "idx_ism_delivered_retention",
+      "definition": "CREATE INDEX idx_ism_delivered_retention ON $schema.inter_session_messages USING btree (delivered_at, id) WHERE (delivered_at IS NOT NULL)"
     },
     {
       "name": "idx_ism_undelivered",
@@ -8907,8 +8915,16 @@
       "definition": "CREATE INDEX idx_terminals_project ON $schema.terminals USING btree (project_id)"
     },
     {
+      "name": "idx_terminals_reconcilable",
+      "definition": "CREATE INDEX idx_terminals_reconcilable ON $schema.terminals USING btree (machine_id, created_at) WHERE (state = ANY (ARRAY['pending'::text, 'live'::text, 'orphaned'::text]))"
+    },
+    {
       "name": "idx_terminals_run",
       "definition": "CREATE INDEX idx_terminals_run ON $schema.terminals USING btree (agent_run_id) WHERE (agent_run_id IS NOT NULL)"
+    },
+    {
+      "name": "idx_terminals_session",
+      "definition": "CREATE INDEX idx_terminals_session ON $schema.terminals USING btree (session_id, updated_at DESC, id DESC)"
     },
     {
       "name": "idx_terminals_spawn_key",

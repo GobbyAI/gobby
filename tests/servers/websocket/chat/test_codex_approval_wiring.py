@@ -79,5 +79,6 @@ async def test_attached_client_routes_mcp_approval_through_lifecycle(
         {
             "tool_name": "mcp__gobby__call_tool",
             "tool_input": {"server_name": "gobby-tasks", "tool_name": "get_task"},
+            "tool_use_id": "e1",
         }
     )

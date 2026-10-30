@@ -43,7 +43,10 @@ templates under `src/gobby/install/shared/workflows/rules/memory-lifecycle/`
 and `.../review-learning/` call `surface_memories` and the review-learning
 recall tools, and `src/gobby/workflows/engine/delivery_formatting.py`,
 `mcp_injections.py` and `injection_tracking.py` format and track delivery.
-This family owns the tools those rules call, not the delivery. The AI family
+This family owns the tools those rules call, not the delivery. The delivery
+formatter and the hooks MCP dispatcher's review-lesson formatter still import
+the Python memory and review-learning code, so 8.6 names them as pieces of
+#21567 and #24151 and depends on both. The AI family
 (#21587, `.gobby/plans/gdaemon-ai-providers-family.md`) owns `/api/embeddings`,
 `/api/llm`, the embedding switch and the `gobby embeddings` CLI; this plan
 consumes its text-generation service (#25097). The Qdrant CLI and
@@ -52,23 +55,44 @@ consumes its text-generation service (#25097). The Qdrant CLI and
 #24819 and is out of scope. The projects family owns the cross-runtime project
 write fence (#25059); every native writer here uses it.
 
-**Non-goals: background graph queue and dream-hidden purge.**
-`src/gobby/sessions/lifecycle.py::SessionLifecycleManager._kg_queue_loop` and
-`::_purge_dream_hidden_memories` stay in Python with the sessions family that
-schedules them. No ledger row serves them. Native writes keep producing
-`graph_status = 'pending'` rows that loop consumes, and 2.4 and 4.1 expose the
-per-memory extraction and purge functions a future native loop calls. The
+**No Python left (Orchestrator ruling, 2026-10-28).** The port ends with
+the family fully in Rust: no Python policy layer, loopback client, rollback
+route or direct-storage writer stays in the path. 7.3 ports the six memory
+background jobs no ledger row serves (the graph queue, dream-hidden purge,
+store reconciliation, startup scope repair, interrupted-run reconciliation
+and the empty-collection refill), which Python schedules from the sessions
+lifecycle and the runner. 8.5 makes the family native-only and deletes the
+Python HTTP routes and their agent capability rows. After 8.5 the Python
+tool modules serve only in-process callers that bypass the front door, so
+8.6 deletes them with the Python memory and review-learning services once
+every other family's Rust plan has moved its Python callers off them; each
+such caller is named in 8.6 against its owning epic. The
 nightly dream schedule is bound by the cron plan's #25024, which binds the
-service 4.3 names.
+service 4.3 names. The public `gobby memory` entry stays 8.3's literal
+argument forwarder inside the Python CLI shell, as the AI plan's 7.7 keeps
+`gobby embeddings`; it holds no memory logic.
 
-**Cross-plan contention.** `crates/gdaemon/src/main.rs::Command` and `::main`
-are also targeted by `.gobby/plans/gdaemon-skills-family.md` 5.1 and
-`.gobby/plans/gdaemon-ai-providers-family.md` 7.5; 7.1 here edits them. The
-landings serialize and the later one rebases. `crates/gcore/src/qdrant.rs`
+**Cross-plan contention.** 7.1 here edits `crates/gdaemon/src/main.rs::Command`
+and `::main`. Six other plans also target `crates/gdaemon/src/main.rs`:
+`.gobby/plans/gdaemon-skills-family.md` 5.1 (and 2.6),
+`.gobby/plans/gdaemon-ai-providers-family.md` 7.5,
+`.gobby/plans/agents-family.md` 10.1 (and 10.2, 10.3),
+`.gobby/plans/node-install-enrollment.md` 2.1 and 4.3,
+`.gobby/plans/gdaemon-cron-family.md` 3.3 and
+`.gobby/plans/gdaemon-projects-files-docs-family.md` 3.4 and 5.3. The
+landings serialize and each later one rebases. `crates/gcore/src/qdrant.rs`
 gains two read functions in 1.3 and 2.3; the AI plan's #25112 adds alias
 operations to the same module, and the later landing rebases.
-`crates/gai/src/lib.rs` gains one re-export in 2.4 after #25097 lands
-(Decision 6).
+`crates/gai/src/lib.rs` gains the re-export of #25097's service in 2.4 only
+when it is absent; the sessions plan's 4.1 adds the same re-export when
+memory has not (Decision 6). The sessions plan edits
+`src/gobby/sessions/lifecycle.py` and keeps the knowledge-graph queue and
+dream-hidden purge in `SessionLifecycleManager`; 7.3 gates them and 8.6
+deletes them after #21562's leaves land. Most family plans edit the Python
+runner composition files, so 8.6 rebases last and its three delete-lines
+proofs are re-pinned at expansion. The code-index plan's 8.3 moves
+`_initialize_vector_store` out of `runner_lifecycle_subsystems.py` and pins
+a shutdown proof against an older blob; whichever lands second re-pins.
 
 ## Decision Record
 `kind: framing`
@@ -87,27 +111,40 @@ operations to the same module, and the later landing rebases.
    through the `_Entity.cluster_id` labels that
    `recluster_knowledge_graph_entities` writes with scikit-learn's HDBSCAN.
    The lockfile holds no HDBSCAN, linfa or ndarray crate. Chosen: keep the
-   tool and the expansion, and add one pure-Rust HDBSCAN crate from crates.io,
-   pinned by 2.5, as the AI plan's Decision 9 authorized `multer`. The
-   silhouette score is computed by hand. Labels keep HDBSCAN semantics: noise
+   tool and the expansion, and add the pure-Rust `hdbscan` crate from
+   crates.io, pinned to exactly `0.12.0` by 2.5, as the AI plan's Decision 9
+   authorized `multer`. It is dual-licensed MIT OR Apache-2.0, needs no
+   native library on macOS or Linux, and brings one new transitive crate,
+   `kdtree` 0.7.0 (MIT OR Apache-2.0); its `num-traits` and `thiserror` 1.x
+   dependencies are already locked and its optional `rayon` feature stays
+   off. It matches scikit-learn's settings for this call: euclidean distance
+   by default, excess-of-mass stability selection (its only selection mode),
+   `min_samples` defaulting to the minimum cluster size, and a core distance
+   that counts the point itself. `petal-clustering` 0.14.0 was rejected:
+   it declares Rust 1.90, above the workspace's 1.88, and pulls in
+   `ndarray`. The silhouette score is computed by hand. Labels keep HDBSCAN semantics: noise
    is -1 and clusters are numbered from 0. The new dependency goes to Josh
    with the stamped plan. If Josh rejects it, the Orchestrator reopens 2.5
    before approval for the recorded fallback: gcore's Leiden
    (`crates/gcore/src/graph_analytics.rs`) over a k-nearest-neighbour graph of
    entity embeddings, with no noise class, under an exact waiver.
-3. **Memory's session-variable writes (Orchestrator MEM-D2, option A).**
-   `get_memory` appends to `accessed_memory_ids` (bounded at 1000, each
-   record carrying the claimed task id), and `review_task_memories` writes
-   `_memory_task_review_records` (bounded at 50) and
-   `_memory_review_stop_delivered`. No native `session_variables` writer
-   exists; `.gobby/plans/rust-rule-evaluation.md` D1.2 assigns the general
-   native commit to sessions #21562, which is unplanned. Leaf 6.1 owns a
-   narrow native writer for exactly those three keys. It is key-scoped, runs
-   under `SessionVariableMutation`'s explicit advisory key from #25262 (the
-   Orchestrator confirmed the edge), and matches
-   `src/gobby/workflows/state_manager.py::SessionVariableManager.upsert_bounded_list_variable`.
-   The sessions family absorbs it when that family lands; its plan records
-   this seam.
+3. **Memory's session-variable writes (Orchestrator MEM-D2, option A, as
+   corrected by ORCH-REV-MEM-2).** `get_memory` appends to
+   `accessed_memory_ids` (bounded at 1000, each record carrying the claimed
+   task id), and `review_task_memories` writes `_memory_task_review_records`
+   (bounded at 50) and `_memory_review_stop_delivered`. The sessions plan
+   (`.gobby/plans/sessions-family.md`, #21562, planned under #25253) owns the
+   native `session_variables` writer. Its 2.4 exports a key-scoped variable
+   read and mutation API under `SessionVariableMutation`'s explicit advisory
+   key from #25262. It also absorbs the bounded-list upsert of
+   `src/gobby/workflows/state_manager.py::SessionVariableManager.upsert_bounded_list_variable`
+   that an earlier draft of this plan placed in
+   `crates/gmemory/src/session_vars.rs`; that plan's Writer records the
+   absorption. gmemory writes no `session_variables` row and takes no lock
+   itself. Leaf 6.1 keeps only memory's knowledge of the three keys (names,
+   bounds and record identities) and calls that API, so it depends on
+   #21562. It keeps its #25262 edge because its tests assert that a Python
+   writer and a native writer of one session serialize on that key.
 4. **Native embedding serving lease (Orchestrator MEM-D3, option A; amends
    the approved AI plan, flagged for Josh).** AI 7.4 states that the native
    daemon holds no serving lease and writes no collection. That stops being
@@ -119,10 +156,13 @@ operations to the same module, and the later landing rebases.
    module, `crates/gcore/src/embedding_generation.rs`. It prepares,
    acknowledges, renews and fences a serving lease, asserts serving before
    every native vector write, appends projection changes and reads managed
-   projection targets. gdaemon holds one lease with instance id
+   projection targets. Its managed lifecycle ports Python's renewal,
+   transient backoff, deadline fencing, reacquisition, projection repair and
+   rebuild-on-mismatch, so a lease that loses serving recovers instead of
+   staying fenced. gdaemon holds one lease with instance id
    `UUIDv5(machine_id, "gdaemon")`, distinct from Python's and stable across
    restarts. #25071's native tool-embeddings writer reuses the module. The
-   Orchestrator records AI 7.4's premise as amended.
+   AI plan's 7.4 records the amended premise (commit 23d0c055b8).
 5. **Placement.** The family composes only where the hub pool exists, as
    `crates/gdaemon/src/serve.rs::run` composes `gobby_runtime::RuntimeFamily`
    inside `if let Some(pool) = &pool`: hub and standalone. A node composes
@@ -133,7 +173,8 @@ operations to the same module, and the later landing rebases.
 6. **LLM and embeddings.** Dream planning and knowledge-graph extraction call
    the AI family's text-generation service in process. The AI crate exports
    only its family-push function, so 2.4 adds one re-export of the #25097
-   service to `crates/gai/src/lib.rs`, keeping crates/AGENTS.md's rule that
+   service to `crates/gai/src/lib.rs` when that re-export is absent (the
+   sessions plan's 4.1 adds the same one), keeping crates/AGENTS.md's rule that
    families reach each other only through public APIs. The `memory.dream` and
    `memory.kg` feature profiles (`feature_mid`, `feature_low`) and candidate
    lists resolve through that service. Embeddings reuse the landed
@@ -149,12 +190,40 @@ operations to the same module, and the later landing rebases.
    `ReviewLearningPatternMutation` keeps its explicit key
    `review_learning_pattern:{project_id}:{pattern_key}`
    (`src/gobby/storage/hub/postgres_pool.py::advisory_lock_keys`).
-8. **Cross-family reads.** The tasks (#21560) and sessions (#21562) families
-   are unported. Native memory reads their rows directly through the shared
-   pool, read-only: `surface_memories` reads the session's `project_id` and
-   `last_assistant_content`; `get_memory` reads the claimed task id;
-   `review_task_memories` reads task and session rows. Its only writes outside
-   memory tables are Decision 3's three session-variable keys.
+8. **Cross-family reads (ORCH-REV-MEM-1, ROADMAP decision 16).** Native
+   memory reaches tasks and sessions data only through the owning crates'
+   public APIs, never their tables. 5.1, the first consumer, adds path
+   dependencies on `gobby-tasks` (#21560, `.gobby/plans/tasks-family.md`) and
+   `gobby-sessions` (#21562, `.gobby/plans/sessions-family.md`). Both depend
+   on gcore and neither depends on gmemory, so the crate graph stays acyclic.
+   The calls are:
+   - Session lookup. The review-learning scope resolvers (5.1) and
+     `surface_memories`, `get_memory` and `review_task_memories` (6.2) resolve
+     the caller's session, its `project_id` and its `last_assistant_content`
+     through sessions 1.1's store and `resolve_session_ref`, as
+     `src/gobby/mcp_proxy/tools/memory_session.py::resolve_session` does.
+   - Claimed task. `get_memory` takes the caller's newest open claimed task
+     through tasks 1.2's listing with a `claimed_by_session_id` filter, as
+     `memory_session.py::resolve_claimed_task_id` calls
+     `LocalTaskManager.list_tasks`.
+   - Review task. `review_task_memories` resolves its task through tasks
+     1.1's `resolve_read`, as `memory_review.py::_resolve_task` does, and
+     decides operator review through tasks 2.1's `is_operator_coordinator`.
+   - Session lineage. `review_task_memories` checks that the closing session
+     descends from the caller through a gsessions export porting
+     `src/gobby/storage/sessions/_lineage_discovery.py::_LineageDiscoveryMixin.is_ancestor`.
+     The sessions plan does not name that export yet, so the Orchestrator
+     routes it to that plan's Writer.
+   - Retirement listing. Class recall (5.1) lists tasks by project, closed
+     state and label through tasks 1.2's listing, as
+     `src/gobby/review_learning/class_recall.py::RetirementTaskManager` does.
+   - Session variables. Decision 3.
+
+   5.1 and 6.2 depend on #21560 and #21562; 6.1 depends on #21562. The
+   owning leaves are tasks 1.1, 1.2 and 2.1 and sessions 1.1 and 2.4, and
+   the Orchestrator may narrow these epic edges to those leaves' tasks at
+   expansion. Memory's only writes outside memory tables are Decision 3's
+   three keys, through the sessions API.
 9. **CLI architecture.** Python's record commands build
    `MemoryManager(db, config.memory)` in process with no vector store,
    embedder or graph (`src/gobby/cli/memory/__init__.py::get_memory_manager`),
@@ -168,7 +237,10 @@ operations to the same module, and the later landing rebases.
     parents the seam's phase sub-epic under #25070. #25116's existing edge
     on #25070 then waits on the seam leaf. The Orchestrator removes #25070's
     `needs-planning` label after expansion. #25024 is blocked on the epic;
-    it binds `MemoryDreamService` from 4.3.
+    it binds `MemoryDreamService` from 4.3. #25071 reuses 2.1's lease module
+    and implements 3.1's `CollectionRebuildSeam`, so at expansion the
+    Orchestrator adds `#25071` blocked-by edges on the tasks expanded from
+    2.1 and 3.1 (ORCH-REV-MEM-4).
 11. **Debt-first review (memory 9066f1eb).** The disposition list below
     decides every surfaced debt item. Two candidates proved not to be debt.
     The CLI's in-process manager writes no vectors (Decision 9), so it
@@ -181,9 +253,11 @@ operations to the same module, and the later landing rebases.
     `{{ name }}` and one `{{ name | default('literal') }}`. Restraint stops at
     a renderer for exactly that subset in the memory crate (2.4). An override
     that uses other syntax fails with a typed validation error naming the
-    template path and calls no model; it never renders partially. A second
-    native consumer of prompts would move this renderer to gcore rather than
-    copy it.
+    template path and calls no model; it never renders partially. Python
+    renders such an override, so the refusal is a changed behavior on the
+    eight surfaces that report a graph rebuild or a dream run, each under an
+    exact waiver (Debt not to port). A second native consumer of prompts
+    would move this renderer to gcore rather than copy it.
 
 ## Debt not to port
 `kind: framing`
@@ -255,6 +329,43 @@ public surfaces; parity matches their intentional contracts, not accidents.
   `backup_memories` falls back the same way when no project is current.
   Native reads and writes the current project's backup file, using the
   personal project when none is current, as `list_memories` does. Owner 6.2.
+- **Prompt overrides outside the rendered subset.** Python renders any
+  `prompts` record the memory jobs load with full Jinja
+  (`src/gobby/prompts/loader.py::PromptLoader.render`): a global override of
+  the three graph templates, or a project or global override of the dream
+  template at the configured `prompt_path`. Native renders Decision 12's
+  subset and refuses other syntax with a validation-class error naming the
+  template path, before any model call. A graph rebuild resolves and parses
+  its three templates before it marks any memory pending, so a refusal fails
+  the whole job and leaves every row's graph state unchanged: a foreground
+  rebuild returns the error, and the job status ends `failed` with it,
+  unredacted. A dream run refuses at its first planner page, before any
+  action applies, and ends `failed` with the error, the branch Python takes
+  for a Jinja error, which `src/gobby/memory/dream/planner.py`'s page
+  isolation does not catch. Triggers keep their admission responses
+  (`POST /memory/dream`, `memory_dream`, a background rebuild's 202 and
+  `invalidate`); the change shows on the eight surfaces that report the job.
+  Corpus cases for other rows use the bundled templates. Owners 2.4 and 4.3
+  for HTTP, 6.2 for MCP and 7.2 for CLI. 7.3's graph queue job serves no
+  ledger row and needs no waiver: it records the refusal as that memory's
+  deterministic graph failure before any model call, so the memory leaves
+  the queue after `max_deterministic_attempts`, where Python would have
+  extracted it.
+
+**FIX**, with no waiver because no recorded surface outcome changes:
+
+- **Rationale missing from projection identity.**
+  `src/gobby/memory/services/secondary_reconciliation.py::_snapshot_matches`
+  and its conditional `vector_needs_reindex` clear compare content, project,
+  global flag, memory type and liveness, but not `rationale`. The vector
+  embeds content and rationale together (`memory_embedding_text`), and
+  `src/gobby/memory/services/lifecycle.py` reprojects on a rationale-only
+  edit. A projection paused after its embed can therefore clear the flag a
+  newer rationale-only edit set and leave a stale vector marked clean. Native
+  compares rationale null-safely in both. The difference appears only under
+  that interleaving, which 2.2.12 and 2.3.7 prove. A paused Python projection
+  keeps the omission until 8.6 retires the family's Python writers or
+  #25272 fixes the Python side. Owners 2.2 and 2.3.
 
 **Waiver inventory:**
 
@@ -282,8 +393,11 @@ public surfaces; parity matches their intentional contracts, not accidents.
 | `memory.http-crossrefs-rebuild.reported-failures` | `HTTP POST /api/memories/crossrefs/rebuild` | 2.3 |
 | `memory.http-embeddings-reindex.internal-error-redaction` | `HTTP POST /api/memories/embeddings/reindex` | 2.3 |
 | `memory.http-graph-rebuild.internal-error-redaction` | `HTTP POST /api/memories/graph/rebuild` | 2.4 |
+| `memory.http-graph-rebuild.unsupported-prompt-syntax` | `HTTP POST /api/memories/graph/rebuild` | 2.4 |
 | `memory.http-graph-rebuild-status.internal-error-redaction` | `HTTP GET /api/memories/graph/rebuild/status` | 2.4 |
+| `memory.http-graph-rebuild-status.unsupported-prompt-syntax` | `HTTP GET /api/memories/graph/rebuild/status` | 2.4 |
 | `memory.http-graph-clear.internal-error-redaction` | `HTTP POST /api/memories/graph/clear` | 2.4 |
+| `memory.http-dream-status.unsupported-prompt-syntax` | `HTTP GET /memory/dream/{run_id}` | 4.3 |
 | `memory.http-dream-revert.state-conflict-status` | `HTTP POST /memory/dream/{run_id}/revert` | 4.3 |
 | `memory.mcp-backup-memories.internal-error-redaction` | `MCP gobby-memory:backup_memories` | 6.2 |
 | `memory.mcp-backup-memories.project-backup-path` | `MCP gobby-memory:backup_memories` | 6.2 |
@@ -294,12 +408,14 @@ public surfaces; parity matches their intentional contracts, not accidents.
 | `memory.mcp-get-memory.internal-error-redaction` | `MCP gobby-memory:get_memory` | 6.2 |
 | `memory.mcp-get-related-memories.internal-error-redaction` | `MCP gobby-memory:get_related_memories` | 6.2 |
 | `memory.mcp-list-memories.internal-error-redaction` | `MCP gobby-memory:list_memories` | 6.2 |
+| `memory.mcp-memory-dream-status.unsupported-prompt-syntax` | `MCP gobby-memory:memory_dream_status` | 6.2 |
 | `memory.mcp-memory-stats.internal-error-redaction` | `MCP gobby-memory:memory_stats` | 6.2 |
 | `memory.mcp-move-memory.internal-error-redaction` | `MCP gobby-memory:move_memory` | 6.2 |
 | `memory.mcp-promote-memory-to-global.internal-error-redaction` | `MCP gobby-memory:promote_memory_to_global` | 6.2 |
 | `memory.mcp-rebuild-crossrefs.internal-error-redaction` | `MCP gobby-memory:rebuild_crossrefs` | 6.2 |
 | `memory.mcp-rebuild-crossrefs.reported-failures` | `MCP gobby-memory:rebuild_crossrefs` | 6.2 |
 | `memory.mcp-rebuild-knowledge-graph.internal-error-redaction` | `MCP gobby-memory:rebuild_knowledge_graph` | 6.2 |
+| `memory.mcp-rebuild-knowledge-graph.unsupported-prompt-syntax` | `MCP gobby-memory:rebuild_knowledge_graph` | 6.2 |
 | `memory.mcp-recluster-knowledge-graph-entities.internal-error-redaction` | `MCP gobby-memory:recluster_knowledge_graph_entities` | 6.2 |
 | `memory.mcp-reindex-embeddings.internal-error-redaction` | `MCP gobby-memory:reindex_embeddings` | 6.2 |
 | `memory.mcp-restore-memories.internal-error-redaction` | `MCP gobby-memory:restore_memories` | 6.2 |
@@ -315,7 +431,10 @@ public surfaces; parity matches their intentional contracts, not accidents.
 | `memory.mcp-recall-review-lessons-for-files.internal-error-redaction` | `MCP gobby-review-learning:recall_review_lessons_for_files` | 6.3 |
 | `memory.mcp-record-review-lesson.internal-error-redaction` | `MCP gobby-review-learning:record_review_lesson` | 6.3 |
 | `memory.mcp-retire-review-lesson.internal-error-redaction` | `MCP gobby-review-learning:retire_review_lesson` | 6.3 |
+| `memory.cli-dream.unsupported-prompt-syntax` | `CLI gobby memory dream` | 7.2 |
+| `memory.cli-dream-status.unsupported-prompt-syntax` | `CLI gobby memory dream status` | 7.2 |
 | `memory.cli-invalidate.tracked-rebuild` | `CLI gobby memory invalidate` | 7.2 |
+| `memory.cli-rebuild-graph.unsupported-prompt-syntax` | `CLI gobby memory rebuild-graph` | 7.2 |
 
 Each owner adds its entries to `docs/contracts/parity-waivers.json` and depends
 on #24963, which owns that file's schema, loader and consumers. Entry fields
@@ -372,12 +491,14 @@ state, never by running the effect twice in production.
   HTTP handlers, search, graph, writes, dream and MCP each have their own
   module files, and test modules live in `tests/` or `<module>/tests.rs`,
   never inline (crates/AGENTS.md).
-- 1.1 declares the crate's dependency set except `gobby-ai` (2.4) and the
-  HDBSCAN crate (2.5): `gobby-core` with its `postgres` and qdrant/falkor
+- 1.1 declares the crate's dependency set except `gobby-ai` (2.4), the
+  HDBSCAN crate (2.5) and `gobby-tasks` and `gobby-sessions` (5.1,
+  Decision 8): `gobby-core` with its `postgres` and qdrant/falkor
   features, `gobby-runtime` for `crates/gruntime/src/config.rs::active_state`
   and the secret store, axum, tokio, serde, serde_json, uuid, chrono, clap
   with `derive` for 7.1, and `reqwest` with `blocking` for 7.2. Only 1.1,
-  2.4, 2.5 and 8.2 edit `crates/gmemory/Cargo.toml` or `Cargo.lock`.
+  2.4, 2.5 and 5.1 edit `crates/gmemory/Cargo.toml`; those leaves, 8.2, 8.5
+  and 8.6 are the only ones that edit `Cargo.lock`.
 - gcore's Qdrant, FalkorDB and embeddings clients are blocking. Async handlers
   call them through `tokio::task::spawn_blocking`.
 - Storage reuses existing tables: `memories`, `memory_crossrefs`,
@@ -386,9 +507,9 @@ state, never by running the effect twice in production.
   `session_variables` (Decision 3's keys only), and read-only `sessions` and
   `tasks`. Review lessons are `memories` rows with lesson tags. No schema
   change.
-- Source changes are built and tested before deployment. 8.2 is the one
-  shipping commit and owns release bumps and promotion; earlier commits are
-  unshipped source commits. Read the current `project_policy.release_guidance`
+- Source changes are built and tested before deployment. 8.2, 8.5 and 8.6
+  are the shipping commits and own their release bumps and promotion; the
+  other commits are unshipped source commits. Read the current `project_policy.release_guidance`
   at execution, honor the published and unpublished binary distinction, and
   use `src/gobby/install/bin_set_coherence.py::promote_workspace_binary_set`.
 - Heavy Rust commands require the Release Manager's heavy-work admission and
@@ -425,8 +546,10 @@ which key on `gobby-review-learning` tool names. No Rust crate calls
 `src/gobby/servers/browser_sessions.py::browser_route_allowed` limits managed
 browser cookies to GET, HEAD and OPTIONS. No memory row is a runtime-grant
 route. The Python route, tool and service modules stay as the proxy backend
-until the global Python removal; this plan edits none of them except the CLI
-package that 8.3 replaces.
+until 8.5 makes the family native-only. Before then this plan edits them only
+where 7.3 gates the Python jobs and 8.3 replaces the CLI package; 8.5 deletes
+the routes, and 8.6 deletes the tool and service modules with the family's
+runner wiring.
 
 ## P0: Freeze the family contract
 `kind: framing`
@@ -453,7 +576,7 @@ and `src/gobby/cli/memory/main.py::memory`. Existing Python fixtures live in
 `tests/cli/test_memory_coverage.py` and `tests/servers/routes/`. Generate a
 committed, versioned JSON corpus from isolated Python fixtures: method and
 path, tool and arguments, or command and argv; headers; seeded `memories`,
-`memory_crossrefs`, dream, session and task rows; seeded Qdrant points and
+`memory_crossrefs`, `prompts`, dream, session and task rows; seeded Qdrant points and
 FalkorDB nodes; stub embedding and generation behavior; expected response,
 exit code and effects. Only explicitly enumerated volatile fields are
 normalized: generated UUIDs, timestamps, job IDs and checkout paths.
@@ -468,11 +591,17 @@ matching and mismatched session identity, using Python's
 record the exact input schema, description, brief projection and definition
 hash. For every CLI row, record help text, stdout, stderr and exit codes.
 
-Consume #24963's one `docs/contracts/parity-waivers.json` loader. The 56
+Consume #24963's one `docs/contracts/parity-waivers.json` loader. The 64
 changed behaviors in the waiver inventory keep their Python baseline and get
 case-specific `Waived` assertions with a required native outcome, never masks
 or `Skipped`. Each redaction case injects an unexpected fault into the Python
-fixture to record the raw-text baseline. This leaf uses test-only waiver
+fixture to record the raw-text baseline. Each unsupported-prompt-syntax case
+seeds a `prompts` row whose template uses a `{% if %}` block: a global
+override of `memory/extract_relations` for the four graph-rebuild surfaces
+and a project override of `memory/dream` for the four dream-status surfaces.
+Python's baseline renders it and completes against the stub; the native
+assertion requires the validation-class error naming the template path and
+no stub generation request. This leaf uses test-only waiver
 entries and native-result doubles to check loader matching; the owning leaves
 add the production entries and replay against real handlers. No dependency
 cycle is introduced.
@@ -491,7 +620,7 @@ cycle is introduced.
   including agent-token admission on the two graph rows only and managed
   cookies refused on every mutation.
   test: `tests/contracts/test_memory_parity_corpus.py::test_http_admission_matrix`.
-- 0.1.4 - Each of the 56 changed behaviors resolves to one exact-surface test
+- 0.1.4 - Each of the 64 changed behaviors resolves to one exact-surface test
   waiver with explicit native assertions, while untouched cases on the same
   surface stay `Passed`.
   test: `tests/contracts/test_memory_parity_corpus.py::test_debt_waivers_are_behavior_scoped`.
@@ -656,6 +785,7 @@ Targets:
 - `crates/gmemory/src/search/results.rs`
 - `crates/gmemory/src/search/access.rs`
 - `crates/gcore/src/qdrant.rs::*` — scope-reason: add one point-retrieval function that returns stored vectors by id, beside the existing search
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: pass the memory route's resolved backend into the memory family push at both cfg-gated serve entry points
 - `crates/gmemory/src/http/mod.rs`
 - `crates/gmemory/src/http/search.rs`
 - `crates/gmemory/tests/search.rs`
@@ -683,6 +813,20 @@ route handler is `search_memories` in `create_memory_router`. A missing
 vector store or embedder falls back to keyword search exactly as Python does.
 This leaf adds the `memory.http-search` redaction entry.
 
+Compare isolation follows the terminals family's precedent,
+`terminal_route_latch`: the memory family push receives the `memory` route's
+resolved backend from `bootstrap.front_door.routes` (the family default when
+absent), which gdaemon reads once at startup. The front door's compare
+dispatch runs the native router on a copied `GET` with no shadow marker, so
+under `Compare` every native search is the shadow leg. `update_surfaced_stats`
+takes a caller-owned transaction; the search handler opens exactly one for
+its surfaced writes and always rolls it back, on error paths too, and no
+separate committing transaction exists for those writes. Under `Native` the
+same transaction commits, as Python's writes do. Python's debounce reads
+`last_surfaced_at`, so no in-process state needs isolating. 8.2 passes the
+`gobby-memory` server's backend to the tool family the same way for
+`search_memories`.
+
 **Acceptance:**
 
 - 1.3.1 - `HTTP GET /api/memories/search` matches ranking, scores,
@@ -699,6 +843,10 @@ This leaf adds the `memory.http-search` redaction entry.
 - 1.3.5 - An injected unexpected fault returns safe detail under
   `memory.http-search.internal-error-redaction`.
   test: `crates/gmemory/tests/search.rs::unexpected_search_error_is_safe_and_waived`.
+- 1.3.6 - With the family built for `Compare`, search returns its result and
+  every surfaced-stat write rolls back, including after an error injected
+  mid-update; built for `Native`, the writes commit with Python's debounce.
+  test: `crates/gmemory/tests/search.rs::compare_backend_rolls_back_surfaced_stats`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test search`
 against run-unique test-stack collections and the embedding stub;
@@ -712,6 +860,7 @@ against run-unique test-stack collections and the embedding stub;
 
 Targets:
 - `crates/gcore/src/embedding_generation.rs`
+- `crates/gcore/src/embedding_generation/managed.rs`
 - `crates/gcore/src/embedding_generation/tests.rs`
 - `crates/gcore/src/lib.rs::*` — scope-reason: export the shared embedding-generation module beside the existing qdrant export
 - `crates/gcore/tests/embedding_generation.rs`
@@ -742,6 +891,25 @@ configuration key `ai.embeddings.switch_run`, as
 module is backend-neutral so #25071 reuses it for tool embeddings. Python's
 lease stays unchanged and coexists under its own instance id.
 
+`crates/gcore/src/embedding_generation/managed.rs` owns the managed lifecycle,
+ported from `_ManagedEmbeddingLease`, `_renew_embedding_lease`,
+`_renew_with_backoff` and `_reacquire_lease`; no other module renews or
+reacquires. Renewal runs on a dedicated `std::thread`, as Python's
+single-thread executor does, so a stalled tokio runtime cannot starve it. Every
+10 seconds it renews; a transient renew failure retries after 1 second,
+doubling to a 5-second cap, and fences once the remaining lease is no longer
+than the next wait; an expired or lost lease fences at once. While fenced,
+the same thread polls the completed-switch record every 5 seconds. A record
+whose generation and revision match the held lease activates the successor,
+resumes serving and calls the projection-repair callback once; a changed
+record, or a successor that loses to a newer lease, calls the rebuild
+callback with that record and stays fenced until it runs; a storage error
+keeps polling. Python's `HostSleepTracker` only lowers log levels, so a host
+sleep that outlives the lease takes the same expiry path. The holder supplies
+three callbacks: re-target and rebuild from 2.2, and projection repair from
+2.3, which runs its store reconciliation as Python's
+`_request_memory_projection_repair` does.
+
 **Acceptance:**
 
 - 2.1.1 - `append_change`, `watermark` and `projection_targets` produce
@@ -755,6 +923,17 @@ lease stays unchanged and coexists under its own instance id.
 - 2.1.3 - The instance id is stable across restarts and differs from
   `UUID(machine_id)`; a completed switch re-targets the holder through its
   callback. test: `crates/gcore/tests/embedding_generation.rs::instance_identity_and_retarget`.
+- 2.1.4 - The managed lifecycle keeps renewing while the async runtime is
+  blocked; transient renew failures retry at 1, 2, 4 and then 5 seconds and
+  fence once the remaining lease is no longer than the next wait; an expired
+  or lost lease, including one that expires across a simulated host sleep,
+  fences at once.
+  test: `crates/gcore/tests/embedding_generation.rs::managed_renewal_backoff_and_fence`.
+- 2.1.5 - While fenced, a matching completed-switch record re-activates the
+  successor, resumes serving and requests projection repair once; a changed
+  record, or a successor that loses to a newer lease, requests a rebuild with
+  that record and stays fenced; storage errors keep polling without resuming.
+  test: `crates/gcore/tests/embedding_generation.rs::managed_reacquire_or_rebuild`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-core --features postgres --test embedding_generation`
 against the isolated test database.
@@ -800,7 +979,37 @@ upsert or delete inside #25059's project fence after `assert_serving`, with
 dual-writes to the managed projection targets, then graph enqueue
 (`graph_status = 'pending'`) and dream due-marking
 (`write_supersession_mark_due_enabled`). The vector writer holds the gdaemon
-lease from 2.1 and supplies its re-target callback. Handlers are
+lease from 2.1 and supplies its re-target and rebuild callbacks.
+
+Failure invariants follow Python's repair design, not a rollback. The row
+write, its `vector_needs_reindex = TRUE` mark (set by create, content or type
+change, move and scope change, as Python's row writes above do)
+and its `append_change` row commit in one transaction. Vector work runs after commit; when the lease is
+fenced, the fence is held, embedding fails or Qdrant fails, Python's
+`embed_and_upsert` logs and returns false, the request still succeeds with
+its committed row, and the flag and change row stay as durable repair intent.
+No derived-store write happens outside that tracked path. 2.3's
+reconciliation (`reconcile_stores` and
+`secondary_reconciliation.reconcile_active_snapshot`) later writes the
+vector, graph and crossref state and clears the flag only once they
+converge. An unexpected fault before commit writes nothing and returns safe
+detail.
+
+Projection for one memory is serialized with Python's own protocol, so native
+and the still-live Python writers cannot overwrite each other. Every
+post-commit projection and reconciliation of a memory holds the session-level
+`pg_advisory_lock` on Python's per-memory key (the UUID's low 64 bits read as
+a signed integer, as `memories_crud.py::_memory_lock_key` computes it) across
+its I/O without an idle transaction, as
+`secondary_reconciliation.memory_row_session` does. Before any I/O it re-reads
+the row `FOR SHARE` and stops when the row no longer matches the scheduled
+snapshot (`_load_active_snapshot`). It clears `vector_needs_reindex` only
+through the conditional update that matches content, rationale, project,
+global flag, memory type and a live row. The snapshot check and that update
+compare rationale null-safely (`IS NOT DISTINCT FROM`), which Python omits
+(Debt not to port). Create keeps Python's transaction-scoped advisory
+locks over the superseded and final ids. Python runs every post-commit write
+through `_reconcile_active_snapshot`, and native does the same. Handlers are
 `create_memory`, `update_memory`, `delete_memory`, `restore_memory`,
 `promote_memory`, `demote_memory` and `move_memory` in
 `src/gobby/servers/routes/memory.py::create_memory_router`, with request
@@ -838,8 +1047,25 @@ separate deliverables.
   an active switch journal dual-writes, and a completed switch re-targets the
   writer. test: `crates/gmemory/tests/writes.rs::fence_lease_and_dual_write`.
 - 2.2.10 - The seven rows return safe detail for injected faults under their
-  exact Waived citations and leave no partial effects.
+  exact Waived citations; a fault before commit leaves the row, ledger and
+  derived stores unchanged, and a fault after commit leaves the committed row
+  with `vector_needs_reindex` true and its change row, with no untracked
+  derived-store write.
   test: `crates/gmemory/tests/writes.rs::unexpected_write_errors_are_safe_and_waived`.
+- 2.2.11 - With the lease fenced or Qdrant failing, create and update commit
+  the row with `vector_needs_reindex` true and its change row and return
+  Python's success response without a vector write; no vector write happens
+  until a successor lease serves, after which the next write projects
+  normally and the earlier row keeps its flag for 2.3's repair.
+  test: `crates/gmemory/tests/writes.rs::fenced_write_keeps_repair_intent_until_successor`.
+- 2.2.12 - With projection I/O paused, an update, a rationale-only update, a
+  delete or a move of the same memory by native and, separately, by a Python
+  writer never lets the paused stale projection clear the newer flag. After
+  the interleave, including a rationale-only update whose own projection then
+  fails or is fenced, the final state is the newest row's projection or its
+  durable repair intent; a stale vector, scope or resurrected point that
+  lands transiently never stays untracked.
+  test: `crates/gmemory/tests/writes.rs::stale_projection_loses_to_newer_writes`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test writes`
 against the isolated database, run-unique collections and graphs, the
@@ -880,7 +1106,11 @@ clears nothing and returns 202 with the running snapshot and
 `already_running: true`; otherwise it clears, starts the job and returns the
 clear report with `rebuild_status: "started"`. Crossref rebuild adds
 `crossrefs_failed` (`memory.http-crossrefs-rebuild.reported-failures`). This
-leaf adds those two entries and the four 2.3 redaction entries.
+leaf adds those two entries and the four 2.3 redaction entries. It also
+supplies 2.1's projection-repair callback, which runs the applied
+`reconcile_stores` once after the lease is reacquired, as Python's
+`_request_memory_projection_repair` does; a repair failure is logged and the
+successor lease keeps serving.
 
 **Acceptance:**
 
@@ -898,6 +1128,18 @@ leaf adds those two entries and the four 2.3 redaction entries.
   test: `crates/gmemory/tests/maintenance.rs::reindex_matches_python`.
 - 2.3.5 - The four rows return safe detail for injected faults under their
   exact Waived citations. test: `crates/gmemory/tests/maintenance.rs::unexpected_maintenance_errors_are_safe_and_waived`.
+- 2.3.6 - After reacquisition, the projection-repair callback writes vectors,
+  graph state and crossrefs for rows left with `vector_needs_reindex` true
+  and clears each flag only once that row converges; a repair failure leaves
+  the flags set and serving continues.
+  test: `crates/gmemory/tests/maintenance.rs::projection_repair_clears_flags_after_reacquire`.
+- 2.3.7 - A reconciliation paused after its snapshot check, then raced by a
+  native or Python update, rationale-only update, delete or move, never
+  clears the newer row's flag. Afterwards the final state is the newest
+  row's projection or its durable repair intent, the newer row stays flagged
+  until its own reconciliation converges, and a stale vector, graph or
+  crossref write that lands transiently never stays untracked.
+  test: `crates/gmemory/tests/maintenance.rs::stale_reconciliation_keeps_newer_repair_intent`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test maintenance`;
 `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-core -E 'test(qdrant)'`.
@@ -921,8 +1163,10 @@ Targets:
 - `crates/gmemory/tests/graph_writes.rs`
 - `docs/contracts/parity-waivers.json::*` — scope-reason: append this leaf's waiver entries to the shared manifest array
 
-**Research context:** Decision 6: add `gobby-ai` as a path dependency and one
-re-export of #25097's text-generation service in `crates/gai/src/lib.rs`.
+**Research context:** Decision 6: add `gobby-ai` as a path dependency and,
+only when it is absent, one re-export of #25097's text-generation service in
+`crates/gai/src/lib.rs`; the sessions plan's 4.1 adds the same re-export
+when it lands first.
 Port `src/gobby/memory/services/knowledge_graph/service.py::KnowledgeGraphService`,
 `writer.py`, `extraction.py` (structured output through
 `src/gobby/memory/generation_schemas.py`), `rebuild.py`, `maintenance.py`,
@@ -935,16 +1179,31 @@ it loads the `prompts` record for a path with
 `src/gobby/prompts/loader.py::PromptLoader.load`'s scope precedence and
 renders it with strict undefined variables, as `PromptLoader.render` does,
 for the `memory/extract_entities`, `memory/extract_relations`,
-`memory/delete_relations` and `memory/dream` templates. Writes run inside #25059's fence, per project or under the
+`memory/delete_relations` and `memory/dream` templates. Graph extraction
+loads with no project, so only global and bundled records apply, as
+`src/gobby/memory/manager.py` builds its loader; dream planning passes the
+run's project, so project, global and bundled records apply in that order.
+The template's metadata defaults
+(`src/gobby/prompts/models.py::PromptTemplate.get_default_context`, `None`
+for a declared variable without one) merge first, and call variables replace
+them. Values render as Python's `str()` does, including `None`, `True`,
+`False` and floats such as `1.0`; a default of another type is refused as
+unsupported. `default('literal')` applies only to a variable absent from the
+merged context, and one trailing newline is dropped, as Jinja's defaults do.
+A rebuild resolves and parses all three graph templates before it marks any
+memory pending and refuses the whole job on an unsupported one (Debt not to
+port). `extract_memory_graph` parses them before its first model call, and
+7.3's queue job records that refusal as the memory's deterministic graph
+failure. Writes run inside #25059's fence, per project or under the
 global writer for global memories, as `service.py` lines 157-160 and 662-703
 do. Handlers are `rebuild_knowledge_graph` (foreground, or background with
 `background=true`), `rebuild_knowledge_graph_status` and
 `clear_knowledge_graph` in `create_memory_router`, with
 `_execute_graph_rebuild` progress callbacks recorded into 2.3's job slot.
-Expose `extract_memory_graph(memory)` for the sessions family's queue loop
-(Overview non-goal). This leaf adds the three 2.4 redaction entries; the
-status redaction replaces the stored `error` text with `Internal server
-error` and logs the diagnostic.
+Expose `extract_memory_graph(memory)` for 7.3's graph queue job. This leaf adds the three 2.4 redaction entries and the
+two 2.4 unsupported-prompt-syntax entries. The status redaction replaces an
+internal-class `error` with `Internal server error` and logs the diagnostic;
+the validation-class prompt refusal keeps its text.
 
 **Granularity:** Three HTTP rows and the densify service share one graph
 writer, the extraction client and the job slot. Reclustering adds a new
@@ -963,12 +1222,23 @@ dependency and is split into 2.5.
 - 2.4.4 - Extraction, writer, densify and code-link effects match Python for
   a fixture project, using the stubbed `memory.kg` candidates.
   test: `crates/gmemory/tests/graph_writes.rs::extraction_and_densify_match_python`.
-- 2.4.5 - The four bundled memory prompts and a project override render
-  byte-identically to Python; an undefined variable and an override using
-  unsupported template syntax fail with a typed error naming the path and
-  call no model. test: `crates/gmemory/tests/graph_writes.rs::prompt_rendering_matches_python`.
+- 2.4.5 - The four bundled memory prompts, a global override of a graph
+  template and a project override of `memory/dream` render byte-identically
+  to Python, including metadata defaults that call variables replace, a
+  `None` default, a `1.0` float and the dropped trailing newline. A project
+  override of a graph template is ignored and the global or bundled record
+  renders. An undefined variable and an override using unsupported template
+  syntax fail with a typed error naming the path and call no model.
+  test: `crates/gmemory/tests/graph_writes.rs::prompt_rendering_matches_python`.
 - 2.4.6 - Injected faults return safe detail on the three rows under their
   exact Waived citations. test: `crates/gmemory/tests/graph_writes.rs::unexpected_graph_errors_are_safe_and_waived`.
+- 2.4.7 - With a global `{% if %}` override of `memory/extract_relations`,
+  a foreground `HTTP POST /api/memories/graph/rebuild` returns the
+  validation-class error naming the path, and a background job's
+  `HTTP GET /api/memories/graph/rebuild/status` ends `failed` with that text
+  unredacted, under their exact waivers. No memory's graph state changes and
+  the generation stub receives no request.
+  test: `crates/gmemory/tests/graph_writes.rs::unsupported_graph_prompt_refuses_rebuild`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test graph_writes`
 against a run-unique FalkorDB graph and the generation stub;
@@ -991,10 +1261,23 @@ embeddings, run HDBSCAN with `HDBSCAN_METRIC` euclidean,
 (default 5) and `memory.cluster_min_samples` (default 2, where none delegates
 to the minimum cluster size), relabel clusters in Python's stable order,
 compute the silhouette score over clustered points by hand, and persist
-`_Entity.cluster_id` (noise -1). Add the one pure-Rust HDBSCAN crate,
-pinned to an exact version in `crates/gmemory/Cargo.toml` and committed in
-`Cargo.lock`. Writes run inside the project fence. 1.2's reader consumes the
-labels.
+`_Entity.cluster_id` (noise -1). Add `hdbscan = "=0.12.0"` with default
+features to `crates/gmemory/Cargo.toml` and commit the resolution in
+`Cargo.lock`, which adds exactly `hdbscan` 0.12.0 and `kdtree` 0.7.0. Build
+the parameters with `HdbscanHyperParams::builder()`, `.min_cluster_size`,
+`.min_samples` (omitted when the setting is none, so the crate's default of
+the minimum cluster size applies) and the default euclidean metric, then call
+`Hdbscan::new(&data, params).cluster()`. The crate sorts distances with a
+panicking float comparison, so keep Python's `_partition_valid_vectors` and
+`_coerce_unit_vector` steps: empty, non-numeric, non-finite or zero-norm
+vectors and vectors whose dimension differs from the most common one are
+labelled noise and listed as invalid, and the rest are unit-normalised before
+they reach the crate. Run the call in `spawn_blocking`. Rust-version evidence against the
+workspace's `rust-version = "1.88"`: neither `hdbscan` 0.12.0 nor `kdtree`
+0.7.0 declares a `rust-version`, both use edition 2021, and `hdbscan` 0.12.0
+was published 2025-11-24, after Rust 1.88, so 2.5.3 builds both crates with
+the 1.88.0 toolchain rather than trusting the missing field. Writes run inside
+the project fence. 1.2's reader consumes the labels.
 
 **Acceptance:**
 
@@ -1004,11 +1287,18 @@ labels.
 - 2.5.2 - Persisted `cluster_id` values and the result summary match Python,
   and 1.2's cluster expansion reads them.
   test: `crates/gmemory/tests/clustering.rs::recluster_persists_labels`.
-- 2.5.3 - The new crate is pinned to one exact version and resolves in the
-  lockfile with no other new dependency.
-  behavior: "single pinned HDBSCAN dependency" in `crates/gmemory/Cargo.toml`.
+- 2.5.3 - `hdbscan` is pinned to `=0.12.0`, the lockfile gains exactly
+  `hdbscan` 0.12.0 and `kdtree` 0.7.0, and both crates compile with the Rust
+  1.88.0 toolchain.
+  behavior: "hdbscan pinned to =0.12.0 and building on Rust 1.88" in `crates/gmemory/Cargo.toml`.
+- 2.5.4 - Entities with empty, non-numeric, non-finite or zero-norm vectors,
+  or a dimension other than the most common one, are labelled noise and
+  listed as invalid without reaching the crate, as in Python.
+  test: `crates/gmemory/tests/clustering.rs::invalid_vectors_are_noise`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test clustering`;
+`cargo +1.88.0 check -p hdbscan -p kdtree` (install the toolchain with
+`rustup toolchain install 1.88.0` when absent);
 the fixture embeddings and expected labels are generated once from Python's
 scikit-learn run and committed with the test.
 
@@ -1019,25 +1309,43 @@ scikit-learn run and committed with the test.
 `kind: deliverable`
 
 Targets:
+- `crates/gcore/src/embedding_generation.rs`
+- `crates/gcore/src/embedding_generation/seam.rs`
 - `crates/gmemory/src/lib.rs`
 - `crates/gmemory/src/rebuild_seam.rs`
 - `crates/gmemory/tests/rebuild_seam.rs`
 
 **Research context:** #25070's contract, as the AI plan's 7.4 consumes it.
-`rebuild(collection_kind = memories, physical_name, embedder)` fills the named
-physical collection with one vector per live memory from the target
+For the `memories` kind, `rebuild(physical_name, &EmbeddingConfig)` fills the
+named physical collection with one vector per live memory from the target
 embedder, under the per-project write fence, as Python does with
 `LocalMemoryManager.list_memories(100)` pages and `VectorStore.batch_upsert`
 into `memories@<run_id>` (`src/gobby/memory/collection_names.py`).
-`project_change(collection_kind = memories, source_id, physical_name,
-embedder)` re-reads the source memory authoritatively and upserts its point,
+`project_change(source_id, physical_name, &EmbeddingConfig)` re-reads the
+source memory authoritatively and upserts its point,
 or deletes the point for a tombstone. The switch, not this seam, owns the
 ledger read, watermark and replay
 (`src/gobby/ai/embedding_switch_runner.py::EmbeddingSwitchRunner.build` and
 `::_replay_projection_changes`). Producers keep appending ledger rows and
-dual-writing through 2.2. Export the two functions from `gobby_memory` for
-`gobby_ai`'s switch; the embedder argument is the switch's target embedding
-binding.
+dual-writing through 2.2.
+
+Composition (Orchestrator ruling on MEM-ADV-01, option A): gmemory depends on
+gai (2.4), so gai must never depend on gmemory. This leaf adds
+`crates/gcore/src/embedding_generation/seam.rs`, declared from
+`crates/gcore/src/embedding_generation.rs`, with
+`pub trait CollectionRebuildSeam: Send + Sync` carrying
+`rebuild(physical_name, &EmbeddingConfig)` and
+`project_change(source_id, physical_name, &EmbeddingConfig)`; the embedder is
+gcore's existing `config::EmbeddingConfig`, the switch's target binding.
+gmemory exports `MemoriesRebuildSeam`, built from the hub pool, implementing
+it for the `memories` kind, and #25071 implements the same trait for tool
+embeddings. The AI plan's 7.4 runner holds one `Arc<dyn
+CollectionRebuildSeam>` per kind, its test stubs implement the same trait,
+and its 7.6 composes the real seams in `crates/gdaemon/src/serve.rs`; the AI
+plan records those 7.4 and 7.6 amendments (commit 23d0c055b8). The crate
+graph stays acyclic: gai, gmemory, gtasks and gsessions depend on gcore,
+gmemory depends on gai, gtasks and gsessions (Decision 8), none of them
+depends on gmemory, and gdaemon depends on all of them.
 
 **Acceptance:**
 
@@ -1051,6 +1359,10 @@ binding.
 - 3.1.3 - Native create, update and delete during an armed switch append
   change rows and dual-write to the named physical target.
   test: `crates/gmemory/tests/rebuild_seam.rs::producers_dual_write_while_armed`.
+- 3.1.4 - `rebuild` and `project_change` called through an
+  `Arc<dyn CollectionRebuildSeam>` reach the real `MemoriesRebuildSeam`, and
+  `cargo tree -p gobby-ai --edges normal` lists no `gobby-memory`.
+  test: `crates/gmemory/tests/rebuild_seam.rs::seam_trait_object_reaches_memories_and_stays_acyclic`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test rebuild_seam`
 against run-unique physical collections and the embedding stub.
@@ -1081,9 +1393,23 @@ revert_failed, revert_forfeited, interrupted, partial), `storage_journal.py`,
 fenced actions; cursor advance; reconcile after apply and revert), `plan.py`
 validation, `decisions.py`, `models.py` and `options.py`. Expose
 `purge_dream_hidden_memories` with `purge_delete_after_days` and
-`purge_review_after_days` for the sessions family's loop (Overview non-goal).
+`purge_review_after_days`, and the run-history prune, for 7.3's purge job.
 Every memory mutation goes through 2.2's write path, so ledger, fence and lease
 rules hold.
+
+Port the stale-plan fences exactly. `apply_candidate_action` updates a
+candidate only while its `dream_due_version`, `updated_at`, `project_id` and
+`is_global` still equal the values captured at selection and the row is
+live; otherwise the action is recorded as skipped with zero mutation.
+`revert_snapshot` locks the row, reports `missing` for an absent row and
+`conflict` when any fence column (`deleted_at`, `project_id`, `is_global`
+and the action-owned columns) differs from the snapshot's after-state. It
+restores only the action-owned columns (refresh: `content` and `tags`;
+promote: `is_global`; review and delete: `deleted_at` and `dream_action`),
+preserves every other later change, clears `last_dreamed_at`, increments
+`dream_due_version`, sets `vector_needs_reindex`, restores crossrefs and
+appends a projection change in that transaction, and reconciles projections
+only after commit.
 
 **Acceptance:**
 
@@ -1098,6 +1424,12 @@ rules hold.
   test: `crates/gmemory/tests/dream_apply.rs::revert_matches_python`.
 - 4.1.4 - The purge function deletes only hidden memories past their
   retention. test: `crates/gmemory/tests/dream_apply.rs::purge_matches_python`.
+- 4.1.5 - A candidate changed after selection is skipped with zero mutation;
+  revert reports a conflict when an action-owned or fence column changed,
+  otherwise restores only action-owned columns, keeps unrelated later
+  changes, increments `dream_due_version`, and reconciles projections only
+  after the row transition commits.
+  test: `crates/gmemory/tests/dream_apply.rs::stale_plan_and_revert_fences`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test dream_apply`
 against the isolated database.
@@ -1128,7 +1460,12 @@ keyword evidence with `related_evidence_top_k`,
 `work_unit_timeout_seconds`, `max_runtime_seconds`). The planner renders
 `memory/dream` through 2.4's `crates/gmemory/src/prompts.rs` with the
 variables `truth_digest`, `candidates`, `previous_summary` and the three
-confidence floors, as `planner.py` passes them.
+confidence floors, as `planner.py` passes them. Each page renders before its
+model call, and the first page renders before any action applies. A missing
+record stays isolated to its page, as Python's `FileNotFoundError` is an
+`OSError` in `_EXPECTED_PLANNER_ERRORS`. An undefined variable or an
+unsupported override fails the run, as Python's Jinja errors escape that
+tuple (Debt not to port).
 
 **Acceptance:**
 
@@ -1140,6 +1477,10 @@ confidence floors, as `planner.py` passes them.
 - 4.2.3 - Sweeps, work units, dry runs, inventory runs, checkpoints and
   runtime limits match Python's totals and stored plan.
   test: `crates/gmemory/tests/dream_sweep.rs::sweep_orchestration_matches_python`.
+- 4.2.4 - A missing `memory/dream` record is isolated to its page as in
+  Python, while an undefined variable or an unsupported project override
+  fails the run with no generation request and no applied action.
+  test: `crates/gmemory/tests/dream_sweep.rs::prompt_errors_match_python_isolation`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test dream_sweep`
 against the generation stub and the isolated database.
@@ -1169,7 +1510,9 @@ unscoped trigger), `coordinator.py::MemoryDreamCoordinator` (`trigger`,
 `src/gobby/servers/routes/memory_dream.py::create_memory_dream_router`, with
 `_http_status` kept (Debt KEEP). Revert keeps 404 for an unknown run and
 returns 409 with the same `detail` for `revert_forfeited` and `revert_failed`
-(`memory.http-dream-revert.state-conflict-status`).
+(`memory.http-dream-revert.state-conflict-status`). Run status reports a run
+that 4.2 failed on an unsupported prompt override as `failed` with the
+validation-class error (`memory.http-dream-status.unsupported-prompt-syntax`).
 
 `MemoryDreamService::new` takes the hub `Pool` by value (Decision 5) and is
 the constructor #25024 binds; it also exposes
@@ -1192,6 +1535,10 @@ the cron registration. This plan registers no schedule.
   interrupted-run reconciliation match Python; the service cannot be built
   without a hub pool.
   test: `crates/gmemory/tests/dream_routes.rs::aggregate_reports_and_hub_only_construction`.
+- 4.3.5 - With a project `{% if %}` override of `memory/dream`,
+  `HTTP GET /memory/dream/{run_id}` reports the run `failed` with the error
+  naming the path under its exact waiver, where Python's baseline completes.
+  test: `crates/gmemory/tests/dream_routes.rs::unsupported_dream_prompt_status_is_waived`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test dream_routes`
 against the generation stub, the isolated database and a temporary project
@@ -1200,10 +1547,12 @@ root for reports.
 ## P5: Review-learning service
 `kind: framing`
 
-### 5.1 Native review-learning service over memory rows [category: code] (depends: 4.3)
+### 5.1 Native review-learning service over memory rows [category: code] (depends: 4.3, #21560, #21562)
 `kind: deliverable`
 
 Targets:
+- `crates/gmemory/Cargo.toml`
+- `Cargo.lock`
 - `crates/gmemory/src/lib.rs`
 - `crates/gmemory/src/review/mod.rs`
 - `crates/gmemory/src/review/lessons.rs`
@@ -1216,7 +1565,8 @@ Targets:
 `recall_review_lessons_by_class`, `list_check_keys`,
 `retire_review_lesson`, `record`, `_search_recall_matches`,
 `_candidate_lesson_memories` and the scope resolvers `_resolve_scope_sync`
-and `_resolve_explicit_scope_sync`, which read the session row) and its
+and `_resolve_explicit_scope_sync`, which read the session's project through
+sessions 1.1's store and `resolve_session_ref`) and its
 module functions (`build_recall_queries`, `rank_recall_matches`,
 `_validate_recorded_finding`, `_missing_qa_rejection_fields`,
 `_build_file_lesson`, `_parse_lesson_content`), plus `lessons.py`
@@ -1231,6 +1581,12 @@ search. `record` serializes per pattern under
 transaction advisory lock exactly as
 `src/gobby/storage/hub/postgres_pool.py::advisory_lock_keys` derives it, so
 Python and native writers exclude each other.
+
+Decision 8: this leaf adds `gobby-tasks` and `gobby-sessions` as path
+dependencies of `crates/gmemory/Cargo.toml`. Class recall's retirement listing
+(`class_recall.py::RetirementTaskManager.list_tasks` by project, closed state,
+label and limit) calls tasks 1.2's listing, and the scope resolvers call
+sessions 1.1. No gmemory query names a tasks or sessions table.
 
 **Acceptance:**
 
@@ -1249,45 +1605,48 @@ against the isolated database, run-unique collections and the embedding stub.
 ## P6: Native internal-tool families
 `kind: framing`
 
-### 6.1 Memory session-variable writer [category: code] (depends: 5.1, #25262)
+### 6.1 Memory session-variable records over the sessions API [category: code] (depends: 5.1, #21562, #25262)
 `kind: deliverable`
 
 Targets:
 - `crates/gmemory/src/lib.rs`
-- `crates/gmemory/src/session_vars.rs`
-- `crates/gmemory/tests/session_vars.rs`
+- `crates/gmemory/src/session_records.rs`
+- `crates/gmemory/tests/session_records.rs`
 
-**Research context:** Decision 3. The writer touches exactly three keys of
-the `session_variables` row: `accessed_memory_ids`
+**Research context:** Decision 3. Sessions 2.4 owns the `session_variables`
+writer, its bounded-list upsert and the #25262 lock; this module holds only
+memory's knowledge of three keys. They are `accessed_memory_ids`
 (`src/gobby/mcp_proxy/tools/memory_session.py::ACCESSED_MEMORY_IDS_VARIABLE`,
 bounded by `src/gobby/mcp_proxy/tools/memory.py`'s `_ACCESSED_MEMORY_IDS_MAX`
 of 1000, identity the whole `{memory_id, task_id}` record as
 `_record_accessed_memory` passes it), `_memory_task_review_records`
 (`REVIEW_RECORDS_VARIABLE`, bounded at 50, identity `closure_id`) and
 `_memory_review_stop_delivered` (`REVIEW_DELIVERED_VARIABLE`, set true).
-Semantics match `src/gobby/workflows/state_manager.py::SessionVariableManager.upsert_bounded_list_variable`
-(drop a matching item, append, keep the newest `max_items`) and
-`::set_variable`, key-scoped so concurrent writers of other keys are
-untouched. Each write runs under `SessionVariableMutation`'s explicit key
-from #25262, at priority 950, so Python and native writers of one session
-serialize. Reads of `_memory_pending_task_reviews` reuse the same row read.
-No other key is writable through this module.
+The module exposes one function per key. Each builds memory's record and
+calls the sessions 2.4 bounded-list upsert, which ports
+`src/gobby/workflows/state_manager.py::SessionVariableManager.upsert_bounded_list_variable`
+(drop a matching item, append, keep the newest `max_items`), or its key-scoped
+set, which ports `::set_variable`. Reads of `_memory_pending_task_reviews` and
+the three keys go through the sessions 2.4 read API. The module takes no lock
+and issues no SQL; no other key is writable through it.
 
 **Acceptance:**
 
-- 6.1.1 - Bounded-list upserts and the boolean set produce Python's rows for
-  all three keys, including identity replacement and trimming.
-  test: `crates/gmemory/tests/session_vars.rs::writes_match_python`.
-- 6.1.2 - Concurrent Python and native writers on one session serialize
-  under the shared key without losing either update, and writes to other
-  keys are preserved. test: `crates/gmemory/tests/session_vars.rs::shared_lock_serializes_writers`.
-- 6.1.3 - Any key outside the three is refused before a write.
-  test: `crates/gmemory/tests/session_vars.rs::only_owned_keys_are_writable`.
+- 6.1.1 - Through the sessions API, bounded-list upserts and the boolean set
+  produce Python's rows for all three keys, including identity replacement
+  and trimming. test: `crates/gmemory/tests/session_records.rs::writes_match_python`.
+- 6.1.2 - A concurrent Python writer and a native memory write on one
+  session both land, serialized on the #25262 key that sessions 2.4 takes,
+  and writes to other keys are preserved.
+  test: `crates/gmemory/tests/session_records.rs::python_and_native_writes_both_land`.
+- 6.1.3 - Reads of `_memory_pending_task_reviews` and the three keys through
+  the sessions read API match Python's values.
+  test: `crates/gmemory/tests/session_records.rs::reads_match_python`.
 
-Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test session_vars`
+Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test session_records`
 against the isolated database, with a Python writer started by the test.
 
-### 6.2 gobby-memory descriptor, schemas and MCP behavior [category: code] (depends: 6.1, #24883)
+### 6.2 gobby-memory descriptor, schemas and MCP behavior [category: code] (depends: 6.1, #24883, #21560, #21562)
 `kind: deliverable`
 
 Targets:
@@ -1312,7 +1671,8 @@ the handler context the shared gateway projects, as
 `::memory_owned_by_current_project` and `::resolve_current_memory_id` and
 `memory_session.py::resolve_session` and `::resolve_claimed_task_id` resolve
 them; a missing project falls back to the personal project as
-`list_memories` does.
+`list_memories` does. Session and task data come only from Decision 8's
+gsessions and gtasks calls.
 
 Tool specifics. `search_memories` uses caller
 `mcp_proxy.memory.search_memories`. `surface_memories` uses
@@ -1326,7 +1686,10 @@ session's last assistant message for a `turn` trigger whose text fails
 `accessed_memory_ids` through 6.1. `review_task_memories` ports
 `src/gobby/mcp_proxy/tools/memory_review.py` (`_resolve_task`,
 `_accessed_ids`, `_record_review`, `_CANDIDATE_LIMIT` 5, caller
-`mcp_proxy.memory.review_task_memories`) and writes through 6.1. The dream
+`mcp_proxy.memory.review_task_memories`) and writes through 6.1. It resolves
+the task, operator review and the closing session's lineage through
+Decision 8's tasks 1.1 and 2.1 calls and the gsessions `is_ancestor` export,
+and returns `foreign_session_closure` exactly as Python does. The dream
 tools call 4.3's service; `memory_dream_decisions` reads 4.1's decisions.
 `recluster_knowledge_graph_entities` calls 2.5, `densify_knowledge_graph_cooccurrence`
 and `rebuild_knowledge_graph` call 2.4, and `rebuild_crossrefs` (with its
@@ -1346,8 +1709,10 @@ Consume #24970's classification and MCP adapter. Unexpected text becomes
 `Internal server error`; deliberate domain errors keep their text. This leaf
 adds the 21 gobby-memory redaction entries and
 `memory.mcp-rebuild-crossrefs.reported-failures`,
-`memory.mcp-backup-memories.project-backup-path` and
-`memory.mcp-restore-memories.project-backup-path`, each with decision
+`memory.mcp-backup-memories.project-backup-path`,
+`memory.mcp-restore-memories.project-backup-path`,
+`memory.mcp-rebuild-knowledge-graph.unsupported-prompt-syntax` and
+`memory.mcp-memory-dream-status.unsupported-prompt-syntax`, each with decision
 `.gobby/plans/memory-family.md#6.2`. Registering and activating the
 descriptor waits for 8.2.
 
@@ -1387,7 +1752,9 @@ by tool would create per-file wrappers, not independent outcomes.
   listing. test: `crates/gmemory/tests/mcp_memory.rs::dream_decisions_match_python`.
 - 6.2.11 - `MCP gobby-memory:memory_dream_revert` matches revert results.
   test: `crates/gmemory/tests/mcp_memory.rs::dream_revert_matches_python`.
-- 6.2.12 - `MCP gobby-memory:memory_dream_status` matches run status.
+- 6.2.12 - `MCP gobby-memory:memory_dream_status` matches run status, and
+  reports a run refused by an unsupported prompt override as `failed` with
+  the error naming the path under its exact waiver.
   test: `crates/gmemory/tests/mcp_memory.rs::dream_status_matches_python`.
 - 6.2.13 - `MCP gobby-memory:memory_stats` matches statistics.
   test: `crates/gmemory/tests/mcp_memory.rs::memory_stats_matches_python`.
@@ -1399,7 +1766,9 @@ by tool would create per-file wrappers, not independent outcomes.
   and reports `crossrefs_failed` under its exact waiver.
   test: `crates/gmemory/tests/mcp_memory.rs::rebuild_crossrefs_reports_failures`.
 - 6.2.17 - `MCP gobby-memory:rebuild_knowledge_graph` matches rebuild
-  results. test: `crates/gmemory/tests/mcp_memory.rs::rebuild_knowledge_graph_matches_python`.
+  results, and returns the validation-class error naming the path for an
+  unsupported graph prompt override under its exact waiver.
+  test: `crates/gmemory/tests/mcp_memory.rs::rebuild_knowledge_graph_matches_python`.
 - 6.2.18 - `MCP gobby-memory:recluster_knowledge_graph_entities` matches the
   clustering summary. test: `crates/gmemory/tests/mcp_memory.rs::recluster_matches_python`.
 - 6.2.19 - `MCP gobby-memory:reindex_embeddings` matches the reindex report.
@@ -1427,8 +1796,11 @@ by tool would create per-file wrappers, not independent outcomes.
   arguments call no service.
   test: `crates/gmemory/tests/mcp_memory.rs::catalog_and_validation_match_python`.
 - 6.2.28 - Each of the 21 redaction tools returns safe text for an injected
-  fault under its own exact waiver with no partial effects, and deliberate
-  domain errors keep their text.
+  fault under its own exact waiver, and deliberate domain errors keep their
+  text. A fault before commit leaves the row, ledger and derived stores
+  unchanged; a fault after commit leaves the committed row with
+  `vector_needs_reindex` true and its change row, with no untracked
+  derived-store write, as 2.2 defines.
   test: `crates/gmemory/tests/mcp_memory.rs::tool_internal_errors_are_safe`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test mcp_memory`;
@@ -1457,6 +1829,10 @@ key on `("gobby-review-learning", "recall_review_lessons_for_files")` and
 `{"success": False, "error": str(exc)}` catch becomes the safe adapter result;
 this leaf adds the six review-learning redaction entries.
 
+**Granularity:** Six public-tool items and a catalog item describe one
+descriptor and one adapter over 5.1's already-tested service. Splitting by
+tool would create per-tool wrappers, not independent outcomes.
+
 **Acceptance:**
 
 - 6.3.1 - `MCP gobby-review-learning:list_check_keys` matches results.
@@ -1478,7 +1854,7 @@ this leaf adds the six review-learning redaction entries.
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test mcp_review`;
 `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-core --test mcp_contract`.
 
-## P7: Native CLI commands
+## P7: Native CLI commands and background jobs
 `kind: framing`
 
 ### 7.1 Native command tree and record commands [category: code] (depends: 6.3)
@@ -1510,8 +1886,8 @@ dispatcher with `memory`; clap parsing and output formatting live in the
 family crate. `gdaemon memory` is the internal dispatcher for the existing
 public `gobby memory` contract and adds no public surface. Map errors through
 #24970's CLI adapter for exit codes and stderr. This leaf edits
-`crates/gdaemon/src/main.rs` after the skills plan's 5.1 and the AI plan's
-7.5 if those land first (Overview).
+`crates/gdaemon/src/main.rs` after any of the six plans the Overview's
+cross-plan contention lists that land first, and rebases onto them.
 
 **Granularity:** Thirteen ledger rows share one command tree, one CLI pool
 and the database-only service mode. The HTTP-client commands are 7.2.
@@ -1572,8 +1948,11 @@ does. Reuse gcore's daemon URL and local token helpers
 blocking reqwest. A health failure prints Python's `Daemon not running`
 message. `invalidate` prints that nothing was cleared and a rebuild is
 already running when the response carries `already_running`
-(`memory.cli-invalidate.tracked-rebuild`); this leaf adds that entry. Its
-other output, and `rebuild-crossrefs`'s, is unchanged.
+(`memory.cli-invalidate.tracked-rebuild`). `rebuild-graph`, `dream` and
+`dream status` print the refusal or failed run that 2.4 and 4.3 report for
+an unsupported prompt override through Python's existing error and
+failed-run renderers. This leaf adds those four entries. Other output,
+including `rebuild-crossrefs`'s, is unchanged.
 
 **Granularity:** Ten ledger rows are thin HTTP clients sharing one client,
 health check and error mapping. Their behavior lives in 2.3, 2.4 and 4.3.
@@ -1585,7 +1964,9 @@ health check and error mapping. Their behavior lives in 2.3, 2.4 and 4.3.
 - 7.2.2 - `CLI gobby memory graph-counts` matches text and JSON output.
   test: `crates/gmemory/tests/cli_daemon.rs::graph_counts_matches_python`.
 - 7.2.3 - `CLI gobby memory rebuild-graph` matches foreground, `--wait`
-  polling and timeout behavior. test: `crates/gmemory/tests/cli_daemon.rs::rebuild_graph_matches_python`.
+  polling and timeout behavior, and prints an unsupported prompt override's
+  refusal under its exact waiver.
+  test: `crates/gmemory/tests/cli_daemon.rs::rebuild_graph_matches_python`.
 - 7.2.4 - `CLI gobby memory invalidate` matches confirmation and the clear
   report, and reports a running rebuild under its exact waiver.
   test: `crates/gmemory/tests/cli_daemon.rs::invalidate_reports_running_rebuild`.
@@ -1596,8 +1977,11 @@ health check and error mapping. Their behavior lives in 2.3, 2.4 and 4.3.
 - 7.2.7 - `CLI gobby memory reindex-embeddings` matches output.
   test: `crates/gmemory/tests/cli_daemon.rs::reindex_matches_python`.
 - 7.2.8 - `CLI gobby memory dream` matches trigger, polling, dry-run,
-  aggregate and resume-hint output. test: `crates/gmemory/tests/cli_daemon.rs::dream_matches_python`.
-- 7.2.9 - `CLI gobby memory dream status` matches status rendering.
+  aggregate and resume-hint output, and prints a run failed by an
+  unsupported prompt override under its exact waiver.
+  test: `crates/gmemory/tests/cli_daemon.rs::dream_matches_python`.
+- 7.2.9 - `CLI gobby memory dream status` matches status rendering, including
+  that failed run under its exact waiver.
   test: `crates/gmemory/tests/cli_daemon.rs::dream_status_matches_python`.
 - 7.2.10 - `CLI gobby memory dream revert` matches output and error detail.
   test: `crates/gmemory/tests/cli_daemon.rs::dream_revert_matches_python`.
@@ -1607,10 +1991,138 @@ health check and error mapping. Their behavior lives in 2.3, 2.4 and 4.3.
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test cli_daemon`
 against a local HTTP stub that replays 0.1's recorded responses.
 
+### 7.3 Native memory background jobs [category: code] (depends: 7.2)
+`kind: deliverable`
+
+Targets:
+- `crates/gmemory/src/lib.rs`
+- `crates/gmemory/src/background.rs`
+- `crates/gmemory/tests/background.rs`
+- `crates/gdaemon/src/state.rs::RuntimeState::prepare`
+- `src/gobby/memory/job_ownership.py`
+- `src/gobby/sessions/lifecycle.py::*` — scope-reason: skip the graph queue task in `SessionLifecycleManager.start` and the dream-hidden purge in `_sweep_shared_rows` when gdaemon owns the memory jobs
+- `src/gobby/runner_lifecycle_periodic.py::*` — scope-reason: skip the `memory-reconcile` spawn in `start_periodic_tasks` when gdaemon owns the memory jobs
+- `src/gobby/runner_init/services.py::*` — scope-reason: skip both `start_projection_scope_repair` calls when gdaemon owns the memory jobs
+- `src/gobby/memory/dream/cron.py::*` — scope-reason: make `reconcile_interrupted_dream_runs` return no IDs when gdaemon owns the memory jobs
+- `src/gobby/runner_maintenance/lifecycle.py::*` — scope-reason: make `rebuild_vector_store` log that gdaemon owns the rebuild and return when gdaemon owns the memory jobs
+- `tests/conftest.py::_clear_terminal_route_latch`
+- `tests/memory/test_native_job_ownership.py`
+
+**Research context:** Python runs six memory jobs outside any ledger row,
+all hub-only. `src/gobby/sessions/lifecycle.py::SessionLifecycleManager._kg_queue_loop`
+runs `_process_pending_graph_memories` every
+`knowledge_graph_queue.interval_minutes` (default 30): it takes at most
+`batch_size` pending memories
+(`src/gobby/storage/memories_graph.py::get_pending_graph_memories`),
+extracts them one at a time, and calls `mark_graph_processed` or
+`record_graph_failure`, so a memory leaves the queue after
+`max_deterministic_attempts` deterministic failures
+(`src/gobby/config/features.py::KnowledgeGraphQueueConfig`).
+`::_purge_dream_hidden_memories` runs in the shared-row sweep every
+`session_lifecycle.expire_check_interval_minutes`, whether or not dream is
+enabled: it purges delete-hidden memories past `purge_delete_after_days` and
+review-hidden ones past `purge_review_after_days`, reconciling secondary
+stores for the removed rows, then prunes dream run history past
+`memory.dream.run_retention_days`
+(`src/gobby/memory/dream/storage_runs.py::prune_runs`).
+`src/gobby/runner_maintenance_recurring.py::memory_reconcile_loop` runs the
+applied `reconcile_stores` after the shared startup delay, then every 24
+hours, retrying in five minutes after a Qdrant error or a failure. At
+startup, `src/gobby/memory/manager.py::MemoryManager.start_projection_scope_repair`
+runs the secondary scope repair once,
+`src/gobby/memory/dream/cron.py::reconcile_interrupted_dream_runs` marks every
+non-terminal dream run interrupted before the daemon serves, and
+`src/gobby/runner_lifecycle_subsystems.py::_initialize_vector_store`
+rebuilds an empty Qdrant collection from the hub's memories.
+
+`crates/gmemory/src/background.rs` ports the first five over the leaves that
+already hold their logic: 2.4's `extract_memory_graph` and the three queue
+state functions from `memories_graph.py`, 4.1's
+`purge_dream_hidden_memories` and run-history prune, 2.3's applied
+`reconcile_stores` and `ProjectionScopeRepairService.repair` port, and 4.3's
+`reconcile_interrupted_dream_runs`. The sixth needs no native code:
+`reconcile_stores` backfills every memory missing from Qdrant
+(`src/gobby/memory/services/indexing.py`, `missing = storage_ids -
+qdrant_ids`), so the first reconcile pass refills an empty collection. An
+unsupported prompt override is recorded as that memory's deterministic graph
+failure before any model call (Debt not to port).
+
+Ownership switches once at the restart boundary, from the bootstrap
+`front_door.routes.memory` selection (Cron 4.1 and sessions Decision 5
+precedent). `crates/gmemory/src/lib.rs` gains `memory_route`, which resolves
+that entry or the family default. 1.1's push function starts the jobs only
+when it resolves Native, and composes only on hub and standalone
+(Decision 5). It runs the interrupted-run reconcile and the scope repair
+before it returns, so both finish before the family claims a row. The other
+jobs run as tasks the family owns until the serve runtime stops, and every
+write passes 2.1's serving assertion and #25059's fence. `serve.rs` is
+unchanged. `RuntimeState::prepare` already latches the terminal route into
+the Python backend's environment; it latches `GOBBY_MEMORY_ROUTE` from
+`memory_route` the same way. That carries gdaemon's own default to Python,
+so 8.5's change of the default cannot desynchronize the two. Proxy and
+Compare keep Python as the owner.
+
+`src/gobby/memory/job_ownership.py::native_owns_memory_jobs` takes no
+argument and returns true when the latch reads `native`. Python skips at
+each start site: the graph queue task in `SessionLifecycleManager.start`,
+the purge in `_sweep_shared_rows`, the `memory-reconcile` spawn in
+`start_periodic_tasks`, both `start_projection_scope_repair` calls in
+`services.py`, `reconcile_interrupted_dream_runs` (it returns no IDs) and
+`rebuild_vector_store` (it logs that gdaemon owns the rebuild and returns).
+The interrupted-run gate is required, not a tidy-up: Python's backend
+finishes startup after gdaemon serves, and its reconcile would mark a live
+native run interrupted. The rebuild gate sits in the callee because
+`runner_lifecycle_subsystems.py` (863 lines) still logs that it scheduled
+the rebuild; the gated callee's log line follows it. Python's own
+lease-recovery repair (`src/gobby/runner_init/services.py::_request_memory_projection_repair`)
+stays with Python's serving lease until 8.6; reconciliation is idempotent
+under 2.3's per-memory advisory lock. `tests/conftest.py` clears the new
+latch beside the terminal one, because gdaemon exports its latches to agent
+shells.
+
+**Granularity:** Five native jobs and their Python gates form one ownership
+switch. Each job calls logic an earlier leaf already ports, so this leaf
+adds scheduling, ownership and the gates only.
+
+**Acceptance:**
+
+- 7.3.1 - The graph queue job processes at most `batch_size` pending
+  memories per interval in order, marks successes processed, records
+  failures, and removes a memory after `max_deterministic_attempts`
+  deterministic failures, matching Python's queue state; an unsupported
+  prompt override records a deterministic failure without a model call.
+  test: `crates/gmemory/tests/background.rs::graph_queue_matches_python`.
+- 7.3.2 - The purge job purges delete-hidden and review-hidden memories past
+  their grace windows whether or not dream is enabled, reconciles secondary
+  stores for removed rows, and prunes run history past
+  `run_retention_days`. test: `crates/gmemory/tests/background.rs::dream_hidden_purge_matches_python`.
+- 7.3.3 - The reconcile job runs its first applied pass after the startup
+  delay and then daily, retries in five minutes after a Qdrant error or a
+  failure, and refills an empty memories collection.
+  test: `crates/gmemory/tests/background.rs::reconcile_job_matches_python`.
+- 7.3.4 - Interrupted-run reconciliation and the scope repair run once
+  before the family claims a row, so a run admitted afterwards is never
+  marked interrupted. test: `crates/gmemory/tests/background.rs::startup_jobs_finish_before_serving`.
+- 7.3.5 - Jobs start only when the resolved memory route is Native on hub
+  and standalone; Proxy, Compare and a node start none, and
+  `memory_route` resolves the configured entry or the family default that
+  the latch carries. test: `crates/gmemory/tests/background.rs::jobs_follow_the_memory_route`.
+- 7.3.6 - With the latch set to `native`, every Python start site is a no-op
+  and a dream run that native starts during Python's startup is not marked
+  interrupted; with the latch absent or `proxy` or `compare`, Python's jobs
+  run unchanged. test: `tests/memory/test_native_job_ownership.py::test_python_jobs_follow_the_memory_latch`.
+
+Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test background`
+with isolated database, Qdrant, FalkorDB and model stubs;
+`cargo check -p gobby-daemon`; the Python test with the protected prefix,
+`tests/sessions/test_sessions_lifecycle.py`, `tests/test_runner_lifecycle.py`
+and `tests/test_runner_maintenance_startup.py`; scoped Ruff and mypy with a
+changed-test type audit.
+
 ## P8: Admission, activation and ledger
 `kind: framing`
 
-### 8.1 Native admission binding for memory rows [category: code] (depends: 7.2, #25046, #25068)
+### 8.1 Native admission binding for memory rows [category: code] (depends: 7.3, #25046, #25068)
 `kind: deliverable`
 
 Targets:
@@ -1671,7 +2183,7 @@ composing the landed #25046 and #25068 seams with isolated credential state;
 
 Targets:
 - `crates/gmemory/src/lib.rs`
-- `crates/gdaemon/src/serve.rs::*` — scope-reason: register the two memory tool families with the shared gateway at both cfg-gated serve entry points
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: register the two memory tool families with the shared gateway at both cfg-gated serve entry points, passing the gobby-memory server's resolved backend
 - `crates/gdaemon/Cargo.toml`
 - `crates/gcode/Cargo.toml`
 - `crates/ghook/Cargo.toml`
@@ -1711,7 +2223,9 @@ gateway reads each internal server's `front_door.routes` entry (`proxy`,
 `gobby-review-learning` descriptors through #24885's registration interface,
 and selects `front_door.routes.memory`, `front_door.routes.gobby-memory` and
 `front_door.routes.gobby-review-learning` through the existing bootstrap
-mechanism, with Proxy selectable for rollback. Compare runs only the S3 read
+mechanism, with Proxy selectable for rollback until 8.5 retires it. The
+selection takes effect at the activating restart, where 7.3's latch also
+moves the memory background jobs to gdaemon. Compare runs only the S3 read
 rows and read-only tools. Effectful rows and tools are proven by the owning
 leaves' isolated tests and the e2e run, never by running an effect twice.
 Consume #24963's readiness result: every waiver in the inventory needs its
@@ -1723,7 +2237,7 @@ hub and standalone (Decision 5).
 This is the first shipping commit since 1.1 added the `crates/gmemory`
 member to the root `Cargo.toml`.
 `src/gobby/install/bin_release_identity.py::workspace_source_identity` hashes
-the root manifest for every managed binary, and 1.3, 2.1 and 2.3 changed
+the root manifest for every managed binary, and 1.3, 2.1, 2.3 and 3.1 changed
 gcore, so gdaemon, gcode and ghook each take a 0.0.1 bump above their
 preceding released version, with manifests, lock and pins updated. Rebuild
 gclient, gmcp and gterm alongside; unpublished binaries keep their versions
@@ -1741,7 +2255,13 @@ ledger evidence.
 
 - 8.2.1 - Proxy, compare and native states affect only the memory HTTP rows
   and the two MCP servers; compare runs read rows only, effectful rows run
-  once, and rollback to Proxy preserves state.
+  once, and rollback to Proxy preserves state. For
+  `GET /api/memories/search` both implementations compute a result, the
+  native surfaced-statistics mutation is discarded with its isolated
+  transaction, and Python's surfaced counter and debounce effect happens
+  exactly once. This runs through the real front-door router against a
+  Python stub: native shadow counters roll back even when the native leg
+  errors, and in `Native` the native counters persist.
   test: `crates/gdaemon/tests/memory_cutover.rs::memory_cutover_is_scoped_and_single_effect`.
 - 8.2.2 - With the Python backend unavailable, all 25 HTTP rows and 32 tools
   run natively for every admitted caller class on hub and standalone, rule
@@ -1787,7 +2307,6 @@ Targets:
 
 Consumers unchanged:
 - `src/gobby/cli/__init__.py` — no-edit-reason: its lazy map entry `"memory": ("memory", "memory")` still resolves `gobby.cli.memory.memory`.
-- `src/gobby/memory/services/_search_access.py` — no-edit-reason: the `cli.memory.recall` caller tag stays in `SURFACED_CALLERS`; 7.1 sends it.
 
 **Research context:** Literal sweeps for `gobby.cli.memory` found the six
 test importers listed above and no production importer outside the package.
@@ -1860,6 +2379,511 @@ Planned verification: `uv run python scripts/generate_parity_ledger.py` run
 twice with no second-run diff; `tests/test_parity_ledger.py` with the
 protected Python prefix.
 
+### 8.5 Make the memory family native-only and retire the Python routes [category: code] (depends: 8.4)
+`kind: deliverable`
+
+Targets:
+- `crates/gmemory/src/lib.rs`
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: propagate the memory family's retired-route refusal with `?` at both cfg-gated serve entry points
+- `crates/gmemory/tests/native_only.rs`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+- `src/gobby/servers/routes/memory.py::*` — operation: delete — scope-reason: retire the Python memory HTTP routes the native family serves
+- `src/gobby/servers/routes/memory_dream.py::*` — operation: delete — scope-reason: retire the Python dream HTTP routes the native family serves
+- `src/gobby/servers/routes/__init__.py::*` — scope-reason: drop the two memory router imports and their `__all__` entries
+- `src/gobby/servers/_app_routes.py::*` — scope-reason: drop the two memory router imports and `include_router` calls
+- `src/gobby/servers/auth_service.py::_AGENT_CAPABILITY_MATRIX`
+- `tests/servers/routes/test_memory_routes.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python routes, whose rows 0.1's corpus and the native tests own
+- `tests/servers/test_memory_python_retired.py`
+- `docs/contracts/memory-native.md`
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: dynamically reads the bumped gdaemon pin.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gmcp.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: dynamically reads unchanged native version pins.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: resolves every pin dynamically by binary name.
+- `src/gobby/code_index/gcode_versions.py` — no-edit-reason: both gcode maintenance floors derive from the unchanged gcode pin.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: the hook compatibility floor derives from the unchanged ghook pin.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: enumerates the map dynamically.
+- `src/gobby/install/distribution.py` — no-edit-reason: resolves minimum versions dynamically.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: derives expected ghook versions from the map.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gmcp.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: derives expected versions from the map.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: derives gcode expectations from the unchanged pin.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: derives ghook expectations from the unchanged pin.
+- `tests/install/test_distribution.py` — no-edit-reason: dynamically parameterizes managed version expectations.
+- `tests/install/test_version_pins.py` — no-edit-reason: already verifies each managed pin against its Cargo manifest.
+- `tests/servers/test_auth_service.py` — no-edit-reason: its out-of-matrix memory rebuild row stays refused.
+- `tests/servers/routes/test_runtime_handshake.py` — no-edit-reason: it asserts only the retained handshake row.
+
+**Research context:** After 8.4 every row is served natively, and Proxy
+and Compare remain only as a rollback to Python. This leaf removes that
+rollback. `MemoryFamily`'s default backend becomes Native. A Proxy or
+Compare selection for `front_door.routes.memory`,
+`front_door.routes.gobby-memory` or
+`front_door.routes.gobby-review-learning` returns a gmemory-local typed
+error naming the key, telling the operator to remove the entry or set it to
+`native`. The family push returns it before pushing, and serve.rs
+propagates it with `?` as it already does `terminal_route_latch`, so
+gdaemon refuses to start before any row is served. 7.3's latch then always
+carries `native`, so Python's job gates stay closed. A node runs no Python
+backend and relays through `HubRelay`, so this leaf changes nothing a node
+serves. Only gdaemon links gmemory; `src/gobby/install/bin_release_identity.py::_locked_dependencies`
+hashes only reachable lock entries, so gdaemon alone takes a 0.0.1 bump,
+with manifest, lock and pin updated, and gcode and ghook keep theirs.
+
+The two Python route modules are deleted with their registrations. A
+loopback sweep for `/api/memories` and `/memory/dream` under `src/gobby`
+found only the `cli/memory` callbacks that 8.3 retired and two
+`_AGENT_CAPABILITY_MATRIX` rows (`GET /api/memories/graph/counts` and
+`GET /api/memories/graph/rebuild/status`). Those rows authorize routes
+Python no longer has, and 8.1 owns their native admission, so they are
+removed. The Python tool modules stay registered, but no public caller
+reaches them: the gateway serves both servers natively and refuses the
+proxy. Their remaining callers are in-process and bypass the front door.
+They are the Python rule engine's `mcp_call` dispatch
+(`src/gobby/hooks/dispatchers/mcp.py::dispatch_mcp_calls` and the inline
+dispatcher in `src/gobby/hooks/factory.py`) and the Python tool proxy's
+internal-registry dispatch. 8.6 retires the modules with those callers'
+owners. Rollback after this leaf reverts its commit and reinstalls the
+preceding gdaemon; a binary rollback alone would proxy to deleted routes.
+The release follows 8.2's promotion and Orchestrator-directed cutover.
+
+**Granularity:** The refusal, the default change and the route deletions
+are one ownership switch: deleting the routes without the refusal would
+leave a proxy selection pointing at nothing.
+
+**Acceptance:**
+
+- 8.5.1 - A Proxy or Compare selection for each of the three keys refuses
+  start with an error naming the key, an absent entry resolves Native, and
+  `native` starts the family. test: `crates/gmemory/tests/native_only.rs::retired_backends_refuse_start`.
+- 8.5.2 - The Python app mounts no `/api/memories` or `/memory/dream`
+  router, the agent capability matrix has no memory row, and import and
+  patch-string sweeps find no reference to a deleted route module.
+  test: `tests/servers/test_memory_python_retired.py::test_python_memory_routes_are_retired`.
+- 8.5.3 - The gdaemon manifest, lock and pin agree at the required patch
+  increment. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 8.5.4 - The contract states that the family is native-only, how a
+  retired selection is refused, and the rollback procedure.
+  behavior: "memory native-only selection" in `docs/contracts/memory-native.md`.
+
+Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test native_only`;
+`cargo check -p gobby-daemon`; the retirement test and
+`tests/servers/test_auth_service.py` with the protected Python prefix; the
+targeted version-pin check; scoped Ruff and mypy with
+a changed-test type audit; an admitted release build and
+Orchestrator-directed cutover.
+
+### 8.6 Retire the Python memory and review-learning services [category: code] (depends: 8.5, #25024, #21560, #21562, #24151, #21567, #21570, #21583, #21585, #21587, #21589, #21591)
+`kind: deliverable`
+
+Targets:
+- `crates/gdaemon/src/state.rs::RuntimeState::prepare`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+- `src/gobby/memory/job_ownership.py`
+- `src/gobby/mcp_proxy/tools/memory.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/memory_dream.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/memory_review.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/memory_surface.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/memory_scope.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/memory_session.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/memory_write.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/review_learning.py::*` — operation: delete — scope-reason: retire the Python review-learning tool module
+- `src/gobby/memory/backends/__init__.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/backends/null.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/backends/storage_adapter.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/collection_names.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/components/__init__.py`
+- `src/gobby/memory/dream/__init__.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/aggregate.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/apply.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/candidates.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/coordinator.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/cron.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/decisions.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/models.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/options.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/orchestrator.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/plan.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/planner.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/protocols.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/related.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/report.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/service.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/storage.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/storage_actions.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/storage_journal.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/storage_runs.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/truth_digest.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/embedding_text.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/facade.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/falkor_client.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/generation_schemas.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/identity.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/manager.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/prompt_triage.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/protocol.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/push_exclusion.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/scoring.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/__init__.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_access.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_backfill.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_constants.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_graph.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_keyword.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_models.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_paths.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_ranking.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_results.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_rrf.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/crossref.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/indexing.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/keyword.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/__init__.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/clustering.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/code_linker.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/densify.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/extraction.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/maintenance.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/models.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/normalization.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/reader.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/rebuild.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/service.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/writer.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/lifecycle.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/maintenance.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/projection_repair.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/repository.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/search.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/secondary_reconciliation.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/surface_format.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_client.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_filters.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_logging.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_maintenance.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_queries.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_rebuild.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_status.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/write_result.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/review_learning/__init__.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/review_learning/class_recall.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/review_learning/file_paths.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/review_learning/fingerprint.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/review_learning/guidance.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/review_learning/lessons.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/review_learning/service.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/storage/memories.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_base.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_crossrefs.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_crud.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_dreams.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_graph.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_models.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_query.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_scope.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_vector_reindex.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/sync/memories.py::*` — operation: delete — scope-reason: retire the Python memory backup manager
+- `src/gobby/app_context.py::*` — scope-reason: drop the memory manager, dream coordinator and backup manager fields and their imports
+- `src/gobby/runner.py::*` — scope-reason: drop the memory, vector store, dream coordinator and backup manager attributes, the reconcile task slot and their imports
+- `src/gobby/runner_init/config_subscribers.py::*` — scope-reason: drop the `memory_services` subscriber and its live keys
+- `src/gobby/runner_init/orchestration.py::*` — operation: delete-lines — base-blob: 8958a08506fae444c05ab2b01b47302846f14c81 — lines: 616-638, 715-737, 860-874 — scope-reason: remove the dream coordinator, the Python dream cron registration and the interrupted-run reconcile
+- `src/gobby/runner_init/servers.py::*` — scope-reason: stop passing the memory manager, dream coordinator and backup manager to the HTTP server
+- `src/gobby/runner_init/services.py::*` — scope-reason: delete the memory service stack: the bundle, its builders and rebuild requests, the vector store, both scope repairs and the projection repair
+- `src/gobby/runner_lifecycle.py::*` — scope-reason: stop threading `rebuild_vector_store` into subsystem startup
+- `src/gobby/runner_lifecycle_periodic.py::*` — scope-reason: delete the gated `memory-reconcile` spawn and its loop entry
+- `src/gobby/runner_lifecycle_shutdown.py::*` — operation: delete-lines — base-blob: b2aca3939c682863c87789d2f67d9a6f84d17afd — lines: 288, 422-439 — scope-reason: remove the memory reconcile task slot and the memory manager and vector store closes
+- `src/gobby/runner_lifecycle_subsystems.py::*` — operation: delete-lines — base-blob: e37cc910330a11e0df8f3bf9c606fa5113bb54ba — lines: 49, 155-207, 771, 811-813 — scope-reason: remove the vector store startup phase, the vector store initializer and its rebuild parameter
+- `src/gobby/runner_maintenance/__init__.py::*` — scope-reason: drop the `rebuild_vector_store` and `memory_reconcile_loop` re-exports
+- `src/gobby/runner_maintenance/lifecycle.py::*` — scope-reason: delete `rebuild_vector_store`
+- `src/gobby/runner_maintenance_recurring.py::*` — scope-reason: delete `memory_reconcile_loop`
+- `src/gobby/runner_rollback.py::*` — scope-reason: drop the memory manager rollback entry
+- `src/gobby/runner_service_readiness.py::*` — scope-reason: drop the FalkorDB probe, whose client and only Python user retire here
+- `src/gobby/servers/_app_lifecycle.py::*` — scope-reason: drop the memory manager from the app state
+- `src/gobby/servers/http.py::*` — scope-reason: drop the memory resolvers, constructor parameters and property, and the dream coordinator shutdown
+- `src/gobby/mcp_proxy/registries.py::*` — scope-reason: drop the memory and review-learning registries, the review-learning service construction and the memory resolver parameters
+- `src/gobby/mcp_proxy/server.py::*` — scope-reason: drop the unused `memory_manager` parameter
+- `src/gobby/sessions/lifecycle.py::*` — scope-reason: delete the knowledge-graph queue loop, the dream-hidden purge and their gated start sites
+- `tests/mcp_proxy/test_memory_tools_kg.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_memory.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_memory_get_access.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_memory_review.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_memory_surface.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_memory_tools.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_memory_write_cap.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_review_learning.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/__init__.py`
+- `tests/memory/_recall_corpus.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/conftest.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/fixtures/claude_transcript_titles.jsonl`
+- `tests/memory/fixtures/gobby_cli_truth_digest.json::*` — operation: delete — scope-reason: retire the fixture of the deleted Python dream tests
+- `tests/memory/fixtures/ranking_cohort.json::*` — operation: delete — scope-reason: retire the fixture of the deleted Python ranking tests
+- `tests/memory/recall_benchmark_cleanup.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_async_db_offload.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_backends.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_collapse_screen.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_cooccurrence_densify.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_create_supersedes.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_coordinator.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_cron.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_evidence.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_frozen_digest.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_keyword_parse.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_options.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_related.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_reports.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_summaries.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_embedding_text.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_falkor_client.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_falkor_phase2_dialect.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_falkor_phase2_wiring.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_falkor_vector_search.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_falkor_write_methods.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_graph_backfill_equivalence.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_graph_edge_weighting.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_graph_search_integration.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_identity.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_indexing_service.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_knowledge_graph.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_knowledge_graph_clustering.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_maintenance_update.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_manager_graph_search.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_manager_knowledge_graph_wiring.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_manager_renames.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_manager_vectorstore.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_memory_manager_1.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_memory_protocol.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_projection_repair.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_prompt_triage.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_ranking_policy.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_recall_benchmark.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_recall_benchmark_cleanup.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_recall_benchmark_e2e.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_scoring.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_search_access_gating.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_search_ranking.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_secondary_reconciliation.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_v2_features.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_vectorstore.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_vectorstore_init.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_write_cap.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/__init__.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/conftest.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_ci_guard.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_class_recall.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_feedback_loop_e2e.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_file_paths.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_fingerprint.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_guidance.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_lessons.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_promotion.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_recall_context.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_recall_limits.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_retirement.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_storage_contract.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/storage/test_memories_dreams.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/storage/test_memory_manager.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/storage/test_memory_media.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/storage/test_storage_memories.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/sync/test_memory_backup.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/sync/test_memory_sync.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_native_job_ownership.py`
+- `tests/e2e/test_memory_dream_gc_e2e.py::*` — operation: delete — scope-reason: retire the e2e of the Python dream-hidden purge, which 7.3's native job owns
+- `tests/conftest.py::_clear_terminal_route_latch`
+- `tests/ai/test_ai_runner_lease_lifecycle.py::*` — scope-reason: drop the memory-services rebuild cases
+- `tests/config/test_stateful_config_subscribers.py::*` — scope-reason: drop the `memory_services` subscriber cases
+- `tests/mcp_proxy/test_registries.py::*` — scope-reason: drop the memory and review-learning registry cases
+- `tests/mcp_proxy/tools/tasks/test_cross_project_task_refs.py::*` — scope-reason: drop the cases that build the Python memory registry
+- `tests/mcp_proxy/tools/test_internal_action_tools.py::*` — scope-reason: drop the memory backup and restore cases
+- `tests/mcp_proxy/tools/test_tool_verbosity.py::*` — scope-reason: drop the memory verbosity case
+- `tests/meta/test_import_hygiene.py::*` — scope-reason: drop the memory manager argument
+- `tests/reports/test_publishing_retirement.py::*` — scope-reason: seed dream rows with SQL instead of the retired dream store
+- `tests/reports/test_tools.py::*` — scope-reason: seed dream rows with SQL instead of the retired dream store
+- `tests/runner_init/test_services_mcp_stack.py::*` — scope-reason: drop the memory stack expectations
+- `tests/servers/conftest.py::*` — scope-reason: drop the memory manager and backup manager fixture arguments
+- `tests/servers/test_http_endpoints.py::*` — scope-reason: drop the memory manager arguments
+- `tests/servers/test_http_middleware.py::*` — scope-reason: drop the memory manager argument
+- `tests/sessions/test_sessions_lifecycle.py::*` — scope-reason: drop the knowledge-graph queue and dream-hidden purge cases
+- `tests/skills/test_epic_review_skill.py::*` — scope-reason: drop the cases that drive the Python review-learning service
+- `tests/skills/test_review_learning_skill.py::*` — scope-reason: drop the cases that drive the Python review-learning service
+- `tests/storage/sessions/test_storage_sessions_lifecycle.py::*` — scope-reason: seed memory rows with SQL instead of the retired storage manager
+- `tests/storage/test_datetime_bindings.py::*` — scope-reason: drop the memory storage cases
+- `tests/storage/test_datetime_models.py::*` — scope-reason: drop the memory model cases
+- `tests/storage/test_dialect_parity.py::*` — scope-reason: drop the memory manager cases
+- `tests/storage/test_embedding_generation_ledger.py::*` — scope-reason: seed memory rows with SQL instead of the retired storage manager
+- `tests/sync/test_local_backup_paths.py::*` — scope-reason: drop the memory backup path cases
+- `tests/test_bm25_startup.py::*` — scope-reason: drop the `_initialize_vector_store` patch
+- `tests/test_runner_approval_timeout.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_backlog.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_bin_freshness.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_code_index_shutdown.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_init.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_lifecycle.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_lifecycle_periodic.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_lifecycle_startup.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_lifecycle_subsystems.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_maintenance_offload.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_maintenance_startup.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_rollback.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_service_readiness.py::*` — scope-reason: drop the FalkorDB probe cases
+- `tests/test_runner_shutdown.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_skill_maintenance.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_workflow_audit_maintenance.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/utils/test_deps.py::*` — scope-reason: drop the `_init_memory_stack` expectations
+- `tests/workflows/test_memory_lifecycle_rules.py::*` — scope-reason: drop the case that builds the Python memory registry
+- `tests/workflows/test_session_variable_mutation_scope.py::*` — scope-reason: drop the retired tool helper imports
+- `tests/servers/test_memory_python_retired.py`
+- `docs/contracts/memory-native.md`
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: dynamically reads the bumped gdaemon pin.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gmcp.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: dynamically reads unchanged native version pins.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: resolves every pin dynamically by binary name.
+- `src/gobby/code_index/gcode_versions.py` — no-edit-reason: both gcode maintenance floors derive from the unchanged gcode pin.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: the hook compatibility floor derives from the unchanged ghook pin.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: enumerates the map dynamically.
+- `src/gobby/install/distribution.py` — no-edit-reason: resolves minimum versions dynamically.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: derives expected ghook versions from the map.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gmcp.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: derives expected versions from the map.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: derives gcode expectations from the unchanged pin.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: derives ghook expectations from the unchanged pin.
+- `tests/install/test_distribution.py` — no-edit-reason: dynamically parameterizes managed version expectations.
+- `tests/install/test_version_pins.py` — no-edit-reason: already verifies each managed pin against its Cargo manifest.
+
+**Research context:** After 8.5 no public caller reaches Python memory
+code, but Python still constructs the memory service, the review-learning
+service, the shared `VectorStore` and the dream coordinator, and other
+families' Python code calls them in-process. This leaf deletes all of it
+once those callers have moved. Each remaining caller outside this family is
+named below against the epic whose Rust plan owns it; that epic moves the
+caller off the Python service before this leaf runs. The Orchestrator
+narrows each epic edge to the owning leaf tasks at expansion, because
+several of those epics hold leaves that depend on this plan.
+
+- #21560 tasks: `ReviewLearningService` in
+  `src/gobby/mcp_proxy/tools/tasks/_context.py`, `_factory.py` and
+  `_ops_factory.py`.
+- #21562 sessions: `src/gobby/sessions/summary_context.py::_get_session_memories`,
+  the memory manager in `src/gobby/sessions/transcript_processing.py`,
+  `src/gobby/mcp_proxy/tools/sessions/_factory.py`,
+  `src/gobby/hooks/session_summary_dispatcher.py` and
+  `src/gobby/hooks/session_summary_wiring.py`.
+- #24151 hooks: the memory components and inline MCP dispatcher in
+  `src/gobby/hooks/factory.py`, `src/gobby/hooks/hook_manager.py`, and
+  `src/gobby/hooks/dispatchers/mcp.py` (`dispatch_mcp_calls` and
+  `format_review_lesson_guidance`).
+- #21567 workflows: the Python rule engine's `mcp_call` dispatch, including
+  the web chat consumer in `src/gobby/servers/websocket/chat/_lifecycle.py`
+  (`.gobby/plans/rust-rule-evaluation.md` D4 to D6), the pipeline tool
+  steps in `src/gobby/workflows/pipeline/handlers.py`, and
+  `src/gobby/workflows/engine/delivery_formatting.py`.
+- #21570 MCP front door: the Python tool proxy's internal-registry dispatch
+  (`src/gobby/servers/routes/mcp/endpoints/execution.py`,
+  `src/gobby/mcp_proxy/server.py` and `src/gobby/mcp_proxy/stdio_tools.py`),
+  `src/gobby/mcp_proxy/semantic_search.py`,
+  `src/gobby/mcp_proxy/services/fallback.py`, the tool-embeddings half of
+  `_initialize_vector_store`, and the bundle's `semantic_search` that
+  `src/gobby/servers/http.py` reads.
+- #21583 communications: `get_current_project_id` in
+  `src/gobby/mcp_proxy/tools/communications.py`.
+- #21585 projects: `src/gobby/runner_init/project_purge.py`,
+  `src/gobby/projects/vector_cleanup.py` and
+  `src/gobby/projects/fenced_vector_store.py`.
+- #21587 AI: `src/gobby/ai/embedding_switch.py` and
+  `src/gobby/ai/embedding_switch_runner.py`.
+- #21589 admin: the memory statistics and vector store in
+  `src/gobby/servers/routes/admin/_health.py`.
+- #21591 install: the `VectorStore` in
+  `src/gobby/cli/installers/embedding.py`.
+- #25024 cron: binds the native nightly dream to 4.3's service, so the
+  Python dream cron registration has no role left.
+
+Their tests move with them: the embedding switch, project write fence,
+admin health and status-budget, and memory index delivery tests, and the
+memory component fixtures under `tests/hooks/` and `tests/adapters/`.
+`ReviewLearningPatternMutation` in `src/gobby/storage/hub/protocol.py` and
+`src/gobby/storage/hub/postgres_pool.py` stays with the shared hub lock
+registry; 5.1 takes the same key string.
+
+This leaf owns the rest: the family's packages, storage mixins, backup
+manager and tool modules, and the family's wiring in the Python runner. The
+sessions plan keeps the knowledge-graph queue and the dream-hidden purge in
+`SessionLifecycleManager`; this leaf deletes them there, with 7.3's gates
+and `src/gobby/memory/job_ownership.py`. 7.3's latch has no reader left, so
+`RuntimeState::prepare` stops exporting `GOBBY_MEMORY_ROUTE`,
+`tests/conftest.py` stops clearing it, and gdaemon takes a 0.0.1 bump with
+manifest, lock and pin, as in 8.5. A node runs no Python backend, so no
+node behavior changes. The bare-path entries for
+`src/gobby/memory/components/__init__.py`, `tests/memory/__init__.py`,
+`tests/memory/fixtures/claude_transcript_titles.jsonl`,
+`src/gobby/memory/job_ownership.py` and
+`tests/memory/test_native_job_ownership.py` are deletions as well: the
+index holds no symbols for the first three, and 7.3 creates the last two.
+
+The three runner files over 850 lines take delete-lines proofs pinned to
+their current blobs: in `orchestration.py` the dream coordinator, the
+dream cron registration and the interrupted-run reconcile; in
+`runner_lifecycle_shutdown.py` the reconcile task slot and the memory
+manager and vector store closes; in `runner_lifecycle_subsystems.py` the
+`vector_store` startup phase, `_initialize_vector_store` and its
+`rebuild_vector_store` parameter. Other families edit these files before
+this leaf runs, so the proofs are re-pinned at expansion and the executor
+removes the named blocks. If the code-index plan's 8.3 has moved
+`_initialize_vector_store` into `src/gobby/runner_startup_vectors.py`, the
+re-pin follows it there.
+
+**Granularity:** One atomic state: nothing under `src/` imports the Python
+memory, review-learning, memory storage or memory backup modules, or the
+eight memory tool modules. The tools cannot go first, because
+`registries.py` builds `ReviewLearningService` from the service package,
+and the runner wiring must change in the same commit as the deletions.
+Every target is a deletion or the removal of a reference to a deleted
+module.
+
+**Acceptance:**
+
+- 8.6.1 - No module remains under `gobby.memory`, `gobby.review_learning`,
+  `gobby.storage.memories*`, `gobby.sync.memories` or the eight memory tool
+  modules; import and patch-string sweeps under `src/` and `tests/` find no
+  reference to them; and no source under `crates/` or `src/` names
+  `GOBBY_MEMORY_ROUTE`.
+  test: `tests/servers/test_memory_python_retired.py::test_python_memory_services_are_retired`.
+- 8.6.2 - The Python runner starts, serves its remaining families and shuts
+  down with no memory service, vector store, dream coordinator, memory job
+  or FalkorDB probe. test: `tests/test_runner_lifecycle.py::test_runner_runs_without_python_memory`.
+- 8.6.3 - The gdaemon manifest, lock and pin agree at the required patch
+  increment. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 8.6.4 - The contract records the retirement and each named piece with its
+  owning epic. behavior: "memory Python retirement" in `docs/contracts/memory-native.md`.
+
+Planned verification: `cargo check -p gobby-daemon` and the gdaemon state
+tests; the retirement and runner tests and every edited test file with the
+protected Python prefix; scoped Ruff, mypy over `src/` and a changed-test
+type audit; the targeted version-pin check; an admitted release build and
+Orchestrator-directed cutover.
+
 ## E1 End-to-end verification
 `kind: verification`
 
@@ -1876,13 +2900,21 @@ review-learning service and 6.1 the session-variable writer. 8.1 owns
 admission and the Security approval gate, 8.2 activates the HTTP family and
 both MCP servers, and 8.4 records the delegated ledger state.
 
+Under the Orchestrator's 2026-10-28 ruling the port ends with no Python in
+the family's path. 7.3 runs the six memory background jobs in gdaemon, 8.5
+refuses a Proxy or Compare selection at start, makes Native the default and
+deletes the Python HTTP routes, and 8.6 deletes the Python memory and
+review-learning services, tool modules and runner wiring after the epics it
+names have moved their own callers.
+
 The #24963 readiness gate requires ordinary `Passed` cases and exactly cited,
-native-asserted `Waived` cases for the 56 waivers, and fails skipped-only and
+native-asserted `Waived` cases for the 64 waivers, and fails skipped-only and
 unwaived reports. #24970 supplies the shared error classes and adapters.
 Shared target files are dependency-ordered throughout, and no section leaves
-a product choice to its executor. Josh reviews the two flagged items with the
-stamped plan: the HDBSCAN dependency (Decision 2) and the AI 7.4 amendment
-(Decision 4).
+a product choice to its executor. Josh reviews the flagged items with the
+stamped plan: the HDBSCAN dependency (Decision 2), the AI 7.4 amendment
+(Decision 4) and the AI 7.4 and 7.6 rebuild-seam amendments (3.1), both
+committed to the AI plan at 23d0c055b8.
 
 Draft validation command:
 `uv run gobby plans validate .gobby/plans/memory-family.md -p /Users/josh/Projects/gobby`.
@@ -1895,5 +2927,902 @@ production cutover or task expansion have been performed during planning.
 
 - 2026-10-28 — Initial narrative by Plan Writer gobby#18291 for #25254,
   carrying the Orchestrator's MEM-D1, MEM-D2 and MEM-D3 rulings and the
-  #25262 edge; awaiting enhancer dispositions and adversarial review by
-  gobby#18294; no consensus claimed.
+  #25262 edge. The Orchestrator accepted enhancer gobby#18364's MEM-ENH-01
+  to 05: the managed lease lifecycle (2.1, 2.2, 2.3), explicit
+  repair-intent failure invariants (2.2, 2.3, 6.2.28), stale-plan and
+  revert fences (4.1), the search compare effect (8.2.1), and the pinned
+  `hdbscan` 0.12.0 with `kdtree` 0.7.0 and Rust 1.88 evidence (Decision 2,
+  2.5). Awaiting adversarial review by gobby#18294; no consensus claimed.
+- 2026-10-28 — Plan Writer gobby#18291 and Plan Adversary gobby#18294
+  reached consensus on the narrative at
+  `3a381053249fd63213a45579b1ba6cd35135be34`. MEM-ADV-01: the Orchestrator
+  ruled option A, a gcore `CollectionRebuildSeam` trait that gmemory's
+  `MemoriesRebuildSeam` implements, so `gobby-ai` never depends on
+  `gobby-memory`, and the Orchestrator records the AI 7.4 and 7.6
+  amendments (3.1.4). MEM-ADV-02: eight exact-surface
+  unsupported-prompt-syntax waivers, 64 in all, refuse before any model call
+  or graph-state change and keep Python's metadata-default merge (2.4, 4.2,
+  4.3, 6.2, 7.2). MEM-ADV-03: projection and reconciliation hold Python's
+  per-memory advisory lock and compare rationale in the snapshot check and
+  the conditional clear; Python's rationale omission is recorded under Debt
+  not to port and filed as #25272 (2.2.12, 2.3.7). MEM-ADV-04: 6.3 states
+  its granularity. MEM-ADV-05: compare mode rolls back native surfaced-stat
+  writes through the route backend passed at family construction (1.3.6,
+  8.2.1). No governing decision remains open.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Executable 80-row characterization corpus
+  category: test
+  task_type: chore
+  depends_on: []
+  validation_criteria: '0.1.1: The corpus inventory equals the exact 80-key ledger
+    predicate, every key has a success case and a representative failure case, and
+    a key outside the family is rejected. test: `tests/contracts/test_memory_parity_corpus.py::test_inventory_matches_memory_ledger`.
+
+    0.1.2: Running the collector twice against reset isolated state gives the same
+    normalized fixtures, ordering, stdout, stderr, exit codes, vectors, graph effects
+    and stub requests. test: `tests/contracts/test_memory_parity_corpus.py::test_collection_is_reproducible`.
+
+    0.1.3: Each of the 25 HTTP rows records the full admission matrix, including agent-token
+    admission on the two graph rows only and managed cookies refused on every mutation.
+    test: `tests/contracts/test_memory_parity_corpus.py::test_http_admission_matrix`.
+
+    0.1.4: Each of the 64 changed behaviors resolves to one exact-surface test waiver
+    with explicit native assertions, while untouched cases on the same surface stay
+    `Passed`. test: `tests/contracts/test_memory_parity_corpus.py::test_debt_waivers_are_behavior_scoped`.
+
+    0.1.5: Skipped-only reports, unwaived `Skipped`, stale or missing waiver decisions
+    and an unrelated injected regression fail readiness even beside a valid `Waived`
+    case. test: `tests/contracts/test_memory_parity_corpus.py::test_waiver_does_not_hide_unrelated_diff`.'
+  labels:
+  - covers:memory-family:0.1:0.1.1
+  - covers:memory-family:0.1:0.1.2
+  - covers:memory-family:0.1:0.1.3
+  - covers:memory-family:0.1:0.1.4
+  - covers:memory-family:0.1:0.1.5
+  tdd: false
+  source_section: '0.1'
+  assigned_agent: developer
+- title: Crate, memory family shell, configuration and record reads
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.1'
+  validation_criteria: '1.1.1: `HTTP GET /api/memories` matches list scope, filters,
+    ordering, limit, offset and payload. test: `crates/gmemory/tests/records.rs::list_matches_python`.
+
+    1.1.2: `HTTP GET /api/memories/{memory_id}` matches identity, prefix resolution,
+    foreign-project refusal and not-found outcomes. test: `crates/gmemory/tests/records.rs::get_matches_python`.
+
+    1.1.3: `HTTP GET /api/memories/stats` matches totals, per-type counts and project
+    filtering. test: `crates/gmemory/tests/records.rs::stats_matches_python`.
+
+    1.1.4: The family claims only implemented rows, admission fails closed, a node
+    composes no memory family, and a configuration change applies on the next request.
+    test: `crates/gmemory/tests/records.rs::family_shell_and_placement`.
+
+    1.1.5: Injected unexpected faults on the three rows return safe detail under their
+    exact Waived citations and change no state. test: `crates/gmemory/tests/records.rs::unexpected_read_errors_are_safe_and_waived`.'
+  labels:
+  - covers:memory-family:1.1:1.1.1
+  - covers:memory-family:1.1:1.1.2
+  - covers:memory-family:1.1:1.1.3
+  - covers:memory-family:1.1:1.1.4
+  - covers:memory-family:1.1:1.1.5
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Knowledge-graph reads
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `HTTP GET /api/memories/graph` matches nodes, crossref
+    edges, limits and project scoping. test: `crates/gmemory/tests/graph_reads.rs::memory_graph_matches_python`.
+
+    1.2.2: `HTTP GET /api/memories/graph/counts` matches counts and the FalkorDB-unavailable
+    502. test: `crates/gmemory/tests/graph_reads.rs::graph_counts_matches_python`.
+
+    1.2.3: `HTTP GET /api/memories/graph/entities` matches entity listing, ordering
+    and limit bounds. test: `crates/gmemory/tests/graph_reads.rs::entities_match_python`.
+
+    1.2.4: `HTTP GET /api/memories/graph/entities/{entity_key}/neighbors` matches
+    neighbor expansion, encoded keys, weights and unknown-entity results. test: `crates/gmemory/tests/graph_reads.rs::neighbors_match_python`.
+
+    1.2.5: Cluster expansion matches Python with the flag on and off, and the four
+    rows return safe detail under their exact Waived citations. test: `crates/gmemory/tests/graph_reads.rs::cluster_expansion_and_safe_errors`.'
+  labels:
+  - covers:memory-family:1.2:1.2.1
+  - covers:memory-family:1.2:1.2.2
+  - covers:memory-family:1.2:1.2.3
+  - covers:memory-family:1.2:1.2.4
+  - covers:memory-family:1.2:1.2.5
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Hybrid search and surfaced statistics
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: `HTTP GET /api/memories/search` matches ranking, scores,
+    diagnostics, filters, limit and min-score across semantic, keyword and graph legs.
+    test: `crates/gmemory/tests/search.rs::search_matches_python`.
+
+    1.3.2: Keyword-only fallback, an unavailable vector store, a pg_search parse error
+    and a graph-leg timeout match Python''s degraded results. test: `crates/gmemory/tests/search.rs::degraded_search_matches_python`.
+
+    1.3.3: Surfaced statistics change only for the five surfaced callers, with Python''s
+    debounce. test: `crates/gmemory/tests/search.rs::surfaced_stats_match_python`.
+
+    1.3.4: The gcore retrieval function returns stored vectors by id and a typed error
+    for a missing collection. test: `crates/gmemory/tests/search.rs::qdrant_retrieval_returns_vectors`.
+
+    1.3.5: An injected unexpected fault returns safe detail under `memory.http-search.internal-error-redaction`.
+    test: `crates/gmemory/tests/search.rs::unexpected_search_error_is_safe_and_waived`.
+
+    1.3.6: With the family built for `Compare`, search returns its result and every
+    surfaced-stat write rolls back, including after an error injected mid-update;
+    built for `Native`, the writes commit with Python''s debounce. test: `crates/gmemory/tests/search.rs::compare_backend_rolls_back_surfaced_stats`.'
+  labels:
+  - covers:memory-family:1.3:1.3.1
+  - covers:memory-family:1.3:1.3.2
+  - covers:memory-family:1.3:1.3.3
+  - covers:memory-family:1.3:1.3.4
+  - covers:memory-family:1.3:1.3.5
+  - covers:memory-family:1.3:1.3.6
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Shared embedding serving lease and projection-change ledger
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.1'
+  validation_criteria: '2.1.1: `append_change`, `watermark` and `projection_targets`
+    produce Python''s rows and target sets for memory and tool sources, inside and
+    outside a caller transaction. test: `crates/gcore/tests/embedding_generation.rs::ledger_matches_python`.
+
+    2.1.2: Prepare, acknowledge, renew, fence, successor and `assert_serving` match
+    Python''s lease states, expiry and errors; a native and a Python lease on one
+    machine hold separate rows, and `can_collect` honors both. test: `crates/gcore/tests/embedding_generation.rs::serving_lease_matches_python`.
+
+    2.1.3: The instance id is stable across restarts and differs from `UUID(machine_id)`;
+    a completed switch re-targets the holder through its callback. test: `crates/gcore/tests/embedding_generation.rs::instance_identity_and_retarget`.
+
+    2.1.4: The managed lifecycle keeps renewing while the async runtime is blocked;
+    transient renew failures retry at 1, 2, 4 and then 5 seconds and fence once the
+    remaining lease is no longer than the next wait; an expired or lost lease, including
+    one that expires across a simulated host sleep, fences at once. test: `crates/gcore/tests/embedding_generation.rs::managed_renewal_backoff_and_fence`.
+
+    2.1.5: While fenced, a matching completed-switch record re-activates the successor,
+    resumes serving and requests projection repair once; a changed record, or a successor
+    that loses to a newer lease, requests a rebuild with that record and stays fenced;
+    storage errors keep polling without resuming. test: `crates/gcore/tests/embedding_generation.rs::managed_reacquire_or_rebuild`.'
+  labels:
+  - covers:memory-family:2.1:2.1.1
+  - covers:memory-family:2.1:2.1.2
+  - covers:memory-family:2.1:2.1.3
+  - covers:memory-family:2.1:2.1.4
+  - covers:memory-family:2.1:2.1.5
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Record lifecycle writes
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  - '2.1'
+  validation_criteria: '2.2.1: `HTTP POST /api/memories` matches row, vector, crossref,
+    graph enqueue and ledger effects, and validation failures write nothing. test:
+    `crates/gmemory/tests/writes.rs::create_matches_python`.
+
+    2.2.2: `HTTP PUT /api/memories/{memory_id}` matches content, tag and type updates
+    with re-embedding and ledger rows. test: `crates/gmemory/tests/writes.rs::update_matches_python`.
+
+    2.2.3: `HTTP DELETE /api/memories/{memory_id}` matches soft deletion, vector removal,
+    tombstone change rows and foreign-project refusal. test: `crates/gmemory/tests/writes.rs::delete_matches_python`.
+
+    2.2.4: `HTTP POST /api/memories/{memory_id}/restore` matches restoration and index
+    re-projection. test: `crates/gmemory/tests/writes.rs::restore_matches_python`.
+
+    2.2.5: `HTTP POST /api/memories/{memory_id}/promote` matches global promotion
+    and scope re-projection. test: `crates/gmemory/tests/writes.rs::promote_matches_python`.
+
+    2.2.6: `HTTP POST /api/memories/{memory_id}/demote` matches demotion to the current
+    project. test: `crates/gmemory/tests/writes.rs::demote_matches_python`.
+
+    2.2.7: `HTTP POST /api/memories/{memory_id}/move` matches the project move and
+    its index effects. test: `crates/gmemory/tests/writes.rs::move_matches_python`.
+
+    2.2.8: Supersedes, auto-supersede at 0.9, `similar_existing`, ephemeral notes,
+    rationale and content caps and provenance match Python''s create policy. test:
+    `crates/gmemory/tests/writes.rs::create_policy_matches_python`.
+
+    2.2.9: A held purge fence blocks vector writes, a lost lease refuses them, an
+    active switch journal dual-writes, and a completed switch re-targets the writer.
+    test: `crates/gmemory/tests/writes.rs::fence_lease_and_dual_write`.
+
+    2.2.10: The seven rows return safe detail for injected faults under their exact
+    Waived citations; a fault before commit leaves the row, ledger and derived stores
+    unchanged, and a fault after commit leaves the committed row with `vector_needs_reindex`
+    true and its change row, with no untracked derived-store write. test: `crates/gmemory/tests/writes.rs::unexpected_write_errors_are_safe_and_waived`.
+
+    2.2.11: With the lease fenced or Qdrant failing, create and update commit the
+    row with `vector_needs_reindex` true and its change row and return Python''s success
+    response without a vector write; no vector write happens until a successor lease
+    serves, after which the next write projects normally and the earlier row keeps
+    its flag for 2.3''s repair. test: `crates/gmemory/tests/writes.rs::fenced_write_keeps_repair_intent_until_successor`.
+
+    2.2.12: With projection I/O paused, an update, a rationale-only update, a delete
+    or a move of the same memory by native and, separately, by a Python writer never
+    lets the paused stale projection clear the newer flag. After the interleave, including
+    a rationale-only update whose own projection then fails or is fenced, the final
+    state is the newest row''s projection or its durable repair intent; a stale vector,
+    scope or resurrected point that lands transiently never stays untracked. test:
+    `crates/gmemory/tests/writes.rs::stale_projection_loses_to_newer_writes`.'
+  labels:
+  - covers:memory-family:2.2:2.2.1
+  - covers:memory-family:2.2:2.2.2
+  - covers:memory-family:2.2:2.2.3
+  - covers:memory-family:2.2:2.2.4
+  - covers:memory-family:2.2:2.2.5
+  - covers:memory-family:2.2:2.2.6
+  - covers:memory-family:2.2:2.2.7
+  - covers:memory-family:2.2:2.2.8
+  - covers:memory-family:2.2:2.2.9
+  - covers:memory-family:2.2:2.2.10
+  - covers:memory-family:2.2:2.2.11
+  - covers:memory-family:2.2:2.2.12
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Index maintenance and the shared job slot
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.3.1: `HTTP POST /api/memories/invalidate` matches the clear
+    report and starts a tracked rebuild; a running job refuses to clear with the coalesced
+    202. test: `crates/gmemory/tests/maintenance.rs::invalidate_is_tracked_and_waived`.
+
+    2.3.2: `HTTP POST /api/memories/reconcile` matches dry-run and applied reconciliation
+    reports and effects. test: `crates/gmemory/tests/maintenance.rs::reconcile_matches_python`.
+
+    2.3.3: `HTTP POST /api/memories/crossrefs/rebuild` matches processed and created
+    counts and reports per-memory failures in `crossrefs_failed`. test: `crates/gmemory/tests/maintenance.rs::crossref_rebuild_reports_failures`.
+
+    2.3.4: `HTTP POST /api/memories/embeddings/reindex` matches the reindex report,
+    flag clearing and vector effects. test: `crates/gmemory/tests/maintenance.rs::reindex_matches_python`.
+
+    2.3.5: The four rows return safe detail for injected faults under their exact
+    Waived citations. test: `crates/gmemory/tests/maintenance.rs::unexpected_maintenance_errors_are_safe_and_waived`.
+
+    2.3.6: After reacquisition, the projection-repair callback writes vectors, graph
+    state and crossrefs for rows left with `vector_needs_reindex` true and clears
+    each flag only once that row converges; a repair failure leaves the flags set
+    and serving continues. test: `crates/gmemory/tests/maintenance.rs::projection_repair_clears_flags_after_reacquire`.
+
+    2.3.7: A reconciliation paused after its snapshot check, then raced by a native
+    or Python update, rationale-only update, delete or move, never clears the newer
+    row''s flag. Afterwards the final state is the newest row''s projection or its
+    durable repair intent, the newer row stays flagged until its own reconciliation
+    converges, and a stale vector, graph or crossref write that lands transiently
+    never stays untracked. test: `crates/gmemory/tests/maintenance.rs::stale_reconciliation_keeps_newer_repair_intent`.'
+  labels:
+  - covers:memory-family:2.3:2.3.1
+  - covers:memory-family:2.3:2.3.2
+  - covers:memory-family:2.3:2.3.3
+  - covers:memory-family:2.3:2.3.4
+  - covers:memory-family:2.3:2.3.5
+  - covers:memory-family:2.3:2.3.6
+  - covers:memory-family:2.3:2.3.7
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Knowledge-graph writes, extraction and rebuild jobs
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: '2.4.1: `HTTP POST /api/memories/graph/rebuild` matches foreground
+    and background rebuilds, coalescing onto a running job, and FalkorDB effects.
+    test: `crates/gmemory/tests/graph_writes.rs::graph_rebuild_matches_python`.
+
+    2.4.2: `HTTP GET /api/memories/graph/rebuild/status` matches idle, running, completed
+    and failed snapshots, with failure text redacted under its exact waiver. test:
+    `crates/gmemory/tests/graph_writes.rs::rebuild_status_matches_python`.
+
+    2.4.3: `HTTP POST /api/memories/graph/clear` matches the clear report and graph
+    effects per project. test: `crates/gmemory/tests/graph_writes.rs::graph_clear_matches_python`.
+
+    2.4.4: Extraction, writer, densify and code-link effects match Python for a fixture
+    project, using the stubbed `memory.kg` candidates. test: `crates/gmemory/tests/graph_writes.rs::extraction_and_densify_match_python`.
+
+    2.4.5: The four bundled memory prompts, a global override of a graph template
+    and a project override of `memory/dream` render byte-identically to Python, including
+    metadata defaults that call variables replace, a `None` default, a `1.0` float
+    and the dropped trailing newline. A project override of a graph template is ignored
+    and the global or bundled record renders. An undefined variable and an override
+    using unsupported template syntax fail with a typed error naming the path and
+    call no model. test: `crates/gmemory/tests/graph_writes.rs::prompt_rendering_matches_python`.
+
+    2.4.6: Injected faults return safe detail on the three rows under their exact
+    Waived citations. test: `crates/gmemory/tests/graph_writes.rs::unexpected_graph_errors_are_safe_and_waived`.
+
+    2.4.7: With a global `{% if %}` override of `memory/extract_relations`, a foreground
+    `HTTP POST /api/memories/graph/rebuild` returns the validation-class error naming
+    the path, and a background job''s `HTTP GET /api/memories/graph/rebuild/status`
+    ends `failed` with that text unredacted, under their exact waivers. No memory''s
+    graph state changes and the generation stub receives no request. test: `crates/gmemory/tests/graph_writes.rs::unsupported_graph_prompt_refuses_rebuild`.'
+  labels:
+  - covers:memory-family:2.4:2.4.1
+  - covers:memory-family:2.4:2.4.2
+  - covers:memory-family:2.4:2.4.3
+  - covers:memory-family:2.4:2.4.4
+  - covers:memory-family:2.4:2.4.5
+  - covers:memory-family:2.4:2.4.6
+  - covers:memory-family:2.4:2.4.7
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: HDBSCAN entity reclustering
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  validation_criteria: '2.5.1: On fixture embeddings the labels, noise set, cluster
+    sizes and silhouette score match scikit-learn''s output, up to the relabelling
+    Python applies. test: `crates/gmemory/tests/clustering.rs::hdbscan_matches_sklearn_fixture`.
+
+    2.5.2: Persisted `cluster_id` values and the result summary match Python, and
+    1.2''s cluster expansion reads them. test: `crates/gmemory/tests/clustering.rs::recluster_persists_labels`.
+
+    2.5.3: `hdbscan` is pinned to `=0.12.0`, the lockfile gains exactly `hdbscan`
+    0.12.0 and `kdtree` 0.7.0, and both crates compile with the Rust 1.88.0 toolchain.
+    behavior: "hdbscan pinned to =0.12.0 and building on Rust 1.88" in `crates/gmemory/Cargo.toml`.
+
+    2.5.4: Entities with empty, non-numeric, non-finite or zero-norm vectors, or a
+    dimension other than the most common one, are labelled noise and listed as invalid
+    without reaching the crate, as in Python. test: `crates/gmemory/tests/clustering.rs::invalid_vectors_are_noise`.'
+  labels:
+  - covers:memory-family:2.5:2.5.1
+  - covers:memory-family:2.5:2.5.2
+  - covers:memory-family:2.5:2.5.3
+  - covers:memory-family:2.5:2.5.4
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Native memories rebuild and project_change seam
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.5'
+  validation_criteria: '3.1.1: `rebuild` fills the named collection with one point
+    per live memory from the target embedder, under the fence, and Python''s `batch_upsert`
+    rebuild yields the same point set for a fixture project. test: `crates/gmemory/tests/rebuild_seam.rs::rebuild_matches_python_point_set`.
+
+    3.1.2: `project_change` upserts a changed memory''s point from the authoritative
+    row and deletes the point for a tombstone. test: `crates/gmemory/tests/rebuild_seam.rs::project_change_upserts_and_deletes`.
+
+    3.1.3: Native create, update and delete during an armed switch append change rows
+    and dual-write to the named physical target. test: `crates/gmemory/tests/rebuild_seam.rs::producers_dual_write_while_armed`.
+
+    3.1.4: `rebuild` and `project_change` called through an `Arc<dyn CollectionRebuildSeam>`
+    reach the real `MemoriesRebuildSeam`, and `cargo tree -p gobby-ai --edges normal`
+    lists no `gobby-memory`. test: `crates/gmemory/tests/rebuild_seam.rs::seam_trait_object_reaches_memories_and_stays_acyclic`.'
+  labels:
+  - covers:memory-family:3.1:3.1.1
+  - covers:memory-family:3.1:3.1.2
+  - covers:memory-family:3.1:3.1.3
+  - covers:memory-family:3.1:3.1.4
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Dream store, journal, apply and revert
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '4.1.1: Run creation, admission conflicts, status transitions
+    and checkpoints match Python''s rows. test: `crates/gmemory/tests/dream_apply.rs::run_store_matches_python`.
+
+    4.1.2: Applying a validated plan matches Python''s memory, snapshot, ledger and
+    reconcile effects for each action, and an invalid plan writes nothing. test: `crates/gmemory/tests/dream_apply.rs::apply_matches_python`.
+
+    4.1.3: Revert matches Python for reverted, already reverted, forfeited and failed
+    runs, including conflict and missing-row outcomes. test: `crates/gmemory/tests/dream_apply.rs::revert_matches_python`.
+
+    4.1.4: The purge function deletes only hidden memories past their retention. test:
+    `crates/gmemory/tests/dream_apply.rs::purge_matches_python`.
+
+    4.1.5: A candidate changed after selection is skipped with zero mutation; revert
+    reports a conflict when an action-owned or fence column changed, otherwise restores
+    only action-owned columns, keeps unrelated later changes, increments `dream_due_version`,
+    and reconciles projections only after the row transition commits. test: `crates/gmemory/tests/dream_apply.rs::stale_plan_and_revert_fences`.'
+  labels:
+  - covers:memory-family:4.1:4.1.1
+  - covers:memory-family:4.1:4.1.2
+  - covers:memory-family:4.1:4.1.3
+  - covers:memory-family:4.1:4.1.4
+  - covers:memory-family:4.1:4.1.5
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Dream planning, related evidence and sweep orchestration
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: Candidate selection, batching and the plan request
+    match Python for a fixture scope, and the stubbed plan is validated with Python''s
+    floors. test: `crates/gmemory/tests/dream_sweep.rs::planning_matches_python`.
+
+    4.2.2: Related evidence matches Python''s hits, timeouts and retries. test: `crates/gmemory/tests/dream_sweep.rs::related_evidence_matches_python`.
+
+    4.2.3: Sweeps, work units, dry runs, inventory runs, checkpoints and runtime limits
+    match Python''s totals and stored plan. test: `crates/gmemory/tests/dream_sweep.rs::sweep_orchestration_matches_python`.
+
+    4.2.4: A missing `memory/dream` record is isolated to its page as in Python, while
+    an undefined variable or an unsupported project override fails the run with no
+    generation request and no applied action. test: `crates/gmemory/tests/dream_sweep.rs::prompt_errors_match_python_isolation`.'
+  labels:
+  - covers:memory-family:4.2:4.2.1
+  - covers:memory-family:4.2:4.2.2
+  - covers:memory-family:4.2:4.2.3
+  - covers:memory-family:4.2:4.2.4
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Dream service, aggregate runs, reports and routes
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '4.3.1: `HTTP POST /memory/dream` matches 202 admission, 200
+    coalescing, 409 conflict, 400 invalid options, 500 failed launch and 503 unavailable
+    coordinator, for scoped and unscoped triggers. test: `crates/gmemory/tests/dream_routes.rs::dream_trigger_matches_python`.
+
+    4.3.2: `HTTP GET /memory/dream/{run_id}` matches run payloads and the unknown-run
+    404. test: `crates/gmemory/tests/dream_routes.rs::dream_status_matches_python`.
+
+    4.3.3: `HTTP POST /memory/dream/{run_id}/revert` matches successful and already-reverted
+    results and returns 409 for forfeited and failed reverts under its exact waiver.
+    test: `crates/gmemory/tests/dream_routes.rs::dream_revert_status_is_waived`.
+
+    4.3.4: Aggregate runs, the per-scope execution lock, reports and interrupted-run
+    reconciliation match Python; the service cannot be built without a hub pool. test:
+    `crates/gmemory/tests/dream_routes.rs::aggregate_reports_and_hub_only_construction`.
+
+    4.3.5: With a project `{% if %}` override of `memory/dream`, `HTTP GET /memory/dream/{run_id}`
+    reports the run `failed` with the error naming the path under its exact waiver,
+    where Python''s baseline completes. test: `crates/gmemory/tests/dream_routes.rs::unsupported_dream_prompt_status_is_waived`.'
+  labels:
+  - covers:memory-family:4.3:4.3.1
+  - covers:memory-family:4.3:4.3.2
+  - covers:memory-family:4.3:4.3.3
+  - covers:memory-family:4.3:4.3.4
+  - covers:memory-family:4.3:4.3.5
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: Native review-learning service over memory rows
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.3'
+  validation_criteria: '5.1.1: Recording matches Python''s identity, normalization,
+    tags, rendered content, deduplication and validation refusals, and a concurrent
+    Python writer on the same pattern serializes with the native one. test: `crates/gmemory/tests/review_learning.rs::record_matches_python`.
+
+    5.1.2: Context, file and class recall match Python''s queries, ranking, tiers
+    and scope resolution. test: `crates/gmemory/tests/review_learning.rs::recall_matches_python`.
+
+    5.1.3: Check-key listing and retirement match Python''s results and effects. test:
+    `crates/gmemory/tests/review_learning.rs::check_keys_and_retire_match_python`.'
+  labels:
+  - covers:memory-family:5.1:5.1.1
+  - covers:memory-family:5.1:5.1.2
+  - covers:memory-family:5.1:5.1.3
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Memory session-variable writer
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  validation_criteria: '6.1.1: Bounded-list upserts and the boolean set produce Python''s
+    rows for all three keys, including identity replacement and trimming. test: `crates/gmemory/tests/session_vars.rs::writes_match_python`.
+
+    6.1.2: Concurrent Python and native writers on one session serialize under the
+    shared key without losing either update, and writes to other keys are preserved.
+    test: `crates/gmemory/tests/session_vars.rs::shared_lock_serializes_writers`.
+
+    6.1.3: Any key outside the three is refused before a write. test: `crates/gmemory/tests/session_vars.rs::only_owned_keys_are_writable`.'
+  labels:
+  - covers:memory-family:6.1:6.1.1
+  - covers:memory-family:6.1:6.1.2
+  - covers:memory-family:6.1:6.1.3
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: gobby-memory descriptor, schemas and MCP behavior
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: '6.2.1: `MCP gobby-memory:backup_memories` writes the current
+    project''s backup, or the personal project''s when none is current, under its
+    exact waiver. test: `crates/gmemory/tests/mcp_memory.rs::backup_memories_uses_project_backup_path`.
+
+    6.2.2: `MCP gobby-memory:create_memory` matches the create policy, provenance
+    and result fields. test: `crates/gmemory/tests/mcp_memory.rs::create_memory_matches_python`.
+
+    6.2.3: `MCP gobby-memory:delete_memory` matches deletion and ownership refusals.
+    test: `crates/gmemory/tests/mcp_memory.rs::delete_memory_matches_python`.
+
+    6.2.4: `MCP gobby-memory:demote_memory_from_global` matches demotion. test: `crates/gmemory/tests/mcp_memory.rs::demote_matches_python`.
+
+    6.2.5: `MCP gobby-memory:densify_knowledge_graph_cooccurrence` matches densification
+    results. test: `crates/gmemory/tests/mcp_memory.rs::densify_matches_python`.
+
+    6.2.6: `MCP gobby-memory:get_memory` matches the payload, access recording and
+    the `accessed_memory_ids` record with the claimed task id. test: `crates/gmemory/tests/mcp_memory.rs::get_memory_records_access`.
+
+    6.2.7: `MCP gobby-memory:get_related_memories` matches crossref results. test:
+    `crates/gmemory/tests/mcp_memory.rs::get_related_matches_python`.
+
+    6.2.8: `MCP gobby-memory:list_memories` matches filters and the personal fallback.
+    test: `crates/gmemory/tests/mcp_memory.rs::list_memories_matches_python`.
+
+    6.2.9: `MCP gobby-memory:memory_dream` matches admission and coalescing results.
+    test: `crates/gmemory/tests/mcp_memory.rs::memory_dream_matches_python`.
+
+    6.2.10: `MCP gobby-memory:memory_dream_decisions` matches decision listing. test:
+    `crates/gmemory/tests/mcp_memory.rs::dream_decisions_match_python`.
+
+    6.2.11: `MCP gobby-memory:memory_dream_revert` matches revert results. test: `crates/gmemory/tests/mcp_memory.rs::dream_revert_matches_python`.
+
+    6.2.12: `MCP gobby-memory:memory_dream_status` matches run status, and reports
+    a run refused by an unsupported prompt override as `failed` with the error naming
+    the path under its exact waiver. test: `crates/gmemory/tests/mcp_memory.rs::dream_status_matches_python`.
+
+    6.2.13: `MCP gobby-memory:memory_stats` matches statistics. test: `crates/gmemory/tests/mcp_memory.rs::memory_stats_matches_python`.
+
+    6.2.14: `MCP gobby-memory:move_memory` matches the move and ownership checks.
+    test: `crates/gmemory/tests/mcp_memory.rs::move_memory_matches_python`.
+
+    6.2.15: `MCP gobby-memory:promote_memory_to_global` matches promotion. test: `crates/gmemory/tests/mcp_memory.rs::promote_matches_python`.
+
+    6.2.16: `MCP gobby-memory:rebuild_crossrefs` matches the limit and counts and
+    reports `crossrefs_failed` under its exact waiver. test: `crates/gmemory/tests/mcp_memory.rs::rebuild_crossrefs_reports_failures`.
+
+    6.2.17: `MCP gobby-memory:rebuild_knowledge_graph` matches rebuild results, and
+    returns the validation-class error naming the path for an unsupported graph prompt
+    override under its exact waiver. test: `crates/gmemory/tests/mcp_memory.rs::rebuild_knowledge_graph_matches_python`.
+
+    6.2.18: `MCP gobby-memory:recluster_knowledge_graph_entities` matches the clustering
+    summary. test: `crates/gmemory/tests/mcp_memory.rs::recluster_matches_python`.
+
+    6.2.19: `MCP gobby-memory:reindex_embeddings` matches the reindex report. test:
+    `crates/gmemory/tests/mcp_memory.rs::reindex_matches_python`.
+
+    6.2.20: `MCP gobby-memory:restore_memories` restores from the current project''s
+    backup file with timestamp-wins outcomes and index reconciliation, under its exact
+    waiver. test: `crates/gmemory/tests/mcp_memory.rs::restore_memories_uses_project_backup_path`.
+
+    6.2.21: `MCP gobby-memory:restore_memory` matches single restoration. test: `crates/gmemory/tests/mcp_memory.rs::restore_memory_matches_python`.
+
+    6.2.22: `MCP gobby-memory:review_task_memories` matches task resolution, candidate
+    search, records and the delivered flag. test: `crates/gmemory/tests/mcp_memory.rs::review_task_memories_matches_python`.
+
+    6.2.23: `MCP gobby-memory:search_knowledge_graph` matches graph search. test:
+    `crates/gmemory/tests/mcp_memory.rs::search_knowledge_graph_matches_python`.
+
+    6.2.24: `MCP gobby-memory:search_memories` matches ranking, diagnostics and surfaced
+    statistics. test: `crates/gmemory/tests/mcp_memory.rs::search_memories_matches_python`.
+
+    6.2.25: `MCP gobby-memory:surface_memories` matches triggers, the assistant-message
+    fallback, exclusions and the fail-soft empty result. test: `crates/gmemory/tests/mcp_memory.rs::surface_memories_matches_python`.
+
+    6.2.26: `MCP gobby-memory:update_memory` matches updates and validation. test:
+    `crates/gmemory/tests/mcp_memory.rs::update_memory_matches_python`.
+
+    6.2.27: Tool inventory, descriptions, schemas, definition hashes and read-only
+    classifications match the frozen Python contract; malformed arguments call no
+    service. test: `crates/gmemory/tests/mcp_memory.rs::catalog_and_validation_match_python`.
+
+    6.2.28: Each of the 21 redaction tools returns safe text for an injected fault
+    under its own exact waiver, and deliberate domain errors keep their text. A fault
+    before commit leaves the row, ledger and derived stores unchanged; a fault after
+    commit leaves the committed row with `vector_needs_reindex` true and its change
+    row, with no untracked derived-store write, as 2.2 defines. test: `crates/gmemory/tests/mcp_memory.rs::tool_internal_errors_are_safe`.'
+  labels:
+  - covers:memory-family:6.2:6.2.1
+  - covers:memory-family:6.2:6.2.2
+  - covers:memory-family:6.2:6.2.3
+  - covers:memory-family:6.2:6.2.4
+  - covers:memory-family:6.2:6.2.5
+  - covers:memory-family:6.2:6.2.6
+  - covers:memory-family:6.2:6.2.7
+  - covers:memory-family:6.2:6.2.8
+  - covers:memory-family:6.2:6.2.9
+  - covers:memory-family:6.2:6.2.10
+  - covers:memory-family:6.2:6.2.11
+  - covers:memory-family:6.2:6.2.12
+  - covers:memory-family:6.2:6.2.13
+  - covers:memory-family:6.2:6.2.14
+  - covers:memory-family:6.2:6.2.15
+  - covers:memory-family:6.2:6.2.16
+  - covers:memory-family:6.2:6.2.17
+  - covers:memory-family:6.2:6.2.18
+  - covers:memory-family:6.2:6.2.19
+  - covers:memory-family:6.2:6.2.20
+  - covers:memory-family:6.2:6.2.21
+  - covers:memory-family:6.2:6.2.22
+  - covers:memory-family:6.2:6.2.23
+  - covers:memory-family:6.2:6.2.24
+  - covers:memory-family:6.2:6.2.25
+  - covers:memory-family:6.2:6.2.26
+  - covers:memory-family:6.2:6.2.27
+  - covers:memory-family:6.2:6.2.28
+  tdd: true
+  source_section: '6.2'
+  implementation_domain: backend
+- title: gobby-review-learning descriptor
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.2'
+  validation_criteria: '6.3.1: `MCP gobby-review-learning:list_check_keys` matches
+    results. test: `crates/gmemory/tests/mcp_review.rs::list_check_keys_matches_python`.
+
+    6.3.2: `MCP gobby-review-learning:recall_review_context` matches recall. test:
+    `crates/gmemory/tests/mcp_review.rs::recall_context_matches_python`.
+
+    6.3.3: `MCP gobby-review-learning:recall_review_lessons_by_class` matches class
+    recall. test: `crates/gmemory/tests/mcp_review.rs::recall_by_class_matches_python`.
+
+    6.3.4: `MCP gobby-review-learning:recall_review_lessons_for_files` matches file
+    recall and path coercion. test: `crates/gmemory/tests/mcp_review.rs::recall_for_files_matches_python`.
+
+    6.3.5: `MCP gobby-review-learning:record_review_lesson` matches recording and
+    refusals. test: `crates/gmemory/tests/mcp_review.rs::record_lesson_matches_python`.
+
+    6.3.6: `MCP gobby-review-learning:retire_review_lesson` matches retirement. test:
+    `crates/gmemory/tests/mcp_review.rs::retire_lesson_matches_python`.
+
+    6.3.7: The catalog matches the frozen contract, and all six tools return safe
+    text for injected faults under their exact waivers. test: `crates/gmemory/tests/mcp_review.rs::catalog_and_safe_errors_match`.'
+  labels:
+  - covers:memory-family:6.3:6.3.1
+  - covers:memory-family:6.3:6.3.2
+  - covers:memory-family:6.3:6.3.3
+  - covers:memory-family:6.3:6.3.4
+  - covers:memory-family:6.3:6.3.5
+  - covers:memory-family:6.3:6.3.6
+  - covers:memory-family:6.3:6.3.7
+  tdd: true
+  source_section: '6.3'
+  implementation_domain: backend
+- title: Native command tree and record commands
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.3'
+  validation_criteria: '7.1.1: `CLI gobby memory` matches group help and dispatch.
+    test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+
+    7.1.2: `CLI gobby memory create` matches flags, output and the database-only effect.
+    test: `crates/gmemory/tests/cli_records.rs::create_matches_python`.
+
+    7.1.3: `CLI gobby memory recall` matches keyword-only results and surfaced statistics.
+    test: `crates/gmemory/tests/cli_records.rs::recall_matches_python`.
+
+    7.1.4: `CLI gobby memory delete` matches prefix resolution and output. test: `crates/gmemory/tests/cli_records.rs::delete_matches_python`.
+
+    7.1.5: `CLI gobby memory list` matches filters and formatting. test: `crates/gmemory/tests/cli_records.rs::list_matches_python`.
+
+    7.1.6: `CLI gobby memory show` matches output and errors. test: `crates/gmemory/tests/cli_records.rs::show_matches_python`.
+
+    7.1.7: `CLI gobby memory update` matches updates and output. test: `crates/gmemory/tests/cli_records.rs::update_matches_python`.
+
+    7.1.8: `CLI gobby memory stats` matches output. test: `crates/gmemory/tests/cli_records.rs::stats_matches_python`.
+
+    7.1.9: `CLI gobby memory backfill-unscoped-lessons` stamps the same lessons and
+    prints the same count. test: `crates/gmemory/tests/cli_records.rs::backfill_matches_python`.
+
+    7.1.10: `CLI gobby memory dedupe` matches dry-run, confirmation and deletions.
+    test: `crates/gmemory/tests/cli_records.rs::dedupe_matches_python`.
+
+    7.1.11: `CLI gobby memory export` matches the markdown document and the metadata
+    and stats flags. test: `crates/gmemory/tests/cli_records.rs::export_matches_python`.
+
+    7.1.12: `CLI gobby memory backup` matches default and explicit paths and the JSONL
+    bytes. test: `crates/gmemory/tests/cli_records.rs::backup_matches_python`.
+
+    7.1.13: `CLI gobby memory restore` matches timestamp-wins restoration, missing-file
+    messages and exit codes. test: `crates/gmemory/tests/cli_records.rs::restore_matches_python`.'
+  labels:
+  - covers:memory-family:7.1:7.1.1
+  - covers:memory-family:7.1:7.1.2
+  - covers:memory-family:7.1:7.1.3
+  - covers:memory-family:7.1:7.1.4
+  - covers:memory-family:7.1:7.1.5
+  - covers:memory-family:7.1:7.1.6
+  - covers:memory-family:7.1:7.1.7
+  - covers:memory-family:7.1:7.1.8
+  - covers:memory-family:7.1:7.1.9
+  - covers:memory-family:7.1:7.1.10
+  - covers:memory-family:7.1:7.1.11
+  - covers:memory-family:7.1:7.1.12
+  - covers:memory-family:7.1:7.1.13
+  tdd: true
+  source_section: '7.1'
+  implementation_domain: backend
+- title: Native index, graph and dream commands
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.1'
+  validation_criteria: '7.2.1: `CLI gobby memory clear-graph` matches confirmation,
+    output and errors. test: `crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python`.
+
+    7.2.2: `CLI gobby memory graph-counts` matches text and JSON output. test: `crates/gmemory/tests/cli_daemon.rs::graph_counts_matches_python`.
+
+    7.2.3: `CLI gobby memory rebuild-graph` matches foreground, `--wait` polling and
+    timeout behavior, and prints an unsupported prompt override''s refusal under its
+    exact waiver. test: `crates/gmemory/tests/cli_daemon.rs::rebuild_graph_matches_python`.
+
+    7.2.4: `CLI gobby memory invalidate` matches confirmation and the clear report,
+    and reports a running rebuild under its exact waiver. test: `crates/gmemory/tests/cli_daemon.rs::invalidate_reports_running_rebuild`.
+
+    7.2.5: `CLI gobby memory rebuild-crossrefs` matches output. test: `crates/gmemory/tests/cli_daemon.rs::rebuild_crossrefs_matches_python`.
+
+    7.2.6: `CLI gobby memory reconcile` matches dry-run and applied output. test:
+    `crates/gmemory/tests/cli_daemon.rs::reconcile_matches_python`.
+
+    7.2.7: `CLI gobby memory reindex-embeddings` matches output. test: `crates/gmemory/tests/cli_daemon.rs::reindex_matches_python`.
+
+    7.2.8: `CLI gobby memory dream` matches trigger, polling, dry-run, aggregate and
+    resume-hint output, and prints a run failed by an unsupported prompt override
+    under its exact waiver. test: `crates/gmemory/tests/cli_daemon.rs::dream_matches_python`.
+
+    7.2.9: `CLI gobby memory dream status` matches status rendering, including that
+    failed run under its exact waiver. test: `crates/gmemory/tests/cli_daemon.rs::dream_status_matches_python`.
+
+    7.2.10: `CLI gobby memory dream revert` matches output and error detail. test:
+    `crates/gmemory/tests/cli_daemon.rs::dream_revert_matches_python`.
+
+    7.2.11: An unreachable daemon, an error status and invalid JSON produce Python''s
+    messages and exit codes. test: `crates/gmemory/tests/cli_daemon.rs::daemon_errors_match_python`.'
+  labels:
+  - covers:memory-family:7.2:7.2.1
+  - covers:memory-family:7.2:7.2.2
+  - covers:memory-family:7.2:7.2.3
+  - covers:memory-family:7.2:7.2.4
+  - covers:memory-family:7.2:7.2.5
+  - covers:memory-family:7.2:7.2.6
+  - covers:memory-family:7.2:7.2.7
+  - covers:memory-family:7.2:7.2.8
+  - covers:memory-family:7.2:7.2.9
+  - covers:memory-family:7.2:7.2.10
+  - covers:memory-family:7.2:7.2.11
+  tdd: true
+  source_section: '7.2'
+  implementation_domain: backend
+- title: Native admission binding for memory rows
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.2'
+  validation_criteria: '8.1.1: Agent tokens with matching, mismatched, revoked and
+    expired identity get Python''s outcomes on the two graph rows and are refused
+    on the other 23. test: `crates/gmemory/tests/admission.rs::agent_token_rows_match_python`.
+
+    8.1.2: API keys, the local operator and ordinary cookies keep Python''s permissions
+    on all 25 rows, and managed cookies are refused on every mutation before any effect.
+    test: `crates/gmemory/tests/admission.rs::operator_and_browser_classes_match_python`.
+
+    8.1.3: Without a bound Admitted value the row stays proxied, unavailable authority
+    returns 503, and no second verifier exists in the crate. test: `crates/gmemory/tests/admission.rs::admission_fails_closed_without_shared_seam`.
+
+    8.1.4: The admission record names the persisted `security-review` label, the pre-dispatch
+    check and the approved step for the exact SHA; absent or stale approval holds
+    native admission. behavior: "memory admission security gate" in `docs/contracts/memory-native.md`.'
+  labels:
+  - covers:memory-family:8.1:8.1.1
+  - covers:memory-family:8.1:8.1.2
+  - covers:memory-family:8.1:8.1.3
+  - covers:memory-family:8.1:8.1.4
+  tdd: true
+  source_section: '8.1'
+  implementation_domain: backend
+- title: Memory family activation and coherent release
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.1'
+  validation_criteria: '8.2.1: Proxy, compare and native states affect only the memory
+    HTTP rows and the two MCP servers; compare runs read rows only, effectful rows
+    run once, and rollback to Proxy preserves state. For `GET /api/memories/search`
+    both implementations compute a result, the native surfaced-statistics mutation
+    is discarded with its isolated transaction, and Python''s surfaced counter and
+    debounce effect happens exactly once. This runs through the real front-door router
+    against a Python stub: native shadow counters roll back even when the native leg
+    errors, and in `Native` the native counters persist. test: `crates/gdaemon/tests/memory_cutover.rs::memory_cutover_is_scoped_and_single_effect`.
+
+    8.2.2: With the Python backend unavailable, all 25 HTTP rows and 32 tools run
+    natively for every admitted caller class on hub and standalone, rule surfacing
+    still injects memories, and a node keeps its current backend. test: `tests/e2e/test_memory_native.py::test_memory_rows_work_without_python_backend`.
+
+    8.2.3: Readiness rejects zero-Passed, all-Skipped and unwaived-Skipped reports
+    and unknown or stale waivers, and requires every inventory entry beside ordinary
+    `Passed` cases. test: `crates/gdaemon/tests/memory_cutover.rs::waiver_readiness_gates_memory_activation`.
+
+    8.2.4: Shipping manifests, lock and pins agree at the required patch increment.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    8.2.5: The runbook records build and installed hashes, compared cases, rollback
+    command, announcement, health, the Security approval for 8.1 and native smoke
+    evidence. behavior: "memory activation evidence" in `docs/contracts/memory-native.md`.'
+  labels:
+  - covers:memory-family:8.2:8.2.1
+  - covers:memory-family:8.2:8.2.2
+  - covers:memory-family:8.2:8.2.3
+  - covers:memory-family:8.2:8.2.4
+  - covers:memory-family:8.2:8.2.5
+  tdd: true
+  source_section: '8.2'
+  implementation_domain: backend
+- title: Forward the public memory CLI and retire Python callbacks
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.2'
+  validation_criteria: '8.3.1: The public launcher forwards literal arguments, cwd,
+    configuration and exit status, including unknown options, Unicode, help and errors,
+    to the resolved binary, and imports no memory business, storage or service module.
+    test: `tests/cli/test_memory_native_forwarding.py::test_launcher_only_forwards`.
+
+    8.3.2: Every retired callback expectation maps to the frozen corpus and a native
+    row test, and import and patch-string sweeps find no reference to a deleted module.
+    test: `tests/cli/test_memory_native_forwarding.py::test_retired_callbacks_have_native_coverage`.'
+  labels:
+  - covers:memory-family:8.3:8.3.1
+  - covers:memory-family:8.3:8.3.2
+  tdd: true
+  source_section: '8.3'
+  implementation_domain: backend
+- title: Publish memory family parity ownership
+  category: docs
+  task_type: chore
+  depends_on:
+  - '8.3'
+  validation_criteria: '8.4.1: The 74 memory rows are `delegated` with notes citing
+    their leaf, tests and waiver IDs, and every other record is unchanged. behavior:
+    "74 delegated memory parity rows" in `docs/contracts/parity-ledger-status.d/memory-skills.json`.
+
+    8.4.2: The six review-learning rows are `delegated` with notes citing 6.3 and
+    its tests, and every other record is unchanged. behavior: "6 delegated review-learning
+    parity rows" in `docs/contracts/parity-ledger-status.d/remainder.json`.
+
+    8.4.3: The regenerated ledger matches the shards and the public inventory. test:
+    `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+
+    8.4.4: The guide describes native memory operation and the forwarding CLI. behavior:
+    "native memory operation" in `docs/guides/memory.md`.'
+  labels:
+  - covers:memory-family:8.4:8.4.1
+  - covers:memory-family:8.4:8.4.2
+  - covers:memory-family:8.4:8.4.3
+  - covers:memory-family:8.4:8.4.4
+  tdd: false
+  source_section: '8.4'
+  assigned_agent: tech-writer
+```

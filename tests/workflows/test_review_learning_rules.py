@@ -16,6 +16,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -37,7 +38,7 @@ def test_class_injection_rule_source_uses_canonical_schema(
         / filename
     )
     source = cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")))
-    assert {"review-learning", "gobby", "default"} <= set(source["tags"])
+    assert source["tags"] == ["plan-review-lessons-policy"]
     rules = cast(dict[str, dict[str, Any]], source["rules"])
     assert len(rules) == 1
     rule_name, rule = next(iter(rules.items()))
@@ -317,6 +318,7 @@ async def test_class_recall_formatter_routing(temp_db: HubDatabase) -> None:
         definition_json=body.model_dump_json(),
         enabled=True,
     )
+    seed_seat(temp_db, "custom-critic", include=["name:test-class-recall-routing"])
 
     async def dispatcher(
         server: str, tool: str, args: dict[str, Any], event: HookEvent
@@ -340,8 +342,12 @@ async def test_class_recall_formatter_routing(temp_db: HubDatabase) -> None:
 
     engine = RuleEngine(temp_db, mcp_dispatcher=dispatcher)
     with worker_staging_scope():
-        first = await engine.evaluate(_event({"tool_name": "Read"}), EXTERNAL_SESSION_ID, {})
-        second = await engine.evaluate(_event({"tool_name": "Read"}), EXTERNAL_SESSION_ID, {})
+        first = await engine.evaluate(
+            _event({"tool_name": "Read"}), EXTERNAL_SESSION_ID, {"_agent_type": "custom-critic"}
+        )
+        second = await engine.evaluate(
+            _event({"tool_name": "Read"}), EXTERNAL_SESSION_ID, {"_agent_type": "custom-critic"}
+        )
 
     assert first.context is not None
     assert "<review-guidance>" in first.context
@@ -351,38 +357,22 @@ async def test_class_recall_formatter_routing(temp_db: HubDatabase) -> None:
 
 
 @pytest.mark.asyncio
-async def test_class_injection_agent_scoping(temp_db: HubDatabase) -> None:
+@pytest.mark.parametrize("agent_type", ["custom-critic", "plan-adversary"])
+@pytest.mark.parametrize("selected", [False, True])
+@pytest.mark.parametrize("handoff_pending", [False, True])
+async def test_class_injection_definition_selection(
+    temp_db: HubDatabase, agent_type: str, selected: bool, handoff_pending: bool
+) -> None:
     _sync_bundled(temp_db)
     manager = RuleDefinitionManager(temp_db)
-    expected_rules = {
-        "inject-plan-reviewer-lessons": (
-            ["plan-adversary"],
-            "plan",
-            ["reviewer-miss"],
-        ),
-    }
-
-    expected_by_agent: dict[str, tuple[str, list[str]]] = {}
-    for rule_name, (agent_scope, lesson_domain, lesson_types) in expected_rules.items():
-        row = manager.get_by_name(rule_name)
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.event == RuleTriggerEvent.TURN_START
-        assert body.group == "review-learning"
-        assert body.agent_scope == agent_scope
-        assert len(body.resolved_effects) == 1
-        effect = body.resolved_effects[0]
-        assert effect.type == "mcp_call"
-        assert effect.server == "gobby-review-learning"
-        assert effect.tool == "recall_review_lessons_by_class"
-        assert effect.arguments == {
-            "lesson_domain": lesson_domain,
-            "lesson_types": lesson_types,
-            "limit": 3,
-        }
-        assert effect.background is False
-        assert effect.inject_result is True
-        expected_by_agent.update(dict.fromkeys(agent_scope, (lesson_domain, lesson_types)))
+    row = manager.get_by_name("inject-plan-reviewer-lessons")
+    assert row is not None
+    manager.update(row.id, enabled=True)
+    seed_seat(
+        temp_db,
+        agent_type,
+        include=["tag:default", *(["name:inject-plan-reviewer-lessons"] if selected else [])],
+    )
 
     class_calls: list[dict[str, Any]] = []
 
@@ -417,30 +407,19 @@ async def test_class_injection_agent_scoping(temp_db: HubDatabase) -> None:
         "_memory_initial_stop_checked": True,
         "servers_listed": True,
     }
-    for agent_type, (lesson_domain, lesson_types) in expected_by_agent.items():
-        before = len(class_calls)
-        response = await engine.evaluate(
-            _turn_start_event(),
-            session_id=EXTERNAL_SESSION_ID,
-            variables={**base_variables, "_agent_type": agent_type},
-        )
-        assert len(class_calls) == before + 1
-        assert class_calls[-1] == {
-            "lesson_domain": lesson_domain,
-            "lesson_types": lesson_types,
-            "limit": 3,
-        }
-        assert "<review-guidance>" in (response.context or "")
-
-    for variables in (
-        {**base_variables, "_agent_type": "developer"},
-        base_variables,
-    ):
-        before = len(class_calls)
-        response = await engine.evaluate(
-            _turn_start_event(),
-            session_id=EXTERNAL_SESSION_ID,
-            variables=variables,
-        )
-        assert len(class_calls) == before
-        assert "<review-guidance>" not in (response.context or "")
+    response = await engine.evaluate(
+        _turn_start_event(),
+        session_id=EXTERNAL_SESSION_ID,
+        variables={
+            **base_variables,
+            "_agent_type": agent_type,
+            "handoff_pull_pending": handoff_pending,
+        },
+    )
+    expected_calls = (
+        [{"lesson_domain": "plan", "lesson_types": ["reviewer-miss"], "limit": 3}]
+        if selected and not handoff_pending
+        else []
+    )
+    assert class_calls == expected_calls
+    assert ("<review-guidance>" in (response.context or "")) is bool(expected_calls)

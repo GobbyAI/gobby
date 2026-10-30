@@ -1,13 +1,12 @@
-tags: [review-learning, plan-review, gobby, default]
+tags: [plan-review-lessons-policy]
 
 rules:
   inject-plan-reviewer-lessons:
-    description: "Inject reviewer-miss lessons for plan adversaries"
+    description: "Inject reviewer-miss lessons for selected plan reviewers"
     event: turn_start
     enabled: true
     priority: 24
     group: review-learning
-    agent_scope: [plan-adversary]
     when: >-
       not variables.get('handoff_pull_pending')
     effect:

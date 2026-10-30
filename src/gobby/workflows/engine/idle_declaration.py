@@ -4,8 +4,8 @@ An idle step lets its seat stop after declaring ``seat_idle``. Native
 ``set_variable`` otherwise skips step allowlists as an infrastructure tool; at an
 idle step it meets the step's ``allowed_tools`` instead, and the guard admits the
 declaration itself: ``seat_idle`` set to true, in session scope, on the caller's
-own session. Only assistant, orchestrator and default definitions retain native
-writes; other seats declare idleness through a readiness-message rule effect.
+own session. Definitions grant native writes with ``write_session_variables``;
+other seats declare idleness through a readiness-message rule effect.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
+from gobby.workflows.agent_resolver import session_has_capability_or_operator
 from gobby.workflows.enforcement.blocking import canonical_gobby_tool_name
 
 if TYPE_CHECKING:
@@ -21,7 +22,6 @@ if TYPE_CHECKING:
 
 IDLE_VARIABLE = "seat_idle"
 SET_VARIABLE_TOOL = "mcp__gobby__set_variable"
-NATIVE_VARIABLE_ROLES = frozenset({"assistant", "orchestrator", "default"})
 
 
 def native_variable_write_error(
@@ -31,14 +31,12 @@ def native_variable_write_error(
     variables: dict[str, Any],
     sessions: SessionManager | None,
 ) -> str | None:
-    """Refuse native writes outside the authenticated caller's allowed role."""
+    """Require the authenticated caller's native variable-write capability."""
     if canonical_gobby_tool_name(tool_name) != SET_VARIABLE_TOOL:
         return None
     prefix = "Rule enforced by Gobby: [native-variable-authority]\n"
     role = variables.get("_agent_type")
-    if "_agent_type" in variables and (
-        not isinstance(role, str) or role not in NATIVE_VARIABLE_ROLES
-    ):
+    if "_agent_type" in variables and (not isinstance(role, str) or not role):
         return prefix + f"Native set_variable is blocked for agent definition {role!r}."
     # The workspace binding is written by the daemon at session start and clear, never by a seat.
     from gobby.agents.agent_workspaces import WORKSPACE_VARIABLE_NAMES
@@ -61,8 +59,9 @@ def native_variable_write_error(
         active_run = LocalAgentRunManager(sessions.db).get_by_session(caller_id)
         if active_run is not None or (instance is not None and instance.enabled):
             return prefix + "The calling seat has no protected active agent definition."
-    # Privileged roles keep their existing cross-session authority. The idle
-    # step's own-session restriction is enforced separately by is_idle_declaration.
+    if not session_has_capability_or_operator(sessions.db, caller_id, "write_session_variables"):
+        return prefix + "The calling definition does not grant write_session_variables."
+    # The idle step's own-session restriction is enforced by is_idle_declaration.
     return None
 
 

@@ -24,6 +24,7 @@ from gobby.config.runtime import (
 )
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.storage.config_notifications import ConfigNotificationListener, NotificationConnection
+from gobby.storage.hub.operation_deadline import current_database_operation_deadline
 from gobby.storage.hub.postgres import PostgresHubDatabase
 
 FEATURE_LOW_PROFILE_DEFAULT_KEY = "ai.generation.profile_defaults.feature_low"
@@ -684,6 +685,37 @@ async def test_blocking_work_is_bounded_and_quarantined() -> None:
     assert subscriber.thread_ids[-1] != main_thread
     assert late.dispose_count == 1
     await runtime.close()
+
+
+class DeadlineRecordingRepository(FakeRepository):
+    def __init__(self, snapshots: list[StoredSnapshot]) -> None:
+        super().__init__(snapshots)
+        self.deadline_budgets: list[float | None] = []
+
+    def read_bounded(
+        self,
+        *,
+        resolve_secrets: bool = True,
+        statement_timeout_ms: int,
+        lock_timeout_ms: int,
+    ) -> StoredSnapshot:
+        deadline = current_database_operation_deadline()
+        self.deadline_budgets.append(None if deadline is None else deadline.remaining_seconds())
+        return super().read_bounded(
+            resolve_secrets=resolve_secrets,
+            statement_timeout_ms=statement_timeout_ms,
+            lock_timeout_ms=lock_timeout_ms,
+        )
+
+
+@pytest.mark.asyncio
+async def test_database_work_runs_under_runtime_deadline() -> None:
+    repository = DeadlineRecordingRepository([stored_snapshot(0)])
+    runtime = ConfigRuntime(repository, registry=FakeRegistry(), db_timeout=2.0)
+    await runtime.start()
+    await runtime.close()
+    assert repository.deadline_budgets
+    assert all(budget is not None and 0 < budget <= 2.0 for budget in repository.deadline_budgets)
 
 
 @pytest.mark.asyncio

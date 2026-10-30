@@ -1,4 +1,5 @@
 name: debugger
+capabilities: [accept_resume_retype]
 description: |
   Debugger seat. Owns one stated hypothesis for a bug, gathers evidence for and
   against it through reproductions, logs, focused tests and gcode, and reports
@@ -53,6 +54,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"

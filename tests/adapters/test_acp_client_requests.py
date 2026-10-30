@@ -230,6 +230,7 @@ async def test_request_permission_cancels_when_pre_tool_blocks() -> None:
         {
             "tool_name": "list_mcp_servers",
             "tool_input": {"toolCallId": "tc-1", "title": "list_mcp_servers"},
+            "tool_use_id": "tc-1",
         }
     )
     response = _written_messages(client)[0]
@@ -365,6 +366,7 @@ async def test_filesystem_write_does_not_execute_when_pre_tool_blocks(tmp_path: 
         {
             "tool_name": "write_text_file",
             "tool_input": {"path": str(target), "content": "blocked\n"},
+            "tool_use_id": "write-blocked",
         }
     )
     assert not target.exists()
@@ -577,6 +579,7 @@ async def test_terminal_create_does_not_execute_when_pre_tool_blocks(
                 "env": [],
                 "outputByteLimit": 4096,
             },
+            "tool_use_id": "terminal-1",
         }
     )
     response = _written_messages(client)[0]

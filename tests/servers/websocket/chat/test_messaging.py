@@ -2,14 +2,14 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from websockets.exceptions import ConnectionClosed
 
-from gobby.hooks.events import HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.llm.claude_models import (
     DoneEvent,
     TextChunk,
@@ -17,6 +17,7 @@ from gobby.llm.claude_models import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat._lifecycle import ChatLifecycleMixin
 from gobby.servers.websocket.chat._messaging import ChatMessagingMixin
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
@@ -30,6 +31,27 @@ pytestmark = pytest.mark.unit
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 
 
+def _chat_session() -> AsyncMock:
+    """Keep session identity values concrete when session_info is serialized."""
+    return AsyncMock(
+        spec=ChatSessionProtocol,
+        db_session_id=None,
+        project_id=None,
+        project_path=None,
+        _pending_agent_name=None,
+        model="opus",
+        message_index=0,
+        chat_mode="bypass",
+        plan_auto_switch=True,
+        available_commands=[],
+    )
+
+
+def _disconnect_after_session_info(message: str) -> None:
+    if json.loads(message)["type"] != "session_info":
+        raise ConnectionClosed(None, None)
+
+
 @pytest.fixture(autouse=True)
 def _local_machine_identity() -> Iterator[None]:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
@@ -38,18 +60,18 @@ def _local_machine_identity() -> Iterator[None]:
 
 class DummyMessagingMixin(ChatMessagingMixin):
     def __init__(self) -> None:
-        self.clients: dict = {}
-        self._chat_sessions: dict = {}
-        self._active_chat_tasks: dict = {}
+        self.clients = {}
+        self._chat_sessions = {}
+        self._active_chat_tasks = {}
         self._session_create_locks: dict[str, asyncio.Lock] = {}
-        self._pending_modes: dict = {}
-        self._pending_worktree_paths: dict = {}
-        self._pending_agents: dict = {}
+        self._pending_modes = {}
+        self._pending_worktree_paths = {}
+        self._pending_agents = {}
         self.session_manager = None
-        self.inter_session_msg_manager = None
+        self.inter_session_msg_manager: MagicMock | None = None
         self._voice_enabled: dict[str, bool] = {}
         self._created_tts_pipelines = 0
-        self._last_tts_pipeline = None
+        self._last_tts_pipeline: MagicMock | None = None
         self.start_voice_warmup = MagicMock()
 
     def _get_session_create_lock(self, conversation_id: str) -> asyncio.Lock:
@@ -60,7 +82,7 @@ class DummyMessagingMixin(ChatMessagingMixin):
         return lock
 
     async def _send_error(
-        self, ws: object, msg: str, request_id: str | None = None, code: str = "ERROR"
+        self, ws: AsyncMock, msg: str, request_id: str | None = None, code: str = "ERROR"
     ) -> None:
         await ws.send(json.dumps({"error": msg, "request_id": request_id, "code": code}))
 
@@ -86,25 +108,25 @@ class DummyMessagingMixin(ChatMessagingMixin):
         provider: str | None = None,
         reasoning_effort: str | None = None,
     ) -> AsyncMock:
-        sess = AsyncMock()
+        sess = _chat_session()
         sess.db_session_id = "db-id"
         sess.model = "opus"
         self._chat_sessions[cid] = sess
         return sess
 
-    async def broadcast_session_event(self, event: str, sid: str, **kwargs: object) -> None:
+    async def broadcast_session_event(self, event: str, session_id: str, **kwargs: object) -> None:
         pass
 
 
 class DummyLifecycleMixin(ChatLifecycleMixin):
     def __init__(self) -> None:
-        self.clients: dict = {}
-        self._chat_sessions: dict = {}
-        self._active_chat_tasks: dict = {}
-        self._pending_modes: dict = {}
-        self._pending_worktree_paths: dict = {}
-        self._pending_agents: dict = {}
-        self._pending_projects: dict = {}
+        self.clients = {}
+        self._chat_sessions = {}
+        self._active_chat_tasks = {}
+        self._pending_modes = {}
+        self._pending_worktree_paths = {}
+        self._pending_agents = {}
+        self._pending_projects = {}
         self.workflow_handler = SimpleNamespace(evaluate=lambda event: HookResponse())
         self.inter_session_msg_manager = None
 
@@ -132,7 +154,7 @@ def ws() -> AsyncMock:
 
 
 class TestClassifyChatError:
-    def test_classify(self, mixin: DummyMessagingMixin):
+    def test_classify(self, mixin: DummyMessagingMixin) -> None:
         rate_limit = RuntimeError("provider rejected request")
         rate_limit.status_code = 429  # type: ignore[attr-defined]
         msg, code = mixin._classify_chat_error(rate_limit)
@@ -154,14 +176,14 @@ class TestClassifyChatError:
 
 
 class TestInjectPendingMessages:
-    def test_inject_wrong_event(self, mixin: DummyMessagingMixin):
+    def test_inject_wrong_event(self, mixin: DummyMessagingMixin) -> None:
         assert mixin._inject_pending_messages("1", HookEventType.SESSION_START) is None
 
-    def test_inject_no_manager(self, mixin: DummyMessagingMixin):
+    def test_inject_no_manager(self, mixin: DummyMessagingMixin) -> None:
         # Already set to None in Dummy init
         assert mixin._inject_pending_messages("1", HookEventType.BEFORE_AGENT) is None
 
-    def test_inject_success(self, mixin: DummyMessagingMixin):
+    def test_inject_success(self, mixin: DummyMessagingMixin) -> None:
         mixin.inter_session_msg_manager = MagicMock()
 
         msg1 = MagicMock()
@@ -236,17 +258,25 @@ class TestInjectPendingMessages:
     ) -> None:
         message_manager = MagicMock()
         mixin.inter_session_msg_manager = message_manager
-        message_manager.mark_delivered.side_effect = ValueError("already claimed")
+        delivered: list[str] = []
 
-        result = mixin._mark_pending_messages_delivered(["claimed"], "sid")
+        def mark_delivered(message_id: str, session_id: str) -> None:
+            if message_id == "claimed":
+                raise ValueError("already claimed")
+            delivered.append(message_id)
 
-        assert result is None
-        message_manager.mark_delivered.assert_called_once_with("claimed", "sid")
+        message_manager.mark_delivered.side_effect = mark_delivered
+
+        mixin._mark_pending_messages_delivered(["claimed", "pending"], "sid")
+
+        assert delivered == ["pending"]
+        message_manager.mark_delivered.assert_any_call("claimed", "sid")
+        message_manager.mark_delivered.assert_any_call("pending", "sid")
 
 
 class TestHandleChatMessage:
     @pytest.mark.asyncio
-    async def test_no_content(self, mixin: DummyMessagingMixin, ws: AsyncMock):
+    async def test_no_content(self, mixin: DummyMessagingMixin, ws: AsyncMock) -> None:
         mixin.clients[ws] = {"connected": True}
 
         await mixin._handle_chat_message(ws, {"content": "", "request_id": "req-1"})
@@ -259,7 +289,7 @@ class TestHandleChatMessage:
     @pytest.mark.asyncio
     async def test_invalid_content_blocks_message_is_specific(
         self, mixin: DummyMessagingMixin, ws: AsyncMock
-    ):
+    ) -> None:
         mixin.clients[ws] = {"connected": True}
 
         await mixin._handle_chat_message(ws, {"content_blocks": "bad"})
@@ -272,7 +302,7 @@ class TestHandleChatMessage:
         self,
         mixin: DummyMessagingMixin,
         ws: AsyncMock,
-    ):
+    ) -> None:
         mixin.clients[ws] = {"connected": True}
         prepared = SimpleNamespace(
             prompt_context="Attached files:\n- /tmp/a.txt", records=[object()]
@@ -296,6 +326,7 @@ class TestHandleChatMessage:
             await mixin._active_chat_tasks["c1"]
 
         mock_stream.assert_awaited_once()
+        assert mock_stream.await_args is not None
         assert mock_stream.await_args.kwargs["attachments"] is prepared
         assert mock_stream.await_args.kwargs["inject_context"] == "Attached files:\n- /tmp/a.txt"
 
@@ -330,7 +361,7 @@ class TestHandleChatMessage:
         assert "c1" not in mixin._active_chat_tasks
 
     @pytest.mark.asyncio
-    async def test_unregistered_client(self, mixin: DummyMessagingMixin, ws: AsyncMock):
+    async def test_unregistered_client(self, mixin: DummyMessagingMixin, ws: AsyncMock) -> None:
         # mixin.clients is empty
         await mixin._handle_chat_message(ws, {"content": "hi", "request_id": "req-2"})
 
@@ -341,7 +372,7 @@ class TestHandleChatMessage:
         assert payload["code"] == "UNREGISTERED_CLIENT"
 
     @pytest.mark.asyncio
-    async def test_success_dispatch(self, mixin: DummyMessagingMixin, ws: AsyncMock):
+    async def test_success_dispatch(self, mixin: DummyMessagingMixin, ws: AsyncMock) -> None:
         mixin.clients[ws] = {"connected": True}
 
         with patch.object(mixin, "_stream_chat_response", new_callable=AsyncMock) as mock_stream:
@@ -426,14 +457,14 @@ class TestHandleChatMessage:
     @pytest.mark.asyncio
     async def test_tts_intent_enabled_arms_voice_before_stream(
         self, mixin: DummyMessagingMixin, ws: AsyncMock
-    ):
+    ) -> None:
         mixin.clients[ws] = {"connected": True}
-        session = AsyncMock()
+        session = _chat_session()
         session.model = "opus"
         session.db_session_id = "db-id"
         mixin._chat_sessions["c1"] = session
 
-        async def dummy_generator(text):
+        async def dummy_generator(text: str) -> AsyncIterator[TextChunk | DoneEvent]:
             yield TextChunk(content="spoken response.")
             yield DoneEvent(
                 sdk_session_id="sdk", input_tokens=10, output_tokens=5, tool_calls_count=0
@@ -457,15 +488,15 @@ class TestHandleChatMessage:
     @pytest.mark.asyncio
     async def test_tts_intent_disabled_suppresses_pipeline_for_turn(
         self, mixin: DummyMessagingMixin, ws: AsyncMock
-    ):
+    ) -> None:
         mixin.clients[ws] = {"connected": True}
         mixin._voice_enabled["c1"] = True
-        session = AsyncMock()
+        session = _chat_session()
         session.model = "opus"
         session.db_session_id = "db-id"
         mixin._chat_sessions["c1"] = session
 
-        async def dummy_generator(text):
+        async def dummy_generator(text: str) -> AsyncIterator[TextChunk | DoneEvent]:
             yield TextChunk(content="text only.")
             yield DoneEvent(
                 sdk_session_id="sdk", input_tokens=10, output_tokens=5, tool_calls_count=0
@@ -488,21 +519,22 @@ class TestFireLifecycle:
     @pytest.mark.asyncio
     async def test_fire_lifecycle_includes_project_context(self) -> None:
         mixin = DummyLifecycleMixin()
-        mixin._chat_sessions["conv-1"] = SimpleNamespace(
+        mixin._chat_sessions["conv-1"] = AsyncMock(
+            spec=ChatSessionProtocol,
             db_session_id="db-session",
             provider="claude",
             project_id="project-123",
             project_path="/tmp/project",
             seq_num=None,
         )
-        captured_event = None
+        captured_event: HookEvent | None = None
 
-        def evaluate(event):
+        def evaluate(event: HookEvent) -> HookResponse:
             nonlocal captured_event
             captured_event = event
             return HookResponse(decision="allow")
 
-        async def fake_run_db(_owner, func):
+        async def fake_run_db[T](_owner: object, func: Callable[[], T]) -> T:
             return func()
 
         mixin.workflow_handler.evaluate = evaluate
@@ -601,15 +633,15 @@ class TestStreamChatResponse:
         }
 
     @pytest.mark.asyncio
-    async def test_stream_model_switch(self, mixin: DummyMessagingMixin, ws: AsyncMock):
+    async def test_stream_model_switch(self, mixin: DummyMessagingMixin, ws: AsyncMock) -> None:
         mixin.clients[ws] = {"conversation_id": "c1"}
-        session = AsyncMock()
+        session = _chat_session()
         session.model = "opus"
         session.db_session_id = "db-id"
         mixin._chat_sessions["c1"] = session
         mixin.session_manager = MagicMock()
 
-        async def dummy_generator(text):
+        async def dummy_generator(text: str) -> AsyncIterator[DoneEvent]:
             yield DoneEvent(
                 sdk_session_id="sdk", input_tokens=10, output_tokens=5, tool_calls_count=0
             )
@@ -626,12 +658,14 @@ class TestStreamChatResponse:
         assert any("model_switched" in msg and "sonnet" in msg for msg in messages)
 
     @pytest.mark.asyncio
-    async def test_stream_events(self, mixin: DummyMessagingMixin, ws: AsyncMock):
+    async def test_stream_events(self, mixin: DummyMessagingMixin, ws: AsyncMock) -> None:
         mixin.clients[ws] = {"conversation_id": "c1"}
-        session = AsyncMock()
+        session = _chat_session()
         mixin._chat_sessions["c1"] = session
 
-        async def mock_stream(content):
+        async def mock_stream(
+            content: str,
+        ) -> AsyncIterator[ThinkingEvent | TextChunk | ToolCallEvent | ToolResultEvent | DoneEvent]:
             yield ThinkingEvent(content="hmm")
             yield TextChunk(content="text block")
             yield ToolCallEvent(
@@ -652,6 +686,8 @@ class TestStreamChatResponse:
             msgs.append(json.loads(call[0][0]))
 
         types = [m.get("type") for m in msgs]
+        assert msgs[0]["type"] == "session_info"
+        assert msgs[0]["agent_name"] == "default"
         assert "chat_thinking" in types
         assert "chat_stream" in types
         assert "tool_status" in types
@@ -673,10 +709,10 @@ class TestStreamChatResponse:
             other_ws: {"conversation_id": "c2"},
             unbound_ws: {"connected": True},
         }
-        session = AsyncMock()
+        session = _chat_session()
         mixin._chat_sessions["c1"] = session
 
-        async def mock_stream(content: str):
+        async def mock_stream(content: str) -> AsyncIterator[TextChunk | DoneEvent]:
             yield TextChunk(content="scoped")
             yield DoneEvent(
                 sdk_session_id="sdk", input_tokens=10, output_tokens=5, tool_calls_count=0
@@ -700,11 +736,11 @@ class TestStreamChatResponse:
         self, mixin: DummyMessagingMixin, ws: AsyncMock
     ) -> None:
         mixin.clients[ws] = {"conversation_id": "c1"}
-        session = AsyncMock()
+        session = _chat_session()
         mixin._chat_sessions["c1"] = session
         captured_content: list[object] = []
 
-        async def mock_stream(content):
+        async def mock_stream(content: str) -> AsyncIterator[DoneEvent]:
             captured_content.append(content)
             yield DoneEvent(
                 sdk_session_id="sdk", input_tokens=10, output_tokens=5, tool_calls_count=0
@@ -723,13 +759,13 @@ class TestStreamChatResponse:
         self, mixin: DummyMessagingMixin, ws: AsyncMock
     ) -> None:
         mixin.clients[ws] = {"conversation_id": "c1"}
-        session = AsyncMock()
+        session = _chat_session()
         session.model = "opus"
         session.db_session_id = "db-id"
         session.project_id = "project-original"
         mixin._chat_sessions["c1"] = session
 
-        async def dummy_stream(content):
+        async def dummy_stream(content: str) -> AsyncIterator[DoneEvent]:
             yield DoneEvent(
                 sdk_session_id="sdk", input_tokens=10, output_tokens=5, tool_calls_count=0
             )
@@ -744,12 +780,14 @@ class TestStreamChatResponse:
         assert mixin.clients[ws]["project_id"] == "project-original"
 
     @pytest.mark.asyncio
-    async def test_stream_cancellation_safely(self, mixin: DummyMessagingMixin, ws: AsyncMock):
+    async def test_stream_cancellation_safely(
+        self, mixin: DummyMessagingMixin, ws: AsyncMock
+    ) -> None:
         mixin.clients[ws] = {"conversation_id": "c1"}
-        session = AsyncMock()
+        session = _chat_session()
         mixin._chat_sessions["c1"] = session
 
-        async def canceling_stream(content):
+        async def canceling_stream(content: str) -> AsyncIterator[None]:
             raise asyncio.CancelledError()
             yield  # required to make this an async generator
 
@@ -781,11 +819,11 @@ class TestStreamChatResponse:
         )
         mixin.session_manager = session_manager
 
-        session = AsyncMock()
+        session = _chat_session()
         session.db_session_id = stored_session.id
         mixin._chat_sessions["c1"] = session
 
-        async def interrupted_stream(content):
+        async def interrupted_stream(content: str) -> AsyncIterator[TextChunk]:
             yield TextChunk(content="partial response")
             if exit_mode == "cancel":
                 raise asyncio.CancelledError()
@@ -794,7 +832,7 @@ class TestStreamChatResponse:
 
         session.send_message = lambda content: interrupted_stream(content)
         if exit_mode == "disconnect":
-            ws.send.side_effect = ConnectionClosed(None, None)
+            ws.send.side_effect = _disconnect_after_session_info
 
         await mixin._stream_chat_response(ws, "c1", "hi", None)
 
@@ -803,14 +841,16 @@ class TestStreamChatResponse:
             ("user", "hi"),
             ("assistant", "partial response"),
         ]
-        assert session_manager.get(stored_session.id).status == "paused"
+        persisted_session = session_manager.get(stored_session.id)
+        assert persisted_session is not None
+        assert persisted_session.status == "paused"
 
     @pytest.mark.asyncio
     async def test_stream_client_disconnect(
         self, mixin: DummyMessagingMixin, ws: AsyncMock
     ) -> None:
         mixin.clients[ws] = {"conversation_id": "c1"}
-        session = AsyncMock()
+        session = _chat_session()
         mixin._chat_sessions["c1"] = session
 
         async def dummy_stream(content: str) -> AsyncIterator[ThinkingEvent]:
@@ -819,8 +859,9 @@ class TestStreamChatResponse:
         # send_message must return an async generator directly (not a coroutine)
         session.send_message = lambda content: dummy_stream(content)
 
-        ws.send.side_effect = ConnectionClosed(None, None)
+        ws.send.side_effect = _disconnect_after_session_info
 
-        result = await mixin._stream_chat_response(ws, "c1", "hi", None)
-        assert result is None
+        await mixin._stream_chat_response(ws, "c1", "hi", None)
         assert mixin._chat_sessions["c1"] is session
+        messages = [json.loads(call.args[0]) for call in ws.send.call_args_list]
+        assert [message["type"] for message in messages] == ["session_info", "chat_thinking"]

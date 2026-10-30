@@ -689,7 +689,7 @@ class TestEnsureDaemonRunning:
             timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
             base_url="http://daemon.example.test:61999",
         )
-        mock_config.assert_called_once_with(resolve_database_url=False)
+        mock_config.assert_not_called()
         mock_start.assert_not_called()
 
     @pytest.mark.asyncio

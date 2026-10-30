@@ -506,6 +506,7 @@ def build_condition_helpers(
     )
     from .condition_helpers_paths import PATH_CONDITION_HELPERS
     from .condition_helpers_sessions import session_condition_helpers
+    from .engine.command_environment import command_sets_environment
     from .monolith_guard import (
         outstanding_monolith_paths,
         projected_monolith_paths,
@@ -533,6 +534,7 @@ def build_condition_helpers(
             "shell_command_invokes_gcode": shell_command_invokes_gcode,
             "shell_command_runs_ocr_review": shell_command_runs_ocr_review,
             "shell_command_consumes_code_review": shell_command_consumes_code_review,
+            "command_sets_environment": command_sets_environment,
             "blocks_direct_provider_launch": blocks_direct_provider_launch,
             "remote_fetch_execution": remote_fetch_execution,
             "task_commit_project_path_allowlist_violation": (

@@ -18,3 +18,6 @@ rules:
           operands or a structured Write/Edit tool, then retry.
           For source/. commands, use uv run or run the script directly by a literal script path
           under an active task claim.
+          A script whose body writes to unresolved targets is refused even when invoked
+          by a literal path under an active task claim: run its steps with literal paths,
+          or ask the operator to run it.

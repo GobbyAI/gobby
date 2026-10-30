@@ -51,6 +51,7 @@ from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.composer_ledger import ComposerLedger, WriteKind, WriteOrigin
+from gobby.terminals.composer_lock import composer_action_lock
 from gobby.terminals.key_bytes import normalize_named_key, tmux_key_name
 from gobby.terminals.native_runtime import (
     NativeBatchFailure,
@@ -58,7 +59,13 @@ from gobby.terminals.native_runtime import (
     NativeBatchTarget,
     NativeTerminalRuntime,
 )
-from gobby.terminals.pane_io import DrainResult, RuntimePaneIO, SubmitResult, TmuxPaneIO
+from gobby.terminals.pane_io import (
+    DrainResult,
+    RuntimePaneIO,
+    SubmitResult,
+    TmuxPaneIO,
+    composer_gate_for_write,
+)
 from gobby.terminals.runtime import Delivered, SnapshotMode
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
@@ -308,6 +315,57 @@ def _tracked_tmux_seat(composer_ledger: ComposerLedger, monkeypatch: pytest.Monk
 def _append_bytes(path: Path, content: bytes) -> None:
     with path.open("ab") as stream:
         stream.write(content)
+
+
+@pytest.mark.parametrize("phase", ["waiting_for_lock", "composer_probe"])
+async def test_scheduled_continuation_does_not_type_after_another_wake_starts_a_turn(
+    session_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    tmux = _FakeTmux()
+    lifecycle = TurnLifecycleReducer(SessionManager(session_db))
+    sampled = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    failures: list[str] = []
+
+    def sample_generation(db: HubDatabase, session_id: str) -> int | None:
+        baseline = continuation_retry.turn_lifecycle_generation(db, session_id)
+        loop.call_soon_threadsafe(sampled.set)
+        return baseline
+
+    async def probe_then_start_turn(*args: Any, **kwargs: Any) -> tuple[bool, str | None, str]:
+        result = await composer_gate_for_write(*args, **kwargs)
+        lifecycle.begin_turn(SESSION_ID, TurnEvidence(source="hook"))
+        return result
+
+    monkeypatch.setattr(
+        "gobby.sessions.compact_continuation.turn_lifecycle_generation", sample_generation
+    )
+    monkeypatch.setattr("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0)
+    if phase == "composer_probe":
+        monkeypatch.setattr(
+            "gobby.sessions.compact_continuation.composer_gate_for_write", probe_then_start_turn
+        )
+    async with asyncio.TaskGroup() as group:
+        async with composer_action_lock("%12"):
+            sender = group.create_task(
+                _send_handoff_compact_continuation(
+                    TmuxPaneIO(tmux, "%12"),
+                    "Call get_handoff and continue.",
+                    SESSION_ID,
+                    delay_seconds=0,
+                    cli_source="codex",
+                    composer_read=_CODEX_READ,
+                    db=session_db,
+                    on_send_failure=lambda: failures.append("durable fallback"),
+                )
+            )
+            await asyncio.wait_for(sampled.wait(), timeout=2)
+            if phase == "waiting_for_lock":
+                lifecycle.begin_turn(SESSION_ID, TurnEvidence(source="hook"))
+
+    assert tmux.sent_keys == []
+    assert sender.result() is False
+    assert failures == ["durable fallback"]
 
 
 def test_codex_rollout_cursor_detects_only_fresh_abort(tmp_path: Path) -> None:

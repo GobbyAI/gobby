@@ -14,6 +14,9 @@ MemoryKeywordScope = Literal["global_only", "project_only", "project_and_global"
 
 logger = logging.getLogger(__name__)
 
+# pg_search parallel workers can segfault and force recovery of the whole hub.
+BM25_SERIAL_QUERY = "SET LOCAL max_parallel_workers_per_gather = 0"
+
 
 class SearchQuerySyntaxError(ValueError):
     """Raised when pg_search cannot parse a user search query."""
@@ -348,10 +351,9 @@ def _tokenize(value: str) -> list[str]:
 
 
 def fetch_all(hub: Any, sql: str, params: Sequence[Any]) -> list[Any]:
-    """Fetch rows using direct DB methods or HubDatabase transactions."""
-    if hasattr(hub, "fetchall"):
-        return list(hub.fetchall(sql, tuple(params)))
+    """Keep BM25 execution in the leader for this transaction only."""
     with hub.transaction() as txn:
+        txn.execute(BM25_SERIAL_QUERY)
         return list(txn.execute(sql, params).fetchall())
 
 

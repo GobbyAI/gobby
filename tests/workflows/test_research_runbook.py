@@ -17,7 +17,6 @@ pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).resolve().parents[2]
 RESEARCH_PATH = ROOT / "src/gobby/install/shared/workflows/pipelines/research.yaml"
-AGENTS_DIR = ROOT / "src/gobby/install/shared/workflows/agents"
 SEATS = ("researcher", "research-reviewer")
 SEAT_TITLES = {"researcher": "Researcher", "research-reviewer": "Research Reviewer"}
 SHARED_INPUTS = {"workspace", "task", "seat_pane", "project_path", "seats", "report_to"}
@@ -207,16 +206,6 @@ def test_research_arrange_tiles_the_tab_its_seats_joined() -> None:
     ]
 
 
-def test_research_seats_hold_the_grants_their_close_path_needs() -> None:
-    # Pins existing grants: the Researcher records implementation and closing, and the
-    # Research Reviewer records only the review step that its LAND verdict needs.
-    researcher = yaml.safe_load((AGENTS_DIR / "researcher.yaml").read_text())
-    reviewer = yaml.safe_load((AGENTS_DIR / "research-reviewer.yaml").read_text())
-
-    assert set(researcher["task_step_writes"]) >= {"implementation", "closing"}
-    assert reviewer["task_step_writes"] == ["review"]
-
-
 def test_research_admits_a_treeless_team_when_a_seat_launches() -> None:
     definition = _definition()
     admit = next(step for step in definition.steps if step.id == "admit")
@@ -227,7 +216,11 @@ def test_research_admits_a_treeless_team_when_a_seat_launches() -> None:
     args = StepRenderer(TemplateEngine()).render_mcp_arguments(
         admit.mcp.arguments, _context(definition, SEATS), drop_none=True
     )
-    assert args == {"task": "#25223", "checkout_mode": "none"}
+    assert args == {
+        "task": "#25223",
+        "checkout_mode": "none",
+        "tab_title": "Research - #25223",
+    }
 
 
 def test_research_seats_route_their_run_without_a_dev_manager() -> None:

@@ -202,6 +202,32 @@ async def test_descendant_claims_scoped_to_team(world: TeamWorld) -> None:
 
 
 @pytest.mark.asyncio
+async def test_team_seat_cannot_claim_its_epic_root(world: TeamWorld) -> None:
+    """An epic root has no acceptance criteria, so its team's seats claim only its open leaves."""
+    db = world.case.db
+    tasks = LocalTaskManager(db)
+    tools = create_task_registry(tasks)
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    runbook = world.child(epic)
+    await world.admit(runbook, epic)
+    seat = world.case.session("test-writer", parent=runbook.id)
+
+    async def claim(task: Task) -> dict[str, Any]:
+        with session_context_for_test(seat):
+            return cast(dict[str, Any], await tools.call("claim_task", {"task_id": task.id}))
+
+    refused = await claim(epic)
+    assert refused.get("success") is not True, refused
+    assert refused.get("error_code") == "TASK_CLAIM_CONFLICT", refused
+    assert tasks.get_task(epic.id).claimed_by_session_id is None
+
+    reply = await claim(leaf)
+    assert reply.get("success") is True, reply
+    assert tasks.get_task(leaf.id).claimed_by_session_id == seat
+
+
+@pytest.mark.asyncio
 async def test_planning_child_of_epic_is_claimable_by_non_team_session(world: TeamWorld) -> None:
     """A planning-category child under a live epic team is claimable by a plan writer seat."""
     tasks = LocalTaskManager(world.case.db)

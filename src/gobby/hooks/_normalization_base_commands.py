@@ -1,5 +1,7 @@
 """Classify plain shell commands independently of recursive shell execution."""
 
+import re
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from gobby.hooks._inline_interpreter_classifier import (
@@ -8,14 +10,20 @@ from gobby.hooks._inline_interpreter_classifier import (
 )
 from gobby.hooks._normalization_bindings import _loop_binding_variable_is_stable
 from gobby.hooks._normalization_file_commands import classify_file_command
-from gobby.hooks._normalization_git import classify_git_mutation, classify_search_segment
+from gobby.hooks._normalization_git import (
+    classify_git_mutation,
+    classify_search_segment,
+    git_command_is_read_only,
+)
 from gobby.hooks._normalization_interpreter_segments import _python_write_segment
 from gobby.hooks._normalization_operands import (
     _curl_output_paths,
     _find_has_mutation_predicate,
     _search_command_paths,
     _shell_positional_args_after,
+    rg_preprocessor,
 )
+from gobby.hooks._normalization_patch import classify_patch
 from gobby.hooks._normalization_sed import classify_sed_segment
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import (
@@ -40,6 +48,285 @@ from gobby.hooks.code_navigation import (
     source_read_navigation_metadata,
 )
 
+_UV_VALUE_OPTIONS = frozenset(
+    "--extra --no-extra --group --no-group --only-group --no-editable-package "
+    "--env-file -w --with --with-editable --with-requirements --package --python-platform "
+    "--index --default-index -i --index-url --extra-index-url -f --find-links --index-strategy "
+    "--keyring-provider -P --upgrade-package --upgrade-group --resolution --prerelease "
+    "--prerelease-package --fork-strategy --exclude-newer --exclude-newer-package "
+    "--no-sources-package --reinstall-package --link-mode -C --config-setting "
+    "--config-settings-package --no-build-isolation-package --no-build-package "
+    "--no-binary-package --cache-dir --refresh-package -p --python --color "
+    "--allow-insecure-host --directory --project --config-file --from "
+    "-c --constraints --build-constraints --overrides -b --torch-backend "
+    "--python-preference --python-downloads".split()
+)
+_UV_FLAG_OPTIONS = frozenset(
+    "--all-extras --dev --no-dev --only-dev --no-default-groups --all-groups -m --module "
+    "--no-editable --exact --no-env-file --isolated --active --no-sync --locked --frozen "
+    "-s --script --gui-script --all-packages --no-project --no-index -U --upgrade "
+    "--no-sources --reinstall --compile-bytecode --no-build-isolation --no-build --no-binary "
+    "--require-build-hashes --no-require-build-hashes -n --no-cache --refresh --managed-python "
+    "--no-managed-python --no-python-downloads -q --quiet -v --verbose --system-certs "
+    "--native-tls --offline --no-progress --no-config -h --help --lfs --check --diff "
+    "--dry-run -V --version".split()
+)
+
+
+# npx strips any dash count, globs single-dash shorthands and hands the next word to
+# an unknown bare option, so any option outside these switches can name a package.
+_NODE_RUNNER_SAFE_OPTIONS = frozenset({"--", "-q", "--quiet", "--no-install"})
+
+
+_UV_PACKAGE_OPTIONS = frozenset(
+    {"--from", "-w", "--with", "--with-editable", "--with-requirements"}
+)
+
+
+def _uv_options(
+    parts: list[str],
+    start: int,
+    cwd: str | None,
+    *,
+    interspersed: bool = False,
+    value_options: frozenset[str] = _UV_VALUE_OPTIONS,
+) -> tuple[int, str | None, set[str]] | None:
+    """Parse known option arities; an unknown option cannot prove the executable boundary."""
+    flags: set[str] = set()
+    while start < len(parts):
+        word = parts[start]
+        if not word.startswith("-"):
+            if interspersed:
+                start += 1
+                continue
+            break
+        if word == "--":
+            return start + 1, cwd, flags
+        option, separator, value = word.partition("=")
+        if option in value_options:
+            flags.add(option)
+            if not separator:
+                start += 1
+                if start >= len(parts):
+                    return None
+                value = parts[start]
+            if option == "--directory":
+                cwd = _rebase_shell_paths([value], cwd)[0]
+        elif word in _UV_FLAG_OPTIONS:
+            flags.add(word)
+        elif not word.startswith("--") and len(word) > 2 and word[:2] in value_options:
+            flags.add(word[:2])  # Attached short-option value, e.g. -p3.13.
+        elif re.fullmatch(r"-[qv]+", word):
+            pass
+        else:
+            return None
+        start += 1
+    return start, cwd, flags
+
+
+def _wrapper_options_end(parts: list[str], start: int, value_options: frozenset[str]) -> int:
+    while start < len(parts) and parts[start].startswith("-"):
+        if parts[start] == "--":
+            return start + 1
+        if parts[start] in value_options:
+            start += 2
+            continue
+        if parts[start] in {"-m", "-c"} or parts[start].partition("=")[0] == "--call":
+            break
+        start += 1
+    return start
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionCommand:
+    parts: list[str] | None
+    cwd: str | None
+    read_only: bool = True
+    directory_proven: bool = True
+
+
+def unwrap_execution_command(parts: list[str], cwd: str | None) -> ExecutionCommand:
+    """Expose package-runner argv and its explicit working directory for normal classification."""
+    # Implicit runner setup must not require write authority for read-only audits.
+    # Explicit project changes such as uv sync/lock are classified separately.
+    read_only = True
+    directory_proven = True
+    while parts:
+        command = shell_command_name(parts[0])
+        if (
+            command == "rtk"
+            and parts[1:2]
+            and parts[1] in {"uv", "ruff", "npx", "bunx", "prettier"}
+        ):
+            # These RTK routes preserve the runner/formatter argv. Other RTK
+            # subcommands (e.g. format, read, recall) have their own semantics.
+            index = 1
+        elif command in {"uv", "uvx"}:
+            tool_run = command == "uvx"
+            parsed = _uv_options(parts, 1, cwd)
+            if parsed is None:
+                return ExecutionCommand(None, cwd, read_only=False, directory_proven=False)
+            index, cwd, flags = parsed
+            if command == "uv":
+                if parts[index : index + 2] == ["tool", "run"]:
+                    tool_run = True
+                    index += 1
+                elif parts[index : index + 1] != ["run"]:
+                    break
+                parsed = _uv_options(parts, index + 1, cwd)
+                if parsed is None:
+                    return ExecutionCommand(None, cwd, read_only=False, directory_proven=False)
+                index, cwd, run_flags = parsed
+                flags |= run_flags
+                if not tool_run:
+                    # --no-sync implies --frozen. Ordinary uv run may update uv.lock.
+                    read_only &= not flags.isdisjoint({"--frozen", "--locked", "--no-sync"})
+            read_only &= flags.isdisjoint(
+                {"-U", "--upgrade", "-P", "--upgrade-package", "--upgrade-group", "--env-file"}
+                | _UV_PACKAGE_OPTIONS
+            )
+            directory_proven &= "--env-file" not in flags
+            if tool_run and index < len(parts):
+                parts = [*parts[:index], parts[index].partition("@")[0], *parts[index + 1 :]]
+        elif command in {"npx", "bunx"}:
+            index = _wrapper_options_end(parts, 1, frozenset({"--package", "-p"}))
+            read_only &= _NODE_RUNNER_SAFE_OPTIONS.issuperset(parts[1:index])
+            parts = parts[index:]
+            if parts and (parts[0] == "-c" or parts[0].partition("=")[0] == "--call"):
+                # A shell program string is not an executable argv; submit must fail closed.
+                return ExecutionCommand(None, cwd, read_only=False, directory_proven=False)
+            if parts and "/" not in parts[0] and not parts[0].startswith("@"):
+                name, _, spec = parts[0].partition("@")
+                # An npm:/file:/git: spec swaps in another package; only a version stays read-only.
+                read_only &= ":" not in spec
+                parts = [name, *parts[1:]]
+            continue
+        elif re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", command):
+            index = _wrapper_options_end(
+                parts, 1, frozenset({"-W", "-X", "--check-hash-based-pycs"})
+            )
+            if parts[index : index + 1] != ["-m"]:
+                break
+            index += 1
+        else:
+            break
+        parts = parts[index:]
+    return ExecutionCommand(parts, cwd, read_only, directory_proven)
+
+
+def execution_context_is_read_only(parts: list[str]) -> bool:
+    """Keep environment and runner effects in the proof before argv is discarded."""
+    assignments: set[str] = set()
+    while parts:
+        unwrapped = _unwrap(parts, assignments=assignments)
+        # Only presentation/locale variables have known harmless effects here.
+        if not assignments.issubset({"LANG", "LC_ALL", "LC_CTYPE", "NO_COLOR", "FORCE_COLOR"}):
+            return False
+        if unwrapped and "=" in unwrapped[0]:
+            return False  # env also accepts names outside the shell assignment grammar.
+        execution = unwrap_execution_command(unwrapped, None)
+        if not execution.read_only or execution.parts is None:
+            return False
+        if execution.parts == parts:
+            break
+        parts = execution.parts
+    return True
+
+
+def _formatter_mutates(parts: list[str]) -> bool:
+    """Recognize formatter write modes after execution wrappers are removed."""
+    if not parts:
+        return False
+    command = shell_command_name(parts[0])
+    arguments = parts[1:]
+    if command == "ruff":
+        arguments = arguments[: arguments.index("--")] if "--" in arguments else arguments
+        if "--diff" in arguments:
+            return False
+        return ("format" in arguments and "--check" not in arguments) or bool(
+            {"--fix", "--fix-only"}.intersection(arguments)
+        )
+    if command in {"black", "isort", "rustfmt"}:
+        return not {"--check", "--check-only", "--diff"}.intersection(arguments)
+    if command == "prettier":
+        return bool({"--write", "-w"}.intersection(arguments))
+    if command == "cargo":
+        index = 2 if len(parts) > 1 and parts[1].startswith("+") else 1
+        return parts[index : index + 1] == ["fmt"] and "--check" not in arguments
+    return False
+
+
+def unresolved_execution_metadata(
+    item: _ShellSegmentMetadata,
+    cwd: str | None,
+    *,
+    outputs: list[str] | None = None,
+    stdin_arguments: bool = False,
+) -> _ShellSegmentMetadata:
+    """Keep write evidence while withholding execution and stdin scope proof."""
+    child_is_read_only = item.proven_read_only
+    # An output-producing wrapper does not mutate its child's read operands.
+    mutation_paths = item.paths if item.repo_mutation or not outputs else ()
+    paths = tuple(dict.fromkeys([*mutation_paths, *(outputs or ())]))
+    extra = dict(item.extra or {})
+    extra.pop("canonical_tree_write_cwds", None)
+    scope = [
+        *extra.get("canonical_unresolved_execution_paths", ()),
+        *extra.pop("canonical_tree_write_paths", ()),
+        *(outputs or () if child_is_read_only else paths),
+    ]
+    if cwd and not child_is_read_only:
+        scope.append(cwd)
+    extra.update(
+        canonical_unresolved_execution=True,
+        canonical_unresolved_execution_paths=list(dict.fromkeys(scope)),
+    )
+    if stdin_arguments and (item.repo_mutation or outputs):
+        extra["_canonical_repo_mutation_scope_unknown"] = True
+    return replace(
+        item,
+        kind="write" if outputs else item.kind,
+        paths=paths,
+        write_paths=tuple(dict.fromkeys([*item.write_paths, *(outputs or ())])),
+        repo_mutation=item.repo_mutation or bool(outputs),
+        read_only=False,
+        extra=extra,
+    )
+
+
+_XARGS_STDIN_FLAGS = frozenset({"-0", "--null", "-r", "--no-run-if-empty"})
+# Batching options only regroup stdin into cat invocations; the value is separate or attached.
+_XARGS_BATCH_FLAGS = frozenset(
+    {
+        "-n",
+        "-L",
+        "-P",
+        "-s",
+        "-d",
+        "--max-args",
+        "--max-lines",
+        "--max-procs",
+        "--max-chars",
+        "--delimiter",
+    }
+)
+
+
+def xargs_runs_cat(parts: list[str]) -> bool:
+    """True when xargs directly runs cat; these flags only split stdin or skip empty input."""
+    index = 1
+    while index < len(parts):
+        flag = parts[index]
+        if flag in _XARGS_STDIN_FLAGS:
+            index += 1
+        elif flag in _XARGS_BATCH_FLAGS:
+            index += 2
+        elif flag[:2] in _XARGS_BATCH_FLAGS or flag.partition("=")[0] in _XARGS_BATCH_FLAGS:
+            index += 1
+        else:
+            break
+    return parts[index : index + 1] == ["cat"]
+
 
 def classify_base_command(
     parts: list[str],
@@ -48,6 +335,7 @@ def classify_base_command(
     shell_stdin: bool = False,
     base_cwd: Path | None = None,
     raw_parts: tuple[str, ...] | None = None,
+    preprocessor_read_only: bool = False,
 ) -> _ShellSegmentMetadata:
     if not parts:
         return _ShellSegmentMetadata("execute")
@@ -57,14 +345,72 @@ def classify_base_command(
         return _classify_for_loop_header(parts, cwd)
 
     if cmd == "git":
-        git_metadata = classify_git_mutation(parts, cwd, base_cwd)
-        if git_metadata is not None:
-            return git_metadata
+        git_metadata = classify_git_mutation(parts, cwd, base_cwd) or classify_search_segment(
+            cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin
+        )
+        if not git_command_is_read_only(parts):
+            git_metadata = replace(
+                git_metadata, extra={**(git_metadata.extra or {}), "canonical_git_mutation": True}
+            )
+        else:
+            git_metadata = replace(git_metadata, read_only=True)
+        return git_metadata
+
+    if _formatter_mutates(parts):
+        return _ShellSegmentMetadata("execute", extra={"canonical_formatter_mutation": True})
+
+    # Ruff check may fix from project configuration, add noqa, or write a report.
+    # Only format's explicit inspection modes prove no writes without that cwd.
+    if cmd == "ruff" and parts[1:2] == ["format"] and parts[2:3] in (["--check"], ["--diff"]):
+        return _ShellSegmentMetadata("execute", read_only=True)
+    if cmd in {"pwd", "ls", "wc", "stat", "true", "false", "echo", "printf", "uptime"}:
+        return _ShellSegmentMetadata("execute", read_only=True)
+    # Delegate mode prints file scope and review rules; its only write is ocr's
+    # own update-check stamp under ~/.opencodereview.
+    delegate_read = parts[2:3] in (["preview"], ["rule"])
+    if cmd == "ocr" and parts[1:2] in (["delegate"], ["d"]) and delegate_read:
+        return _ShellSegmentMetadata("execute", read_only=True)
+
+    if cmd == "pre-commit":
+        index = _wrapper_options_end(parts, 1, frozenset({"-c", "--config", "--color"}))
+        if parts[index : index + 1] == ["run"]:
+            return _ShellSegmentMetadata("execute", extra={"canonical_formatter_mutation": True})
+    if cmd == "uv":
+        index = _wrapper_options_end(parts, 1, _UV_VALUE_OPTIONS)
+        operation = parts[index : index + 1]
+        if operation in (["format"], ["sync"]):
+            value_options = _UV_VALUE_OPTIONS | (
+                {"--version"} if operation == ["format"] else set()
+            )
+            parsed = _uv_options(
+                parts, index + 1, cwd, interspersed=True, value_options=value_options
+            )
+            if parsed is None:
+                return unresolved_execution_metadata(
+                    _ShellSegmentMetadata("execute"), cwd or (str(base_cwd) if base_cwd else None)
+                )
+            _, _, flags = parsed
+            if operation == ["format"] and flags.isdisjoint({"--check", "--diff", "--help", "-h"}):
+                return _ShellSegmentMetadata(
+                    "execute", extra={"canonical_formatter_mutation": True}
+                )
+            if operation == ["sync"] and flags.isdisjoint(
+                {"--locked", "--frozen", "--dry-run", "--check", "--help", "-h"}
+            ):
+                return _ShellSegmentMetadata("write", repo_mutation=True)
+        if operation in (["add"], ["remove"], ["init"]):
+            return _ShellSegmentMetadata("write", repo_mutation=True)
+        if operation == ["lock"] and not {"--check", "--check-exists"}.intersection(parts):
+            return _ShellSegmentMetadata("write", repo_mutation=True)
+        if operation == ["version"] and "--dry-run" not in parts:
+            values = _shell_positional_args_after(
+                parts, index + 1, option_args=set(_UV_VALUE_OPTIONS) | {"--output-format", "--bump"}
+            )
+            if values or any(word.partition("=")[0] == "--bump" for word in parts[index + 1 :]):
+                return _ShellSegmentMetadata("write", repo_mutation=True)
 
     if cmd == "patch":
-        if "--dry-run" in parts[1:]:
-            return _ShellSegmentMetadata("execute")
-        return _ShellSegmentMetadata("write", repo_mutation=True)
+        return classify_patch(parts, cwd, base_cwd)
 
     interpreter_parts = _inline_interpreter_parts(parts)
     if interpreter_parts:
@@ -73,7 +419,7 @@ def classify_base_command(
         if interpreter in {"python", "python3"} and "-c" in interpreter_args:
             python_classification, mutation = _classify_python_pipeline_evidence(parts)
             if python_classification is _PythonExecutionClassification.READ_ONLY:
-                return _ShellSegmentMetadata("execute")
+                return _ShellSegmentMetadata("execute", read_only=True)
             if python_classification is _PythonExecutionClassification.INDETERMINATE:
                 return _ShellSegmentMetadata("execute", confidence="low")
             return _python_write_segment(mutation, cwd)
@@ -90,6 +436,7 @@ def classify_base_command(
                 return _ShellSegmentMetadata("write", repo_mutation=True)
             return _ShellSegmentMetadata(
                 "execute",
+                read_only=inline_classification is _InlineProgramClassification.READ_ONLY,
                 confidence=(
                     "high"
                     if inline_classification is _InlineProgramClassification.READ_ONLY
@@ -116,12 +463,20 @@ def classify_base_command(
             paths=tuple(paths),
             extra=find_navigation_metadata(parts, paths),
             repo_mutation=_find_has_mutation_predicate(parts),
+            read_only=not _find_has_mutation_predicate(parts),
         )
 
     if cmd in {"rg", "grep", "git"}:
-        return classify_search_segment(cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin)
+        search = classify_search_segment(cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin)
+        if cmd == "rg" and rg_preprocessor(parts) is not None:
+            return unresolved_execution_metadata(
+                replace(search, read_only=preprocessor_read_only),
+                cwd or (str(base_cwd) if base_cwd else None),
+            )
+        return search
 
-    if cmd == "xargs" and _unwrap(parts)[:1] == ["cat"]:
+    if cmd == "xargs" and xargs_runs_cat(parts):
+        # Only direct cat is proven read-only; nested wrappers may write their own outputs.
         # Stdin supplies file operands, not source contents; their scope is unknown.
         navigation = {
             "canonical_code_navigation_action": "read",
@@ -132,6 +487,14 @@ def classify_base_command(
         return _ShellSegmentMetadata(
             "read",
             extra={**navigation, "canonical_code_navigation_segments": [navigation]},
+        )
+
+    if cmd in {"sudo", "xargs"}:
+        # Privilege/policy changes and stdin-supplied arguments cannot prove a read-only launch.
+        if parts[1:] in (["--help"], ["--version"]):
+            return _ShellSegmentMetadata("execute")
+        return unresolved_execution_metadata(
+            _ShellSegmentMetadata("execute"), cwd or (str(base_cwd) if base_cwd else None)
         )
 
     if cmd == "awk" and parts[1:2] == ["1"]:
@@ -169,6 +532,19 @@ def classify_base_command(
         return _ShellSegmentMetadata(
             "read",
             paths=tuple(paths),
+            # Interactive less can save output/run a shell; bat can launch an
+            # explicit pager or write its configuration/cache instead of reading.
+            read_only=cmd != "less"
+            and not (
+                cmd == "bat"
+                and (
+                    parts[1:2] == ["cache"]
+                    or any(
+                        part.partition("=")[0] in {"--pager", "--generate-config"}
+                        for part in parts[1:]
+                    )
+                )
+            ),
             extra=source_read_navigation_metadata(
                 paths,
                 line_count=line_count,
@@ -196,16 +572,15 @@ def _classify_for_loop_header(parts: list[str], cwd: str | None) -> _ShellSegmen
     except ValueError:
         return _ShellSegmentMetadata("execute")
     variable = parts[1] if len(parts) > 1 else ""
-    items = parts[in_index + 1 :]
-    if (
-        in_index != 2
-        or not _loop_binding_variable_is_stable(variable)
-        or not items
-        or any(not _looks_path_target(part) for part in items)
-    ):
+    if in_index != 2 or not _loop_binding_variable_is_stable(variable):
         return _ShellSegmentMetadata("execute")
+    # Binding an ordinary scalar runs nothing and writes no file.
+    items = parts[in_index + 1 :]
+    if not items or any(not _looks_path_target(part) for part in items):
+        return _ShellSegmentMetadata("execute", read_only=True)
     return _ShellSegmentMetadata(
         "execute",
+        read_only=True,
         paths=tuple(_rebase_shell_paths(items, cwd)),
         loop_binding_variable=variable,
     )

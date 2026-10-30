@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from gobby.events.wake_terminal_resolution import resolve_session_terminal_route
+from gobby.mcp_proxy.tools.sessions._terminal_send_keys_gate import send_keys_target_refusal
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
 from gobby.terminals.key_bytes import normalize_named_key
 from gobby.terminals.runtime import Delivered, IndeterminateWrite, TerminalWriteError
@@ -59,8 +60,8 @@ def _authorize_send_keys_target(
         }
 
     try:
-        # Whether a spawned agent may use send_keys at all is the opt-in
-        # ``no-send-keys`` rule's decision, made before dispatch.
+        # Whether the caller may use send_keys at all is the default ``no-send-keys``
+        # rule's decision, made before dispatch.
         scope = resolve_actor_scope(
             session_manager, f"{SESSION_ACTOR_PREFIX}{caller_ref}", allow_autonomous=True
         )
@@ -106,6 +107,7 @@ def register_send_keys_tool(
     session_manager: SessionManager,
     *,
     terminal_manager: Any | None = None,
+    terminal_runtime_registry: Any | None = None,
     write_coordinator: Any | None = None,
 ) -> None:
     """Register coordinator-backed terminal input with the sessions tool registry."""
@@ -156,6 +158,16 @@ def register_send_keys_tool(
             }
 
         assert resolved_session_id is not None
+        refusal = await send_keys_target_refusal(
+            resolved_session_id, terminal_manager, terminal_runtime_registry
+        )
+        if refusal is not None:
+            return {
+                "success": False,
+                "error": refusal.message,
+                "error_code": refusal.code,
+                "idempotency_key": resolved_key,
+            }
         target_session = session_manager.get(resolved_session_id)
         if (
             write_coordinator is not None
