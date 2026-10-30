@@ -90,7 +90,7 @@ PROVIDER_DISCOVERY_TOOLS = frozenset({"ToolSearch", "search_tool"})
 # always interrogate a stuck agent (e.g. send_keys into a terminate step
 # whose allow-list only lists kill_agent). Agent enforcement blocks them
 # outright for provider-native subagents. Spawned Gobby agents are gated by the
-# opt-in ``no-send-keys`` rule, which an agent definition selects.
+# ``no-send-keys`` rule, which withholds ``send_keys`` unless the definition holds it.
 OPERATOR_TOOLS = {
     "send_keys",
     "capture_output",
@@ -260,7 +260,7 @@ def is_operator_tool(tool_name: str | None) -> bool:
     or CLI to inspect or poke a running session. They are not agent actions
     and must bypass step/agent MCP allow-lists so an operator can always
     reach a stuck agent. Provider-native subagents are blocked from them by agent
-    enforcement; spawned Gobby agents are gated by the opt-in ``no-send-keys`` rule.
+    enforcement; spawned Gobby agents are gated by the ``no-send-keys`` rule.
 
     Args:
         tool_name: The MCP tool name (from tool_input.tool_name)

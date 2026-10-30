@@ -24,7 +24,7 @@ from gobby.hooks.terminal_handoff_delivery import (
     schedule_terminal_handoff_delivery,
 )
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.sessions import _terminal_clear
+from gobby.mcp_proxy.tools.sessions import _terminal_clear, _terminal_send_keys
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
     _FORBIDDEN_SPEED_COMMANDS,
@@ -63,6 +63,16 @@ from tests.fixtures.postgres import TEST_USER_ID
 pytestmark = pytest.mark.unit
 
 MACHINE_ID = "30000000-0000-4000-8000-000000000003"
+
+
+@pytest.fixture(autouse=True)
+def _target_gate_admits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Handler tests cover dispatch; the target composer gate has its own tests."""
+
+    async def admit(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(_terminal_send_keys, "send_keys_target_refusal", admit)
 
 
 class _TestRegistry(InternalToolRegistry):

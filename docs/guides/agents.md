@@ -245,11 +245,12 @@ short-lived seat: spawn-only, with `execution_mode: one_shot` and a bounded
 additionally declares `idle_ttl_seconds: 900`.
 
 Shared seat guidance is injected by the `inject-seat-common` rule in the `roles`
-rule group. The `no-send-keys` rule blocks `send_keys` and `capture_output` for
-every seat that selects it. The Assistant, Orchestrator, Dev Manager and
-Recovery Steward do not select it, so the rule does not block them. Spawn and
-pipeline-launch restrictions prevent seats from bypassing their assigned role;
-a Dev Manager may only resume a stalled seat of its own team.
+rule group. The `no-send-keys` rule (default tag, so every bundled definition
+selects it) withholds `send_keys` from every definition except the Orchestrator
+and Assistant, which carry the `send_keys` capability. It does not withhold
+`capture_output`. Dev Managers, the Recovery Steward and Triage report stalled
+seats to Triage, which relays each resume to the Orchestrator. Spawn and
+pipeline-launch restrictions prevent seats from bypassing their assigned role.
 Definitions declare tool blocks; path-aware rules constrain seats with bounded
 write scopes. Seats with required skills or a fixed loop declare a step workflow.
 Message-driven seats need no empty serve loop. Inspect installed rows and
