@@ -12,7 +12,7 @@ from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import psycopg
@@ -20,7 +20,9 @@ import pytest
 from psycopg_pool import PoolTimeout
 
 from gobby.hooks._normalization_tools import normalize_tool_fields
+from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.session_types import HookSessionManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -59,6 +61,7 @@ from gobby.workflows.task_tool_bindings import TaskToolBindings
 from gobby.workflows.worktree_shell_attribution import (
     OVERLAPS_VARIABLE,
     begin_structured_edit_calls,
+    overlapped_worktree_paths,
 )
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
@@ -1934,6 +1937,58 @@ async def test_overlap_holder_native_write_ignores_a_stale_call_from_another_ses
     )
 
     assert await _dirty_edit_reason(h, _native_write(h, "owned.txt")) == ""
+
+
+@pytest.mark.asyncio
+async def test_overlap_holder_native_write_clears_record_and_unblocks_merge_commit(
+    guard_harness: GuardHarness,
+) -> None:
+    """A stranded merge can commit only after the holder's native write clears its overlap."""
+    h = guard_harness
+    base = _git(h.repo, "branch", "--show-current")
+    _git(h.repo, "checkout", "-b", "incoming")
+    _commit_files(h.repo, "incoming", {"merged.txt": "incoming\n"})
+    _git(h.repo, "checkout", base)
+    await _recorded_operation(h, "merge", "--no-ff", "--no-commit", "incoming")
+    assert _git(h.repo, "rev-parse", "--verify", "MERGE_HEAD") == _git(
+        h.repo, "rev-parse", "incoming"
+    )
+    _holder_overlap(h, "merged.txt")
+    _git(h.repo, "add", "--", "merged.txt")
+    commit = h.event("git commit -m merge")
+    refused = await h.handler._evaluate_rules(commit)
+    assert refused.decision == "block", refused.reason
+    assert "ambiguous overlapping writes: merged.txt" in (refused.reason or "")
+
+    LocalWorktreeManager(h.db).create(
+        project_id=h.project.id,
+        branch_name="task-merge-edit",
+        worktree_path=str(h.repo),
+        task_id=h.current_task.id,
+        agent_session_id=h.current_session.id,
+    )
+    manager = SessionVariableManager(h.db)
+    assert overlapped_worktree_paths(manager.get_variables(h.current_session.id), str(h.repo)) == {
+        "merged.txt"
+    }
+    native = _native_write(h, "merged.txt", call_id="toolu-merge-edit")
+    # Production order: register the edit, judge it, write, then run the after-tool hook.
+    begin_structured_edit_calls(manager, h.current_session.id, native)
+    assert manager.get_variables(h.current_session.id)["worktree_shell_calls"]
+    assert await _dirty_edit_reason(h, native) == ""
+    (h.repo / "merged.txt").write_text("native rewrite\n", encoding="utf-8")
+    sessions = cast(HookSessionManager, h.session_manager)
+    handlers = EventHandlers(session_manager=sessions, session_storage=sessions)
+    handlers.handle_after_tool(replace(native, event_type=HookEventType.AFTER_TOOL))
+
+    assert "merged.txt" not in overlapped_worktree_paths(
+        manager.get_variables(h.current_session.id), str(h.repo)
+    )
+    _git(h.repo, "add", "--", "merged.txt")
+    allowed = await h.handler._evaluate_rules(commit)
+    assert allowed.decision == "allow", allowed.reason
+    _git(h.repo, "commit", "-m", "merge")
+    assert len(_git(h.repo, "rev-list", "--parents", "-n", "1", "HEAD").split()) == 3
 
 
 @pytest.mark.asyncio

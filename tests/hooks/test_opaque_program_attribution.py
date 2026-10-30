@@ -1696,7 +1696,7 @@ def test_overlap_record_refuses_an_owned_path_whose_content_still_matches(
 ) -> None:
     """An overlap record refuses shell writes to its path even when the caller's own record matches.
 
-    Once no call is in flight, the holder's native write clears the record, and its commit passes.
+    Once no call is in flight, the holder's native write clears the record, and shell writes pass.
     """
     checkout = task_worktree
     SessionVariableManager(checkout.db).merge_variables(
@@ -1710,25 +1710,19 @@ def test_overlap_record_refuses_an_owned_path_whose_content_still_matches(
     native = _native_write_event(checkout, "owned.txt")
     # WorkflowHookHandler registers the edit before its rules judge it.
     begin_structured_edit_calls(SessionVariableManager(checkout.db), checkout.session_id, native)
-    assert handlers.handle_before_tool(native).decision == "allow"
+    native_reason = foreign_dirty_edit_conflict(
+        checkout.db,
+        native,
+        session_id=checkout.session_id,
+        project_id=checkout.project_id,
+        project_path=str(checkout.repo),
+    )
+    assert asyncio.run(native_reason) == ""
+    handlers.handle_before_tool(native)
     checkout.write("owned.txt", "native rewrite\n")
     handlers.handle_after_tool(replace(native, event_type=HookEventType.AFTER_TOOL))
-    assert checkout.rule_3_reason("owned.txt") == ""
-
-    _git(checkout.repo, "add", "--", "owned.txt")
-    commit = checkout.tool_event(HookEventType.BEFORE_TOOL, "git commit -m owned")
-    assert (
-        asyncio.run(
-            foreign_staged_commit_conflict(
-                checkout.db,
-                commit,
-                session_id=checkout.session_id,
-                project_id=checkout.project_id,
-                project_path=str(checkout.repo),
-            )
-        )
-        == ""
-    )
+    for command in ("git restore -- owned.txt", "rm owned.txt"):
+        assert checkout.rule_3_reason("owned.txt", command=command) == ""
 
 
 @pytest.mark.parametrize(
