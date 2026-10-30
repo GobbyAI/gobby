@@ -21,6 +21,7 @@ from gobby.storage.tasks import (
     TaskClosedError,
     TaskNotFoundError,
 )
+from gobby.storage.team_records import EPIC_MODE
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 from gobby.workflows.task_claim_state import active_task_id_for_edit
@@ -127,14 +128,23 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 TaskToolErrorCode.TASK_CLOSED,
             )
 
-        # A descendant of an active epic team is claimed by that team's seats only. A planning
-        # child is exempt, so the plan writer seat the team-planning runbook launches can claim it.
+        # An epic team's own root is not work: its seats claim the open leaves below it instead.
         from gobby.agents.team_lifecycle import task_team
 
+        seat = seat_team(ctx.task_manager.db, resolved_session_id)
+        if seat is not None and seat.mode == EPIC_MODE and seat.task_id == resolved_id:
+            return task_error(
+                f"Task {resolved_id} is the epic root of team {seat.team_id}; "
+                "claim one of its open leaves",
+                TaskToolErrorCode.TASK_CLAIM_CONFLICT,
+                team_id=seat.team_id,
+            )
+
+        # A descendant of an active epic team is claimed by that team's seats only. A planning
+        # child is exempt, so the plan writer seat the team-planning runbook launches can claim it.
         epic_team = epic_team_above(ctx.task_manager.db, resolved_id)
         if epic_team is not None and task.category != "planning":
             owning_team = task_team(ctx.task_manager.db, resolved_id)
-            seat = seat_team(ctx.task_manager.db, resolved_session_id)
             if seat is None or owning_team is None or seat.team_id != owning_team.team_id:
                 return task_error(
                     f"Task {resolved_id} is under team {owning_team.team_id if owning_team else epic_team.team_id}; "

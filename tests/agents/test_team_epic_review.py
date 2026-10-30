@@ -175,7 +175,7 @@ async def epic_team(world: TeamWorld, epic: Task) -> EpicTeam:
     """An admitted epic team with a running Dev Manager seat. The manager never claims the epic."""
     db = world.case.db
     runbook = world.child(epic)
-    binding = await world.admit(runbook, epic)
+    binding = await world.admit(runbook, epic, tab_title=f"Dev Team - #{epic.seq_num}")
     manager = world.case.session("dev-manager", parent=runbook.id)
     runs = LocalAgentRunManager(db)
     run = runs.create(
@@ -716,8 +716,18 @@ async def test_pod_pipeline_launches_triplet_and_relaunches_in_pod_tab(world: Te
     leaf = new_task(world, "Pipeline leaf", parent=epic)
     team = await epic_team(world, epic)
     definitions = AgentDefinitionManager(team.db)
-    for name in ("test-writer", "code-reviewer"):
-        definitions.create(name, {"name": name, "version": "1.0"}, project_id=world.case.project_id)
+    for name, step in (("test-writer", "test"), ("code-reviewer", "review")):
+        definitions.create(
+            name,
+            {
+                "name": name,
+                "version": "1.0",
+                "prompts": {"agent": "Perform the assigned work."},
+                "workflows": {"rule_selectors": {"include": []}},
+                "task_step_writes": [step],
+            },
+            project_id=world.case.project_id,
+        )
     workspace = WorkspaceManager(team.db).create(require_machine_id(), "devteam")[0].id
     inputs = _inputs(leaf, workspace, team.manager, None)
     inputs["parent_team_id"] = team.binding.team_id
