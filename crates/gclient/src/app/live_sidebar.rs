@@ -61,6 +61,18 @@ impl Workspace<LiveDaemon> {
         self.rebuild_sidebar();
     }
 
+    /// Installs an attention snapshot unless an attention event newer than it
+    /// already landed, since installing it would undo that event. Returns
+    /// whether it was installed.
+    pub(crate) fn install_attention_guarded(&mut self, roster: RosterSnapshot) -> bool {
+        let (epoch, roster_seq, _) = &roster;
+        if *epoch == self.attention.epoch && *roster_seq < self.attention.seq {
+            return false;
+        }
+        self.install_attention(roster);
+        true
+    }
+
     /// Fetch every sidebar row: projects, then status and worktrees for each
     /// project checked out here, then the sessions and runs of every
     /// checked-out project and the focused one. Reconcile and the dialogs
@@ -159,6 +171,7 @@ impl Workspace<LiveDaemon> {
         }
         let request = SidebarRequest {
             seq: self.sidebar_stamps.next(),
+            generation: self.daemon.generation().0,
             projects: pending.projects,
             project_rows: pending.project_rows,
             checked_out: self.checked_out_projects(),
@@ -219,15 +232,11 @@ impl Workspace<LiveDaemon> {
             }
         }
         if let Some(roster) = fetch.roster {
-            if SidebarStamps::accept(&mut stamps.roster, seq) {
-                let (epoch, roster_seq, _) = &roster;
-                if *epoch == self.attention.epoch && *roster_seq < self.attention.seq {
-                    // An event newer than this snapshot already landed;
-                    // installing it would undo that event, so ask again.
-                    self.pending_sidebar.roster = true;
-                } else {
-                    self.install_attention(roster);
-                }
+            if SidebarStamps::accept(&mut stamps.roster, seq)
+                && !self.install_attention_guarded(roster)
+            {
+                // Ask again: the snapshot is older than an event already applied.
+                self.pending_sidebar.roster = true;
             }
         }
         self.rebuild_sidebar();
@@ -311,8 +320,10 @@ impl Workspace<LiveDaemon> {
 /// logged, remembered for the caller's banner, and reported as an absent row.
 fn optional<T>(
     result: Result<T, DaemonError>,
-    what: &'static str,
+    operation: &'static str,
     project: Option<&str>,
+    generation: u64,
+    started: Instant,
     failure: &mut Option<DaemonError>,
 ) -> Option<T> {
     match result {
@@ -321,14 +332,32 @@ fn optional<T>(
             // The project belongs in the line: which one went sick is what a
             // stale row is diagnosed from.
             tracing::warn!(
-                %what,
+                operation,
                 project = project.unwrap_or(""),
+                generation,
+                error_class = error_class(&error),
+                elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                 %error,
                 "sidebar row refresh failed"
             );
             failure.get_or_insert(error);
             None
         }
+    }
+}
+
+/// The kind of daemon failure a sidebar WARN names.
+fn error_class(error: &DaemonError) -> &'static str {
+    match error {
+        DaemonError::Unauthorized => "unauthorized",
+        DaemonError::NotFound => "not_found",
+        DaemonError::Unavailable { .. } => "unavailable",
+        DaemonError::GoingAway => "going_away",
+        DaemonError::Protocol { .. } => "protocol",
+        DaemonError::ControlRequestInFlight => "control_request_in_flight",
+        DaemonError::ControlScopeIndeterminate => "control_scope_indeterminate",
+        DaemonError::Timeout { .. } => "timeout",
+        DaemonError::Workspace(_) => "workspace",
     }
 }
 
@@ -348,7 +377,7 @@ pub struct SidebarFetch {
 }
 
 /// The attention roster as the daemon returned it: epoch, seq, entries.
-type RosterSnapshot = (String, u64, Vec<RosterEntry>);
+pub(crate) type RosterSnapshot = (String, u64, Vec<RosterEntry>);
 
 /// A running sidebar refetch; the live loop polls it from a select branch.
 pub type SidebarFetchFuture =
@@ -357,6 +386,8 @@ pub type SidebarFetchFuture =
 /// What one refetch asks the daemon for.
 struct SidebarRequest {
     seq: u64,
+    /// The daemon connection the request was made on, for a failure's WARN.
+    generation: u64,
     projects: bool,
     project_rows: BTreeSet<String>,
     /// The projects checked out here when the request was made; a refetched
@@ -388,10 +419,13 @@ impl SidebarRequest {
         let mut failure = None;
         let mut gathered = false;
         if self.roster {
+            let started = Instant::now();
             if let Some(roster) = optional(
                 daemon.attention_roster().await,
                 "attention roster",
                 None,
+                self.generation,
+                started,
                 &mut failure,
             ) {
                 fetch.roster = Some(roster);
@@ -404,9 +438,15 @@ impl SidebarRequest {
             fetch.projects_attempted = true;
             // A project list this refetch could not read leaves the caller's
             // known checkouts standing in for it.
-            if let Some(projects) =
-                optional(daemon.projects().await, "projects", None, &mut failure)
-            {
+            let started = Instant::now();
+            if let Some(projects) = optional(
+                daemon.projects().await,
+                "projects",
+                None,
+                self.generation,
+                started,
+                &mut failure,
+            ) {
                 checked_out = projects
                     .iter()
                     .filter(|row| row.checkout.is_some())
@@ -421,16 +461,22 @@ impl SidebarRequest {
             if !checked_out.contains(&project) {
                 continue;
             }
+            let started = Instant::now();
             let status = optional(
                 daemon.source_status(&project).await,
                 "source status",
                 Some(&project),
+                self.generation,
+                started,
                 &mut failure,
             );
+            let started = Instant::now();
             let worktrees = optional(
                 daemon.worktrees(&project).await,
                 "worktrees",
                 Some(&project),
+                self.generation,
+                started,
                 &mut failure,
             );
             if status.is_some() || worktrees.is_some() {
@@ -450,19 +496,25 @@ impl SidebarRequest {
             for project in projects {
                 // A project whose rows this refetch could not read keeps the ones
                 // it already has, and the rest of the sidebar still refreshes.
+                let started = Instant::now();
                 let Some(sessions) = optional(
                     daemon.sessions(&project).await,
                     "sessions",
                     Some(&project),
+                    self.generation,
+                    started,
                     &mut failure,
                 ) else {
                     fetch.sessions_failed = true;
                     continue;
                 };
+                let started = Instant::now();
                 let Some(runs) = optional(
                     daemon.agent_runs(&project).await,
                     "agent runs",
                     Some(&project),
+                    self.generation,
+                    started,
                     &mut failure,
                 ) else {
                     fetch.sessions_failed = true;

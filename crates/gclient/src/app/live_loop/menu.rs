@@ -10,6 +10,8 @@
 //! chosen [`MenuAction`]; the items both loops apply the same way live in
 //! [`apply_local_menu_action`].
 
+use std::borrow::Cow;
+
 use ratatui::layout::{Margin, Position, Rect};
 
 use crate::app::PaneId;
@@ -43,6 +45,9 @@ pub enum Submenu {
     /// Arrange: the layout choices for the tab the opening menu (Window, a
     /// tab's or a pane's) was built for.
     Arrange(ArrangeTarget),
+    /// Move to tab ▸: the other tabs of this pane's project and machine, for
+    /// the pane whose menu offered it.
+    MoveToTab { pane: PaneId },
 }
 
 impl Submenu {
@@ -50,7 +55,7 @@ impl Submenu {
     /// menu itself.
     fn parent(&self) -> Option<Self> {
         match self {
-            Self::Appearance | Self::Theme | Self::Arrange(_) => None,
+            Self::Appearance | Self::Theme | Self::Arrange(_) | Self::MoveToTab { .. } => None,
         }
     }
 }
@@ -100,6 +105,11 @@ pub enum MenuAction {
     Arrange {
         layout: ArrangeLayout,
         target: ArrangeTarget,
+    },
+    /// Move this pane to the tab the move menu named when it was built.
+    MovePane {
+        pane: PaneId,
+        tab: String,
     },
     OpenNewGrid,
     NewGrid {
@@ -158,7 +168,7 @@ pub enum MenuAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem {
-    pub label: &'static str,
+    pub label: Cow<'static, str>,
     pub action: MenuAction,
     pub enabled: bool,
 }

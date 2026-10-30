@@ -176,8 +176,10 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `base_branch` | Branch used for new isolation, or `inherit` |
 | `timeout` | Runtime limit in seconds; `0` means unlimited |
 | `workflows` | Rule, skill, variable, and pipeline selectors |
+| `capabilities` | Explicit permissions and workflow opt-ins; a definition's name grants no authority. Rule applicability and exemptions belong in `workflows.rule_selectors`. |
 | `blocked_tools` / `blocked_mcp_tools` | Definition-level restrictions |
 | `spawnable_agents` | What a spawned run of this definition may spawn: `["*"]` any agent, named agents, or empty (the default) none. See [Spawn Scope](#spawn-scope) |
+| `resumable_team_agents` | Existing agent definitions a running team manager may resume within its own admitted team, retaining the seat's stored type. Empty by default; fresh spawns still use `spawnable_agents`. |
 | `send_message_targets` | `send_message` target modes a spawned agent may use (default `["parent"]`), enforced by the `scope-spawned-agent-send-message` rule |
 | `step_workflow` | Optional nested object with `steps`, `variables`, and `exit_condition` |
 | `enabled` | Whether the definition is active |
@@ -187,6 +189,12 @@ Every declared surface requires its prompt block. Legacy `role`, `goal`,
 Use `workflows.skill_selectors` for discovery and
 `step_workflow.variables.required_skills` for required loads. Use `surfaces`
 plus the runtime tool choice instead of the retired `mode` field.
+
+`recover_rejected_submission` opts a definition into recovery from `submit` to
+`implement` when the current candidate receives a recorded rejection. Recovery
+requires the caller's claim and matching implementation and review records; a
+team hold postpones it. The bundled Developer declares this capability. Custom
+definitions using the same submission workflow must declare it explicitly.
 
 ### Versioning
 
@@ -237,11 +245,12 @@ short-lived seat: spawn-only, with `execution_mode: one_shot` and a bounded
 additionally declares `idle_ttl_seconds: 900`.
 
 Shared seat guidance is injected by the `inject-seat-common` rule in the `roles`
-rule group. The `no-send-keys` rule blocks `send_keys` and `capture_output` for
-every seat that selects it. The Assistant, Orchestrator, Dev Manager and
-Recovery Steward do not select it, so the rule does not block them. Spawn and
-pipeline-launch restrictions prevent seats from bypassing their assigned role;
-a Dev Manager may only resume a stalled seat of its own team.
+rule group. The `no-send-keys` rule (default tag, so every bundled definition
+selects it) withholds `send_keys` from every definition except the Orchestrator
+and Assistant, which carry the `send_keys` capability. It does not withhold
+`capture_output`. Dev Managers, the Recovery Steward and Triage report stalled
+seats to Triage, which relays each resume to the Orchestrator. Spawn and
+pipeline-launch restrictions prevent seats from bypassing their assigned role.
 Definitions declare tool blocks; path-aware rules constrain seats with bounded
 write scopes. Seats with required skills or a fixed loop declare a step workflow.
 Message-driven seats need no empty serve loop. Inspect installed rows and
@@ -622,6 +631,20 @@ machine; foreign owners, foreign-attributed paths, and unattributed paths are
 rejected. A successful checkpoint returns commit/path evidence and releases the
 temporary worktree claim while preserving the task claim. It does not validate
 or close the task. If a release error includes a commit, inspect it before retrying.
+
+## Workspace Backups
+
+The daemon commits agent workspace notes on handoff, compaction, and session end.
+The `gobby:agent-workspaces` system cron catches missed changes nightly at 03:30
+local time (`30 3 * * *`). Upgrades migrate the old five-minute schedule while
+preserving disabled jobs and parked jobs. A parked job stays enabled but has no
+next scheduled run until it is explicitly woken.
+
+One background worker serializes backup scans, commits, and garbage collection.
+Generated trees, provider homes, and credential filenames are excluded before
+Git expands status. Symlinks and files larger than 1 MiB are skipped. An old
+index lock is recovered only after checking that no process holds it; live or
+uncertain locks are preserved and retries back off.
 
 ## Checkout Modes
 

@@ -8,7 +8,9 @@ Covers:
 
 from __future__ import annotations
 
+import subprocess
 from collections import Counter
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -159,6 +161,77 @@ def _make_workflow_handler_with_response(**kwargs: Any) -> MagicMock:
     response = HookResponse(**kwargs)
     handler.evaluate.return_value = response
     return handler
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("override", [None, "absolute", "relative"])
+@pytest.mark.parametrize("timeout", [False, True])
+async def test_managed_git_operation_uses_effective_checkout(
+    host: ChatMixinHost, tmp_path: Path, override: str | None, timeout: bool
+) -> None:
+    project, worktree = tmp_path / "project", tmp_path / "worktree"
+    for root in (project, worktree):
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+    session = _make_session()
+    session.project_path = str(project)
+    host._chat_sessions["conv-1"] = session
+    host.workflow_handler = _make_workflow_handler()
+    if timeout:
+        host.workflow_handler.evaluate.side_effect = WorkflowEvaluationTimeout(
+            event_type=HookEventType.BEFORE_TOOL, session_id=SESSION_ID, timeout_seconds=0.1
+        )
+    tool_input = {"command": "git merge incoming"}
+    if override:
+        tool_input["workdir"] = "../worktree" if override == "relative" else str(worktree)
+
+    result = await host._fire_lifecycle(
+        "conv-1",
+        HookEventType.BEFORE_TOOL,
+        {"tool_name": "Bash", "tool_input": tool_input, "tool_use_id": "merge-call"},
+    )
+
+    event = host.workflow_handler.evaluate.call_args.args[0]
+    assert event.data["canonical_git_operation_roots"] == [str(worktree if override else project)]
+    assert result is not None
+    assert result["decision"] == ("block" if timeout else "allow")
+    if timeout:
+        assert "ownership lifecycle failed" in result["reason"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler_fails", [False, True])
+async def test_managed_before_tool_preserves_handler_block_and_execution_identity(
+    host: ChatMixinHost, handler_fails: bool
+) -> None:
+    host._chat_sessions["conv-1"] = _make_session()
+    host.workflow_handler = _make_workflow_handler(context="rule context")
+    handler = MagicMock(return_value=HookResponse(decision="block", reason="foreign Git operation"))
+    if handler_fails:
+        handler.side_effect = RuntimeError("ownership unavailable")
+    host.event_handlers = MagicMock()
+    host.event_handlers.get_handler.return_value = handler
+
+    result = await host._fire_lifecycle(
+        "conv-1",
+        HookEventType.BEFORE_TOOL,
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "git merge incoming"},
+            "tool_use_id": "merge-call",
+        },
+    )
+
+    assert result is not None
+    assert result["decision"] == "block"
+    assert result["reason"] == (
+        "Before-tool handler failed: RuntimeError: ownership unavailable"
+        if handler_fails
+        else "foreign Git operation"
+    )
+    assert "rule context" in result["context"]
+    event = handler.call_args.args[0]
+    assert event.request_id == "merge-call"
+    assert event.data["tool_use_id"] == "merge-call"
 
 
 @pytest.mark.asyncio

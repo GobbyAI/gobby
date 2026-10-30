@@ -220,6 +220,8 @@ async def run_daemon(
             )
             await runner.coordination_wait_service.start()
 
+        from gobby.servers.websocket_protocol import WebSocketProtocol
+
         uvicorn_drain_timeout = 15
         config = uvicorn.Config(
             runner.http_server.app,
@@ -227,7 +229,7 @@ async def run_daemon(
             port=runner.http_server.port,
             log_level="warning",
             access_log=False,
-            ws="websockets-sansio",
+            ws=WebSocketProtocol,
             timeout_graceful_shutdown=uvicorn_drain_timeout,
             # The front door replaces every client forwarding header with the
             # peer it observed; only a loopback caller may set request.client.

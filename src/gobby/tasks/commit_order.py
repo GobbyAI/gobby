@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
+from gobby.utils.git import descends_from_all
+
 if TYPE_CHECKING:
-    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks import LocalTaskManager, Task
 
 
 class HistoryCommit(Protocol):
@@ -20,6 +22,24 @@ def same_commit(left: str, right: str) -> bool:
     if left == right:
         return True
     return min(len(left), len(right)) >= 7 and (left.startswith(right) or right.startswith(left))
+
+
+def link_candidate(
+    task_manager: LocalTaskManager, task_id: str, commit_sha: str, repo_path: str
+) -> Task:
+    """Declare a descendant candidate as the tip without dropping historical links."""
+    # Keep the ancestry proof and reorder on the same linked set. Concurrent links
+    # must wait until this transaction has committed.
+    with task_manager.db.transaction() as conn:
+        conn.execute("SELECT id FROM tasks WHERE id = %s FOR UPDATE", (task_id,))
+        task = task_manager.get_task(task_id)
+        others = [sha for sha in task.commits or [] if not same_commit(sha, commit_sha)]
+        if not descends_from_all(commit_sha, others, repo_path):
+            raise ValueError("Declared candidate must descend from every other linked commit.")
+        task = task_manager.link_commit(task_id, commit_sha)
+        if task.commits and not same_commit(task.commits[-1], commit_sha):
+            task = task_manager.move_commit_to_tip(task_id, commit_sha)
+        return task
 
 
 def link_by_history(

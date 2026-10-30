@@ -14,6 +14,7 @@ from gobby.storage.tasks import Task
 from gobby.tasks.attributed_roots import is_ignorable_attributed_root
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.step_records import StepRequirements, task_step_requirements
+from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
     foreign_owned_dirty_paths_async,
@@ -45,7 +46,7 @@ async def step_requirements(
     task: Task,
     commit_shas: Sequence[str],
     *,
-    closer_definition: str | None = None,
+    closer_definition: AgentDefinitionBody | None = None,
 ) -> StepRequirements:
     """Judge step records against the close's prospective commits, as final close will."""
     prospective = replace(task, commits=list(commit_shas))

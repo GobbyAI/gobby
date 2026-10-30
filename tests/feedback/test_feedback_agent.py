@@ -9,13 +9,13 @@ import pytest
 
 from gobby.agents.runner import AgentRunner
 from gobby.config.app import DaemonConfig
+from gobby.config.sessions import FeedbackReviewConfig
 from gobby.events.completion_registry import (
     CompletionEventRegistry,
     CompletionResultEvictedError,
 )
 from gobby.feedback import agent as agent_module
 from gobby.feedback.agent import (
-    FEEDBACK_REVIEWER_AGENT_NAME,
     FeedbackReviewerAgent,
     FeedbackReviewerLaunchError,
     FeedbackReviewerResultError,
@@ -25,6 +25,7 @@ from gobby.feedback.agent import (
 from gobby.feedback.storage import FeedbackReviewStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -60,6 +61,10 @@ def _reviewer(
     spawn_result: dict[str, Any] | None = None,
     wait_error: Exception | None = None,
     has_submission: bool | None = None,
+    agent_name: str | None = "fixture-feedback-review",
+    available: bool = True,
+    enabled: bool = True,
+    row_enabled: bool = True,
 ) -> tuple[FeedbackReviewerAgent, _FakeRegistry, dict[str, Any]]:
     captured: dict[str, Any] = {}
     if has_submission is None:
@@ -72,18 +77,29 @@ def _reviewer(
         project_id: str | None = None,
     ) -> Any:
         captured["resolved"] = (name, cli_source, project_id)
-        return SimpleNamespace(name=name)
+        if not available:
+            return None
+        return (
+            make_agent_definition(
+                name=name, enabled=enabled, prompts={"agent": "Review feedback."}
+            ),
+            SimpleNamespace(enabled=row_enabled),
+        )
 
     async def fake_spawn_agent_impl(*args: Any, **kwargs: Any) -> dict[str, Any]:
         captured["spawn_args"] = args
         captured["spawn_kwargs"] = kwargs
         return spawn_result or {"success": True, "run_id": "agent-run-1"}
 
-    monkeypatch.setattr(agent_module, "resolve_agent", fake_resolve_agent)
+    def create_launcher(*_args: object) -> str:
+        captured["launcher_created"] = True
+        return "launcher-session-1"
+
+    monkeypatch.setattr(agent_module, "resolve_agent_with_row", fake_resolve_agent)
     monkeypatch.setattr(
         agent_module,
         "get_or_create_launcher_session",
-        lambda *_args: "launcher-session-1",
+        create_launcher,
     )
     monkeypatch.setattr(agent_module, "spawn_agent_impl", fake_spawn_agent_impl)
     monkeypatch.setattr(
@@ -115,6 +131,7 @@ def _reviewer(
         project_path="/tmp/gobby-project",
         git_manager=None,
         daemon_config=cast(DaemonConfig, object()),
+        agent_name=FeedbackReviewConfig(agent=agent_name).agent,
     )
     return reviewer, registry, captured
 
@@ -152,18 +169,61 @@ async def test_named_reviewer_launches_waits_and_reads_submitted_report(
         result.report_path
         == "/tmp/gobby-project/.gobby/reports/feedback/gobby-feedback-20260911.md"
     )
-    assert captured["resolved"] == (FEEDBACK_REVIEWER_AGENT_NAME, None, "project-1")
+    assert captured["resolved"] == ("fixture-feedback-review", None, "project-1")
     spawn_args = captured["spawn_args"]
     spawn_kwargs = captured["spawn_kwargs"]
     assert spawn_args[0].startswith("rendered observations")
     assert result.report_path in spawn_args[0]
     assert "one cumulative synthesis" in spawn_args[0]
-    assert spawn_kwargs["agent_lookup_name"] == FEEDBACK_REVIEWER_AGENT_NAME
+    assert spawn_kwargs["agent_lookup_name"] == "fixture-feedback-review"
     assert spawn_kwargs["parent_session_id"] == "launcher-session-1"
     assert spawn_kwargs["notify_parent_on_completion"] is True
     assert spawn_kwargs["checkout_mode"] == "none"
     assert spawn_kwargs["timeout"] == 900.0
     assert registry.waits == [("agent-run-1", 930.0)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_name", [None, "", "   "])
+async def test_reviewer_requires_configured_definition(
+    monkeypatch: pytest.MonkeyPatch, agent_name: str | None
+) -> None:
+    reviewer, registry, captured = _reviewer(monkeypatch, agent_name=agent_name)
+
+    with pytest.raises(FeedbackReviewerLaunchError, match=r"session_feedback\.review\.agent"):
+        await reviewer.review("Review feedback", run_id="review-1", timeout_seconds=30)
+
+    assert captured == {}
+    assert registry.waits == []
+
+
+@pytest.mark.asyncio
+async def test_reviewer_refuses_unavailable_configured_definition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reviewer, registry, captured = _reviewer(
+        monkeypatch, agent_name="unavailable-review", available=False
+    )
+
+    with pytest.raises(FeedbackReviewerLaunchError, match="unavailable-review.*not found"):
+        await reviewer.review("Review feedback", run_id="review-1", timeout_seconds=30)
+
+    assert captured == {"resolved": ("unavailable-review", None, "project-1")}
+    assert registry.waits == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("enabled", "row_enabled"), [(False, True), (True, False), (False, False)])
+async def test_reviewer_refuses_disabled_definition(
+    monkeypatch: pytest.MonkeyPatch, enabled: bool, row_enabled: bool
+) -> None:
+    reviewer, registry, captured = _reviewer(monkeypatch, enabled=enabled, row_enabled=row_enabled)
+
+    with pytest.raises(FeedbackReviewerLaunchError, match="disabled"):
+        await reviewer.review("Review feedback", run_id="review-1", timeout_seconds=30)
+
+    assert captured == {"resolved": ("fixture-feedback-review", None, "project-1")}
+    assert registry.waits == []
 
 
 @pytest.mark.asyncio

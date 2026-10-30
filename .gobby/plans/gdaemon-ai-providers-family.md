@@ -126,10 +126,15 @@ edits. The two landings serialize, and the second rebases onto the first.
    switch journal, coordinator, stage, build orchestration, alias flip and
    garbage collection. Per-collection rebuilds go through two seams: #25070
    (memories, under #21563) and #25071 (tool embeddings, under #21570). Their
-   contract is `rebuild(kind, physical_name, embedder)` plus
-   `project_change(kind, source_id, physical_name, embedder)`. The switch owns
-   the ledger read, watermark, replay, collection creation, alias flip and GC.
-   Producers keep calling `append_change` and dual-writing.
+   contract is gcore's `pub trait CollectionRebuildSeam: Send + Sync` in
+   `crates/gcore/src/embedding_generation/seam.rs`, which memory-family 3.1
+   adds (Orchestrator ruling on MEM-ADV-01, option A):
+   `rebuild(physical_name, &EmbeddingConfig)` plus
+   `project_change(source_id, physical_name, &EmbeddingConfig)`. The switch
+   holds one `Arc<dyn CollectionRebuildSeam>` per kind, so gai never depends
+   on `gobby-memory`. The switch owns the ledger read, watermark, replay,
+   collection creation, alias flip and GC. Producers keep calling
+   `append_change` and dual-writing.
 4. **Agent-token and runtime-grant admission (Orchestrator, D3).** #25068 owns
    one native seam for agent tokens and runtime grants. It depends on #25046
    (API key, local operator and confined browser admission), #24452
@@ -754,7 +759,7 @@ Targets:
 - `crates/gai/src/llm/mod.rs`
 - `crates/gai/src/llm/generate.rs`
 - `crates/gai/tests/generate.rs`
-- `docs/contracts/parity-waivers.json`
+- `docs/contracts/parity-waivers.json::*` — scope-reason: append this leaf's waiver entries to the shared manifest array
 
 **Research context:** `src/gobby/servers/routes/llm.py::TextGeneratePayload`
 carries `prompt` (min length 1), `provider`, `profile`, `candidates`,
@@ -1722,7 +1727,7 @@ Targets:
 - `crates/gai/src/switch/mod.rs`
 - `crates/gai/src/switch/stage.rs`
 - `crates/gai/tests/switch_stage.rs`
-- `docs/contracts/parity-waivers.json`
+- `docs/contracts/parity-waivers.json::*` — scope-reason: append this leaf's waiver entries to the shared manifest array
 
 **Research context:** `src/gobby/ai/embedding_switch_runner.py::EmbeddingSwitchRunner.stage`
 runs provider setup, checks the target dimension with
@@ -1805,9 +1810,13 @@ reads from that key, so publishing the names first arms dual-writes for every
 change the watermark does not cover. Reversing the two writes can lose a
 projection change across a crash. Build reads the ledger through a reader the
 tests replace, as Python's tests replace `EmbeddingSwitchRunner.generation_state`.
-It then calls `rebuild(kind, physical_name, embedder)` on #25070 (memories) and
-#25071 (tool embeddings), then replays `changes_after(watermark)` through
-`project_change(kind, source_id, physical_name, embedder)` for at most
+It holds one `Arc<dyn CollectionRebuildSeam>` per kind (Decision 3): #25070's
+`MemoriesRebuildSeam` for `memories` and #25071's seam for `tool_embeddings`.
+Its test stubs implement the same trait, and gai never depends on
+`gobby-memory`. It calls each seam's `rebuild(physical_name,
+&EmbeddingConfig)` with the target binding, then replays
+`changes_after(watermark)` through the owning kind's
+`project_change(source_id, physical_name, &EmbeddingConfig)` for at most
 `_REPLAY_MAX_PASSES` (20) passes before `EmbeddingGenerationNotCaughtUp`.
 Ledger reads take `pg_advisory_xact_lock(0x474F4242, 1)`. Flip marks
 flipping started, replays once more, switches both aliases in one Qdrant
@@ -1818,10 +1827,13 @@ revision or no acknowledgement, then deletes only the superseded physical
 collections. Abort cleanup deletes staged collections only after checking
 that no live alias names them.
 
-Alias reads and changes use 7.0's public gcore functions. The native daemon
-holds no serving lease: its embedding row reads the active configuration per
-request and writes no collection. Python daemons keep their leases in
-`src/gobby/runner_init/embedding_lease.py`, and GC honors them.
+Alias reads and changes use 7.0's public gcore functions. Once memory-family
+2.1 lands, gdaemon holds one serving lease through gcore's
+`crates/gcore/src/embedding_generation.rs`, with instance id
+`UUIDv5(machine_id, "gdaemon")`, because native memory and tool-embedding
+writers write vectors (memory-family Decision 4). Python daemons keep their
+leases in `src/gobby/runner_init/embedding_lease.py`. GC honors every live
+lease, the native one included.
 
 **Acceptance:**
 
@@ -1857,7 +1869,7 @@ Targets:
 - `crates/gdaemon/src/main.rs::Command`
 - `crates/gdaemon/src/main.rs::main`
 - `crates/gai/tests/switch_cli.rs`
-- `docs/contracts/parity-waivers.json`
+- `docs/contracts/parity-waivers.json::*` — scope-reason: append this leaf's waiver entries to the shared manifest array
 
 **Research context:** `src/gobby/cli/embeddings.py` defines the Click group
 `embeddings` and its commands `catalog`, `doctor` and `switch`, which are the
@@ -1975,6 +1987,7 @@ Targets:
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: build the real memories and tool-embeddings rebuild seams from the hub pool and pass them to the switch service in the pool-gated block of both cfg-gated serve entry points
 - `crates/gdaemon/tests/embedding_switch_cutover.rs`
 - `tests/e2e/test_embedding_switch_native.py`
 - `docs/contracts/ai-native.md`
@@ -2006,7 +2019,12 @@ Consumers unchanged:
 **Research context:** Activation selects
 `front_door.routes.ai-embedding-switch` through the existing bootstrap
 mechanism; Proxy stays selectable for rollback. It requires #25070 and #25071,
-which 7.4 consumes.
+which 7.4 consumes. Until this leaf the switch runs only against 7.4's test
+stubs. Here serve builds gmemory's `MemoriesRebuildSeam` and #25071's
+tool-embeddings seam from the hub pool, inside the same pool-gated block that
+pushes the AI families, and passes each as an `Arc<dyn
+CollectionRebuildSeam>` (Decision 3). gdaemon depends on gai and gmemory, and
+gai never depends on gmemory.
 
 Activation goes from Proxy to native without compare. Status reports
 `running` only for the serving daemon's own task, and the three mutations
@@ -2067,7 +2085,8 @@ the public CLI entry, and 8.1 records ledger evidence.
 - 7.6.2 - With the Python backend unavailable, the four HTTP rows run natively
   for API-key, local operator and cookie callers and status also for agent
   tokens, the released `gdaemon embeddings` drives a switch from start to
-  active against isolated Qdrant and an embedding stub, and a node keeps its
+  active against isolated Qdrant and an embedding stub through the real
+  memories and tool-embeddings seams serve composes, and a node keeps its
   current backend.
   test: `tests/e2e/test_embedding_switch_native.py::test_switch_rows_work_without_python_backend`.
 - 7.6.3 - Readiness requires the exact three HTTP waivers beside ordinary
@@ -2245,6 +2264,17 @@ production cutover or task expansion have been performed during planning.
   ENH-003 rejected, ENH-004 added wording on 4.1.2 and 4.1.3, and ENH-F1-001
   rejected the restart gate and labelled 7.6.6. No findings or decisions
   remain open.
+- 2026-10-28 — Post-expansion amendment by memory-family Plan Writer
+  gobby#18291 under #25254, on the Orchestrator's MEM-ADV-01 (option A) and
+  MEM-D3 rulings and ORCH-REV-MEM-3. Decision 3 and 7.4 now consume gcore's
+  `CollectionRebuildSeam` trait, one `Arc<dyn CollectionRebuildSeam>` per
+  kind, so gai never depends on `gobby-memory`. 7.4 states that gdaemon holds
+  one serving lease through memory-family 2.1's gcore module. 7.6 composes
+  the real seams in `crates/gdaemon/src/serve.rs`, and 7.6.2 runs through
+  them. The three bare `docs/contracts/parity-waivers.json` targets in 2.4,
+  7.3 and 7.5 take the scoped `::*` form that current validation requires.
+  The M1 manifest is unchanged; the Orchestrator carries the matching task
+  edits.
 
 ## M1 Task Manifest
 `kind: manifest`

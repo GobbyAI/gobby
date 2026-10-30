@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import time
 from collections import deque
 from collections.abc import Callable, Coroutine, Iterable, Sequence
 from dataclasses import dataclass
@@ -22,10 +23,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Decision 14 admission budgets, counting queued plus in-flight operations. The byte budget
-# is also the bound on each request body.
+# also bounds the body of any one request.
 MAX_RETAINED_BYTES = 128 * 1024 * 1024
 MAX_RETAINED_OPS = 65_536
 MAX_WAITING_FUTURES = 65_536
+# Mitigation, not a demonstrated root cause of the first publish timeout. REQUEST_TIMEOUT
+# covers the whole POST, body upload included, so a backlog sized by the retained budget
+# can exceed it. Capping each POST bounds its latency; one operation larger than the limit
+# still goes alone.
+MAX_BATCH_BYTES = 1024 * 1024
 
 REQUEST_TIMEOUT = 2.0
 TOKEN_WAIT = 2.0
@@ -116,7 +122,7 @@ class NativePublisher:
         try:
             await self.bind()
         except (_BindFailed, httpx.HTTPError, TimeoutError) as exc:
-            logger.warning("Native WS bind failed; retrying every %ss: %s", REBIND_INTERVAL, exc)
+            logger.warning("Native WS bind failed; retrying every %ss: %r", REBIND_INTERVAL, exc)
             self._schedule_rebind(immediate=False)
 
     async def bind(self) -> str:
@@ -249,12 +255,13 @@ class NativePublisher:
         first = self._queue.popleft()
         batch = [first]
         size = len(_request_body(first.generation, [])) + len(first.encoded)
+        limit = min(MAX_BATCH_BYTES, MAX_RETAINED_BYTES)
         while self._queue:
             candidate = self._queue[0]
             if candidate.generation != first.generation:
                 break
             # Each further operation adds its bytes and one separating comma.
-            if size + 1 + len(candidate.encoded) > MAX_RETAINED_BYTES:
+            if size + 1 + len(candidate.encoded) > limit:
                 break
             size += 1 + len(candidate.encoded)
             batch.append(self._queue.popleft())
@@ -266,6 +273,7 @@ class NativePublisher:
             logger.warning("Native WS publish has no supervisor write token")
             return False
         body = _request_body(generation, [op.encoded for op in batch])
+        started = time.monotonic()
         try:
             response = await asyncio.wait_for(
                 self._client.post(
@@ -274,7 +282,15 @@ class NativePublisher:
                 REQUEST_TIMEOUT,
             )
         except (httpx.HTTPError, TimeoutError) as exc:
-            logger.warning("Native WS publish failed for generation %s: %r", generation, exc)
+            logger.warning(
+                "Native WS publish failed for generation %s after %.2fs with %d ops and "
+                "%d body bytes: %r",
+                generation,
+                time.monotonic() - started,
+                len(batch),
+                len(body),
+                exc,
+            )
             return False
         if response.status_code != 204:
             logger.warning(
@@ -335,7 +351,7 @@ class NativePublisher:
                 await self.bind()
                 return
             except (_BindFailed, httpx.HTTPError, TimeoutError) as exc:
-                logger.warning("Native WS rebind failed: %s", exc)
+                logger.warning("Native WS rebind failed: %r", exc)
             await asyncio.sleep(REBIND_INTERVAL)
 
     def _spawn(self, coro: Coroutine[Any, Any, None]) -> None:

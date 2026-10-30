@@ -18,9 +18,12 @@ the node command channel.
 
 The work lives in the agents family crate, `crates/gagents` (package
 `gobby-agents`), which is statically linked into gdaemon under ROADMAP decision
-16. It is registered as a RouteFamily the same way `crates/gruntime` is. The
-hub's Python writers keep running. Each one becomes a client of a loopback
-internal transition route, so Python stops holding any ordering state of its own.
+16. It is registered as a RouteFamily the same way `crates/gruntime` is. Until
+their owning flows leave Python, the hub's Python writers become clients of a
+loopback internal transition route, so Python stops holding any ordering state
+of its own. The final leaf, 4.5, deletes the whole Python attention surface
+after the owning plans delete every Python caller. When this plan completes, no
+Python attention writer, reader or client remains.
 
 The work is needed because the ledger still names Python for all four HTTP rows,
 and every attention event is ordered by a Python in-memory cursor. The plan
@@ -60,8 +63,8 @@ gobby#17480:
   `agent_runs.machine_id`. Its project is
   `COALESCE(child.project_id, parent.project_id)`.
 - **Q3, write ownership.** Rust owns attention transitions, ordering, the
-  metadata store and event publication. Every Python writer becomes a client of a
-  loopback internal route. That route is guarded the same way as
+  metadata store and event publication. Until 4.5, every Python writer is a
+  client of a loopback internal route. That route is guarded the same way as
   `crates/gdaemon/src/nodes/internal_api.rs::handle`: loopback peer only, plus a
   check of the `x-gobby-backend-secret` header. The Python pane lifecycle monitor
   keeps running and writes through that client. Retiring the monitor (option b)
@@ -132,6 +135,44 @@ gobby#17480:
   If the three attempts are exhausted, the reducer returns a not-applied result
   with reason `attention_conflict`. It writes no status and adds no fallback
   path.
+
+  The CAS, the fence and the reducer client are transition-window mechanism.
+  They leave with the Python reducer, which #21592's deletion leaf deletes
+  before 4.5 (ORCH-REV-2, Q3).
+- **ORCH-REV-2, the Python end state.** Josh's rule: everything off the hub-node
+  path ends fully in Rust, and only #17436 (Node mode: the per-machine daemon
+  that holds no datastore credentials and runs only local duties) keeps Python.
+  The Orchestrator ruled on 2026-10-28, relayed by Triage gobby#17480:
+  - **Fork A, bind.** No plan ports another family's Python flow here. Each
+    owning plan deletes its Python attention callers in a named deletion leaf,
+    and the Orchestrator directs those amendments. 4.5 then deletes the whole
+    Python attention surface, with one cross-plan edge per group:
+    - G1, #21564 agents family:
+      - writers: `attention_tracker.py`, `interactive_attention_monitor.py`,
+        `terminal_cleanup.py` and `watchdog/interactive_capacity.py` under
+        `src/gobby/agents/`; the remote sync in `idle_check_handler.py`;
+        `src/gobby/hub/remote_pane.py`; and `src/gobby/events/wake.py` through
+        `src/gobby/terminals/composer_attention.py`;
+      - readers: `src/gobby/agents/agent_health.py`, and the `attention_states`
+        join in
+        `src/gobby/storage/agents/_selectors.py::_AgentRunSelectorMixin._select_runs_with_live_stats_sql`;
+      - wiring: `lifecycle_monitor.py` and `agent_cleanup.py`.
+    - G2, #24151 S2.11 hooks: `src/gobby/hooks/terminal_handoff_delivery.py`,
+      the metadata write in `src/gobby/hooks/event_handlers/_agent.py`, and the
+      composer helpers in `src/gobby/hooks/event_handlers/_base.py`.
+    - G3, #21592 WS chat: the reducer in `src/gobby/sessions/turn_lifecycle.py`
+      and its construction in `src/gobby/servers/websocket/server.py`. The
+      Orchestrator adds this deletion leaf when #21592 is planned.
+    - G4, #21562 sessions: the two reads in
+      `src/gobby/sessions/continuation_retry.py`. The read in
+      `src/gobby/cli/sessions.py` is already deleted by sessions-family 7.3.
+  - **Q2.** Plain reads count as clients, so readers are deleted too.
+  - **Q3.** The reducer stays an interim client with the CAS and the status
+    fence until G3 deletes it. 4.5 removes what remains of that path.
+  - **Rejected, Fork B:** porting the G1-G3 flows into Rust in this plan. It
+    would duplicate hooks 5.9/5.10 and agents 5.2/8.1, and override three
+    owners' scopes.
+  - The decision-16 roster exception (Q4) stands; Josh allowed it on 2026-10-27.
 - **Q4, roster read model.** The roster stays one read-model query in gagents.
   This is recorded as a ROADMAP decision-16 exception. The reason is that the
   projection snapshot must come from one transaction under the cursor lock. The
@@ -180,7 +221,8 @@ gobby#17480:
   `src/gobby/hooks/terminal_handoff_delivery.py` (903) and
   `src/gobby/servers/websocket/server.py` (828). The direct reads `get`,
   `list_blocked` and `snapshot` stay as plain database reads, because a read
-  needs no ordering.
+  needs no ordering. This holds only for the transition window: the G1-G4
+  owners delete those call sites, and 4.5 deletes both names.
 - **Rollout and rollback.** Native construction stays passive in production
   through P3: the family's default backend is `proxy`, and Python remains the
   sole writer and publisher. Only 4.3 activates native ownership, as one
@@ -196,6 +238,11 @@ gobby#17480:
   `front_door.routes.attention` entry overrides the default in both directions,
   4.3 makes restart, cutover and start refuse while that key is set, and the
   key must stay absent for a rollback reinstall.
+
+  4.5 is a second restart-bound release. It deletes the Python client surface
+  and the loopback routes only after every G1-G4 deletion leaf has landed, so
+  no live Python caller depends on them. Its rollback is again reinstalling the
+  prior coherent release.
 - macOS and Linux only. Windows is #25249. This plan has no latency gates.
 
 ## Pre-expansion capability bindings
@@ -224,6 +271,12 @@ alone does not satisfy any of them. Dispatch needs landed proof.
   3.4 binds it.
 - **#24580, terminal family native activation**, which makes the gterminals
   coordinator the local write owner. 3.4 binds it.
+- **The G1-G4 deletion leaves (ORCH-REV-2).** 4.5 binds #21564, #24151, #21592
+  and #21562. At expansion the Orchestrator narrows each edge to that owner's
+  named deletion leaf, never the epic. #21564 and #24151 already wait on #24149
+  leaves (agents-family 1.1, 8.1 and 11.2; S2.11 7.17 on 4.1), so an epic edge
+  here would close a cycle. Those owners' edges bind leaves up to 4.4, and 4.5
+  comes after their deletion leaves.
 
 The Orchestrator cycle-checks the cross-plan graph before expansion. #21564 may
 later extend `crates/gagents`. This plan creates the crate in 2.1, and the
@@ -290,7 +343,8 @@ ordering corrections cite the roster surface, which is where consumers reconcile
   `.gobby/plans/s2-7-hub-attention-dispatch.md#4.3`. Replacement: CAS first, then
   a status write fenced on the committed lifecycle. A crash between them is
   repaired by the next status-writing transition, or by replay through the
-  duplicate paths the Decision Record names.
+  duplicate paths the Decision Record names. This lasts only for the transition
+  window: the Python reducer leaves with G3, before 4.5.
 - **Obsolete dispatcher phrase (Q1).** Recorded in the Decision Record. No
   surface.
 
@@ -300,8 +354,8 @@ ordering corrections cite the roster surface, which is where consumers reconcile
 - **File size.** Every production file stays below 1,000 lines. Inline Rust
   test modules count against that limit, so tests go in external
   `crates/gagents/tests/*.rs` files. `src/gobby/runner_init/orchestration.py`
-  (896 lines) is relieved by the move in 4.3. No other targeted production file
-  is at or above 850 lines.
+  (896 lines) is relieved by the move in 4.3, and 4.5 only removes lines from it.
+  No other targeted production file is at or above 850 lines.
 - **Releases.** Each production Rust leaf bumps every affected shipped binary by
   one patch from its executor's starting tip, and updates `Cargo.lock` and
   `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`. It validates
@@ -313,8 +367,8 @@ ordering corrections cite the roster surface, which is where consumers reconcile
   - Unpublished gclient, gmcp and gterm get no bump.
 - **Live installs.** The release owner promotes through
   `promote_workspace_binary_set`. Only the Orchestrator delegates a live
-  cutover. 4.3 is restart-bound: announce it globally, wait for quiet, then
-  promote the coherent set. This plan's author runs no cutover.
+  cutover. 4.3 and 4.5 are restart-bound: announce each globally, wait for
+  quiet, then promote the coherent set. This plan's author runs no cutover.
 - **Commands.** Python runs through uv. Pytest uses the isolated hub:
   `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest <focused-path>`.
   Never run the full suite. Cargo runs set `CARGO_BUILD_JOBS=3`, name the
@@ -343,6 +397,15 @@ ordering corrections cite the roster surface, which is where consumers reconcile
     `routes.attention` (22 files, each listed in 4.3)
   - a check of every Python writer's transition call site and its exception
     handling (named in 4.3)
+  - for ORCH-REV-2:
+    - `gcode grep -l -E 'AttentionStateManager|AttentionMetadataStore|storage\.attention|attention_metadata' src/gobby -m 80`
+      found 29 source files;
+    - `gcode grep -n -F 'attention_states' src/gobby -m 40` found the
+      `_selectors.py` join and the reducer's reads;
+    - the same names over `tests` found 22 files.
+
+    The Decision Record assigns each caller to G1-G4. 4.3 and 4.5 target the
+    attention surface, its wiring and the remaining tests.
 
 ## Parity ownership
 `kind: framing`
@@ -968,6 +1031,7 @@ Targets:
 - `src/gobby/sessions/turn_lifecycle.py::*` — scope-reason: drop FOR UPDATE, apply the bounded CAS and fenced status write in _apply and block_provider_failure, and repair status on duplicate replay
 - `src/gobby/runner_init/orchestration.py::*` — scope-reason: move attention client construction into the split module and delete both publisher closures
 - `src/gobby/runner_init/attention_clients.py`
+- `src/gobby/runner.py::*` — scope-reason: call init_attention_clients before init_orchestration in both runner init paths
 - `src/gobby/cli/daemon_preflight.py::*` — scope-reason: add attention_route_override_refusal and call it from restart_start_refusal
 - `src/gobby/cli/daemon_start.py::_start_dependency_errors`
 - `src/gobby/runner_init/servers.py::*` — scope-reason: remove the configure_attention_ordering and configure_attention_metadata wiring
@@ -988,8 +1052,8 @@ Targets:
 - `tests/sessions/test_turn_lifecycle_cas.py`
 - `tests/cli/test_daemon_preflight.py::*` — scope-reason: cover the attention route override refusal on restart, cutover and start
 - `tests/storage/test_attention_client.py` — edit the file created by 4.2 to assert Python keeps no attention ordering state
-- `tests/mcp_proxy/tools/sessions/test_registration_terminal_binding.py::*` — scope-reason: replace load_roster_rows assertions with bound-terminal row assertions
-- `tests/storage/test_terminal_bindings.py::*` — scope-reason: replace load_roster_rows assertions with bound-terminal row assertions
+- `tests/mcp_proxy/tools/sessions/test_registration_terminal_binding.py::*` — scope-reason: replace load_roster_rows assertions with bound-terminal row assertions and drop the AttentionStateManager import
+- `tests/storage/test_terminal_bindings.py::*` — scope-reason: replace load_roster_rows assertions with bound-terminal row assertions and drop the AttentionStateManager import
 - `tests/config/test_config_authority_audit.py::*` — scope-reason: remove the deleted attention route path
 - `tests/terminals/test_no_direct_tmux_consumers.py::*` — scope-reason: remove the deleted attention route path
 - `tests/servers/test_attention_native_roster.py::*` — operation: delete — scope-reason: native roster tests and corpus cover it
@@ -999,6 +1063,7 @@ Targets:
 - `tests/servers/test_attention_roster_machines.py::*` — operation: delete — scope-reason: native roster tests cover machine scope
 - `tests/servers/test_attention_routes_wiring.py::*` — operation: delete — scope-reason: the Python router no longer exists
 - `tests/e2e/test_attention_family.py` — edit the file created by 3.5 to verify the Python writers through the native store after deletion
+- `tests/contracts/test_attention_oracle.py` — delete the file created by 1.1: every Python oracle it replays is deleted here, and the recorded vectors stay for the native suites and 4.2's fake transport
 
 **Research context.** This leaf is the single restart-bound flip. It changes the
 following, in order of the targets above.
@@ -1023,7 +1088,7 @@ in `tests/conftest.py` replaces it with a factory that builds clients over
 validators stay, and the server validates again.
 
 **3. Complete writer list.** All of these become clients with unchanged call
-sites:
+sites. They stay clients only until their G1-G4 owners delete them, before 4.5:
 - transitions:
   - `src/gobby/agents/attention_tracker.py` (three `transition_async` calls)
   - `src/gobby/agents/interactive_attention_monitor.py` (three)
@@ -1040,7 +1105,10 @@ sites:
 
 The former route writer, `src/gobby/servers/routes/attention.py`, is deleted.
 The readers `agent_health.py`, `continuation_retry.py` and
-`src/gobby/cli/sessions.py` use the direct reads and stay unchanged.
+`src/gobby/cli/sessions.py` use the direct reads and stay unchanged. So does the
+`attention_states` join in
+`src/gobby/storage/agents/_selectors.py::_AgentRunSelectorMixin._select_runs_with_live_stats_sql`.
+G1 and G4 delete these readers before 4.5.
 
 **4. Reducer.** In `TurnLifecycleReducer._apply` and `block_provider_failure`,
 replace the `FOR UPDATE` transaction with this order:
@@ -1092,8 +1160,11 @@ then A's fenced write, and asserts that B's status stands.
 **5. Wiring.** Move the attention client construction out of
 `src/gobby/runner_init/orchestration.py` and into the new split module
 `src/gobby/runner_init/attention_clients.py`, as `init_attention_clients(runner)`.
-It sets `runner.attention_manager` and `runner.attention_metadata_store` before
-their consumers: the `attention_manager=` argument to the `WakeDispatcher`
+`GobbyRunner._initialize_post_database_services` and
+`GobbyRunner._initialize_runtime_services` call it immediately before
+`init_orchestration`. The call sits in `runner.py`, so 4.5 can remove it
+without touching orchestration.py. It sets `runner.attention_manager` and
+`runner.attention_metadata_store` before their consumers: the `attention_manager=` argument to the `WakeDispatcher`
 construction, and the `attention_manager=` and `attention_metadata_store=`
 arguments to the lifecycle monitor construction. The
 `publish_attention_event` and `publish_attention_metadata` closures are deleted.
@@ -1219,6 +1290,113 @@ review.
 - 4.4.1 - The service contract documents the routes, events, cursor, writer list, reducer repair, roster exception, respond errors, rollback boundary and the route-override refusal. file: `docs/contracts/attention-services.md`.
 - 4.4.2 - CLI gobby nodes and gobby nodes list stay proxied, with #21571 owner notes citing the contract. file: `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json`.
 
+### 4.5 Delete the Python attention surface [category: refactor] (depends: 4.4, #21564, #24151, #21592, #21562)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/storage/attention.py::*` — operation: delete — scope-reason: no Python attention writer, reader or client remains once the G1-G4 deletion leaves land
+- `src/gobby/agents/attention_metadata.py::*` — operation: delete — scope-reason: the metadata client has no Python caller left
+- `src/gobby/storage/attention_client.py` — delete the file created by 4.2; its last callers are gone
+- `src/gobby/runner_init/attention_clients.py` — delete the file created by 4.3
+- `src/gobby/runner_init/servers.py::*` — scope-reason: stop passing the attention services into the app context in init_servers
+- `src/gobby/runner.py::*` — scope-reason: remove the two init_attention_clients calls that 4.3 added, the attention_manager and attention_metadata_store attributes and their imports
+- `src/gobby/app_context.py::*` — scope-reason: remove the two attention service fields and the metadata store import
+- `src/gobby/servers/_app_lifecycle.py::*` — scope-reason: remove the event-handler attention metadata store binding in create_lifespan
+- `src/gobby/hooks/event_handlers/__init__.py::*` — scope-reason: remove the attention metadata store parameter, field, setter and import
+- `crates/gagents/src/internal.rs` — delete the file created by 2.3; no loopback client remains
+- `crates/gagents/src/lib.rs` — edit the file created by 2.1 to drop the internal module
+- `crates/gagents/tests/internal.rs` — delete the file created by 2.3
+- `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: remove the loopback attention route dispatch
+- `crates/gdaemon/tests/attention_internal.rs` — edit the file created by 2.3 to drive transitions through the in-process service and assert the loopback routes are gone
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: release pin for removing the loopback attention routes
+- `tests/conftest.py::*` — scope-reason: remove the autouse attention-client fixture that 4.3 added
+- `tests/storage/attention_fake.py` — delete the file created by 4.2
+- `tests/storage/test_attention_client.py` — delete the file created by 4.2
+- `tests/agents/test_attention_state.py::*` — operation: delete — scope-reason: its subject is deleted
+- `tests/agents/test_attention_metadata.py::*` — operation: delete — scope-reason: its subject is deleted
+- `tests/servers/websocket/test_servers_websocket_auth.py::test_wired_callback_rejects_and_accepts`
+- `tests/e2e/test_attention_family.py` — edit the file created by 3.5 to drop the Python-writer case, since no Python writer remains
+- `tests/storage/test_no_python_attention.py`
+- `docs/contracts/attention-services.md` — edit the file created by 4.4 to record the end state
+
+**Research context.** This leaf implements ORCH-REV-2. Josh's rule is that
+everything off the hub-node path ends fully in Rust, so no Python attention
+writer, reader or client may remain when this plan completes. The Orchestrator
+chose Fork A: each owning plan deletes its own Python attention callers, and
+this leaf then deletes what they leave behind. It starts only after all four
+deletion leaves have landed:
+
+| Group | Owner and edge | Python callers that owner deletes |
+| --- | --- | --- |
+| G1 | #21564 agents family | `attention_tracker.py`, `interactive_attention_monitor.py`, `terminal_cleanup.py`, `watchdog/interactive_capacity.py`, the remote sync in `idle_check_handler.py`, `agent_health.py`, `lifecycle_monitor.py` and `agent_cleanup.py` wiring (all under `src/gobby/agents/`); `src/gobby/hub/remote_pane.py`; `src/gobby/events/wake.py` with `src/gobby/terminals/composer_attention.py`; the `attention_states` join in `src/gobby/storage/agents/_selectors.py`; the interactive monitor start in `create_lifespan`; the wake and lifecycle-monitor arguments in `orchestration.py` |
+| G2 | #24151 S2.11 hooks | `src/gobby/hooks/terminal_handoff_delivery.py`, the metadata write in `src/gobby/hooks/event_handlers/_agent.py`, and the composer helpers in `src/gobby/hooks/event_handlers/_base.py` |
+| G3 | #21592 WS chat | the reducer in `src/gobby/sessions/turn_lifecycle.py` and its construction in `src/gobby/servers/websocket/server.py`, together with the interim CAS and status fence from 4.3 |
+| G4 | #21562 sessions | the two reads in `src/gobby/sessions/continuation_retry.py`; sessions-family 7.3 already deletes the read in `src/gobby/cli/sessions.py` |
+
+Each owner also deletes or migrates the tests whose subject it deletes. The
+Orchestrator narrows each heading edge to the owner's named deletion leaf at
+expansion (see Pre-expansion capability bindings).
+
+After those leaves land, the only Python attention code left is the surface
+itself and its wiring:
+- `AttentionStateManager`, the entry-id helpers and the state types in
+  `src/gobby/storage/attention.py`;
+- `AttentionMetadataStore` and its validators in
+  `src/gobby/agents/attention_metadata.py`;
+- `AttentionServiceClient` (4.2) and `init_attention_clients` (4.3);
+- the `runner.attention_manager` and `runner.attention_metadata_store`
+  attributes;
+- the matching fields in `src/gobby/app_context.py`, passed from
+  `init_servers`;
+- the `set_attention_metadata_store` setter on `EventHandlers`, bound in
+  `create_lifespan`.
+
+This leaf deletes all of it. With no client left, the loopback writer routes
+in `crates/gagents/src/internal.rs` have no caller, so they go too, along with
+their dispatch in `front_door/mod.rs`. The native owners (agents-family 8.1, and
+the S2.11 hooks seams bound to `gobby-agents` in its 7.4) write through the
+in-process attention service that 2.3 constructs in `serve.rs`. That service
+and its broker publication stay. The `gdaemon` attention test keeps the
+seq-order proof by driving transitions through that service.
+
+The guard test reads every `.py` file under `src/gobby`. It fails on any
+import of `gobby.storage.attention` or `gobby.agents.attention_metadata`, any
+mention of `AttentionStateManager`, `AttentionMetadataStore` or
+`AttentionServiceClient`, any `/api/internal/attention` path, and any
+`attention_states` SQL. It also asserts that the deleted modules are not
+importable. A surviving caller means an owner's deletion leaf is unfinished.
+The executor sends that back to the owner through `gobby-agents:send_message`,
+with the failing guard output, and does not delete the caller here.
+
+`docs/contracts/attention-services.md` then records the end state. Native
+owners write in-process. There is no loopback route and no Python client. The
+reducer CAS and fence left with the Python reducer.
+
+Planned:
+- isolated pytest of `tests/storage/test_no_python_attention.py`,
+  `tests/servers/websocket/test_servers_websocket_auth.py` and
+  `tests/e2e/test_attention_family.py`;
+- `uv run ruff check src/`, `uv run ruff format --check src/` and
+  `uv run mypy src/`;
+- the scoped test-types audit over the changed tests;
+- `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents` and
+  `cargo nextest run -p gobby-daemon --test attention_internal`.
+
+**Granularity:** The Python client and its loopback routes form one transport.
+Deleting the client alone would leave a route with no caller. Deleting the
+routes alone would break the client. The wiring targets only carry the deleted
+objects. One leaf retires the transport, and the guard test proves that
+nothing remains.
+
+**Acceptance:**
+- 4.5.1 - No module under `src/gobby` imports or names the Python attention store, metadata store, client, loopback path or `attention_states` table, and the deleted modules are not importable. test: `tests/storage/test_no_python_attention.py::test_python_attention_surface_is_gone`.
+- 4.5.2 - Every door returns not-found for the former loopback attention routes. test: `crates/gdaemon/tests/attention_internal.rs::loopback_attention_routes_are_gone`.
+- 4.5.3 - Transitions applied through the in-process service still publish 1.1's event messages through the native broker in seq order. test: `crates/gdaemon/tests/attention_internal.rs::in_process_transitions_publish_in_seq_order`.
+- 4.5.4 - The service contract records the end state: native owners write in-process, there is no loopback route or Python client, and the reducer CAS and fence are retired. file: `docs/contracts/attention-services.md`.
+- 4.5.5 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
 ## E1 Verification
 `kind: verification`
 
@@ -1236,8 +1414,12 @@ Implementation checks are all planned, none run:
   `tests/e2e/test_attention_family.py::test_restart_resets_cursor_and_keeps_rows`;
 - 4.3's route-override refusal test
   `tests/cli/test_daemon_preflight.py::test_attention_route_override_refuses_start`;
+- 4.5's guard test
+  `tests/storage/test_no_python_attention.py::test_python_attention_surface_is_gone`,
+  and its gdaemon tests showing the loopback routes are gone and that
+  in-process transitions keep seq order;
 - the version-pin test on every Rust leaf;
-- Ruff, mypy src and the scoped test-types audit on 4.3.
+- Ruff, mypy src and the scoped test-types audit on 4.3 and 4.5.
 
 A passing validation parse does not attest to future behavior. Josh approves the
 stamped plan before any expansion. This planning seat neither expands nor
@@ -1281,353 +1463,3 @@ anything stops, is promoted or launches. Acceptance 4.3.8 pins this. The
 rollback boundary and 4.4's documentation are preserved. The adversary's
 re-review of 2e8e158 resolved ORCH-REV-1, with base validation clean and no
 open decisions.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Characterize attention behavior before takeover
-  category: test
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: Transition vectors reproduce every `_transition_locked`
-    branch and the bounded sweep, and mark the native-only `expected_payload` expectations.
-    test: `tests/contracts/test_attention_oracle.py::test_transition_vectors_match_python`.
-
-    1.1.2: Event vectors pin both agent-event messages byte for byte, including the
-    empty and null fields and the metadata enrichment. test: `tests/contracts/test_attention_oracle.py::test_event_vectors_match_python`.
-
-    1.1.3: Roster vectors reproduce the projection, skip rules, display names, terminal
-    and tmux blocks, metadata and ordering. test: `tests/contracts/test_attention_oracle.py::test_roster_vectors_match_python`.
-
-    1.1.4: Respond vectors cover answer validation, every local and remote error branch
-    with its stage, ownership for both local and remote panes, and the pane fingerprint
-    vectors. test: `tests/contracts/test_attention_oracle.py::test_respond_vectors_match_python`.
-
-    1.1.5: The HTTP corpus records the four routes and their error branches with Python
-    origin. file: `tests/contracts/http/attention.json`.
-
-    1.1.6: The shared manifest carries the three attention waivers, each with an exact
-    ledger surface, behaviour, decision and replacement. file: `docs/contracts/parity-waivers.json`.'
-  labels:
-  - covers:s2-7-hub-attention-dispatch:1.1:1.1.1
-  - covers:s2-7-hub-attention-dispatch:1.1:1.1.2
-  - covers:s2-7-hub-attention-dispatch:1.1:1.1.3
-  - covers:s2-7-hub-attention-dispatch:1.1:1.1.4
-  - covers:s2-7-hub-attention-dispatch:1.1:1.1.5
-  - covers:s2-7-hub-attention-dispatch:1.1:1.1.6
-  tdd: false
-  source_section: '1.1'
-  assigned_agent: developer
-- title: Native attention store, episode transitions and ordering cursor
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '2.1.1: Every 1.1 transition vector produces Python''s row
-    and applied result. test: `crates/gagents/tests/store.rs::transition_vectors_match_python`.
-
-    2.1.2: `expected_payload` CAS is exact: an absent row compares as `{}`, and a
-    mismatch writes nothing and assigns no seq. test: `crates/gagents/tests/store.rs::expected_payload_cas_is_exact`.
-
-    2.1.3: Seq increments only for applied transitions, after commit, under the cursor
-    mutex, and a failed transaction publishes nothing. test: `crates/gagents/tests/store.rs::cursor_assigns_after_commit`.
-
-    2.1.4: The empty-row sweep deletes at most 256 rows per 60 seconds, in the transition''s
-    transaction. test: `crates/gagents/tests/store.rs::empty_row_sweep_is_bounded`.
-
-    2.1.5: gcode, gdaemon and ghook receive this leaf''s patch bumps, lock and pins.
-    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
-  labels:
-  - covers:s2-7-hub-attention-dispatch:2.1:2.1.1
-  - covers:s2-7-hub-attention-dispatch:2.1:2.1.2
-  - covers:s2-7-hub-attention-dispatch:2.1:2.1.3
-  - covers:s2-7-hub-attention-dispatch:2.1:2.1.4
-  - covers:s2-7-hub-attention-dispatch:2.1:2.1.5
-  tdd: true
-  source_section: '2.1'
-  implementation_domain: backend
-- title: Native attention metadata store
-  category: code
-  task_type: feature
-  depends_on:
-  - '2.1'
-  validation_criteria: '2.2.1: Set, get, clear, expiry and validation match the Python
-    metadata vectors. test: `crates/gagents/tests/metadata.rs::metadata_vectors_match_python`.
-
-    2.2.2: Metadata changes take the next shared cursor seq and publish 1.1''s event
-    shape. A clear of an absent entry publishes nothing. test: `crates/gagents/tests/metadata.rs::metadata_changes_take_cursor_seq`.'
-  labels:
-  - covers:s2-7-hub-attention-dispatch:2.2:2.2.1
-  - covers:s2-7-hub-attention-dispatch:2.2:2.2.2
-  tdd: true
-  source_section: '2.2'
-  implementation_domain: backend
-- title: Broker publication and loopback writer routes
-  category: code
-  task_type: feature
-  depends_on:
-  - '2.2'
-  validation_criteria: '2.3.1: Applied transitions and metadata changes publish 1.1''s
-    exact event messages through the native broker, in seq order. test: `crates/gdaemon/tests/attention_internal.rs::events_reach_the_native_broker_in_seq_order`.
-
-    2.3.2: The loopback routes apply transitions and metadata changes and return the
-    documented bodies. Invalid bodies get the shared validation error. test: `crates/gagents/tests/internal.rs::internal_routes_apply_and_validate`.
-
-    2.3.3: Non-loopback peers, a missing or wrong backend secret, and the node door
-    all receive not-found before body parsing. test: `crates/gdaemon/tests/attention_internal.rs::internal_routes_admit_only_loopback_secret`.
-
-    2.3.4: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
-  labels:
-  - covers:s2-7-hub-attention-dispatch:2.3:2.3.1
-  - covers:s2-7-hub-attention-dispatch:2.3:2.3.2
-  - covers:s2-7-hub-attention-dispatch:2.3:2.3.3
-  - covers:s2-7-hub-attention-dispatch:2.3:2.3.4
-  tdd: true
-  source_section: '2.3'
-  implementation_domain: backend
-- title: Attention family and roster read route
-  category: code
-  task_type: feature
-  depends_on:
-  - '2.3'
-  validation_criteria: '3.1.1: GET /api/attention/roster reproduces every 1.1 roster
-    vector. test: `crates/gagents/tests/roster.rs::roster_matches_python`.
-
-    3.1.2: Under concurrent transitions, the returned epoch and seq always equal the
-    states returned. test: `crates/gagents/tests/roster.rs::roster_snapshot_is_consistent`.
-
-    3.1.3: A run, task or terminal change is visible on the very next read, asserting
-    `attention.get-roster.no-response-cache`. test: `crates/gagents/tests/roster.rs::roster_reads_are_uncached`.
-
-    3.1.4: Family claims, key and cookie principals, and CORS are bounded to the claimed
-    routes, and the default backend is proxy. test: `crates/gagents/tests/roster.rs::claims_and_auth_are_bounded`.
-
-    3.1.5: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
-  labels:
-  - covers:s2-7-hub-attention-dispatch:3.1:3.1.1
-  - covers:s2-7-hub-attention-dispatch:3.1:3.1.2
-  - covers:s2-7-hub-attention-dispatch:3.1:3.1.3
-  - covers:s2-7-hub-attention-dispatch:3.1:3.1.4
-  - covers:s2-7-hub-attention-dispatch:3.1:3.1.5
-  tdd: true
-  source_section: '3.1'
-  implementation_domain: backend
-- title: Seen and metadata routes
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.1'
-  validation_criteria: '3.2.1: POST /api/attention/{entry_id}/seen matches the Python
-    vectors for found, missing, stale and already-seen entries, and publishes one
-    event per applied mark. test: `crates/gagents/tests/updates.rs::seen_matches_python`.
-
-    3.2.2: POST /api/attention/{entry_id}/metadata matches the Python validation,
-    response and event vectors. test: `crates/gagents/tests/updates.rs::metadata_matches_python`.
-
-    3.2.3: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
-  labels:
-  - covers:s2-7-hub-attention-dispatch:3.2:3.2.1
-  - covers:s2-7-hub-attention-dispatch:3.2:3.2.2
-  - covers:s2-7-hub-attention-dispatch:3.2:3.2.3
-  tdd: true
-  source_section: '3.2'
-  implementation_domain: backend
-- title: Read-only tmux pane capture
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.2'
-  validation_criteria: '3.3.1: Capture reads the last 15 lines only after `live_target`
-    confirms the generation. A stale or missing target returns `None` without running
-    capture. test: `crates/gterminals/tests/tmux_capture.rs::capture_reads_only_a_live_target`.
-
-    3.3.2: Capture issues only the read-only `capture-pane` argv. test: `crates/gterminals/tests/tmux_capture.rs::capture_is_read_only`.
-
-    3.3.3: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
-  labels:
-  - covers:s2-7-hub-attention-dispatch:3.3:3.3.1
-  - covers:s2-7-hub-attention-dispatch:3.3:3.3.2
-  - covers:s2-7-hub-attention-dispatch:3.3:3.3.3
-  tdd: true
-  source_section: '3.3'
-  implementation_domain: backend
-- title: Respond route with local and remote delivery
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.3'
-  validation_criteria: '3.4.1: Answer validation matches the 1.1 vectors for option,
-    text and key, including the byte and control-character bounds and unknown fields.
-    test: `crates/gagents/tests/respond.rs::answer_validation_matches_python`.
-
-    3.4.2: Unavailable, missing, stale, not-actionable and invalid-option errors match
-    the 1.1 bodies and statuses. test: `crates/gagents/tests/respond.rs::identity_errors_match_python`.
-
-    3.4.3: Local respond captures, re-checks identity and the fingerprint, and claims
-    by CAS before it injects with the attention origin and action key. test: `crates/gagents/tests/respond.rs::local_respond_claims_before_inject`.
-
-    3.4.4: Local failures map write outcomes to the recorded stages and redetect the
-    retired episode. A fingerprint mismatch returns `prompt_changed` with the moved
-    identity. test: `crates/gagents/tests/respond.rs::local_failures_redetect_and_map_stages`.
-
-    3.4.5: Remote respond enforces machine ownership, writes through the node registry,
-    and matches the refused, offline and indeterminate vectors. test: `crates/gagents/tests/respond.rs::remote_respond_matches_python`.
-
-    3.4.6: Concurrent responds to one entry deliver at most one write. test: `crates/gagents/tests/respond.rs::concurrent_respond_delivers_once`.
-
-    3.4.7: Host adapters capture tmux and native rows, load only the provider''s detection
-    manifest, and reproduce Python''s pane fingerprint vectors. test: `crates/gdaemon/tests/attention_host.rs::host_adapters_match_python`.
-
-    3.4.8: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
-
-    3.4.9: A local pane on a machine the caller does not own, or on a missing machine,
-    gets the 1.1 403 body with no capture, detection, CAS clear or injection. test:
-    `crates/gagents/tests/respond.rs::local_respond_requires_machine_ownership`.'
-  labels:
-  - covers:s2-7-hub-attention-dispatch:3.4:3.4.1
-  - covers:s2-7-hub-attention-dispatch:3.4:3.4.2
-  - covers:s2-7-hub-attention-dispatch:3.4:3.4.3
-  - covers:s2-7-hub-attention-dispatch:3.4:3.4.4
-  - covers:s2-7-hub-attention-dispatch:3.4:3.4.5
-  - covers:s2-7-hub-attention-dispatch:3.4:3.4.6
-  - covers:s2-7-hub-attention-dispatch:3.4:3.4.7
-  - covers:s2-7-hub-attention-dispatch:3.4:3.4.8
-  - covers:s2-7-hub-attention-dispatch:3.4:3.4.9
-  tdd: true
-  source_section: '3.4'
-  implementation_domain: backend
-- title: Side-effect-safe comparison and native corpus replay
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.4'
-  validation_criteria: '3.5.1: Roster comparison normalizes only the cursor, clock
-    fields and generated ids, and reports any other difference unless it cites a waiver.
-    test: `crates/gagents/tests/compare.rs::roster_compare_normalizes_cursor_only`.
-
-    3.5.2: In compare mode, mutations reach Python only and are never applied twice.
-    test: `crates/gagents/tests/compare.rs::compare_mutations_call_python_only`.
-
-    3.5.3: Native replay of the four routes passes with ordinary Passed cases per
-    route, and asserts the cited waivers. test: `tests/e2e/test_attention_family.py::test_native_attention_corpus_matches`.
-
-    3.5.4: After an isolated daemon restart on the same database, the roster reports
-    a new epoch with seq starting over and keeps the durable rows, and the first post-restart
-    event reconciles through an epoch-change roster read. test: `tests/e2e/test_attention_family.py::test_restart_resets_cursor_and_keeps_rows`.
-
-    3.5.5: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
-  labels:
-  - covers:s2-7-hub-attention-dispatch:3.5:3.5.1
-  - covers:s2-7-hub-attention-dispatch:3.5:3.5.2
-  - covers:s2-7-hub-attention-dispatch:3.5:3.5.3
-  - covers:s2-7-hub-attention-dispatch:3.5:3.5.4
-  - covers:s2-7-hub-attention-dispatch:3.5:3.5.5
-  tdd: true
-  source_section: '3.5'
-  implementation_domain: backend
-- title: Keep delegated ledger rows after Python surface removal
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.5'
-  validation_criteria: '4.1.1: A delegated row whose Python surface is removed stays
-    in the rendered ledger, while a stale proxied row still fails. test: `tests/test_parity_ledger.py::test_delegated_rows_survive_python_removal`.
-
-    4.1.2: A behaviour waiver that cites a retained delegated surface loads, and one
-    that cites an unknown surface fails. test: `tests/test_parity_ledger.py::test_waivers_accept_retained_delegated_surfaces`.'
-  labels:
-  - covers:s2-7-hub-attention-dispatch:4.1:4.1.1
-  - covers:s2-7-hub-attention-dispatch:4.1:4.1.2
-  tdd: true
-  source_section: '4.1'
-  implementation_domain: backend
-- title: Loopback attention client and contract-verified test transport
-  category: code
-  task_type: feature
-  depends_on:
-  - '4.1'
-  validation_criteria: '4.2.1: The client sends each operation to its loopback route
-    with the backend secret and no proxy environment, maps the responses, and raises
-    `AttentionServiceUnavailable` from a transition when the connection fails or the
-    secret is missing. test: `tests/storage/test_attention_client.py::test_client_wire_contract`.
-
-    4.2.2: The fake transport passes every 1.1 transition vector, including `expected_payload`.
-    test: `tests/storage/test_attention_client.py::test_fake_transport_matches_transition_vectors`.
-
-    4.2.3: When the service is unavailable, metadata set and clear log a warning and
-    drop the change without raising, while invalid metadata still raises its validation
-    error. test: `tests/storage/test_attention_client.py::test_metadata_unavailable_is_dropped`.'
-  labels:
-  - covers:s2-7-hub-attention-dispatch:4.2:4.2.1
-  - covers:s2-7-hub-attention-dispatch:4.2:4.2.2
-  - covers:s2-7-hub-attention-dispatch:4.2:4.2.3
-  tdd: true
-  source_section: '4.2'
-  implementation_domain: backend
-- title: Native takeover and Python attention retirement
-  category: code
-  task_type: feature
-  depends_on:
-  - '4.2'
-  validation_criteria: '4.3.1: The attention family defaults to native, and gdaemon
-    receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
-
-    4.3.2: Every named Python writer transitions and sets metadata only through the
-    client, and no Python module keeps an attention cursor or publisher. test: `tests/storage/test_attention_client.py::test_python_holds_no_attention_ordering_state`.
-
-    4.3.3: The reducer reads without a row lock, sends no transition for an unchanged
-    row, applies a change by CAS within three attempts, writes status only through
-    the fence, and returns `attention_conflict` once the attempts are exhausted. test:
-    `tests/sessions/test_turn_lifecycle_cas.py::test_reducer_writes_status_after_cas`.
-
-    4.3.4: A failure injected between the CAS and the status write is repaired by
-    the next status-writing transition, and by replay of the same `begin_turn`, `enter_wait`
-    and `record_provider_failure` evidence, while a status another writer set after
-    `begin_turn` stands, asserting `attention.get-roster.session-status-repair`. test:
-    `tests/sessions/test_turn_lifecycle_cas.py::test_crash_between_cas_and_status_is_repaired`.
-
-    4.3.5: After deletion, Python writer transitions publish ordered events through
-    the native broker, and the roster serves them with no Python attention route.
-    test: `tests/e2e/test_attention_family.py::test_python_writers_publish_through_native_store`.
-
-    4.3.6: The four attention HTTP rows are delegated with evidence and waiver citations,
-    and the ledger regenerates cleanly. file: `docs/contracts/parity-ledger.md`.
-
-    4.3.7: When reducer A''s CAS is followed by reducer B''s CAS and fenced status
-    write, A''s later fenced write is skipped and B''s status stands. test: `tests/sessions/test_turn_lifecycle_cas.py::test_stale_status_write_is_fenced`.
-
-    4.3.8: With `front_door.routes.attention` set to any backend, restart and cutover
-    refuse before anything stops or is promoted, and start refuses before launch,
-    each naming the key to remove. With the key absent, all three pass this check.
-    test: `tests/cli/test_daemon_preflight.py::test_attention_route_override_refuses_start`.'
-  labels:
-  - covers:s2-7-hub-attention-dispatch:4.3:4.3.1
-  - covers:s2-7-hub-attention-dispatch:4.3:4.3.2
-  - covers:s2-7-hub-attention-dispatch:4.3:4.3.3
-  - covers:s2-7-hub-attention-dispatch:4.3:4.3.4
-  - covers:s2-7-hub-attention-dispatch:4.3:4.3.5
-  - covers:s2-7-hub-attention-dispatch:4.3:4.3.6
-  - covers:s2-7-hub-attention-dispatch:4.3:4.3.7
-  - covers:s2-7-hub-attention-dispatch:4.3:4.3.8
-  tdd: true
-  source_section: '4.3'
-  implementation_domain: backend
-- title: Attention service contract and nodes CLI handoff
-  category: docs
-  task_type: feature
-  depends_on:
-  - '4.3'
-  validation_criteria: '4.4.1: The service contract documents the routes, events,
-    cursor, writer list, reducer repair, roster exception, respond errors, rollback
-    boundary and the route-override refusal. file: `docs/contracts/attention-services.md`.
-
-    4.4.2: CLI gobby nodes and gobby nodes list stay proxied, with #21571 owner notes
-    citing the contract. file: `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json`.'
-  labels:
-  - covers:s2-7-hub-attention-dispatch:4.4:4.4.1
-  - covers:s2-7-hub-attention-dispatch:4.4:4.4.2
-  tdd: false
-  source_section: '4.4'
-  assigned_agent: tech-writer
-```

@@ -90,7 +90,7 @@ PROVIDER_DISCOVERY_TOOLS = frozenset({"ToolSearch", "search_tool"})
 # always interrogate a stuck agent (e.g. send_keys into a terminate step
 # whose allow-list only lists kill_agent). Agent enforcement blocks them
 # outright for provider-native subagents. Spawned Gobby agents are gated by the
-# opt-in ``no-send-keys`` rule, which an agent definition selects.
+# ``no-send-keys`` rule, which withholds ``send_keys`` unless the definition holds it.
 OPERATOR_TOOLS = {
     "send_keys",
     "capture_output",
@@ -260,7 +260,7 @@ def is_operator_tool(tool_name: str | None) -> bool:
     or CLI to inspect or poke a running session. They are not agent actions
     and must bypass step/agent MCP allow-lists so an operator can always
     reach a stuck agent. Provider-native subagents are blocked from them by agent
-    enforcement; spawned Gobby agents are gated by the opt-in ``no-send-keys`` rule.
+    enforcement; spawned Gobby agents are gated by the ``no-send-keys`` rule.
 
     Args:
         tool_name: The MCP tool name (from tool_input.tool_name)
@@ -694,31 +694,37 @@ def requires_task_for_any_touched_file(
     source: str | None = None,
     plan_mode: bool = False,
     event_data: Any = None,
-    agent_type: str | None = None,
+    allow_plan_artifacts: bool = False,
 ) -> bool:
     """Return True when any touched file should be task-gated.
 
     Structured tool inputs (Write/Edit shapes) carry their own paths; shell
     commands carry none, so the adapter's canonical path extraction in event
     data is the fallback — a bash write whose extracted paths are all plan or
-    taskless feedback files is exempt exactly like the structured path. The
-    helper still fails closed: when neither source yields a path for a write-like
+    taskless feedback files is exempt, but a structured Write/Edit of a plan file is
+    not: plan mode and an explicit plan-artifact grant exempt those paths below. The helper still
+    fails closed: when neither source yields a path for a write-like
     tool, the edit is treated as requiring a task.
     """
     touched_paths = get_touched_file_paths(tool_input) or _canonical_event_paths(event_data)
+    structured_mutation = (
+        isinstance(event_data, dict) and event_data.get("canonical_structured_mutation") is True
+    )
     if not touched_paths:
         return True
 
     for path in touched_paths:
         if (
-            agent_type == "plan-writer"
+            allow_plan_artifacts is True
             and isinstance(event_data, dict)
             and is_project_plan_artifact_path(
                 path, event_data.get("project_path"), include_coverage=True
             )
         ):
             continue
-        if is_plan_file(path, source):
+        # A native Write/Edit of a plan file needs a claim outside plan mode and the
+        # plan-artifact grant; only shell writes keep the taskless plan-file exemption.
+        if not structured_mutation and is_plan_file(path, source):
             continue
         if plan_mode and path.endswith(".md"):
             continue

@@ -58,7 +58,8 @@ the same counts.
 ## Constraints
 `kind: framing`
 
-- Resume-turn context requirement (Orchestrator ruling on PA-01, 2026-10-28, Option 1):
+- Resume-turn context requirement (Orchestrator ruling on PA-01, 2026-10-28, Option 1,
+  approved by Josh as answer A on 2026-10-28):
   until the handoff is pulled, the resume turn carries no memory index, no review
   lessons and no skill-load directives. Three one-shot injections are allowed resume-turn
   context and named as exemptions: Seat Guidance (`roles/inject-seat-common.yaml`), Agent
@@ -68,14 +69,14 @@ the same counts.
   context, and the seat guidance itself requires `get_handoff` during holds. No
   turn_start follows the pull until the next prompt, so a guard would leave an autonomous
   seat without its policy and workspace path for the whole resumed turn. This replaces
-  the original goal wording "no injected payload"; the Orchestrator flags the change to
-  Josh with the stamped plan.
+  the original goal wording "no injected payload". Josh approved the narrowing.
 - 2.3 edits a bundled rule template, which reaches the installed rule table only at
   daemon start. It is live after a merge and an ordinary daemon restart announced with a
   `global` `send_message`. It needs no cutover, binary install or quiet window. 4.1
-  touches only tests, the CI workflow and the pre-push script, and needs no restart.
-- CI coverage must not drop. Today the CI `test` job runs the parity test, ungated, on
-  both Python matrix entries. After this change the same job must still run it on both.
+  touches only tests, two CI workflows and the pre-push script, and needs no restart.
+- CI coverage must not drop. Today two jobs run the parity test, ungated: the CI `test`
+  job on both Python matrix entries, and the `release-branch-ci` job through
+  `./pre-push-test.sh`. After this change both must still run it.
 - Follow the repository's established opt-in shape. Use a module-level `pytestmark`
   combining a category marker with a `skipif` on a `GOBBY_RUN_*` variable, evaluated
   before fixture setup. Record the gate in three places: the CI job environment, a
@@ -163,6 +164,8 @@ Targets:
 - `pre-push-test.sh::*` — scope-reason: the top-level pytest selection block gains the manifest opt-in branch and loses the dead build-canary branch; no shell function changes
 - `tests/ci/test_postgres_test_stack.py::test_pre_push_excludes_live_opt_in_tests_by_default`
 - `tests/ci/test_postgres_test_stack.py::test_ci_test_job_builds_and_runs_local_postgres_test_container`
+- `.github/workflows/postgres-pgsearch-smoke.yml`
+- `tests/ci/test_release_branch_prerequisites.py::test_release_workflow_provisions_pre_push_tools_and_falkor`
 
 Research context. `test_manifest_membership_matches_wheel`, at line 14 of
 `tests/install/test_bundled_content_manifest.py`, is the only test in its module. It
@@ -173,8 +176,9 @@ copies every tracked file outside `.gobby/` into a temp tree. It runs
 `shared/` tree. The module has no `pytestmark`, no marker and no guard. It already
 imports `os`, but not `pytest`.
 
-The opt-in convention. The repository has no CI marker and no test reads a CI
-environment variable. The established gate is a module-level `pytestmark` list, which
+The opt-in convention. The repository has no CI marker, and no test reads the `CI`
+environment variable. Only `pre-push-test.sh` does (lines 56-59), to ignore the live AGY
+probe under CI. The established gate is a module-level `pytestmark` list, which
 pytest applies before fixture setup. `tests/packaging/test_installed_wheel_ui_smoke.py`
 lines 22-28 are the canonical example: `pytest.mark.integration` plus a
 `pytest.mark.skipif(os.environ.get("GOBBY_RUN_WHEEL_UI_SMOKE") != "1", reason="set
@@ -200,6 +204,20 @@ and asserts `_job_env(env)` equals the Postgres mapping. `_job_env` filters to t
 Postgres names, so a new variable leaves that assertion intact. Add one assertion to the
 test that `env["GOBBY_RUN_WHEEL_MANIFEST_PARITY"] == "1"`. Without it, nothing stops a
 later edit from quietly dropping CI parity coverage.
+
+Release branch CI. `.github/workflows/postgres-pgsearch-smoke.yml` (workflow
+`Release Branch CI`) runs on pushes to version branches, `release/**` and `v*` tags.
+`ci.yml` triggers only on `main`, `0.4.9`, `0.5.0`, its tags and pull requests, so
+`release/**` and later version branches get parity coverage from this workflow alone.
+Its `release-branch-ci` job runs `./pre-push-test.sh` (line 155), so the parity test
+runs there today, ungated. The job `env` (lines 23-31) sets only the Falkor and Postgres
+test variables. Add `GOBBY_RUN_WHEEL_MANIFEST_PARITY: "1"` to that job `env`; without
+it, the new pre-push `--ignore` drops parity coverage on release branches.
+`test_release_workflow_provisions_pre_push_tools_and_falkor` in
+`tests/ci/test_release_branch_prerequisites.py` loads that job and already asserts two of
+its `env` entries. Add one assertion that
+`job["env"]["GOBBY_RUN_WHEEL_MANIFEST_PARITY"] == "1"`. No other workflow job runs the
+parity module: the `voice-extra` and `terminal-acceptance` jobs run named paths only.
 
 Pre-push. The `pre-push-test.sh` selection block (lines 54-85, approximate) builds
 `PYTEST_SELECTION_ARGS`. A whole-module gate uses `--ignore=<module path>`, following the
@@ -227,8 +245,8 @@ detection runs through `verify_bundled_integrity` and the startup refusal
 `dirty_bundled_content_refusal`, and depends on no test.
 
 Planned checks, none run yet: the module reports one skip without the variable and one
-pass with it set; `tests/ci/test_postgres_test_stack.py` passes; `bash -n pre-push-test.sh`
-is clean.
+pass with it set; `tests/ci/test_postgres_test_stack.py` and
+`tests/ci/test_release_branch_prerequisites.py` pass; `bash -n pre-push-test.sh` is clean.
 
 **Acceptance:**
 
@@ -237,6 +255,7 @@ is clean.
 - 4.1.3 - The pre-push selection block ignores the manifest module unless `GOBBY_RUN_WHEEL_MANIFEST_PARITY` is 1. file: `pre-push-test.sh`.
 - 4.1.4 - The opt-in registry test asserts the new variable and its ignore target. test: `tests/ci/test_postgres_test_stack.py::test_pre_push_excludes_live_opt_in_tests_by_default`.
 - 4.1.5 - No `GOBBY_RUN_BUILD_CANARY` branch or build-canary deselect remains in the pre-push script, and the registry test no longer asserts either. file: `pre-push-test.sh`.
+- 4.1.6 - The `release-branch-ci` job env in `.github/workflows/postgres-pgsearch-smoke.yml` exports `GOBBY_RUN_WHEEL_MANIFEST_PARITY: "1"`, and the release-workflow test asserts it. test: `tests/ci/test_release_branch_prerequisites.py::test_release_workflow_provisions_pre_push_tools_and_falkor`.
 
 ## E1 End-to-end verification
 `kind: verification`
@@ -250,14 +269,14 @@ All commands run against the isolated test hub, from the implementing checkout:
   no `uv build`.
 - The same command with `GOBBY_RUN_WHEEL_MANIFEST_PARITY=1` reports 1 passed. It builds
   an sdist and a wheel, so expect several minutes.
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/ci/test_postgres_test_stack.py -q`
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/ci/test_postgres_test_stack.py tests/ci/test_release_branch_prerequisites.py -q`
   passes.
 - `bash -n pre-push-test.sh` is clean, and
   `gcode grep -F "GOBBY_RUN_BUILD_CANARY" pre-push-test.sh tests/ci -m 5` returns no hits.
-- `uv run ruff format --check tests/workflows/test_plan_mode_rules.py tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py`
-  and `uv run ruff check tests/workflows/test_plan_mode_rules.py tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py`
+- `uv run ruff format --check tests/workflows/test_plan_mode_rules.py tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py tests/ci/test_release_branch_prerequisites.py`
+  and `uv run ruff check tests/workflows/test_plan_mode_rules.py tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py tests/ci/test_release_branch_prerequisites.py`
   are clean.
-- `uv run gobby test-types audit tests/workflows/test_plan_mode_rules.py tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py --baseline .gobby/test-types-baseline.json --fail-on-new`
+- `uv run gobby test-types audit tests/workflows/test_plan_mode_rules.py tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py tests/ci/test_release_branch_prerequisites.py --baseline .gobby/test-types-baseline.json --fail-on-new`
   reports no new findings.
 
 Live check for 2.3, from the main checkout after the merge and an announced daemon
@@ -270,3 +289,85 @@ pending-pull clause in the installed `when`. 4.1 needs no live check.
 <!-- Updated after task creation -->
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+
+## V1 Plan Changelog
+`kind: framing`
+
+- 2026-10-28: Staleness revision and council pass by Plan Writer gobby#18340 under
+  #23669. P1-P3 (1.1, 1.2, 2.1, 2.2, 3.1) were dropped to the Delivered Scope table as
+  landed through #22638 and #24421. 4.1 is kept and gains the removal of the dead
+  `GOBBY_RUN_BUILD_CANARY` branch. Plan Enhancer gobby#18354 converged with no
+  suggestions. Plan Adversary gobby#18349 raised PA-01: the original P2 goal of no
+  injected payload before the pull was unmet by the seat injectors. The Orchestrator
+  ruled Option 1 and Josh approved it as answer A: Seat Guidance, Agent Workspace and the
+  proxy-retry notice are named exemptions, and the plan-mode skill directive gets the
+  pull guard as new deliverable 2.3. The adversary's two minor corrections (E1 lint scope
+  and report routing) were applied at `6bd7de5`. Writer and adversary reached consensus
+  on this revision.
+- 2026-10-28: The Orchestrator's review of the stamped plan (`26facd9`) returned it with
+  ORCH-REV-HSG-1. The 4.1 pre-push `--ignore` would drop the parity test from
+  `Release Branch CI`, the only workflow that covers `release/**` and later version
+  branches. The Writer's repair at `898f582` adds
+  `.github/workflows/postgres-pgsearch-smoke.yml` and its workflow test to the 4.1
+  Targets, adds acceptance 4.1.6, and corrects the research claim about the `CI`
+  variable. The stale M1 is withdrawn for a fresh derivation by Plan Adversary
+  gobby#18349.
+- 2026-10-28: gobby#18349 ended before re-stamping, and the Orchestrator relaunched the
+  seat as Plan Adversary gobby#18400. It re-reviewed `9d51b37` and found no blocking
+  findings, no nits and no unresolved decisions. Writer gobby#18340 and Plan Adversary
+  gobby#18400 reached consensus on this revision.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Guard the plan-mode skill directive on a pending pull
+  category: config
+  task_type: chore
+  depends_on: []
+  validation_criteria: '2.3.1: The plan-mode entry rule''s when starts with `not variables.get(''handoff_pull_pending'')`
+    and keeps the plan-mode and directive-delivered clauses. file: `src/gobby/install/shared/workflows/rules/plan-mode/handle-plan-mode-entry.yaml`.
+
+    2.3.2: With a pull pending, a plan-mode turn start delivers no plan-reference
+    directive and leaves the delivered flag unset; after the pull marker clears, the
+    next turn start delivers it once. test: `tests/workflows/test_plan_mode_rules.py::TestHandlePlanModeEntry::test_skill_directive_waits_for_pending_handoff_pull`.'
+  labels:
+  - covers:handoff-stop-gates-and-pull-order:2.3:2.3.1
+  - covers:handoff-stop-gates-and-pull-order:2.3:2.3.2
+  tdd: false
+  source_section: '2.3'
+  assigned_agent: developer
+- title: Put the wheel-manifest parity test behind an opt-in flag
+  category: test
+  task_type: chore
+  depends_on: []
+  validation_criteria: '4.1.1: The module carries a `pytestmark` list of `pytest.mark.integration`
+    and a skipif on `GOBBY_RUN_WHEEL_MANIFEST_PARITY`, so the test is skipped without
+    the variable and runs with it set to 1. test: `tests/install/test_bundled_content_manifest.py::test_manifest_membership_matches_wheel`.
+
+    4.1.2: The CI test job env exports `GOBBY_RUN_WHEEL_MANIFEST_PARITY: "1"`, and
+    the CI-contract test asserts it. test: `tests/ci/test_postgres_test_stack.py::test_ci_test_job_builds_and_runs_local_postgres_test_container`.
+
+    4.1.3: The pre-push selection block ignores the manifest module unless `GOBBY_RUN_WHEEL_MANIFEST_PARITY`
+    is 1. file: `pre-push-test.sh`.
+
+    4.1.4: The opt-in registry test asserts the new variable and its ignore target.
+    test: `tests/ci/test_postgres_test_stack.py::test_pre_push_excludes_live_opt_in_tests_by_default`.
+
+    4.1.5: No `GOBBY_RUN_BUILD_CANARY` branch or build-canary deselect remains in
+    the pre-push script, and the registry test no longer asserts either. file: `pre-push-test.sh`.
+
+    4.1.6: The `release-branch-ci` job env in `.github/workflows/postgres-pgsearch-smoke.yml`
+    exports `GOBBY_RUN_WHEEL_MANIFEST_PARITY: "1"`, and the release-workflow test
+    asserts it. test: `tests/ci/test_release_branch_prerequisites.py::test_release_workflow_provisions_pre_push_tools_and_falkor`.'
+  labels:
+  - covers:handoff-stop-gates-and-pull-order:4.1:4.1.1
+  - covers:handoff-stop-gates-and-pull-order:4.1:4.1.2
+  - covers:handoff-stop-gates-and-pull-order:4.1:4.1.3
+  - covers:handoff-stop-gates-and-pull-order:4.1:4.1.4
+  - covers:handoff-stop-gates-and-pull-order:4.1:4.1.5
+  - covers:handoff-stop-gates-and-pull-order:4.1:4.1.6
+  tdd: false
+  source_section: '4.1'
+  assigned_agent: developer
+```

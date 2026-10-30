@@ -33,6 +33,7 @@ def run_coro_blocking(
     *,
     label: str | None = None,
     timeout_seconds: float = 30,
+    raise_errors: bool = False,
 ) -> Any:
     """Run a coroutine blocking, using the best available event loop strategy.
 
@@ -42,9 +43,10 @@ def run_coro_blocking(
         logger: Logger for diagnostics.
         label: Optional call label for diagnostics.
         timeout_seconds: Timeout for thread-safe scheduling.
+        raise_errors: Propagate failures when the caller owns refusal and cleanup.
 
     Returns:
-        The coroutine result, or None on failure.
+        The coroutine result, or None on failure unless raise_errors is set.
     """
     label_suffix = f"[{label}]" if label else ""
     if loop and loop.is_running():
@@ -55,6 +57,8 @@ def run_coro_blocking(
         except concurrent.futures.TimeoutError as e:
             if future is not None:
                 future.cancel()
+            if raise_errors:
+                raise
             logger.exception(
                 "run_coro_blocking%s: threadsafe failed after %ss: %s: %s",
                 label_suffix,
@@ -64,6 +68,8 @@ def run_coro_blocking(
             )
             return None
         except Exception as e:
+            if raise_errors:
+                raise
             logger.exception(
                 "run_coro_blocking%s: threadsafe failed: %s: %s",
                 label_suffix,
@@ -79,6 +85,8 @@ def run_coro_blocking(
 
             return asyncio.run(run_with_timeout())
         except Exception as e:
+            if raise_errors:
+                raise
             logger.exception(
                 "run_coro_blocking%s: asyncio.run failed: %s: %s",
                 label_suffix,

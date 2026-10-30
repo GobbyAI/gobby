@@ -1,7 +1,7 @@
-"""Fixed standing-seat effects replacing native flag writes.
+"""Definition-authorized workflow effects replacing native flag writes.
 
 Only the workflow engine dispatches these effects after successful existing
-tools. Each role owns a bounded set of flags; no tool exposes this writer.
+tools. Each declared permission owns bounded flags; no tool exposes this writer.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from gobby.tasks.step_records import (
     list_task_step_records,
 )
 from gobby.utils.git import normalize_commit_sha
+from gobby.workflows.agent_resolver import session_agent_definition
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 from gobby.workflows.engine.seat_messages import (
     CandidateEvent,
@@ -163,7 +164,7 @@ def _clear_candidate() -> dict[str, Any]:
 
 def _monitor_message(
     db: HubDatabase,
-    role: str,
+    required_recipients: list[str],
     step: str | None,
     state: dict[str, Any],
     recipient: str,
@@ -172,29 +173,23 @@ def _monitor_message(
 ) -> dict[str, Any]:
     if not (content.startswith("Systems nominal") or content.startswith("EVENT=ALARM ")):
         return {}
-    recipient_role = SessionVariableManager(db).get_variable_subset(recipient, ("_agent_type",))
-    target_role = recipient_role.get("_agent_type")
-    if role == "log-monitor":
-        if target_role != "triage":
-            return {}
-        return {"tick_done": False, "tick_window": sent_at}
-    if target_role not in {"triage", "log-monitor"}:
+    recipient_session = SessionManager(db).get(recipient)
+    if recipient_session is None:
         return {}
+    definition = session_agent_definition(db, recipient_session)
+    if definition is None or definition[0].name not in required_recipients:
+        return {}
+    target = definition[0].name
     if step == "report" and content != state.get("_window_report"):
         return {}
-    triage = state.get("triage_reported", False) if step == "report" else False
-    log_monitor = state.get("log_monitor_reported", False) if step == "report" else False
-    triage = triage or target_role == "triage"
-    log_monitor = log_monitor or target_role == "log-monitor"
-    changes = {
+    reported = set(state.get("_reported_to") or []) if step == "report" else set()
+    reported.add(target)
+    return {
         "tick_window": state.get("tick_window") if step == "report" else sent_at,
         "_window_report": content,
-        "tick_done": not (triage and log_monitor),
-        "triage_reported": triage,
-        "log_monitor_reported": log_monitor,
+        "tick_done": not set(required_recipients).issubset(reported),
+        "_reported_to": sorted(reported),
     }
-    changes["triage_session" if target_role == "triage" else "log_monitor_session"] = recipient
-    return changes
 
 
 def _candidate_rejection(
@@ -221,17 +216,6 @@ def _candidate_rejection(
     return None
 
 
-def _holds_seat(
-    db: HubDatabase, session_id: str, agent_name: str | None, seat: str, step: str
-) -> bool:
-    """Whether the session holds ``seat``: named so, or its definition grants ``step``.
-
-    Team seats such as docs-reviewer carry grants rather than the fixed names; the name
-    keeps seats without a resolvable installed definition on their fixed role.
-    """
-    return agent_name == seat or session_grants(db, session_id, step)
-
-
 def candidate_binding_error(
     db: HubDatabase, session_id: str, message: InterSessionMessage
 ) -> str | None:
@@ -251,14 +235,14 @@ def candidate_binding_error(
         event is not None
         and instance.current_step == "submit"
         and _returns_to_implement(event.fields)
-        and _holds_seat(db, session_id, instance.agent_name, "developer", "implementation")
+        and session_grants(db, session_id, "implementation")
     ):
         state = {**SessionVariableManager(db).get_variables(session_id), **instance.variables}
         why = _submit_return_rejection(db, session_id, state, event)
         return f"{event.fields['EVENT']} did not return submit to implement: {why}" if why else None
     if reason is None and (event is None or event.fields.get("EVENT") != "CANDIDATE"):
         return None
-    if not _holds_seat(db, session_id, instance.agent_name, "code-reviewer", "review"):
+    if not session_grants(db, session_id, "review"):
         return None
     if reason is None and event is not None:
         state = {**SessionVariableManager(db).get_variables(session_id), **instance.variables}
@@ -350,15 +334,21 @@ def advance_seat(
     tool_input: dict[str, Any],
     tool_output: Any,
 ) -> dict[str, Any]:
-    """Compute only fixed, role-specific changes from a successful completion."""
-    role = instance.agent_name
+    """Compute only effects authorized by the caller's enabled definition."""
+    session = SessionManager(db).get(session_id)
+    if session is None:
+        return {}
+    definition = session_agent_definition(db, session)
+    if definition is None:
+        return {}
+    body = definition[0]
     step = instance.current_step
     state = {**variables, **instance.variables}
     tasks = LocalTaskManager(db)
     if (
         step == "route_skills"
         and mcp_tool == ("gobby-tasks", "get_task")
-        and _holds_seat(db, session_id, role, "developer", "implementation")
+        and "implementation" in body.task_step_writes
     ):
         task = _requested_task(tasks, state.get("assigned_task_id"), tool_input.get("task_id"))
         if task is None or task.claimed_by_session_id != session_id:
@@ -366,7 +356,7 @@ def advance_seat(
         skills = build_claimed_task_extra_skill_state({"claimed_tasks": {task.id: {}}}, tasks)
         return {"additional_skills": skills["claimed_task_extra_skills"], "skills_routed": True}
     if mcp_tool in {("gobby-tasks", "get_task"), ("gobby-tasks", "record_review_step")} and (
-        _holds_seat(db, session_id, role, "code-reviewer", "review")
+        "review" in body.task_step_writes
     ):
         task_id, sha = state.get("candidate_task"), state.get("candidate_sha")
         disposition = state.get("candidate_disposition")
@@ -383,6 +373,7 @@ def advance_seat(
     if mcp_tool[0] != "gobby-agents":
         return {}
     consumed = list(state.get("_seat_consumed_messages") or [])
+    monitor_updates: dict[str, Any] = {}
     for message in completion_messages(db, session_id, mcp_tool[1], tool_input, tool_output):
         if message.id in consumed:
             continue
@@ -391,19 +382,39 @@ def advance_seat(
         except CandidateMessageError:
             continue
         changes: dict[str, Any] = {}
-        if event is not None and _holds_seat(db, session_id, role, "code-reviewer", "review"):
+        if (
+            event is not None
+            and step == "submit"
+            and "implementation" in body.task_step_writes
+            and _returns_to_implement(event.fields)
+        ):
+            if _submit_return_rejection(db, session_id, state, event) is None:
+                # Return the claim to implement with shell access; link_commit clears the flag.
+                changes = {"bounced": True, "implementation_complete": False}
+        elif event is not None and "review" in body.task_step_writes:
             changes = _reviewer_message(db, session_id, state, event, variables)
-        elif role in {"log-monitor", "metrics-monitor"} and message.from_session == session_id:
+        elif (
+            body.monitor_report_recipients
+            and message.from_session == session_id
+            and message.content.startswith(("Systems nominal", "EVENT=ALARM "))
+        ):
             changes = _monitor_message(
                 db,
-                role,
+                body.monitor_report_recipients,
                 step,
                 state,
                 message.to_session,
                 message.content,
                 message.sent_at.isoformat(),
             )
-        elif role == "plan-adversary" and message.from_session == session_id:
+            if changes:
+                monitor_updates.update(changes)
+                state.update(changes)
+                # A broadcast's recipients share one window even before the step transition.
+                step = "report"
+                consumed.append(message.id)
+            continue
+        elif "track_plan_consensus" in body.capabilities and message.from_session == session_id:
             match = re.match(
                 r"EVENT=(CONSENSUS|CONSENSUS_WITHDRAWN) SHA=([0-9a-f]{40})(?:\s|$)",
                 message.content.partition("\n")[0],
@@ -413,14 +424,10 @@ def advance_seat(
             elif match and step == "stamp" and match[1] == "CONSENSUS_WITHDRAWN":
                 if not state.get("consensus_sha") or match[2] == state.get("consensus_sha"):
                     changes = {"bounced": True, "consensus": False}
-        elif (
-            step == "submit"
-            and event is not None
-            and _holds_seat(db, session_id, role, "developer", "implementation")
-        ):
-            if _submit_return_rejection(db, session_id, state, event) is None:
-                # The flag returns the claim to implement with shell access; link_commit clears it.
-                changes = {"bounced": True, "implementation_complete": False}
         if changes:
-            return {**changes, "_seat_consumed_messages": (consumed + [message.id])[-64:]}
-    return {}
+            return {
+                **monitor_updates,
+                **changes,
+                "_seat_consumed_messages": (consumed + [message.id])[-64:],
+            }
+    return {**monitor_updates, "_seat_consumed_messages": consumed[-64:]} if monitor_updates else {}

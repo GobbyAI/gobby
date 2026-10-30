@@ -71,14 +71,15 @@ def command_name(raw: str) -> str:
     return raw.strip().rsplit("/", 1)[-1].lstrip("-")
 
 
-def foreground_commands(shell_pids: Mapping[str, int]) -> dict[str, str]:
-    """Map each key in ``shell_pids`` to the command in its terminal's foreground.
+def foreground_executables(shell_pids: Mapping[str, int]) -> dict[str, str]:
+    """Map each key in ``shell_pids`` to the executable in its terminal's foreground.
 
-    Keys whose shell is gone, whose shell has no controlling terminal, or whose
-    foreground group leader cannot be read are absent from the result rather than
-    present with a placeholder, so a caller can tell "unknown" from a real name.
-    An idle shell is its own foreground group, which is how a bare prompt
-    resolves to ``zsh`` instead of to nothing.
+    The value is the leader's raw ``ps`` comm: an absolute path on macOS, which
+    :func:`command_name` reduces to a bare name. Keys whose shell is gone, whose
+    shell has no controlling terminal, or whose foreground group leader cannot be
+    read are absent from the result rather than present with a placeholder, so a
+    caller can tell "unknown" from a real name. An idle shell is its own foreground
+    group, which is how a bare prompt resolves to ``zsh`` instead of to nothing.
     """
     wanted = {key: pid for key, pid in shell_pids.items() if pid > 0}
     if not wanted:
@@ -93,9 +94,20 @@ def foreground_commands(shell_pids: Mapping[str, int]) -> dict[str, str]:
         leader = snapshot.get(shell[0])
         if leader is None:
             continue
-        if name := command_name(leader[1]):
-            resolved[key] = name
+        resolved[key] = leader[1]
     return resolved
+
+
+def foreground_commands(shell_pids: Mapping[str, int]) -> dict[str, str]:
+    """Map each key in ``shell_pids`` to the command in its terminal's foreground.
+
+    Same keys as :func:`foreground_executables`, reduced to bare command names.
+    """
+    commands = {
+        key: command_name(executable)
+        for key, executable in foreground_executables(shell_pids).items()
+    }
+    return {key: name for key, name in commands.items() if name}
 
 
 def shell_cwds(shell_pids: Mapping[str, int]) -> dict[str, str]:
@@ -147,4 +159,11 @@ def process_shell(row: object) -> str | None:
     return shell if isinstance(shell, str) and shell else None
 
 
-__all__ = ["command_name", "foreground_commands", "process_shell", "shell_cwds", "shell_pid"]
+__all__ = [
+    "command_name",
+    "foreground_commands",
+    "foreground_executables",
+    "process_shell",
+    "shell_cwds",
+    "shell_pid",
+]

@@ -150,3 +150,100 @@ fn spawned_connect_stop_continues_without_shutdown_marker() -> TestResult {
     assert_stderr_empty(&output, "spawned Stop")?;
     Ok(())
 }
+
+const BACKEND_STARTING: &str =
+    r#"{"status":"unavailable","backend":{"state":"starting","target":"127.0.0.1:60888"}}"#;
+
+/// Runs a spawned Claude seat's hook while the daemon is unreachable: the
+/// supervisor answers the typed 503 for a backend gap, or nothing listens.
+/// `marker` is the planned-shutdown intent on disk and its age in seconds.
+/// Returns the output and the number of envelopes left for replay.
+fn run_spawned_claude_gap(
+    hook: &str,
+    marker: Option<(&str, f64)>,
+    supervisor_up: bool,
+) -> Result<(Output, usize), Box<dyn std::error::Error>> {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    if let Some((intent, age)) = marker {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64() - age;
+        fs::write(
+            gobby_home.path().join("shutdown_intent_active.json"),
+            format!(r#"{{"source":"cli_restart","intent":"{intent}","timestamp":{timestamp}}}"#),
+        )?;
+    }
+    let (url, server) = if supervisor_up {
+        let (url, server) = start_daemon(http_json_status(
+            503,
+            "Service Unavailable",
+            BACKEND_STARTING,
+        ))?;
+        (url, Some(server))
+    } else {
+        (closed_local_url()?, None)
+    };
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("claude"),
+        Some(hook),
+        &url,
+        VALID_STDIN,
+        &[
+            ("GOBBY_IS_SPAWNED_AGENT", "1"),
+            ("GOBBY_PROJECT_ID", "test-project"),
+        ],
+    )?;
+    if let Some(server) = server {
+        join_daemon(server)?;
+    }
+    Ok((output, inbox_envelopes(gobby_home.path())?.len()))
+}
+
+fn assert_daemon_down(output: Output, context: &str) -> TestResult {
+    assert_eq!(output.status.code(), Some(2), "{context}");
+    assert!(output.stdout.is_empty(), "{context}");
+    assert_eq!(
+        String::from_utf8(output.stderr)?.trim(),
+        MESSAGE,
+        "{context}"
+    );
+    Ok(())
+}
+
+#[test]
+fn spawned_restart_gap_continues_post_tool_batch_and_pauses_pre_tool_use() -> TestResult {
+    for supervisor_up in [true, false] {
+        let context = format!("restart gap, supervisor_up={supervisor_up}");
+        let (batch, queued) =
+            run_spawned_claude_gap("post-tool-batch", Some(("restart", 1.0)), supervisor_up)?;
+        assert_eq!(batch.status.code(), Some(0), "{context}");
+        assert_json_stdout(&batch, serde_json::json!({"continue": true}))?;
+        assert_stderr_empty(&batch, &context)?;
+        assert_eq!(queued, 1, "{context}: batch envelope kept for replay");
+
+        let (pre_tool, _) =
+            run_spawned_claude_gap("pre-tool-use", Some(("restart", 1.0)), supervisor_up)?;
+        assert_daemon_down(pre_tool, &context)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn spawned_outage_without_fresh_restart_keeps_post_tool_batch_paused() -> TestResult {
+    let markers = [
+        None,
+        Some(("restart", 600.0)),
+        Some(("stop", 1.0)),
+        Some(("maintenance", 1.0)),
+    ];
+    for marker in markers {
+        for supervisor_up in [true, false] {
+            let context = format!("marker={marker:?}, supervisor_up={supervisor_up}");
+            let (batch, queued) = run_spawned_claude_gap("post-tool-batch", marker, supervisor_up)?;
+            assert_eq!(queued, 1, "{context}");
+            assert_daemon_down(batch, &context)?;
+        }
+    }
+    Ok(())
+}

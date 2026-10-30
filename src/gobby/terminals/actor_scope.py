@@ -4,10 +4,11 @@ An actor is ``operator`` or ``session:<id>``. The operator is in scope
 everywhere. A session actor reaches a target in its own project, the session
 itself, or a session in its agent tree. An autonomous agent-run session is
 refused unless the caller opts in with ``allow_autonomous``: ``send_keys`` and
-``capture_output`` opt in, because the ``no-send-keys`` rule is what withholds
-them from agents, while every workspace op that kills, spawns into, adopts, or
-writes a terminal still refuses it, except a team manager's own team seat, which
-placement admits through ``allow_autonomous`` (see ``AgentPaneReserver.preflight``).
+``capture_output`` opt in, because the ``no-send-keys`` rule decides ``send_keys``
+by capability and target scope decides both, while every workspace op that kills,
+spawns into, adopts, or writes a terminal still refuses it, except a team
+manager's own team seat, which placement admits through ``allow_autonomous`` (see
+``AgentPaneReserver.preflight``).
 """
 
 from __future__ import annotations

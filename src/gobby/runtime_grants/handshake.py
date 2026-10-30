@@ -151,7 +151,13 @@ class HandshakeService:
         *,
         machine_id: str,
         project_id: str,
+        renewal: bool = False,
     ) -> GrantBundle:
+        """Issue a grant for verified capability claims.
+
+        A ``renewal`` replaces an expired capability, so its expiry must not bound
+        the new grant; the live binding is the authority that admits it.
+        """
         if claims is None:
             raise HandshakeRejection("capability token is required", code="claims_mismatch")
         if claims.machine_id != machine_id or claims.project_id != project_id:
@@ -169,7 +175,7 @@ class HandshakeService:
             execution_id=claims.agent_run_id or claims.managed_execution_id,
             session_id=None if kind == "maintenance" else claims.session_id,
         )
-        return self._issue(principal, token_exp=claims.exp)
+        return self._issue(principal, token_exp=None if renewal else claims.exp)
 
     def issue_for_maintenance(
         self,

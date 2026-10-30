@@ -20,6 +20,74 @@ use tokio::sync::mpsc::unbounded_channel;
 
 const WINDOW: ContextMenuKind = ContextMenuKind::MenuBar(MenuBarMenu::Window);
 
+#[tokio::test]
+async fn move_to_tab_menu_filters_destinations_and_moves_the_clicked_pane() {
+    let (mock, mut workspace, mut chrome, _home) = two_tabs().await;
+    mock.apply_workspace_op(json!({
+        "op": "tab.create", "workspace": "default", "project_id": "foreign-project",
+        "title": "Foreign project", "terminal_id": "foreign-terminal",
+    }));
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("refresh tabs");
+    sync_live_chrome(&mut workspace, &mut chrome);
+    assert_eq!(
+        chrome.tabs().tabs.len(),
+        2,
+        "the current project's two tabs"
+    );
+    chrome.activate_tab(0);
+    let source = workspace.pane_for_terminal("b2").expect("clicked pane");
+    let target_tab = mock.tab_for_terminal("a1").expect("destination");
+    let kind = ContextMenuKind::Pane(source);
+    let menu = build_menu(&workspace, &chrome, kind.clone(), (10, 3));
+    let opener = menu
+        .items
+        .iter()
+        .find(|item| item.label == "Move to tab ▸")
+        .expect("pane menu offers Move to tab")
+        .clone();
+    assert!(opener.enabled);
+    chrome.menu = Some(menu);
+    apply_live_menu_action(
+        &mut workspace,
+        &mut chrome,
+        &unbounded_channel().0,
+        kind,
+        opener.action,
+    )
+    .await
+    .expect("open move submenu");
+    let submenu = chrome.menu.as_ref().expect("move submenu");
+    let choices: Vec<_> = submenu.items.iter().filter(|item| item.enabled).collect();
+    assert_eq!(
+        choices.len(),
+        1,
+        "exclude own tab and the foreign project's tab"
+    );
+    let action = choices[0].action.clone();
+    let submenu_kind = submenu.kind.clone();
+    // Changing focus after opening must not turn a right-click on b2 into a move of a1.
+    chrome.activate_tab(0);
+    apply_live_menu_action(
+        &mut workspace,
+        &mut chrome,
+        &unbounded_channel().0,
+        submenu_kind,
+        action,
+    )
+    .await
+    .expect("move selected pane");
+    let moves: Vec<_> = mock
+        .workspace_requests()
+        .into_iter()
+        .filter(|op| op["op"] == "pane.move")
+        .collect();
+    assert_eq!(moves.len(), 1);
+    assert_eq!(moves[0]["tab"], target_tab);
+}
+
 /// The target of the enabled Arrange ▸ row in the menu `kind` opens.
 fn arrange_target<W: WorkspaceView>(
     ws: &W,

@@ -1641,8 +1641,11 @@ class TestUpdateDefinitionNestedFields:
             "idle_ttl_seconds",
             "network",
             "operator_messaging",
+            "persistent_workspace",
+            "read_all_agent_workspaces",
             "send_message_targets",
             "spawnable_agents",
+            "task_step_writes",
         }
     )
     # Row columns the requests carry that the body does not store.
@@ -1676,6 +1679,9 @@ class TestUpdateDefinitionNestedFields:
             ("idle_ttl_seconds", 900),
             ("operator_messaging", True),
             ("communications_admin", True),
+            ("persistent_workspace", True),
+            ("read_all_agent_workspaces", True),
+            ("task_step_writes", ["implementation"]),
         ],
     )
     @pytest.mark.parametrize("method", ["post", "put"])

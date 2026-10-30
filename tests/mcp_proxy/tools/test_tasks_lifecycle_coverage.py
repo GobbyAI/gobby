@@ -147,6 +147,7 @@ def close_case(tmp_path: Path, mock_task_manager: MagicMock) -> Iterator[CloseCa
     sessions = _checkout_session_manager()
     variables = MagicMock()
     variables.get_variables.return_value = {}
+    variables.get_variable_subset.return_value = {}
     session_tasks = MagicMock()
     projects = MagicMock()
     projects.get.return_value = MagicMock()
@@ -169,7 +170,7 @@ def close_case(tmp_path: Path, mock_task_manager: MagicMock) -> Iterator[CloseCa
             new=AsyncMock(return_value=SimpleNamespace(repo_path=None)),
         ),
         patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.main_checkout_target",
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.task_landing_target",
             new=AsyncMock(return_value=(repo, "main")),
         ),
         patch(

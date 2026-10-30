@@ -184,7 +184,7 @@ class _CloseTaskGitIsolation:
             ),
             patch.object(
                 lifecycle_close,
-                "main_checkout_target",
+                "task_landing_target",
                 return_value=(Path(TEST_REPO_PATH), "0.5.0"),
             ),
             patch.object(
@@ -201,6 +201,7 @@ class _CloseTaskGitIsolation:
             ),
         ):
             variables.return_value.get_variables.return_value = {}
+            variables.return_value.get_variable_subset.return_value = {}
             yield
 
 

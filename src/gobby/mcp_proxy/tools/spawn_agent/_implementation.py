@@ -29,6 +29,7 @@ from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.agents.worktree_reuse import ReusedWorktreeSyncConflict
+from gobby.app_context import get_app_context
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
 from gobby.providers.version_gate import (
     AGY_REVALIDATING_REASON,
@@ -94,6 +95,22 @@ logger = logging.getLogger(__name__)
 _spawn_background_tasks: dict[str, asyncio.Task[None]] = {}
 
 
+def _native_front_door_refusal() -> dict[str, Any] | None:
+    """Refuse a spawn while the native front door has no bound generation.
+
+    An unbound publisher drops lifecycle publishes without error, and raising from one
+    fences the lifecycle registry for good, so admission refuses before any run exists.
+    """
+    server = getattr(get_app_context(), "websocket_server", None)
+    publisher = getattr(server, "native_publisher", None)
+    if publisher is None or publisher.generation is not None:
+        return None
+    return {
+        "success": False,
+        "error": "native WS front door unbound; spawn refused until the publisher rebinds",
+    }
+
+
 async def spawn_agent_impl(
     prompt: str,
     runner: AgentRunner,
@@ -144,6 +161,9 @@ async def spawn_agent_impl(
     project_path_explicit: bool = True,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
+    refusal = _native_front_door_refusal()
+    if refusal is not None:
+        return refusal
     spawn_started_at = start_spawn_phase()
     phase_timings_ms: dict[str, float] = {}
     resume_target = None
@@ -212,7 +232,7 @@ async def spawn_agent_impl(
 
     gate_result = await asyncio.to_thread(
         validate_plan_for_agent_spawn,
-        agent_lookup_name,
+        agent_body,
         task_id,
         task_manager,
         code_index=code_index,
@@ -410,6 +430,7 @@ async def spawn_agent_impl(
         seat_title=definition_display_name(agent_body.name) if agent_body is not None else None,
         resume_session_id=resume_session_id,
         replaces_tab=replaces_tab,
+        spawn_timeout=effective_timeout,
     )
     if isinstance(placed, dict):
         return placed

@@ -123,6 +123,44 @@ def test_background_poll_uses_persisted_original_start_and_releases_fence(
     assert recreated.started_at(after) == before.timestamp.timestamp()
 
 
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_mcp_session_identity_does_not_create_a_background_command(
+    temp_db: HubDatabase, canonical_task_session: Session, wrapped: bool
+) -> None:
+    variables = SessionVariableManager(temp_db)
+    binding = TaskToolBindings(variables, canonical_task_session.id)
+    before = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        source=SessionSource.CODEX,
+        session_id=canonical_task_session.external_id,
+        timestamp=datetime.now(UTC),
+        request_id="read-variable",
+        data={
+            "tool_name": "functions.exec" if wrapped else "mcp__gobby__get_variable",
+            "arguments": (
+                'text(await tools.mcp__gobby__get_variable({session_id: "#42"}))'
+                if wrapped
+                else {"session_id": "#42"}
+            ),
+        },
+    )
+    binding.start(before)
+    binding.complete(
+        replace(
+            before,
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                **before.data,
+                "tool_output": {"session_id": canonical_task_session.id, "success": True},
+            },
+        )
+    )
+
+    persisted = variables.get_variables(canonical_task_session.id)["task_tool_bindings"]
+    assert persisted["codex:read-variable"]["pending"] is False
+    assert persisted["codex:read-variable"]["aliases"] == []
+
+
 def test_completed_call_replay_retains_its_start_after_focus_changes(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

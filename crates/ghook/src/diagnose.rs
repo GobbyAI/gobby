@@ -6,7 +6,7 @@
 //! configuration without spamming the inbox.
 
 use crate::{cli_config::CliConfig, diagnostics};
-use gobby_core::{bootstrap, daemon_url, local_token::read_api_key_at, project};
+use gobby_core::{daemon_url, local_token::read_api_key_at, project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -80,9 +80,7 @@ pub fn diagnose(cli: &str, hook_type: &str) -> anyhow::Result<DiagnoseOutput> {
     let cli_recognized = cfg.is_some();
 
     let url = daemon_url::daemon_url()?;
-    // An environment override can bypass an invalid bootstrap URL. These
-    // fields describe bootstrap metadata only; `url` is the checked dial target.
-    let endpoint = bootstrap::read_daemon_endpoint().unwrap_or_default();
+    let (daemon_host, daemon_port) = diagnostics::daemon_host_port(&url);
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let project_root = project::find_project_root(&cwd);
@@ -121,8 +119,8 @@ pub fn diagnose(cli: &str, hook_type: &str) -> anyhow::Result<DiagnoseOutput> {
         critical,
         terminal_context_enabled,
         daemon_url: url,
-        daemon_host: endpoint.host,
-        daemon_port: endpoint.port,
+        daemon_host,
+        daemon_port,
         project_root,
         project_id,
         terminal_context_preview,
@@ -141,6 +139,24 @@ pub fn diagnose(cli: &str, hook_type: &str) -> anyhow::Result<DiagnoseOutput> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn diagnose_reports_supplied_endpoint_without_owner_metadata() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("bootstrap.yaml"), "daemon_url: 123\n").unwrap();
+        temp_env::with_vars(
+            [
+                ("GOBBY_HOME", Some(home.path().to_str().unwrap())),
+                ("GOBBY_DAEMON_URL", Some("http://127.0.0.1:31579")),
+            ],
+            || {
+                let result = diagnose("unsupported", "session-start").unwrap();
+                assert_eq!(result.daemon_url, "http://127.0.0.1:31579");
+                assert_eq!(result.daemon_host, "127.0.0.1");
+                assert_eq!(result.daemon_port, 31579);
+            },
+        );
+    }
 
     #[test]
     fn unknown_cli_marked_not_recognized() {

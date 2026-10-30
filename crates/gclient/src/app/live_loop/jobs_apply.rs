@@ -116,6 +116,50 @@ pub(super) fn apply_job_outcome(
             elapsed,
             result,
         } => apply_open(workspace, generation, &terminal_id, elapsed, result),
+        JobResult::Roster {
+            project,
+            elapsed,
+            result,
+        } => match result {
+            Ok(relist) => {
+                if workspace.apply_relist(relist) {
+                    workspace.roster_landed = true;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    operation = "roster",
+                    project = %project,
+                    generation = generation.0,
+                    error_class = %error.code(),
+                    elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                    %error,
+                    "roster refresh failed; retrying with the focused relist"
+                );
+                workspace.request_relist();
+            }
+        },
+        JobResult::Attention { elapsed, result } => match result {
+            Ok(roster) => {
+                // A snapshot older than an attention event already applied is
+                // asked for again, rather than undoing that event.
+                if !workspace.install_attention_guarded(roster) {
+                    workspace.pending_refetch.attention = true;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    operation = "attention roster",
+                    generation = generation.0,
+                    error_class = %error.code(),
+                    elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                    %error,
+                    "attention refresh failed"
+                );
+                // The sidebar's own refetch reports the failure and its banner.
+                workspace.pending_sidebar.roster = true;
+            }
+        },
     }
     jobs.start(workspace, chrome, follow_up);
 }

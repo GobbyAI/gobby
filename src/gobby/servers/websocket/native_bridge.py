@@ -11,6 +11,7 @@ from urllib.parse import unquote
 from uuid import uuid4
 
 from starlette.websockets import WebSocket
+from websockets.exceptions import ConnectionClosed
 
 from gobby.config.bootstrap import is_loopback_host
 from gobby.servers.routes._database import require_hub_database
@@ -213,15 +214,17 @@ def mount_native_bridge(app: FastAPI, server: HTTPServer) -> None:
         )
         await adapter.accept()
         refusal, decision = await _admit(websocket_server, server, adapter, context)
-        if refusal is not None:
-            await adapter.send(_ready(context.generation, admitted=False, **refusal))
-            await adapter.close()
-            return
-        if not publisher.register_leg(context.generation, adapter):
-            # The generation failed while admission ran.
-            await adapter.close(code=1008)
-            return
+        registered = False
         try:
+            if refusal is not None:
+                await adapter.send(_ready(context.generation, admitted=False, **refusal))
+                await adapter.close()
+                return
+            registered = publisher.register_leg(context.generation, adapter)
+            if not registered:
+                # The generation failed while admission ran.
+                await adapter.close(code=1008)
+                return
             await adapter.send(
                 _ready(
                     context.generation,
@@ -231,10 +234,13 @@ def mount_native_bridge(app: FastAPI, server: HTTPServer) -> None:
             )
             database = None if decision is None else require_hub_database(server.services.database)
             await websocket_server.handle_connection(adapter, decision, database=database)
+        except ConnectionClosed:
+            logger.debug("Native WS bridge disconnected: code=%s", adapter.close_code)
         except Exception:
             logger.exception("Native WS bridge handler failed")
         finally:
-            publisher.unregister_leg(context.generation, adapter)
+            if registered:
+                publisher.unregister_leg(context.generation, adapter)
         if not adapter.closed and not adapter.disconnected:
             await adapter.close(code=1011, reason="WebSocket handler exited unexpectedly")
 

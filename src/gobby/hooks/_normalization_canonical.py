@@ -7,7 +7,12 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from gobby.hooks._normalization_base_commands import classify_base_command
+from gobby.hooks._normalization_base_commands import (
+    classify_base_command,
+    execution_context_is_read_only,
+    unresolved_execution_metadata,
+    unwrap_execution_command,
+)
 from gobby.hooks._normalization_bindings import (
     _literal_assignment_bindings,
     _literal_assignment_values,
@@ -43,6 +48,7 @@ from gobby.hooks._normalization_metadata import (
     _unknown_write_metadata,
     _without_code_index_navigation,
 )
+from gobby.hooks._normalization_operands import rg_preprocessor
 from gobby.hooks._normalization_paths import (
     CANONICAL_WRITE_TOOL_NAMES as CANONICAL_WRITE_TOOL_NAMES,
 )
@@ -374,8 +380,14 @@ def _classify_shell_command(
                 depth=depth,
                 base_cwd=None if directory.changed else base_cwd,
             )
-            if body_metadata.repo_mutation or (body_metadata.extra or {}).get(
-                "canonical_script_execution"
+            if not body_metadata.proven_read_only or any(
+                (body_metadata.extra or {}).get(flag)
+                for flag in (
+                    "canonical_script_execution",
+                    "canonical_git_mutation",
+                    "canonical_formatter_mutation",
+                    "canonical_unresolved_execution",
+                )
             ):
                 metadata.append(body_metadata)
         if parts[:1] != ["for"] and not preserves_directory(parts):
@@ -423,14 +435,28 @@ def _classify_shell_command(
                 directory.list_conditional |= (
                     segment.separator_before == "&&" or directory.in_conditional
                 )
-            metadata.append(
-                _ShellSegmentMetadata(
-                    "execute",
-                    neutral_setup=True,
-                    shell_words=tuple(raw_parts),
-                    shell_raw_words=source_parts,
+            if has_mutating_output_redirection(segment.tokens):
+                # The redirect runs in the invocation directory, before cd changes it.
+                metadata.append(
+                    _classify_shell_segment(
+                        segment.tokens,
+                        parts,
+                        segment_cwd,
+                        depth=depth,
+                        base_cwd=segment_base,
+                        invocation_cwd=segment_cwd,
+                        raw_by_token=raw_by_token,
+                    )
                 )
-            )
+            else:
+                metadata.append(
+                    _ShellSegmentMetadata(
+                        "execute",
+                        neutral_setup=True,
+                        shell_words=tuple(raw_parts),
+                        shell_raw_words=source_parts,
+                    )
+                )
             continue
 
         pipeline_filter = segment.separator_before == "|" and _is_read_only_pipeline_stage(
@@ -517,6 +543,12 @@ def _classify_shell_command(
         directory.apply_opaque_change(parts)
 
     metadata = _classify_stdin_python(metadata, heredoc_bodies)
+    metadata = [
+        item
+        if execution_context_is_read_only(list(item.shell_words))
+        else replace(item, read_only=False)
+        for item in metadata
+    ]
     result = _merge_shell_segment_metadata(_gate_rewritable_scripts(metadata))
     if compound_directory_change and result.get("canonical_repo_mutation"):
         # Without whole-stage ownership, neither inner nor followup cwd is proven.
@@ -547,7 +579,15 @@ def _classify_shell_segment(
         search_base_cwd=search_base_cwd,
         raw_by_token=raw_by_token,
     )
-    return replace(metadata, extra=redirect_source_read_metadata(metadata.extra, tokens))
+    extra = redirect_source_read_metadata(metadata.extra, tokens)
+    if extra and (paths := extra.get("canonical_tree_write_paths")):
+        effective_cwd = invocation_cwd or cwd or str(search_base_cwd or base_cwd or "")
+        if effective_cwd:
+            contexts = dict(extra.get("canonical_tree_write_cwds", {}))
+            for path in paths:
+                contexts.setdefault(path, [effective_cwd])
+            extra["canonical_tree_write_cwds"] = contexts
+    return replace(metadata, extra=extra)
 
 
 def _classify_shell_segment_impl(
@@ -607,6 +647,12 @@ def _classify_shell_segment_impl(
     stdin_parts = git_environment_parts(shell_token_values(tokens), stdin_parts)
     if stdin_parts and shell_command_name(stdin_parts[0]) == "rg" and input_paths == ["/dev/null"]:
         shell_stdin, cwd = False, cwd or str(search_base_cwd or base_cwd or ".")
+    name = shell_command_name(stdin_parts[0]) if stdin_parts else ""
+    if cwd is None and (
+        name in {"sudo", "xargs"} or (name == "rg" and rg_preprocessor(stdin_parts) is not None)
+    ):
+        # Script-inspection proof may be lost while the invocation cwd is unchanged.
+        cwd = str(search_base_cwd) if search_base_cwd else None
 
     operand_tokens = strip_input_redirections(plain_tokens)
     raw_parts = None
@@ -673,6 +719,8 @@ def _classify_shell_segment_impl(
             extra["canonical_script_execution"] = True
         base_paths = list(base_metadata.paths)
         base_write_paths = list(base_metadata.write_paths)
+        if extra.get("_canonical_patch_input_paths"):
+            extra["_canonical_repo_mutation_scope_unknown"] = True
         return _ShellSegmentMetadata(
             "write",
             paths=tuple(
@@ -719,6 +767,7 @@ def _classify_shell_segment_impl(
             neutral_setup=base_metadata.neutral_setup,
             pure_gcode_navigation=base_metadata.pure_gcode_navigation,
             read_only_pipeline_filter=base_metadata.read_only_pipeline_filter,
+            read_only=base_metadata.proven_read_only,
         )
 
     if has_shell_input_redirection(tokens):
@@ -779,6 +828,27 @@ def _classify_shell_segment_without_redirection(
     if not parts:
         return _ShellSegmentMetadata("execute")
 
+    runner = unwrap_execution_command(
+        parts, cwd or (str(base_cwd) if base_cwd is not None else None)
+    )
+    executed, execution_cwd = runner.parts, runner.cwd
+    if executed is None:
+        return unresolved_execution_metadata(_ShellSegmentMetadata("execute"), execution_cwd)
+    if executed != parts:
+        execution_raw = raw_parts[-len(executed) :] if raw_parts and executed else tuple(executed)
+        execution_cwd = ShellDirectoryState(cwd=execution_cwd).invocation_cwd(
+            executed, execution_raw, base_cwd
+        )
+        executed = git_environment_parts(executed, _strip_shell_wrappers(executed))
+        return _classify_shell_segment_without_redirection(
+            executed,
+            execution_cwd,
+            depth=depth,
+            shell_stdin=shell_stdin,
+            base_cwd=Path(execution_cwd) if execution_cwd else base_cwd,
+            raw_parts=execution_raw[-len(executed) :] if executed else None,
+        )
+
     cmd = shell_command_name(parts[0])
 
     if parts[0] == UNRESOLVED_WRAPPER:
@@ -786,7 +856,35 @@ def _classify_shell_segment_without_redirection(
             "write", repo_mutation=True, extra={"_canonical_repo_mutation_scope_unknown": True}
         )
 
-    unwrapped = _unwrap(parts)
+    wrapper_effects: list[tuple[str, str]] = []
+    unwrapped = _unwrap(parts, effects=wrapper_effects)
+    if (
+        cmd in {"sudo", "xargs"}
+        and parts[1:] not in (["--help"], ["--version"])
+        and not (cmd == "xargs" and parts[1:2] == ["cat"])
+        and depth < SHELL_WRAPPER_DEPTH
+    ):
+        wrapper_outputs: list[str] = []
+        for effect, value in wrapper_effects:
+            if effect == "cwd":
+                execution_cwd = _rebase_shell_paths([value], execution_cwd)[0]
+            elif effect == "output":
+                wrapper_outputs.extend(_rebase_shell_paths([value], execution_cwd))
+        inner = _classify_shell_segment_without_redirection(
+            unwrapped,
+            execution_cwd,
+            depth=depth + 1,
+            shell_stdin=shell_stdin,
+            base_cwd=Path(execution_cwd)
+            if execution_cwd and any(effect == "cwd" for effect, _ in wrapper_effects)
+            else base_cwd,
+        )
+        return unresolved_execution_metadata(
+            inner,
+            execution_cwd,
+            outputs=wrapper_outputs,
+            stdin_arguments=any(effect == "stdin" for effect, _ in wrapper_effects),
+        )
     if unwrapped and is_dynamic_program_word(unwrapped[0]):
         return _ShellSegmentMetadata(
             "execute", confidence="low", extra={"canonical_script_execution": True}
@@ -796,7 +894,7 @@ def _classify_shell_segment_without_redirection(
     if execution is not None and execution.parse_only:
         # A syntax check reads its script and runs none of it.
         if execution.script_word is None:
-            return _ShellSegmentMetadata("execute")
+            return _ShellSegmentMetadata("execute", read_only=True)
         return _ShellSegmentMetadata(
             "read", paths=tuple(_rebase_shell_paths([execution.script_word], cwd))
         )
@@ -862,6 +960,7 @@ def _classify_shell_segment_without_redirection(
             }
             return _ShellSegmentMetadata(
                 nested.get("canonical_tool_kind", "execute"),
+                read_only=nested.get("canonical_read_only") is True,
                 paths=tuple(nested.get("canonical_file_paths", ())),
                 write_paths=tuple(nested.get("canonical_write_file_paths", ())),
                 repo_mutation=bool(nested.get("canonical_repo_mutation")),
@@ -870,6 +969,23 @@ def _classify_shell_segment_without_redirection(
             )
         return _ShellSegmentMetadata("execute")
 
+    preprocessor = rg_preprocessor(parts) if cmd == "rg" else None
+    preprocessor_read_only = (
+        _classify_shell_segment_without_redirection(
+            [preprocessor, "$UNRESOLVED"],
+            execution_cwd,
+            depth=depth + 1,
+            shell_stdin=True,
+            base_cwd=base_cwd,
+        ).proven_read_only
+        if preprocessor is not None and depth < SHELL_WRAPPER_DEPTH
+        else False
+    )
     return classify_base_command(
-        parts, cwd, shell_stdin=shell_stdin, base_cwd=base_cwd, raw_parts=raw_parts
+        parts,
+        cwd,
+        shell_stdin=shell_stdin,
+        base_cwd=base_cwd,
+        raw_parts=raw_parts,
+        preprocessor_read_only=preprocessor_read_only,
     )

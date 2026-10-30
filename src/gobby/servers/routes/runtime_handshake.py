@@ -9,9 +9,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from gobby.agents.resume_finalization import notify_parent_of_recovery
 from gobby.runtime_grants.handshake import HandshakeRejection, challenge_proof
 from gobby.runtime_grants.service import GrantRejection
 from gobby.servers.responses import JSONResponse
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.utils.local_token import AgentApiTokenClaims
 
 logger = logging.getLogger(__name__)
@@ -94,6 +96,37 @@ def _challenge_claims(body: ChallengeRequest) -> AgentApiTokenClaims | None:
     )
 
 
+def _report_capability_expiry(server: Any, claims: AgentApiTokenClaims) -> None:
+    """Tell the seat's parent that its expired capability could not be renewed.
+
+    Written daemon-side, so the blocker reaches the parent after the seat's own
+    token has expired. Best effort: a failed write must not change the rejection
+    the seat receives.
+    """
+    run_id = claims.agent_run_id
+    if run_id is None:
+        return
+    try:
+        database = server.services.database
+        run = LocalAgentRunManager(database).get(run_id)
+        if run is None or not run.parent_session_id:
+            return
+        notify_parent_of_recovery(
+            database,
+            child_session_id=claims.session_id,
+            parent_session_id=run.parent_session_id,
+            content=(
+                f"Managed capability for run {run_id} expired at {claims.exp} and could not "
+                "be renewed; this seat cannot refresh its Gobby access."
+            ),
+            run_id=run_id,
+            event="capability_expired",
+            dedupe_key=str(claims.exp),
+        )
+    except Exception:
+        logger.exception("Failed to report capability expiry for run %s", run_id)
+
+
 def grant_error_response(error: GrantRejection | HandshakeRejection) -> JSONResponse:
     status = 403
     if error.code == "stale_epoch":
@@ -146,7 +179,10 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
 
     @router.post("/handshake")
     def handshake(request: Request, body: HandshakeRequest) -> JSONResponse:
-        if not server.auth_service.is_request_authenticated(request):
+        # An expired seat capability renews only while its run is live; everything
+        # else still goes through the normal gate, which refuses it.
+        renewal = server.auth_service.expired_renewal_claims(request)
+        if renewal is None and not server.auth_service.is_request_authenticated(request):
             raise HTTPException(status_code=401, detail="Authentication required")
         factory = getattr(server, "handshake_factory", None)
         service = factory() if callable(factory) else getattr(server, "handshake_service", None)
@@ -156,7 +192,9 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
         execution_id = None
         session_id = body.session_id
         try:
-            claims = server.auth_service.verified_agent_claims(request)
+            claims = renewal
+            if claims is None:
+                claims = server.auth_service.verified_agent_claims(request)
             if claims is not None:
                 principal_kind = claims.kind or (
                     "agent_run" if claims.agent_run_id is not None else "tool_chat"
@@ -167,6 +205,7 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
                     claims,
                     machine_id=body.machine_id,
                     project_id=body.project_id,
+                    renewal=renewal is not None,
                 )
             else:
                 identity = server.auth_service.verified_front_door_identity(request)
@@ -192,6 +231,8 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
                     "project_id": body.project_id,
                 },
             )
+            if renewal is not None and error.code == "credential_issuance_failed":
+                _report_capability_expiry(server, renewal)
             return grant_error_response(error)
         return JSONResponse(
             content={

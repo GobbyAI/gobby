@@ -345,6 +345,27 @@ async def test_literal_command_slots_and_brace_arguments_stay_allowed(
 
 # A leading environment assignment is still a literal python heredoc: its body is data.
 ENV_PREFIXED_HEREDOC_ALLOWED = (
+    """UV_PROJECT_ENVIRONMENT=/Users/josh/Projects/gobby/.venv uv run --no-sync python - <<'PY'
+import json
+import subprocess
+from pathlib import Path
+old = json.loads(subprocess.check_output([
+    "git", "show", "4fc7e189:crates/gdaemon/tests/fixtures/node_srt/corpus.json"
+]))
+new = json.loads(Path("crates/gdaemon/tests/fixtures/node_srt/corpus.json").read_text())
+a = {c["name"]: c for c in old["cases"]}
+b = {c["name"]: c for c in new["cases"]}
+print(a == b)
+PY""",
+    """UV_PROJECT_ENVIRONMENT=/repo/gobby/.venv uv run python - <<'PY'
+print({case["name"]: case for case in cases})
+PY""",
+    """uv run --no-sync python - <<'PY'
+print({case["name"]: case for case in cases})
+PY""",
+    """PYTHONUTF8=1 UV_PROJECT_ENVIRONMENT=.venv PYTHONUNBUFFERED=1 uv run --no-sync python3 - <<'PY'
+print({case["name"]: case for case in cases})
+PY""",
     """PYTHONDONTWRITEBYTECODE=1 uv run python - <<'PY'
 queries = [{"op": "grep", "pattern": "gobby sessions"}]
 print(queries)
@@ -360,6 +381,29 @@ print(queries)
 PY""",
 )
 ENV_PREFIXED_HEREDOC_REFUSED = (
+    """UV_PROJECT_ENVIRONMENT=.venv python - <<'PY'
+gobby {tasks,sessions} list
+PY""",
+    """UV_PROJECT_ENVIRONMENT=/repo/gobby/.venv uv run --no-sync python - <<'PY'
+print(1)
+PY
+uv run gobby sessions {approve,list}-dirty-paths s7""",
+    """UV_PROJECT_ENVIRONMENT=/repo/gobby/.venv uv run --no-sync python - <<'PY'
+print(1)
+PY
+gobby sessions $(printf approve-dirty-paths) s7""",
+    """UV_PROJECT_ENVIRONMENT=/repo/gobby/.venv uv run --no-sync gobby sessions {approve,list}-dirty-paths s7 <<'PY'
+print(1)
+PY""",
+    """UV_PROJECT_ENVIRONMENT=$(gobby sessions {approve,list}-dirty-paths s7) uv run --no-sync python - <<'PY'
+print(1)
+PY""",
+    """UV_PROJECT_ENVIRONMENT=/repo/gobby/.venv PATH=/opt/shim uv run --no-sync python - <<'PY'
+gobby {tasks,sessions} list
+PY""",
+    """UV_PROJECT_ENVIRONMENT=/repo/gobby/.venv uv run --no-sync python - <<PY
+$(gobby sessions {approve,list}-dirty-paths s7)
+PY""",
     """PYTHONDONTWRITEBYTECODE=1 uv run python - <<'PY'
 print(1)
 PY
@@ -368,7 +412,7 @@ gobby sessions {approve,list}-dirty-paths s7""",
 print(1)
 PY
 gobby {tasks,sessions} list""",
-    # Only interpreter flags are data-safe; another prefix can redirect the launch.
+    # PATH can replace the launcher and stays outside the literal-prefix allowlist.
     """PATH=/opt/shim uv run python - <<'PY'
 gobby {tasks,sessions} list
 PY""",

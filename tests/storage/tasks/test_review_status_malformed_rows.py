@@ -26,6 +26,7 @@ _REVIEW_ROW: dict[str, Any] = {
     "commit_sha": None,
     "sequence": 1,
     "agent_definition": "reviewer",
+    "supplemental_review": False,
     "session_id": "reviewer-session",
 }
 
@@ -50,6 +51,60 @@ def test_review_status_read_counts_a_malformed_review_row_as_no_review(
     )
 
     assert manager.get_task(task.id).review_status == "pending"
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        {},
+        {"supplemental_review": None},
+        {"supplemental_review": "false"},
+        {"supplemental_review": True},
+        {"supplemental_review": False},
+    ],
+    ids=["absent", "null", "string", "supplemental", "primary"],
+)
+@pytest.mark.parametrize("history", ["open", "closed", "older_primary"])
+def test_review_status_requires_explicit_primary_authority(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    snapshot: dict[str, object],
+    history: str,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"],
+        "Restored review authority",
+        validation_criteria="Only explicit primary authority projects an open task as valid.",
+    )
+    temp_db.execute(
+        "UPDATE tasks SET review_status = 'valid', closed_at = %s, closed_reason = %s WHERE id = %s",
+        (
+            datetime.now(UTC) if history == "closed" else None,
+            "done" if history == "closed" else None,
+            task.id,
+        ),
+    )
+    if history == "older_primary":
+        temp_db.execute(
+            "INSERT INTO task_comments (id, task_id, author, author_type, body) "
+            "VALUES (%s, %s, %s, 'task_step', %s)",
+            (str(uuid4()), task.id, "reviewer-session", json.dumps(_REVIEW_ROW)),
+        )
+    body = {key: value for key, value in _REVIEW_ROW.items() if key != "supplemental_review"}
+    body.update({"sequence": 2, **snapshot})
+    temp_db.execute(
+        "INSERT INTO task_comments (id, task_id, author, author_type, body) "
+        "VALUES (%s, %s, %s, 'task_step', %s)",
+        (str(uuid4()), task.id, "reviewer-session", json.dumps(body)),
+    )
+
+    expected = (
+        "pending"
+        if history == "open" and snapshot.get("supplemental_review") is not False
+        else "valid"
+    )
+    assert manager.get_task(task.id).review_status == expected
 
 
 @pytest.mark.parametrize("field", ["epoch", "round_number"])
@@ -93,6 +148,7 @@ def test_backed_up_step_history_refuses_a_non_integer_field(field: str, value: o
         agent_definition="reviewer",
         agent_definition_version="1",
         agent_definition_hash="hash-1",
+        supplemental_review=False,
         session_id=str(uuid4()),
         created_at=now,
         updated_at=now,
