@@ -695,6 +695,7 @@ def requires_task_for_any_touched_file(
     plan_mode: bool = False,
     event_data: Any = None,
     allow_plan_artifacts: bool = False,
+    allow_digest: bool = False,
 ) -> bool:
     """Return True when any touched file should be task-gated.
 
