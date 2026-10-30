@@ -153,7 +153,8 @@ class TestAgentDefinitionBodyModel:
         from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 31, f"Expected 31 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 32, f"Expected 32 fields, got {len(fields)}: {list(fields.keys())}"
+        assert "read_all_agent_workspaces" in fields
         assert "operator_messaging" in fields
         assert "communications_admin" in fields
         assert "idle_ttl_seconds" in fields
