@@ -13,7 +13,7 @@ use std::{
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixListener,
-    sync::broadcast,
+    sync::{Notify, broadcast},
     task::{JoinHandle, JoinSet},
 };
 
@@ -27,6 +27,9 @@ pub struct FakeGterm {
     drop_next_list: Arc<AtomicBool>,
     reject_next_commit: Arc<AtomicBool>,
     events: broadcast::Sender<Value>,
+    exit_before_commit: Arc<AtomicBool>,
+    disconnect_after_exit: Arc<AtomicBool>,
+    resume_commit: Arc<Notify>,
 }
 
 impl FakeGterm {
@@ -65,6 +68,9 @@ impl FakeGterm {
         let drop_next_list = Arc::new(AtomicBool::new(false));
         let reject_next_commit = Arc::new(AtomicBool::new(false));
         let (events, _) = broadcast::channel(16);
+        let exit_before_commit = Arc::new(AtomicBool::new(false));
+        let disconnect_after_exit = Arc::new(AtomicBool::new(false));
+        let resume_commit = Arc::new(Notify::new());
         let script = Arc::new(Mutex::new(HostScript {
             inventory,
             pending: BTreeMap::new(),
@@ -75,6 +81,9 @@ impl FakeGterm {
             let drop_next_list = drop_next_list.clone();
             let reject_next_commit = reject_next_commit.clone();
             let events = events.clone();
+            let exit_before_commit = exit_before_commit.clone();
+            let disconnect_after_exit = disconnect_after_exit.clone();
+            let resume_commit = resume_commit.clone();
             let pid = process.id();
             async move {
                 let mut connections = JoinSet::new();
@@ -85,7 +94,11 @@ impl FakeGterm {
                             let requests = requests.clone();
                             let drop_next_list = drop_next_list.clone();
                             let reject_next_commit = reject_next_commit.clone();
+                            let emit_events = events.clone();
                             let mut events = events.subscribe();
+                            let exit_before_commit = exit_before_commit.clone();
+                            let disconnect_after_exit = disconnect_after_exit.clone();
+                            let resume_commit = resume_commit.clone();
                             let script = script.clone();
                             connections.spawn(async move {
                                 let (reader, mut writer) = stream.into_split();
@@ -104,6 +117,9 @@ impl FakeGterm {
                                         event = events.recv(), if subscribed => {
                                             let Ok(event) = event else { return };
                                             if send(&mut writer, &event).await.is_err() { return }
+                                            if event["event"] == "terminal_exited"
+                                                && disconnect_after_exit.swap(false, Ordering::SeqCst)
+                                            { return }
                                             continue;
                                         }
                                     };
@@ -124,6 +140,33 @@ impl FakeGterm {
                                         subscribed |= method == "subscribe_events";
                                         script.lock().expect("fixture inventory").reply(&request, pid)
                                     };
+                                    // Keep the event cursor contiguous with this fixture's
+                                    // spawn/commit sequence increments before emitting the exit.
+                                    if matches!(method, "spawn" | "spawn_commit")
+                                        && exit_before_commit.load(Ordering::SeqCst)
+                                    {
+                                        let _ = emit_events.send(json!({"event":"input_activity",
+                                            "epoch":EPOCH,"seq":reply["seq"],
+                                            "terminal_id":request["terminal_id"],
+                                            "host_terminal_id":format!("host-{}", request["terminal_id"].as_str().unwrap()),
+                                            "attachment_id":"fixture-input","kind":"input",
+                                            "bytes":1,"submit":false}));
+                                    }
+                                    if method == "spawn_commit" && reply["ok"] == true
+                                        && exit_before_commit.swap(false, Ordering::SeqCst)
+                                    {
+                                        let event = {
+                                            let mut script = script.lock().expect("fixture inventory");
+                                            script.inventory.retain(|item| item["terminal_id"] != request["terminal_id"]);
+                                            script.seq += 1;
+                                            json!({"event":"terminal_exited","epoch":EPOCH,"seq":script.seq,
+                                                "terminal_id":request["terminal_id"],
+                                                "host_terminal_id":format!("host-{}", request["terminal_id"].as_str().unwrap()),
+                                                "exit_code":7})
+                                        };
+                                        let _ = emit_events.send(event);
+                                        resume_commit.notified().await;
+                                    }
                                     reply["id"] = request["id"].clone();
                                     if send(&mut writer, &reply).await.is_err() { return }
                                 }
@@ -141,6 +184,9 @@ impl FakeGterm {
             drop_next_list,
             reject_next_commit,
             events,
+            exit_before_commit,
+            disconnect_after_exit,
+            resume_commit,
         })
     }
 
@@ -160,6 +206,16 @@ impl FakeGterm {
         self.events.send(json!({"event":"terminal_exited","epoch":EPOCH,"seq":1,
             "terminal_id":"fixture-terminal","host_terminal_id":"fixture-host-terminal","exit_code":0}))?;
         Ok(())
+    }
+
+    /// Hold the commit reply until the test observes the exit watcher's reconnect.
+    pub fn exit_before_next_commit_reply(&self) {
+        self.exit_before_commit.store(true, Ordering::SeqCst);
+        self.disconnect_after_exit.store(true, Ordering::SeqCst);
+    }
+
+    pub fn release_commit_reply(&self) {
+        self.resume_commit.notify_one();
     }
 
     pub fn alive(&mut self) -> Result<bool> {

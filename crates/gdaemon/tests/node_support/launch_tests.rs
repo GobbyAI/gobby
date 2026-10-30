@@ -677,6 +677,78 @@ async fn reconcile_after_restart() -> Result<()> {
 }
 
 #[tokio::test]
+async fn exit_before_commit_reply_is_settled_for_owner() -> Result<()> {
+    let fixture = LaunchFixture::new().await?;
+    let mut watcher = tokio::spawn({
+        let agents = Arc::clone(&fixture.agents);
+        async move { watch_exits(&agents).await }
+    });
+    let ready = async {
+        while !fixture
+            .host
+            .requests()
+            .iter()
+            .any(|r| r["method"] == "list")
+        {
+            tokio::task::yield_now().await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), ready).await?;
+    // Serialize behind the watcher's initial inventory request before spawning.
+    fixture
+        .agents
+        .host
+        .call(|client| Box::pin(async move { client.list().await }))
+        .await?;
+    fixture.host.exit_before_next_commit_reply();
+    let mut launch = Box::pin(fixture.launch());
+    let consumed = async {
+        loop {
+            let subscriptions = fixture
+                .host
+                .requests()
+                .iter()
+                .filter(|r| r["method"] == "subscribe_events")
+                .count();
+            if subscriptions == 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    };
+    let barrier = tokio::select! {
+        result = &mut launch => anyhow::bail!("commit reply gate was bypassed: {result:?}"),
+        result = &mut watcher => anyhow::bail!("exit watcher stopped: {result:?}"),
+        result = tokio::time::timeout(Duration::from_secs(5), consumed) => result,
+    };
+    // The fake host closes the event stream only after sending the exit. A second
+    // subscription proves the watcher consumed that stream before launch resumes.
+    // Stop before reconnect reconciliation can conceal the discarded event.
+    watcher.abort();
+    let _ = watcher.await;
+    fixture.host.release_commit_reply();
+    barrier?;
+    let launch_result = launch.await;
+    let state = persisted_state(&fixture.agents.home)?;
+    assert!(
+        !state.runs.contains_key(&fixture.payload.run_id),
+        "fast exit left its owner active after launch completed: {launch_result:?}"
+    );
+    let exit = &state
+        .exits
+        .iter()
+        .find(|record| record.exit.run_id == fixture.payload.run_id)
+        .context("fast exit was not retained for its owner")?
+        .exit;
+    assert_eq!(exit.terminal_id, fixture.payload.terminal_id);
+    assert_eq!(exit.reason, ExitReason::Exited);
+    assert_eq!(exit.exit_code, Some(7));
+    assert!(exit.launched);
+    assert!(exit.workspace.is_some());
+    Ok(())
+}
+
+#[tokio::test]
 async fn exit_events_record_exits() -> Result<()> {
     for cancelled in [false, true] {
         let root = tempfile::tempdir()?;
