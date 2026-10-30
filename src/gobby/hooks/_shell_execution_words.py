@@ -385,6 +385,13 @@ def _unwrap(
                     if effect is not None:
                         effects.append(effect)
                 advance(count)
+            if name in {"env", "sudo"} and effects is not None:
+                # The first unresolved operand may expand to a name=value pair.
+                # Keep it available to consumers without guessing its expansion.
+                for word in tail():
+                    effects.append(("environment", word))
+                    if "=" not in word:
+                        break
             if name == "timeout" and remaining():
                 advance()
         elif name == "eval":

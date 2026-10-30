@@ -11,11 +11,14 @@ from typing import Literal
 from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect
 from gobby.hooks._normalization_bindings import _raw_shell_word_is_literal
 from gobby.hooks._normalization_shell import (
+    _substitution_end,
+    backtick_body,
     scan_shell_command,
     strip_input_redirections,
     strip_output_redirections,
 )
 from gobby.hooks._shell_execution_words import _unwrap
+from gobby.hooks._shell_syntax import joined_prefix_end
 from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import _SHELLS, _python_program
 from gobby.hooks.shell_execution import SHELL_WRAPPER_DEPTH, shell_execution
@@ -67,11 +70,51 @@ def _program(
     if depth >= SHELL_WRAPPER_DEPTH:
         return literal_reference or bool(token.search(source)), modes
     literal_reference = literal_reference or bool(token.search(source))
-    # Substitutions cannot change the parent's shell options. Their independently
-    # executable bodies remain conservative; discard correlated data projections.
-    projected = _resolve_substitutions(source, depth, [], "subjects")
-    if any(token.search(body) for body in projected[1:]):
+    try:
+        original = scan_shell_command(source, dialect=dialect)
+    except ValueError:
+        return literal_reference, modes
+    literal_reference = literal_reference or any(
+        token.search(word.value) for word in original.tokens
+    )
+    substitutions: list[str] = []
+    if syntax == "program" and any(
+        _parameter_sets(
+            source[start:],
+            variable,
+            word_end=end - start,
+            literal_reference=literal_reference,
+            substitutions=substitutions,
+        )
+        for start, end in original.spans
+    ):
         return True, modes
+    if any(
+        not heredoc.quoted
+        and _parameter_sets(
+            heredoc.text,
+            variable,
+            quoting="heredoc",
+            literal_reference=literal_reference,
+            substitutions=substitutions,
+        )
+        for heredoc in original.heredocs
+    ):
+        return True, modes
+    for body in substitutions:
+        if _program(
+            body,
+            variable,
+            token,
+            modes,
+            dialect,
+            depth + 1,
+            literal_reference=literal_reference,
+        )[0]:
+            return True, modes
+    # Bodies were checked with their original quotes above. Project them out of
+    # the owner without importing their shell options or treating data as code.
+    projected = _resolve_substitutions(source, depth, [], "subjects")
     source = projected[0]
     try:
         scan = scan_shell_command(source, dialect=dialect)
@@ -80,7 +123,10 @@ def _program(
         )
         if scan.heredocs:
             if any(
-                not heredoc.quoted and _parameter_sets(heredoc.text, variable, quoting="heredoc")
+                not heredoc.quoted
+                and _parameter_sets(
+                    heredoc.text, variable, quoting="heredoc", literal_reference=literal_reference
+                )
                 for heredoc in scan.heredocs
             ):
                 return True, modes
@@ -127,7 +173,10 @@ def _program(
             # Arithmetic may assign; a subshell inherits options but returns none.
             if words[0].startswith("(") and not stage[0].quoted:
                 if words[0].startswith("(("):
-                    if token.search(" ".join(words)):
+                    expression = " ".join(words)
+                    if token.search(expression) or (
+                        literal_reference and not _literal_arithmetic(expression)
+                    ):
                         return True, modes
                 elif words[0].endswith(")"):
                     if _program(
@@ -146,7 +195,7 @@ def _program(
             # Complex control flow is not proof that a setter cannot execute.
             # In particular a skipped conditional disable must not clear a mode.
             if words[0] in {"if", "then", "else", "elif", "for", "while", "until", "case", "{"}:
-                if token.search(source):
+                if literal_reference:
                     return True, modes
             environment_changes: list[tuple[str | None, str | None]] = []
             wrapper_effects: list[tuple[str, str]] = []
@@ -159,7 +208,13 @@ def _program(
             # Input may become an argument or variable name through a pipe,
             # here-string/document, or file written earlier in this program.
             # Retain the original reference even after heredoc projection.
-            if literal_reference and any(kind == "stdin" for kind, _ in wrapper_effects):
+            if literal_reference and any(
+                kind == "stdin"
+                or (
+                    kind == "environment" and not _raw_shell_word_is_literal(word.partition("=")[0])
+                )
+                for kind, word in wrapper_effects
+            ):
                 return True, modes
             # An assigned value can later become an environment name through
             # export/env expansion or a nameref. Do not require local dataflow
@@ -171,6 +226,12 @@ def _program(
                 return True, modes
             if not command:
                 continue
+            if (
+                literal_reference
+                and command[0] != "["
+                and not _raw_shell_word_is_literal(command[0])
+            ):
+                return True, modes
             name, args = shell_command_name(command[0]), command[1:]
             if literal_reference and name in {"read", "readarray", "mapfile", "getopts"}:
                 return True, modes
@@ -183,11 +244,33 @@ def _program(
                 )
             ):
                 return True, modes
-            if _builtin_sets(name, args, variable, token):
+            if _builtin_sets(name, args, variable, token, literal_reference=literal_reference):
                 return True, modes
             stage_modes = _shellopts_export(name, args, modes)
             if name in {"set", "setopt", "unsetopt"}:
                 stage_modes = _keyword_options(name, args, modes)
+            deferred: list[str] = []
+            if name == "alias":
+                deferred = [word.partition("=")[2] for word in args if "=" in word]
+                if literal_reference and any(
+                    "=" not in word and not _raw_shell_word_is_literal(word) for word in args
+                ):
+                    return True, modes
+            elif name == "trap":
+                operands = args[1:] if args[:1] == ["--"] else args
+                if operands and operands[0] not in {"-p", "-l", "-"}:
+                    deferred = operands[:1]
+            for body in deferred:
+                if _program(
+                    body,
+                    variable,
+                    token,
+                    modes,
+                    dialect,
+                    depth + 1,
+                    literal_reference=literal_reference,
+                )[0]:
+                    return True, modes
             if name == "eval":
                 found, stage_modes = _program(
                     " ".join(args),
@@ -248,11 +331,15 @@ def _program(
 
 
 def _parameter_sets(
-    raw_word: str, variable: str, *, quoting: Literal["word", "heredoc"] = "word"
+    raw_word: str,
+    variable: str,
+    *,
+    quoting: Literal["word", "heredoc"] = "word",
+    word_end: int | None = None,
+    literal_reference: bool = False,
+    substitutions: list[str] | None = None,
 ) -> bool:
     """Recognize assignment expansions only where shell quoting permits expansion."""
-    if quoting == "word" and _raw_shell_word_is_literal(raw_word):
-        return False
     continuation = r"(?:\\\n)*"
     pattern = re.compile(
         continuation.join(re.escape(char) for char in "${" + variable)
@@ -263,7 +350,12 @@ def _parameter_sets(
     )
     quote: str | None = None
     escaped = False
+    skip_until = 0
     for index, char in enumerate(raw_word):
+        if word_end is not None and index >= word_end:
+            break
+        if index < skip_until:
+            continue
         if escaped:
             escaped = False
         elif char == "\\" and quote != "'":
@@ -272,8 +364,51 @@ def _parameter_sets(
             quote = None
         elif quoting == "word" and char in {"'", '"'} and quote is None:
             quote = char
-        elif char == "$" and quote != "'" and pattern.match(raw_word, index):
-            return True
+        elif quote != "'" and (
+            char == "`"
+            or joined_prefix_end(raw_word, index, "$(") is not None
+            or (
+                quote is None
+                and char in "<>"
+                and joined_prefix_end(raw_word, index, char + "(") is not None
+            )
+        ):
+            tick = char == "`"
+            opening = index + 1 if tick else joined_prefix_end(raw_word, index, char + "(")
+            assert opening is not None
+            try:
+                end = _substitution_end(raw_word, opening, tick, 0)
+            except ValueError:
+                return literal_reference
+            body = raw_word[opening:end]
+            if joined_prefix_end(raw_word, index, "$((") is not None:
+                if literal_reference and not _literal_arithmetic(body):
+                    return True
+            elif substitutions is not None:
+                substitutions.append(backtick_body(body) if tick else body)
+            skip_until = end + 1
+        elif char == "$" and quote != "'":
+            if pattern.match(raw_word, index):
+                return True
+            if not literal_reference:
+                continue
+            if joined_prefix_end(raw_word, index, "$[") is not None:
+                return True
+            opening = joined_prefix_end(raw_word, index, "${")
+            if opening is not None:
+                end = raw_word.find("}", opening)
+                body = raw_word[opening : end if end != -1 else len(raw_word)]
+                # Indexed parameters and substring offsets can evaluate variables
+                # as arithmetic even when the containing command only prints data.
+                if body.startswith("!") or re.match(r"#?[A-Za-z_][A-Za-z0-9_]*\[", body):
+                    return True
+                offset_match = re.match(r"(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*?#$!-]):", body)
+                if offset_match is None:
+                    continue
+                offset = body[offset_match.end() :]
+                if offset[:1] not in {"-", "+", "=", "?"}:
+                    if not _literal_arithmetic(offset):
+                        return True
     return False
 
 
@@ -336,9 +471,32 @@ def _shellopts_export(name: str, args: list[str], modes: _Modes) -> _Modes:
     return modes
 
 
-def _builtin_sets(name: str, args: list[str], variable: str, token: re.Pattern[str]) -> bool:
-    if name in {"read", "readarray", "mapfile", "getopts", "let", "integer", "float", "set"}:
-        return any(token.search(word) for word in args)
+def _literal_arithmetic(value: str) -> bool:
+    """Prove arithmetic cannot follow a variable into another expression."""
+    return re.fullmatch(r"[0-9\s.()+*/%<>&|^~!?:=,+-]+", value) is not None
+
+
+def _builtin_sets(
+    name: str,
+    args: list[str],
+    variable: str,
+    token: re.Pattern[str],
+    *,
+    literal_reference: bool,
+) -> bool:
+    if name == "let":
+        return any(
+            token.search(word) or (literal_reference and not _literal_arithmetic(word))
+            for word in args
+        )
+    if name in {"unset", "test", "["} and literal_reference:
+        if (name == "unset" or "-v" in args) and any("[" in word for word in args):
+            return True
+    if name in {"read", "readarray", "mapfile", "getopts", "set"}:
+        return any(
+            token.search(word) or (literal_reference and not _raw_shell_word_is_literal(word))
+            for word in args
+        )
     if name == "alias":
         return any("=" in word and token.search(word) for word in args)
     if name == "trap":
@@ -349,16 +507,43 @@ def _builtin_sets(name: str, args: list[str], variable: str, token: re.Pattern[s
                 break
             if option.startswith("-v"):
                 target = option[2:] or next(iter(args[index + 1 :]), "")
-                if token.search(target) or any(token.search(value) for value in args[index + 1 :]):
+                if (
+                    token.search(target)
+                    or (literal_reference and not _raw_shell_word_is_literal(target))
+                    or any(token.search(value) for value in args[index + 1 :])
+                ):
                     return True
-    if name not in {"export", "declare", "typeset", "local", "readonly"}:
+    if name not in {"export", "declare", "typeset", "local", "readonly", "integer", "float"}:
         return False
-    if name in {"declare", "typeset"}:
-        for option in args:
-            if option == "--" or not option.startswith(("-", "+")):
-                break
-            if "p" in option[1:]:
+    nameref = False
+    arithmetic = name in {"integer", "float"}
+    options = True
+    for word in args:
+        if options and word == "--":
+            options = False
+            continue
+        if options and word.startswith(("-", "+")):
+            if name in {"declare", "typeset"} and any(flag in word[1:] for flag in "pf"):
                 return False
+            if name == "declare" and "F" in word[1:]:
+                return False
+            if name in {"declare", "typeset", "local"} and "n" in word[1:]:
+                nameref = word.startswith("-")
+            if name in {"declare", "typeset", "local", "integer", "float"} and "i" in word[1:]:
+                arithmetic = word.startswith("-")
+            if name == "typeset" and any(flag in word[1:] for flag in "EF"):
+                arithmetic = word.startswith("-")
+            continue
+        options = False
+        target, separator, value = word.partition("=")
+        if literal_reference and (
+            not _raw_shell_word_is_literal(target)
+            or (nameref and (not separator or not _raw_shell_word_is_literal(value)))
+            # The attribute persists: later assignments/printf may evaluate an
+            # unknown value even when this initializer is a numeric literal.
+            or arithmetic
+        ):
+            return True
     return any(
         word == variable or (_assignment_name(word) is not None and token.search(word))
         for word in args
