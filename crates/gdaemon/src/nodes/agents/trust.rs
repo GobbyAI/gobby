@@ -81,14 +81,25 @@ fn seed_codex(home: &Path, paths: &[String]) -> Result<()> {
             .entry("projects")
             .or_insert(Item::Table(Table::new())),
     )?;
-    // Only deleted generated worktrees, clones and temp workspaces leave; other entries stay.
-    let stale: Vec<String> = projects
-        .iter()
-        .map(|(key, _)| key.to_string())
-        .filter(|key| !paths.contains(key) && is_stale_generated_path(Path::new(key)))
-        .collect();
-    for key in &stale {
-        projects.remove(key);
+    // Stale pruning runs only when a requested path is pending, as in trust.py.
+    let pending = paths.iter().any(|path| {
+        projects
+            .get(path)
+            .and_then(Item::as_table_like)
+            .and_then(|project| project.get("trust_level"))
+            .and_then(Item::as_str)
+            != Some("trusted")
+    });
+    if pending {
+        // Only deleted generated worktrees, clones and temp workspaces leave; other entries stay.
+        let stale: Vec<String> = projects
+            .iter()
+            .map(|(key, _)| key.to_string())
+            .filter(|key| !paths.contains(key) && is_stale_generated_path(Path::new(key)))
+            .collect();
+        for key in &stale {
+            projects.remove(key);
+        }
     }
     for path in paths {
         let project = table_entry(projects.entry(path).or_insert(Item::Table(Table::new())))?;
