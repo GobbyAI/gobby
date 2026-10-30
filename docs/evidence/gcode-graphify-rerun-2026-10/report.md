@@ -1,15 +1,21 @@
 # gcode vs Graphify comparison rerun, 2026-10
 
 Task: #24222 (plan section 1.1, `.gobby/plans/gcode-graphify-parity-delta.md`).
-Status: **skeleton.** No timed run has executed. The compose stack is not started,
+Status: **partial.** Identities are re-recorded on 0.5.0 `da750976` with installed
+gcode 1.9.83 (section 1). No timed run has executed. The compose stack is not started,
 and the launch waits for Orchestrator approval and a pause lift. Every value marked
 TBD comes from a run that has not happened yet.
 
 ## 1. Runtime root, ownership, and inputs (1.1.1)
 
-- Runtime root: `/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/developer/session-18326/gcode-graphify-rerun-2026-10-r2`
-  (initialized 2026-10-28 by `init` from `stage-root2`; `write-compose` run there; compose not started). The card's `var/` path is not
-  used: the sandbox denied dotfile names there (Orchestrator ruling 2026-10-28). A
+- Fresh runtime root (this seat, 2026-10-30): `/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/developer/session-18637/gcode-graphify-rerun-2026-10`.
+  Created with `scripts/`, and `tools/gcode/bin/`. Corpora, init, compose config, and
+  receipts are not yet written.
+- Prior root, unreadable from this seat (`Operation not permitted`, 2026-10-30):
+  `.../developer/session-18326/gcode-graphify-rerun-2026-10-r2`. Its contents are
+  not used or cited here. The prior session's report recorded its initialization
+  (2026-10-28) and `write-compose`; compose was never started there.
+  The card's `var/` path is not used: the sandbox denied dotfile names there (Orchestrator ruling 2026-10-28). A
   dotfile write probe under the agent workspace passed.
 - Superseded first root: `.../session-18326/gcode-graphify-rerun-2026-10`, initialized
   with seven comparators and 69 corpus copies. Its `receipts/init.json` SHA-256 is
@@ -19,8 +25,15 @@ TBD comes from a run that has not happened yet.
   `owner_session` `2d61ac70-d0d1-4b21-a59d-f35635f68c07`. Live receipts: TBD.
 - Partial first attempt, left in place (gitignored, not evidence):
   `var/gcode-graphify-rerun-2026-10/`, 10,326 files and 1,144 directories.
-- Source pin: Gobby source archived at `9b148b644c63a8ac2a28f341ecac585210ecd3fe`
-  (HEAD; `crates/gcode` version 1.9.80 matches the installed binary).
+- Source pin: Gobby source at `da75097647` (0.5.0, the branch HEAD after the 2026-10-30
+  fast-forward). `crates/gcode` version 1.9.83 matches the installed binary. The prior
+  pin `9b148b644c63` (gcode 1.9.80) is superseded and not used.
+- gcode identity (2026-10-30): `gcode 1.9.83`, contract version 12, schema identity
+  `latest_version` 484 (`latest_checksum` `336cfd2ed1bc8394dd5fcfc8285110e0a8aa466e552c525217568ea58d0e1066`,
+  `baseline_version` 420, `assets_root_hash` `b5daec7e0028051d4bfc9342c8e5883954cf13d814f5d154bc83fae07d76f93c`).
+  Installed `~/.gobby/bin/gcode` SHA-256 `692d6a2051ebb51576c69c3aba5f20b7d6d7d4a8bca4cf850bf00f6c14a2bb7f`.
+  The copy at `tools/gcode/bin/gcode` in the fresh root has the same SHA-256 and runs `gcode 1.9.83`.
+  The prior 1.9.80 binary SHA-256 `937bafc6…` is superseded.
 - Dated script copies (SHA-256):
 
 | File | SHA-256 |
@@ -53,10 +66,11 @@ TBD comes from a run that has not happened yet.
   C9-baseline and C9-change for both comparators (598 files). They are not verified or
   used, since C9 is not rerun. Verification output SHA-256
   `98736c4601646053ac0aea80bace7dcc4383ec791fddd027aced03270a41a07f`.
-- Tool identities: gcode version `1.9.80`, contract version `12`, executable
-  SHA-256 `937bafc61768c9047f3933a59cefc4013b4b908ca2890085ec6a838225f7d740` (the
-  copy in `tools/gcode/bin/gcode` matches the installed binary). Graphify PyPI
-  `graphifyy` `0.9.97` (unpinned latest; September was `0.9.55`), executable SHA-256
+- Tool identities: gcode `1.9.83` (see the gcode identity bullet above; the prior
+  `1.9.80` record is superseded). Graphify PyPI `graphifyy` `0.9.97` was recorded by the
+  prior session in its venv, which this seat cannot read. It is not re-recorded here
+  until a fresh install is approved (Orchestrator). September was `0.9.55`.
+  Prior record: executable SHA-256
   `f3ee03f456f1017891020ae1a6202992a19ddccaf0b9bd942f3c9471e7cd6a65`, lock SHA-256
   `43195a111ee59c0a20ef9c4180a46d07548bf2d757d5feacc918136d8a1d64ed`.
 - Load samples (1, 5, 15 minute averages) before each run: TBD.
