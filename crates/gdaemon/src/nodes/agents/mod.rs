@@ -1,9 +1,14 @@
 //! Durable node-local agent ownership.
+pub mod agy_gate;
 #[cfg(unix)]
 pub mod host;
+pub mod launch;
+pub mod provider_command;
+pub mod provider_env;
 pub mod repair;
 pub mod sandbox;
 pub mod state;
+pub mod trust;
 pub mod workspace;
 
 use anyhow::{Context, Result};
