@@ -415,7 +415,31 @@ async fn launch_spawns_and_commits() -> Result<()> {
         argv[0],
         fixture.context.installation.node.display().to_string()
     );
-    assert_eq!(argv.iter().filter(|arg| **arg == "--settings").count(), 1);
+    let separator = argv
+        .iter()
+        .position(|arg| arg == "--")
+        .context("SRT separator")?;
+    let (wrapper, provider) = argv.split_at(separator);
+    assert_eq!(
+        wrapper.iter().filter(|arg| **arg == "--settings").count(),
+        1
+    );
+    let corpus = corpus()?;
+    let command = corpus["cases"]
+        .as_array()
+        .context("corpus cases")?
+        .iter()
+        .find(|case| case["name"] == "claude-fresh")
+        .context("claude-fresh corpus case")?["expected"]["command"]
+        .as_array()
+        .context("Claude command")?;
+    let settings = |args: &[Value]| {
+        args.windows(2)
+            .filter(|pair| pair[0] == "--settings")
+            .map(|pair| pair[1].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(settings(&provider[1..]), settings(command));
     let persisted = persisted_state(&fixture.agents.home)?;
     let run = &persisted.runs[&fixture.payload.run_id];
     assert_eq!(run.phase, RunPhase::Launched);
