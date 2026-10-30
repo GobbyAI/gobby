@@ -38,8 +38,7 @@ from tests.fixtures.postgres import TEST_USER_ID
 
 
 def synthetic_manager_body() -> dict[str, Any]:
-    """A synthetic team manager: the capabilities, team_manager grant and spawn scope the tests
-    exercise. The capabilities mirror the installed dev-manager definition."""
+    """A synthetic team manager: the grants and spawn scope of the bundled dev-manager.yaml."""
     return {
         "name": "dev-manager",
         "version": "1.0",
