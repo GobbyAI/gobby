@@ -38,14 +38,29 @@ from tests.fixtures.postgres import TEST_USER_ID
 
 
 def synthetic_manager_body() -> dict[str, Any]:
-    """A synthetic team manager: the team_manager grant and the spawn scope the tests exercise."""
+    """A synthetic team manager: the grants and spawn scope of the bundled dev-manager.yaml."""
     return {
         "name": "dev-manager",
         "version": "1.0",
+        "capabilities": ["manage_task_claims", "land_tasks", "accept_resume_retype"],
         "surfaces": ["spawn"],
         "send_message_targets": ["parent", "session", "project"],
-        "spawnable_agents": ["developer", "code-reviewer", "docs-reviewer", "research-reviewer"],
-        "resumable_team_agents": ["test-writer", "developer", "code-reviewer"],
+        "spawnable_agents": [
+            "developer",
+            "test-writer",
+            "code-reviewer",
+            "docs-reviewer",
+            "research-reviewer",
+            "researcher",
+        ],
+        "resumable_team_agents": [
+            "test-writer",
+            "developer",
+            "code-reviewer",
+            "docs-reviewer",
+            "research-reviewer",
+            "researcher",
+        ],
         "prompts": {"agent": "Run the dev-manager seat."},
         "workflows": {
             "rule_selectors": {"include": []},

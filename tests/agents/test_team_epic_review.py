@@ -171,11 +171,11 @@ def new_task(
     )
 
 
-async def epic_team(world: TeamWorld, epic: Task) -> EpicTeam:
+async def epic_team(world: TeamWorld, epic: Task, tab_title: str | None = None) -> EpicTeam:
     """An admitted epic team with a running Dev Manager seat. The manager never claims the epic."""
     db = world.case.db
     runbook = world.child(epic)
-    binding = await world.admit(runbook, epic)
+    binding = await world.admit(runbook, epic, tab_title=tab_title)
     manager = world.case.session("dev-manager", parent=runbook.id)
     runs = LocalAgentRunManager(db)
     run = runs.create(
@@ -642,7 +642,7 @@ async def test_epic_manager_resumes_pod_seat_in_its_own_team(
 ) -> None:
     epic = new_task(world, "Resume pod", epic=True)
     leaf = new_task(world, "Pod leaf", parent=epic)
-    team = await epic_team(world, epic)
+    team = await epic_team(world, epic, tab_title=f"Dev Team - #{epic.seq_num}")
     run = world.child(leaf, parent=team.manager)
     pod = await world.admit(run, leaf, parent_team_id=team.binding.team_id)
     seat = running_seat(world, run, agent)
@@ -716,8 +716,18 @@ async def test_pod_pipeline_launches_triplet_and_relaunches_in_pod_tab(world: Te
     leaf = new_task(world, "Pipeline leaf", parent=epic)
     team = await epic_team(world, epic)
     definitions = AgentDefinitionManager(team.db)
-    for name in ("test-writer", "code-reviewer"):
-        definitions.create(name, {"name": name, "version": "1.0"}, project_id=world.case.project_id)
+    for name, grant in (("test-writer", "test"), ("code-reviewer", "review")):
+        definitions.create(
+            name,
+            {
+                "name": name,
+                "version": "1.0",
+                "task_step_writes": [grant],
+                "prompts": {"agent": f"Run the {name} seat."},
+                "workflows": {"rule_selectors": {"include": []}},
+            },
+            project_id=world.case.project_id,
+        )
     workspace = WorkspaceManager(team.db).create(require_machine_id(), "devteam")[0].id
     inputs = _inputs(leaf, workspace, team.manager, None)
     inputs["parent_team_id"] = team.binding.team_id
