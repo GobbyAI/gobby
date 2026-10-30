@@ -6,6 +6,8 @@ mod fake_gterm;
 mod fd_constructor_tests;
 #[path = "node_support/fd_hygiene.rs"]
 mod fd_hygiene;
+#[path = "node_support/fixer_regressions.rs"]
+mod fixer_regressions;
 #[path = "node_support/launch_tests.rs"]
 mod launch_tests;
 #[path = "node_support/workspace_fixtures.rs"]
@@ -520,7 +522,10 @@ async fn restart_fails_unlaunched_runs() -> Result<()> {
         for recovered in &state.exits[1..] {
             assert_eq!(recovered.exit.reason, ExitReason::PrepareFailed);
             assert!(!recovered.exit.launched);
-            assert!(recovered.exit.workspace.is_none());
+            assert_eq!(
+                recovered.exit.workspace.is_some(),
+                recovered.exit.run_id != "accepted"
+            );
             assert!(recovered.exit.exit_code.is_none());
         }
         state.clone()

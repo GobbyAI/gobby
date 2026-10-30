@@ -1,17 +1,13 @@
 //! Provider trust seeds: the port of `pre_approve_directory` for claude and codex.
+use super::repair::{update_claude_config, update_provider_config};
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};
 use std::{
     ffi::OsString,
     fs,
-    io::ErrorKind,
     path::{Path, PathBuf},
-    sync::{Mutex, PoisonError},
 };
 use toml_edit::{DocumentMut, Item, Table, value};
-
-/// Serializes read-modify-write cycles on `~/.claude.json` within this process.
-static CLAUDE_STORE: Mutex<()> = Mutex::new(());
 
 /// Marks `workspace` and its real path trusted in the provider's store under `home`.
 /// Droid, grok and agy have no store.
@@ -37,76 +33,64 @@ fn trust_paths(workspace: &Path) -> Vec<String> {
 }
 
 fn seed_claude(home: &Path, paths: &[String]) -> Result<()> {
-    let _guard = CLAUDE_STORE.lock().unwrap_or_else(PoisonError::into_inner);
     let store_path = home.join(".claude.json");
-    let mut store: Value = match fs::read(&store_path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .with_context(|| format!("parse {}", store_path.display()))?,
-        Err(err) if err.kind() == ErrorKind::NotFound => Value::Object(Map::new()),
-        Err(err) => return Err(err).with_context(|| format!("read {}", store_path.display())),
-    };
-    let projects = store
-        .as_object_mut()
-        .context("claude store is not an object")?
-        .entry("projects")
-        .or_insert_with(|| Value::Object(Map::new()))
-        .as_object_mut()
-        .context("claude projects is not an object")?;
-    for path in paths {
-        projects
-            .entry(path.as_str())
+    update_claude_config(&store_path, |store| {
+        let projects = store
+            .entry("projects")
             .or_insert_with(|| Value::Object(Map::new()))
             .as_object_mut()
-            .context("claude project entry is not an object")?
-            .insert("hasTrustDialogAccepted".into(), Value::Bool(true));
-    }
-    fs::write(&store_path, serde_json::to_vec_pretty(&store)?)
-        .with_context(|| format!("write {}", store_path.display()))
+            .context("claude projects is not an object")?;
+        for path in paths {
+            projects
+                .entry(path.as_str())
+                .or_insert_with(|| Value::Object(Map::new()))
+                .as_object_mut()
+                .context("claude project entry is not an object")?
+                .insert("hasTrustDialogAccepted".into(), Value::Bool(true));
+        }
+        Ok(())
+    })
 }
 
 fn seed_codex(home: &Path, paths: &[String]) -> Result<()> {
     let codex_home = home.join(".codex");
     fs::create_dir_all(&codex_home)?;
     let config_path = codex_home.join("config.toml");
-    let text = match fs::read_to_string(&config_path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == ErrorKind::NotFound => String::new(),
-        Err(err) => return Err(err).with_context(|| format!("read {}", config_path.display())),
-    };
-    let mut config: DocumentMut = text
-        .parse()
-        .with_context(|| format!("parse {}", config_path.display()))?;
-    let projects = table_entry(
-        config
-            .entry("projects")
-            .or_insert(Item::Table(Table::new())),
-    )?;
-    // Stale pruning runs only when a requested path is pending, as in trust.py.
-    let pending = paths.iter().any(|path| {
-        projects
-            .get(path)
-            .and_then(Item::as_table_like)
-            .and_then(|project| project.get("trust_level"))
-            .and_then(Item::as_str)
-            != Some("trusted")
-    });
-    if pending {
-        // Only deleted generated worktrees, clones and temp workspaces leave; other entries stay.
-        let stale: Vec<String> = projects
-            .iter()
-            .map(|(key, _)| key.to_string())
-            .filter(|key| !paths.contains(key) && is_stale_generated_path(Path::new(key)))
-            .collect();
-        for key in &stale {
-            projects.remove(key);
+    update_provider_config(&config_path, |text| {
+        let mut config: DocumentMut = text
+            .parse()
+            .with_context(|| format!("parse {}", config_path.display()))?;
+        let projects = table_entry(
+            config
+                .entry("projects")
+                .or_insert(Item::Table(Table::new())),
+        )?;
+        // Stale pruning runs only when a requested path is pending, as in trust.py.
+        let pending = paths.iter().any(|path| {
+            projects
+                .get(path)
+                .and_then(Item::as_table_like)
+                .and_then(|project| project.get("trust_level"))
+                .and_then(Item::as_str)
+                != Some("trusted")
+        });
+        if pending {
+            // Only deleted generated worktrees, clones and temp workspaces leave; other entries stay.
+            let stale: Vec<String> = projects
+                .iter()
+                .map(|(key, _)| key.to_string())
+                .filter(|key| !paths.contains(key) && is_stale_generated_path(Path::new(key)))
+                .collect();
+            for key in &stale {
+                projects.remove(key);
+            }
         }
-    }
-    for path in paths {
-        let project = table_entry(projects.entry(path).or_insert(Item::Table(Table::new())))?;
-        project["trust_level"] = value("trusted");
-    }
-    fs::write(&config_path, config.to_string())
-        .with_context(|| format!("write {}", config_path.display()))
+        for path in paths {
+            let project = table_entry(projects.entry(path).or_insert(Item::Table(Table::new())))?;
+            project["trust_level"] = value("trusted");
+        }
+        Ok(config.to_string())
+    })
 }
 
 /// Port of `is_stale_generated_path`: a path that no longer exists under a Gobby-generated

@@ -3,6 +3,7 @@
 //! a heartbeat, then an atomic replace. Lock ownership is checked before the
 //! temp file is written and again before it is renamed into place, so a lost
 //! lock aborts the change and leaves the original file intact.
+//! Codex trust updates reuse the locking and replacement via the text adapter.
 
 use super::write_temp;
 use anyhow::{Context, Result, bail, ensure};
@@ -50,25 +51,47 @@ fn update_with(
     timing: Timing,
     change: impl FnOnce(&mut Map<String, Value>) -> Result<()>,
 ) -> Result<()> {
+    update_text_with(path, timing, |text| {
+        let mut data = match text {
+            Some(text) => serde_json::from_str::<Value>(&text)
+                .with_context(|| format!("parse {}", path.display()))?,
+            None => Value::Object(Map::new()),
+        };
+        let object = data
+            .as_object_mut()
+            .with_context(|| format!("parse {}: expected a JSON object", path.display()))?;
+        change(object)?;
+        let mut text = serde_json::to_string_pretty(&data)?;
+        text.push('\n');
+        Ok(text)
+    })
+}
+
+/// Applies a non-JSON provider update with the same lock and atomic-write contract.
+pub fn update_text(path: &Path, change: impl FnOnce(&str) -> Result<String>) -> Result<()> {
+    update_text_with(path, PYTHON_TIMING, |text| {
+        change(text.as_deref().unwrap_or(""))
+    })
+}
+
+fn update_text_with(
+    path: &Path,
+    timing: Timing,
+    change: impl FnOnce(Option<String>) -> Result<String>,
+) -> Result<()> {
     ensure!(
         !path.is_symlink(),
         "{} must not be a symlink",
         path.display()
     );
     let lock = acquire(path, timing)?;
-    let mut data = match fs::read(path) {
-        Ok(bytes) => serde_json::from_slice::<Value>(&bytes)
-            .with_context(|| format!("parse {}", path.display()))?,
-        Err(error) if error.kind() == ErrorKind::NotFound => Value::Object(Map::new()),
+    let text = match fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
         Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
     };
     let mode = config_mode(path)?;
-    let object = data
-        .as_object_mut()
-        .with_context(|| format!("parse {}: expected a JSON object", path.display()))?;
-    change(object)?;
-    let mut text = serde_json::to_string_pretty(&data)?;
-    text.push('\n');
+    let text = change(text)?;
     lock.check()?;
     let temp = write_temp(path, text.as_bytes(), mode)?;
     let published = lock.check().and_then(|()| {

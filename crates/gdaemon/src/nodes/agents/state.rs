@@ -1,5 +1,5 @@
 //! Snapshot stored at node/agents.json.
-use crate::node_commands::{ExitReason, ReportExit, WorkspaceMode};
+use crate::node_commands::{ExitReason, ReportExit, ReportMode, ReportWorkspace, WorkspaceMode};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -52,6 +52,20 @@ pub struct WorkspaceRecord {
     pub base_branch: Option<String>,
     pub source_root: PathBuf,
     pub reused: bool,
+}
+
+impl WorkspaceRecord {
+    pub(super) fn report(&self) -> ReportWorkspace {
+        ReportWorkspace {
+            mode: match self.mode {
+                WorkspaceMode::Worktree => ReportMode::Worktree,
+                WorkspaceMode::Clone => ReportMode::Clone,
+            },
+            path: self.path.display().to_string(),
+            branch_name: self.branch_name.clone(),
+            base_branch: self.base_branch.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,6 +168,11 @@ impl AgentState {
             .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
             .unwrap_or(0);
         for run_id in interrupted {
+            let workspace = self
+                .runs
+                .get(&run_id)
+                .and_then(|run| run.workspace.as_ref())
+                .map(WorkspaceRecord::report);
             self.to_removals(&run_id);
             let pending = self.pending_exits.remove(&run_id);
             if let Some(run) = self.runs.remove(&run_id) {
@@ -169,7 +188,7 @@ impl AgentState {
                         launched,
                         exit_code,
                         reason,
-                        workspace: None,
+                        workspace,
                         sandbox: None,
                     },
                     ended_at_ms,

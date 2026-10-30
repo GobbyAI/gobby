@@ -12,9 +12,7 @@ use super::{
     state::{AgentState, ExitRecord, RunPhase, WorkspaceRecord},
     trust::seed_trust,
 };
-use crate::node_commands::{
-    ExitReason, ReportExit, ReportMode, ReportWorkspace, SpawnPayload, WorkspaceMode,
-};
+use crate::node_commands::{ExitReason, ReportExit, SpawnPayload};
 use gobby_terminals::control::{EventCursor, HostEventKind, SpawnRequest};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -491,6 +489,17 @@ async fn settle_exit(
 /// Settles each launched run whose terminal is absent from the live host's inventory. A present
 /// run stays live, including after a host epoch change, because the inventory is the live host.
 pub async fn reconcile(agents: &NodeAgents) -> anyhow::Result<()> {
+    // A list can prove absence only for runs launched before the snapshot.
+    // Remember the full record so a replacement under the same ID also survives.
+    let eligible: Vec<_> = agents
+        .state
+        .lock()
+        .await
+        .runs
+        .iter()
+        .filter(|(_, run)| run.phase == RunPhase::Launched)
+        .map(|(run_id, run)| (run_id.clone(), run.clone()))
+        .collect();
     let inventory = agents
         .host
         .call(|client| Box::pin(async move { client.list().await }))
@@ -501,11 +510,12 @@ pub async fn reconcile(agents: &NodeAgents) -> anyhow::Result<()> {
         .filter_map(|terminal| terminal["terminal_id"].as_str().map(str::to_owned))
         .collect();
     let mut state = agents.state.lock().await;
-    let absent: Vec<String> = state
-        .runs
-        .iter()
-        .filter(|(_, run)| run.phase == RunPhase::Launched && !live.contains(&run.terminal_id))
-        .map(|(run_id, _)| run_id.clone())
+    let absent: Vec<String> = eligible
+        .into_iter()
+        .filter(|(run_id, run)| {
+            state.runs.get(run_id) == Some(run) && !live.contains(&run.terminal_id)
+        })
+        .map(|(run_id, _)| run_id)
         .collect();
     if absent.is_empty() {
         return Ok(());
@@ -538,24 +548,12 @@ fn settle(
         launched,
         exit_code,
         reason,
-        workspace: run.workspace.as_ref().map(report_workspace),
+        workspace: run.workspace.as_ref().map(WorkspaceRecord::report),
         sandbox: None,
     };
     state.to_removals(run_id);
     state.runs.remove(run_id);
     state.exits.push(ExitRecord { exit, ended_at_ms });
-}
-
-fn report_workspace(workspace: &WorkspaceRecord) -> ReportWorkspace {
-    ReportWorkspace {
-        mode: match workspace.mode {
-            WorkspaceMode::Worktree => ReportMode::Worktree,
-            WorkspaceMode::Clone => ReportMode::Clone,
-        },
-        path: workspace.path.display().to_string(),
-        branch_name: workspace.branch_name.clone(),
-        base_branch: workspace.base_branch.clone(),
-    }
 }
 
 fn now_ms() -> u64 {
