@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -17,11 +18,14 @@ from gobby.storage.sessions import SessionManager
 from gobby.terminals.runtime import Delivered
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.agents.detection_test_support import BundledDetectionRegistry
 
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "33333333-3333-4333-8333-333333333333"
 TERMINAL_ID = "terminal-1"
+# The framed Claude composer the provider manifest reads as empty (corpus claude.composer_empty).
+IDLE_COMPOSER = "────────────────────\n❯ \n────────────────────"
 
 
 class _Manager:
@@ -56,14 +60,17 @@ def _scene(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> _Manager:
         "terminal": _terminal(),
         "foreground": {TERMINAL_ID: "claude"},
         "composer": "empty",
-        "snapshot": "> ",
+        "snapshot": IDLE_COMPOSER,
         "pane": True,
         "lookup_error": None,
     } | overrides
     pane = _Pane(scene["snapshot"]) if scene["pane"] else None
-    monkeypatch.setattr(gate, "foreground_commands", lambda _pids: scene["foreground"])
+    monkeypatch.setattr(
+        gate, "foreground_executables", lambda pids: scene["foreground"] if pids else {}
+    )
     monkeypatch.setattr(gate, "read_composer", lambda _id: SimpleNamespace(state=scene["composer"]))
     monkeypatch.setattr(gate, "live_runtime_pane", lambda *_args: pane)
+    monkeypatch.setattr(gate, "_detection_registry", lambda _manager: BundledDetectionRegistry())
     return _Manager(scene["terminal"], scene["lookup_error"])
 
 
@@ -87,7 +94,7 @@ REFUSALS = [
         id="non-agent-foreground",
     ),
     pytest.param(
-        {"foreground": {TERMINAL_ID: "python"}, "snapshot": "> "},
+        {"foreground": {TERMINAL_ID: "python"}, "snapshot": IDLE_COMPOSER},
         "send_keys_target_unconfirmed",
         id="exited-cli-stale-composer",
     ),
@@ -99,6 +106,10 @@ REFUSALS = [
         {"snapshot": "Enter passphrase for key '/home/josh/.ssh/id':"},
         "send_keys_credential_prompt",
         id="passphrase",
+    ),
+    pytest.param({"snapshot": "Enter API key:"}, "send_keys_credential_prompt", id="api-key"),
+    pytest.param(
+        {"snapshot": "Thinking..."}, "send_keys_composer_not_idle", id="busy-cli-no-composer"
     ),
     pytest.param(
         {"lookup_error": RuntimeError("terminal table unavailable")},
@@ -135,7 +146,7 @@ async def test_admits_a_target_showing_an_idle_agent_composer(
 async def test_a_password_line_above_an_idle_prompt_is_not_a_credential_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    manager = _scene(monkeypatch, snapshot="Password: \n> ")
+    manager = _scene(monkeypatch, snapshot=f"Password: \n{IDLE_COMPOSER}")
 
     assert await gate.send_keys_target_refusal(SESSION_ID, manager, object()) is None
 
@@ -149,6 +160,57 @@ async def test_missing_manager_or_registry_refuses(monkeypatch: pytest.MonkeyPat
 
     assert no_manager is not None and no_manager.code == "send_keys_target_unconfirmed"
     assert no_registry is not None and no_registry.code == "send_keys_target_unconfirmed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("via_symlink", [False, True], ids=["direct", "symlink"])
+async def test_admits_an_idle_composer_on_a_versioned_claude_build(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, via_symlink: bool
+) -> None:
+    build = tmp_path / "claude" / "versions" / "2.1.314"
+    build.parent.mkdir(parents=True)
+    build.touch()
+    executable = build
+    if via_symlink:
+        executable = tmp_path / "bin" / "cli"
+        executable.parent.mkdir()
+        executable.symlink_to(build)
+    manager = _scene(monkeypatch, foreground={TERMINAL_ID: str(executable)})
+
+    assert await gate.send_keys_target_refusal(SESSION_ID, manager, object()) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "relative",
+    ["other/versions/2.1.314", "claude/versions/helper"],
+    ids=["other-tree", "non-version-name"],
+)
+async def test_refuses_an_unknown_versioned_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, relative: str
+) -> None:
+    build = tmp_path / relative
+    build.parent.mkdir(parents=True)
+    build.touch()
+    manager = _scene(monkeypatch, foreground={TERMINAL_ID: str(build)})
+
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+
+    assert refusal is not None
+    assert refusal.code == "send_keys_target_unconfirmed"
+
+
+@pytest.mark.asyncio
+async def test_refuses_a_versioned_path_that_does_not_exist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    missing = tmp_path / "claude" / "versions" / "2.1.314"
+    manager = _scene(monkeypatch, foreground={TERMINAL_ID: str(missing)})
+
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+
+    assert refusal is not None
+    assert refusal.code == "send_keys_target_unconfirmed"
 
 
 @pytest.fixture
