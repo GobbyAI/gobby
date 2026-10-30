@@ -73,19 +73,9 @@ _UV_FLAG_OPTIONS = frozenset(
 )
 
 
-# Naming a package to install is an explicit install that can run build or lifecycle
-# scripts, unlike implicit runner setup. uv's -p is --python, so the sets differ.
-_NODE_RUNNER_PACKAGE_KEYS = frozenset({"p", "package", "y", "yes"})
-
-
-def _node_runner_names_package(word: str) -> bool:
-    """Match npx's parser: any dash count, then nopt's glommed single-dash shorthands."""
-    if not word.startswith("-") or word == "--":
-        return False
-    key = word.lstrip("-").partition("=")[0]
-    if key in _NODE_RUNNER_PACKAGE_KEYS:
-        return True
-    return not word.startswith("--") and not {"p", "y"}.isdisjoint(key)
+# npx strips any dash count, globs single-dash shorthands and hands the next word to
+# an unknown bare option, so any option outside these switches can name a package.
+_NODE_RUNNER_SAFE_OPTIONS = frozenset({"--", "-q", "--quiet", "--no-install"})
 
 
 _UV_PACKAGE_OPTIONS = frozenset(
@@ -200,7 +190,7 @@ def unwrap_execution_command(parts: list[str], cwd: str | None) -> ExecutionComm
                 parts = [*parts[:index], parts[index].partition("@")[0], *parts[index + 1 :]]
         elif command in {"npx", "bunx"}:
             index = _wrapper_options_end(parts, 1, frozenset({"--package", "-p"}))
-            read_only &= not any(_node_runner_names_package(word) for word in parts[1:index])
+            read_only &= _NODE_RUNNER_SAFE_OPTIONS.issuperset(parts[1:index])
             parts = parts[index:]
             if parts and (parts[0] == "-c" or parts[0].partition("=")[0] == "--call"):
                 # A shell program string is not an executable argv; submit must fail closed.
