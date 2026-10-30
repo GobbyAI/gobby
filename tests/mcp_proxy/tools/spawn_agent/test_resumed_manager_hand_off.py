@@ -28,6 +28,7 @@ from gobby.workflows.agent_models import (
     AgentSelector,
     AgentWorkflows,
 )
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.landing_case import (
     DEV_MANAGER,
     LandingCase,
@@ -54,6 +55,8 @@ class CrashedTeam:
 
 
 def _seat(db: HubDatabase, session_id: str, runbook: str, role: str) -> None:
+    # A seat resumes only as the definition it was launched with, recorded as its agent type.
+    SessionVariableManager(db).set_variable(session_id, "_agent_type", role)
     LocalAgentRunManager(db).create(
         parent_session_id=runbook,
         provider="claude",
