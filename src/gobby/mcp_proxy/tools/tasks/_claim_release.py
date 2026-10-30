@@ -3,12 +3,10 @@
 from typing import Any
 
 from gobby.agents.team_lifecycle import TeamBinding, seat_team
-from gobby.agents.team_scope import open_leaf_below
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_claim import record_claimant_state
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
-from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import (
     AgentTaskClaimMutation,
     HubDatabase,
@@ -17,15 +15,11 @@ from gobby.storage.hub.protocol import (
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
-from gobby.storage.team_records import EPIC_MODE
 from gobby.tasks.attributed_roots import is_ignorable_attributed_root
-from gobby.tasks.lifecycle_access import (
-    is_operator_coordinator,
-    session_agent_definition,
-    session_grants,
-)
+from gobby.tasks.lifecycle_access import is_operator_coordinator
 from gobby.tasks.step_records import fixer_round, list_task_step_records
 from gobby.utils.session_context import get_current_session_id
+from gobby.workflows.agent_resolver import session_agent_definition
 from gobby.workflows.task_claim_state import task_edited_checkout_paths, task_edited_file_set
 from gobby.workflows.task_dirty_state import task_dirty_paths
 
@@ -36,14 +30,21 @@ _STALE_HOLDER = {
 
 
 def _can_release(ctx: RegistryContext, caller: Session, holder: Session, task_id: str) -> bool:
-    """The Orchestrator, or the Dev Manager of the task's team when the holder is its seat."""
+    """A declared coordinator, or the task's team manager when the holder is its seat."""
     if caller.project_id != holder.project_id or caller.machine_id != holder.machine_id:
         return False
-    role = ctx.session_var_manager.get_variable_subset(caller.id, ("_agent_type",))
-    if role.get("_agent_type") == "orchestrator":
-        return is_operator_coordinator(ctx.task_manager, caller)
+    if is_operator_coordinator(ctx.task_manager, caller, capability="manage_task_claims"):
+        return True
     team = _managed_team(ctx, caller, task_id)
-    return team is not None and seat_team(ctx.task_manager.db, holder.id) == team
+    return team is not None and _is_team_seat(ctx.task_manager.db, holder.id, team.team_id)
+
+
+def _is_team_seat(db: HubDatabase, session_id: str, team_id: str) -> bool:
+    """Whether the session is a seat of the team. Team identity decides membership: a seat's
+    admission snapshot can lag the live team after a replacement join or a later seat bind, so
+    the whole binding need not compare equal."""
+    held = seat_team(db, session_id)
+    return held is not None and held.team_id == team_id
 
 
 def _uncommitted_refusal(
@@ -167,27 +168,6 @@ def register_release_task_claim(registry: InternalToolRegistry, ctx: RegistryCon
     register_hand_off_task_claim(registry, ctx)
 
 
-def _bound_dev_manager(ctx: RegistryContext, caller: Session, task_id: str) -> bool:
-    """The caller's active run is bound to the task and its definition writes closing."""
-    db = ctx.task_manager.db
-    run = LocalAgentRunManager(db).get_by_session(caller.id)
-    definition = session_agent_definition(db, caller)
-    return (
-        run is not None
-        and run.task_id == task_id
-        and definition is not None
-        and definition[0].name != "researcher"
-        and "closing" in definition[0].task_step_writes
-    )
-
-
-def _team_task(db: HubDatabase, team: TeamBinding, task_id: str) -> bool:
-    """The team's own task, or in epic mode an open leaf below its epic."""
-    if team.task_id == task_id:
-        return True
-    return team.mode == EPIC_MODE and open_leaf_below(db, team.task_id, task_id) is not None
-
-
 def _managed_team(ctx: RegistryContext, caller: Session, task_id: str) -> TeamBinding | None:
     """The team the caller manages for ``task_id``: its Dev Manager, bound to the team's task.
 
@@ -195,10 +175,12 @@ def _managed_team(ctx: RegistryContext, caller: Session, task_id: str) -> TeamBi
     team comes from the caller's runbook execution (``seat_team``), shared by every caller.
     """
     db = ctx.task_manager.db
-    team = seat_team(db, caller.id)
-    if team is None or not _team_task(db, team, task_id):
+    from gobby.agents.team_lifecycle import managed_task_team
+
+    definition = session_agent_definition(db, caller)
+    if definition is None or "manage_task_claims" not in definition[0].capabilities:
         return None
-    return team if _bound_dev_manager(ctx, caller, team.task_id) else None
+    return managed_task_team(db, caller.id, task_id)
 
 
 def _recipient_refusal(
@@ -211,9 +193,7 @@ def _recipient_refusal(
     """
     definition = session_agent_definition(db, recipient)
     if recipient.id == caller_id or (
-        definition is not None
-        and definition[0].name != "researcher"
-        and "closing" in definition[0].task_step_writes
+        definition is not None and "land_tasks" in definition[0].capabilities
     ):
         return {
             "error": "The seat that closes the task cannot hold its claim",
@@ -262,21 +242,12 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
             if (
                 holder is None
                 or recipient is None
-                or seat_team(db, holder.id) != team
-                or seat_team(db, recipient.id) != team
+                or not _is_team_seat(db, holder.id, team.team_id)
+                or not _is_team_seat(db, recipient.id, team.team_id)
             ):
                 return {
                     "error": "The holder and the recipient must be seats of the task's team",
                     "error_code": "team_seat_required",
-                }
-            if (
-                team.mode == EPIC_MODE
-                and session_grants(db, recipient.id, "review")
-                and not session_grants(db, recipient.id, "implementation")
-            ):
-                return {
-                    "error": "An epic reviewer never takes a claim; findings go to a developer",
-                    "error_code": "reviewer_claim_forbidden",
                 }
             # claim_task_for_agent re-takes these exact locks, so the ownership check, the
             # dirty-file check and the move commit as one transfer.

@@ -12,20 +12,15 @@ from gobby.agents.srt_package_patch import apply_srt_proxy_patch, verify_srt_pro
 from tests.srt_fixture_helpers import write_srt_proxy_fixture
 
 
-def test_patch_drains_only_the_two_upstream_close_handlers(tmp_path: Path) -> None:
+def test_patch_drains_mux_and_verifies_all_runtime_bytes(tmp_path: Path) -> None:
     from gobby.agents.srt_package_patch import MUX_PROXY_PATH
 
-    proxy = write_srt_proxy_fixture(tmp_path, patched=False)
-    original = proxy.read_bytes()
+    write_srt_proxy_fixture(tmp_path, patched=False)
     mux = tmp_path / MUX_PROXY_PATH
     original_mux = mux.read_bytes()
 
     apply_srt_proxy_patch(tmp_path)
 
-    assert proxy.read_bytes() == original.replace(
-        b"upstream.on('close', () => socket.destroy());",
-        b"upstream.on('close', () => socket.end());",
-    )
     assert mux.read_bytes() == original_mux.replace(
         b"upstream.once('close', () => client.destroy());",
         b"upstream.once('close', () => client.end());",
@@ -63,6 +58,18 @@ def test_verifier_rejects_unpatched_and_modified_proxy(tmp_path: Path, name: str
     proxy.write_bytes(proxy.read_bytes() + b"// tampered\n")
     with pytest.raises(ValueError, match="checksum mismatch"):
         verify_srt_proxy_patch(tmp_path)
+
+
+def test_connect_failure_reporter_writes_only_to_the_journal(tmp_path: Path) -> None:
+    # The proxy shares the sandboxed agent's terminal; console output lands in its composer.
+    proxy = write_srt_proxy_fixture(tmp_path).read_bytes()
+    start = proxy.index(b"function reportConnectFailure(")
+    reporter = proxy[start : proxy.index(b"export function createHttpProxyServer(", start)]
+
+    assert b"globalThis.gobbySrtProxyFailure?.(record);" in reporter
+    assert b"console." not in reporter
+    assert b"process.std" not in reporter
+    assert b"[gobby-srt proxy]" not in proxy
 
 
 _WHICH_PROBE = """

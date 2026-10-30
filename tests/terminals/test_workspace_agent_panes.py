@@ -923,6 +923,91 @@ async def test_reserve_rollback_failure_leaves_sweepable_residue(
     assert _pane_ids(h, ws) == {anchor.id, retry.pane_id}
 
 
+async def test_close_empty_tab_bounds_a_held_tab_row(
+    harness: _Harness, caplog: pytest.LogCaptureFixture
+) -> None:
+    h = harness
+    ws = _workspace(h)
+    caplog.set_level(logging.WARNING, logger=agent_panes.__name__)
+    reserved = await _reserve(h, _tab(ws.id, "lead"))
+    tab_id = reserved.tab_id
+    row_held, release_row = threading.Event(), threading.Event()
+
+    def hold_row() -> None:
+        # A separate thread holds its own connection, so the close waits on a real row lock.
+        with h.db.transaction() as conn:
+            conn.execute("SELECT id FROM workspace_tabs WHERE id = %s FOR UPDATE", (tab_id,))
+            row_held.set()
+            assert release_row.wait(10), "Test did not release the tab row lock"
+
+    holder = asyncio.create_task(asyncio.to_thread(hold_row))
+    try:
+        assert await asyncio.to_thread(row_held.wait, 5)
+        close = asyncio.create_task(h.reserver.close_empty_tab(tab_id, timeout=0.05))
+        done, _ = await asyncio.wait({close}, timeout=1.0)
+        assert done, "close_empty_tab waited past its bound on a held tab row"
+        refused = close.exception()
+    finally:
+        release_row.set()
+        await holder
+    assert isinstance(refused, AgentPlacementError)
+    assert refused.code == "timeout"
+    assert _tab_ids(h, ws) == {tab_id}
+    assert any("waiting for a workspace row lock" in m for m in _reserver_logs(caplog))
+
+
+async def test_rollback_bounds_a_held_pane_row_and_keeps_residue(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    h = harness
+    ws = _workspace(h)
+    _, anchor = _base(h, ws)
+    caplog.set_level(logging.WARNING, logger=agent_panes.__name__)
+    original_rename = h.workspaces.rename_pane
+    release_row = threading.Event()
+    holders: list[threading.Thread] = []
+
+    def held_rename(pane_id: str, label: str | None) -> WorkspacePane:
+        # The insert has committed the pane; a holder keeps its row locked through the rename.
+        row_held = threading.Event()
+
+        def hold_row() -> None:
+            with h.db.transaction() as conn:
+                conn.execute("SELECT id FROM workspace_panes WHERE id = %s FOR UPDATE", (pane_id,))
+                row_held.set()
+                assert release_row.wait(10), "Test did not release the pane row lock"
+
+        holder = threading.Thread(target=hold_row)
+        holders.append(holder)
+        holder.start()
+        assert row_held.wait(5)
+        return original_rename(pane_id, label)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(h.workspaces, "rename_pane", held_rename)
+        resolved = await h.reserver.preflight(OPERATOR, h.project_id, _split(anchor.id, "scout"))
+        reserve = asyncio.create_task(h.reserver.reserve(resolved, worktree_id=None, timeout=0.05))
+        try:
+            done, _ = await asyncio.wait({reserve}, timeout=1.0)
+            assert done, "reserve waited past its bound on a held pane row"
+            refused = reserve.exception()
+        finally:
+            release_row.set()
+            for holder in holders:
+                holder.join(5)
+    assert isinstance(refused, AgentPlacementError)
+    assert refused.code == "timeout"
+    [residue] = h.minted
+    assert _in_flight(h) == []
+    assert _pane(h, ws, residue).terminal_id is None
+    assert any("waiting for a workspace row lock" in m for m in _reserver_logs(caplog))
+
+    retry = await _reserve(h, _split(anchor.id, "scout"))
+    swept = h.workspaces.sweep_dead_panes(ws.id)
+    assert {pane.id for pane in swept.removed_panes} == {residue}
+    assert _pane_ids(h, ws) == {anchor.id, retry.pane_id}
+
+
 async def test_mark_held_until_settle(harness: _Harness) -> None:
     h = harness
     ws = _workspace(h)

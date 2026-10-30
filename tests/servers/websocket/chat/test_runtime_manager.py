@@ -554,13 +554,19 @@ class TestGrokBackend:
         assert any(isinstance(event, ToolCallEvent) for event in first_events)
         assert any(isinstance(event, ToolResultEvent) for event in first_events)
         session._on_pre_tool.assert_awaited_once_with(
-            {"tool_name": "Write", "tool_input": {"file_path": "/tmp/example.py"}}
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/tmp/example.py"},
+                "tool_use_id": "call-1",
+            }
         )
         session._on_post_tool.assert_awaited_once_with(
             {
                 "tool_name": "Write",
                 "tool_input": {"file_path": "/tmp/example.py"},
                 "tool_response": "ok",
+                "tool_use_id": "call-1",
+                "verification_execution_id": "call-1",
             }
         )
         assert isinstance(second_events[-1], DoneEvent)
@@ -607,7 +613,11 @@ class TestGrokBackend:
         assert not any(isinstance(event, ToolResultEvent) for event in events)
         assert isinstance(events[-1], DoneEvent)
         session._on_pre_tool.assert_awaited_once_with(
-            {"tool_name": "Write", "tool_input": {"file_path": "/tmp/example.py"}}
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/tmp/example.py"},
+                "tool_use_id": "call-1",
+            }
         )
         session._on_post_tool.assert_not_awaited()
         assert session._consume_deferred_context() == TASKS_SKILL_DIRECTIVE
@@ -687,6 +697,7 @@ class TestGrokBackend:
             {
                 "tool_name": "list_mcp_servers",
                 "tool_input": {"toolCallId": "tc-1", "title": "list_mcp_servers"},
+                "tool_use_id": "tc-1",
             }
         )
         messages = [
@@ -828,6 +839,9 @@ async def _collect_codex_backend_events(
     is_connected: bool = True,
     previous_turn_id: str | None = None,
     disconnect_after_chunk: bool = False,
+    pre_tool: AsyncMock | None = None,
+    post_tool: AsyncMock | None = None,
+    interrupt: AsyncMock | None = None,
 ) -> tuple[list[Any], CodexManagedChatSession]:
     handlers: dict[str, list[Any]] = {}
 
@@ -849,6 +863,7 @@ async def _collect_codex_backend_events(
     client.add_notification_handler = MagicMock(side_effect=add_handler)
     client.remove_notification_handler = MagicMock()
     client.start_turn = AsyncMock(side_effect=start_turn)
+    client.interrupt_turn = interrupt or AsyncMock()
 
     backend = CodexWebChatBackend(client=client)
     await backend.start()
@@ -857,6 +872,8 @@ async def _collect_codex_backend_events(
     session._connected = True
     session._thread_id = "thread-1"
     session._turn_id = previous_turn_id
+    session._on_pre_tool = pre_tool
+    session._on_post_tool = post_tool
     if transcript_path is not None:
         transcript_path.write_text("", encoding="utf-8")
         session._transcript_path = str(transcript_path)
@@ -870,6 +887,67 @@ async def _collect_codex_backend_events(
         if disconnect_after_chunk and isinstance(event, TextChunk):
             client.is_connected = False
     return events, session
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked", [False, True])
+async def test_codex_wrapped_shell_lifecycle_preserves_execution_and_checkout(
+    tmp_path: Path, blocked: bool
+) -> None:
+    fixture = (
+        Path(__file__).resolve().parents[3]
+        / "fixtures/provider_contracts/codex/functions-exec-items.json"
+    )
+    records = {entry["case"]: entry["item"] for entry in json.loads(fixture.read_text())["events"]}
+    pending = records["yielded"]
+    pending["arguments"] = (
+        'const r = await tools.exec_command({cmd:"git merge incoming",workdir:'
+        + json.dumps(str(tmp_path))
+        + "}); text(r.output);"
+    )
+    terminal = records["yielded_final_failure"]
+    before = AsyncMock(
+        return_value={"decision": "block", "reason": "foreign operation"} if blocked else None
+    )
+    after = AsyncMock(return_value=None)
+    interrupt = AsyncMock()
+    events, _session = await _collect_codex_backend_events(
+        [
+            ("item/started", {"threadId": "thread-1", "item": pending}),
+            ("item/completed", {"threadId": "thread-1", "item": pending}),
+            ("item/completed", {"threadId": "thread-1", "item": terminal}),
+            ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+        ],
+        pre_tool=before,
+        post_tool=after,
+        interrupt=interrupt,
+    )
+    before.assert_awaited_once_with(
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "git merge incoming", "workdir": str(tmp_path)},
+            "tool_use_id": pending["id"],
+        }
+    )
+    if blocked:
+        interrupt.assert_awaited_once_with("thread-1", "turn-1")
+        after.assert_not_awaited()
+        assert not any(isinstance(event, ToolCallEvent) for event in events)
+        assert any(
+            isinstance(event, TextChunk) and "foreign operation" in event.content
+            for event in events
+        )
+    else:
+        interrupt.assert_not_awaited()
+        assert after.await_count == 2
+        pending_hook, terminal_hook = [call.args[0] for call in after.await_args_list]
+        for hook in (pending_hook, terminal_hook):
+            assert hook["tool_name"] == "Bash"
+            assert hook["tool_input"] == {"command": "git merge incoming", "workdir": str(tmp_path)}
+            assert hook["tool_use_id"] == hook["verification_execution_id"] == pending["id"]
+        assert pending_hook["_verification_pending"] is True
+        assert "_verification_pending" not in terminal_hook
+        assert terminal_hook["is_error"] is True
 
 
 class TestCodexBackend:
@@ -2559,6 +2637,8 @@ class TestCodexBackend:
                 "tool_input": {"task_id": "#42"},
                 "tool_response": {"success": True},
                 "is_error": False,
+                "tool_use_id": "call-lifecycle-1",
+                "verification_execution_id": "call-lifecycle-1",
                 "mcp_server": "gobby-tasks",
                 "mcp_tool": "close_task",
             }
@@ -2662,6 +2742,8 @@ class TestCodexBackend:
                 "tool_input": {"task_id": "#42", "changes_summary": "done"},
                 "tool_response": {"success": True, "task_id": "#42"},
                 "is_error": False,
+                "tool_use_id": "item-mcp-1",
+                "verification_execution_id": "item-mcp-1",
                 "mcp_server": "gobby-tasks",
                 "mcp_tool": "close_task",
             }
@@ -2735,6 +2817,7 @@ class TestCodexBackend:
                     "tool_name": "list_tasks",
                     "arguments": {"project": "_personal"},
                 },
+                "tool_use_id": "elicitation-1",
             }
         )
         wait_for_tool_approval.assert_not_awaited()
@@ -2852,12 +2935,14 @@ class TestCodexBackend:
                 {
                     "tool_name": "mcp__gobby-tasks__close_task",
                     "tool_input": {"task_id": "#42"},
+                    "tool_use_id": "item-mcp-1",
                 }
             ),
             call(
                 {
                     "tool_name": "mcp__gobby-tasks__close_task",
                     "tool_input": {"task_id": "#42"},
+                    "tool_use_id": "item-mcp-1",
                 }
             ),
         ]

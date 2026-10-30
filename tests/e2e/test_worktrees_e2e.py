@@ -46,7 +46,7 @@ def extract_result(response: dict[str, Any]) -> dict[str, Any]:
 def extract_internal_session_id(session_result: dict[str, Any]) -> str:
     """Extract the database session ID from first-activity hook context."""
     additional_context = session_result.get("hookSpecificOutput", {}).get("additionalContext", "")
-    match = re.search(r"Gobby Session ID: #[0-9]+ \(([^)]+)\)", additional_context)
+    match = re.search(r"Gobby Session ID: [^(\n]*\(([^)]+)\)", additional_context)
     assert match, f"Could not find session ID in response: {session_result}"
     return match.group(1)
 

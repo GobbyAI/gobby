@@ -12,10 +12,19 @@ fallback for capture. Inspect `via` and truncation metadata when present: a
 transcript tail is not proof of a live terminal screen. Missing pane/transcript
 errors require restoring the actual runtime or using transcript diagnostics.
 
-`send_keys` requires current caller context. Autonomous agent-run sessions cannot
-use it. `send_keys` and `capture_output` targets must be the caller, in its
-project, or in its ancestor/descendant tree, and web-chat sessions can use neither
-tool. These checks do not grant permission to answer a user's approval dialog.
+`send_keys` requires current caller context. The `no-send-keys` rule (default tag)
+withholds it from every definition except the Orchestrator and Assistant, which
+carry the `send_keys` capability; the operator's own unspawned terminal stays
+exempt. `capture_output` is not withheld by that rule. Before any key is written,
+the target must show an idle agent CLI composer: a bare shell, an empty or dead
+terminal, a session with no live agent CLI, a draft or held composer, and a
+credential prompt are refused, and undeterminable state fails closed. A tmux
+target without a process group is refused as unconfirmed.
+The selected `block-cross-project-send-keys` rule restricts targets to the caller,
+its project, or its ancestor/descendant tree, and `block-web-chat-send-keys`
+blocks both tools for web-chat callers. Seat guidance permits stalled-session
+resume only, never steering. No seat may enter credentials or type into a password
+or credential prompt. These permissions do not authorize answering a user's approval dialog.
 Use the session target intentionally; do not use raw tmux to evade a refusal.
 
 Literal input defaults to true. Trailing newlines request one Enter after paste;

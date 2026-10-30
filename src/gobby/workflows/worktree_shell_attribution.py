@@ -25,11 +25,12 @@ import os
 import re
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.hooks.events import tool_execution_id
 from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
 from gobby.workflows.checkout_fingerprint import path_fingerprints
 
@@ -168,6 +169,8 @@ def _is_fresh(entry: Any, now: float) -> bool:
         return False
     age = now - float(entry.get("started_at", 0.0))
     output_path = entry.get("output_path")
+    if entry.get("pending_receipt") is True:
+        return age < BACKGROUND_STALE_SECONDS
     if isinstance(output_path, str):
         return age < BACKGROUND_STALE_SECONDS and background_output_state(output_path) != "missing"
     return age < STALE_CALL_SECONDS
@@ -213,8 +216,14 @@ class WorktreeShellCallRegistry(ABC):
         attributable: bool,
         now: float,
         task_started_at: float | None = None,
+        read_only: bool = False,
     ) -> None:
-        """Register one call before it runs, then mark every in-flight call it overlaps."""
+        """Register one call before it runs, then mark every in-flight call it overlaps.
+
+        A read-only call changes nothing, so it registers nothing and marks no other call.
+        """
+        if read_only:
+            return
         entry = {
             "root": root,
             "started_at": now,
@@ -239,15 +248,21 @@ class WorktreeShellCallRegistry(ABC):
         if hits:
             self._mark_overlapped(session_id, call_id)
 
-    def defer_worktree_shell_call(self, session_id: str, call_id: str, *, output_path: str) -> None:
-        """Keep a background call in flight until its output file shows the process ended."""
+    def defer_worktree_shell_call(
+        self, session_id: str, call_id: str, *, output_path: str | None
+    ) -> None:
+        """Keep a call in flight until its output file or terminal poll proves it ended."""
 
         def defer(variables: dict[str, Any]) -> tuple[None, bool]:
             calls = _calls_of(variables)
             entry = calls.get(call_id)
             if not isinstance(entry, dict):
                 return None, False
-            calls[call_id] = {**entry, "output_path": output_path}
+            calls[call_id] = {
+                **entry,
+                "output_path": output_path,
+                "pending_receipt": output_path is None,
+            }
             variables[CALLS_VARIABLE] = calls
             return None, True
 
@@ -287,6 +302,9 @@ class WorktreeShellCallRegistry(ABC):
         or ends meanwhile, and each of those marks it. Without a readable ``after`` snapshot
         nothing is attributed.
         """
+        # An unregistered call, such as a read-only one, marks nothing: it is not in flight.
+        if call_id not in _calls_of(self.get_variable_subset(session_id, (CALLS_VARIABLE,))):
+            return None
         hits = self._in_flight_elsewhere(session_id, root, now)
         for other_session_id, other_call_id in hits:
             self._mark_overlapped(other_session_id, other_call_id)
@@ -340,6 +358,27 @@ class WorktreeShellCallRegistry(ABC):
                     hits.append((str(row["session_id"]), other_call_id))
         return hits
 
+    def has_calls_in_flight(self, root: str, now: float, request_id: str | None) -> bool:
+        """Whether any session, this one included, has a fresh call in ``root`` besides one request.
+
+        A structured edit registers its own entry under ``edit:<request_id>:<root>`` before its
+        rules judge it, so that request's entries (its shell id and its edit keys) never count.
+        """
+        rows = self.db.fetchall(
+            """
+            SELECT (session_variables.variables -> 'worktree_shell_calls')::text AS calls
+            FROM session_variables
+            WHERE session_variables.variables ? 'worktree_shell_calls'
+            """
+        )
+        own_edit_prefix = f"{_EDIT_CALL_PREFIX}{request_id}:"
+        return any(
+            _is_fresh(entry, now) and entry.get("root") == root
+            for row in rows
+            for call_id, entry in _json_object(row["calls"]).items()
+            if call_id != request_id and not call_id.startswith(own_edit_prefix)
+        )
+
     def _mark_overlapped(self, session_id: str, call_id: str) -> None:
         def mark(variables: dict[str, Any]) -> tuple[None, bool]:
             calls = _calls_of(variables)
@@ -377,6 +416,23 @@ class WorktreeShellCallRegistry(ABC):
             return None, True
 
         self._mutate_variables(session_id, settle, keys=(OVERLAPS_VARIABLE,))
+
+    def clear_overlapped_paths(self, session_id: str, root: str, paths: Collection[str]) -> None:
+        """Drop paths a native structured write named from this session's overlap record."""
+        named = set(paths)
+
+        def clear(variables: dict[str, Any]) -> tuple[None, bool]:
+            raw = variables.get(OVERLAPS_VARIABLE)
+            records = dict(raw) if isinstance(raw, dict) else {}
+            kept = sorted(path for path in records.get(root, []) if path not in named)
+            if kept:
+                records[root] = kept
+            else:
+                records.pop(root, None)
+            variables[OVERLAPS_VARIABLE] = records or None
+            return None, True
+
+        self._mutate_variables(session_id, clear, keys=(OVERLAPS_VARIABLE,))
 
 
 def attribute_settled_call(
@@ -464,7 +520,7 @@ def begin_structured_edit_calls(
     )
 
     data = event.data
-    request_id = event.request_id
+    request_id = tool_execution_id(event)
     project_id = event.project_id
     if request_id is None or project_id is None or not isinstance(data, dict):
         return

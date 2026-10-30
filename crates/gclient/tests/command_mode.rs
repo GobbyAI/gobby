@@ -1,5 +1,6 @@
 mod mock_daemon;
 
+use gobby_client::app::{plan_arrange, ArrangeLayout};
 use mock_daemon::MockDaemon;
 use serde_json::{json, Value};
 use std::fs;
@@ -7,7 +8,7 @@ use std::process::{Command, Output};
 
 const PROJECT: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
-const VERBS: [&str; 11] = [
+const VERBS: [&str; 13] = [
     "list",
     "new-tab",
     "split",
@@ -18,8 +19,96 @@ const VERBS: [&str; 11] = [
     "capture-pane",
     "wait-for-output",
     "kill",
+    "arrange",
+    "move-pane",
     "help",
 ];
+
+#[tokio::test(flavor = "multi_thread")]
+async fn arrange_cli_matches_each_gui_layout() {
+    for (name, layout) in [
+        ("tiled", ArrangeLayout::Tiled),
+        ("even-horizontal", ArrangeLayout::EvenHorizontal),
+        ("even-vertical", ArrangeLayout::EvenVertical),
+        ("main-horizontal", ArrangeLayout::MainHorizontal),
+        ("main-vertical", ArrangeLayout::MainVertical),
+    ] {
+        let daemon = MockDaemon::start("command-token").await;
+        let seeded = daemon.seed_workspace(PROJECT, &[(&["a", "b", "c", "d", "e"], "a")]);
+        let (tab, panes) = &seeded[0];
+        let output = invoke(&daemon, &["arrange", tab, "--layout", name]).await;
+        assert_eq!(output.status.code(), Some(0), "{name}: {}", stderr(&output));
+        let actual: Vec<_> = daemon
+            .workspace_requests()
+            .into_iter()
+            .filter(|op| matches!(op["op"].as_str(), Some("pane.move" | "pane.resize")))
+            .collect();
+        let expected = plan_arrange(layout, tab, panes);
+        assert_eq!(actual.len(), expected.len(), "{name}: complete layout plan");
+        for (actual, expected) in actual.iter().zip(expected) {
+            let expected = serde_json::to_value(expected).expect("serialize GUI operation");
+            for (key, value) in expected.as_object().expect("operation object") {
+                assert_eq!(actual.get(key), Some(value), "{name}: {key}");
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn move_pane_cli_sends_destination_and_optional_beside() {
+    for with_beside in [false, true] {
+        let daemon = MockDaemon::start("command-token").await;
+        let seeded =
+            daemon.seed_workspace(PROJECT, &[(&["source"], "source"), (&["target"], "target")]);
+        let source = &seeded[0].1[0];
+        let (tab, panes) = &seeded[1];
+        let mut args = vec!["move-pane", source, "--to-tab", tab];
+        if with_beside {
+            args.extend(["--beside", &panes[0]]);
+        }
+        let output = invoke(&daemon, &args).await;
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+        let moves: Vec<_> = daemon
+            .workspace_requests()
+            .into_iter()
+            .filter(|op| op["op"] == "pane.move")
+            .collect();
+        assert_eq!(moves.len(), 1, "move once");
+        assert_eq!(moves[0]["pane"], source.as_str());
+        assert_eq!(moves[0]["tab"], tab.as_str());
+        if with_beside {
+            assert_eq!(moves[0]["beside"], panes[0].as_str());
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn move_pane_cli_surfaces_project_and_machine_refusals() {
+    for reason in [
+        "destination belongs to another project",
+        "destination belongs to another machine",
+    ] {
+        let daemon = MockDaemon::start("command-token").await;
+        let seeded =
+            daemon.seed_workspace(PROJECT, &[(&["source"], "source"), (&["target"], "target")]);
+        daemon.enqueue_workspace_refusal("invalid_move", reason);
+        let output = invoke(
+            &daemon,
+            &["move-pane", &seeded[0].1[0], "--to-tab", &seeded[1].0],
+        )
+        .await;
+        assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+        assert!(
+            stderr(&output).contains(reason),
+            "the refusal explains the boundary"
+        );
+        assert_eq!(
+            daemon.workspace_requests().len(),
+            1,
+            "a refusal is not retried"
+        );
+    }
+}
 
 fn gclient(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_gclient"))

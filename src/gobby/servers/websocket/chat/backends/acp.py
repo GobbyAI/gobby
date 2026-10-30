@@ -276,6 +276,9 @@ class ACPWebChatBackend:
             return await session._apply_pre_tool_lifecycle(
                 tool_name,
                 tool_input if isinstance(tool_input, dict) else {},
+                tool_execution_id=(
+                    value if isinstance(value := data.get("tool_use_id"), str) else None
+                ),
             )
 
         client = session._acp_client

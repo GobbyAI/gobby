@@ -44,6 +44,7 @@ WorkspaceOpErrorCode = Literal[
     "not_found",
     "invalid_ref",
     "invalid_op",
+    "invalid_move",
     "terminal_failed",
     "busy",
     "forbidden",

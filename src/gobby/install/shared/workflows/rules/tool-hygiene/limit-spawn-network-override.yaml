@@ -17,7 +17,7 @@ rules:
       - type: block
         mcp_tools: ["gobby-agents:spawn_agent"]
         reason: >-
-          Only a root session or a spawned default or orchestrator agent chooses
-          a spawn's network profile. Authority comes from the calling session's
-          own agent run; a parent_session_id argument grants none. Omit network
+          Choosing a spawn's network profile requires the override_spawn_network
+          capability or the operator terminal. A spawned caller's authority comes
+          from its own agent run; a parent_session_id argument grants none. Omit network
           to spawn with the profile the agent definition sets.

@@ -23,6 +23,7 @@ from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.http import HTTPServer
 from gobby.servers.websocket.asgi_adapter import ASGIWebSocketAdapter
 from gobby.servers.websocket.server import WebSocketServer
+from gobby.servers.websocket_protocol import WebSocketProtocol
 
 pytestmark = pytest.mark.unit
 
@@ -381,7 +382,7 @@ async def _live_ws_server(websocket_server: _WebSocketServer | None) -> AsyncIte
         access_log=False,
         lifespan="off",
         log_config=None,
-        ws="websockets-sansio",
+        ws=WebSocketProtocol,
     )
     http = uvicorn.Server(config)
     task = asyncio.create_task(http.serve())

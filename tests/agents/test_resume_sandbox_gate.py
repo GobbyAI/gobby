@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,6 +27,41 @@ from tests.agents.test_resume_executor import (
 pytestmark = pytest.mark.unit
 
 _ABSENT = object()
+
+
+async def test_resume_recreates_only_saved_directory_grants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
+    directory = tmp_path / ".nextest"
+    file_grant = tmp_path / "settings.json"
+    glob_grant = tmp_path / "logs/*.log"
+    metadata = _resume_metadata()
+    metadata["cwd"] = str(tmp_path)
+    metadata["sandbox_config"] = SandboxConfig(
+        enabled=True,
+        backend="srt",
+        extra_write_paths=[str(directory), str(file_grant), str(glob_grant)],
+    ).model_dump(mode="json")
+    metadata["sandbox_directory_write_paths"] = [str(directory)]
+    observed: dict[str, bool] = {}
+
+    async def launch(**_kwargs: object) -> None:
+        observed.update(
+            directory=directory.is_dir(), file=file_grant.exists(), glob=glob_grant.parent.exists()
+        )
+        raise OSError("stop after directory preparation")
+
+    monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", launch)
+    with patch("gobby.agents.sandbox_gate.verify_srt_installation_for_launch"):
+        result = await resume_executor.resume_agent_run(
+            _original_run(),
+            resume_metadata=metadata,
+            runner=_runner(storage=MagicMock()),
+            session_manager=MagicMock(),
+        )
+    assert result.error is not None and "stop after directory preparation" in result.error
+    assert observed == {"directory": True, "file": False, "glob": False}
 
 
 @pytest.mark.parametrize(

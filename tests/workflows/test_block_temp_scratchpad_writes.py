@@ -18,12 +18,9 @@ import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
-from gobby.workflows.selectors import resolve_rules_for_agent
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -33,7 +30,6 @@ RULE = "block-temp-scratchpad-writes"
 RULE_PATH = (
     ROOT / "src/gobby/install/shared/workflows/rules/roles/block-temp-scratchpad-writes.yaml"
 )
-AGENTS_DIR = ROOT / "src/gobby/install/shared/workflows/agents"
 SESSION_ID = "55555555-5555-4555-8555-555555555555"
 
 PROJECT = "/Users/dev/.gobby/worktrees/gobby/task-25218-example"
@@ -185,25 +181,6 @@ def test_template_fires_for_every_seat_without_keying_on_agent_type(seat: str | 
 
 
 # --- Selection: every agent definition and the hub-synced row ---------------
-
-
-@pytest.mark.asyncio
-async def test_every_agent_definition_selects_the_synced_rule(db: HubDatabase) -> None:
-    _sync_bundled(db)
-    manager = RuleDefinitionManager(db)
-
-    row = manager.get_by_name(RULE)
-    assert row is not None, f"{RULE} is not synced as a bundled rule"
-    assert row.enabled is True
-
-    all_rows = manager.list_all()
-    unselected: list[str] = []
-    for agent_path in sorted(AGENTS_DIR.glob("*.yaml")):
-        agent = AgentDefinitionBody.model_validate(yaml.safe_load(agent_path.read_text()))
-        if RULE not in resolve_rules_for_agent(agent, all_rows):
-            unselected.append(agent_path.stem)
-
-    assert unselected == [], f"agent definitions that do not select {RULE}: {unselected}"
 
 
 # --- Evaluator: Write and Edit into temp roots -------------------------------

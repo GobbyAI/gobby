@@ -15,12 +15,14 @@ from gobby.adapters.codex_impl.execution_chain import (
     extract_functions_write_stdin_command,
     validate_functions_exec_wrapper,
 )
+from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.codex_impl.item_normalization import (
+    build_pre_tool_lifecycle_payload,
     extract_functions_exec_command,
     extract_yielded_cell_id,
 )
 from gobby.adapters.grok import GrokAdapter
-from gobby.hooks.events import HookEventType, SessionSource
+from gobby.hooks.events import HookEventType, SessionSource, tool_execution_id
 from gobby.servers.websocket.chat.backends.droid_stream import parse_droid_stream_line
 
 pytestmark = pytest.mark.unit
@@ -208,6 +210,92 @@ def test_codex_functions_exec_contract_correlates_yielded_final_outcome() -> Non
     assert failed["tool_outcome"]["status"] == "failed"
     assert failed["tool_outcome"]["exit_code"] == 7
     assert unknown["tool_outcome"]["status"] == "unknown"
+
+
+@pytest.mark.parametrize("direct", [False, True])
+def test_codex_pre_tool_keeps_relative_workdir(direct: bool) -> None:
+    arguments: Any = {"cmd": "git merge incoming", "workdir": "../foreign"}
+    if not direct:
+        arguments = 'await tools.exec_command({cmd:"git merge incoming",workdir:"../foreign"})'
+    result = build_pre_tool_lifecycle_payload(
+        {
+            "item": {
+                "type": "dynamicToolCall",
+                "namespace": "functions",
+                "tool": "exec_command" if direct else "exec",
+                "arguments": arguments,
+            }
+        }
+    )
+    assert result == ("Bash", {"command": "git merge incoming", "workdir": "../foreign"})
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        "workdir:wd",
+        "workdir",
+        'workdir:"../" + name',
+        'workdir:"/safe",workdir:wd',
+        "'workdir':wd",
+        r'"wo\x72kdir":wd',
+        "...options",
+    ],
+)
+def test_codex_computed_workdir_stays_visible_to_wrapper_validation(selector: str) -> None:
+    arguments = 'await tools.exec_command({cmd:"git merge incoming",' + selector + "})"
+    result = build_pre_tool_lifecycle_payload(
+        {
+            "item": {
+                "type": "dynamicToolCall",
+                "namespace": "functions",
+                "tool": "exec",
+                "arguments": arguments,
+            }
+        }
+    )
+    assert result == ("functions.exec", {"arguments": arguments})
+    assert validate_functions_exec_wrapper(arguments) == (
+        "functions.exec shell wrapper arguments must be one statically attributable literal object"
+    )
+
+
+def test_recorded_codex_completion_keeps_the_native_before_execution_id() -> None:
+    """Derive the native pre-hook envelope from recorded app-server item arguments and IDs."""
+    payload = json.loads(
+        (PROVIDER_CONTRACT_ROOT / "codex" / "functions-exec-items.json").read_text()
+    )
+    by_case = {record["case"]: record["item"] for record in payload["events"]}
+    yielded = by_case["yielded"]
+    terminal_item = by_case["yielded_final_failure"]
+    before = CodexHooksAdapter().translate_to_hook_event(
+        {
+            "hook_type": "PreToolUse",
+            "input_data": {
+                "session_id": "fixture-session",
+                "tool_use_id": yielded["id"],
+                "tool_name": f"{yielded['namespace']}.{yielded['tool']}",
+                "tool_input": {"arguments": yielded["arguments"]},
+            },
+        }
+    )
+    adapter = CodexAdapter()
+    pending, terminal = (
+        adapter.translate_to_hook_event(
+            {
+                "method": "item/completed",
+                "params": {"threadId": "fixture-session", "item": item},
+            }
+        )
+        for item in (yielded, terminal_item)
+    )
+    assert before is not None and before.event_type == HookEventType.BEFORE_TOOL
+    assert pending is not None and pending.event_type == HookEventType.AFTER_TOOL
+    assert terminal is not None and terminal.event_type == HookEventType.AFTER_TOOL
+    assert pending.data["_verification_pending"] is True
+    assert terminal.request_id == terminal_item["id"]
+    assert tool_execution_id(before) == tool_execution_id(pending) == tool_execution_id(terminal)
+    assert tool_execution_id(terminal) == yielded["id"]
 
 
 @pytest.mark.parametrize(

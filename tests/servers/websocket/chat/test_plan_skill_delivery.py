@@ -14,7 +14,7 @@ import pytest
 from claude_agent_sdk.types import HookContext, UserPromptSubmitHookInput
 
 from gobby.adapters.acp_client import ACPClient, StreamEvent
-from gobby.hooks.events import ContextPart, HookEventType
+from gobby.hooks.events import HookEventType, HookResponse
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
 from gobby.servers.websocket.chat.backends.acp_session import ACPManagedChatSession
@@ -273,11 +273,11 @@ async def test_context_change_during_evaluation_invalidates_older_receipt(
     evaluated = asyncio.Event()
     resume = asyncio.Event()
 
-    async def pause_after_rules(event_type: HookEventType, *args: Any) -> list[ContextPart]:
+    async def pause_after_rules(event_type: HookEventType, *args: Any) -> HookResponse:
         if event_type is HookEventType.BEFORE_AGENT:
             evaluated.set()
             await resume.wait()
-        return []
+        return HookResponse()
 
     monkeypatch.setattr(host, "_dispatch_event_handlers", pause_after_rules)
 

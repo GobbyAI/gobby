@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 
@@ -9,9 +10,61 @@ from gobby.storage.definitions.agents import (
     reject_terminal_backend,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
+from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import AgentDefinitionBody, AgentSelector, AgentWorkflows
+from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger(__name__)
+
+
+def session_agent_definition(
+    db: HubDatabase, session: Session
+) -> tuple[AgentDefinitionBody, str] | None:
+    """Resolve a session's enabled installed definition and its content digest."""
+    agent_type = (
+        SessionVariableManager(db)
+        .get_variable_subset(session.id, ("_agent_type",))
+        .get("_agent_type")
+    )
+    if not isinstance(agent_type, str) or not agent_type or session.project_id is None:
+        return None
+    row = AgentDefinitionManager(db).get_by_name(agent_type, session.project_id)
+    if row is None or not row.enabled:
+        return None
+    try:
+        body = AgentDefinitionBody.model_validate({**row.definition_json, "name": row.name})
+    except ValidationError:
+        logger.warning("Invalid active agent definition for session %s", session.id)
+        return None
+    digest = hashlib.sha256(
+        json.dumps(row.definition_json, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return body, digest
+
+
+def session_has_capability(db: HubDatabase, session_id: str, capability: str) -> bool:
+    """Whether a known session's enabled definition grants this permission."""
+    session = SessionManager(db).get(session_id)
+    resolved = session_agent_definition(db, session) if session is not None else None
+    return resolved is not None and capability in resolved[0].capabilities
+
+
+def is_operator_session(session: Session, role: object) -> bool:
+    """An unspawned, unseated terminal retains the operator's authority."""
+    return not session.agent_run_id and not session.agent_depth and role in (None, "default")
+
+
+def session_has_capability_or_operator(db: HubDatabase, session_id: str, capability: str) -> bool:
+    """Recognize a declared permission or the operator's own unspawned terminal."""
+    session = SessionManager(db).get(session_id)
+    if session is None:
+        return False
+    role = SessionVariableManager(db).get_variable_subset(session_id, ("_agent_type",))
+    if is_operator_session(session, role.get("_agent_type")):
+        return True
+    resolved = session_agent_definition(db, session)
+    return resolved is not None and capability in resolved[0].capabilities
 
 
 class AgentResolutionError(Exception):
@@ -36,6 +89,26 @@ def _resolve_inherit(body: AgentDefinitionBody, cli_source: str | None) -> Agent
     if body.provider == "inherit":
         body.provider = cli_source if cli_source else "claude"
     return body
+
+
+def resolve_cold_start_command(
+    db: HubDatabase, command: str, *, project_id: str | None = None
+) -> str | None:
+    """Resolve a unique alias from enabled interactive definitions in project scope."""
+    matches: list[str] = []
+    for row in AgentDefinitionManager(db).list_resolved(project_id=project_id):
+        if not row.enabled:
+            continue
+        try:
+            reject_terminal_backend(row.definition_json)
+            body = _body_from_row(row, row.name)
+        except (ValueError, TypeError):
+            continue
+        if body.supports_cold_start() and command.casefold() in body.cold_start_commands:
+            matches.append(row.name)
+    if len(matches) > 1:
+        raise AgentResolutionError(f"Cold-start command {command!r} matches multiple definitions")
+    return matches[0] if matches else None
 
 
 def resolve_agent_with_row(

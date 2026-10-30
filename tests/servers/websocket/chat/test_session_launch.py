@@ -225,6 +225,7 @@ class TestInterleavedLaunchesPersistOwnPolicy:
         session_a.db_session_id = "db-a"
         session_b.db_session_id = "db-b"
         session_manager = MagicMock()
+        session_manager.db.execute.return_value.fetchone.return_value = None
         session_manager.update = MagicMock(return_value=None)
         owner = _owner()
         existing_a = SimpleNamespace(

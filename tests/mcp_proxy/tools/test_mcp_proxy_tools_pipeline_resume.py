@@ -338,8 +338,13 @@ async def test_resume_returns_only_resumable_ids() -> None:
         return non_resumable_pipeline
 
     loader.load_pipeline.side_effect = _load
+    release = asyncio.Event()
+
+    async def _execute(*args: object, **kwargs: object) -> None:
+        await release.wait()
+
     executor = MagicMock()
-    executor.execute = AsyncMock(side_effect=asyncio.CancelledError)
+    executor.execute = AsyncMock(side_effect=_execute)
     execution_manager = MagicMock()
     execution_manager.list_executions.return_value = [resumable_exec, non_resumable_exec]
 
@@ -352,6 +357,10 @@ async def test_resume_returns_only_resumable_ids() -> None:
 
     assert result == ["pe-resumable"]
     assert len(_background_tasks) == 1
+    task = _background_tasks_by_execution["pe-resumable"]
+    assert task in _background_tasks and not task.done()
+    release.set()
+    await task
 
 
 @pytest.mark.asyncio

@@ -3886,6 +3886,20 @@
     },
     {
       "activation": "live",
+      "default": null,
+      "description": "Enabled agent definition to run for feedback review; must be configured",
+      "key": "session_feedback.review.agent",
+      "machineExport": false,
+      "namespace": "session_feedback",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": [
         {
           "candidate": "codex/gpt-6-luna",

@@ -373,6 +373,8 @@ class ManagedChatSessionBase:
         self,
         tool_name: str,
         tool_input: object,
+        *,
+        tool_execution_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Run managed BEFORE_TOOL hooks and queue any returned context.
 
@@ -381,7 +383,10 @@ class ManagedChatSessionBase:
         """
         if self._on_pre_tool is None:
             return None
-        response = await self._on_pre_tool({"tool_name": tool_name, "tool_input": tool_input})
+        payload: dict[str, Any] = {"tool_name": tool_name, "tool_input": tool_input}
+        if tool_execution_id and tool_execution_id != "unknown":
+            payload["tool_use_id"] = tool_execution_id
+        response = await self._on_pre_tool(payload)
         self._queue_deferred_context(response)
         return response
 
@@ -392,6 +397,8 @@ class ManagedChatSessionBase:
         tool_response: Any,
         *,
         is_error: bool | None = None,
+        tool_execution_id: str | None = None,
+        pending: bool = False,
     ) -> dict[str, Any] | None:
         """Run managed AFTER_TOOL hooks and queue any returned context."""
         if self._on_post_tool is None:
@@ -403,6 +410,11 @@ class ManagedChatSessionBase:
         }
         if isinstance(is_error, bool):
             payload["is_error"] = is_error
+        if tool_execution_id and tool_execution_id != "unknown":
+            payload["tool_use_id"] = tool_execution_id
+            payload["verification_execution_id"] = tool_execution_id
+        if pending:
+            payload["_verification_pending"] = True
         normalized_payload = normalize_tool_display_fields(dict(payload))
         for key in ("mcp_server", "mcp_tool"):
             value = normalized_payload.get(key)

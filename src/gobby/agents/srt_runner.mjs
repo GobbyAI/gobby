@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { appendFileSync, chmodSync, readFileSync, unlinkSync, writeSync, closeSync, openSync, fchmodSync, fstatSync, renameSync, constants } from 'node:fs'
+import { accessSync, realpathSync, statSync, appendFileSync, chmodSync, readFileSync, unlinkSync, writeSync, closeSync, openSync, fchmodSync, fstatSync, renameSync, constants } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn, execFile } from 'node:child_process'
 import { createConnection, createServer } from 'node:net'
@@ -145,7 +145,9 @@ class Backlog {
   }
   finish(done) {
     return this.serial(async () => {
-      if (done) { await this.discard(); return }
+      // A normal close can race the last summary or ACK. Preserve every
+      // unacknowledged record just as on an interrupted consumer.
+      if (done && this.entries.size === 0) { await this.discard(); return }
       await this.compact()
       await this.file?.close()
       this.file = null
@@ -286,6 +288,7 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
   const finishConsumer = async state => {
     if (state.finished) return
     state.finished = true
+    flushRepeats(state.socket, state)
     await Promise.all([
       state.backlog?.finish(state.done).catch(error => console.error(`gobby-srt monitor backlog retention failed for ${state.runKey}: ${error.message}`)),
       !state.done && state.providerPid !== null
@@ -307,6 +310,55 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
       socket.destroy()
     } finally { state.pumping = false }
   }
+  const storeRecord = (socket, state, record) => {
+    const { full, stored } = state.backlog.add({ id: ++sequence, ...record })
+    stored.then(() => pump(socket, state)).catch(error => {
+      console.error(`gobby-srt monitor backlog write failed for ${state.runKey}: ${error.message}`)
+      socket.destroy()
+    })
+    if (full && !state.finished) {
+      console.error(`gobby-srt monitor: ${state.runKey} exceeded 32 MiB backlog; closing its subscription`)
+      const cleanup = finishConsumer(state)
+      cleanups.add(cleanup)
+      cleanup.finally(() => cleanups.delete(cleanup))
+      socket.destroy()
+    }
+  }
+  const flushRepeats = (socket, state) => {
+    for (const record of state.repeats.values()) {
+      if (record.occurrences) {
+        const summary = { ...record, aggregated: true }
+        record.occurrences = 0
+        storeRecord(socket, state, summary)
+      }
+    }
+  }
+  const recordEvent = (socket, state, message) => {
+    const now = Date.now()
+    const repeated = state.repeats.get(message)
+    if (repeated) {
+      if (!repeated.occurrences) repeated.firstObserved = now
+      repeated.lastObserved = now
+      repeated.occurrences++
+      return
+    }
+    // Bound both cardinality and sample size; large unique events retain the
+    // existing durable backlog limit. Repeats flush every second and on close.
+    if (message.length <= 8192) {
+      if (state.repeats.size === 64) {
+        const oldest = state.repeats.keys().next().value
+        const pending = state.repeats.get(oldest)
+        state.repeats.delete(oldest)
+        if (pending.occurrences) storeRecord(socket, state, { ...pending, aggregated: true })
+        if (state.finished) return
+      }
+      state.repeats.set(message, { message, occurrences: 0, firstObserved: now, lastObserved: now })
+    }
+    storeRecord(socket, state, { message })
+  }
+  const aggregateTimer = setInterval(() => {
+    for (const [socket, state] of clients) if (!state.finished) flushRepeats(socket, state)
+  }, 1000)
   const armIdle = () => {
     clearTimeout(idleTimer)
     if (clients.size === 0 && !stopping) idleTimer = setTimeout(stop, 30000)
@@ -327,6 +379,7 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
     stopping = true
     console.error(`gobby-srt monitor stopped: ${unrelated} unrelated, ${unparsed} malformed records`)
     clearTimeout(idleTimer)
+    clearInterval(aggregateTimer)
     for (const socket of clients.keys()) socket.destroy()
     server.close()
     logProcess?.kill('SIGTERM')
@@ -336,6 +389,8 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
   const server = createServer(socket => {
     clearTimeout(idleTimer)
     const state = { suffix: null, registered: false, runKey: null, runnerPid: null, providerPid: null, providerIdentity: null, done: false, finished: false, backlog: null, blocked: false, pumping: false, queue: Promise.resolve() }
+    state.socket = socket
+    state.repeats = new Map()
     clients.set(socket, state)
     // Bound the complete handshake, including identity/backlog work and stream
     // readiness. An idle socket timer incorrectly expired during healthy work.
@@ -433,23 +488,11 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
         markReady()
         const message = event.eventMessage
         const suffix = message.match(/_[a-z0-9]+_SBX$/)?.[0]
-        const id = ++sequence
         let matched = false
         for (const [socket, state] of clients) {
           if (!socket.destroyed && !state.finished && state.backlog && state.suffix === suffix) {
             matched = true
-            const { full, stored } = state.backlog.add({ id, message })
-            stored.then(() => pump(socket, state)).catch(error => {
-              console.error(`gobby-srt monitor backlog write failed for ${state.runKey}: ${error.message}`)
-              socket.destroy()
-            })
-            if (full) {
-              console.error(`gobby-srt monitor: ${state.runKey} exceeded 32 MiB backlog; closing its subscription`)
-              const cleanup = finishConsumer(state)
-              cleanups.add(cleanup)
-              cleanup.finally(() => cleanups.delete(cleanup))
-              socket.destroy()
-            }
+            recordEvent(socket, state, message)
           }
         }
         if (!matched) unrelated++
@@ -509,7 +552,8 @@ function sharedTransport(socketPath, suffix, failed, runKey = process.env.GOBBY_
       } else if (ready && record.providerReady === true && record.identity && typeof record.identity.started === 'string' && Number.isSafeInteger(record.identity.group)) {
         transport.emit('providerReady', record.identity)
       } else if (ready && Number.isSafeInteger(record.id) && record.id > 0 && typeof record.message === 'string' && record.message.endsWith(suffix)) {
-        transport.stdout.emit('data', Buffer.from(record.message))
+        if (record.aggregated === true) transport.emit('summary', record)
+        else transport.stdout.emit('data', Buffer.from(record.message))
         // Upstream processing and Gobby's append are synchronous. Ack only
         // after they finish; a lost consumer leaves its unacked tail durable.
         socket.write(JSON.stringify({ ack: record.id }) + '\n')
@@ -635,6 +679,29 @@ function shellQuote(value) {
   return `'${value.replaceAll("'", `'"'"'`)}'`
 }
 
+async function darwinGitEnvironment(env) {
+  const paths = (env.PATH ?? '/usr/bin:/bin').split(':')
+  for (let index = 0; index < paths.length; index++) {
+    const candidate = join(paths[index] || '.', 'git')
+    try {
+      accessSync(candidate, constants.X_OK)
+      if (!statSync(candidate).isFile()) continue
+      if (realpathSync(candidate) !== '/usr/bin/git') return env
+    } catch { continue }
+    // Resolve Apple's shim on the host. Inside Seatbelt it repeatedly invokes
+    // xcrun/xcodebuild and can spin on denied system-info operations.
+    const { stdout } = await execFileAsync('/usr/bin/xcrun', ['--find', 'git'], { env, timeout: 10000 })
+    const git = stdout.trim()
+    if (!git.startsWith('/') || realpathSync(git) === '/usr/bin/git' || !statSync(git).isFile()) {
+      throw new Error('xcrun did not resolve a non-shim git executable')
+    }
+    accessSync(git, constants.X_OK)
+    paths.splice(index, 0, dirname(git))
+    return { ...env, PATH: paths.join(':') }
+  }
+  return env
+}
+
 // The store keeps only its last 100 violations, so its array length stops
 // growing once the tail is full. Its monotonic total is the cursor instead.
 function appendViolations(path, store, recorded) {
@@ -642,7 +709,11 @@ function appendViolations(path, store, recorded) {
   const violations = store.getViolations()
   const fresh = Math.min(total - recorded, violations.length)
   for (const violation of fresh > 0 ? violations.slice(-fresh) : []) {
-    const line = JSON.stringify(violation, (_, value) =>
+    const network = violation.line?.match(/\bdeny\(\d+\)\s+network-outbound(?:\s+(.*))?$/)
+    const record = network
+      ? { ...violation, operation: 'network-outbound', target: network[1]?.trim() || 'unknown' }
+      : violation
+    const line = JSON.stringify(record, (_, value) =>
       typeof value === 'bigint' ? value.toString() : value,
     )
     appendFileSync(path, `${line}\n`, { encoding: 'utf8', mode: 0o600 })
@@ -698,6 +769,9 @@ async function main() {
     else child.stdio[3]?.end() // Closing the gate prevents an unregistered exec.
   }
   try {
+    globalThis.gobbySrtProxyFailure = record => {
+      appendFileSync(options.violationsPath, JSON.stringify(record) + '\n', { mode: 0o600 })
+    }
     if (process.platform === 'darwin') {
       const socketPath = process.env.GOBBY_SRT_MONITOR_SOCKET
       if (!socketPath) throw new Error('missing shared SRT violation monitor')
@@ -707,6 +781,12 @@ async function main() {
           cleanup = stopChild().catch(cleanupError => {
             monitorFailure = new Error(`fail-closed provider cleanup failed: ${cleanupError.message}`, { cause: cleanupError })
           })
+        })
+        transport.on('summary', record => {
+          appendFileSync(options.violationsPath, JSON.stringify({
+            source: 'srt-monitor', line: record.message, occurrences: record.occurrences,
+            firstObserved: record.firstObserved, lastObserved: record.lastObserved,
+          }) + '\n', { mode: 0o600 })
         })
         return transport
       }
@@ -733,6 +813,7 @@ async function main() {
       process.cwd(),
     )
     const childEnv = { ...process.env, ...wrapped.env }
+    if (process.platform === 'darwin') Object.assign(childEnv, await darwinGitEnvironment(childEnv))
     delete childEnv.GOBBY_SRT_TMPDIR
     delete childEnv.GOBBY_SRT_MONITOR_SOCKET
     delete childEnv.GOBBY_SRT_RUN_KEY

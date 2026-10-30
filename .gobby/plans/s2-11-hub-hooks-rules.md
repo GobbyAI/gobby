@@ -16,33 +16,37 @@ gdaemon.
 Two statically linked family crates carry the work.
 
 - `crates/gworkflows` (package `gobby-workflows`) holds the rule engine and
-  command normalization. Ingress, #21567 Workflows, #24884's native MCP gateway
-  and the Python MCP proxy forward (Decision 2) all consume it.
+  command normalization. Ingress, #21567 Workflows and #24884's native MCP
+  gateway consume it; the gateway shares the hooks family's one driver instance
+  (7.1).
 - `crates/gingress` (package `gobby-ingress`) holds the `hooks` route family:
   envelope handling, the shared envelope ledger, the adapters, the pipeline,
   the handlers, and the node and webhook routes.
 
-The plan ends with native default after a compare soak, the parity-ledger rows,
-and deletion of the Python route and the ingress-only modules. Python
-`HookManager` stays for the consumers that do not enter through the route
-(Decision 4).
+The plan ends with native default after a compare soak, taken at one cutover
+with #24884's gateway, then the parity-ledger rows and deletion of the Python
+routes and the ingress-only modules. No Python client of a Rust endpoint is
+added. Each Python piece that another family's Python path still uses is a
+typed deferral that family owns (D1-D3), and D1 ends with the Python hook
+pipeline and rule engine deleted (Decision 7).
 
 Josh's rulings apply. Bundled YAML (rules, pipelines, agents, workflows) is
 validated against the engine schema and loader only, with no unit or
 functional test per individual rule (2026-10-27 18:04 CDT). Hub-node work
 covers macOS and Linux; Windows is #25249. No latency budget gates anything.
-0.5.0 keeps no backward compatibility.
+0.5.0 keeps no backward compatibility. Every family port ends with its surface
+fully in Rust: no Python policy layer, loopback client, rollback route or
+direct-storage writer stays in the path, and a piece another family owns is
+named on that family's edge (Josh, 2026-10-28: "No Python").
 
 ## Decision Record
 `kind: framing`
 
-1. **Scope includes the rule engine (Q1, option B).** This plan absorbs DR1-DR8
-   and P1/P2 of `.gobby/plans/rust-rule-evaluation.md` and closes its open
-   findings F2 and F4; #22946 closes as superseded. The Orchestrator and this
-   writer recommend B. Q1 awaits Josh through Triage. Under option A, P2
-   collapses to one deliverable that consumes `gobby-workflows` (depends:
-   #21567), and #21567 keeps its edge on #24151. Under B, #21567 consumes this
-   plan's P2 instead; the Orchestrator reverses that edge at expansion.
+1. **Scope includes the rule engine (Q1 = B, Josh, 2026-10-28).** This plan
+   absorbs DR1-DR8 and P1/P2 of `.gobby/plans/rust-rule-evaluation.md` and
+   closes its open findings F2 and F4. #22946 is closed as superseded by
+   #24151. #21567 consumes this plan's P2; the Orchestrator reverses the
+   #21567 edge on #24151 at expansion.
 2. **Seams first (Q2, Orchestrator ruling).** #21562 Sessions and #21566 MCP
    stay hard prerequisites (Josh, decision B, 2026-10-12). The engine and
    ingress are built behind seam traits with in-memory test doubles. Only the
@@ -50,11 +54,9 @@ covers macOS and Linux; Windows is #25249. No latency budget gates anything.
    added. Each owning family gets its own P7 adapter leaf, and the flip (7.15)
    waits on all of them, so #24151 flips last in Lane 5 (Orchestrator,
    2026-10-28).
-   - The one Python change outside deletion is the DR6 forward (7.14): from the
-     flip until #21570, the Python MCP proxy sends before- and after-tool rule
-     passes of Rust-owned sessions to a backend-only gdaemon pass endpoint. It
-     is a Python client of a Rust endpoint, required by the DR6 session-ownership
-     ruling, and is deleted by #21570.
+   - Python changes are deletions and unscheduled loops, plus one guard: web
+     chat runs no Python rule pass for a native-hook-authority session (7.14).
+     No Python client of a Rust endpoint is added (Josh, 2026-10-28).
 3. **Two crates.** `gobby-workflows` (engine, normalization, engine seams) and
    `gobby-ingress` (one `hooks` RouteFamily). Each follows the gruntime pattern:
    `publish = false`, gobby-core features `postgres`, `postgres-pool` and
@@ -68,13 +70,40 @@ covers macOS and Linux; Windows is #25249. No latency budget gates anything.
    - Rejected: the family inside gdaemon. Family crates are the convention
      (crates/AGENTS.md).
    - Rejected: the engine inside `gobby-ingress`. It has four consumers.
-4. **Session ownership (old DR6, extended to the whole pipeline).** At native
-   default, CLI sessions that reach `POST /api/hooks/execute` are Rust-owned.
-   Web chat (`src/gobby/servers/websocket/chat/_lifecycle.py`), ACP sessions
-   (`src/gobby/adapters/acp_hook_adapter.py`, base of in-process Grok and AGY),
-   the Codex app server (`src/gobby/adapters/codex_impl/app_server_adapter.py`)
-   and the in-process runner stay Python-owned through Python `HookManager`
-   until #21592 and #21564. No session is served by both runtimes.
+4. **Session ownership (old DR6, extended to the whole pipeline).** One engine
+   runs every pass of a session. Ownership follows where a session's hooks run.
+   At native default every session whose hooks reach `POST /api/hooks/execute`
+   is Rust-owned: CLI sessions through ghook, and AGY web chat sessions, whose
+   child runs native ghook (`NATIVE_HOOK_AUTHORITY_PROVIDERS` in
+   `src/gobby/servers/websocket/chat/_session_launch.py`). Python owns only the
+   other web chat sessions, until #21592: `bind_session_lifecycle` wires their
+   callbacks to `ChatLifecycleMixin._fire_lifecycle`
+   (`src/gobby/servers/websocket/chat/_lifecycle.py`), which calls
+   `WorkflowHookHandler.evaluate` directly. Three rules hold ownership without
+   a Python client of Rust:
+   - **Joint cutover.** A CLI session's passes come from its hooks and from its
+     proxied tool calls. #24884's gateway runs the tool-call passes through
+     the hooks family's one `driver` instance (7.1), so both kinds join one
+     FIFO. gdaemon refuses to start when exactly one of the `hooks` and `mcp`
+     families is native (7.15), so no flip or rollback splits them.
+   - **AGY web chat.** Web chat runs no Python rule pass for a
+     native-hook-authority session (7.14). AGY's native hooks emit no
+     SESSION_END, INTERRUPT or NOTIFICATION, so rules and observers see none of
+     those events of an AGY web chat session until #21592 (D1).
+   - **Python-hosted web chat.** Its lifecycle passes stay in Python until
+     #21592 (D1). From the joint cutover its gobby MCP calls take the gateway's
+     Rust passes, so until #21592 such a session's passes run in two engines.
+     Both merge only changed keys under `SessionVariableMutation` (2.19.3), and
+     FIFO order holds within each engine. Holding the cutover for #21592, the
+     last family to move, is the alternative this plan declines.
+   - Python `HookManager` has no other live source under native. Only
+     `run_adapter_hook` (`src/gobby/hooks/adapter_execution.py`), called from
+     the HTTP route, calls the adapters' `handle_native`. `ACPHookAdapter` is
+     the CLI translation base of the Grok and AGY adapters (4.4, 4.6). The
+     Codex app-server adapter attaches to a shared client
+     (`src/gobby/servers/_app_lifecycle.py`) that nothing starts, and web
+     chat's Codex backend uses only its tool map. `AgentRunner.workflow_handler`
+     is set there and read nowhere.
 5. **One envelope ledger.** `crates/gdaemon/src/nodes/hooks/ledger.rs::Ledger`
    moves into gcore as `crates/gcore/src/hook_ledger.rs` behind a new
    `hook-ledger` feature (3.1); the gdaemon node arm and `gobby-ingress` both
@@ -88,22 +117,47 @@ covers macOS and Linux; Windows is #25249. No latency budget gates anything.
      carries Decision 6's seam.
    - The Rust hub inbox drain (3.5) sends each envelope through the front
      door's route table in process, so it follows the `hooks` route value and
-     rollback to proxy needs no Python loop. 7.15 starts it and deletes the
-     Python periodic drain and quarantine-retention loops, so two periodic
-     drains never run together. The Python startup barrier
-     (`src/gobby/runner_hook_replay.py`) stays and posts through the front door;
-     per-file claims are exclusive.
+     rollback to proxy needs no Python loop. 7.13 starts it and unschedules
+     the Python periodic drain and quarantine-retention loops while `hooks` is
+     still proxy or compare, so the compare soak covers the Rust drain before
+     the 7.15 flip and two periodic drains never run together. 7.17 deletes
+     the dormant Python modules. The Python startup barrier
+     (`src/gobby/runner_hook_replay.py`) belongs to agent-run restart recovery
+     and moves with #21564 (D2): its Rust recovery awaits the drain's startup
+     pass (3.5) before it classifies agent runs. Until then the barrier posts
+     through the front door, and per-file claims keep it and the Rust drain
+     from delivering one file twice.
 6. **Compare soak for a mutating route.** For non-GET methods the front door
    proxies once and then calls `RouteFamily::check_proxied`, which sees only
-   post-state. A new gcore default method, `RouteFamily::prepare_proxied`
-   (no-op default, 3.1), is awaited before the proxied leg. The `hooks` family runs
-   the Rust pass in record mode against pre-state: no writes and no external
-   effects, with an in-pass overlay. `check_proxied` then compares the decision,
-   reason, context, system message, modified input and staged receipt fields.
-   A pass that depends on an `mcp_call` result compares only up to that call.
+   post-state. 3.1 adds two gcore default methods. `RouteFamily::prepare_proxied`
+   is awaited before the proxied leg and returns an opaque `ProxiedPrep`, empty
+   by default. `RouteFamily::check_prepared` receives that prep with Python's
+   response and by default calls `check_proxied`. `compare` holds the prep in a
+   local between the two calls, so it belongs to one request, and a proxy error
+   or a cancelled request drops it. The `hooks` family's prep runs the Rust pass
+   in record mode against pre-state: no writes and no external effects, with an
+   in-pass overlay. Its `check_prepared` then compares the decision, reason,
+   context, system message, modified input and staged receipt fields.
+   - A pass that runs an inline `mcp_call` or carries a foreground deferred one
+     cannot be verified, because Python's response carries no call result. Its
+     record is `Waived` under the committed waiver
+     `hooks.execute.mcp-call-partial` and is never `Verified`; the 1.1 cases
+     with scripted call results are its replacement proof (7.13). Without the
+     waiver every such record would be an unwaived skip, and `Report::passes`
+     would fail every soak. Partial records are reported apart from verified
+     ones (Orchestrator, 2026-10-28).
+   - Rejected: changing `check_proxied`'s signature. Seven other family plans
+     implement it on their own schedules, so 3.1 could not target every
+     implementor.
+   - Rejected: keying the record by envelope id. Execute accepts requests
+     without one, and concurrent retries share one.
 7. **Python deletion boundary.** 7.17 and 7.18 delete the routes and the modules only
    ingress uses, each only when `gcode grep -w <symbol> -l -g 'src/**'` shows no
-   surviving importer. `HookManager` and the event handlers stay (Decision 4).
+   surviving importer. Every Python piece left after them is a named piece of another
+   family's Python path, each a typed deferral: web chat's lifecycle (D1,
+   #21592), the startup barrier (D2, #21564) and the Python MCP proxy's
+   rule-pass sites (D3, #21570). D1 ends by deleting the Python hook pipeline
+   and rule engine.
 8. **Node session registration.** Registering a node session that lacks its
    pre-created row (hub-mode Decision 18, the fourth use of the key-verified
    foreign-machine path) sits behind the sessions seam. Its handler is 5.4
@@ -117,15 +171,26 @@ covers macOS and Linux; Windows is #25249. No latency budget gates anything.
     `gobby_codeindex::jobs::trigger::EditTrigger::notify_file_changed` through
     `HubJobs::edit_trigger()` for the hub's own checkouts. 5.8 calls the
     seam, and 7.10 binds it (depends: #21586, #24705). Node events skip it (Site row 16).
-11. **Bundled YAML conformance.** Every bundled rule, agent, workflow and
-    pipeline body must load in the Rust loader: schema parse, condition parse,
-    template compile and pattern compile. The engine corpus (1.1) uses synthetic
-    rule bodies that exercise engine features; it never asserts per-rule
-    behavior.
+11. **Bundled YAML conformance.** Every bundled YAML body must load in the
+    Rust loader that owns its family: schema parse, condition parse, template
+    compile and pattern compile. Bundled bodies are validated against the
+    engine schema and loader only, with no per-rule tests (Josh). The engine
+    corpus (1.1) uses synthetic rule bodies that exercise engine features; it
+    never asserts per-rule behavior. Ownership by family under
+    `src/gobby/install/shared/workflows/`:
+    - **Rules (`rules/`).** Every body parses (2.1.5) and compiles into a cache
+      entry (2.13.3) here.
+    - **Agents (`agents/`).** Rule selectors and step workflows parse here
+      (2.1.5), and their conditions and templates compile (2.13.3). The rest of
+      the definition schema stays with Python's sync until #21567; #21564 reads
+      the synced rows.
+    - **Variables (`variables/`).** Every body parses here (2.1.5).
+    - **Pipelines (`pipelines/` and the root `review.yaml`).** #21567's loader
+      owns their conformance; this plan loads none.
 12. **Carried decisions DR1-DR8** from rust-rule-evaluation, minus its latency
     gate. Its flip gates D2.1-D2.9 land in P7, except D2.7, a py-spy GIL-share
     capture that the no-latency ruling drops; D2.8's tests prove single
-    ownership (7.14). The carried decisions: DR5 fails closed in the response; DR6 serializes passes per session
+    ownership (7.1.5, 7.14.1 and 7.15.5). The carried decisions: DR5 fails closed in the response; DR6 serializes passes per session
     in FIFO order and takes the shared advisory locks `SessionVariableMutation`
     (950) and `AgentStepInstanceMutation` (875); DR7 reads definitions at one
     revision per pass; DR8 records outcome counters.
@@ -147,7 +212,7 @@ row names the Python behaviour, its evidence and the disposition.
 | --- | --- | --- |
 | One hub-wide `.stop_replay_epoch` file | node-halves Constraints | Drop: one epoch per machine (Decision 5) |
 | Two envelope ledgers (Python `envelope_dedupe.py`, Rust node `Ledger`) | `src/gobby/hooks/envelope_dedupe.py`, `crates/gdaemon/src/nodes/hooks/ledger.rs` | Drop: one shared ledger (Decision 5) |
-| Python drain loop POSTs envelopes back through the front door over HTTP | `src/gobby/hooks/inbox.py::_post_envelope`, `src/gobby/hooks/inbox_maintenance.py::drain_hook_inbox_loop` | Drop: the Rust drain dispatches through the route table in process, and 7.15 deletes the loop (Decision 5) |
+| Python drain loop POSTs envelopes back through the front door over HTTP | `src/gobby/hooks/inbox.py::_post_envelope`, `src/gobby/hooks/inbox_maintenance.py::drain_hook_inbox_loop` | Drop: the Rust drain dispatches through the route table in process; 7.13 unschedules the loop and 7.17 deletes its module (Decision 5) |
 | An 862-line route module | `src/gobby/servers/routes/mcp/hooks.py` | Drop: one Rust module per concern (P3) |
 | Provider inferred from inner payload fields | memory a39d0411, #17173 | Keep the fix: `source` alone selects the adapter (4.1) |
 | Seven `RuleEffect` types no bundled rule uses: `set_display_content`, `rewrite_input`, `set_permission_response`, `set_retry`, `set_watch_paths`, `set_worktree_path`, `set_elicitation` | `src/gobby/workflows/definitions.py::RuleEffect` (F2) | Keep: they are the rule-authoring schema, adapters already translate each field, and synthetic corpus cases pin them (2.12) |
@@ -176,13 +241,14 @@ row names the Python behaviour, its evidence and the disposition.
 `kind: framing`
 
 Heading `(depends: #N)` marks carry the edges into this plan. The Orchestrator
-sets the edges this plan cannot express in a heading at expansion.
+sets the edges this plan cannot express in a heading at expansion, and labels
+each D-section's owner `deferred-from:s2-11-hub-hooks-rules:D<n>`.
 
 | Task | Relation | Where |
 | --- | --- | --- |
 | #21562 Sessions | blocks | 7.2 |
 | #21560 Tasks | blocks | 7.3 |
-| #21564 Agents | blocks | 7.4; also receives the report and run rows and the pane store (Decision 13) |
+| #21564 Agents | blocks | 7.4; also receives the report and run rows and the pane store (Decision 13), and owns D2; D2's heading makes #21564 wait on 3.5 at expansion, and the Orchestrator may move that edge down to #21564's restart-recovery leaf |
 | #21565 Terminals | blocks | 7.5 |
 | #21580 Skills | blocks | 7.6 |
 | #21566 MCP multiplexer | blocks | 7.7 |
@@ -194,12 +260,13 @@ sets the edges this plan cannot express in a heading at expansion.
 | #25046 Reusable native admission | blocks | 7.12 |
 | #25068 Agent-token and runtime-grant admission | blocks | 7.12 |
 | #24149 S2.7 hub, leaf 4.1 (delegated rows survive Python removal) | blocks | 7.17; the Orchestrator binds the 4.1 leaf at expansion |
-| #21567 Workflows | blocked by P2 under B | set by the Orchestrator at expansion |
-| #24884 Native MCP gateway | blocked by #24151 | unchanged; consumes `gobby-workflows` |
+| #21567 Workflows | blocked by P2 (Q1 = B) | set by the Orchestrator at expansion; #21567 also owns bundled pipeline conformance, including the root `review.yaml` (Decision 11) |
+| #24884 Native MCP gateway | blocks | 7.15; the Orchestrator narrows #24884's own edge on #24151 to 7.1 at expansion. The gateway takes 7.1's shared `driver` for every before- and after-tool pass and goes native only with `hooks` (7.15.5) |
 | #24713 Code-index 9.7 | blocked by #24151 | unchanged |
 | #21569 S2.11 holder | blocked by #24151 | unchanged |
-| #22946 rust-rule-evaluation | closes superseded under B | Orchestrator |
-| #21570 MCP front door flip | deletes the DR6 forward | 7.14 |
+| #22946 rust-rule-evaluation | closed as superseded (Q1 = B) | Orchestrator |
+| #21570 MCP front door flip | owns D3, the Python MCP proxy's rule-pass sites | D3 |
+| #21592 WS chat route family | owns D1: web chat's lifecycle, then deletion of the Python hook pipeline and rule engine | D1; D1's heading makes #21592 wait on 7.15 and #21570 at expansion, never on the epic, and the Orchestrator may move those edges down to #21592's own leaves once it is planned |
 | #21571 CLI | owns the `gobby webhooks` verbs | 7.16 records it |
 
 ## Site Disposition port
@@ -306,7 +373,9 @@ JSON file per case, listed in `manifest.json`. A case carries:
   response or failure;
 - the `expect` block: every response field above, the eager variable delta,
   the staged `on_receipt` payload, the ordered effect log, the audit records
-  and the DR8 outcome.
+  and the DR8 outcome;
+- `family`, naming the helper family or observer the case exercises, when it
+  exercises one.
 
 Rule bodies are synthetic. They exercise engine features; no case asserts the
 behavior of a bundled rule (Decision 11). Both engines must produce each
@@ -348,7 +417,21 @@ Required scenario cases:
   non-block effects run once;
 - a turn end with `HANDOFF_TURN_END_PENDING_VARIABLE` set, which allows;
 - a hardcoded override with no rule installed (`include_rule_outputs=False`);
-- one case per hardcoded behavior 2.16 and 2.17 list.
+- one case per hardcoded behavior 2.16 and 2.17 list;
+- an after-tool event with no pending before context, and a duplicate before;
+- for each helper family 2.10, 2.11 and 2.12 port, at least one allow, one
+  block and one seam-error case: commit guard, review scope, ledger reconcile
+  and dirty state (2.10); claim, binding, dirty grant and edit ledger (2.11);
+  found work, validation, monolith, memory review and session target (2.12);
+- for each observer 2.18 ports (plan mode, context usage, MCP, commits and
+  turn interrupt), an observed and a not-observed case, plus a seam-error case
+  for each observer that reads a seam;
+- three transitions as event sequences: a claim and its release, a review gate
+  armed and then cleared, and plan mode entered and then exited.
+
+Family cases reuse the inputs of those modules' Python unit tests, rewritten as
+synthetic rule bodies, events and seam scripts. They stay engine cases: none
+asserts a bundled rule's behavior.
 
 **Granularity:** one leaf with seven acceptance items. The case schema, the
 exporter that is its oracle and the coverage checks are one artifact; a corpus
@@ -357,7 +440,7 @@ without its exporter cannot be re-recorded.
 **Acceptance:**
 - 1.1.1 - The manifest and every case load at `schema_version` 1, and a stale version is rejected. test: `tests/contracts/test_rules_corpus.py::test_loader_rejects_stale_schema_version`.
 - 1.1.2 - All 15 effect types and both delivery classes appear in some case's expected effect log, using synthetic rule bodies only. test: `tests/contracts/test_rules_corpus.py::test_corpus_covers_effect_types_and_delivery`.
-- 1.1.3 - Every required scenario case exists, including both F4 recheck cases. test: `tests/contracts/test_rules_corpus.py::test_corpus_has_required_scenarios`.
+- 1.1.3 - Every required scenario case exists, including both F4 recheck cases, every listed helper family's and observer's classes and the three transitions; removing any of them fails the check. test: `tests/contracts/test_rules_corpus.py::test_corpus_has_required_scenarios`.
 - 1.1.4 - The Python engine reproduces every case's `expect` block. test: `tests/contracts/test_rules_corpus.py::test_python_engine_replays_corpus`.
 - 1.1.5 - Every hardcoded behavior 2.16 and 2.17 list has a case, and every response field appears set in some case. test: `tests/contracts/test_rules_corpus.py::test_corpus_covers_hardcoded_behavior_and_response_fields`.
 - 1.1.6 - The Python functions reproduce every normalizer vector. test: `tests/contracts/test_rules_corpus.py::test_python_normalizer_replays_vectors`.
@@ -603,8 +686,9 @@ Add `crates/gworkflows` (package `gobby-workflows`) to the root members with
   defaults and the `{{ gobby_bin }}` substitution, and parses each body. It also
   parses the rule selectors and step workflows of every file under
   `src/gobby/install/shared/workflows/agents/` and every body under
-  `src/gobby/install/shared/workflows/variables/`. Pipelines belong to #21567's
-  loader. 2.13 extends this test to compilation.
+  `src/gobby/install/shared/workflows/variables/`. Pipelines, including the
+  root `workflows/review.yaml`, belong to #21567's loader. 2.13 extends this
+  test to compilation.
 
 **Granularity:** one leaf with eight production files, counting both
 `Cargo.toml` files, and six acceptance items. The manifest, body, repository
@@ -790,8 +874,9 @@ inline scripts with `ast.parse`. rust-rule-evaluation decided
 `rustpython-parser`; it is not yet in `Cargo.lock`.
 
 `python_source.rs` wraps `rustpython-parser`, pinned at its newest release that
-is at least two weeks old when 2.6 starts. Both this classifier and 2.8's
-launch guard consume it.
+is at least two weeks old when 2.6 starts. This classifier, 2.8's launch guard
+and 2.9's condition parser consume it, so it exposes module and expression
+parsing.
 - Rejected: a hand-written statement parser, which needs the full statement
   grammar.
 - Rejected: treating unparsed inline Python as not read-only, which diverges
@@ -950,11 +1035,14 @@ Targets:
   unanswered returns `False`, so the write is outside scope.
 
 Build `condition`:
-- **Parser.** A hand-written parser for exactly the accepted subset, including
-  Python string literal forms, reproducing
-  `SafeExpressionEvaluator._normalize_expr` and rejecting every other node,
-  f-strings and lambdas included. Rejected: a full Python parser crate for a
-  subset of about 20 nodes.
+- **Parser.** `condition::parse` reproduces
+  `SafeExpressionEvaluator._normalize_expr`, parses the result in expression
+  mode through 2.6's `normalize::python_source` wrapper over
+  `rustpython-parser`, and converts only the accepted nodes into the
+  evaluator's tree. Every other node is rejected at parse time, f-strings and
+  lambdas included. Python's evaluator also parses with `ast`, so string literal
+  forms and precedence match without a second grammar. Rejected: a
+  hand-written expression parser, which would duplicate 2.6's grammar.
 - **Values.** A dynamic `Value` with Python truthiness, comparison, membership,
   indexing and the `Mod` and `FloorDiv` semantics the vectors pin.
 - **Evaluator.** Applies DR5's per-rule rule for deterministic errors.
@@ -1028,7 +1116,7 @@ through the seam. The 863-line commit guard splits into `commit_guard.rs` and
 together.
 
 **Acceptance:**
-- 2.10.1 - Every commit-guard, review-scope, ledger-reconcile and dirty-state case in the 1.1 corpus replays equal. test: `crates/gworkflows/tests/git_helpers_corpus.rs::git_helper_cases_replay_equal`.
+- 2.10.1 - Every commit-guard, review-scope, ledger-reconcile and dirty-state case in the 1.1 corpus replays equal, and the replay fails when any of those families has no case. test: `crates/gworkflows/tests/git_helpers_corpus.rs::git_helper_cases_replay_equal`.
 - 2.10.2 - Site row 2: for a node event with an unanswered read, the commit guard blocks naming the detail, the review gate stays armed, the ledger releases nothing, the worktree root stays unresolved and the landed check keeps the attribution. test: `crates/gworkflows/src/git/tests.rs::site_row_2_git_failures_fail_closed_per_caller`.
 - 2.10.3 - Site row 17: live path owners come only from the event's machine. test: `crates/gworkflows/src/git/tests.rs::site_row_17_owners_are_machine_scoped`.
 
@@ -1063,7 +1151,7 @@ Port them as `claims` and register the task-backed helper names in
 `condition::helpers`.
 
 **Acceptance:**
-- 2.11.1 - Every claim, binding, dirty-grant and edit-ledger case in the 1.1 corpus replays equal. test: `crates/gworkflows/tests/claims_corpus.rs::claim_cases_replay_equal`.
+- 2.11.1 - Every claim, binding, dirty-grant and edit-ledger case in the 1.1 corpus replays equal, and the replay fails when any of those families has no case. test: `crates/gworkflows/tests/claims_corpus.rs::claim_cases_replay_equal`.
 - 2.11.2 - Every task-backed condition helper replays equal, and a seam failure follows the per-rule rule. test: `crates/gworkflows/src/claims/tests.rs::task_helpers_match_python`.
 - 2.11.3 - Site row 15: an unanswered node read resolves the edit pair to the lexical path under the node's checkout row. test: `crates/gworkflows/src/claims/tests.rs::site_row_15_edit_pair_degrades_to_lexical_path`.
 
@@ -1111,7 +1199,7 @@ helper set, registered together in `condition::helpers` and tested by one
 corpus replay.
 
 **Acceptance:**
-- 2.12.1 - Every found-work, validation, monolith, memory-review and session-target case in the 1.1 corpus replays equal. test: `crates/gworkflows/tests/gates_corpus.rs::gate_cases_replay_equal`.
+- 2.12.1 - Every found-work, validation, monolith, memory-review and session-target case in the 1.1 corpus replays equal, and the replay fails when any of those families has no case. test: `crates/gworkflows/tests/gates_corpus.rs::gate_cases_replay_equal`.
 - 2.12.2 - Site row 11: an unanswered projection read lists the path with the diagnostic. test: `crates/gworkflows/src/gates/tests.rs::site_row_11_projection_fails_closed`.
 - 2.12.3 - Site row 12: one batched read serves every guard path, and an unanswered read lists each path with the diagnostic. test: `crates/gworkflows/src/gates/tests.rs::site_row_12_outstanding_paths_fail_closed`.
 - 2.12.4 - Site row 23: terminal-failure analysis for a node session matches Python unchanged. test: `crates/gworkflows/src/gates/tests.rs::site_row_23_terminal_failures_unchanged`.
@@ -1155,7 +1243,7 @@ compiled cache entry (Decision 11).
 **Acceptance:**
 - 2.13.1 - Every template the 1.1 cases render produces Python's output byte for byte. test: `crates/gworkflows/tests/template_corpus.rs::template_vectors_render_equal`.
 - 2.13.2 - The three custom filters match Python on quoting, regex groups and no-match input, and an undefined variable renders as `TemplateEngine` renders it. test: `crates/gworkflows/src/template/tests.rs::filters_and_undefined_match_python`.
-- 2.13.3 - Every bundled rule body compiles into a cache entry: conditions parse, patterns compile and templates compile. test: `crates/gworkflows/tests/bundled_conformance.rs::every_bundled_body_compiles_into_a_cache_entry`.
+- 2.13.3 - Every bundled rule body compiles into a cache entry, and every condition and template in a bundled agent step workflow compiles: conditions parse, patterns compile and templates compile. test: `crates/gworkflows/tests/bundled_conformance.rs::every_bundled_body_compiles_into_a_cache_entry`.
 
 **Verification:** the shared P2 commands.
 
@@ -1400,7 +1488,7 @@ Transcript reads go through `TranscriptQueries`.
 run by one dispatcher and tested by one corpus replay.
 
 **Acceptance:**
-- 2.18.1 - Every observer case in the 1.1 corpus replays equal. test: `crates/gworkflows/tests/observers_corpus.rs::observer_cases_replay_equal`.
+- 2.18.1 - Every observer case in the 1.1 corpus replays equal, and the replay fails when any of the five observers has no case. test: `crates/gworkflows/tests/observers_corpus.rs::observer_cases_replay_equal`.
 - 2.18.2 - Site row 26: the plan-mode observer reads the Codex transcript for a node session as Python does. test: `crates/gworkflows/src/observers/tests.rs::site_row_26_transcript_read_unchanged`.
 
 **Verification:** the shared P2 commands.
@@ -1441,8 +1529,9 @@ the pass, and commits the delta under the `SessionVariableMutation` key with
 priority 950, all through a `SessionVariables` seam whose gcore-pool
 implementation lives here. The 528-line `_evaluate_rules` splits into
 `evaluate.rs`; the variable manager splits into `variables.rs` and
-`variables/merge.rs`. #24884's gateway, 7.14's pass endpoint and the ingress
-pipeline (5.2) call `driver`.
+`variables/merge.rs`. gdaemon builds one `driver` instance (7.1); the ingress
+pipeline (5.2) and #24884's gateway both call it, so every Rust pass of a
+session joins one FIFO.
 
 **Granularity:** one leaf with eight production files and five acceptance
 items. Ordering, variable load and merge, and disposition form one pass
@@ -1474,7 +1563,7 @@ Targets:
 - `crates/gcore/src/lib.rs::*` — scope-reason: declares the feature-gated hook_ledger module
 - `crates/gcore/src/hook_ledger.rs`
 - `crates/gcore/src/hook_ledger/tests.rs`
-- `crates/gcore/src/route_family.rs::RouteFamily`
+- `crates/gcore/src/route_family.rs::*` — scope-reason: adds ProxiedPrep, the two default methods and the Waived variant
 - `crates/gdaemon/Cargo.toml`
 - `crates/gdaemon/src/nodes/hooks/ledger.rs::*` — operation: delete — scope-reason: the whole module moves to crates/gcore/src/hook_ledger.rs
 - `crates/gdaemon/src/nodes/hooks/mod.rs`
@@ -1484,7 +1573,7 @@ Targets:
 - `crates/gdaemon/src/nodes/hooks/receipts.rs::*` — scope-reason: import path changes only
 - `crates/gdaemon/src/state.rs::NodeServices`
 - `crates/gdaemon/tests/node_hooks.rs::*` — scope-reason: import path changes only
-- `crates/gdaemon/src/front_door/routes.rs::*` — scope-reason: compare awaits the new seam and gains its test
+- `crates/gdaemon/src/front_door/routes.rs::*` — scope-reason: compare holds each request's prep and records waived checks, with their tests
 - `crates/gcode/Cargo.toml`
 - `crates/ghook/Cargo.toml`
 - `crates/gclient/Cargo.toml`
@@ -1514,7 +1603,17 @@ Targets:
   native and proxied legs concurrently for GET and HEAD. For other methods it
   proxies once and then calls `RouteFamily::check_proxied`
   (`crates/gcore/src/route_family.rs`), logging to `front-door-compare.jsonl`
-  through `crates/gdaemon/src/front_door/compare.rs`.
+  through `crates/gdaemon/src/front_door/compare.rs`. On a proxy error it
+  returns before any check.
+- **Check outcomes.** `ProxiedCheck` has `Skipped`, `Verified` and
+  `Mismatch(String)`, and `compare` holds its only exhaustive match.
+  `compare.rs::Record` carries `waiver: Option<WaiverRef>`, a gdaemon type,
+  which `routes.rs::record` always sets to `None`. `compare::report` accepts a
+  `Waived` record only when its waiver is in the manifest with the same
+  decision and an `HTTP <method> <path>` surface that matches.
+- **Implementors.** `crates/gruntime/src/lib.rs` and
+  `crates/gdaemon/tests/compare.rs` implement `check_proxied`, and seven other
+  family plans add implementors on their own schedules.
 - **Release carriers.** gcore 0.10.21 is a path dependency of gcode, gdaemon,
   ghook, gclient, gmcp, gruntime and gterminals.
 
@@ -1527,9 +1626,25 @@ machine use; `Some(id)` uses `.stop_replay_epoch.<machine_id>`.
 `terminal_response` takes the envelope's machine id and checks that machine's
 epoch. gdaemon enables the feature and imports from gcore.
 
-Add `RouteFamily::prepare_proxied(&self, parts, request) -> Pin<Box<dyn
-Future<Output = ()> + Send>>` with a no-op default. `compare` awaits it before
-the proxied leg for non-GET/HEAD requests. No family overrides it until 7.13.
+Add the request-local compare seam to `route_family.rs`:
+- `ProxiedPrep` wraps `Option<Box<dyn Any + Send>>`. `ProxiedPrep::default()`
+  is empty, and a family stores and takes back its own type.
+- `RouteFamily::prepare_proxied(&self, parts, request) -> Pin<Box<dyn
+  Future<Output = ProxiedPrep> + Send + 'a>>` returns the empty prep by
+  default.
+- `RouteFamily::check_prepared(&self, parts, request, status, response, prep:
+  ProxiedPrep)` returns `self.check_proxied(parts, request, status, response)`
+  by default, so every current and planned `check_proxied` implementor stays
+  unchanged.
+- `ProxiedCheck::Waived { id, decision }` carries strings, because `WaiverRef`
+  is gdaemon-local.
+
+`compare` awaits `prepare_proxied` for a claimed non-GET/HEAD request, holds
+the prep in a local across the proxied leg, and moves it into
+`check_prepared`. A proxy error or a cancelled request drops the prep with the
+request future, so no family keeps a per-request map. `compare` maps `Waived`
+to `Outcome::Waived` and passes its `WaiverRef` to `record`, which stops
+hardcoding `None`. No family overrides the new methods until 7.13.
 
 Bump gcore and every released dependent (gcode, gdaemon, ghook, gclient,
 gmcp) by 0.0.1, update `Cargo.lock`, and keep `MANAGED_BIN_VERSION_PINS` in
@@ -1542,12 +1657,14 @@ dependent.
 **Acceptance:**
 - 3.1.1 - The node arm's existing ledger, drain and ingress tests pass unchanged against `gcore::hook_ledger`, including the session-start epoch bump. test: `crates/gdaemon/tests/node_hooks.rs::ingress_session_start_bumps_epoch`.
 - 3.1.2 - A per-machine epoch bump bounds STOP replays for that machine only, and `None` keeps the single-file layout Python reads. test: `crates/gcore/src/hook_ledger/tests.rs::stop_epoch_is_per_machine`.
-- 3.1.3 - Compare awaits `prepare_proxied` before the proxied leg of a non-GET request, and the default does nothing. test: `crates/gdaemon/src/front_door/routes.rs::compare_awaits_prepare_before_proxied_leg`.
+- 3.1.3 - Compare awaits `prepare_proxied` before the proxied leg of a non-GET request and moves that request's prep into its `check_prepared`: concurrent requests each receive their own prep, a proxy error or a cancelled request drops it, and the defaults return an empty prep and delegate to `check_proxied`. test: `crates/gdaemon/src/front_door/routes.rs::compare_hands_each_request_its_own_prep`.
 - 3.1.4 - gcore and its released dependents carry 0.0.1 bumps, and `Cargo.lock` and the managed pins agree. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 3.1.5 - A `ProxiedCheck::Waived` result is recorded as `Waived` with its waiver id and decision. test: `crates/gdaemon/src/front_door/routes.rs::waived_check_records_its_waiver`.
 
 **Verification:** planned:
 `cargo nextest run -p gobby-core --features hook-ledger -E 'test(hook_ledger)'`,
 `cargo nextest run -p gobby-daemon -E 'test(node_hooks) | test(compare)'`,
+`cargo check --workspace --all-targets`,
 `cargo clippy -p gobby-core -p gobby-daemon --all-targets -- -D warnings`.
 
 ### 3.2 `gobby-ingress` crate, `hooks` family and request validation [category: code] (depends: 3.1)
@@ -1578,7 +1695,7 @@ Targets:
 - **Contract.** `docs/contracts/hook-ingress.md` and the 1.2 corpus.
 - **Family seam.** `crates/gcore/src/route_family.rs::RouteFamily` (`name`,
   `prefixes`, `router`, `default_backend` defaulting to `Proxy`, `claims`,
-  `check_proxied`, 3.1's `prepare_proxied`). Pattern:
+  `check_proxied`, and 3.1's `prepare_proxied` and `check_prepared`). Pattern:
   `crates/gruntime/Cargo.toml`.
 - **Door.** `crates/gdaemon/src/front_door/mod.rs` answers node-mode
   `/api/hooks/execute` in `Door::Node` before any routing table, so the
@@ -1646,6 +1763,9 @@ Targets:
 - `crates/gingress/src/receipts/staging.rs`
 - `crates/gingress/src/receipts/tests.rs`
 - `crates/gingress/src/execute.rs`
+- `crates/gingress/src/seams.rs`
+- `crates/gingress/src/seams/scripted.rs`
+- `crates/gingress/src/seams/tests.rs`
 - `crates/gingress/tests/envelope_corpus.rs`
 
 **Research context:**
@@ -1663,13 +1783,21 @@ Targets:
   write of a receipted response releases the receipt for redelivery. ghook
   replaces the envelope file with a `delivery-receipt` acknowledgement
   (`docs/contracts/hook-ingress.md`, "Receipt acknowledgement file").
-- **Storage.** Receipts and staged effects are session rows; reads and writes
-  go through 5.1's `Sessions` seam, scripted here.
+- **Storage.** Receipts and staged effects are session rows owned by
+  Sessions (#21562).
 
 Port them as `receipts`: attach a receipt to a response carrying staged
 `on_receipt` effects, release it when the response body fails to write,
 consume pending acknowledgement files before execution, and apply an
-acknowledged receipt's staged effects once.
+acknowledged receipt's staged effects once. Receipt reads and writes go through
+a `seams::Sessions` trait that this leaf creates with only the receipt and
+staged-effect methods, each returning `Result<_, SeamUnavailable>`.
+`seams::scripted` gives it a scripted implementation that replays a recorded
+script and fails on an unscripted call. 5.1 adds the remaining Sessions methods
+and the other seam groups to the same module.
+
+**Granularity:** one leaf with seven production files. The receipt seam is
+defined here because receipts are its first caller.
 
 **Acceptance:**
 - 3.4.1 - The 1.2 receipt round trip replays equal: the response carries `_gobby_delivery_receipt`, and the acknowledgement applies the staged effects once. test: `crates/gingress/tests/envelope_corpus.rs::receipt_round_trip_replays_equal`.
@@ -1702,19 +1830,25 @@ Targets:
 - **Quarantine rule.** A spooled envelope answered 403 `hook_machine_mismatch`
   is quarantined and never replayed.
 - **Barrier user.** `src/gobby/runner_hook_replay.py` calls
-  `drain_hook_inbox_barrier` before agent restart classification; 7.15 keeps
-  that barrier working.
+  `drain_hook_inbox_barrier` before agent restart classification; 7.13 keeps
+  that barrier working until #21564 replaces it (D2). It returns
+  `HookInboxBarrierResult`: the replayed count, a timed-out flag, the
+  unresolved run and session ids, and residue, live-hook and receipt counts.
 
 Port them as `inbox`. The drain claims each inbox file atomically, passes the
 envelope's headers and body to a dispatch closure the caller supplies, settles
 or quarantines the file by the response, and prunes processed markers and
-quarantine by age. It is built here; 7.15 starts it with a closure over the
+quarantine by age. `inbox::startup_pass` drains the files present when it
+starts, once, before a deadline, and returns every `HookInboxBarrierResult`
+field; #21564's Rust restart recovery awaits it before it classifies agent
+runs (D2). The drain is built here; 7.13 starts it with a closure over the
 front door's route table.
 
 **Acceptance:**
 - 3.5.1 - The drain executes each spooled envelope once through the dispatch closure, settles it by response, and quarantines a 403 without replay. test: `crates/gingress/src/inbox/tests.rs::drain_settles_and_quarantines_like_python`.
 - 3.5.2 - A file another drain has claimed is skipped, and a crashed claim is restored. test: `crates/gingress/src/inbox/tests.rs::inbox_claims_are_exclusive_and_restorable`.
 - 3.5.3 - Inbox, temp-file and quarantine pruning follow Python's ages and bounds. test: `crates/gingress/src/inbox/tests.rs::pruning_matches_python`.
+- 3.5.4 - The startup pass delivers each file present at its start once before its deadline and returns the barrier's fields as `drain_hook_inbox_barrier` does. test: `crates/gingress/src/inbox/tests.rs::startup_pass_matches_the_python_barrier`.
 
 **Verification:** planned:
 `cargo nextest run -p gobby-ingress` and
@@ -1810,7 +1944,7 @@ and `shared.py` (26), plus
 `src/gobby/sessions/transcripts/codex_items.py::normalize_command_execution`
 (106-line module) and
 `src/gobby/sessions/reasoning_effort.py::observed_reasoning_effort` (41). The
-Codex app-server adapter is Python-owned (Decision 4) and not ported.
+Codex app-server adapter is not ported: no hook reaches it (Decision 4).
 - **Site row 20.** `_command_execution_result` reads a transcript or spill
   file; a node delivery skips it.
 
@@ -1833,8 +1967,8 @@ Targets:
 `ACPHookAdapter`, base of `GrokAdapter` and `AgyAdapter`) with
 `acp_tool_names.py` (53: `normalize_acp_tool_name`), and
 `src/gobby/adapters/grok.py` (298: `GrokAdapter`, `_spilled_mcp_output`).
-In-process ACP sessions stay Python-owned (Decision 4); only the hook
-translation is ported.
+ACP web chat sessions run their passes in web chat's lifecycle and stay
+Python-owned (Decision 4); this leaf ports the CLI hook translation.
 - **Site row 20.** `_spilled_mcp_output` reads a spill file; a node delivery
   skips it.
 
@@ -1902,7 +2036,7 @@ replaying the 1.4 corpus, then compose envelope, adapters and pipeline into
 the route's execution step.
 
 Shared rules for every P5 deliverable:
-- Every call to another family goes through a 5.1 seam; P7 implements each
+- Every call to another family goes through a `seams` trait (3.4, 5.1); P7 implements each
   seam over the owning family's native API.
 - A Python module over 850 lines is split into two Rust files up front.
 - Verification for every P5 deliverable:
@@ -1925,8 +2059,8 @@ Targets:
 by owning family:
 - **Sessions (#21562):** session rows, lookup and status, platform session
   binding, deferred activation, materialization, clear-run lineage, the
-  message processor and transcripts, receipts and staged effects (3.4), and
-  node session registration (Decision 8).
+  message processor and transcripts, and node session registration
+  (Decision 8). The receipt and staged-effect methods already exist from 3.4.
 - **Tasks (#21560):** task reads and writes, session-task links, commit
   auto-link.
 - **Agents (#21564):** agent runs and their lifecycle
@@ -1946,10 +2080,11 @@ by owning family:
 - **Broadcast:** UI event fan-out (`src/gobby/hooks/broadcaster.py`), served by
   gdaemon's native WS transport (#21558, closed).
 
-Define one trait per group, each call returning `Result<_, SeamUnavailable>`,
-and a scripted implementation that replays a 1.4 case's collaborator script
-and fails on an unscripted call. The engine's own seams stay in
-`gobby-workflows`.
+Extend 3.4's `seams::Sessions` trait with the remaining Sessions methods and
+define one trait per other group, each call returning
+`Result<_, SeamUnavailable>`. Extend 3.4's scripted implementation so it
+replays a 1.4 case's collaborator script and fails on an unscripted call. The
+engine's own seams stay in `gobby-workflows`.
 
 **Acceptance:**
 - 5.1.1 - Every collaborator call in the 1.4 corpus maps to exactly one seam method. test: `crates/gingress/src/seams/tests.rs::every_recorded_collaborator_maps_to_a_seam`.
@@ -2428,9 +2563,9 @@ Targets:
 `kind: framing`
 
 Compose the family in gdaemon, bind each seam group to its owning family, bind
-native admission, soak in compare mode, add the DR6 forward, flip to native
-default, record the ledger rows, and delete the Python routes and the modules
-only they use.
+native admission, soak in compare mode, stop web chat's Python rule passes
+for AGY sessions, flip to native default jointly with #24884's gateway, record
+the ledger rows, and delete the Python routes and the modules only they use.
 
 Shared rules for every P7 deliverable:
 - Every leaf that changes gdaemon or a crate it links bumps gdaemon by 0.0.1
@@ -2441,11 +2576,15 @@ Shared rules for every P7 deliverable:
   method of its 5.1 group, and the engine seams of the same family, to that
   family's public operation. A family failure returns `SeamUnavailable`.
 - No agent reads or edits the live bootstrap. The operator sets each
-  `front_door.routes.hooks` value, and the Orchestrator coordinates it at each
-  cutover.
+  `front_door.routes.hooks` and `front_door.routes.mcp` value only while the
+  daemon is stopped, and the Orchestrator coordinates them at each cutover.
+  gdaemon reads the values once at start (7.15).
 - Verification: `GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo nextest run -p gobby-daemon -p gobby-ingress`,
   `cargo clippy -p gobby-daemon -p gobby-ingress --all-targets -- -D warnings`
   and `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/install/test_version_pins.py`.
+- A leaf that edits Python also runs
+  `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest <each surviving test file in its Targets and acceptance> -v`,
+  `uv run ruff check src/` and `uv run mypy src/`.
 
 ### 7.1 Compose the `hooks` family in gdaemon [category: code] (depends: 6.3)
 `kind: deliverable`
@@ -2486,15 +2625,21 @@ Three are bound here:
   unbound until 7.11.
 `SessionVariables` uses `gobby-workflows`' gcore-pool implementation.
 
+`hooks::compose` builds one 2.19 `driver` and returns it beside the family as
+an `Arc`. The pipeline holds one clone, and `serve::run` keeps the other for
+#24884's gateway composition, which takes it (Cross-plan edges). Every Rust
+pass of a session, from a hook or a proxied tool call, then joins one FIFO and
+one pending tool context (Decision 4).
+
 `hooks::dispatch::LocalDispatch` sends a request through `FrontDoor::handle`
 with a loopback peer and the local operator credential
 (`gobby_core::local_token::read_api_key`), set once after the door is built.
-7.7 and 7.15 use it so their requests reach whichever backend serves the route.
+7.7 and 7.13 use it so their requests reach whichever backend serves the route.
 
 Until 7.12 binds admission, `HooksFamily::claims` returns false. Every request
 then stays proxied, whatever the route value, while seam groups are unbound.
 
-**Granularity:** one leaf with seven production files and four acceptance
+**Granularity:** one leaf with seven production files and five acceptance
 items. Registration, the bundle, the local seams and in-process dispatch are
 one composition step; nothing below it has a caller until it exists.
 
@@ -2503,6 +2648,7 @@ one composition step; nothing below it has a caller until it exists.
 - 7.1.2 - Broadcasts reach the native broker, the local runner runs a `run_command` case, and every unbound group returns `SeamUnavailable`. test: `crates/gdaemon/src/hooks/tests.rs::local_seams_bind_and_unbound_groups_refuse`.
 - 7.1.3 - `LocalDispatch` sends a request through authentication and the route table, and it reaches Python when the route is proxied. test: `crates/gdaemon/src/hooks/tests.rs::local_dispatch_uses_the_front_door`.
 - 7.1.4 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 7.1.5 - D2.8: an ingress pass and a pass through a second holder of the shared `driver` for one session run in arrival order while a scripted seam holds the first in flight, and the second reads the variables the first committed; a second-holder before pass for a tool whose ingress BEFORE_TOOL is still pending sees that context as a duplicate. test: `crates/gdaemon/src/hooks/tests.rs::ingress_and_gateway_passes_share_one_session_fifo`.
 
 ### 7.2 Sessions seam adapter [category: code] (depends: 7.1, #21562)
 `kind: deliverable`
@@ -2515,7 +2661,7 @@ Targets:
 - `crates/gdaemon/src/hooks/seams/sessions/tests.rs`
 - `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
 
-**Research context:** 5.1's Sessions group (session rows, lookup and status,
+**Research context:** the Sessions group from 3.4 and 5.1 (session rows, lookup and status,
 platform binding, deferred activation, materialization, clear-run lineage,
 messages and transcripts, receipts and staged effects, and node session
 registration from 5.4 and Decision 8). Engine seams: `SessionQueries` targets,
@@ -2759,7 +2905,7 @@ implementation SHA; a later change needs renewed approval.
 - 7.12.4 - The contract records the persisted `security-review` label, the pre-dispatch check and the approved step for the exact SHA. behavior: "hooks admission security gate" in `docs/contracts/hook-ingress.md`.
 - 7.12.5 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 7.13 Compare mode for the hook routes [category: code] (depends: 7.12)
+### 7.13 Compare mode and the Rust drain handover [category: code] (depends: 7.12)
 `kind: deliverable`
 
 Targets:
@@ -2768,130 +2914,8 @@ Targets:
 - `crates/gingress/src/compare.rs`
 - `crates/gingress/src/compare/record.rs`
 - `crates/gingress/src/compare/tests.rs`
-- `crates/gdaemon/Cargo.toml`
-- `Cargo.lock`
-- `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
-
-**Research context:**
-- **Compare.** `crates/gdaemon/src/front_door/routes.rs::compare` runs both legs
-  for GET and HEAD. For other methods it awaits 3.1's `prepare_proxied`, proxies
-  once, then calls `check_proxied`, which returns `ProxiedCheck::Verified` or
-  `Mismatch(pointer)`. Records go to `front-door-compare.jsonl`
-  (`crates/gdaemon/src/front_door/compare.rs::Record`), and
-  `gdaemon compare-report --since <ts>` passes only with no diff, native error,
-  mismatch or unwaived skip (`Report::passes`).
-- **Gates carried.** rust-rule-evaluation D2.3 (no unexplained diff in decision,
-  reason, injected context or staged receipt fields), D2.5 (DR8 counters per
-  route) and D2.6 (allow-audit lines keep `record_rule_evaluation`'s schema in
-  `rule-allow-audit.jsonl`).
-
-`HooksFamily` overrides both methods:
-- **Execute.** `prepare_proxied` runs 5.12's execution on pre-state in record
-  mode: every seam write and external effect is recorded, the claim is skipped
-  and the driver commits nothing. The record is keyed by envelope id.
-  `check_proxied` compares decision, reason, context, system message, modified
-  input and staged receipt fields with Python's response. A pass whose later
-  rules read an `mcp_call` result compares up to that call and is counted as
-  partial.
-- **Node replay.** `prepare_proxied` computes the decision on pre-state, and
-  `check_proxied` compares it.
-- **Receipts.** `check_proxied` verifies that the receipt row's post-state
-  agrees with Python's body.
-- **Webhook test.** `check_proxied` recomputes the config-determined error
-  bodies and, for a delivery, checks the response shape and the named enabled
-  endpoint.
-- The GET rows use the door's concurrent compare.
-
-`compare::record` appends one line per claimed execute to
-`<home>/logs/hooks-compare.jsonl`: envelope id, event type, DR8 outcome class,
-partial flag and verdict. That is the family's per-route observability (D2.5).
-In native mode the family appends each pass's audit records to
-`rule-allow-audit.jsonl` (D2.6). An explained difference is one recorded under a
-#24963 waiver in `docs/contracts/parity-waivers.json`, such as 5.4's
-`hooks.node-session.register`.
-
-**Granularity:** one leaf with four production files and four acceptance
-items. Record mode, the per-route checks and the outcome log are one compare
-step that the soak reads together.
-
-**Acceptance:**
-- 7.13.1 - A record-mode execute writes nothing and runs no external effect, and its response fields compare equal to Python's on every 1.2 and 1.4 case. test: `crates/gingress/src/compare/tests.rs::record_mode_execute_matches_python_without_effects`.
-- 7.13.2 - An `mcp_call`-dependent pass compares up to the call and is logged as partial, and a changed decision reports a JSON pointer mismatch. test: `crates/gingress/src/compare/tests.rs::partial_and_mismatch_are_reported`.
-- 7.13.3 - Replay, receipt and webhook-test checks verify Python's responses and report a planted divergence; every execute line carries its DR8 class, and native audit lines parse with `record_rule_evaluation`'s schema. test: `crates/gingress/src/compare/tests.rs::post_route_checks_and_outcome_lines`.
-- 7.13.4 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
-
-### 7.14 DR6 pass endpoint and the Python proxy forward [category: code] (depends: 7.13)
-`kind: deliverable`
-
-Targets:
 - `crates/gdaemon/src/hooks.rs`
-- `crates/gdaemon/src/hooks/rule_pass.rs`
-- `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: dispatch the loopback rule-pass route on hub and standalone doors and refuse it on the node door
-- `crates/gdaemon/tests/hook_rule_pass.rs`
-- `crates/gingress/src/pipeline.rs`
-- `crates/gingress/src/pipeline/tests.rs`
-- `src/gobby/mcp_proxy/services/rule_pass_forward.py`
-- `src/gobby/mcp_proxy/services/result_handling.py::apply_before_tool_enforcement`
-- `src/gobby/mcp_proxy/services/result_handling.py::apply_after_tool_workflow`
-- `tests/mcp_proxy/services/test_rule_pass_forward.py`
-- `crates/gdaemon/Cargo.toml`
-- `Cargo.lock`
-- `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
-
-**Research context:**
-- **Rule.** rust-rule-evaluation DR6: one engine owns every pass of a session,
-  including its pending tool context. Ownership follows how the session's hooks
-  arrive. Python's proxy runs a persisting pass before and after every proxied
-  tool call (`apply_before_tool_enforcement`, `apply_after_tool_workflow`).
-  #21570 deletes the forward (Decision 2).
-- **Loopback pattern.** `crates/gdaemon/src/nodes/internal_api.rs::is_route` is
-  dispatched in `FrontDoor::handle`; the node door answers not-found. Admission
-  requires a loopback peer and `x-gobby-backend-secret` matching
-  `AuthState::backend_secret_matches`, before any body parsing
-  (`.gobby/plans/s2-7-hub-attention-dispatch.md` 2.3).
-- **Python client pattern.** `src/gobby/hub/node_client.py::NodeCommandClient`:
-  daemon port from `load_bootstrap()`, `X-Gobby-Backend-Secret:
-  front_door_secret()`, `trust_env=False`, no redirects.
-- **Route value.** `src/gobby/config/bootstrap.py::FrontDoorConfig` `routes`.
-  Python treats an absent family as proxied.
-
-`POST /api/internal/hooks/rule-pass` takes the pass input the two Python sites
-build (1.1's proxied-pass cases record it), runs 2.19's `driver` and returns
-the full 1.1 response field set, `modified_input` included. Unknown or invalid
-bodies get not-found or the shared validation error.
-
-Ownership marker: the Rust pipeline merges `_rule_pass_owner: "rust"` into the
-delta of the first pass it commits for a session. `rule_pass_forward` defines
-`HOOKS_ROUTE_DEFAULT = "proxy"`, which 7.15 flips. Its `rust_owns_session`
-returns true when the effective `hooks` value is native and the session's
-variables carry the marker. Web chat, ACP, Codex app-server and in-process
-runner sessions never get the marker, because their hooks never reach the
-route (Decision 4). Both Python sites forward when it returns true, run no
-Python pass, and apply the returned response as they apply Python's. Rollback
-to proxy makes the check false, so Python runs the passes again.
-
-Consumers unchanged:
-- `src/gobby/mcp_proxy/services/tool_proxy.py` — no-edit-reason: Its wrappers call both functions, whose signatures and return shapes are unchanged.
-- `tests/mcp_proxy/services/test_direct_tool_session_activation.py` — no-edit-reason: Its sessions carry no ownership marker, so the Python pass still runs.
-- `tests/workflows/test_seat_rules.py` — no-edit-reason: Its sessions carry no ownership marker, so the Python pass still runs.
-
-**Acceptance:**
-- 7.14.1 - The endpoint returns every response field of a 1.1 proxied-pass case, and non-loopback peers, a missing or wrong secret and the node door get not-found before body parsing. test: `crates/gdaemon/tests/hook_rule_pass.rs::rule_pass_endpoint_is_loopback_only_and_complete`.
-- 7.14.2 - D2.8: across every session kind, both pass sites and all three route values, exactly one engine runs each pass. test: `tests/mcp_proxy/services/test_rule_pass_forward.py::test_one_engine_per_session`.
-- 7.14.3 - D2.8: a Rust-owned session's before- and after-tool passes forward to Rust, run none in Python, and apply every field, `modified_input` included. test: `tests/mcp_proxy/services/test_rule_pass_forward.py::test_rust_owned_passes_forward_with_every_field`.
-- 7.14.4 - The first committed Rust pass of a session sets the ownership marker once. test: `crates/gingress/src/pipeline/tests.rs::first_rust_pass_marks_ownership`.
-- 7.14.5 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
-
-### 7.15 Native default and the Rust drain [category: code] (depends: 7.14)
-`kind: deliverable`
-
-Targets:
-- `crates/gingress/src/family.rs`
-- `crates/gdaemon/src/hooks.rs`
-- `crates/gdaemon/tests/hooks_flip.rs`
-- `src/gobby/mcp_proxy/services/rule_pass_forward.py`
-- `src/gobby/hooks/inbox_maintenance.py::*` — operation: delete — scope-reason: the Rust hub drain replaces the Python drain loop and inbox pruning
-- `src/gobby/hooks/quarantine_retention.py::*` — operation: delete — scope-reason: the Rust hub drain owns quarantine retention
+- `crates/gdaemon/tests/hooks_drain.rs`
 - `src/gobby/runner_maintenance/messaging.py::drain_hook_inbox_loop`
 - `src/gobby/runner_maintenance/messaging.py::hook_quarantine_retention_loop`
 - `src/gobby/runner_maintenance/__init__.py::*` — scope-reason: drop the two loop re-exports
@@ -2903,30 +2927,40 @@ Targets:
 - `src/gobby/runner_lifecycle_shutdown.py::_cancel_periodic_tasks`
 - `src/gobby/runner_lifecycle_shutdown.py::stop_restart_recovery`
 - `src/gobby/runner_periodic_task_attrs.py`
-- `tests/hooks/test_inbox_temp_reaper.py::*` — operation: delete — scope-reason: its subject, inbox_maintenance, is deleted
-- `tests/hooks/test_envelope_marker_retention.py::*` — scope-reason: drop the cases that import inbox_maintenance
-- `tests/hooks/test_inbox.py::*` — scope-reason: drop the maintenance and quarantine-retention cases and keep the barrier cases
+- `tests/hooks/test_inbox.py::*` — scope-reason: add the barrier and Rust drain coexistence case
 - `tests/test_runner_bin_freshness.py::*` — scope-reason: drop the drain loop argument
 - `tests/test_runner_maintenance_startup.py::*` — scope-reason: remove the quarantine-loop scheduling test
 - `tests/test_runner_shutdown.py::*` — scope-reason: drop the quarantine task attribute from the shutdown fixture
+- `docs/contracts/parity-waivers.json::*` — scope-reason: adds the mcp-call-partial waiver entry
+- `docs/contracts/parity-ledger.md::*` — scope-reason: regenerated so the execute row notes the new waiver
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
 
 **Research context:**
-- **Gates.** rust-rule-evaluation D2.1 (1.2 replays equal on the Rust route),
-  D2.2 (every 409 and 503 body, DR5's mappings), D2.4 (`hooks: proxy` returns
-  the route to Python with no other family affected) and D2.9 (the 1.1
-  hardcoded-behavior and response-field cases replay equal at this commit).
-- **Soak.** This leaf dispatches only after the operator records a passing
-  `gdaemon compare-report --since <compare start>` for a `hooks: compare` soak.
-  The window is the runtime family's operator rule
-  (`.gobby/plans/gdaemon-runtime-family.md` Q2): at least 24 hours, measured
-  once from the cutover that starts compare. The window also needs at least one
-  execute from each of the five CLIs and one request on each node and webhook
-  row. No restart resets the clock. If a CLI cannot run on this machine at flip
-  time, the soak evidence names it and the flip waits for Josh's waiver; the
-  CLI is never skipped silently (Orchestrator, 2026-10-28).
+- **Compare.** `crates/gdaemon/src/front_door/routes.rs::compare` runs both legs
+  for GET and HEAD. For other methods it awaits 3.1's `prepare_proxied`, proxies
+  once, then moves that request's `ProxiedPrep` into `check_prepared`, which
+  returns `ProxiedCheck::Verified`, `Mismatch(pointer)` or `Waived { id,
+  decision }`. Records go to `front-door-compare.jsonl`
+  (`crates/gdaemon/src/front_door/compare.rs::Record`), and
+  `gdaemon compare-report --since <ts>` passes only with no diff, native error,
+  mismatch or unwaived skip (`Report::passes`).
+- **Gates carried.** rust-rule-evaluation D2.3 (no unexplained diff in decision,
+  reason, injected context or staged receipt fields), D2.5 (DR8 counters per
+  route) and D2.6 (allow-audit lines keep `record_rule_evaluation`'s schema in
+  `rule-allow-audit.jsonl`).
+- **`mcp_call` results.** `src/gobby/workflows/engine/effects.py` runs an
+  `mcp_call` inline when it sets `inject_result`, is not `background` and a
+  dispatcher is present. The result sets `success_variable`, adds context and
+  can block. Other calls go to `metadata["mcp_calls"]` as server, tool and
+  arguments only, and `src/gobby/hooks/rule_evaluator.py` dispatches the
+  foreground ones before it builds the response, so their results add context
+  or override the decision. Python's response carries no call result. The
+  hardcoded `list_mcp_servers` seed on a session's first prompt
+  (`src/gobby/workflows/engine/core.py`) is one such deferred call, and six
+  bundled rule files, `surface-memories-on-turn-start` among them, use
+  `mcp_call`.
 - **Python loops.** `runner_lifecycle_periodic.py::start_periodic_tasks` spawns
   `hook-inbox-drain` (`runner._hook_inbox_task`) and `hook-quarantine-retention`.
   `runner_lifecycle.py::run_daemon` passes `drain_hook_inbox_loop`.
@@ -2935,24 +2969,70 @@ Targets:
   `runner_maintenance/messaging.py` imports `inbox_maintenance` and
   `quarantine_retention`.
 - **Barrier.** `src/gobby/runner_hook_replay.py` calls
-  `inbox.drain_hook_inbox_barrier`, which posts through the front door. It stays.
+  `inbox.drain_hook_inbox_barrier`, which posts through the front door. It stays
+  until #21564's Rust restart recovery awaits 3.5's startup pass instead (D2).
   Per-file claims are exclusive (3.5.2), and a timeout fences unresolved
   sessions.
 
-`HooksFamily::default_backend` returns `Native`, and `HOOKS_ROUTE_DEFAULT`
-becomes `"native"` in the same commit. `hooks::compose` starts 3.5's drain and
-retention with a closure that sends each envelope through `LocalDispatch`, so
-the drain follows the route value and rollback needs no Python loop. The Python
-drain and quarantine-retention loops and their modules go.
+`HooksFamily` overrides `prepare_proxied` and `check_prepared`. Each request's
+record travels in its own `ProxiedPrep`; the envelope id, when present, is
+diagnostic only, so anonymous requests and concurrent retries of one envelope
+each compare against their own pre-state.
+- **Execute.** `prepare_proxied` runs 5.12's execution on pre-state in record
+  mode: every seam write and external effect is recorded, the claim is skipped
+  and the driver commits nothing. `check_prepared` compares decision, reason,
+  context, system message, modified input and staged receipt fields with
+  Python's response. A pass that runs an inline `mcp_call` or carries a
+  foreground deferred one is partial: `check_prepared` returns `Waived` under
+  `hooks.execute.mcp-call-partial` and never `Verified` or `Mismatch`, because
+  Python's response cannot show what Rust would produce from the same call
+  results (Decision 6).
+- **Node replay.** `prepare_proxied` computes the decision on pre-state, and
+  `check_prepared` compares it.
+- **Receipts.** `check_prepared` verifies that the receipt row's post-state
+  agrees with Python's body.
+- **Webhook test.** `check_prepared` recomputes the config-determined error
+  bodies and, for a delivery, checks the response shape and the named enabled
+  endpoint.
+- The GET rows use the door's concurrent compare.
+
+`compare::record` appends one line per claimed execute to
+`<home>/logs/hooks-compare.jsonl`: envelope id, event type, DR8 outcome class,
+partial flag and verdict. That is the family's per-route observability (D2.5).
+In native mode the family appends each pass's audit records to
+`rule-allow-audit.jsonl` (D2.6). An explained difference is one recorded under a
+#24963 waiver in `docs/contracts/parity-waivers.json`, such as 5.4's
+`hooks.node-session.register`. This leaf adds `hooks.execute.mcp-call-partial`
+on surface `HTTP POST /api/hooks/execute` with decision
+`.gobby/plans/s2-11-hub-hooks-rules.md#7.13`. Its behaviour: the Rust pass of
+an execute that runs or carries a foreground `mcp_call` is not compared with
+Python's response. Its replacement: the 1.1 cases with scripted `mcp_call`
+results replay equal through both engines (1.1.4, 7.15.1). `compare-report`
+counts these records under the waiver id, apart from `Verified`
+(`Report::waived`). The leaf regenerates `docs/contracts/parity-ledger.md`
+so the execute row notes the waiver.
+
+Drain handover: `hooks::compose` starts 3.5's drain and retention with a
+closure that sends each envelope through `LocalDispatch`. The drain follows the
+route value, so under `proxy` and `compare` it delivers to Python through the
+front door, and the compare soak covers it before the 7.15 flip. In the same
+commit Python stops scheduling its drain and quarantine-retention loops:
+`messaging.py` loses both loop functions and their imports, and the runner
+wiring drops them. `inbox_maintenance.py` and `quarantine_retention.py` stay
+dormant with no importer, so reverting this commit restores the Python drain;
+7.17 deletes them.
+
 `runner_lifecycle_shutdown.py` has 916 lines, so this deliverable makes one
 split: the attribute-name tuple in `_cancel_periodic_tasks` is the move to
 `src/gobby/runner_periodic_task_attrs.py` as `PERIODIC_TASK_ATTRS`, without the
-two hook loop names, and
-`stop_restart_recovery` drops `_hook_inbox_task` from its tuple.
+two hook loop names, and `stop_restart_recovery` drops `_hook_inbox_task` from
+its tuple.
 
-**Granularity:** one leaf with 15 production files and five acceptance items.
-The default flip, the Rust drain start and the Python loop removal must land
-together so exactly one periodic drain runs.
+**Granularity:** one leaf with 15 production files and eight acceptance items.
+Record mode, the per-route checks, the waiver they cite and the outcome log are
+one compare step that the soak reads together. The drain handover lands with them so the same soak
+covers the Rust drain while proxy rollback still reaches Python, and so
+exactly one periodic drain runs.
 
 Consumers unchanged:
 - `tests/test_runner_lifecycle_periodic.py` — no-edit-reason: It names no hook loop, and the remaining loops keep their keys and spawn order.
@@ -2972,11 +3052,132 @@ Consumers unchanged:
 - `src/gobby/runner_rollback.py` — no-edit-reason: It awaits `stop_restart_recovery(runner)`, whose signature is unchanged.
 
 **Acceptance:**
+- 7.13.1 - A record-mode execute writes nothing and runs no external effect, and its response fields compare equal to Python's on every 1.2 and 1.4 case. test: `crates/gingress/src/compare/tests.rs::record_mode_execute_matches_python_without_effects`.
+- 7.13.2 - A divergence planted after an inline `mcp_call`, and one after a foreground deferred call, each return `Waived` with `hooks.execute.mcp-call-partial`, never `Verified` or `Mismatch`, and their `hooks-compare.jsonl` lines carry the partial flag; a changed decision in a pass with no `mcp_call` reports a JSON pointer mismatch. test: `crates/gingress/src/compare/tests.rs::partial_passes_are_waived_and_mismatches_reported`.
+- 7.13.3 - Replay, receipt and webhook-test checks verify Python's responses and report a planted divergence; every execute line carries its DR8 class, and native audit lines parse with `record_rule_evaluation`'s schema. test: `crates/gingress/src/compare/tests.rs::post_route_checks_and_outcome_lines`.
+- 7.13.4 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 7.13.5 - Under `proxy` and `compare` the Rust drain delivers each spooled envelope once through `LocalDispatch` to Python, settles or quarantines it by the response, and a compare-mode delivery writes a `hooks-compare.jsonl` line with its envelope id. test: `crates/gdaemon/tests/hooks_drain.rs::drain_delivers_through_the_route_table`.
+- 7.13.6 - The Rust drain and the Python barrier never deliver one file twice, and Python schedules no drain or quarantine loop. test: `tests/hooks/test_inbox.py::test_barrier_coexists_with_the_rust_drain`.
+- 7.13.7 - Two concurrent executes without an envelope id, and two concurrent retries of one envelope, each compare against their own pre-state record. test: `crates/gingress/src/compare/tests.rs::concurrent_requests_compare_their_own_snapshots`.
+- 7.13.8 - The waiver loads with its id, surface, decision and replacement, and the regenerated ledger matches the committed one. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+
+### 7.14 Web chat runs no Python rule pass for native-hook-authority sessions [category: code] (depends: 7.13)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/servers/websocket/chat/_lifecycle.py::ChatLifecycleMixin._fire_lifecycle`
+- `tests/servers/websocket/chat/test_lifecycle_native_authority.py`
+
+**Research context:**
+- **Native hook authority.** An AGY web chat child runs native ghook
+  (`src/gobby/servers/websocket/chat/backends/agy.py`, `_identity_env`), so at
+  native default its hooks run in Rust (Decision 4).
+  `_session_launch.py::uses_native_hook_authority` reads the session's
+  `provider`. `bind_session_lifecycle`, the permission-request and stop events
+  in `src/gobby/servers/websocket/chat/_stream_events.py` and
+  `src/gobby/servers/websocket/handlers/plan_approval.py::_resolve_managed_plan_lifecycle`
+  already skip `_fire_lifecycle` for AGY.
+- **Ungated callers.** Three callers still run Python passes for an AGY
+  session: SESSION_END from the chat session cleanup helper
+  (`src/gobby/servers/websocket/chat/_session.py`), INTERRUPT from
+  `src/gobby/servers/websocket/handlers/session_lifecycle.py::handle_stop_chat`,
+  and NOTIFICATION from the ask-user and tool-approval responses
+  (`src/gobby/servers/websocket/chat/_interaction_responses.py`).
+- **AGY's native hooks.** `src/gobby/adapters/agy_contract.py::AGY_HOOK_NAMES`
+  lists `PreInvocation`, `PreToolUse`, `PostToolUse`, `PostInvocation` and
+  `Stop`. None maps to SESSION_END, INTERRUPT or NOTIFICATION.
+- **Lifecycle steps.** `_fire_lifecycle` resolves the chat session, builds the
+  `HookEvent` and calls `workflow_handler.evaluate`. From that response it then
+  dispatches `metadata["mcp_calls"]`, blocking webhooks, event handlers, the
+  message piggyback and the broadcast.
+
+When the resolved session uses native hook authority, `_fire_lifecycle` runs no
+rule pass: it skips `workflow_handler.evaluate` and continues with an allow
+response that carries no `mcp_calls`, so blocking webhooks, event handlers, the
+piggyback and the broadcast still run. One guard covers the three callers and
+any later one. Rules and observers, 2.18's turn-interrupt observer among them,
+see no SESSION_END, INTERRUPT or NOTIFICATION of an AGY web chat session until
+#21592 moves web chat's lifecycle to Rust and removes this guard (D1).
+- Rejected: sending these events to a Rust endpoint. A Python client of Rust is
+  what Josh's No Python rule forbids (2026-10-28).
+- Rejected: leaving them in Python. A Python pass beside the session's native
+  passes would split it across engines (DR6).
+
+Consumers unchanged:
+- `tests/servers/test_fire_lifecycle_parity.py` — no-edit-reason: Its `_fire_lifecycle` cases use sessions whose provider is not `agy`, and its AGY cases mock `_fire_lifecycle` or drive the adapter.
+- `tests/servers/test_websocket_chat_resilience.py` — no-edit-reason: Its sessions' provider is not `agy`, so their events run the pass as before.
+- `tests/servers/websocket/chat/test_messaging.py` — no-edit-reason: Its sessions' provider is not `agy`, so their events run the pass as before.
+- `tests/servers/websocket/chat/test_session_registry.py` — no-edit-reason: Its sessions' provider is not `agy`, so their events run the pass as before.
+
+**Acceptance:**
+- 7.14.1 - D2.8: an AGY web chat session's SESSION_END, INTERRUPT and NOTIFICATION events run no rule pass and dispatch no `mcp_calls`, while their event handlers, blocking webhooks and broadcast still run. test: `tests/servers/websocket/chat/test_lifecycle_native_authority.py::test_native_authority_events_run_no_rule_pass`.
+- 7.14.2 - A managed web chat session's events still run the pass. test: `tests/servers/websocket/chat/test_lifecycle_native_authority.py::test_managed_session_events_run_the_pass`.
+
+### 7.15 Native default [category: code] (depends: 7.14, #24884)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/family.rs`
+- `crates/gdaemon/src/hooks.rs`
+- `crates/gdaemon/tests/hooks_flip.rs`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
+
+**Research context:**
+- **Gates.** rust-rule-evaluation D2.1 (1.2 replays equal on the Rust route),
+  D2.2 (every 409 and 503 body, DR5's mappings), D2.4 (`hooks: proxy` returns
+  the route to Python with no other family affected) and D2.9 (the 1.1
+  hardcoded-behavior and response-field cases replay equal at this commit).
+- **Soak.** This leaf dispatches only after the operator records a passing
+  `gdaemon compare-report --since <compare start>` for a `hooks: compare` soak.
+  The window is the runtime family's operator rule
+  (`.gobby/plans/gdaemon-runtime-family.md` Q2): at least 24 hours, measured
+  once from the cutover that starts compare. The window also needs at least one
+  execute from each of the five CLIs, one request on each node and webhook row,
+  and one inbox envelope the Rust drain delivered, shown by its processed
+  marker and a `hooks-compare.jsonl` line with the same envelope id. No restart
+  resets the clock. If a CLI cannot run on this machine at flip time, the soak
+  evidence names it and the flip waits for Josh's waiver; the CLI is never
+  skipped silently (Orchestrator, 2026-10-28).
+- **Platforms.** The soak and cutover evidence run on macOS only. Linux CI
+  evidence (E1) does not gate this leaf (Josh, 2026-09-14).
+- **Joint cutover.** `.gobby/plans/rust-internal-mcp-servers.md` Decision 3:
+  gdaemon's gateway runs one policy pass around every MCP dispatch, through
+  this plan's evaluator. Its Decision 4: the `mcp` route family is native after
+  #21566 and #24151, and per-server entries pick backends inside it. #24884
+  (its 2.1) takes 7.1's shared `driver`.
+- **Restart.** gdaemon builds its `RouteTable` once at serve start
+  (`crates/gdaemon/src/serve.rs::serve_with_runtime`), so route values change
+  only when gdaemon restarts. ghook enqueues each hook in the inbox before
+  posting it (`crates/ghook/src/dispatch.rs`).
+- **Tool context.** Both engines keep before- and after-tool correlation in
+  process memory (`src/gobby/workflows/tool_context.py`,
+  `crates/gworkflows/src/driver/tool_context.rs`).
+
+`HooksFamily::default_backend` returns `Native`. This leaf changes no Python.
+`hooks::compose` refuses to start with a typed `hooks_mcp_split` error when
+exactly one of the `hooks` and `mcp` families resolves to native, because a CLI
+session's hook passes and its proxied tool-call passes would then run in two
+engines (Decision 4). The cutover that installs this leaf is the joint cutover:
+the operator sets `mcp: native` in the same stopped-daemon edit unless the
+`mcp` family already defaults to native, and a rollback sets both to `proxy`.
+
+Hooks that arrive while the daemon is down wait in the inbox, and the new
+daemon's drain delivers them under the new route. A tool whose before pass ran
+before the cutover reaches its new owner with no pending context, exactly as
+after a Python restart today; 1.1's no-pending-context case pins that path for
+both engines. The Rust drain has run since 7.13 and follows the new default
+through `LocalDispatch`, so `hooks: proxy` with `mcp: proxy` at a later restart
+still rolls the route and the drain's deliveries back to Python.
+
+**Acceptance:**
 - 7.15.1 - D2.1 and D2.9: with no `hooks` entry, every 1.2 envelope and sequence case and every 1.1 hardcoded-behavior and response-field case replays equal through gdaemon. test: `crates/gdaemon/tests/hooks_flip.rs::native_default_replays_the_corpora`.
 - 7.15.2 - D2.2: every 409 and 503 body and DR5's four mappings match through gdaemon. test: `crates/gdaemon/tests/hooks_flip.rs::native_error_paths_match`.
-- 7.15.3 - D2.4: `hooks: proxy` returns the route and the Rust drain's deliveries to Python, and no other family's routing changes. test: `crates/gdaemon/tests/hooks_flip.rs::proxy_setting_rolls_back_route_and_drain`.
-- 7.15.4 - The Rust drain and the Python barrier never deliver one file twice, and Python schedules no drain or quarantine loop. test: `tests/hooks/test_inbox.py::test_barrier_coexists_with_the_rust_drain`.
-- 7.15.5 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 7.15.3 - D2.4: `hooks: proxy` with `mcp: proxy` returns the route and the Rust drain's deliveries to Python, and no family but `hooks` and `mcp` changes its routing. test: `crates/gdaemon/tests/hooks_flip.rs::proxy_setting_rolls_back_route_and_drain`.
+- 7.15.4 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 7.15.5 - D2.8: gdaemon starts when `hooks` and `mcp` are both native or both not native, and refuses with `hooks_mcp_split` when exactly one is native. test: `crates/gdaemon/tests/hooks_flip.rs::hooks_and_mcp_go_native_only_together`.
+- 7.15.6 - A before pass and its after pass split by the joint cutover, in both directions, take the new owner's no-pending-context path and apply no effect twice. test: `crates/gdaemon/tests/hooks_flip.rs::tool_pair_across_the_cutover_matches_python_restart`.
 
 ### 7.16 Parity-ledger rows [category: docs] (depends: 7.15)
 `kind: deliverable`
@@ -3010,6 +3211,11 @@ Targets:
 - `src/gobby/servers/routes/mcp/hook_responses.py::*` — operation: delete — scope-reason: only the deleted route used it
 - `src/gobby/hooks/receipt_redelivery.py::*` — operation: delete — scope-reason: only the deleted route used it
 - `src/gobby/hooks/startup_claim_preflight.py::*` — operation: delete — scope-reason: only the deleted route and receipt_redelivery used it
+- `src/gobby/hooks/inbox_maintenance.py::*` — operation: delete — scope-reason: dormant since 7.13; the Rust hub drain replaces the Python drain loop and inbox pruning
+- `src/gobby/hooks/quarantine_retention.py::*` — operation: delete — scope-reason: dormant since 7.13; the Rust hub drain owns quarantine retention
+- `tests/hooks/test_inbox_temp_reaper.py::*` — operation: delete — scope-reason: its subject, inbox_maintenance, is deleted
+- `tests/hooks/test_envelope_marker_retention.py::*` — scope-reason: drop the cases that import inbox_maintenance
+- `tests/hooks/test_inbox.py::*` — scope-reason: drop the maintenance and quarantine-retention cases and keep the barrier cases
 - `src/gobby/servers/routes/mcp/__init__.py::*` — scope-reason: drop the hooks router export
 - `src/gobby/servers/routes/__init__.py::*` — scope-reason: drop the hooks router re-export
 - `src/gobby/servers/_app_routes.py::register_routes`
@@ -3044,13 +3250,14 @@ Targets:
 `gcode grep -w <symbol> -l -g 'src/**'` per Decision 7. `hooks.py` is imported
 by `routes/mcp/__init__.py`; `hook_hold_open.py`, `hook_responses.py` and
 `receipt_redelivery.py` only by `hooks.py`; and `startup_claim_preflight.py` by
-`hooks.py` and `receipt_redelivery.py`. Kept because they have surviving
+`hooks.py` and `receipt_redelivery.py`. `inbox_maintenance.py` and
+`quarantine_retention.py` have had no importer since 7.13. Kept because they have surviving
 importers: `adapter_execution`
 (`src/gobby/workflows/engine/mcp_injections.py`), `health_gate`,
 `agent_run_ingress`, `runtime_compat`, `envelope_dedupe`, `replay_decision`,
 `replay_fence`, `inbox`, `inbox_envelopes`, `inbox_lifecycle` and
 `src/gobby/code_index/trigger.py` (Python handlers of Python-owned sessions
-call it). The two `_AGENT_CAPABILITY_MATRIX` entries go with the routes they
+call it). D1 deletes each once D2 and D3 remove their other users. The two `_AGENT_CAPABILITY_MATRIX` entries go with the routes they
 admit: the execute entry here, the webhook entry in 7.18. A deleted surface's
 `delegated` row stays in the ledger through #24149's leaf 4.1 (Cross-plan
 edges); this leaf regenerates the ledger and checks it unchanged.
@@ -3101,6 +3308,92 @@ Consumers unchanged:
 - 7.18.1 - The app mounts neither node hook route, the detection-manifest route nor `/api/webhooks`, and the report and run routes still answer. test: `tests/servers/test_node_run_routes.py::test_node_run_routes_survive_hook_route_removal`.
 - 7.18.2 - The five rows stay `delegated` and the ledger matches the inventory. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
 
+## D1 Web chat lifecycle on the Rust pipeline, then the Python pipeline deletion (depends: 7.15, #21570)
+`kind: deferred`
+
+Web chat is the last Python host of rule passes (Decision 4).
+`ChatLifecycleMixin._fire_lifecycle`
+(`src/gobby/servers/websocket/chat/_lifecycle.py`) mirrors `HookManager.handle`:
+the rule pass through `WorkflowHookHandler.evaluate`, blocking webhooks,
+`metadata["mcp_calls"]`, event handlers (`_dispatch_event_handlers`), the
+message piggyback and the broadcast. `bind_session_lifecycle` wires its
+callbacks, and 7.14's guard skips the pass for AGY sessions. Its Rust home is
+the `gobby-ingress` pipeline (5.2-5.12) on 7.1's shared `driver`.
+
+- **D1.1** The WS chat family runs every web chat lifecycle event through the
+  `gobby-ingress` pipeline on the shared `driver`, and 7.14's guard goes with
+  `_fire_lifecycle`.
+- **D1.2** The D2.8 ownership tests pass with every web chat session
+  Rust-owned, AGY SESSION_END, INTERRUPT and NOTIFICATION included.
+- **D1.3** With D2 and D3 done, the Python hook pipeline and rule engine are
+  deleted: `HookManager` and its `hook_manager_*` modules,
+  `src/gobby/hooks/event_handlers/`, `src/gobby/workflows/hooks.py`,
+  `src/gobby/workflows/engine/`, the modules 7.17 keeps, the Python CLI
+  adapters' hook translation, the dormant Codex shared-client sync and
+  `AgentRunner.workflow_handler` (`src/gobby/servers/_app_lifecycle.py`). A
+  sweep finds no importer under `src/`.
+
+```yaml
+deferral:
+  task_ref: "#21592"
+  reason: "Web chat's lifecycle is the WS chat family's surface; that family moves last, so it removes the last Python user of the hook pipeline and rule engine."
+  owner: "#21592 WS chat route family"
+  original_acceptance_items:
+    - D1.1
+    - D1.2
+    - D1.3
+```
+
+## D2 Startup hook-replay barrier (depends: 3.5)
+`kind: deferred`
+
+`src/gobby/runner_hook_replay.py::_run_agent_hook_replay_barrier` calls
+`inbox.drain_hook_inbox_barrier`, which POSTs each spooled envelope through the
+front door, before agent-run restart classification
+(`src/gobby/runner_lifecycle_reconcile.py`,
+`src/gobby/runner_lifecycle_subsystems.py`). It is a Python loopback client
+that belongs to agent-run recovery.
+
+- **D2.1** The agents family's Rust restart recovery awaits 3.5's
+  `startup_pass` before it classifies agent runs, and fences the run and
+  session ids the pass returns unresolved.
+- **D2.2** The Python barrier and `src/gobby/runner_hook_replay.py` are
+  deleted; nothing under `src/` calls `drain_hook_inbox_barrier`.
+
+```yaml
+deferral:
+  task_ref: "#21564"
+  reason: "Agent-run restart recovery is the agents family's surface."
+  owner: "#21564 Attention, agents, dispatch, and worktrees"
+  original_acceptance_items:
+    - D2.1
+    - D2.2
+```
+
+## D3 Python MCP proxy rule-pass sites (depends: 7.15)
+`kind: deferred`
+
+`apply_before_tool_enforcement` and `apply_after_tool_workflow`
+(`src/gobby/mcp_proxy/services/result_handling.py`, called from
+`tool_proxy.py`) run Python rule passes around proxied tool calls, and
+`src/gobby/mcp_proxy/services/session_context.py::resolve_hook_manager` reads
+`HookManager`'s session store and database. From the joint cutover the `mcp`
+family is native (7.15.5), and the gateway's Rust passes replace these sites.
+
+- **D3.1** The Python MCP proxy runs no rule pass, and its rule-pass sites are
+  deleted.
+- **D3.2** No Python MCP service reads `HookManager`.
+
+```yaml
+deferral:
+  task_ref: "#21570"
+  reason: "The Python MCP proxy is the MCP family's surface, and #21570 removes Python from the MCP path."
+  owner: "#21570 MCP front door flip"
+  original_acceptance_items:
+    - D3.1
+    - D3.2
+```
+
 ## E1 Verification and review gates
 `kind: verification`
 
@@ -3110,6 +3403,16 @@ The narrative draft has no M1 and has not run expansion validation. After the
 adversary derives the manifest, run the same base validation and
 `uv run gobby plans validate .gobby/plans/s2-11-hub-hooks-rules.md -p /Users/josh/Projects/gobby --mode expansion`.
 No planned check is claimed as validation evidence.
+
+Platform evidence (Orchestrator, 2026-10-28):
+- **macOS.** Every leaf's focused cargo and pytest commands, the live compare
+  soak and the cutover evidence run on the operator's macOS machine.
+- **Linux.** The same focused commands run on a hosted Linux CI runner as
+  pre-publish evidence under #22360 (Cross-platform CI evidence). The only
+  operator action is approving one exact-SHA push. These are the shared P2,
+  P4, P5 and P7 commands and the commands each P1 and P3 leaf names.
+- Linux evidence never gates a leaf or the 7.15 flip (Josh, 2026-09-14: do not
+  block on Linux or Windows). Windows is #25249. No latency gate applies.
 
 ## V1 Plan Changelog
 `kind: framing`

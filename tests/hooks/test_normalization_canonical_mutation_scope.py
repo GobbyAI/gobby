@@ -28,6 +28,29 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize(
+    ("command", "target"),
+    [
+        ("uv --directory child run touch out.py", "child/out.py"),
+        ("uv run --directory=child touch out.py", "child/out.py"),
+        ("uvx --directory child touch out.py", "child/out.py"),
+        ("uv --directory child run env touch out.py", "child/out.py"),
+        ("uv --directory child run env -C nested touch out.py", "child/nested/out.py"),
+        ("uv run --with --directory=wrong touch out.py", "out.py"),
+        ("uv tool run --directory child touch out.py", "child/out.py"),
+        ("uv --directory child run bash -c 'touch out.py'", "child/out.py"),
+        ("uv run --with --directory touch out.py", "out.py"),
+        ("uv --directory child run uv --directory nested run touch out.py", "child/nested/out.py"),
+    ],
+)
+def test_package_runner_preserves_mutation_scope(tmp_path: Path, command: str, target: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+
+    assert data["canonical_repo_mutation"] is True
+    assert [tmp_path / path for path in data["canonical_file_paths"]] == [tmp_path / target]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize(
     ("command", "operands", "edits"),
     [
         (

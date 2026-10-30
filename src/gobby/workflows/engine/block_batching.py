@@ -53,7 +53,7 @@ def operator_event_is_subagent(
     """Whether this tool event comes from a provider-native subagent.
 
     A spawned Gobby agent is not a subagent here: whether it may drive a terminal
-    channel is the opt-in ``no-send-keys`` rule's decision. A non-empty
+    channel is the ``no-send-keys`` rule's decision. A non-empty
     ``agent_context_key`` is the issuing native subagent on any CLI. Claude Code
     omits that key on the main thread, so an empty key is the parent even while
     ``is_subagent`` is set. Codex and Grok tool events do not carry the key, and

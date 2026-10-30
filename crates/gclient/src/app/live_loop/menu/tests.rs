@@ -3,8 +3,8 @@ use crate::app::{ControlState, Workspace};
 use crate::theme::ThemeName;
 use crate::ui::Action;
 
-fn labels(state: &ContextMenuState) -> Vec<&'static str> {
-    state.items.iter().map(|item| item.label).collect()
+fn labels(state: &ContextMenuState) -> Vec<&str> {
+    state.items.iter().map(|item| item.label.as_ref()).collect()
 }
 
 #[test]
@@ -130,6 +130,7 @@ fn menus_list_items_per_target_and_state() {
             "Split down",
             "Zoom",
             "Arrange ▸",
+            "Move to tab ▸",
             "Take control",
             "Copy mode",
             "Send right-clicks to pane",
@@ -146,9 +147,13 @@ fn menus_list_items_per_target_and_state() {
         })),
         "the pane's Arrange targets its own tab and remembers the pane"
     );
-    assert_eq!(menu.items[6].action, MenuAction::TakeControl(other));
-    assert_eq!(menu.items[8].action, MenuAction::TogglePassthrough(other));
-    assert_eq!(menu.items[9].action, MenuAction::Act(Action::ClosePane));
+    assert_eq!(
+        menu.items[6].action,
+        MenuAction::OpenSubmenu(Submenu::MoveToTab { pane: other })
+    );
+    assert_eq!(menu.items[7].action, MenuAction::TakeControl(other));
+    assert_eq!(menu.items[9].action, MenuAction::TogglePassthrough(other));
+    assert_eq!(menu.items[10].action, MenuAction::Act(Action::ClosePane));
     assert_eq!(
         (menu.kind, menu.anchor, menu.selected),
         (ContextMenuKind::Pane(other), (10, 5), 0)
@@ -182,6 +187,7 @@ fn menus_list_items_per_target_and_state() {
             "Split down",
             "Unzoom",
             "Arrange ▸",
+            "Move to tab ▸",
             "Release control",
             "Respond",
             "Copy mode",
@@ -190,8 +196,8 @@ fn menus_list_items_per_target_and_state() {
         ]
     );
     assert_eq!(menu.items[1].action, MenuAction::ClearPaneName(focused));
-    assert_eq!(menu.items[6].action, MenuAction::ReleaseControl(focused));
-    assert_eq!(menu.items[7].action, MenuAction::Respond(entry_id));
+    assert_eq!(menu.items[7].action, MenuAction::ReleaseControl(focused));
+    assert_eq!(menu.items[8].action, MenuAction::Respond(entry_id));
 
     let menu = build_menu(&ws, &chrome, ContextMenuKind::Tab(0), (3, 0));
     assert_eq!(
@@ -545,7 +551,7 @@ fn agent_menu_disables_navigation_when_its_only_attention_is_focused() {
 fn view_grouping_control_marks_the_value_in_force() {
     let ws = Workspace::scripted();
     let mut chrome = Chrome::dark();
-    let items = |chrome: &Chrome| -> Vec<(&'static str, bool)> {
+    let items = |chrome: &Chrome| -> Vec<(String, bool)> {
         build_menu(
             &ws,
             chrome,
@@ -555,16 +561,16 @@ fn view_grouping_control_marks_the_value_in_force() {
         .items
         .into_iter()
         .skip(5)
-        .map(|item| (item.label, item.enabled))
+        .map(|item| (item.label.into_owned(), item.enabled))
         .collect()
     };
 
     assert_eq!(
         items(&chrome),
         [
-            ("  Show all machines", true),
-            ("✓ Show all projects", true),
-            ("✓ Group agents by project", true),
+            ("  Show all machines".to_owned(), true),
+            ("✓ Show all projects".to_owned(), true),
+            ("✓ Group agents by project".to_owned(), true),
         ]
     );
 
@@ -572,9 +578,9 @@ fn view_grouping_control_marks_the_value_in_force() {
     assert_eq!(
         items(&chrome),
         [
-            ("  Show all machines", true),
-            ("✓ Show all projects", true),
-            ("  Group agents by project", true),
+            ("  Show all machines".to_owned(), true),
+            ("✓ Show all projects".to_owned(), true),
+            ("  Group agents by project".to_owned(), true),
         ]
     );
 
@@ -1069,7 +1075,7 @@ fn theme_row_lists_the_offered_themes_and_each_pick_draws_and_saves() {
                 .items
                 .iter()
                 .filter(|item| item.label.starts_with('●'))
-                .map(|item| item.label)
+                .map(|item| item.label.as_ref())
                 .collect();
             assert_eq!(
                 marked,

@@ -43,6 +43,7 @@ from gobby.mcp_proxy.wait_tools import (
 )
 from gobby.utils.daemon_client import MCP_TOOL_CALL_TIMEOUT_SECONDS
 from gobby.utils.local_token import daemon_auth_headers
+from gobby.utils.machine_id import get_machine_id
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER, TERMINAL_CONTEXT_HEADER
 
 
@@ -76,6 +77,29 @@ _BRIDGE_READY_RETRYABLE_ERROR_CODES = frozenset(
         REQUEST_TIMEOUT_ERROR_CODE,
     }
 )
+
+
+_CAPABILITY_EXPIRED_ERROR_CODE = "capability_expired"
+_REHANDSHAKE_TIMEOUT_SECONDS = 10.0
+
+
+def _response_error_code(response: httpx.Response) -> str | None:
+    """Return a typed daemon error, including authentication middleware's ``code``."""
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    error_code = (body.get("error_code") or body.get("code")) if isinstance(body, dict) else None
+    return error_code if isinstance(error_code, str) else None
+
+
+def _capability_expired_result(detail: str) -> dict[str, Any]:
+    """Typed blocker for a seat whose managed capability can no longer be refreshed."""
+    return {
+        "success": False,
+        "error_code": _CAPABILITY_EXPIRED_ERROR_CODE,
+        "error": f"managed capability expired; {detail}; this seat cannot refresh its Gobby access",
+    }
 
 
 def read_project_id() -> str | None:
@@ -132,6 +156,7 @@ class DaemonProxy:
         self._client: httpx.AsyncClient | None = None
         self._tool_timeouts: dict[str, float] | None = None
         self._tool_timeouts_lock = asyncio.Lock()
+        self._rehandshake_lock = asyncio.Lock()
         self._startup_task = startup_task
 
     async def _get_tool_timeouts(self) -> dict[str, float]:
@@ -185,6 +210,43 @@ class DaemonProxy:
             return _daemon_unavailable_result(self.port, f"startup failed: {exc}")
         self._startup_task = None
         return None
+
+    async def _rehandshake_after_expiry(
+        self,
+        client: httpx.AsyncClient,
+        path: str,
+    ) -> dict[str, Any] | None:
+        """Re-handshake once after capability expiry.
+
+        Returns None when the handshake succeeded and the caller may retry, or the
+        typed blocker naming the expiry when it did not. Serialized so concurrent
+        401s do not each start a rotation for the same execution.
+        """
+        async with self._rehandshake_lock:
+            try:
+                resp = await client.request(
+                    "POST",
+                    f"{self.base_url}/api/runtime/handshake",
+                    json={
+                        "machine_id": get_machine_id() or "",
+                        "project_id": os.environ.get("GOBBY_PROJECT_ID", ""),
+                        "session_id": os.environ.get("GOBBY_SESSION_ID") or None,
+                    },
+                    headers=self._auth_headers,
+                    timeout=_REHANDSHAKE_TIMEOUT_SECONDS,
+                )
+            except httpx.HTTPError as error:
+                failure = type(error).__name__
+            else:
+                if resp.status_code == 200:
+                    self._auth_headers = daemon_auth_headers()
+                    return None
+                failure = _response_error_code(resp) or f"HTTP {resp.status_code}"
+        self._deps_factory().logger.warning(
+            "managed capability expired and re-handshake failed; seat cannot refresh access",
+            extra={"path": path, "failure": failure},
+        )
+        return _capability_expired_result(f"re-handshake failed ({failure})")
 
     async def _request(
         self,
@@ -278,6 +340,18 @@ class DaemonProxy:
                     f"{self.base_url}{path}",
                     **request_kwargs,
                 )
+                if _response_error_code(resp) == _CAPABILITY_EXPIRED_ERROR_CODE:
+                    blocker = await self._rehandshake_after_expiry(client, path)
+                    if blocker is not None:
+                        return blocker
+                    request_kwargs["headers"] = {**headers, **self._auth_headers}
+                    resp = await client.request(
+                        method,
+                        f"{self.base_url}{path}",
+                        **request_kwargs,
+                    )
+                    if _response_error_code(resp) == _CAPABILITY_EXPIRED_ERROR_CODE:
+                        return _capability_expired_result("handshake succeeded but still expired")
             if resp.status_code == 200:
                 data: dict[str, Any] = resp.json()
                 return data

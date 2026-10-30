@@ -167,6 +167,8 @@ class ChatLifecycleMixin:
         if data:
             from gobby.hooks.normalization import normalize_tool_fields
 
+            if isinstance(project_path, str) and project_path:
+                data = {"cwd": project_path, **data}
             # Shell command analysis can run Git; keep it off the event loop.
             data = await asyncio.to_thread(normalize_tool_fields, data)
 
@@ -197,6 +199,14 @@ class ChatLifecycleMixin:
             cwd=project_path,
             project_id=project_id,
             machine_id=get_machine_id(),
+            request_id=next(
+                (
+                    value
+                    for key in ("tool_use_id", "tool_call_id", "request_id")
+                    if isinstance(value := data.get(key), str) and value
+                ),
+                None,
+            ),
         )
         correlate_hook_lifecycle(event)
         if event_type is HookEventType.STOP:
@@ -342,11 +352,23 @@ class ChatLifecycleMixin:
 
             # Dispatch to event handler (parity with CLI HookManager.handle)
             # This is where skill interception lives (handle_before_agent)
-            handler_context = await self._dispatch_event_handlers(event_type, event)
+            handler_response = await self._dispatch_event_handlers(event_type, event)
 
             # Merge rule engine, captured MCP, and handler context as labeled parts
             merged = HookResponse()
-            merged.add_context(*response.context_contributors(), *mcp_context, *handler_context)
+            merged.add_context(
+                *response.context_contributors(),
+                *mcp_context,
+                *handler_response.context_contributors(),
+            )
+            if handler_response.decision != "allow":
+                return {
+                    "decision": handler_response.decision,
+                    "reason": handler_response.reason,
+                    "system_message": handler_response.system_message,
+                    "context": merged.context,
+                    "context_parts": merged.context_parts,
+                }
 
             # --- Inter-session message piggyback (parity with CLI path D6) ---
             pending_message_ids: list[str] = []
@@ -425,6 +447,13 @@ class ChatLifecycleMixin:
             return result
         except Exception as e:
             logger.exception("Lifecycle evaluation failed for %s: %s", event_type, e)
+            if event_type is HookEventType.BEFORE_TOOL and data.get(
+                "canonical_git_operation_roots"
+            ):
+                return {
+                    "decision": "block",
+                    "reason": f"Git operation ownership lifecycle failed: {type(e).__name__}: {e}",
+                }
             # PreCompact runs on the SDK compaction path; failures must not
             # abort compaction or strand the active conversation.
             return None
@@ -536,27 +565,32 @@ class ChatLifecycleMixin:
         self,
         event_type: HookEventType,
         event: HookEvent,
-    ) -> list[ContextPart]:
-        """Dispatch to CLI event handlers and return their labeled context."""
+    ) -> HookResponse:
+        """Dispatch to CLI event handlers without dropping their blocking decisions."""
         event_handlers = getattr(self, "event_handlers", None)
         if not event_handlers:
-            return []
+            return HookResponse()
 
         handler = event_handlers.get_handler(event_type)
         if not handler:
-            return []
+            return HookResponse()
 
         try:
             handler_response: HookResponse = await run_db(self, handler, event)
             if handler_response:
-                return handler_response.context_contributors()
+                return handler_response
         except Exception as exc:
             logger.exception(
                 "_fire_lifecycle: event handler %s failed: %s",
                 event_type.name,
                 exc,
             )
-        return []
+            if event_type is HookEventType.BEFORE_TOOL:
+                return HookResponse(
+                    decision="block",
+                    reason=f"Before-tool handler failed: {type(exc).__name__}: {exc}",
+                )
+        return HookResponse()
 
     async def _dispatch_non_blocking_webhooks(self, event: HookEvent) -> None:
         """Dispatch non-blocking webhooks (fire-and-forget).
