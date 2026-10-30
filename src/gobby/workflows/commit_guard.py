@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
@@ -16,6 +17,7 @@ from psycopg_pool import PoolTimeout
 
 from gobby.hooks._path_scope import checkout_root
 from gobby.hooks.checkout_reads import event_machine_id
+from gobby.hooks.events import tool_execution_id
 from gobby.hooks.normalization import is_shell_tool, tool_input_error
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, daemon_git, parse_porcelain_v1_z
@@ -317,6 +319,7 @@ async def foreign_dirty_edit_conflict(
 ) -> str:
     """Refuse first-touch writes to dirt, regardless of task claim ownership."""
     data = event.data if isinstance(event.data, dict) else {}
+    native_write = not is_shell_tool(data.get("tool_name"))
     if data.get("canonical_tool_kind") != "write":
         return ""
     try:
@@ -365,6 +368,18 @@ async def foreign_dirty_edit_conflict(
             }
             # An overlapped path stays foreign even when this session's own record matches it.
             overlapped_here = overlapped_worktree_paths(variables, root)
+            # A native write may clear the holder's stranded record once no call is in flight;
+            # shell writes and commits stay refused under overlap.
+            clearable = (
+                native_write
+                and bool(overlapped_here)
+                and not await asyncio.to_thread(
+                    SessionVariableManager(db).has_calls_in_flight,
+                    root,
+                    time.time(),
+                    tool_execution_id(event),
+                )
+            )
             candidates = {
                 rel
                 for rel in rels
@@ -416,7 +431,7 @@ async def foreign_dirty_edit_conflict(
                 if holders:
                     conflicts.update(replace(owner, path=path) for owner in holders)
                 elif overlapped_path:
-                    if path not in approved:
+                    if path not in approved and not clearable:
                         root_overlapped.add(path)
                 elif not (
                     overlapping
