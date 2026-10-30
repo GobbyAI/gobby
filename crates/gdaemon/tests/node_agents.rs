@@ -2,10 +2,12 @@
 
 #[path = "node_support/fake_gterm.rs"]
 mod fake_gterm;
-#[path = "node_support/workspace_fixtures.rs"]
-mod workspace_fixtures;
+#[path = "node_support/fd_constructor_tests.rs"]
+mod fd_constructor_tests;
 #[path = "node_support/launch_tests.rs"]
 mod launch_tests;
+#[path = "node_support/workspace_fixtures.rs"]
+mod workspace_fixtures;
 
 use anyhow::{Context, Result};
 use gobby_core::bootstrap::parse_hub_database_bootstrap;
