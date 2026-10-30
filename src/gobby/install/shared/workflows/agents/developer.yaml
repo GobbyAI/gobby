@@ -6,7 +6,9 @@ description: |
 version: "1.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
-provider: inherit
+provider: claude
+model: claude-haiku-5-5
+reasoning_effort: xhigh
 execution_mode: interactive
 checkout_mode: inherit
 timeout: 0
