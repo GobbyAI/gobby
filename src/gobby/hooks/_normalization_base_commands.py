@@ -72,6 +72,14 @@ _UV_FLAG_OPTIONS = frozenset(
 )
 
 
+# Naming a package to install is an explicit install that can run build or lifecycle
+# scripts, unlike implicit runner setup. uv's -p is --python, so the sets differ.
+_NODE_RUNNER_PACKAGE_OPTIONS = frozenset({"-p", "--package", "-y", "--yes"})
+_UV_PACKAGE_OPTIONS = frozenset(
+    {"--from", "-w", "--with", "--with-editable", "--with-requirements"}
+)
+
+
 def _uv_options(
     parts: list[str],
     start: int,
@@ -172,12 +180,17 @@ def unwrap_execution_command(parts: list[str], cwd: str | None) -> ExecutionComm
                     read_only &= not flags.isdisjoint({"--frozen", "--locked", "--no-sync"})
             read_only &= flags.isdisjoint(
                 {"-U", "--upgrade", "-P", "--upgrade-package", "--upgrade-group", "--env-file"}
+                | _UV_PACKAGE_OPTIONS
             )
             directory_proven &= "--env-file" not in flags
             if tool_run and index < len(parts):
                 parts = [*parts[:index], parts[index].partition("@")[0], *parts[index + 1 :]]
         elif command in {"npx", "bunx"}:
             index = _wrapper_options_end(parts, 1, frozenset({"--package", "-p"}))
+            read_only &= all(
+                word.partition("=")[0] not in _NODE_RUNNER_PACKAGE_OPTIONS
+                for word in parts[1:index]
+            )
             parts = parts[index:]
             if parts and (parts[0] == "-c" or parts[0].partition("=")[0] == "--call"):
                 # A shell program string is not an executable argv; submit must fail closed.
