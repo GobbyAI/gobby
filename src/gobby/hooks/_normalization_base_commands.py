@@ -538,16 +538,15 @@ def _classify_for_loop_header(parts: list[str], cwd: str | None) -> _ShellSegmen
     except ValueError:
         return _ShellSegmentMetadata("execute")
     variable = parts[1] if len(parts) > 1 else ""
-    items = parts[in_index + 1 :]
-    if (
-        in_index != 2
-        or not _loop_binding_variable_is_stable(variable)
-        or not items
-        or any(not _looks_path_target(part) for part in items)
-    ):
+    if in_index != 2 or not _loop_binding_variable_is_stable(variable):
         return _ShellSegmentMetadata("execute")
+    # Binding an ordinary scalar runs nothing and writes no file.
+    items = parts[in_index + 1 :]
+    if not items or any(not _looks_path_target(part) for part in items):
+        return _ShellSegmentMetadata("execute", read_only=True)
     return _ShellSegmentMetadata(
         "execute",
+        read_only=True,
         paths=tuple(_rebase_shell_paths(items, cwd)),
         loop_binding_variable=variable,
     )
