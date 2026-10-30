@@ -138,7 +138,7 @@ synthetic escalation nor workflow-variable writes.
 ### Close
 
 Finish the task's validation and independent review, commit its files, and
-integrate every task commit. Then preview the close:
+integrate every task commit. Then preview the close with `preview=true`:
 
 ```python
 call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={

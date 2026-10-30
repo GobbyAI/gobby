@@ -127,6 +127,10 @@ how the system behaves so you can work with it instead of being surprised by it.
     agents to spawn in worktrees outside of 0.5.0 unless they're their parent's
     worktree unless they're developer agents or associated. Admin roles,
     researchers, planners, these don't need separate worktrees."
+16. No hardcoded definition names. Code never grants, refuses, exempts or routes by the
+    name of an agent definition (other than `default`), a rule, a step workflow or a
+    pipeline. Code only validates and processes their YAML through the engine; their
+    authorities and exemptions are declared in that YAML.
 
 ## Session Handoff
 
