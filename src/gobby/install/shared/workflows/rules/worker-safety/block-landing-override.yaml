@@ -6,8 +6,8 @@ rules:
     event: before_tool
     enabled: true
     priority: 40
+    when: command_sets_environment(event.data.get('command'), 'GOBBY_LAND_COMMIT')
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "GOBBY_LAND_COMMIT"
         reason: "The landing override is operator-only; code reaches the protected branch only through gobby-tasks-ops:land_commit."

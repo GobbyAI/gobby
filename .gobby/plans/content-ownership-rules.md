@@ -39,6 +39,9 @@ rulings #25261 asks for in the Decision Record: the #23565 storage layout
   claimed task, although rule 3 already treats that predecessor as the
   claimant's past self. Once gate 3 requires that commit, the two would
   deadlock (1.8).
+- A commit without a pathspec records the whole shared index, so it can
+  record another live session's staged path that rule 2 never checked
+  (Decision 23, 1.8).
 - The recorder records every path a successful write call names, whatever
   happened to its bytes. It records nothing for a failed call that changed
   bytes (1.5).
@@ -53,10 +56,14 @@ rulings #25261 asks for in the Decision Record: the #23565 storage layout
 **When the leaves close:**
 - Gate 3 checks the attribution owner's live task pairs plus every pair any
   session recorded for the task whose current content the task still owns,
-  each against its own checkout. #24402's exclusion of later foreign dirt
+  or that was recorded without a content record, each against its own
+  checkout. #24402's exclusion of later foreign dirt
   still holds for paths the task no longer owns (1.7).
 - A claimant may commit dirt whose live holder works a task the claimant now
   claims (rule 2), as rule 3 already lets it edit that dirt (1.8).
+- While another live session holds dirt in a checkout, a commit there must
+  name its paths (`git commit -- <path>...`), so it never records that
+  session's staged paths (1.8).
 - A write-kind call records a path only when the call changed its bytes,
   whether the call succeeded or failed (1.5).
 - A shell command publishes the union of its write-kind segments' targets, so
@@ -173,7 +180,10 @@ together. The first is delivered; 1.5 builds the second.
   and a write committed by the same call is missed (the F3 shape). The policy
   chooses to record when in doubt, so rule 1 never misses dirt the session
   may have made; a false record costs a commit of the session's own paths,
-  which rule 2 allows.
+  which rule 2 allows. A pair whose path cannot be fingerprinted when it is
+  recorded (an unreadable file, or a directory) gets no content record, and
+  the task's older record of it in that session is dropped; gate 3 still
+  finds it through the task's live interval (Decision 22).
 - **Fingerprint read failure.** Each path is observed on its own. A path
   whose before-call fingerprint raises `OSError` stores no entry. A path
   whose after-call fingerprint raises `OSError` (for example, the call made
@@ -207,6 +217,14 @@ together. The first is delivered; 1.5 builds the second.
   unverified. At `after_tool` the fingerprint comparison needs no git. In the
   no-entry fallback, a failed status records the pair, and ledger
   reconciliation releases it once git reports it clean.
+- **Node-origin events.** The hub's disk is not a node's checkout, so a
+  node-origin call stores no snapshot and every pair takes the no-entry
+  status, run on the node through `checkout_reads.run_git`. A read the node
+  cannot answer records the pair. The pair gets no content record, and
+  `checkout_path_owners` answers nothing for a node-origin event, so rules 2
+  and 3 find it through the live interval. Gate 3 on the hub never judges
+  it: while the recording session's dirty ledger holds it, gate 3 fails
+  unavailable (Decision 4).
 - **Accepted race.** Another process can change the path between the two
   fingerprints, and the recorder then records that change. Overlapping calls
   by one session on one path each compare against their own baseline, so the
@@ -219,7 +237,7 @@ together. The first is delivered; 1.5 builds the second.
 
 Decisions 1, 3, 7, 9 and 11 to 19 shipped with 1.1 to 1.3, except where a
 refreshed decision says otherwise. Decisions 2, 5, 6, 8, 10, 15 and 16 were
-rewritten, and 20 to 22 added, by the #25261 refresh (2026-10-28). The
+rewritten, and 20 to 23 added, by the #25261 refresh (2026-10-28). The
 refreshed rulings take effect with the Adversary's stamp and Josh's approval
 through the Assistant (#25261 criterion 3).
 
@@ -249,15 +267,55 @@ through the Assistant (#25261 criterion 3).
    commit of dirt a live holder keeps for the claimed task. Once 1.7 makes
    gate 3 require that commit, the claimant could neither commit nor close
    while the predecessor lives, for example a seat that escalated the task
-   and waits. 1.8 gives rule 2 rule 3's past-self exclusion. Rejected:
-   retiring #23569 outright, which leaves that deadlock.
+   and waits. 1.8 gives rule 2 rule 3's past-self exclusion, and widens the
+   holder's task for both rules from its claims to its live interval, so a
+   pair with no content record that an escalated holder keeps still names the
+   task (Decision 15). Rejected: retiring #23569 outright, which leaves that
+   deadlock.
 3. **R3, retirements (Orchestrator).** Retire `_claim_scope_conflicts`,
    `inspect_task_path_ownership` and `release_task_paths`. Every rule 2 and
    rule 3 refusal names the owning session ref and task ref.
-4. **Single-machine scope (accepted).** Josh parked #23277 (Hook envelope
-   carries edited-file content) until the Rust multi-machine port. This plan
-   has no foreign-origin sections and no prerequisite on #23277. Node-side
-   ownership belongs to the Rust port.
+4. **Node-origin events take the node's status (refreshed; Orchestrator
+   ORCH-REV-CO-3, 2026-10-28).** #23277 (Hook envelope carries edited-file
+   content) is partly delivered. `hooks/checkout_reads.py` reads a node's
+   checkout over `checkout.read` (#24522), node-origin git runs on the node
+   (#24523), `task_claim_state._resolve_node_edit_pair` takes a node event's
+   pair from node facts, and `commit_guard._live_path_owners` counts only
+   holders on the event's machine (#24529). The hub's disk is not the node's
+   checkout, so fingerprinting it before and after a node call would compare
+   two reads of the wrong file and silently drop the node's edit. Rule: for a
+   node-origin event (`checkout_reads.node_origin()`), `handle_before_tool`
+   stores no snapshot, so the recorder decides every pair by the no-entry
+   status rule, and that status runs through `checkout_reads.run_git` on the
+   node (1.5). A read the node cannot answer raises `CheckoutReadUnavailable`
+   and records the pair, as a failed status does. A node-origin pair gets no
+   content record (1.7). Content ownership is machine-local:
+   `checkout_path_owners` reads only the records of sessions on this machine
+   and answers nothing for a node-origin event, so the hub's bytes never name
+   a node pair's owner, and rules 2 and 3 find a node holder's task through
+   its live interval (Decision 15). Close gates run outside any hook
+   delivery, and #23277 covers hook sites only, so gate 3's git runs on the
+   hub and cannot judge a pair that a session on another machine recorded
+   (Adversary CO-A5-F2, 2026-10-28). Such a remote pair never reaches the
+   hub's digests, its status or the linked-commit fallback. While the
+   recording session's dirty ledger holds the pair, gate 3 fails "Git could
+   not inspect all task-attributed files."; once that session's own ledger
+   reconcile releases it, the pair adds nothing. That reconcile is a node
+   read: `daemon_git.status` runs on the node under `node_origin()`
+   (hook-envelope-file-facts.md, row 2). Ceiling (Orchestrator ruling,
+   2026-10-28): nothing reconciles an ended session's ledger, so a pair an
+   ended node session still holds keeps the task's gate 3 unavailable until
+   restraint-deferral #25284 (Node-backed close read releases an ended node
+   session's held content-ownership pairs, after #24521) lands. Every #23277
+   leaf that edits `commit_guard.py`, `task_claim_state.py` or `_tool.py` is
+   closed (#24522, #24523, #24529). The open leaves #24521 (node
+   `checkout.read` handler, crates only) and #24532 (live proof, an e2e test)
+   share no file with this plan, so no section depends on them. Rejected: a
+   dependency on #24521, because the status rule already records when the
+   node cannot answer; failing closed on every remote pair, because
+   `task_edited_file_checkouts` keeps a pair until close, so no node-touched
+   task could ever close; and a node-read close route in this plan, which
+   #25284 owns.
 5. **Mutation detection fingerprints the named path before and after the
    call (Orchestrator, 2026-10-05: replacement accepted; refreshed).** At
    `before_tool` the handler stores each write path's fingerprint in memory;
@@ -375,9 +433,20 @@ through the Assistant (#25261 criterion 3).
     path under that checkout root, not only sessions with a claimed open task.
     The lookup has no project filter, because a sanctioned worktree's holders
     belong to another project (Decision 9) and ledger keys are already
-    realpath roots. The task ref is the holder's claimed task or the task
-    whose live interval holds the pair (`ForeignPathOwner.owner_task_id`,
-    `ledger_task_id`).
+    realpath roots. `ForeignPathOwner.owner_task_id` is the holder's task
+    whose live interval (`task_live_edit_starts`) covers the path, over every
+    task the holder has an interval for, claimed or released. Escalation
+    releases the claim and keeps the interval (`release_claimed_task`).
+    Without an interval, it is the holder's task whose
+    `task_edited_file_checkouts` holds the pair. `ledger_task_id` is the
+    content-hash owner (`checkout_path_owners`): the task whose newest content
+    record, in any session on this machine, matches the path's current bytes.
+    A pair with no content record (an unreadable file, a directory or a
+    node-origin write) has none, and neither does any holder during a
+    node-origin event (Decision 4). Rules 2 and 3 exempt a holder when either field names a task
+    the session claims (1.8; Orchestrator ORCH-REV-CO-1 and CO-2,
+    2026-10-28). The task ref is the claim's ref, or `#<seq_num>` read from
+    `tasks` for a released task.
 16. **Edit history retired with gate 12 (refresh, 2026-10-28).** V1 kept an
     append-only per-task history to exclude other tasks' paths from gate 12's
     evidence. v4 deleted gate 12 and the transcript evidence, so the history
@@ -426,8 +495,64 @@ through the Assistant (#25261 criterion 3).
     the cross-session set, because nothing there can be committed (precedent:
     the Orchestrator's ruling on CR7 LOW-2, 2026-10-05). The owner's own pairs
     keep `tasks/attributed_roots.py::is_ignorable_attributed_root`, which
-    stays fail-closed for a registered root. Rejected: V1's
-    untransferred-pair inventory, retired with the transfer (Decision 2).
+    stays fail-closed for a registered root. A pair recorded without a
+    content record, because its path could not be fingerprinted (an
+    unreadable file, or a directory), is found from the task's live interval
+    in every session (`task_edited_file_checkouts`). It counts unless its
+    current content is another task's, so a failed observation never hides
+    the task's work (Adversary CO-A4-F2, 2026-10-28). The write that could
+    not fingerprint the path also drops the task's older hash of it in that
+    session, so the pair stays without a content record after the file is
+    readable again. A directory pair is
+    inspected as a git pathspec: gate 3 fails while any path under it is
+    dirty, including dirt another session made there after the task's write.
+    That over-block is accepted. The owner's own directory pairs already
+    behave so, rule 3 refuses the directory write when foreign dirt lies under
+    it at first touch, and the block clears once that dirt is committed.
+    All of this covers pairs that sessions on this machine recorded. A pair a
+    session on another machine recorded, the attribution owner's included,
+    follows Decision 4 instead.
+    Rejected: V1's untransferred-pair inventory, retired with the transfer
+    (Decision 2).
+23. **Whole-index commits in a shared checkout (Orchestrator found work,
+    2026-10-28).** A Plan Writer's commit in the main checkout (2068aaf9a0)
+    recorded another live Plan Writer's edit to
+    `.gobby/plans/external-mcp-transport-multiplexer.md`, and rule 2 did not
+    refuse it. Five seconds before the commit the index held only the
+    committing plan, and the commit was a plain `git commit -m` (no
+    pathspec, `--all` or `--include`). Git stamped it at 09:08:33 CT, when
+    it started, and the command returned at 09:09:11. The other Writer's
+    only `git add` of that path ran at about 09:08:49 to 09:08:55. A commit
+    without a pathspec re-reads the shared index after its pre-commit hook,
+    so it records any path a session stages while the hook runs. A pathspec
+    commit holds `index.lock` through its hooks, so a concurrent `git add`
+    fails and only the listed paths are recorded (scratch-repository probe,
+    git 2.54.0). The pre-commit stash (#25282) rewrites only the working
+    tree, so it stages nothing. Rule 2 reads `git diff --cached` when its
+    hook runs, before any of this. Rule: rule 2 refuses a commit that
+    records the whole index (no pathspec, or `--include` with pathspecs;
+    `--all` without one is the first) while another live session on the
+    event's machine holds a pair in that checkout that git still reports
+    dirty, staged or not. The refusal names the holders and prescribes `git
+    commit -m <msg> -- <path>...`. It keys on the commit's form and the
+    holders' dirt, never on the staged set, so it also covers a `git add -A`
+    or `git add .` earlier in the same command, which stages other
+    sessions' edits after the hook reads the index. A pathspec commit after
+    such an add still records only its listed paths and leaves other
+    sessions' staged paths staged. Concluding an in-progress merge,
+    cherry-pick, revert or rebase is exempt, because git refuses a partial
+    commit there, and rule 2's per-path check still applies to it. This
+    changes the form of a commit rule 2 accepts, not its path scope: a path
+    no live session mutated still commits freely with a pathspec, so
+    Decision 1 holds. Residual: a session with no dirty pair in the checkout
+    that stages a path it never recorded can still be swept by a whole-index
+    commit while no other session holds dirt there; nothing attributes that
+    path to it. Like every refreshed ruling, this takes effect with Josh's
+    approval through the Assistant (#25261 criterion 3). Rejected: refusing
+    only when the hook-time staged set holds a foreign path, which missed
+    2068aaf9a0's path, staged while that commit's hook ran; and rewriting
+    the command into a pathspec commit, which hides the change from the
+    caller.
 
 ## Retired Mechanisms
 `kind: framing`
@@ -482,19 +607,48 @@ V1's edits to `state_manager.py` and `storage/hub/postgres_pool.py`
 
 - **Isolation.** Every pytest run uses
   `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1`
-  and targets files, never the full suite. No leaf restarts the daemon. The
-  rule template of 1.6 goes live only after the Orchestrator's next daemon
-  restart syncs it (AGENTS.md rule 8).
+  and targets files, never the full suite. No leaf restarts the daemon.
+- **Rule 4 ships disabled (Orchestrator ORCH-REV-CO-4, 2026-10-28).** 1.6
+  ships the `block-cross-project-write` template with `enabled: false`. The
+  Orchestrator's next daemon restart syncs it as a disabled row (AGENTS.md
+  rule 8; first sync takes the template's `enabled`, and later drift
+  refreshes keep the row's toggle). Rule 4 goes live only through V2 step 6,
+  after Josh approves enabling it through the Orchestrator.
 - **Order.** 1.4 precedes 1.7, because both edit
-  `_close_context.py::capture_attribution`. 1.8 precedes 1.7, so gate 3 never
+  `_close_context.py::capture_attribution`,
+  `session_edit_ledger.py::SessionEditLedger.record_edited_files` and
+  `task_claim_state.py`. 1.8 precedes 1.7, so gate 3 never
   requires a commit that rule 2 refuses, and both edit `dirty_edit_grants.py`.
   1.5 precedes 1.6, whose end-to-end acceptance needs the recorder to record a
   sanctioned worktree write. 1.8 follows 1.4, because both edit
   `tests/workflows/test_commit_guard.py`. 1.4 follows 1.3
   (`task_claim_state.py`), 1.5 follows 1.3 (`_tool.py`), and 1.8 follows 1.3
   (`commit_guard.py`).
+- **Cross-plan order (Orchestrator ORCH-REV-CO-5, 2026-10-28).**
+  `.gobby/plans/s2-11-hub-hooks-rules.md` (#24151) ports to Rust the Python
+  modules this plan changes, and `.gobby/plans/tasks-family.md` 3.7 ports
+  gate 3's `capture_attribution`. A port that reads a module before this
+  plan's leaf lands would carry the old rules into Rust, so each porting
+  section follows the leaves that change its sources:
+  - S2.11 2.7 (`_normalization_metadata.py`): 1.5;
+  - S2.11 2.9 and 2.11 (`task_claim_state.py`, `dirty_edit_grants.py`,
+    `session_edit_ledger.py`): 1.4, 1.7 and 1.8;
+  - S2.11 2.10 (`commit_guard.py`, `worktree_shell_attribution.py`): 1.5
+    and 1.8;
+  - S2.11 5.7 and 5.8 (`_session_end.py`, `_tool.py`): 1.5;
+  - S2.11 1.1, 2.17 to 2.19 and 7.13 (the rule-pass corpus,
+    `workflows/hooks.py`, `engine/core.py`): 1.6;
+  - tasks-family 3.7 (`_close_context.py::capture_attribution`): 1.4 and
+    1.7.
+
+  No task exists yet for those sections (S2.11 has no M1), so no heading
+  here can name them. The plan that expands second carries these edges as
+  `(depends: #N)` on its porting headings, or the Orchestrator sets them at
+  that expansion. This plan never waits on the ports.
 - **Large files.** Each targeted production file of 850 or more lines is
-  split by its one section: `workflows/commit_guard.py` (863 lines, 1.8),
+  split by its one section: `workflows/commit_guard.py` (863 lines, 1.8,
+  which moves `_operation_paths`' 57 lines out before adding the
+  whole-index refusal, so the file stays under 1,000 lines),
   `workflows/hooks.py` (909, 1.6) and `workflows/engine/core.py` (953, 1.6).
   `workflows/state_manager.py` (879), `hooks/_normalization_canonical.py`
   (875) and `storage/hub/postgres_pool.py` are no longer targeted. Every
@@ -1059,7 +1213,7 @@ Targets:
 - `src/gobby/workflows/worktree_shell_attribution.py::structured_edit_paths`
 - `src/gobby/hooks/_normalization_metadata.py::_merge_shell_segment_metadata`
 - `tests/hooks/test_pre_write_digests.py`
-- `tests/hooks/test_tool_handlers.py::*` — scope-reason: adds the content-check, failed-call and #22642 regression tests and renames two recorder calls
+- `tests/hooks/test_tool_handlers.py::*` — scope-reason: adds the content-check, failed-call, node-origin and #22642 regression tests and renames two recorder calls
 - `tests/hooks/test_normalization.py::*` — scope-reason: adds the mixed-segment write-path union test
 - `tests/hooks/test_normalization_canonical_mutation_scope.py::*` — scope-reason: test_read_only_probe_loop_is_not_an_in_project_mutation restates the recorder gate, which drops canonical_repo_mutation
 
@@ -1109,7 +1263,15 @@ publishes. The #22642 regression needs both halves.
   `path_fingerprints` (31 lines) give git blob hashes, None for an absent
   path, and `OSError` for a directory.
 - `workflows/task_dirty_state.py::task_dirty_paths(paths, cwd)` is the sync
-  pathspec status: None when git fails, untracked dirty, ignored absent.
+  pathspec status: None when git fails, untracked dirty, ignored absent. It
+  runs `utils/git.py::run_git_command`, which spawns git on the hub even for
+  a node-origin event.
+- `hooks/checkout_reads.py`: `node_origin()` is true inside a node
+  delivery; `run_git(args, *, cwd, timeout)` runs git locally outside one
+  and on the node inside one, raising `CheckoutReadUnavailable` (an
+  `OSError`) when the node cannot answer. `_tool.py` already imports
+  `node_origin`. `utils/daemon_git.py::parse_porcelain_v1_z` parses
+  `status --porcelain=v1 -z` output.
 - The #22642 case: `git restore --staged tests/e2e/test_terminal_client_stack.py`
   in a checkout where that path was staged before the claim; the path flipped
   from staged to unstaged and was recorded as an edit. The classification is
@@ -1134,17 +1296,24 @@ publishes. The #22642 regression needs both halves.
     debug and gets no entry; the other paths are still stored.
   - `take(session_id, request_id, path) -> tuple[str | None] | None` pops the
     entry and returns a one-tuple holding the stored fingerprint, or None
-    when there is no entry.
+    when there is no entry or the entry is older than 3600 seconds.
   - `clear_session(session_id)` drops all of that session's entries.
   The module holds one daemon-wide instance, `PRE_WRITE_DIGESTS`, which
-  `_tool.py` and `_session_end.py` import.
+  `_tool.py` and `_session_end.py` import. The module also defines
+  `status_dirty_paths(root, rels) -> set[str] | None`: one
+  `checkout_reads.run_git(["--literal-pathspecs", "--no-optional-locks",
+  "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", *rels],
+  cwd=root, timeout=10)`, parsed with `parse_porcelain_v1_z`; both paths of a
+  rename count. A non-zero exit, unparsable output or a raised `OSError`
+  (`CheckoutReadUnavailable` included) returns None.
 - `handle_before_tool`: when the session id is known and the call is
   write-kind (an `EDIT_TOOLS` name or `canonical_tool_kind == "write"`, after
   normalizing a Bash call that lacks canonical keys), resolve the
   `structured_edit_paths` paths with `resolve_edit_pair` at
   `effective_tool_cwd(event.cwd, event.data)` and call `snapshot` with
   `event.request_id` before the final `allow`. Snapshot errors are logged and
-  never block.
+  never block. A node-origin event (`node_origin()`) stores no snapshot
+  (Decision 4).
 - `is_canonical_edit` becomes `canonical_tool_kind == "write"`.
   `handle_after_tool` calls the recorder for every write-kind call, failed
   ones included. The recorder is renamed `_record_file_mutation`.
@@ -1152,8 +1321,10 @@ publishes. The #22642 regression needs both halves.
   `take` returns an entry whose fingerprint differs from the current one, and
   records nothing on equal fingerprints, including for a path the session
   already owns. Pairs with no entry, or whose current fingerprint raises
-  `OSError`, are batched per root into one `task_dirty_paths(rels, root)`:
-  dirty records, clean records nothing, None records. The overlap and replay
+  `OSError`, are batched per root into one `status_dirty_paths(root, rels)`:
+  dirty records, clean records nothing, None records. For a node-origin
+  event the recorder fingerprints nothing on the hub: every pair takes this
+  status, which runs on the node. The overlap and replay
   filters then apply as today. `_mark_session_had_edits_if_claimed` runs only
   when a pair was recorded.
 - `handle_session_end` calls `PRE_WRITE_DIGESTS.clear_session(session_id)`
@@ -1182,10 +1353,11 @@ Consumers unchanged:
 - 1.5.8 - A Bash call that writes a clean tracked path and commits it (`echo x > <path> && git commit -qam m`) records the pair for the task, and reconciliation then drops it from the session's dirty set. test: `tests/hooks/test_tool_handlers.py::test_write_committed_in_same_call_keeps_task_record`.
 - 1.5.9 - With no stored entry, the status rule decides (dirty records, clean records nothing), and a directory path uses the same rule. test: `tests/hooks/test_tool_handlers.py::test_recorder_falls_back_to_status_without_entry`.
 - 1.5.10 - Interleaved `before(A)`, `before(B)`, `after(A)`, `after(B)` on one path with distinct request ids keep separate baselines. With no request id, the second `before` overwrites the first, and the second `take` finds no entry. test: `tests/hooks/test_pre_write_digests.py::test_interleaved_calls_keep_baselines_by_request_id`.
-- 1.5.11 - `handle_session_end` drops the session's entries and keeps other sessions' entries, and `snapshot` drops entries older than one hour. test: `tests/hooks/test_pre_write_digests.py::test_session_end_and_age_prune_drop_stale_entries`.
+- 1.5.11 - `handle_session_end` drops the session's entries and keeps other sessions' entries, `snapshot` drops entries older than one hour, and `take` returns None for an entry older than one hour when no `snapshot` ran since. test: `tests/hooks/test_pre_write_digests.py::test_session_end_and_age_prune_drop_stale_entries`.
 - 1.5.12 - A Bash write to the relative path `p.py` with `event.cwd` in the main checkout and `workdir` in a second checkout of the project fingerprints and records the second checkout's pair and records nothing for the main checkout's `p.py`. test: `tests/hooks/test_tool_handlers.py::test_recorder_resolves_relative_paths_at_tool_workdir`.
 - 1.5.13 - A Bash call that changes two paths and makes the first unreadable (`chmod 000`) records both pairs, the first through the status fallback, and an unreadable path at `before_tool` stores no entry while the call's other paths keep theirs. test: `tests/hooks/test_tool_handlers.py::test_unreadable_path_takes_status_fallback_without_skipping_others`.
 - 1.5.14 - The read-only probe loop `for i in 1 2 3; do curl -s -o /dev/null ...; done` reaches the recorder as a write-kind call and records nothing, because `/dev/null` resolves to no pair. test: `tests/hooks/test_normalization_canonical_mutation_scope.py::test_read_only_probe_loop_is_not_an_in_project_mutation`.
+- 1.5.15 - Inside `checkout_reads.delivery_scope` for a node machine, with the hub holding a different file at the same root and path, a write-kind call stores no `PRE_WRITE_DIGESTS` entry and never fingerprints the hub file. The recorder runs the pathspec status through `checkout_reads.run_git` on the node (a patched node reply): a dirty reply records the pair, a clean reply records nothing, and `CheckoutReadUnavailable` records the pair. test: `tests/hooks/test_tool_handlers.py::test_node_origin_write_skips_snapshot_and_takes_node_status`.
 
 ### 1.6 Rule 4 refuses writes into another Gobby project [category: code] (depends: 1.3, 1.5)
 `kind: deliverable`
@@ -1242,7 +1414,7 @@ into the new `src/gobby/workflows/engine/eval_context_defaults.py` as
   pattern is gone since 1.2.
 - Rule template shape (from `block-cross-session-foreign-staged-commit.yaml`):
   `tags`, then `rules.<name>` with `description`, `event: before_tool`,
-  `enabled: true`, `priority`, `when: <key>` and `effects: [{type: block,
+  `enabled`, `priority`, `when: <key>` and `effects: [{type: block,
   reason: "{{ <key> }}"}]`.
 
 **Implementation:**
@@ -1270,8 +1442,10 @@ into the new `src/gobby/workflows/engine/eval_context_defaults.py` as
      claimed."
 - New `block-cross-project-write.yaml`: rule `block-cross-project-write`,
   description "Rule 4: block writes into another Gobby-managed project",
-  `event: before_tool`, `priority: 24`, `when: cross_project_write_conflict`,
-  block reason `"{{ cross_project_write_conflict }}"`.
+  `event: before_tool`, `enabled: false`, `priority: 24`,
+  `when: cross_project_write_conflict`, block reason
+  `"{{ cross_project_write_conflict }}"`. It ships disabled; V2 step 6
+  records the toggle that enables it after Josh approves.
 - Fix the `hooks.py:422` comment to describe the variable-defaults lazy init
   on its own.
 
@@ -1298,7 +1472,7 @@ isolation prefix.
 - 1.6.1 - A Write whose path lies in a checkout of a different registered project returns the rule 4 text naming both projects, while writes into the session's own main checkout, its task worktree and a path under no `.gobby/project.json` root are allowed. test: `tests/workflows/test_ownership_eval_context.py::test_rule4_refuses_other_project_and_allows_own_and_unmanaged`.
 - 1.6.2 - End to end through a registered worktree of another project bound to a claimed task, reached through a symlinked temp path: rule 4 allows writes there, yet rule 3 refuses a write to a dirty path the session does not own; a clean path's write passes, the recorder records the pair under the worktree's real root, and `capture_attribution` attributes that pair to the task under that root, so gate 3 inspects it. test: `tests/workflows/test_ownership_eval_context.py::test_sanctioned_worktree_write_obeys_rules_1_to_3`.
 - 1.6.3 - `RuleEngine.evaluate` with an eval_context lacking `cross_project_write_conflict` evaluates the rule as not matching instead of failing closed. test: `tests/workflows/test_ownership_eval_context.py::test_rule4_default_key_keeps_unwired_callers_open`.
-- 1.6.4 - The bundled `block-cross-project-write` template loads with event `before_tool`, priority 24 and a block effect carrying the key. test: `tests/workflows/test_task_enforcement_rules.py::test_block_cross_project_write_template_shape`.
+- 1.6.4 - The bundled `block-cross-project-write` template loads with event `before_tool`, `enabled: false`, priority 24 and a block effect carrying the key. test: `tests/workflows/test_task_enforcement_rules.py::test_block_cross_project_write_template_shape`.
 - 1.6.5 - Rule 4 judges the file the tool names: with `event.cwd` in the session's checkout, a write to `p.py` with `workdir` in another project's checkout, a write to `../<other project>/p.py`, and a write through a relative symlink in the session's checkout that points into the other project are each refused, while the same relative write with `workdir` in the session's own task worktree is allowed. test: `tests/workflows/test_ownership_eval_context.py::test_rule4_resolves_workdir_relative_and_symlinked_paths`.
 
 ### 1.7 Rule 1: gate 3 checks the task's uncommitted work in every session [category: code] (depends: 1.4, 1.8)
@@ -1306,9 +1480,15 @@ isolation prefix.
 
 Targets:
 - `src/gobby/mcp_proxy/tools/tasks/_close_context.py::capture_attribution`
-- `src/gobby/workflows/dirty_edit_grants.py::*` — scope-reason: adds task_recorded_pairs beside claimed_task_ledger_paths
+- `src/gobby/workflows/dirty_edit_grants.py::*` — scope-reason: adds task_recorded_pairs beside claimed_task_ledger_paths and makes checkout_path_owners machine-local
+- `src/gobby/workflows/session_edit_ledger.py::SessionEditLedger.record_edited_files`
+- `src/gobby/workflows/task_claim_state.py::*` — scope-reason: record_task_content_hashes gains the keyword-only unhashed paths it removes
 - `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::*` — scope-reason: adds the cross-session gate 3 tests
-- `tests/workflows/test_dirty_edit_grants.py::*` — scope-reason: adds the task_recorded_pairs test
+- `tests/workflows/test_dirty_edit_grants.py::*` — scope-reason: adds the task_recorded_pairs tests, node-origin pairs and roots included
+
+**Granularity:** one section with more than six acceptance items, by design.
+`task_recorded_pairs` and gate 3's use of it verify only together: each
+discovery rule exists for one gate 3 outcome.
 
 **Research context:**
 - `_lifecycle_close.py::_evaluate_close` (lines 57-218) sets the attribution
@@ -1340,25 +1520,106 @@ Targets:
   root. `checkout_path_owners(db, *, checkout_root, paths)` (lines 97-137)
   maps each path to the task whose newest record matches its current
   fingerprint, across every session.
+- A pair whose path cannot be fingerprinted when recorded gets no content
+  record. `session_edit_ledger.py::SessionEditLedger.record_edited_files`
+  takes its digests from `checkout_fingerprint.path_fingerprints`, which
+  skips a path whose fingerprint raises `OSError` (an unreadable file or a
+  directory), and `task_claim_state.record_task_content_hashes` returns
+  early on empty digests. The pair still enters `session_dirty_file_checkouts`
+  and `task_edited_file_checkouts`, and an earlier record of the same path
+  stays as a stale hash, which matches again if the file returns to those
+  bytes. `state_manager.py` (879 lines) also calls
+  `record_task_content_hashes`, with the digests of adopted shell edits. `checkout_path_owners` compares each record with
+  `dirty_edit_grants._current_digest`, which returns "unreadable" on
+  `OSError`, so it never maps such a pair to a task. Only three functions
+  write `task_edited_file_checkouts`: `record_edited_files` adds,
+  `transfer_live_checkout_paths` moves a pair within a session, and
+  `remove_claimed_task` drops a closed task's entry.
+- `ledger_reconcile.reconcile_edit_ledgers` releases only its own session's
+  `session_dirty_file_checkouts` entries that `task_dirty_paths_async`
+  reports clean, and leaves `task_edited_file_checkouts` alone.
+  `task_dirty_paths_async` calls `daemon_git.status`, which runs on the node
+  under `checkout_reads.node_origin()` (`utils/daemon_git.py`, lines
+  430-483), so a node session's own reconcile releases its pairs by the
+  node's git. Nothing reconciles an ended session's ledger.
+- `checkout_path_owners` reads `session_variables` with no machine filter
+  (line 114) and compares each record with this machine's disk
+  (`_current_digest`, line 131). Its other callers are
+  `claimed_task_carriers` (rule 3), `claimed_task_owned_paths`
+  (`state_manager.py`'s adoption of shell edits) and
+  `commit_guard._live_path_owners`. `capture_attribution` takes the close
+  session's `machine_id` only for `is_ignorable_attributed_root`, and runs
+  the linked-commit fallback when the owner's `task_edited_file_set` and
+  live pairs are both empty and linked commits exist.
 - `tasks/attributed_roots.py::is_ignorable_attributed_root` treats a git
   checkout as inspectable and a missing registered root as fail-closed.
 
 **Implementation:**
-- Add `dirty_edit_grants.task_recorded_pairs(db, *, task_id) ->
-  dict[str, set[str]]`: one query for the session rows whose
-  `task_edited_checkout_hashes` holds the task (jsonb `?`), returning every
-  normalized checkout root and path recorded for it, in any session.
+- Add `dirty_edit_grants.TaskRecordedPairs`, a `NamedTuple` of four maps
+  from normalized checkout root to paths, and
+  `dirty_edit_grants.task_recorded_pairs(db, *, task_id) ->
+  TaskRecordedPairs`: one query for the session rows whose
+  `task_edited_checkout_hashes` or `task_edited_file_checkouts` holds the
+  task (jsonb `?`), joined to `sessions` for each row's `machine_id`. A row
+  whose session is on this machine (`get_machine_id()`) feeds:
+  - `content`: every pair its `task_edited_checkout_hashes` entry for the
+    task records;
+  - `fallback`: every pair of its `task_edited_file_checkouts` entry for the
+    task that its hash entry for the task lacks, or whose `_current_digest`
+    is "unreadable".
+
+  A row whose session is on another machine feeds:
+  - `remote`: every pair either entry records for the task;
+  - `remote_held`: the `remote` pairs that the same row's
+    `session_dirty_file_checkouts` still holds under that root, matched by
+    `overlapping_task_edit_paths` (`task_edit_path_covers` either way), so a
+    held directory entry holds a recorded child and a held child holds a
+    recorded directory.
+
+  A root whose directory is gone is dropped from `content` and `fallback`.
+  `remote` and `remote_held` keep every root, because the hub cannot see
+  another machine's directories (Decision 4).
+- `record_task_content_hashes` takes a keyword-only `unhashed: Iterable[str]
+  = ()` and removes those paths from the task's hashes under the root; it
+  returns early only when both `digests` and `unhashed` are empty.
+  `record_edited_files` passes the recorded paths that `path_fingerprints`
+  skipped, so a pair recorded without a fingerprint keeps no stale hash and
+  stays a fallback pair after its file is readable again. The
+  `state_manager.py` call is unchanged. For a node-origin event
+  (`checkout_reads.node_origin()`), `record_edited_files` takes no
+  fingerprints and passes every recorded path as `unhashed`, because the
+  hub's file at that root and path is not the node's (Decision 4).
+- `checkout_path_owners` returns an empty map for a node-origin event
+  (`checkout_reads.node_origin()`), and otherwise reads only the records of
+  sessions on this machine (join `sessions`, `machine_id =
+  get_machine_id()`), because it compares them with this machine's disk.
+  This one guard covers every caller: `_live_path_owners` gives no
+  `ledger_task_id` during a node-origin event, `claimed_task_carriers` finds
+  no carrier there, `claimed_task_owned_paths` adopts no shell edit there,
+  and a node session's record never names the owner of the hub's bytes
+  (Decision 4).
 - In `capture_attribution`, after reading the owner's live pairs:
-  1. Read `task_recorded_pairs(db, task_id=task.id)` and drop roots whose
-     directory no longer exists (Decision 22).
-  2. For every root among the owner's live pairs and the recorded pairs, call
-     `checkout_path_owners` once over that root's paths, and let the
-     task-owned set be the paths it maps to the closing task.
-  3. Add each root's task-owned recorded paths to the attributed paths of
-     that root.
-  4. Run the linked-commit fallback only when the owner has no task paths
-     and the cross-session read added none.
-  5. Pass `foreign_owned_dirty_paths_async` only the committed paths outside
+  1. Read `task_recorded_pairs(db, task_id=task.id)`, which has already
+     dropped this machine's roots whose directory is gone (Decision 22), and
+     the owner session's `machine_id`. When the owner's session is on
+     another machine, its live pairs leave the hub path before any read;
+     `task_recorded_pairs` already lists them under `remote` from the
+     owner's row (Decision 4).
+  2. When `remote_held` is not empty, log its roots and paths and clear
+     `complete`, so gate 3 fails "Git could not inspect all task-attributed
+     files." No `remote` pair reaches `checkout_path_owners`, the attributed
+     paths or the hub's status.
+  3. For every root among the owner's remaining live pairs, `content` and
+     `fallback`, call `checkout_path_owners` once over that root's paths.
+     The task-owned set is the content pairs it maps to the closing task
+     plus the fallback pairs it maps to no other task.
+  4. Add each root's task-owned paths to the attributed paths of that root.
+  5. Run the linked-commit fallback only when no session on any machine
+     recorded a pair for the task: the owner's `task_edited_file_set` and
+     live pairs are empty and all four maps are empty. So a remote owner or
+     predecessor whose pairs have settled never sends the hub's copy of the
+     linked commits' paths to gate 3.
+  6. Pass `foreign_owned_dirty_paths_async` only the committed paths outside
      the task-owned set, so a path whose content the closing task owns is
      never subtracted.
   Any exception from `task_recorded_pairs` or `checkout_path_owners` is
@@ -1372,6 +1633,7 @@ Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py` — no-edit-reason: commit_close re-evaluates through _evaluate_close, which calls capture_attribution unchanged
 - `tests/mcp_proxy/tools/tasks/test_close_candidate.py` — no-edit-reason: patches capture_attribution with a fixed CloseAttributionSnapshot
 - `tests/mcp_proxy/tools/test_task_lifecycle_coverage.py` — no-edit-reason: patches capture_attribution with a fixed CloseAttributionSnapshot
+- `src/gobby/workflows/state_manager.py` — no-edit-reason: calls record_task_content_hashes without the new keyword, and claimed_task_owned_paths, whose empty answer for a node-origin event already means no shell edit to adopt
 
 **Focused verification (planned):** run
 `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py`,
@@ -1386,22 +1648,28 @@ Consumers unchanged:
 - 1.7.3 - #24402 holds: after T committed `p`, a live session dirtied `p` for task U with a recorded edit, and another live session dirtied `q` with no task record; gate 3 for T passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_ignores_later_foreign_dirt_on_committed_paths`.
 - 1.7.4 - A predecessor's record of `p` for T whose current content task U's later recorded edit owns adds nothing to T's attributed paths. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_skips_recorded_pairs_another_task_now_owns`.
 - 1.7.5 - A recorded pair under a deleted checkout root is dropped and never makes gate 3 unavailable, while a failing `task_recorded_pairs` read fails gate 3 with "Git could not inspect all task-attributed files." test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_drops_deleted_roots_and_fails_closed_on_unread_records`.
-- 1.7.6 - `task_recorded_pairs` returns every root and path that any session's `task_edited_checkout_hashes` recorded for the task, and nothing recorded only for other tasks. test: `tests/workflows/test_dirty_edit_grants.py::test_task_recorded_pairs_reads_every_session`.
+- 1.7.6 - `task_recorded_pairs` returns as content pairs every root and path that any session's `task_edited_checkout_hashes` recorded for the task, and nothing recorded only for other tasks. It returns as fallback pairs a live pair of the task whose session holds no hash for it, a live directory pair, and a live pair whose stale hash names a file that is now unreadable, and it omits a live pair whose recorded hash belongs to a readable file. test: `tests/workflows/test_dirty_edit_grants.py::test_task_recorded_pairs_reads_every_session`.
+- 1.7.7 - An escalated predecessor recorded, for T, a file `p` through the status fallback while `p` was unreadable and a directory `d` that now holds an untracked file, neither with a content record. After B claims T, gate 3 fails instead of passing over either pair. Once `p` is readable again but uncommitted, gate 3 still fails. B commits both through the guarded path, a Bash `git commit` event that `foreign_staged_commit_conflict` passes while the predecessor lives (1.8), never a raw git commit; gate 3 then passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_checks_predecessor_pairs_recorded_without_content`.
+- 1.7.8 - Stale-hash recovery: T's predecessor session records readable `p` (hash H1), and a later recorded write changes `p` and leaves it unreadable, which removes that session's hash of `p` for T while its other paths keep theirs. After B claims T and `p` is made readable again without a byte change, gate 3 fails on the uncommitted `p`, then passes once B commits `p` through the guarded path (a Bash `git commit` event that `foreign_staged_commit_conflict` passes while the predecessor lives). test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_keeps_pairs_whose_stale_hash_was_dropped`.
+- 1.7.9 - Inside `checkout_reads.delivery_scope` for a node machine, `record_edited_files` records T's pair `p` with no content hash although the hub holds a readable file at that root and path, and drops that session's older hash of `p` for T. `task_recorded_pairs` lists `p` under `remote` and `remote_held`, never under `content` or `fallback`, and drops `p` from `remote_held` once that session's dirty ledger releases it. A held directory entry `d` holds a recorded `d/f`, and a held `d/f` holds a recorded `d`. It keeps a root a node-machine session recorded although the hub has no such directory, and drops a hub-machine session's root whose directory is gone. test: `tests/workflows/test_dirty_edit_grants.py::test_task_recorded_pairs_keeps_node_origin_pairs_and_roots`.
+- 1.7.10 - Node-recorded pairs at close: node session N, recording inside `checkout_reads.delivery_scope` for its machine, holds T's dirty `p` under root R, and the hub also has a git checkout at R. Case (a): N is T's attribution owner. Case (b): N has ended, and live hub session B owns T. In each case, with the hub's `p` clean, and again with the hub's `p` matching hub session H's content record for task U, gate 3 for T fails with "Git could not inspect all task-attributed files.", never counting `p` clean or dropping it. In (b) it stays so, which is the ceiling #25284 owns. In (a), once N's own ledger reconcile releases `p`, run inside N's delivery with the node's status reporting `p` clean, gate 3 passes, and a linked commit whose paths are dirty in the hub's checkout does not trigger the linked-commit fallback. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_fails_closed_on_held_node_pairs_and_ignores_hub_bytes`.
+- 1.7.11 - `checkout_path_owners` ignores a node-machine session's content record even though it matches the hub's bytes at that root and path. Inside a node-machine `delivery_scope` it answers an empty map even though a hub session's record matches, so `claimed_task_carriers` finds no carrier there. test: `tests/workflows/test_dirty_edit_grants.py::test_checkout_path_owners_is_machine_local`.
 
-### 1.8 Rule 2 lets a claimant commit its claimed task's dirt [category: code] (depends: 1.3, 1.4)
+### 1.8 Rule 2 lets a claimant commit its claimed task's dirt and refuses whole-index commits in a shared checkout [category: code] (depends: 1.3, 1.4)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/workflows/commit_guard.py::*` — scope-reason: rule 2 skips holders working a task the session claims, and _operation_paths moves out
+- `src/gobby/workflows/commit_guard.py::*` — scope-reason: rules 2 and 3 skip a holder when its interval task or its content-owner task is one the session claims, testing each field on its own, _live_path_owners takes each holder's task from its live interval whether or not it is claimed, rule 2 refuses a whole-index commit while another live session holds dirt in the checkout, and _operation_paths moves out
 - `src/gobby/workflows/git_operation_paths.py`
 - `src/gobby/workflows/dirty_edit_grants.py::*` — scope-reason: renames _claimed_task_ids to the public claimed_task_ids and updates its two callers
-- `tests/workflows/test_commit_guard.py::*` — scope-reason: adds the rule 2 claimed-task tests
+- `tests/workflows/test_commit_guard.py::*` — scope-reason: adds the rule 2 claimed-task and whole-index tests
 - `tests/workflows/test_git_operation_paths.py`
 
 Split `src/gobby/workflows/commit_guard.py` (863 lines): move `_operation_paths`
-(lines 429-485, with its nested `git` and `git_ok` helpers) unchanged into the
-new `src/gobby/workflows/git_operation_paths.py` as `operation_paths`, and
-import it in both rules.
+(lines 429-485, with its nested `git` and `git_ok` helpers) into the new
+`src/gobby/workflows/git_operation_paths.py` as `operation_paths`, and import
+it in both rules. The move changes one thing: the return becomes `set[str] |
+None`, None when no operation is in progress (Decision 23 keys on that state).
 
 **Research context:**
 - Rule 2, `commit_guard.foreign_staged_commit_conflict` (lines 121-275),
@@ -1416,31 +1684,107 @@ import it in both rules.
   from `dirty_edit_grants.claimed_task_carriers` and drops holders whose
   `owner_task_id or ledger_task_id` is in `own_tasks` (lines 365-370), "a
   holder working a task this session now claims is this session's past
-  self".
+  self". Python's `or` tests only the first nonempty field, so a holder's
+  interval task masks a content owner the session claims (Adversary
+  CO-A5-F1).
+- `commit_guard._live_path_owners` (lines 498-583) builds each holder's
+  `ForeignPathOwner`. `owner_task_id` comes from `_live_interval_task`
+  (lines 586-611), which scans only the holder's `claimed_tasks`, else from
+  the first claimed task whose `task_edited_file_checkouts` holds the path;
+  `task_ref` is `str(claimed_tasks[task_id])`. `ledger_task_id` is
+  `dirty_edit_grants.checkout_path_owners` (lines 97-137), the content-hash
+  owner. Escalation releases T from the holder's `claimed_tasks`
+  (`_escalation_coordinator.clear_prior_claim_session_variables`, then
+  `task_claim_state.release_claimed_task`) and keeps
+  `task_live_edit_starts` and `task_edited_file_checkouts`. So for a pair
+  with no content record (an unreadable file, a directory, a node-origin
+  write) an escalated holder yields neither field, and rules 2 and 3 refuse
+  T's claimant. `remove_claimed_task` (T closed) drops T's interval.
+- Other readers of the two fields: `commit_guard_conflicts.py` renders
+  "task <ref>" when `owner_task_id` is set and "no claimed task" otherwise;
+  `agents/worktree_checkpoint.py::checkpoint_agent_worktree` treats an owner
+  as foreign when its `task_ref` differs from the checkpointed task's
+  `#<seq_num>`, unless `owner_task_id` is None and the holder is a recovery
+  session. A claim's ref is `#<seq_num>`, else the task id
+  (`workflows/observers.py`).
 - `dirty_edit_grants._claimed_task_ids(db, session_id)` (lines 65-70) reads
   the tasks whose `claimed_by_session_id` is the session; only
   `claimed_task_carriers` and `claimed_task_owned_paths` call it.
 - No test references `_operation_paths`; rule 3's merge tests exercise it
   (`tests/workflows/test_commit_guard.py::test_rule3_exempts_merge_set_paths_during_merge`).
+- Rule 2 builds its candidates per `git_commit_parsing.GitCommitInvocation`.
+  A path-scoped invocation (`pathspecs` set) lists its paths with `git
+  ls-files`; one without pathspecs, or with `include_staged`, adds the
+  `git diff --cached` set read when the hook runs; `all_tracked` adds `git
+  diff HEAD`. With no live holder in the checkout (`_live_path_owners`
+  empty) it passes at once. The shell runs the commit after the hook
+  answers, so a path staged in between is never a candidate, and neither is
+  one a `git add -A` or `git add .` earlier in the same command stages. A
+  commit without a pathspec also re-reads the index after its own
+  pre-commit hook and records whatever was staged meanwhile, while a
+  pathspec commit holds `index.lock` through its hooks (scratch-repository
+  probe, git 2.54.0). Commit 2068aaf9a0 (2026-10-28) recorded a path
+  another live session staged while that commit's hook ran (Decision 23).
 
 **Implementation:**
 - Rename `_claimed_task_ids` to `claimed_task_ids` and update its two
   callers.
+- In `_live_path_owners`, `_live_interval_task` scans every task in the
+  holder's `task_live_edit_starts` instead of its `claimed_tasks` (the
+  `claimed_tasks` parameter goes; ranking is unchanged, and a task with no
+  recorded selection still ranks oldest). The fallback scans every task in
+  the holder's `task_edited_file_checkouts`. `task_ref` is the claim's ref
+  when the holder claims the task, else `#<seq_num>` (the task id when it has
+  none) from one `SELECT id, seq_num FROM tasks WHERE id = ANY(%s)` per call
+  over the unclaimed tasks named. Rules 2 and 3 both read these owners, so
+  rule 3's past-self exclusion covers a released holder too, and the
+  conflict texts name the released task's ref.
 - In `foreign_staged_commit_conflict`, read `claimed_task_ids(db,
   session_id)` once per call (in a thread) and add a dirty path's holder to
-  the conflicts only when its `owner_task_id or ledger_task_id` is not among
-  them. Candidate collection, the stale-holder release and the rule 2 text
-  are unchanged.
-- Move `_operation_paths` to `git_operation_paths.operation_paths` unchanged.
+  the conflicts only when neither its `owner_task_id` nor its
+  `ledger_task_id` is among them, each field tested on its own. Candidate
+  collection, the stale-holder release and the rule 2 text are unchanged.
+- In `foreign_dirty_edit_conflict`, the past-self exclusion drops a holder
+  when its `owner_task_id` is in `own_tasks` or its `ledger_task_id` is in
+  `own_tasks`, replacing the `or` fallback (Decision 15).
+- In `foreign_staged_commit_conflict`, an invocation that records the whole
+  index (`not invocation.is_path_scoped or invocation.include_staged`),
+  while no merge, cherry-pick, revert or rebase is in progress
+  (`operation_paths` returns None), is refused when
+  `_dirty_owned_paths_releasing_clean` over every holder that
+  `_live_path_owners` names for the checkout returns any path. Holders the
+  claimed-task exclusion skips count too, because a pathspec commit is
+  always available to the claimant. The refusal is
+  `format_conflict_reason` over those holders followed by "This commit
+  records the whole index, which can include files they stage before or
+  while it runs. Commit only your own paths: `git commit -m <msg> --
+  <path>...`." Path-scoped
+  invocations and an operation's conclusion keep the per-path check
+  unchanged (Decision 23).
+- Move `_operation_paths` to `git_operation_paths.operation_paths`. It
+  returns None when no merge, cherry-pick, revert or rebase is in progress,
+  else the path set, which may be empty: a cherry-pick of an empty commit
+  stops with `CHERRY_PICK_HEAD` set, lists no path and leaves none
+  unmerged. Rule 2's candidate subtraction and rule 3's take `or set()`;
+  the whole-index exemption tests `is not None`. The body is otherwise
+  unchanged.
 
 **Focused verification (planned):** run `tests/workflows/test_commit_guard.py`,
-`tests/workflows/test_git_operation_paths.py` and
-`tests/workflows/test_dirty_edit_grants.py` with the isolation prefix.
+`tests/workflows/test_git_operation_paths.py`,
+`tests/workflows/test_dirty_edit_grants.py`,
+`tests/hooks/test_node_origin_edits.py` and
+`tests/agents/test_terminal_timeout_checkpoint.py` with the isolation
+prefix; the last two pin `_live_path_owners`' machine scope and the
+checkpoint's foreign-owner outcomes.
 
 **Acceptance:**
 
-- 1.8.1 - Session C claims task T, and live session P, which no longer claims T, holds dirty `p` whose live interval is T's; rule 2 lets C commit `p`, while a dirty path P holds for task U, which C does not claim, is refused with the rule 2 text. test: `tests/workflows/test_commit_guard.py::test_rule2_allows_commit_of_claimed_task_dirt_held_by_live_predecessor`.
-- 1.8.2 - `operation_paths` imports from `git_operation_paths` and returns the merge set while `MERGE_HEAD` exists and an empty set when no operation is in progress. test: `tests/workflows/test_git_operation_paths.py::test_operation_paths_lists_merge_set_only_during_merge`.
+- 1.8.1 - Session C claims task T, and live session P, which escalated T and so no longer claims it, holds dirty `p` with T's live interval and T's content record; rule 2 lets C commit `p`, while a dirty path P holds for task U, which C does not claim, is refused with the rule 2 text naming U's `#<seq_num>`. test: `tests/workflows/test_commit_guard.py::test_rule2_allows_commit_of_claimed_task_dirt_held_by_live_predecessor`.
+- 1.8.2 - `operation_paths` imports from `git_operation_paths` and returns None when no operation is in progress, the merge set while `MERGE_HEAD` exists, and an empty set (not None) during a cherry-pick of an empty commit stopped with `CHERRY_PICK_HEAD` set. test: `tests/workflows/test_git_operation_paths.py::test_operation_paths_is_none_only_without_an_operation`.
+- 1.8.3 - Fallback pairs held by a live escalated predecessor: in a temporary git checkout, live session P recorded for T, through the status fallback and so with no content record, a file `p` while it was unreadable and a directory `d` holding an untracked file, then escalated T. After C claims T and `p` is readable again, `_live_path_owners` names T, with T's `#<seq_num>` ref, as P's `owner_task_id` for both pairs while `ledger_task_id` is None. Rule 3 lets C edit `p`. C's Bash `git add p d && git commit -m m -- p d` event gets "" from `foreign_staged_commit_conflict` before the commit runs, and the commit then lands. A pair P holds for task U and C names in its pathspec still refuses C's commit, naming U. test: `tests/workflows/test_commit_guard.py::test_claimant_commits_fallback_pairs_held_by_escalated_predecessor`.
+- 1.8.4 - Interval and content owners differ: live session P holds dirty `p` under T's live interval, and ended session Q's content record for U is the newest one matching `p`'s current bytes, so `_live_path_owners` gives P `owner_task_id` T and `ledger_task_id` U. Session C, which claims U, may edit `p` under rule 3 and gets "" from `foreign_staged_commit_conflict` for `git add p && git commit -m m`. Session D, which claims neither T nor U, is refused by both rules, and both texts name T's `#<seq_num>`. test: `tests/workflows/test_commit_guard.py::test_claimed_task_exclusion_tests_interval_and_content_owners_separately`.
+- 1.8.5 - Shared-index sweep, plan files included: in a temporary git checkout, live session P, whose `_agent_type` is `plan-writer`, recorded `.gobby/plans/other.md`; each case runs with that edit unstaged (the 2068aaf9a0 shape) and again with it staged. Session C's Bash `git add p && git commit -m m` gets the whole-index refusal naming P before the commit runs, and so do `git add -A && git commit -m m`, `git add . && git commit -m m`, `git commit -a -m m` and `git commit -i -m m -- p`. C's `git commit -m m -- p` and `git add -A && git commit -m m -- p` get "", and each commit records only `p`, while `.gobby/plans/other.md` keeps P's edit uncommitted. test: `tests/workflows/test_commit_guard.py::test_rule2_refuses_whole_index_commit_while_another_session_holds_dirt`.
+- 1.8.6 - With no other live holder in the checkout, and again once P's only pair is committed so the stale-holder release clears it, C's `git commit -m m` and `git commit -a -m m` get "". During a merge (`MERGE_HEAD` set), C's `git commit --no-edit` that concludes it passes the whole-index check, while a staged path outside the merge set that P holds dirty still refuses it with the rule 2 text. test: `tests/workflows/test_commit_guard.py::test_rule2_allows_whole_index_commit_alone_and_merge_conclusion`.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1564,23 +1908,130 @@ import it in both rules.
   Decisions 5, 6, 10, 15 and 16 were refreshed. The stale
   `## M1 Task Manifest` was withdrawn unedited, so the Adversary re-derives
   it (memory f5577ae0).
+- 2026-10-28: V1 consensus on the #25261 refresh. The Plan Enhancer
+  (gobby#18345) proposed CO-E4-01 (V2 step 5 runs Decision 2's deadlock case
+  through `escalate_task` and `de_escalate_task`) and CO-E4-02 (V2 step 1 is
+  one exact pytest command). The Orchestrator accepted both through Triage
+  (gobby#17480), and they landed in `5f4c40c6b9`. The Plan Adversary
+  (gobby#18336) raised CO-A4-F1 (nit: `PreWriteDigests.take` ignored the
+  one-hour expiry), fixed in `0987242205`. It also raised CO-A4-F2
+  (blocking: a pair recorded without a content fingerprint, an unreadable
+  file or a directory, escaped 1.7's discovery after a handoff, including a
+  stale hash once the file was readable again). `0987242205` and
+  `ac23717515` fixed it with fallback-pair discovery from the task's live
+  interval, the directory ruling in Decision 22, and dropping the task's
+  stale hash when a recorded write cannot fingerprint a path. The Adversary
+  confirmed consensus on `ac237175152ccefc84f61420c83f72e9c50369f9` with no
+  remaining findings and a clean project-aware validation. Routing stays
+  eight backend code leaves with TDD and task type feature. Josh's approval
+  through the Assistant precedes work on #23565 to #23569 (#25261
+  criterion 3).
+- 2026-10-28: Orchestrator review of the stamp `23f2051eeb`, relayed by
+  Triage (gobby#17480), returned it with five findings. The stale
+  `## M1 Task Manifest` was withdrawn unedited (memory f5577ae0).
+  - ORCH-REV-CO-1 and CO-2 (blocking): `_live_path_owners` took a holder's
+    task only from its claims, and `ledger_task_id` is the content-hash
+    owner, so a pair with no content record that an escalated predecessor
+    holds named no task, and rules 2 and 3 refused its claimant while gate
+    3 required the commit. 1.8 now takes the holder's task from its live
+    interval, claimed or not, with a `#<seq_num>` ref for a released task,
+    and adds 1.8.3. Decisions 2 and 15 and 1.8.1 are corrected. 1.7.7 and
+    1.7.8 commit through the guarded path, and V2 step 5 repeats the live
+    case without a content record.
+  - ORCH-REV-CO-3 (blocking): #23277 is partly delivered. Decision 4 is
+    rewritten: node-origin events store no snapshot and take the no-entry
+    status on the node through `checkout_reads.run_git` (1.5, 1.5.15, and
+    the Content-Hash Contract), node-origin pairs get no content record,
+    and gate 3 keeps roots that a node session recorded (1.7, 1.7.9). No
+    open #23277 leaf edits `commit_guard.py`, `task_claim_state.py` or
+    `_tool.py`, so no section gained a `(depends: #N)`. The Orchestrator
+    accepted that.
+  - ORCH-REV-CO-4: rule 4 ships `enabled: false`, and V2 step 6 records the
+    toggle that runs only after Josh approves through the Orchestrator.
+  - ORCH-REV-CO-5: a Constraints bullet orders the S2.11 and tasks-family
+    3.7 port sections after the leaves of this plan that change their
+    sources.
+
+  The Orchestrator withdrew its "No Python" ruling for this plan, which is
+  a rules refresh and not a port. During this round, two found-work items
+  reached Triage. #25280 (the `SessionEditLedger` fingerprint race) was
+  filed. The other: another session's pre-commit stash and restore in the
+  shared checkout reverted an edit made during its run. WIP checkpoints
+  `2d900c772b` and `c11943c` restored attribution. Facts were verified
+  read-only at `c11943c`.
+- 2026-10-28: Adversary review of `4d94bebe1d`. Plan Adversary gobby#18336
+  ended before reviewing it. The Orchestrator relaunched the seat, and Plan
+  Adversary gobby#18407 raised two findings.
+  - CO-A5-F1 (blocking): rules 2 and 3 tested `owner_task_id or
+    ledger_task_id`, so a holder's interval task masked a content owner the
+    session claims. 1.8 now tests each field on its own in both rules and
+    adds 1.8.4 (`fb9ff9a3f5`). The Adversary confirmed the fix.
+  - CO-A5-F2 (blocking): 1.7 discarded which machine recorded a pair, so
+    the hub's digests and status could drop or pass a pair a node session
+    recorded. Content ownership is now machine-local
+    (`checkout_path_owners`), and `task_recorded_pairs` keeps remote pairs
+    apart. A remote pair that its recording session's dirty ledger still
+    holds, matched by `task_edit_path_covers` overlap, fails gate 3 as
+    unavailable. A remote owner or predecessor never triggers the
+    linked-commit fallback. Decisions 4, 15 and 22, the Content-Hash
+    Contract, 1.7.9 and the new 1.7.10 and 1.7.11 carry it. The Orchestrator
+    ruled on the remaining ceiling through Triage (option A): a pair an
+    ended node session still holds keeps gate 3 unavailable until
+    restraint-deferral #25284 lands, after #24521.
+  - Orchestrator found work: the WIP commit `2068aaf9a0` also recorded
+    another live Plan Writer's edit to
+    `.gobby/plans/external-mcp-transport-multiplexer.md`. That Writer's
+    `git add` ran while the commit's pre-commit hook ran, and a commit
+    without a pathspec re-reads the index after its hook; a probe in a
+    scratch repository confirmed both this and that a pathspec commit holds
+    `index.lock` through its hooks. Decision 23 and 1.8 (1.8.5, 1.8.6 and
+    V2 step 7) make rule 2 refuse a whole-index commit while another live
+    session holds dirt in the checkout, staged or not, and 1.8.5 covers
+    `git commit -a` and a same-command `git add -A` or `git add .` at the
+    Orchestrator's request. Until then, seats commit with `git commit --
+    <path>`.
+
+  WIP checkpoints: `fb9ff9a3f5`, `2068aaf9a0`, `bd2663f7f9` and `6dad31d`;
+  the review revision `908200ab86` was followed by this evidence update.
+  One read during another session's pre-commit stash window (#25282)
+  showed the file at its committed bytes; every edit was intact afterwards.
+  Facts were verified read-only at `6dad31d`.
 
 ## V2: Verification
 `kind: verification`
 
 After every leaf has landed:
 
-1. Run the focused suites of 1.4 to 1.8 together against the test hub with
-   the isolation prefix.
+1. Run the focused suites of 1.4 to 1.8 together:
+   `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_session_variable_manager.py tests/workflows/test_task_claim_state.py tests/workflows/test_commit_guard.py tests/agents/test_terminal_timeout_checkpoint.py tests/mcp_proxy/tools/tasks/test_close_attribution.py tests/mcp_proxy/tools/tasks/test_coordinator_claim_release.py tests/workflows/test_session_defaults.py tests/tasks/test_close_invariants.py tests/hooks/test_tool_handlers.py tests/hooks/test_pre_write_digests.py tests/hooks/test_normalization.py tests/hooks/test_normalization_canonical_mutation_scope.py tests/workflows/test_ownership_eval_context.py tests/workflows/test_task_enforcement_rules.py tests/workflows/test_hooks.py tests/workflows/engine/test_unavailable_tool_input_guards.py tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py tests/workflows/test_dirty_edit_grants.py tests/workflows/test_git_operation_paths.py -v`
 2. `rg -n "release_task_paths|inspect_task_path_ownership|release_task_edited_files|baseline_dirty_files|task_edited_file_times|task_edited_file_checkouts_history|task_edited_checkout_history_paths|other_task_edited_checkout_paths|task_checkout_paths_in_window|task_edited_file_set_with_history" src/ docs/guides docs/reference-audit`
    prints nothing.
 3. After the Orchestrator's daemon restart syncs the templates, the installed
-   rows `block-cross-session-foreign-dirty-edit`,
-   `block-cross-session-foreign-staged-commit` and `block-cross-project-write`
-   are enabled with priorities 26, 25 and 24.
+   rows `block-cross-session-foreign-dirty-edit` and
+   `block-cross-session-foreign-staged-commit` are enabled with priorities 26
+   and 25, and the installed row `block-cross-project-write` exists disabled
+   with priority 24.
 4. In a scratch checkout of this project, a session's `git restore --staged`
    on a pre-staged path records nothing, and a later `close_task` passes gate
    3 (#22642 shape, live).
-5. In a scratch checkout, session A records a dirty path for task T and
-   releases T; session B claims T, `close_task` fails gate 3 on that path, B
-   commits it past rule 2, and `close_task` then passes gate 3.
+5. Decision 2's deadlock case, live: in a scratch checkout, live session A
+   claims task T and writes `p`. A calls `escalate_task` on T, which clears
+   the claim (`storage/tasks/_transitions.py::escalate_task`) while A stays
+   live and keeps `p` dirty under T. The task's creator calls
+   `de_escalate_task` on T, and session B claims T. B's `close_task` fails
+   gate 3 on `p`, B commits `p` past rule 2, and `close_task` then passes
+   gate 3. Repeat with A's write recorded through the status fallback, so
+   `p` carries no content record: B still edits `p` past rule 3 and commits
+   it past rule 2 (ORCH-REV-CO-1).
+6. Rule 4 toggle, only after Josh approves enabling it through the
+   Orchestrator: the Orchestrator calls
+   `gobby-workflows:toggle_rule(name="block-cross-project-write",
+   enabled=true)`, confirms the installed row reads enabled, and confirms
+   that a Write into another registered project's checkout is refused with
+   the rule 4 text. Without that approval the row stays disabled and this
+   step is not run.
+7. Whole-index commits, live (Decision 23): in a scratch checkout, live
+   session A writes `q` and leaves it unstaged. Session B's `git add p &&
+   git commit -m m` and `git add -A && git commit -m m` are refused with the
+   whole-index text naming A, and B's `git commit -m m -- p` lands a commit
+   recording only `p` while `q` keeps A's edit uncommitted.

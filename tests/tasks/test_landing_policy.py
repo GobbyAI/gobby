@@ -12,7 +12,6 @@ from gobby.tasks.landing_policy import (
     freeze_path,
     is_direct_commit_path,
     read_freeze,
-    requires_project_sync,
 )
 
 pytestmark = pytest.mark.unit
@@ -21,32 +20,21 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     ("paths", "expected"),
     [
-        ([".gobby/workflows/pipelines/example-lane.yaml", "src/gobby/example.py"], True),
-        ([".gobby/workflows/pipelines/example-lane.yml", "web/src/example.ts"], True),
-        ([".gobby/workflows/rules/operating-policy.yaml", "src/gobby/example.py"], True),
-        ([".gobby/workflows/rules/operating-policy.yml", "web/src/example.ts"], True),
-        ([".gobby/workflows/agents/example.yaml", "src/gobby/example.py"], True),
-        ([".gobby/workflows/variables/example.yml", "web/src/example.ts"], True),
-        ([".gobby/workflows/agents/nested/example.yaml"], False),
-        ([".gobby/workflows/variables/README.md"], False),
-        ([".gobby/workflows/rules/nested/example.yaml"], False),
-        ([".gobby/workflows/rules/README.md"], False),
-        ([".gobby/workflows/pipelines/nested/example.yaml"], False),
-        ([".gobby/workflows/pipelines/README.md"], False),
-        (["src/gobby/install/shared/workflows/agents/example.yaml"], False),
-        ([], False),
+        ([".gobby/workflows/agents/example.yaml", "src/gobby/example.py"], "restart"),
+        ([".gobby/workflows/variables/example.yml", "web/src/example.ts"], "restart"),
+        ([".gobby/workflows/agents/nested/example.yaml"], "none"),
+        ([".gobby/workflows/variables/README.md"], "none"),
     ],
 )
-def test_project_sync_is_independent_of_strongest_class(paths: list[str], expected: bool) -> None:
-    assert requires_project_sync(iter(paths)) is expected
+def test_project_workflow_activation_scope(paths: list[str], expected: str) -> None:
+    assert classify_paths(iter(paths)) == expected
 
 
 @pytest.mark.parametrize("kind", ["agents", "variables"])
 @pytest.mark.parametrize("suffix", ["yaml", "yml"])
-def test_project_agents_and_variables_require_project_sync(kind: str, suffix: str) -> None:
+def test_project_agents_and_variables_require_restart(kind: str, suffix: str) -> None:
     path = f".gobby/workflows/{kind}/example.{suffix}"
-    assert classify_paths([path]) == "sync"
-    assert requires_project_sync(iter([path])) is True
+    assert classify_paths(iter([path])) == "restart"
 
 
 @pytest.mark.parametrize(
@@ -67,26 +55,26 @@ def test_project_agents_and_variables_require_project_sync(kind: str, suffix: st
             "restart",
         ),
         (["web/src/App.tsx"], "ui_build"),
-        ([".gobby/workflows/pipelines/example-lane.yaml"], "sync"),
-        ([".gobby/workflows/pipelines/example-lane.yml", "docs/x.md"], "sync"),
-        ([".gobby/workflows/rules/operating-policy.yaml"], "sync"),
-        ([".gobby/workflows/rules/operating-policy.yml", "docs/x.md"], "sync"),
+        ([".gobby/workflows/pipelines/example-lane.yaml"], "restart"),
+        ([".gobby/workflows/pipelines/example-lane.yml", "docs/x.md"], "restart"),
+        ([".gobby/workflows/rules/operating-policy.yaml"], "restart"),
+        ([".gobby/workflows/rules/operating-policy.yml", "docs/x.md"], "restart"),
         ([".gobby/workflows/rules/README.md"], "none"),
         ([".gobby/workflows/rules/nested/example.yaml"], "none"),
         ([".gobby/workflows/rules/operating-policy.yaml", "src/gobby/example.py"], "restart"),
         ([".gobby/workflows/rules/operating-policy.yaml", "crates/gcore/src/lib.rs"], "cutover"),
-        ([".gobby/workflows/rules/operating-policy.yaml", "web/src/App.tsx"], "ui_build"),
+        ([".gobby/workflows/rules/operating-policy.yaml", "web/src/App.tsx"], "restart"),
         ([".gobby/workflows/pipelines/README.md"], "none"),
         ([".gobby/workflows/pipelines/nested/seat.yaml"], "none"),
         ([".gobby/workflows/pipelines/example-lane.yaml", "src/gobby/cli/main.py"], "restart"),
         ([".gobby/workflows/pipelines/example-lane.yaml", "crates/gcore/src/lib.rs"], "cutover"),
-        ([".gobby/workflows/pipelines/example-lane.yaml", "web/src/App.tsx"], "ui_build"),
+        ([".gobby/workflows/pipelines/example-lane.yaml", "web/src/App.tsx"], "restart"),
         (
             [
                 ".gobby/workflows/pipelines/example-lane.yaml",
                 "src/gobby/install/shared/workflows/agents/researcher.yaml",
             ],
-            "reload",
+            "restart",
         ),
         (
             ["src/gobby/install/shared/workflows/agents/researcher.yaml", "web/src/App.tsx"],

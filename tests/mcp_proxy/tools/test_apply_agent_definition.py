@@ -70,7 +70,10 @@ def definitions(monkeypatch: pytest.MonkeyPatch) -> dict[str, AgentDefinitionBod
     }
     monkeypatch.setattr(
         "gobby.workflows.agent_resolver.resolve_agent_with_row",
-        lambda name, *args, **kwargs: (bodies[name], SimpleNamespace(step_workflow_id=None))
+        lambda name, *args, **kwargs: (
+            bodies[name],
+            SimpleNamespace(step_workflow_id=None, enabled=True),
+        )
         if name in bodies
         else None,
     )
@@ -231,7 +234,7 @@ async def test_activation_arms_the_seat_reading_gates(
     )
     monkeypatch.setattr(
         "gobby.workflows.agent_resolver.resolve_agent_with_row",
-        lambda name, *args, **kwargs: (seat, SimpleNamespace(step_workflow_id=None))
+        lambda name, *args, **kwargs: (seat, SimpleNamespace(step_workflow_id=None, enabled=True))
         if name == "seat"
         else None,
     )
@@ -248,7 +251,9 @@ async def test_activation_arms_the_seat_reading_gates(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["unknown", "surface", "pipeline", "spawned", "task", "collision"])
+@pytest.mark.parametrize(
+    "case", ["unknown", "disabled", "surface", "pipeline", "spawned", "task", "collision"]
+)
 async def test_refusals_write_nothing(
     temp_db: HubDatabase, session_id: str, definitions: dict[str, AgentDefinitionBody], case: str
 ) -> None:
@@ -256,6 +261,7 @@ async def test_refusals_write_nothing(
     options: dict[str, Any] = {"agent": "x", "db": temp_db, "session_id": session_id}
     errors = {
         "unknown": "unknown_agent_definition",
+        "disabled": "agent_definition_disabled",
         "surface": "persona_surface_missing",
         "pipeline": "pipeline_requires_spawn",
         "spawned": "spawned_session_definition_fixed",
@@ -264,6 +270,8 @@ async def test_refusals_write_nothing(
     }
     if case == "unknown":
         options["agent"] = "missing"
+    elif case == "disabled":
+        definitions["x"].enabled = False
     elif case == "surface":
         definitions["x"] = make_agent_definition(
             name="x", surfaces=["spawn"], prompts={"agent": "Work."}

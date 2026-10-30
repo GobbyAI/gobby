@@ -50,7 +50,7 @@ reference requirement. Tool schemas remain authoritative for parameters.
 
 | Request after the trigger | Action |
 | --- | --- |
-| `admin` or `assistant` alone | Cold start this pane as the Orchestrator or Assistant and open its counterpart pane in the same tab once (re-runnable) |
+| A bare alias declared in an enabled definition's `cold_start_commands` | Cold start this pane with that definition and reuse or open its declared counterpart once |
 | `<capability>` | Load its catalog overview |
 | `<capability> references` | Show topic descriptions, loading conditions and exact `<trigger> <capability> references <topic>` examples |
 | `<capability> references <topic>` | Load exactly that topic |
@@ -59,8 +59,9 @@ reference requirement. Tool schemas remain authoritative for parameters.
 | `skill <skill> [args]` | Explicit standalone dispatch, including capability-name collisions |
 | Unknown name or topic | Show available choices; perform no operation |
 
-Only the space forms (`/gobby admin`, `$gobby assistant`) cold start;
-`/gobby:admin` and `admin <request>` load the admin capability. Otherwise
+Only bare space forms cold start; colon forms and commands with trailing
+requests use ordinary capability/skill routing. The bundled aliases include
+`admin` and `assistant`; installed declarations determine available commands. Otherwise
 capability names take precedence. Singular `skill` escapes to standalone
 resolution; plural `skills` is the skill-management capability. Honor project
 overrides and existing skill-name resolution. These provider forms are supported:

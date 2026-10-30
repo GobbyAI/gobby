@@ -1,4 +1,5 @@
 name: release-manager
+capabilities: [follow_relaunch, accept_resume_retype]
 description: |
   Release Manager seat. Rebuilds and promotes the Rust binaries whose crates
   changed. The Orchestrator owns every daemon restart and activation.
@@ -39,8 +40,11 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
+    exclude:
+      - "name:block-unclaimed-found-work"
     # Daemon management stays blocked: the Orchestrator owns restarts and activation.
   variables: {}

@@ -110,6 +110,21 @@ const CREATE_REFUSED_KEYS = new Set([
   "send_message_targets",
   "operator_messaging",
   "communications_admin",
+  "persistent_workspace",
+  "read_all_agent_workspaces",
+  "task_step_writes",
+  "capabilities",
+  "cold_start_commands",
+  "cold_start_counterpart",
+  "message_sender_capabilities",
+  "monitor_report_recipients",
+  "required_review_capabilities",
+  "respect_task_protections",
+  "resumable_team_agents",
+  "supplemental_review",
+  "task_close_reasons",
+  "task_close_scope",
+  "task_step_scope",
 ]);
 
 export function buildDuplicateAgentBody(

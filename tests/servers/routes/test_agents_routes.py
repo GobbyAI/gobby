@@ -832,32 +832,6 @@ class TestCreateDefinition:
         assert body.surfaces == ["spawn", "persona"]
         assert body.version == "1.2.0"
 
-    def test_create_and_update_persist_workspace_and_step_writes(self, client: TestClient) -> None:
-        response = client.post(
-            "/api/agents/definitions",
-            json={
-                **_agent_request("workspace-agent"),
-                "persistent_workspace": True,
-                "task_step_writes": ["review"],
-            },
-        )
-        assert response.status_code == 200
-        created = response.json()["definition"]
-        body = AgentDefinitionBody.model_validate_json(created["definition_json"])
-        assert body.persistent_workspace is True
-        assert body.task_step_writes == ["review"]
-
-        updated = client.put(
-            f"/api/agents/definitions/{created['id']}",
-            json={"persistent_workspace": False, "task_step_writes": ["test", "closing"]},
-        )
-        assert updated.status_code == 200
-        body = AgentDefinitionBody.model_validate_json(
-            updated.json()["definition"]["definition_json"]
-        )
-        assert body.persistent_workspace is False
-        assert body.task_step_writes == ["test", "closing"]
-
     @pytest.mark.parametrize(
         "field, value",
         [
@@ -1662,13 +1636,28 @@ class TestUpdateDefinitionNestedFields:
         {
             "api_base",
             "api_token",
+            "capabilities",
+            "cold_start_commands",
+            "cold_start_counterpart",
             "communications_admin",
             "execution_mode",
             "idle_ttl_seconds",
+            "message_sender_capabilities",
+            "monitor_report_recipients",
             "network",
             "operator_messaging",
+            "persistent_workspace",
+            "read_all_agent_workspaces",
+            "required_review_capabilities",
+            "respect_task_protections",
+            "resumable_team_agents",
             "send_message_targets",
             "spawnable_agents",
+            "supplemental_review",
+            "task_close_reasons",
+            "task_close_scope",
+            "task_step_scope",
+            "task_step_writes",
         }
     )
     # Row columns the requests carry that the body does not store.
@@ -1702,6 +1691,9 @@ class TestUpdateDefinitionNestedFields:
             ("idle_ttl_seconds", 900),
             ("operator_messaging", True),
             ("communications_admin", True),
+            ("persistent_workspace", True),
+            ("read_all_agent_workspaces", True),
+            ("task_step_writes", ["implementation"]),
         ],
     )
     @pytest.mark.parametrize("method", ["post", "put"])

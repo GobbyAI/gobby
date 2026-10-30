@@ -1,4 +1,5 @@
 name: default
+capabilities: [override_spawn_network, write_session_variables]
 description: Baseline agent — bootstraps core guidance and loads other skills on demand
 sources: [claude, codex, droid]
 surfaces: [spawn, persona]
@@ -72,6 +73,9 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
+      - "name:require-tasks-skill-for-mutations"
+      - "name:require-restraint-before-task-growth"
+      - "tag:plan-directive-policy"
   skill_selectors:
     include: []
     # Every context epoch requests gobby:references/skills/loading.md, gobby:references/memory/overview.md, brevity, then restraint. Other

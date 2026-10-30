@@ -83,7 +83,6 @@ def synthetic_developer_body() -> AgentDefinitionBody:
                     "additional_skills": [],
                     "additional_skills_loaded": False,
                     "implementation_complete": False,
-                    "_developer_handoff_tasks": [],
                 },
                 "steps": [
                     {

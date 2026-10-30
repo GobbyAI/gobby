@@ -8,7 +8,6 @@ import logging
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -16,6 +15,9 @@ from websockets.exceptions import ConnectionClosedError
 
 from gobby.llm.claude_models import ChatEvent
 from gobby.servers.websocket.chat._messaging import ChatMessagingMixin
+from gobby.storage import chat_messages
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 ChatContent = str | list[dict[str, Any]]
@@ -39,13 +41,6 @@ class MockWebSocket:
         if self._fail_after is not None and self._send_count > self._fail_after:
             raise ConnectionClosedError(None, None)
         self.sent_messages.append(message)
-
-
-class DisconnectedWebSocket:
-    """WebSocket that always raises ConnectionClosed on send."""
-
-    async def send(self, message: str) -> None:
-        raise ConnectionClosedError(None, None)
 
 
 class _FakeSession:
@@ -137,11 +132,10 @@ class TestSafeSend:
     @pytest.mark.asyncio
     async def test_safe_send_catches_connection_closed(self, host: ChatMixinHost) -> None:
         """_safe_send should catch ConnectionClosed and break the loop."""
-        ws = DisconnectedWebSocket()
+        ws = MockWebSocket(fail_after=1)
         host.clients[ws] = {"conversation_id": "conv-1"}
 
-        # We need to invoke _stream_chat_response with events that will trigger sends.
-        # Instead, test the mechanism by creating a DoneEvent-only stream.
+        # Let session_info through, then fail on the first stream frame.
         from gobby.llm.claude_models import TextChunk
 
         events: list[ChatEvent] = [
@@ -154,13 +148,14 @@ class TestSafeSend:
 
         await host._stream_chat_response(ws, "conv-1", "test", None)
 
-        assert ws in host.clients
+        assert [json.loads(message)["type"] for message in ws.sent_messages] == ["session_info"]
+        assert ws._send_count == 2
 
     @pytest.mark.asyncio
     async def test_safe_send_skips_after_disconnect(self, host: ChatMixinHost) -> None:
         """After first failure, subsequent _safe_send calls should be no-ops."""
-        # WebSocket that fails after 1 successful send
-        ws = MockWebSocket(fail_after=1)
+        # Allow session_info and the first chunk before disconnecting mid-stream.
+        ws = MockWebSocket(fail_after=2)
         host.clients[ws] = {"conversation_id": "conv-2"}
 
         from gobby.llm.claude_models import TextChunk
@@ -176,28 +171,60 @@ class TestSafeSend:
 
         await host._stream_chat_response(ws, "conv-2", "test", None)
 
-        # Only the first text chunk should succeed (session already exists, no session_info)
-        assert len(ws.sent_messages) == 1
-        parsed = json.loads(ws.sent_messages[0])
+        assert len(ws.sent_messages) == 2
+        assert json.loads(ws.sent_messages[0])["type"] == "session_info"
+        parsed = json.loads(ws.sent_messages[1])
         assert parsed["type"] == "chat_stream"
         assert parsed["content"] == "first"
+        assert ws._send_count == 3
 
     @pytest.mark.asyncio
-    async def test_done_event_persists_even_on_disconnect(self, host: ChatMixinHost) -> None:
+    async def test_done_event_persists_even_on_disconnect(
+        self, host: ChatMixinHost, temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """DoneEvent should still persist text even if websocket send fails."""
-        ws = DisconnectedWebSocket()
+        ws = MockWebSocket(fail_after=2)
         host.clients[ws] = {"conversation_id": "conv-3"}
 
-        from gobby.llm.claude_models import DoneEvent
+        from gobby.llm.claude_models import DoneEvent, TextChunk
 
-        mock_msg_mgr = AsyncMock()
-        host.message_manager = mock_msg_mgr
+        monkeypatch.setattr(
+            "gobby.utils.machine_id._cached_machine_id", "21000000-0000-4000-8000-000000000002"
+        )
+        session_manager = SessionManager(temp_db)
+        stored_session = session_manager.register(
+            external_id="done-disconnect",
+            machine_id="21000000-0000-4000-8000-000000000002",
+            source="claude",
+            project_id=None,
+        )
+        host.session_manager = session_manager
 
-        session = _FakeSession([DoneEvent(tool_calls_count=0)])
+        session = _FakeSession(
+            [
+                TextChunk(content="completed response"),
+                DoneEvent(tool_calls_count=0, output_tokens=5),
+            ]
+        )
+        session.db_session_id = stored_session.id
         host._chat_sessions["conv-3"] = session
 
         await host._stream_chat_response(ws, "conv-3", "test", None)
-        assert ws in host.clients
+
+        assert [json.loads(message)["type"] for message in ws.sent_messages] == [
+            "session_info",
+            "chat_stream",
+        ]
+        assert ws._send_count == 3
+        messages = chat_messages.get_messages(temp_db, stored_session.id)
+        assert [(message["role"], message["content"]) for message in messages] == [
+            ("user", "test"),
+            ("assistant", "completed response"),
+        ]
+        persisted_session = session_manager.get(stored_session.id)
+        assert persisted_session is not None
+        assert persisted_session.status == "paused"
+        assert persisted_session.usage_output_tokens == 5
 
 
 # ---------------------------------------------------------------------------

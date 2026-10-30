@@ -25,6 +25,7 @@ from gobby.storage.sessions import LIVE_SESSION_STATUSES, SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.utils.uuid_validation import parse_uuid_reference
+from gobby.workflows.agent_resolver import resolve_agent_with_row
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
 
 PIPELINE_CHILD_PREFIX = "pipeline-"
@@ -210,7 +211,36 @@ def _admit(
         live = _live_seats(stores, session, seats, team_id=None)
     else:
         live = {}
-    tab = _runbook_tab_title(stores.tasks, project_id, tab_title, task)
+    tab_task = task
+    if team_id is not None:
+        from gobby.agents.team_lifecycle import team_binding
+
+        binding = team_binding(stores.tasks.db, team_id)
+        if binding is not None:
+            tab_task = binding.task_id
+            if binding.parent_team_id is not None:
+                if binding.tab_title is not None:
+                    tab_title = binding.tab_title
+                    tab_task = None  # The stored title already includes the task suffix.
+                managers = {
+                    seat.name
+                    for seat in catalogue
+                    if (
+                        resolved := resolve_agent_with_row(
+                            seat.agent, stores.tasks.db, project_id=project_id
+                        )
+                    )
+                    is not None
+                    and resolved[1].enabled
+                    and resolved[0].enabled
+                    and resolved[0].workflows.variables.get("team_manager") is True
+                }
+                seats = tuple(seat for seat in seats if seat.name not in managers)
+                parent_live = _live_seats(
+                    stores, session, catalogue, team_id=binding.parent_team_id
+                )
+                live.update({name: parent_live[name] for name in managers if name in parent_live})
+    tab = _runbook_tab_title(stores.tasks, project_id, tab_title, tab_task)
     return AdmittedSeats(
         workspace_id=workspace_id,
         seats=seats,

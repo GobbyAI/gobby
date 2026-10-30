@@ -1,9 +1,7 @@
 """Tests for the spawn-time plan validation gate.
 
-Specifically: ``planner``, ``plan-adversary``, and ``plan-enhancer-old`` spawns
-refuse to start when the task's ``plan_file_path`` artifact fails the
-Plan-Coverage Contract validator. Other agents pass through, and the gate is a
-no-op when no plan artifact is recorded.
+Definitions with ``track_plan_consensus`` refuse to start when a recorded plan
+fails validation. Other definitions pass through, regardless of their names.
 """
 
 from __future__ import annotations
@@ -21,12 +19,19 @@ import pytest
 
 from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
 from gobby.tasks.expansion import _plan_gate as plan_gate_module
-from gobby.tasks.expansion._plan_gate import (
-    PLANNING_AGENTS,
-    validate_plan_for_agent_spawn,
-)
+from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
+from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
+
+
+def _reviewer(name: str = "fixture-plan-review") -> AgentDefinitionBody:
+    return make_agent_definition(
+        name=name,
+        capabilities=["track_plan_consensus"],
+        prompts={"agent": "Review the recorded plan."},
+    )
 
 
 def _write_broken_plan(path: Path) -> Path:
@@ -140,14 +145,13 @@ class _FreshZeroSymbolIndex:
         return []
 
 
-def test_planning_agents_constant() -> None:
-    assert PLANNING_AGENTS == frozenset({"plan-adversary"})
-
-
-def test_non_planning_agent_passes_through() -> None:
+@pytest.mark.parametrize("name", ["plan-adversary", "fixture-reader"])
+def test_non_planning_agent_passes_through(name: str) -> None:
     manager = _make_task_manager_with_artifact("/tmp/whatever.md")
     result = validate_plan_for_agent_spawn(
-        agent_name="developer", task_id="t1", task_manager=manager
+        agent_body=make_agent_definition(name=name, prompts={"agent": "Read the task."}),
+        task_id="t1",
+        task_manager=manager,
     )
     assert result is None
     manager.get_artifacts.assert_not_called()
@@ -156,22 +160,20 @@ def test_non_planning_agent_passes_through() -> None:
 def test_no_task_id_passes_through() -> None:
     manager = _make_task_manager_with_artifact("/tmp/whatever.md")
     result = validate_plan_for_agent_spawn(
-        agent_name="plan-adversary", task_id=None, task_manager=manager
+        agent_body=_reviewer(), task_id=None, task_manager=manager
     )
     assert result is None
 
 
 def test_no_task_manager_passes_through() -> None:
-    result = validate_plan_for_agent_spawn(
-        agent_name="plan-adversary", task_id="t1", task_manager=None
-    )
+    result = validate_plan_for_agent_spawn(agent_body=_reviewer(), task_id="t1", task_manager=None)
     assert result is None
 
 
 def test_no_plan_artifact_passes_through() -> None:
     manager = _make_task_manager_with_artifact(None)
     result = validate_plan_for_agent_spawn(
-        agent_name="plan-adversary", task_id="t1", task_manager=manager
+        agent_body=_reviewer(), task_id="t1", task_manager=manager
     )
     assert result is None
 
@@ -192,7 +194,7 @@ def test_plan_adversary_spawn_against_fresh_index_passes(
     )
 
     result = validate_plan_for_agent_spawn(
-        agent_name="plan-adversary",
+        agent_body=_reviewer(),
         task_id="t1",
         task_manager=manager,
         code_index=_FreshZeroSymbolIndex(source_path),
@@ -220,7 +222,7 @@ def test_plan_adversary_spawn_passes_complete_isolated_context(
     monkeypatch.setattr(plan_gate_module, "get_project_context", lambda _path: project_context)
 
     result = validate_plan_for_agent_spawn(
-        agent_name="plan-adversary",
+        agent_body=_reviewer(),
         task_id="t1",
         task_manager=manager,
         code_index=_FreshZeroSymbolIndex(
@@ -238,7 +240,7 @@ def test_plan_adversary_blocks_when_symbol_validation_cannot_run(tmp_path: Path)
     manager = _make_task_manager_with_artifact(str(plan))
 
     result = validate_plan_for_agent_spawn(
-        agent_name="plan-adversary",
+        agent_body=_reviewer(),
         task_id="t1",
         task_manager=manager,
     )
@@ -254,7 +256,7 @@ def test_planning_agent_spawn_rejects_missing_plan_id(tmp_path: Path, agent_name
     manager = _make_task_manager_with_artifact(str(plan))
 
     result = validate_plan_for_agent_spawn(
-        agent_name=agent_name, task_id="t1", task_manager=manager
+        agent_body=_reviewer(agent_name), task_id="t1", task_manager=manager
     )
 
     assert result is not None
@@ -272,7 +274,7 @@ def test_plan_adversary_spawn_against_malformed_plan_returns_structured_failure(
     manager = _make_task_manager_with_artifact(str(plan))
 
     result = validate_plan_for_agent_spawn(
-        agent_name="plan-adversary", task_id="t1", task_manager=manager
+        agent_body=_reviewer(), task_id="t1", task_manager=manager
     )
 
     assert result is not None
@@ -285,7 +287,7 @@ def test_missing_plan_file_returns_structured_failure(tmp_path: Path) -> None:
     manager = _make_task_manager_with_artifact(str(missing))
 
     result = validate_plan_for_agent_spawn(
-        agent_name="plan-adversary", task_id="t1", task_manager=manager
+        agent_body=_reviewer(), task_id="t1", task_manager=manager
     )
 
     assert result is not None
@@ -300,7 +302,7 @@ def test_artifact_lookup_failure_passes_through(tmp_path: Path) -> None:
     manager.get_artifacts = MagicMock(side_effect=RuntimeError("db error"))
 
     result = validate_plan_for_agent_spawn(
-        agent_name="plan-adversary", task_id="t1", task_manager=manager
+        agent_body=_reviewer(), task_id="t1", task_manager=manager
     )
 
     assert result is None
@@ -324,7 +326,7 @@ def test_transient_postgres_error_skips_plan_gate(
     caplog.set_level(logging.WARNING)
 
     result = validate_plan_for_agent_spawn(
-        agent_name="plan-adversary",
+        agent_body=_reviewer(),
         task_id="t1",
         task_manager=manager,
     )
@@ -343,10 +345,13 @@ async def test_spawn_agent_impl_dispatches_plan_gate_off_event_loop(
 
     caller_thread = threading.get_ident()
     gate_threads: list[int] = []
+    received_definitions: list[object] = []
+    body = _reviewer()
     gate_failure = {"success": False, "error": "PlanValidationError: blocked"}
 
     def gate(*_args: object, **_kwargs: object) -> dict[str, object]:
         gate_threads.append(threading.get_ident())
+        received_definitions.append(_args[0])
         return gate_failure
 
     monkeypatch.setattr(plan_gate_module, "validate_plan_for_agent_spawn", gate)
@@ -354,7 +359,8 @@ async def test_spawn_agent_impl_dispatches_plan_gate_off_event_loop(
     result = await spawn_agent_impl(
         prompt="review plan",
         runner=MagicMock(),
-        agent_lookup_name="planner",
+        agent_body=body,
+        agent_lookup_name=body.name,
         task_id="t1",
         task_manager=MagicMock(),
     )
@@ -362,3 +368,4 @@ async def test_spawn_agent_impl_dispatches_plan_gate_off_event_loop(
     assert result == gate_failure
     assert len(gate_threads) == 1
     assert gate_threads[0] != caller_thread
+    assert received_definitions == [body]

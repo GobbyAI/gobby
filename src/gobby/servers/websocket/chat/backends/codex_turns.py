@@ -73,6 +73,8 @@ class CodexTurnSession(Protocol):
         tool_response: Any,
         *,
         is_error: bool | None = None,
+        tool_execution_id: str | None = None,
+        pending: bool = False,
     ) -> dict[str, Any] | None: ...
 
     def _resolve_context_window(self) -> int | None: ...
@@ -318,6 +320,8 @@ async def stream_codex_turn(
                             tool_event_data["arguments"],
                             tool_event_data["lifecycle_response"],
                             is_error=tool_event_data["is_error"],
+                            tool_execution_id=tool_event_data["execution_id"],
+                            pending=tool_event_data["pending"],
                         )
                         if tool_call_id:
                             lifecycle_completed_tool_call_ids.add(tool_call_id)
@@ -358,11 +362,15 @@ async def stream_codex_turn(
                 )
                 if pre_tool_payload is not None:
                     tool_name, tool_input = pre_tool_payload
-                    await session._dispatch_before_tool_once(
+                    decision = await session._dispatch_before_tool_once(
                         extract_before_tool_dedup_key(params),
                         tool_name,
                         tool_input,
                     )
+                    if decision and decision.get("decision") in {"block", "deny"}:
+                        if session._turn_id:
+                            await client.interrupt_turn(thread_id, session._turn_id)
+                        raise RuntimeError(decision.get("reason") or "Tool blocked by workflow")
                 if tool_event_data is not None:
                     start_event = _start_tool_event(tool_event_data)
                     if start_event is not None:

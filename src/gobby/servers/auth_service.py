@@ -38,6 +38,7 @@ from gobby.utils.local_token import (
     classify_agent_api_token,
     daemon_bootstrap_path,
     read_managed_signing_key,
+    verify_expired_agent_api_token,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ _SESSION_HEADER = "X-Gobby-Session-Id"
 _AGENT_RUN_HEADER = "X-Gobby-Agent-Run-Id"
 _MANAGED_EXECUTION_HEADER = "X-Gobby-Managed-Execution-Id"
 _HOOKS_EXECUTE_PATH = "/api/hooks/execute"
+_RUNTIME_HANDSHAKE_PATH = "/api/runtime/handshake"
 
 # Why a managed capability bearer was refused; rendered as the 401 body code.
 _CapabilityRejection = (
@@ -117,7 +119,7 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("GET", "/api/voice/status", True),
     _AgentRoute("POST", "/api/voice/transcribe", True),
     _AgentRoute("GET", "/api/providers/models", False),
-    _AgentRoute("POST", "/api/runtime/handshake", True),
+    _AgentRoute("POST", _RUNTIME_HANDSHAKE_PATH, True),
     _AgentRoute("GET", "/api/runtime/config", True),
     # Read-only `gobby` CLI listings backed by DaemonClient.
     _AgentRoute("GET", "/api/comms/channels", False),
@@ -310,6 +312,21 @@ class AuthService:
         if grant_route is None:
             rejection = self._legacy_rejection(request)
             if rejection is not None:
+                # Admit only a verified, live seat's POST handshake renewal.
+                # The route must be reachable through the production middleware
+                # before it can replace the expired capability or report failure.
+                renewal = (
+                    self.expired_renewal_claims(request)
+                    if rejection == "capability_expired"
+                    else None
+                )
+                if renewal is not None:
+                    return AuthDecision(
+                        allowed=True,
+                        user_id=self._machine_owner(renewal),
+                        machine_id=renewal.machine_id,
+                        bearer_claims=renewal,
+                    )
                 return AuthDecision(allowed=False, code=rejection, status_code=401)
             identity = self.verified_front_door_identity(request)
             user_id, break_glass = self._resolved_caller(request)
@@ -486,6 +503,38 @@ class AuthService:
         if len(parts) != 2 or parts[0].casefold() != "bearer":
             return None
         return self._verified_agent_claims_for_token(request, parts[1])
+
+    def expired_renewal_claims(self, request: HTTPConnection) -> AgentApiTokenClaims | None:
+        """Claims of an expired seat capability that may renew its own grant.
+
+        Only the handshake route consults this seam. The bearer's signature must
+        verify, its expiry must have passed, the claimed agent run must still be
+        active, and the identity headers must match the claims. Anything else
+        returns None and stays with the normal auth gate, which refuses it.
+        """
+        if request_path(request) != _RUNTIME_HANDSHAKE_PATH:
+            return None
+        if str(request.scope.get("method", "")) != "POST":
+            return None
+        authorization = request.headers.get("Authorization")
+        if authorization is None:
+            return None
+        parts = authorization.split(maxsplit=1)
+        if len(parts) != 2 or parts[0].casefold() != "bearer":
+            return None
+        claims = verify_expired_agent_api_token(parts[1], self.managed_signing_key())
+        if claims is None or claims.agent_run_id is None:
+            return None
+        if not self._agent_run_is_live(claims.agent_run_id):
+            return None
+        if not _agent_identity_matches(
+            request,
+            claims,
+            bind_identity=True,
+            resolve_session=lambda ref: self._resolve_agent_session_ref(ref, claims.project_id),
+        ):
+            return None
+        return claims
 
     def _verified_agent_claims_for_token(
         self,

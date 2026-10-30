@@ -36,8 +36,12 @@ Row accounting for the 122 live rows of `docs/contracts/parity-ledger-status.d/t
 - 48 MCP rows (37 `gobby-tasks`, 11 `gobby-tasks-ops`) get native descriptors and
   proven schema and result parity here. #21570 activates them; the rows stay
   `proxied` with #21570 owner notes.
-- 33 CLI rows get a documented native service contract here. #21571 builds the
-  client commands; the rows stay `proxied` with #21571 owner notes.
+- 33 CLI rows get a verb-to-public-API map here (Q12). #21571 builds the client
+  commands over the public MCP tool route; the rows stay `proxied` with #21571
+  owner notes.
+- 4 additive `gobby-tasks-ops` tools (`doctor_tasks`, `get_task_stats`,
+  `get_validation_history`, `restore_tasks`) give the operator-only verbs a
+  public operation. They are native extensions with no Python row (Q12).
 - 19 expansion rows (12 `gobby-tasks-ops` MCP tools and 7 CLI verbs) move to
   #21581, which consumes this plan's transactional write service.
 - 5 rows (`gobby tasks compact` and its three subcommands, `gobby tasks clean`)
@@ -72,7 +76,8 @@ The Orchestrator ruled these through Triage (gobby#17480) on 2026-10-28:
   `protected_subtrees` entry in the project policy rule, not a label and not a
   hardcoded constant.
 - **Q6 CLI ownership.** CLI rows stay `proxied` with #21571 owner notes. This
-  plan exports a documented native service contract for all 33 verbs. The
+  plan exports a documented contract for all 33 verbs, which Q12 makes a
+  verb-to-public-API map. The
   Python CLI remains a direct-storage writer until #21571 replaces it.
 - **Q7 lock keys.** #25262 gives every hub `LockTarget` an explicit key and makes
   the repr fallback raise. Deliverables that take Python-shared locks depend on
@@ -108,6 +113,31 @@ The Orchestrator ruled these through Triage (gobby#17480) on 2026-10-28:
   `POST /api/tasks/{task_id}/claim` stays proxied, and its ledger row carries
   the #21562 owner note. Cross-plan edge: #21562 implements the port over its
   native mailbox and activates the route with its own compare evidence.
+- **Q12 CLI transport.** #21571 carries every `gobby tasks` verb in the Rust
+  client over the public `POST /api/mcp/{server}/tools/{tool}` route, the route
+  its read slice already uses. A DB-free client or node never calls gtasks in
+  process. 5.5 publishes the verb-to-public-API map. `doctor`, `stats`,
+  `validation-history` and `restore` have no public operation today, so 5.4
+  adds them as operator-only `gobby-tasks-ops` tools with #24963
+  native-extension entries; restore reads only the hub's default backup path.
+  #21571's inventory row now names #21571 (ad3f8ab), ending the two plans'
+  mutual deferral.
+- **Q13 residual #20822 requirements.**
+  - (a) Dependency edges: `add_dependency`, `remove_dependency` and
+    `create_task(blocks=[...])` need claim authority over each task whose
+    readiness changes. That is `task_id` for an add or remove, and each blocked
+    task for `blocks`. Unclaimed tasks stay open to project sessions.
+  - (b) `auto_link_commits` with a `task_id` needs claim authority over that
+    task. A project-wide scan without one is coordinator-lane: `Operator`, the
+    Orchestrator coordinator, the team's Dev Manager or `Daemon`.
+  - (c) Sessions keep `backup_tasks` to the default path only, which removes
+    the audit's any-caller-path hazard; restore stays operator-only.
+  - (d) The expansion runtime (audit item 3) transfers to #21581 with Q2's rows.
+    3.1's write service takes the caller's principal, and expansion apply
+    passes the run's initiating session rather than `Daemon`, so 2.1's table
+    refuses an auto-apply under a foreign live claim. #21581 owns cancel and
+    resume scoping.
+  The other #20822 items are dispositioned in 2.1 and accepted.
 
 Earlier hub-node rulings for Stage 2 families apply: macOS and Linux only
 (Windows is #25249), and no latency gates.
@@ -174,6 +204,13 @@ under an exact #24963 waiver. No whole live surface is dropped except D1 and D2.
   checks one transition table. HTTP callers are the operator principal, so HTTP
   results do not change; the ground `operator` is recorded where a transition
   is exceptional.
+- **D9 dependency readiness authority.** `add_dependency`, `remove_dependency`
+  and `create_task(blocks=[...])` change another task's readiness with no check
+  today (`src/gobby/mcp_proxy/tools/task_dependencies.py::create_dependency_registry`).
+  Native edges need claim authority over each task whose readiness changes
+  (Q13a).
+- **D10 auto-link lane.** `auto_link_commits` links any task its scan finds,
+  with no claim or lane check. Native auto-link follows Q13b.
 
 Already resolved, ported unchanged: fail-open session resolution left with the
 stage tools under #23341, and revoke-instead-of-deny was fixed by #20821's
@@ -204,6 +241,14 @@ replacement. No wildcard surface is valid.
   `tasks.mcp-update-task.gate-label-authority`,
   `tasks.mcp-add-label.gate-label-authority` and
   `tasks.mcp-remove-label.gate-label-authority`, decision `#2.1`.
+- D9 `tasks.mcp-add-dependency.readiness-authority`,
+  `tasks.mcp-remove-dependency.readiness-authority` and
+  `tasks.mcp-create-task.readiness-authority`, decision `#2.1`.
+- D10 `tasks.mcp-auto-link-commits.lane-authority`, decision `#2.1`.
+- Q12 CLI paths: `tasks.cli-backup.default-path-only` and
+  `tasks.cli-restore.default-path-only`, decision `#5.5`. Python's `--output`
+  and `--input` options name any local path; over the public API, backup and
+  restore use only the hub's default path.
 - Node checkout git: `tasks.mcp-close-task.node-checkout-git`,
   `tasks.mcp-get-task-diff.node-checkout-git`,
   `tasks.mcp-link-commit.node-checkout-git`,
@@ -772,13 +817,19 @@ Principals, resolved once per call from authenticated context, never from
 request fields:
 - `Operator`: an HTTP request carrying `x-gobby-key-id`
   (`crates/gruntime/src/lib.rs::Caller`), a verified browser cookie after 4.4,
-  and the CLI once #21571 delivers it.
+  and #21571's CLI (Q12).
 - `Session`: an MCP call whose `crates/gcore/src/mcp.rs::ToolContext` carries a
   `session_id`, with `project_id`, `agent_run_id` and `machine_id`. The role is
   the session's reserved `_agent_type` variable.
-- `Daemon`: in-process callers such as #21581's expansion apply through the 3.1
-  write service and live-session recovery.
+- `Daemon`: in-process callers such as live-session recovery and 3.7's
+  terminal-epic archive hook. Expansion apply is not `Daemon`: it passes the
+  run's initiating session (Q13d).
 - `Anonymous`: an MCP call with no session context.
+
+A call over `POST /api/mcp/{server}/tools/{tool}` is `Session` when its
+`ToolContext` carries a `session_id`. Otherwise it is `Operator` only when the
+front door verified an operator key, which is how #21571's CLI calls. A call
+with neither is `Anonymous`.
 
 Relationships of a `Session` to a task port the Python predicates exactly:
 owner (`claimed_by_session_id` equals the caller), delegation lineage
@@ -798,25 +849,60 @@ affected files, artifacts, description section, isolation pair, comment add and
 delete, claim, takeover, release, hand-off, delegate, session link, escalate,
 de-escalate, reopen, close, candidate repair, step record, commit link, unlink
 and auto-link, observed files, land, landing freeze, backup, restore and
-reindex. Each row lists its allowed principals and relationships and its
+reindex. It also has rows for the operator-only doctor, stats and
+validation-history reads (Q12). Each row lists its allowed principals and relationships and its
 daemon-verifiable preconditions. A pair not in the table is refused as
 `forbidden`. Rows reproduce today's checks: `require_claim_authority` guards
 `link_commit`, `unlink_commit`, `set_affected_files`, the artifact setters,
 `delete_task`, `add_label`, `remove_label`, `reopen_task`, `escalate_task`,
-`de_escalate_task` and `link_task_to_session`; `update_task` and the dependency
-tools have no claim check today, and their rows keep that; `land_commit` keeps
+`de_escalate_task` and `link_task_to_session`. `update_task` has no claim check
+today, and its row keeps that. `land_commit` keeps
 its `_manages_task` and Orchestrator rules from
-`src/gobby/tasks/land_commit.py::land_candidate`; restore stays operator-only
-(#24797) and `backup_tasks` writes only the default path. `Operator` is allowed
+`src/gobby/tasks/land_commit.py::land_candidate`. Restore stays operator-only
+(#24797), and sessions keep `backup_tasks` to the default path (Q13c). The four
+Q12 tools (`doctor_tasks`, `get_task_stats`, `get_validation_history` and
+`restore_tasks`) are operator-only.
+
+Two rows change today's checks:
+- Dependency add and remove, and each task named in `create_task`'s `blocks`,
+  need claim authority over the task whose readiness changes (Q13a, D9). That
+  is the owner, delegation lineage, the Orchestrator coordinator, the team's
+  Dev Manager, `Operator` or `Daemon`. An unclaimed task stays open to sessions
+  in its project. For `create_task`, a refused `blocks` entry refuses the whole
+  create.
+- Auto-link with a `task_id` needs claim authority over that task. A scan
+  without one is limited to `Operator`, the Orchestrator coordinator, the
+  team's Dev Manager and `Daemon` (Q13b, D10).
+
+`Operator` is allowed
 on every HTTP transition with its existing HTTP semantics, so HTTP results do
 not change. `Anonymous` is allowed exactly where Python allows a call without
 session context: unclaimed tasks, never a claimed one.
 
 Exceptional transitions record their ground in the existing
 `task_lifecycle_events` table (`from_state`, `to_state`, `reason`, `by_actor`),
-with `reason` set to `<transition>:<ground>` and `by_actor` set to the
-principal. Grounds are `owner_dead`, `delegated`, `coordinator` and `operator`
-(Q8); 3.5 uses them for takeover.
+with `reason` set to `<transition>:<ground>:<evidence>` and `by_actor` set to
+the principal. Grounds are `owner_dead`, `delegated`, `coordinator` and
+`operator` (Q8); 3.5 uses them for takeover. The evidence is what the daemon
+verified. For `owner_dead`, it is the owner session id and its status. For
+`delegated`, it is the agent run id. For `coordinator`, it is the caller's
+session id and role. For `operator`, it is the key id. The free-text `reason`
+column carries it, so the schema does not change.
+
+The table settles every #20822 item:
+- Item 1 (takeover): Q8 grounds plus the evidence above.
+- Items 2 and 7 (stage and registry tools): those tools left with #23341.
+- Item 3 (expansion runtime): moves to #21581 (Q13d).
+- Item 4 (backup and restore): Q13c.
+- Item 5 (coordinator-lane tools): only `auto_link_commits` survives, under
+  Q13b.
+- Item 6 (dependency edges): Q13a.
+- Item 8 (resolution and lanes): D5 and D8.
+- Item 9 (gate-bearing labels): Q9.
+- Item 10 (attribution): already enforced. `release_task_claim` and
+  `hand_off_task_claim` refuse while task-attributed files are dirty
+  (`src/gobby/mcp_proxy/tools/tasks/_claim_release.py::_uncommitted_refusal`),
+  and 3.5 ports that refusal.
 
 `labels.rs` applies Q9. The gate-bearing set is `tdd:required`,
 `needs-decision`, `needs-planning`, `clean-window`, `live-session`,
@@ -832,12 +918,17 @@ additionally keeps `src/gobby/mcp_proxy/tools/tasks/_live_session_label.py::live
 and the grounds, and replaces the audit's proposal as the contract of record.
 Planned: `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks --test authority`.
 
+**Granularity:** Seven items prove one static table and the principal resolver
+that feeds it. Splitting them would ship a table with unproven rows.
+
 **Acceptance:**
-- 2.1.1 - Every transition reproduces 0.3's Python result for all eight caller relationships, except the cited D5, D6 and D7 replacements. test: `crates/gtasks/tests/authority.rs::table_matches_python_relationships`.
+- 2.1.1 - Every transition reproduces 0.3's Python result for all eight caller relationships, except the cited D5, D6, D7, D9 and D10 replacements. test: `crates/gtasks/tests/authority.rs::table_matches_python_relationships`.
 - 2.1.2 - Unlisted principal and transition pairs, unresolvable session references and claimed tasks without session context are refused with no write. test: `crates/gtasks/tests/authority.rs::unlisted_pairs_fail_closed`.
 - 2.1.3 - Gate-bearing label adds and removals follow Q9 for every principal, with `live-session` keeping its extra guard. test: `crates/gtasks/tests/authority.rs::gate_labels_follow_q9`.
-- 2.1.4 - Exceptional transitions write one `task_lifecycle_events` row naming the transition, ground and principal. test: `crates/gtasks/tests/authority.rs::grounds_are_recorded`.
-- 2.1.5 - The authority contract documents principals, the full table, grounds and label rules. file: `docs/contracts/task-authority.md`.
+- 2.1.4 - Exceptional transitions write one `task_lifecycle_events` row naming the transition, ground, verified evidence and principal. test: `crates/gtasks/tests/authority.rs::grounds_are_recorded`.
+- 2.1.5 - The authority contract documents principals, the full table, grounds, label rules and the disposition of every #20822 item. file: `docs/contracts/task-authority.md`.
+- 2.1.6 - Dependency add and remove, `create_task` `blocks`, and auto-link with and without a `task_id` follow Q13a and Q13b for every relationship, and each refusal writes nothing. test: `crates/gtasks/tests/authority.rs::readiness_and_auto_link_authority`.
+- 2.1.7 - A tool-route call resolves to `Session` with a session context, to `Operator` only with a verified operator key, and to `Anonymous` otherwise, and the restore, doctor, stats and validation-history rows admit only `Operator`. test: `crates/gtasks/tests/authority.rs::tool_route_principals`.
 
 ### 2.2 Protected subtrees from project policy [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -936,16 +1027,22 @@ The write service is the boundary #21581 consumes. Its contract, documented in
 then creates each task, sets its labels, sets affected files with source
 `expansion`, adds `blocks` dependencies, and sets the `target_branch` and
 `expansion_run_id` artifacts. That is the same sequence
-`src/gobby/tasks/expansion/_apply.py::apply_run` performs today. The caller is
-`Daemon`. Creating tasks, edges, labels, affected files and artifacts outside
-expansion uses the same functions with the caller's principal.
+`src/gobby/tasks/expansion/_apply.py::apply_run` performs today. The service
+takes the caller's principal and checks 2.1's table for each write. Expansion
+apply passes the run's initiating session, never `Daemon` (Q13d), so an
+auto-apply under a foreign live claim is refused with no write. #21581 owns
+the expansion run's cancel and resume scoping. Creating tasks, edges, labels,
+affected files and artifacts outside expansion uses the same functions with
+the caller's principal. `create_task`'s `blocks` applies Q13a to each blocked
+task before any write.
 Planned: `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks --test write`.
 
 **Acceptance:**
 - 3.1.1 - Create, update, reparent, delete with cascade and unlink, labels and description sections match 0.3's rows and errors. test: `crates/gtasks/tests/write.rs::task_writes_match_python`.
 - 3.1.2 - Native writes take Python's lock keys in priority order and serialize against a concurrent Python writer. test: `crates/gtasks/tests/write.rs::writes_share_python_locks`.
 - 3.1.3 - The expansion write service creates a tree with labels, affected files, edges and artifacts in one transaction and rolls back whole on failure. test: `crates/gtasks/tests/write.rs::expansion_write_service_is_atomic`.
-- 3.1.4 - The write-service contract names the operations, locks, principal and transaction boundary #21581 consumes. file: `docs/contracts/tasks-services.md`.
+- 3.1.4 - The write-service contract names the operations, locks, the caller-principal parameter and transaction boundary #21581 consumes, and states that expansion apply passes the initiating session. file: `docs/contracts/tasks-services.md`.
+- 3.1.5 - An expansion apply whose initiating session lacks authority over a foreign live-claimed parent, and a `create_task` whose `blocks` names a task the caller cannot change, are refused with no task written. test: `crates/gtasks/tests/write.rs::write_service_checks_caller_principal`.
 
 ### 3.2 Dependency edges [category: code] (depends: 3.1, #25262)
 `kind: deliverable`
@@ -963,12 +1060,16 @@ and the CLI callbacks `src/gobby/cli/tasks/deps.py::dep_add` and
 `src/gobby/cli/tasks/deps.py::dep_remove`. Edges are written under the
 `TaskDependencyMutation` lock with #25262's explicit key, and the cycle check
 from 1.2 runs inside the same transaction. Self-edges and duplicate edges keep
-Python's errors.
+Python's errors. Before any write, each add or remove checks 2.1's Q13a row
+against the task whose readiness changes (`task_id`). The MCP surfaces assert
+their D9 entries. HTTP and CLI callers are `Operator`, so their results do not
+change.
 Planned: `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks --test deps`.
 
 **Acceptance:**
 - 3.2.1 - Edge adds and removes match 0.3's rows and errors on every lane. test: `crates/gtasks/tests/deps.rs::dependency_edges_match_python`.
 - 3.2.2 - An edge that would close a cycle is refused inside the locked transaction, including under a concurrent Python writer. test: `crates/gtasks/tests/deps.rs::cycles_refused_under_lock`.
+- 3.2.3 - A session without claim authority over a claimed `task_id` cannot add or remove its edges, writes nothing, and gets the D9 refusal; an unclaimed task stays open. test: `crates/gtasks/tests/deps.rs::edge_readiness_authority`.
 
 ### 3.3 Affected files, artifacts and isolation pairs [category: code] (depends: 3.2)
 `kind: deliverable`
@@ -1129,10 +1230,33 @@ Closing an epic as done or moot triggers plan archival after commit, as
 `src/gobby/storage/tasks/_close.py::_schedule_ancestor_epic_archive` does
 through `src/gobby/storage/plans.py::LocalPlanManager.archive_plan`.
 `plan_archive.rs` is a narrow native implementation of that step behind a
-terminal-epic hook: move the linked plan to `.gobby/plans/completed/`, mark the
-`plans` row archived, roll the move back if the row update fails, and do nothing
-when no plan is linked. #21581 later moves this implementation into the Plans
-crate and rewires the hook; 6.1 records that handoff.
+terminal-epic hook, and it keeps every observable effect of `archive_plan`:
+- An already archived row returns unchanged, so a repeated archive is a no-op.
+- The destination keeps the path below `.gobby/plans/`, so
+  `.gobby/plans/a/b.md` moves to `.gobby/plans/completed/a/b.md`. A path outside
+  `.gobby/plans/` keeps its whole relative path.
+- A missing source file refuses before any move or row write, because
+  `src/gobby/storage/plans.py::LocalPlanManager._relative_plan_path` raises
+  `FileNotFoundError` ahead of the move. A file outside the project root
+  refuses the same way with `ValueError`.
+- An existing destination file refuses the archive before any move, as Python's
+  `FileExistsError` does, and nothing is written.
+- The `plans` row records `state` archived, the new `plan_path`, `archived_at`
+  and `updated_at`. If that update fails, the move is rolled back.
+- After the row commits, the coverage manifest at
+  `src/gobby/plans/coverage_manifest.py::coverage_manifest_path` is removed for
+  every plan kind except `strategy`, as
+  `src/gobby/storage/plans.py::LocalPlanManager._remove_coverage_artifacts`
+  does. A missing manifest is not an error.
+- Nothing happens when no plan is linked.
+- Archival runs after the close commits, so a refusal never fails the close.
+  As `src/gobby/hooks/event_handlers/_plan.py::on_epic_terminal` does, a
+  missing plan or missing source file is a silent no-op and any other refusal
+  is logged.
+The oracles are `tests/storage/test_plans_manager.py`, whose archive test
+asserts manifest removal and a repeated archive, and
+`tests/hooks/event_handlers/test_plan.py` for the hook. #21581 later moves this implementation
+into the Plans crate and rewires the hook; 6.1 records that handoff.
 Planned: `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks --test close`.
 
 **Granularity:** The refusals, five gates, finalization and step records form one
@@ -1143,6 +1267,7 @@ close state machine; repair and step records feed gate 5 directly.
 - 3.7.2 - Successful closes write Python's rows, receipts, lifecycle events and ancestor auto-closes, and HTTP close keeps its operator semantics. test: `crates/gtasks/tests/close.rs::close_finalization_matches_python`.
 - 3.7.3 - Candidate repair and the four step records match Python, including SHA resolution. test: `crates/gtasks/tests/close.rs::repair_and_steps_match_python`.
 - 3.7.4 - Closing an epic as done or moot archives its linked plan after commit, rolls back on failure and is a no-op without a plan. test: `crates/gtasks/tests/close.rs::epic_close_archives_plan`.
+- 3.7.6 - Native archival matches `archive_plan`: nested paths map below `completed/`, the coverage manifest is removed except for strategy plans, a repeated archive changes nothing, a missing source, a source outside the project root or an existing destination refuses with no move and no row write, and the epic close still succeeds. test: `crates/gtasks/tests/close.rs::plan_archive_matches_python`.
 - 3.7.5 - A session on another machine is still refused with Python's remote-session error. test: `crates/gtasks/tests/close.rs::remote_session_close_refused_locally`.
 
 ### 3.8 Node checkout git evidence [category: code] (depends: 3.7, #24521, #24532)
@@ -1172,6 +1297,27 @@ verification, auto-link, step-record SHA resolution and observed-file updates
 work for node checkouts. Each changed surface carries its node-checkout-git
 entry from the waiver inventory. A node that is offline or refuses the query
 returns #24970 `unavailable` with no write.
+
+The node's reply is untrusted evidence, so `node_git.rs` validates it before
+any caller reads stdout. The reply shape is
+`crates/gdaemon/src/node_commands/checkout_read.rs::CheckoutReadResult` (`root`,
+`project_id`, `git`) with
+`crates/gdaemon/src/node_commands/checkout_read.rs::GitResult` (`exit_code`,
+`timed_out`, `stdout`, `stderr`, `truncated`). The node caps a reply at 8 MiB
+(`REPLY_BUDGET`). 4.1a's reader maps these fields into the port's own type
+unchanged. Each of these is refused as `unavailable`, with no task, step, link
+or observed-file write:
+- a missing `git` result;
+- a `project_id` other than the task's project, or a `root` that is neither
+  the queried `cwd` (the session's `workspace_path`) nor an ancestor of it;
+- `timed_out`;
+- `truncated`, so a capped diff, status or log never becomes close, commit or
+  observed-file evidence;
+- an `exit_code` of none, meaning git died on a signal.
+A numeric exit code, zero or not, goes to the same per-operation
+interpretation the local port applies. A non-ancestor answer from
+`merge-base --is-ancestor`, for example, stays a domain result. No retry or
+paging is added.
 Planned: `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks --test node_git`; the
 live node-channel case runs in 4.1a's bridge test.
 
@@ -1179,6 +1325,7 @@ live node-channel case runs in 4.1a's bridge test.
 - 3.8.1 - The five close gates evaluate a node session's checkout through `checkout.read` and match the local result for the same repository state. test: `crates/gtasks/tests/node_git.rs::node_close_gates_match_local`.
 - 3.8.2 - Diff, commit verification, auto-link, step-record SHA resolution and observed files resolve against the node checkout under their exact entries. test: `crates/gtasks/tests/node_git.rs::node_git_surfaces_use_checkout_read`.
 - 3.8.3 - An offline or refusing node yields `unavailable` and no write. test: `crates/gtasks/tests/node_git.rs::node_unavailable_writes_nothing`.
+- 3.8.4 - A reply that is truncated, timed out, signal-killed, missing its git result, or from another project or root yields `unavailable` with no write. A nonzero exit code gets the same interpretation as the local port. test: `crates/gtasks/tests/node_git.rs::incomplete_node_replies_are_refused`.
 
 ### 3.9 Commit links and observed files [category: code] (depends: 3.8)
 `kind: deliverable`
@@ -1196,13 +1343,16 @@ the CLI callbacks `src/gobby/cli/tasks/commits.py::link_commit`,
 `src/gobby/cli/tasks/commits.py::unlink_commit`,
 `src/gobby/cli/tasks/commits.py::auto_link` and
 `src/gobby/cli/tasks/commits.py::list_commits`. Links keep the candidate flag
-and the claim-authority rule from 2.1; auto-link scans the same git log range
-for task refs through the git port.
+and the claim-authority rule from 2.1. Auto-link scans the same git log range
+for task refs through the git port, after 2.1's Q13b row admits the caller.
+With a `task_id`, that means claim authority over that task. A project-wide
+scan is coordinator-lane only, and `auto_link_commits` asserts its D10 entry.
 Planned: `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks --test commits`.
 
 **Acceptance:**
 - 3.9.1 - Link, unlink, list and auto-link match 0.3's rows and errors. test: `crates/gtasks/tests/commits.rs::commit_links_match_python`.
 - 3.9.2 - Observed-file updates derive the same files from linked commits and honor `require_commits`. test: `crates/gtasks/tests/commits.rs::observed_files_match_python`.
+- 3.9.3 - Auto-link refuses a session without authority over its `task_id`, and refuses a project-wide scan outside the coordinator lane, with no link written. test: `crates/gtasks/tests/commits.rs::auto_link_lane_authority`.
 
 ### 3.10 Landing freeze and land_commit [category: code] (depends: 3.9)
 `kind: deliverable`
@@ -1254,11 +1404,14 @@ shells), `src/gobby/cli/tasks/main.py::doctor_cmd` after 0.1,
 `src/gobby/mcp_proxy/tools/tasks/_search.py`, which returns statistics because
 pg_search maintains the BM25 index. Backup JSONL is byte-compatible with
 Python's so either side restores the other's file. Backup runs on demand only.
+Native backup and restore take no path. Both use the hub's default
+`~/.gobby/backups/<project-uuid>/tasks.jsonl` (Q12, Q13c), so the CLI's
+`--output` and `--input` become the two default-path-only waivers.
 Planned: `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks --test ops`.
 
 **Acceptance:**
 - 3.11.1 - Native backup writes Python's JSONL to the default path only, and native and Python restore each other's files identically. test: `crates/gtasks/tests/ops.rs::backup_round_trips_with_python`.
-- 3.11.2 - Restore is refused to every principal except `Operator`. test: `crates/gtasks/tests/ops.rs::restore_is_operator_only`.
+- 3.11.2 - Restore reads only the hub's default backup path and is refused to every principal except `Operator`. test: `crates/gtasks/tests/ops.rs::restore_is_operator_only`.
 - 3.11.3 - Doctor's two checks, stats, validation history and reindex statistics match Python. test: `crates/gtasks/tests/ops.rs::ops_reports_match_python`.
 
 ## P4: HTTP family and activation
@@ -1410,13 +1563,64 @@ Targets:
 
 **Research context:** #21559's Compare dispatch
 (`crates/gdaemon/src/front_door/compare.rs`) runs native read legs, proxies
-writes once, then calls `RouteFamily::check_proxied` with a `ProxiedCheck`. A
-task can change between the two read legs: compare snapshots `updated_at` of
-the rows it reads, and a changed row marks the case Skipped with a bounded
-reason, never a match. For writes, Python executes once; `check_proxied` reads
-Python's committed post-image (task row, `task_lifecycle_events`, dependency,
-comment and session-variable rows) and checks the response against the native
-projection of that state without repeating the mutation. The compare log
+writes once, then calls `RouteFamily::check_proxied` with a `ProxiedCheck`.
+
+State can change between the two read legs, and task `updated_at` alone cannot
+see it. `task_dependencies` has no `updated_at` (`id`, `task_id`, `depends_on`,
+`dep_type`, `created_at`). Comment inserts and deletes in
+`src/gobby/servers/routes/tasks_comment_routes.py` touch only `task_comments`.
+A new list member changes no existing row. So compare reads a stability set
+before the first leg and after the second, in one read transaction each. The
+set is the bounded logical result the route's native projection consumes:
+- the ordered identities of a list or search result;
+- each consumed task row's identity and `updated_at`;
+- the identity and content of each consumed dependency edge, comment and label.
+Any difference marks the case Skipped with a bounded reason and is never a
+match. A case whose result is unbounded or larger than the set limit cannot be
+proven stable, so it is Skipped conservatively.
+
+For writes, Python executes once. Another writer can commit between Python's
+commit and `check_proxied`'s first read, so the post-image must be tied to the
+response before it is compared. `check_proxied` reads the post-image (the task
+row, `task_lifecycle_events`, dependency, comment and session-variable rows) in
+one read transaction, and the check uses only that snapshot. Each operation
+then proves linkage through an anchor its response already carries, as
+`crates/gruntime/src/verify.rs::verify` does with `config_revision`:
+- Task-row writes (`POST /api/tasks`, `PATCH`, close, reopen, escalate,
+  de-escalate and release-claim) return
+  `src/gobby/storage/tasks/_models.py::Task.to_dict`. The anchor is its `id`
+  and `updated_at`. A matching row is compared in full, so a difference is a
+  Mismatch. A different `updated_at` or a missing row means a later write, and
+  the case is Skipped.
+- Comment add returns the inserted row and dependency add returns
+  `src/gobby/storage/task_dependencies.py::TaskDependency.to_dict`. The anchor
+  is the row `id`. A present row is compared in full; a missing row means a
+  later delete, and the case is Skipped.
+- Task delete and comment delete name a UUID. Absence is Verified. A present
+  comment is a Mismatch, because no path recreates a comment UUID. A present
+  task is Skipped, because 3.11's restore re-inserts tasks by `id`
+  (`src/gobby/sync/tasks.py` inserts with `ON CONFLICT (id) DO NOTHING`).
+- Dependency remove returns only the pair, and a later add can restore the
+  same pair under a new edge `id`. Absence is Verified; a present pair is
+  Skipped.
+- Effects the response does not carry are lifecycle events, ancestor
+  auto-closes and session-variable keys. They are linked only when they are
+  exactly the effects native projects from the request and the anchored row,
+  and the task's newest events are those events. Anything else is Skipped,
+  because `src/gobby/mcp_proxy/tools/tasks/_claim_release.py` and
+  `src/gobby/tasks/commit_unlink.py` append events without touching the task
+  row.
+- A refused write commits nothing and carries no anchor. It is Verified when
+  native refuses the same request identically against the snapshot, and
+  otherwise Skipped, because a later write may have removed the refusing
+  condition.
+Skipped never counts as a pass:
+`crates/gdaemon/src/front_door/compare.rs::Report::passes` fails a report with
+any unwaived Skipped outcome. An isolated, undisturbed case reproduces every
+anchor and still Passes. A test reproduces the race deterministically without
+a new seam: it runs the Python write, keeps response A, commits a competing
+write B, then calls `check_proxied` with A. No mutation is repeated, and these
+checks add no schema version column and no retry. The compare log
 stores IDs and reasons, never descriptions, comments or commit content. The
 claim route is unclaimed (Q11), so compare never sees it; 4.1.12 covers it.
 
@@ -1438,6 +1642,7 @@ outcome is trustworthy compare and replay evidence for this family.
 
 **Acceptance:**
 - 4.2.1 - Read and write comparisons detect a tampered response or post-image, skip concurrent changes and never repeat a mutation. test: `crates/gtasks/tests/compare.rs::compare_is_side_effect_free_and_race_aware`.
+- 4.2.6 - A dependency add or remove, a comment add or delete, or a new list member injected between read legs marks the case Skipped. So does a competing write committed after Python's write and before the first post-image read: a task update, a delete of the added comment or edge, a re-add of the removed edge, a default-backup restore after a task delete, or a change that lifts a refusal. A comment still present after a delete response is a Mismatch, and an undisturbed case still Passes. test: `crates/gtasks/tests/compare.rs::relation_and_membership_races_skip`.
 - 4.2.2 - The sixteen claimed cases replay with ordinary parity or exact cited #24963 replacements, keep Python origin and need no Python backend for native legs. test: `tests/e2e/test_tasks_family.py::test_native_tasks_corpus_matches_python`.
 - 4.2.3 - Controlled compare covers every claimed route with stable evidence, at least one ordinary Passed case and zero unwaived mismatches, and all-Skipped or unwaived-Skipped readiness fails. test: `tests/e2e/test_tasks_family.py::test_compare_has_coverage_without_double_effects`.
 - 4.2.4 - A paired node forwards `/api/tasks` requests to the hub's native family without a database credential. test: `tests/e2e/test_tasks_family.py::test_node_routes_tasks_to_hub`.
@@ -1720,15 +1925,30 @@ Setters assert their project-scoped-refs entries where 0.3 recorded one.
 Python's `gobby-tasks-ops` server also carries the twelve expansion tools that
 move to #21581 (Q2), and `ToolRegistry::new` refuses two families with one
 server name. `mcp/mod.rs` therefore builds the `gobby-tasks-ops` server from
-these eleven tools plus any `ToolDefinition`s the composer passes in.
+these eleven tools, Q12's four tools and any `ToolDefinition`s the composer
+passes in.
 Cross-plan edge: #21581 passes its twelve expansion definitions through that
-constructor, and #21570 activates the full 23-tool server. This leaf proves the
+constructor, and #21570 activates the full 27-tool server. This leaf proves the
 eleven tools' parity and that passed-in definitions join the same server.
+
+Q12 adds four operator-only tools to this server, so #21571's CLI reaches every
+verb over the public tool route: `doctor_tasks`, `get_task_stats`,
+`get_validation_history` and `restore_tasks`. Each calls its 3.11 service. Its
+arguments are the CLI verb's options without any path: project scope for
+`doctor_tasks`, `get_task_stats` and `restore_tasks`, and `task_id` for
+`get_validation_history`. Results carry the service's data, and the CLI
+renders them. `restore_tasks` reads only the hub's default backup path. 2.1's
+rows admit only `Operator`, so a session or anonymous call is refused as
+`forbidden` before any read or write. They are native extensions with no
+Python counterpart. Their parity is to the 3.11 services' data, which 3.11
+already proves against Python, and 6.1 registers their native-extension
+entries.
 Planned: `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks --test mcp_ops` and
 `CARGO_BUILD_JOBS=3 cargo test -p gobby-core --test mcp_contract`.
 
-**Granularity:** Eleven tool items, a server-assembly item, a catalog item and a
-safe-error item exercise one descriptor adapter.
+**Granularity:** Fifteen tool items, a server-assembly item, a catalog item and
+a safe-error item exercise one descriptor adapter. The four Q12 tools share
+that adapter and the same server assembly.
 
 **Acceptance:**
 - 5.4.1 - `append_description_section` matches section writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
@@ -1746,42 +1966,96 @@ safe-error item exercise one descriptor adapter.
 - 5.4.13 - The eleven tools' catalog entries, schemas, definition hashes, classifications and validation failures match 0.3, and malformed arguments make no service call. test: `crates/gtasks/tests/mcp_ops.rs::ops_catalog_matches_python`.
 - 5.4.14 - Each of the eleven tools returns the safe internal message under its own redaction entry with no partial write. test: `crates/gtasks/tests/mcp_ops.rs::ops_internal_errors_are_safe`.
 - 5.4.15 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 5.4.16 - `doctor_tasks` returns 3.11's cycle and invalid-project checks to `Operator` only. test: `crates/gtasks/tests/mcp_ops.rs::doctor_tasks_is_operator_only`.
+- 5.4.17 - `get_task_stats` returns 3.11's statistics to `Operator` only. test: `crates/gtasks/tests/mcp_ops.rs::get_task_stats_is_operator_only`.
+- 5.4.18 - `get_validation_history` returns 3.11's history for a task to `Operator` only. test: `crates/gtasks/tests/mcp_ops.rs::get_validation_history_is_operator_only`.
+- 5.4.19 - `restore_tasks` restores only from the hub's default backup path, takes no path argument, and refuses every non-`Operator` caller with no write. test: `crates/gtasks/tests/mcp_ops.rs::restore_tasks_is_operator_only`.
 
-### 5.5 Native service contract for the CLI [category: code] (depends: 3.11)
+### 5.5 CLI verb-to-public-API map [category: code] (depends: 5.4)
 `kind: deliverable`
 
 Targets:
 - `docs/contracts/tasks-services.md` — edit the file created by 3.1
-- `crates/gtasks/tests/service_contract.rs`
+- `crates/gtasks/tests/cli_api_map.rs`
 
 **Research context:** The Python CLI under `src/gobby/cli/tasks/` (`main.py`,
 `crud.py`, `commits.py`, `deps.py`, `labels.py`, `search.py`, `ai.py`) writes
-storage directly through `LocalTaskManager` (Q6). Extend the 3.1 contract with a
-verb-by-verb map for all 33 CLI rows: the 29 domain verbs and the four group
-rows (`gobby tasks`, `commit`, `dep`, `label`), which dispatch only. Each verb
-names its native service function from P1 or P3, inputs and defaults, output
-data, typed errors, principal `Operator`, and its waiver IDs:
-`tasks.cli-<verb-slug>.safe-errors` for the 29 domain verbs and the four CLI
-node-checkout-git entries. `restore` stays operator-only and is refused to
-agent shells. #21571 owns argument parsing, text and JSON rendering and removal
-of the Python callbacks. Its native CLI calls these functions in process with
-no second transport, and asserts the safe-errors entries when it delivers each
-verb. The contract test drives 0.3's CLI vectors through the mapped functions
-and compares data and typed errors; rendering is #21571's.
-Planned: `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks --test service_contract`.
+storage directly through `LocalTaskManager` (Q6). Under Q12, #21571's Rust
+client carries every verb over the public
+`POST /api/mcp/{server}/tools/{tool}` route with an operator key. That is the
+route its read slice (`.gobby/plans/client-operator-verbs.md` 1.3) already
+uses, so a DB-free client or node needs no in-process access. The hub's native
+handlers serve the route once #21570 activates both servers.
+
+Extend the 3.1 contract with a verb-by-verb map for all 33 CLI rows: the 29
+domain verbs and the four group rows (`gobby tasks`, `commit`, `dep`, `label`),
+which dispatch only. Each verb's entry names:
+- its tool;
+- the explicit arguments that reproduce the Python verb's defaults;
+- the projection from the tool result to the verb's data;
+- its typed errors;
+- principal `Operator`;
+- its waiver IDs: `tasks.cli-<verb-slug>.safe-errors`, the four CLI
+  node-checkout-git entries, and the two Q12 default-path entries.
+
+The map, `gobby-tasks` unless marked ops:
+- `backup`: `backup_tasks`
+- `blocked`: `list_blocked_tasks`
+- `close`: `close_task`
+- `commit-auto`: `auto_link_commits`
+- `commit-link`: `link_commit`
+- `commit-list`: `get_task` with `brief=false`, projecting `commits`
+- `commit-unlink`: `unlink_commit`
+- `create`: `create_task`
+- `de-escalate`: `de_escalate_task`
+- `delete`: `delete_task`
+- `dep-add`: `add_dependency`
+- `dep-cycles`: `check_dependency_cycles`
+- `dep-remove`: `remove_dependency`
+- `dep-tree`: `get_dependency_tree`
+- `diff`: `get_task_diff`
+- `doctor`: ops `doctor_tasks`
+- `label-add`: `add_label`
+- `label-remove`: `remove_label`
+- `list`: `list_tasks`
+- `ready`: `list_ready_tasks`
+- `reindex`: ops `reindex_tasks`
+- `reopen`: `reopen_task`
+- `restore`: ops `restore_tasks`
+- `search`: `search_tasks`
+- `show`: `get_task`
+- `stats`: ops `get_task_stats`
+- `suggest`: `suggest_next_task`
+- `update`: `update_task`
+- `validation-history`: ops `get_validation_history`
+
+The P1 and P3 services choose semantics by principal, as 3.7 does for HTTP
+close, so an `Operator` call runs the verb's Python operator semantics with no
+handler branch. For example, `close` gets 3.7's operator close with no session
+gates.
+
+#21571 owns argument parsing, text and JSON rendering, removal of the Python
+callbacks, and asserting each verb's waiver entries when it delivers that verb.
+The contract test drives 0.3's CLI vectors through the native tool handlers. It
+calls each mapped tool in process through the native `ToolRegistry` with an
+`Operator` context, which is the handler the public route invokes. It then
+compares the projected data and typed errors. Rendering is #21571's.
+Planned: `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks --test cli_api_map`.
 
 **Acceptance:**
-- 5.5.1 - Every CLI verb's data result and typed error in 0.3's vectors is reproduced by its mapped native service function. test: `crates/gtasks/tests/service_contract.rs::cli_verbs_match_service_vectors`.
-- 5.5.2 - The contract maps all 33 verbs to functions, principal, errors and waiver IDs, and states #21571's rendering and removal ownership. file: `docs/contracts/tasks-services.md`.
+- 5.5.1 - Every CLI verb's data result and typed error in 0.3's vectors is reproduced by its mapped tool, called as `Operator` with the mapped arguments and projection, except the cited default-path waivers. test: `crates/gtasks/tests/cli_api_map.rs::cli_verbs_match_public_tools`.
+- 5.5.2 - The contract maps all 33 verbs to a public tool, arguments, projection, principal, errors and waiver IDs, and states #21571's transport, rendering and removal ownership. file: `docs/contracts/tasks-services.md`.
 
 ## P6: Parity ledger
 `kind: framing`
 
-### 6.1 Publish Tasks parity ownership [category: docs] (depends: 4.4, 5.5)
+### 6.1 Publish Tasks parity ownership [category: code] (depends: 4.4, 5.5)
 `kind: deliverable`
 
 Targets:
 - `docs/contracts/parity-ledger-status.d/tasks.json::*` — scope-reason: set statuses and owner notes for the 117 live Tasks rows not dropped in 0.1
+- `docs/contracts/parity-waivers.json::*` — scope-reason: add the four Q12 native-extension entries
+- `scripts/generate_parity_ledger.py::ADDITIVE_SURFACES`
 - `docs/contracts/parity-ledger.md`
 
 **Research context:** `docs/contracts/parity-ledger.md` is generated by
@@ -1795,39 +2069,59 @@ and its exact-SHA Security approval, set the sixteen claimed HTTP rows to
   activates the route (Q11).
 - The 48 MCP rows: #21570, naming the 5.1 to 5.4 item, the descriptor and the
   waiver IDs.
-- The 33 CLI rows: #21571, naming 5.5's contract and the safe-errors and
-  node-checkout-git IDs.
+- The 33 CLI rows: #21571, naming 5.5's verb-to-public-API map, the
+  safe-errors, node-checkout-git and default-path IDs, and #21571's inventory
+  re-point (ad3f8ab, Q12).
 - The 19 expansion rows: #21581 (Q2). The notes name 3.1's write service, 3.3's
   affected-file service and 5.4's `gobby-tasks-ops` server assembly. They also
   record Q10: #21581 moves `crates/gtasks/src/plan_archive.rs` into the Plans
-  crate and rewires the terminal-epic hook.
+  crate and rewires the terminal-epic hook. They also record Q13d: #21581 owns
+  the expansion runtime's authority and passes the initiating session to 3.1's
+  write service.
+
+The four Q12 tools are additive surfaces with no Python row. 6.1 adds
+`MCP gobby-tasks-ops:doctor_tasks`, `MCP gobby-tasks-ops:get_task_stats`,
+`MCP gobby-tasks-ops:get_validation_history` and
+`MCP gobby-tasks-ops:restore_tasks` to `ADDITIVE_SURFACES`. Beside each it
+adds a `tasks.mcp-<tool-slug>.native-extension` entry in
+`docs/contracts/parity-waivers.json`, with decision `#5.4` and 5.4's test as
+native readiness evidence. The generator renders them as `Native extension`
+rows and refuses a status mapping for them.
 No other family's rows change. Regenerate and confirm a clean second run.
 Planned: the generator command above, run twice.
+
+Consumers unchanged:
+- `tests/contracts/http_corpus.py` — no-edit-reason: It passes `ADDITIVE_SURFACES` to `load_waivers` unchanged, so the four new surfaces load with their native-extension entries.
 
 **Acceptance:**
 - 6.1.1 - Exactly sixteen HTTP rows are `delegated`, and the claim, MCP, CLI and expansion rows stay `proxied` with the owner notes and waiver IDs above. behavior: "Tasks parity ownership" in `docs/contracts/parity-ledger-status.d/tasks.json`.
 - 6.1.2 - The regenerated ledger matches the fragment, and a second run changes nothing. file: `docs/contracts/parity-ledger.md`.
+- 6.1.3 - The four Q12 tools appear as `Native extension` rows, each with its native-extension entry and no status mapping. file: `docs/contracts/parity-waivers.json`.
 
 ## E1 End-to-end verification
 `kind: verification`
 
 0.1 retires the five dropped rows. 4.1's seventeen route items own every HTTP
 row; 4.2 proves compare and replay, 4.3 activates sixteen routes for key
-callers, and 4.4 admits cookies. 5.1 to 5.4 own the 48 MCP rows and 5.5 the 33
-CLI rows' contract. The 19 expansion rows go to #21581 (Q2), which consumes 3.1,
-3.3 and 5.4. 6.1 records each status. Every deliverable that shares a target
-file is dependency-ordered. The chain runs 0.1 to 3.11, then splits. One
-branch runs 4.1 to 4.3, then 5.1 to 5.4, then 4.4, so descriptor work proceeds
-while #24967 lands. 5.5 shares no target with that branch, so it follows 3.11
-directly and runs in parallel. 6.1 joins 4.4 and 5.5.
+callers, and 4.4 admits cookies. 5.1 to 5.4 own the 48 MCP rows and the four
+Q12 additive tools, and 5.5 owns the 33 CLI rows' verb-to-public-API map. The
+19 expansion rows go to #21581 (Q2), which consumes 3.1, 3.3 and 5.4. 6.1
+records each status. Every deliverable that shares a target file is
+dependency-ordered. The chain runs 0.1 to 4.3, then 5.1 to 5.4, so descriptor
+work proceeds while #24967 lands. It then splits: 4.4 waits on #24967, and 5.5
+maps the CLI onto the finished tools (Q12). The two share no target and run in
+parallel. 6.1 joins them.
 
 Cross-plan edges:
 - #21581: consumes the write service, the affected-file service and the
-  `gobby-tasks-ops` assembly, and moves `plan_archive.rs` (Q10).
+  `gobby-tasks-ops` assembly, and moves `plan_archive.rs` (Q10). It owns the
+  expansion runtime's authority and passes the initiating session to the
+  write service (Q13d).
 - #21562: implements `AssignmentNotifier` and activates the claim route (Q11).
 - #21562 and #21567: inherit 3.5's session-variable seam.
 - #21570: activates both MCP servers, ending the Q4 authority window.
-- #21571: delivers the CLI.
+- #21571: delivers every CLI verb over the public tool route, using 5.5's map
+  (Q12). Its inventory row names #21571 (ad3f8ab).
 - #21574: deletes the Python routes.
 
 Shared conventions come from #24970 (errors), #24963 (waivers and readiness),
@@ -1866,3 +2160,1017 @@ and 6.1 joins 4.4 and 5.5. ENH-2: 2.2 proves the shipped policy sync through
 `test_shipped_project_operating_policy_imports` (2.2.4). ENH-3: E1 adds one
 cumulative rerun after the last shared-file edit. Adversarial review is
 pending.
+
+2026-10-28 — Adversary gobby#18284's first pass on ffcf2bb raised ADV-1 through
+ADV-5. The Orchestrator ruled Q12 and Q13 through Triage.
+- ADV-1: 3.7 keeps every `archive_plan` effect (3.7.6).
+- ADV-2: 3.8 refuses incomplete or mismatched node git replies (3.8.4).
+- ADV-3 and Q12: #21571 carries the CLI over the public tool route, and 5.5
+  becomes the verb-to-public-API map, depending on 5.4 again. 5.4 adds four
+  operator-only tools, which 6.1 registers as native extensions. #21571's
+  inventory row was re-pointed in ad3f8ab.
+- ADV-4 and Q13: 2.1 settles every #20822 item and records ground evidence.
+  It adds D9 (3.2.3, 3.1.5) and D10 (3.9.3), keeps backup on the default path
+  for sessions, and moves the expansion runtime to #21581.
+- ADV-5: 4.2's stability check covers relation tables and list membership
+  (4.2.6).
+No consensus is claimed.
+
+2026-10-28 — Adversary gobby#18284's second pass on dddb6fd found two residuals,
+both accepted without a ruling.
+- ADV-1: a missing source file now refuses before any move or row write, as
+  `_relative_plan_path` does, and the terminal-epic hook keeps
+  `on_epic_terminal`'s handling of refusals (3.7.6).
+- ADV-5: each write ties its post-image to an anchor its response already
+  carries, and a write committed between Python's commit and the first
+  post-image read marks the case Skipped (4.2.6). This replaces the two-read
+  bracket. On re-review, a task still present after a delete is Skipped,
+  because restore can re-insert its UUID; comment-delete presence stays a
+  Mismatch.
+No consensus is claimed.
+
+2026-10-28 — Consensus. Plan Writer gobby#18281 and Plan Adversary gobby#18284
+agree on this narrative as of a6937cec36. ADV-1 through ADV-5 are resolved,
+the Orchestrator's rulings Q1 to Q13 are recorded in the Decision Record, and
+no blocking finding or open decision remains. Project-aware base validation
+passes. The adversary derives `## M1 Task Manifest` from the commit that adds
+this entry. Consensus is not implementation approval; operator approval
+precedes expansion.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Retire compaction and orphan-cleanup surfaces
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '0.1.1: `gobby tasks compact` and `gobby tasks clean` no longer
+    exist and `gobby.storage.compaction` is not importable. test: `tests/cli/test_tasks_cli.py::test_retired_task_commands_are_absent`.
+
+    0.1.2: `gobby tasks doctor` reports cycles and invalid projects, exits 1 when
+    either is found, and prints no orphan section or clean hint. test: `tests/cli/test_tasks_cli.py::TestDoctorCommand.test_doctor_reports_cycles_and_invalid_projects`.
+
+    0.1.3: `TaskValidator.validate_all` returns exactly `invalid_projects` and `cycles`.
+    test: `tests/utils/test_db_validation.py::test_validate_all_reports_projects_and_cycles`.
+
+    0.1.4: The five retired rows read `dropped by decision #25252` and the regenerated
+    ledger matches the fragment. file: `docs/contracts/parity-ledger.md`.
+
+    0.1.5: The CLI guide and reference audit list no retired command and describe
+    doctor''s two checks. file: `docs/guides/cli-commands.md`.'
+  labels:
+  - covers:tasks-family:0.1:0.1.1
+  - covers:tasks-family:0.1:0.1.2
+  - covers:tasks-family:0.1:0.1.3
+  - covers:tasks-family:0.1:0.1.4
+  - covers:tasks-family:0.1:0.1.5
+  tdd: false
+  source_section: '0.1'
+  implementation_domain: backend
+- title: Characterize the HTTP, browser and event surface
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: '0.2.1: All seventeen routes and their error branches are recorded
+    with Python origin, rows and normalization limited to IDs and clocks. test: `tests/contracts/test_tasks_oracle.py::test_http_vectors_match_python`.
+
+    0.2.2: Both cookie classes, credential failures and CORS policy are recorded for
+    all seventeen routes without normalizing selectors or effects. test: `tests/contracts/test_tasks_oracle.py::test_browser_vectors_match_python`.
+
+    0.2.3: Each mutating route''s event name, payload, post-commit ordering, assignment
+    notification and broadcast-failure warning are recorded. test: `tests/contracts/test_tasks_oracle.py::test_task_events_match_python`.
+
+    0.2.4: The manifest registers the three new fixtures under `families.tasks` with
+    Python origin beside the existing list case. file: `tests/contracts/http/manifest.json`.'
+  labels:
+  - covers:tasks-family:0.2:0.2.1
+  - covers:tasks-family:0.2:0.2.2
+  - covers:tasks-family:0.2:0.2.3
+  - covers:tasks-family:0.2:0.2.4
+  tdd: false
+  source_section: '0.2'
+  assigned_agent: developer
+- title: Characterize services, authority, MCP and CLI
+  category: test
+  task_type: feature
+  depends_on:
+  - '0.1'
+  - '0.2'
+  validation_criteria: '0.3.1: Service vectors reproduce Python reads, writes, lifecycle
+    effects, lifecycle-event rows and session-variable bookkeeping at a frozen instant.
+    test: `tests/contracts/test_tasks_oracle.py::test_service_vectors_match_python`.
+
+    0.3.2: Authority vectors record every transition for all eight caller relationships,
+    including the D5, D6 and D7 Python observations. test: `tests/contracts/test_tasks_oracle.py::test_authority_vectors_match_python`.
+
+    0.3.3: MCP vectors record catalog, schema, definition hash, classification, results,
+    validation failures and unexpected-error text for all 48 tools. test: `tests/contracts/test_tasks_oracle.py::test_mcp_vectors_match_python`.
+
+    0.3.4: CLI vectors record arguments, output, exit codes and errors for all 33
+    verbs. test: `tests/contracts/test_tasks_oracle.py::test_cli_vectors_match_python`.
+
+    0.3.5: Every inventory entry exists with its exact ledger surface, behaviour,
+    decision and replacement, and each rule-based entry cites its recorded vector.
+    file: `docs/contracts/parity-waivers.json`.'
+  labels:
+  - covers:tasks-family:0.3:0.3.1
+  - covers:tasks-family:0.3:0.3.2
+  - covers:tasks-family:0.3:0.3.3
+  - covers:tasks-family:0.3:0.3.4
+  - covers:tasks-family:0.3:0.3.5
+  tdd: false
+  source_section: '0.3'
+  assigned_agent: developer
+- title: Family crate, row model and scoped references
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.3'
+  validation_criteria: '1.1.1: Task rows round-trip from PostgreSQL to the `to_dict`
+    and `to_brief` shapes in 0.3''s vectors. test: `crates/gtasks/tests/refs.rs::row_projections_match_python`.
+
+    1.1.2: Read resolution matches Python for every ref form; mutation resolution
+    refuses foreign refs except for a local coordinator, with the D5 entries asserted.
+    test: `crates/gtasks/tests/refs.rs::reference_resolution_matches_policy`.
+
+    1.1.3: gcode, gdaemon and ghook receive this leaf''s patch bump, lock and pins.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:tasks-family:1.1:1.1.1
+  - covers:tasks-family:1.1:1.1.2
+  - covers:tasks-family:1.1:1.1.3
+  tdd: false
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Listing, readiness, search and dependency reads
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: Listing filters, sort orders, default and compact views
+    and pagination match 0.3''s vectors. test: `crates/gtasks/tests/reads.rs::list_matches_python`.
+
+    1.2.2: Ready and blocked sets match Python, including parent scoping. test: `crates/gtasks/tests/reads.rs::readiness_matches_python`.
+
+    1.2.3: BM25 search returns Python''s ranking, scores and filters. test: `crates/gtasks/tests/reads.rs::search_matches_python`.
+
+    1.2.4: Dependency trees in each direction and cycle reports match Python. test:
+    `crates/gtasks/tests/reads.rs::dependency_graph_matches_python`.'
+  labels:
+  - covers:tasks-family:1.2:1.2.1
+  - covers:tasks-family:1.2:1.2.2
+  - covers:tasks-family:1.2:1.2.3
+  - covers:tasks-family:1.2:1.2.4
+  tdd: false
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Task detail, links and suggestion reads
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: Task cards, full records, session links and comment
+    lists match Python. test: `crates/gtasks/tests/detail.rs::task_detail_matches_python`.
+
+    1.3.2: Artifacts, affected files and file overlaps match Python. test: `crates/gtasks/tests/detail.rs::files_and_artifacts_match_python`.
+
+    1.3.3: Task diffs match Python for hub-local checkouts through the local git port.
+    test: `crates/gtasks/tests/detail.rs::task_diff_matches_python`.
+
+    1.3.4: Suggestions match Python''s ordering and proximity scoring. test: `crates/gtasks/tests/detail.rs::suggestion_matches_python`.'
+  labels:
+  - covers:tasks-family:1.3:1.3.1
+  - covers:tasks-family:1.3:1.3.2
+  - covers:tasks-family:1.3:1.3.3
+  - covers:tasks-family:1.3:1.3.4
+  tdd: false
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Caller principals and the transition table
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '2.1.1: Every transition reproduces 0.3''s Python result for
+    all eight caller relationships, except the cited D5, D6, D7, D9 and D10 replacements.
+    test: `crates/gtasks/tests/authority.rs::table_matches_python_relationships`.
+
+    2.1.2: Unlisted principal and transition pairs, unresolvable session references
+    and claimed tasks without session context are refused with no write. test: `crates/gtasks/tests/authority.rs::unlisted_pairs_fail_closed`.
+
+    2.1.3: Gate-bearing label adds and removals follow Q9 for every principal, with
+    `live-session` keeping its extra guard. test: `crates/gtasks/tests/authority.rs::gate_labels_follow_q9`.
+
+    2.1.4: Exceptional transitions write one `task_lifecycle_events` row naming the
+    transition, ground, verified evidence and principal. test: `crates/gtasks/tests/authority.rs::grounds_are_recorded`.
+
+    2.1.5: The authority contract documents principals, the full table, grounds, label
+    rules and the disposition of every #20822 item. file: `docs/contracts/task-authority.md`.
+
+    2.1.6: Dependency add and remove, `create_task` `blocks`, and auto-link with and
+    without a `task_id` follow Q13a and Q13b for every relationship, and each refusal
+    writes nothing. test: `crates/gtasks/tests/authority.rs::readiness_and_auto_link_authority`.
+
+    2.1.7: A tool-route call resolves to `Session` with a session context, to `Operator`
+    only with a verified operator key, and to `Anonymous` otherwise, and the restore,
+    doctor, stats and validation-history rows admit only `Operator`. test: `crates/gtasks/tests/authority.rs::tool_route_principals`.'
+  labels:
+  - covers:tasks-family:2.1:2.1.1
+  - covers:tasks-family:2.1:2.1.2
+  - covers:tasks-family:2.1:2.1.3
+  - covers:tasks-family:2.1:2.1.4
+  - covers:tasks-family:2.1:2.1.5
+  - covers:tasks-family:2.1:2.1.6
+  - covers:tasks-family:2.1:2.1.7
+  tdd: false
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Protected subtrees from project policy
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: Python refuses the Consolidator under any subtree the
+    policy row lists, and nowhere else. test: `tests/mcp_proxy/tools/tasks/test_close_authority.py::test_consolidator_cannot_mutate_protected_tasks`.
+
+    2.2.2: Native reads the same row, applies the same refusals, treats a missing
+    entry as empty and fails a malformed entry closed. test: `crates/gtasks/tests/policy.rs::protected_subtrees_follow_policy_row`.
+
+    2.2.3: The policy rule carries the two refs and no bundled template names an operator
+    task number. file: `.gobby/workflows/rules/project-operating-policy.yaml`.
+
+    2.2.4: Syncing the shipped policy file yields a row whose `project_policy` effect
+    carries exactly the two refs, and the Python reader returns them from that synced
+    row. test: `tests/workflows/test_imports.py::test_shipped_project_operating_policy_imports`.'
+  labels:
+  - covers:tasks-family:2.2:2.2.1
+  - covers:tasks-family:2.2:2.2.2
+  - covers:tasks-family:2.2:2.2.3
+  - covers:tasks-family:2.2:2.2.4
+  tdd: false
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Task writes and the expansion write service
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '3.1.1: Create, update, reparent, delete with cascade and unlink,
+    labels and description sections match 0.3''s rows and errors. test: `crates/gtasks/tests/write.rs::task_writes_match_python`.
+
+    3.1.2: Native writes take Python''s lock keys in priority order and serialize
+    against a concurrent Python writer. test: `crates/gtasks/tests/write.rs::writes_share_python_locks`.
+
+    3.1.3: The expansion write service creates a tree with labels, affected files,
+    edges and artifacts in one transaction and rolls back whole on failure. test:
+    `crates/gtasks/tests/write.rs::expansion_write_service_is_atomic`.
+
+    3.1.4: The write-service contract names the operations, locks, the caller-principal
+    parameter and transaction boundary #21581 consumes, and states that expansion
+    apply passes the initiating session. file: `docs/contracts/tasks-services.md`.
+
+    3.1.5: An expansion apply whose initiating session lacks authority over a foreign
+    live-claimed parent, and a `create_task` whose `blocks` names a task the caller
+    cannot change, are refused with no task written. test: `crates/gtasks/tests/write.rs::write_service_checks_caller_principal`.'
+  labels:
+  - covers:tasks-family:3.1:3.1.1
+  - covers:tasks-family:3.1:3.1.2
+  - covers:tasks-family:3.1:3.1.3
+  - covers:tasks-family:3.1:3.1.4
+  - covers:tasks-family:3.1:3.1.5
+  tdd: false
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Dependency edges
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: Edge adds and removes match 0.3''s rows and errors
+    on every lane. test: `crates/gtasks/tests/deps.rs::dependency_edges_match_python`.
+
+    3.2.2: An edge that would close a cycle is refused inside the locked transaction,
+    including under a concurrent Python writer. test: `crates/gtasks/tests/deps.rs::cycles_refused_under_lock`.
+
+    3.2.3: A session without claim authority over a claimed `task_id` cannot add or
+    remove its edges, writes nothing, and gets the D9 refusal; an unclaimed task stays
+    open. test: `crates/gtasks/tests/deps.rs::edge_readiness_authority`.'
+  labels:
+  - covers:tasks-family:3.2:3.2.1
+  - covers:tasks-family:3.2:3.2.2
+  - covers:tasks-family:3.2:3.2.3
+  tdd: false
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Affected files, artifacts and isolation pairs
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '3.3.1: Affected-file writes with each source tag match Python.
+    test: `crates/gtasks/tests/files.rs::affected_files_match_python`.
+
+    3.3.2: Single and atomic artifact writes and isolation-pair clears match Python,
+    and an atomic write with one invalid field writes nothing. test: `crates/gtasks/tests/files.rs::artifacts_match_python`.'
+  labels:
+  - covers:tasks-family:3.3:3.3.1
+  - covers:tasks-family:3.3:3.3.2
+  tdd: false
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Comments
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  validation_criteria: '3.4.1: Comment adds, lists and deletes match 0.3''s rows and
+    errors. test: `crates/gtasks/tests/comments.rs::comments_match_python`.'
+  labels:
+  - covers:tasks-family:3.4:3.4.1
+  tdd: false
+  source_section: '3.4'
+  implementation_domain: backend
+- title: Claims, takeover grounds and session links
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.4'
+  validation_criteria: '3.5.1: Claim, release, hand-off, delegation and session links
+    match 0.3''s rows and refusals, and claims return the assignment target. test:
+    `crates/gtasks/tests/claim.rs::claim_lifecycle_matches_python`.
+
+    3.5.2: Takeover of a live claim succeeds only on `owner_dead`, `delegated`, `coordinator`
+    or `operator`, records the ground, and otherwise refuses with no write. test:
+    `crates/gtasks/tests/claim.rs::takeover_requires_recorded_ground`.
+
+    3.5.3: Claim and release update the five session variables and memory-review queue
+    in the task''s transaction, and a failure rolls back both. test: `crates/gtasks/tests/claim.rs::session_variables_commit_with_claims`.
+
+    3.5.4: Release and hand-off keep Python''s dirty-file refusal, recipient checks
+    and Dev Manager and Orchestrator rules. test: `crates/gtasks/tests/claim.rs::release_rules_match_python`.'
+  labels:
+  - covers:tasks-family:3.5:3.5.1
+  - covers:tasks-family:3.5:3.5.2
+  - covers:tasks-family:3.5:3.5.3
+  - covers:tasks-family:3.5:3.5.4
+  tdd: false
+  source_section: '3.5'
+  implementation_domain: backend
+- title: Escalation, de-escalation and reopen
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.5'
+  validation_criteria: '3.6.1: Escalate, de-escalate and reopen match 0.3''s rows,
+    lifecycle events and errors, including re-escalation releasing the claim. test:
+    `crates/gtasks/tests/status.rs::status_transitions_match_python`.
+
+    3.6.2: Each transition returns the outcome the adapters need for events and parent
+    notices. test: `crates/gtasks/tests/status.rs::status_outcomes_carry_notice_data`.'
+  labels:
+  - covers:tasks-family:3.6:3.6.1
+  - covers:tasks-family:3.6:3.6.2
+  tdd: false
+  source_section: '3.6'
+  implementation_domain: backend
+- title: Local close gates, finalization, repair and step records
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.6'
+  validation_criteria: '3.7.1: Every close refusal and each of the five gates matches
+    0.3''s result in gate order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close_gates_match_python`.
+
+    3.7.2: Successful closes write Python''s rows, receipts, lifecycle events and
+    ancestor auto-closes, and HTTP close keeps its operator semantics. test: `crates/gtasks/tests/close.rs::close_finalization_matches_python`.
+
+    3.7.3: Candidate repair and the four step records match Python, including SHA
+    resolution. test: `crates/gtasks/tests/close.rs::repair_and_steps_match_python`.
+
+    3.7.4: Closing an epic as done or moot archives its linked plan after commit,
+    rolls back on failure and is a no-op without a plan. test: `crates/gtasks/tests/close.rs::epic_close_archives_plan`.
+
+    3.7.6: Native archival matches `archive_plan`: nested paths map below `completed/`,
+    the coverage manifest is removed except for strategy plans, a repeated archive
+    changes nothing, a missing source, a source outside the project root or an existing
+    destination refuses with no move and no row write, and the epic close still succeeds.
+    test: `crates/gtasks/tests/close.rs::plan_archive_matches_python`.
+
+    3.7.5: A session on another machine is still refused with Python''s remote-session
+    error. test: `crates/gtasks/tests/close.rs::remote_session_close_refused_locally`.'
+  labels:
+  - covers:tasks-family:3.7:3.7.1
+  - covers:tasks-family:3.7:3.7.2
+  - covers:tasks-family:3.7:3.7.3
+  - covers:tasks-family:3.7:3.7.4
+  - covers:tasks-family:3.7:3.7.6
+  - covers:tasks-family:3.7:3.7.5
+  tdd: false
+  source_section: '3.7'
+  implementation_domain: backend
+- title: Node checkout git evidence
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.7'
+  validation_criteria: '3.8.1: The five close gates evaluate a node session''s checkout
+    through `checkout.read` and match the local result for the same repository state.
+    test: `crates/gtasks/tests/node_git.rs::node_close_gates_match_local`.
+
+    3.8.2: Diff, commit verification, auto-link, step-record SHA resolution and observed
+    files resolve against the node checkout under their exact entries. test: `crates/gtasks/tests/node_git.rs::node_git_surfaces_use_checkout_read`.
+
+    3.8.3: An offline or refusing node yields `unavailable` and no write. test: `crates/gtasks/tests/node_git.rs::node_unavailable_writes_nothing`.
+
+    3.8.4: A reply that is truncated, timed out, signal-killed, missing its git result,
+    or from another project or root yields `unavailable` with no write. A nonzero
+    exit code gets the same interpretation as the local port. test: `crates/gtasks/tests/node_git.rs::incomplete_node_replies_are_refused`.'
+  labels:
+  - covers:tasks-family:3.8:3.8.1
+  - covers:tasks-family:3.8:3.8.2
+  - covers:tasks-family:3.8:3.8.3
+  - covers:tasks-family:3.8:3.8.4
+  tdd: false
+  source_section: '3.8'
+  implementation_domain: backend
+- title: Commit links and observed files
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.8'
+  validation_criteria: '3.9.1: Link, unlink, list and auto-link match 0.3''s rows
+    and errors. test: `crates/gtasks/tests/commits.rs::commit_links_match_python`.
+
+    3.9.2: Observed-file updates derive the same files from linked commits and honor
+    `require_commits`. test: `crates/gtasks/tests/commits.rs::observed_files_match_python`.
+
+    3.9.3: Auto-link refuses a session without authority over its `task_id`, and refuses
+    a project-wide scan outside the coordinator lane, with no link written. test:
+    `crates/gtasks/tests/commits.rs::auto_link_lane_authority`.'
+  labels:
+  - covers:tasks-family:3.9:3.9.1
+  - covers:tasks-family:3.9:3.9.2
+  - covers:tasks-family:3.9:3.9.3
+  tdd: false
+  source_section: '3.9'
+  implementation_domain: backend
+- title: Landing freeze and land_commit
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.9'
+  validation_criteria: '3.10.1: Landing reproduces Python''s results and landing-message
+    rows for clean, already-landed, conflict, base-update, frozen and review-blocked
+    candidates on a temporary repository. test: `crates/gtasks/tests/landing.rs::land_commit_matches_python`.
+
+    3.10.2: An interrupted landing recovers from the reflog exactly as Python does
+    and never double-lands. test: `crates/gtasks/tests/landing.rs::landing_recovers_from_reflog`.'
+  labels:
+  - covers:tasks-family:3.10:3.10.1
+  - covers:tasks-family:3.10:3.10.2
+  tdd: false
+  source_section: '3.10'
+  implementation_domain: backend
+- title: Backup, restore, doctor, stats, history and reindex
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.10'
+  validation_criteria: '3.11.1: Native backup writes Python''s JSONL to the default
+    path only, and native and Python restore each other''s files identically. test:
+    `crates/gtasks/tests/ops.rs::backup_round_trips_with_python`.
+
+    3.11.2: Restore reads only the hub''s default backup path and is refused to every
+    principal except `Operator`. test: `crates/gtasks/tests/ops.rs::restore_is_operator_only`.
+
+    3.11.3: Doctor''s two checks, stats, validation history and reindex statistics
+    match Python. test: `crates/gtasks/tests/ops.rs::ops_reports_match_python`.'
+  labels:
+  - covers:tasks-family:3.11:3.11.1
+  - covers:tasks-family:3.11:3.11.2
+  - covers:tasks-family:3.11:3.11.3
+  tdd: false
+  source_section: '3.11'
+  implementation_domain: backend
+- title: Tasks HTTP routes, events and the assignment port
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.11'
+  validation_criteria: '4.1.1: `GET /api/tasks` matches 0.2''s filters, ordering,
+    pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+
+    4.1.2: `POST /api/tasks` matches 0.2''s rows, response, errors and events. test:
+    `crates/gtasks/tests/http.rs::create_route_matches_python`.
+
+    4.1.3: `GET /api/tasks/{task_id}` matches every ref form, the 404 and the response.
+    test: `crates/gtasks/tests/http.rs::get_route_matches_python`.
+
+    4.1.4: `PATCH /api/tasks/{task_id}` preserves omitted versus null fields and matches
+    rows, errors and events. test: `crates/gtasks/tests/http.rs::patch_route_matches_python`.
+
+    4.1.5: `DELETE /api/tasks/{task_id}` matches the cascade and unlink flags, rows,
+    errors and events. test: `crates/gtasks/tests/http.rs::delete_route_matches_python`.
+
+    4.1.6: `GET /api/tasks/{task_id}/comments` matches ordering, authors and 404s.
+    test: `crates/gtasks/tests/http.rs::list_comments_route_matches_python`.
+
+    4.1.7: `POST /api/tasks/{task_id}/comments` matches rows, response, errors and
+    events. test: `crates/gtasks/tests/http.rs::add_comment_route_matches_python`.
+
+    4.1.8: `DELETE /api/tasks/{task_id}/comments/{comment_id}` matches rows, response
+    and 404s. test: `crates/gtasks/tests/http.rs::delete_comment_route_matches_python`.
+
+    4.1.9: `GET /api/tasks/{task_id}/dependencies` matches the dependency projection
+    and 404s. test: `crates/gtasks/tests/http.rs::list_dependencies_route_matches_python`.
+
+    4.1.10: `POST /api/tasks/{task_id}/dependencies` matches edge rows, response and
+    the cycle, self-edge and duplicate errors. test: `crates/gtasks/tests/http.rs::add_dependency_route_matches_python`.
+
+    4.1.11: `DELETE /api/tasks/{task_id}/dependencies/{depends_on_id}` matches rows,
+    response and 404s. test: `crates/gtasks/tests/http.rs::remove_dependency_route_matches_python`.
+
+    4.1.12: `POST /api/tasks/{task_id}/claim` matches session resolution, `force`,
+    rows and events, and delivers the assignment notice through a recording notifier,
+    with the `assignment_notification` warning on failure. test: `crates/gtasks/tests/http.rs::claim_route_matches_python`.
+
+    4.1.13: `POST /api/tasks/{task_id}/release-claim` matches rows, response, errors
+    and events. test: `crates/gtasks/tests/http.rs::release_claim_route_matches_python`.
+
+    4.1.14: `POST /api/tasks/{task_id}/close` matches close with and without `commit_sha`,
+    `force` past open children, `closed_in_session_id`, rows and events. test: `crates/gtasks/tests/http.rs::close_route_matches_python`.
+
+    4.1.15: `POST /api/tasks/{task_id}/escalate` matches rows, response, errors and
+    events. test: `crates/gtasks/tests/http.rs::escalate_route_matches_python`.
+
+    4.1.16: `POST /api/tasks/{task_id}/reopen` matches rows, response, errors and
+    events. test: `crates/gtasks/tests/http.rs::reopen_route_matches_python`.
+
+    4.1.17: `POST /api/tasks/{task_id}/de-escalate` matches rows, response, errors
+    and events. test: `crates/gtasks/tests/http.rs::de_escalate_route_matches_python`.
+
+    4.1.18: Events publish after commit in Python''s order with Python''s frames,
+    and a failed publish adds the `warnings` entry without changing the result. test:
+    `crates/gtasks/tests/http.rs::events_follow_commit_like_python`.
+
+    4.1.19: The family claims exactly the listed pairs for key callers, never cookie
+    requests, unlisted paths or the claim route without a bound notifier, and an unbound
+    family returns `unavailable`. test: `crates/gtasks/tests/http.rs::claims_are_exact_and_key_only`.'
+  labels:
+  - covers:tasks-family:4.1:4.1.1
+  - covers:tasks-family:4.1:4.1.2
+  - covers:tasks-family:4.1:4.1.3
+  - covers:tasks-family:4.1:4.1.4
+  - covers:tasks-family:4.1:4.1.5
+  - covers:tasks-family:4.1:4.1.6
+  - covers:tasks-family:4.1:4.1.7
+  - covers:tasks-family:4.1:4.1.8
+  - covers:tasks-family:4.1:4.1.9
+  - covers:tasks-family:4.1:4.1.10
+  - covers:tasks-family:4.1:4.1.11
+  - covers:tasks-family:4.1:4.1.12
+  - covers:tasks-family:4.1:4.1.13
+  - covers:tasks-family:4.1:4.1.14
+  - covers:tasks-family:4.1:4.1.15
+  - covers:tasks-family:4.1:4.1.16
+  - covers:tasks-family:4.1:4.1.17
+  - covers:tasks-family:4.1:4.1.18
+  - covers:tasks-family:4.1:4.1.19
+  tdd: false
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Link gtasks into gdaemon with event and node-read wiring
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.1a.1: A subscribed native WebSocket client receives bridge-published
+    Tasks frames exactly as it receives Python-published ones. test: `crates/gdaemon/tests/tasks_bridge.rs::task_events_reach_broker_subscribers`.
+
+    4.1a.2: A registered node channel answers the bridge''s `checkout.read` git query
+    with the output of local git on the same repository, and an unconnected or refusing
+    node yields `unavailable`. test: `crates/gdaemon/tests/tasks_bridge.rs::checkout_reader_uses_node_channel`.
+
+    4.1a.3: `gdaemon serve` registers the Tasks family with a Proxy default and binds
+    it before serving, leaving the claim route unclaimed. test: `crates/gdaemon/tests/tasks_bridge.rs::tasks_family_registers_passive`.
+
+    4.1a.4: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:tasks-family:4.1a:4.1a.1
+  - covers:tasks-family:4.1a:4.1a.2
+  - covers:tasks-family:4.1a:4.1a.3
+  - covers:tasks-family:4.1a:4.1a.4
+  tdd: false
+  source_section: 4.1a
+  implementation_domain: backend
+- title: Side-effect-safe comparison and native corpus replay
+  category: code
+  task_type: feature
+  depends_on:
+  - 4.1a
+  validation_criteria: '4.2.1: Read and write comparisons detect a tampered response
+    or post-image, skip concurrent changes and never repeat a mutation. test: `crates/gtasks/tests/compare.rs::compare_is_side_effect_free_and_race_aware`.
+
+    4.2.6: A dependency add or remove, a comment add or delete, or a new list member
+    injected between read legs marks the case Skipped. So does a competing write committed
+    after Python''s write and before the first post-image read: a task update, a delete
+    of the added comment or edge, a re-add of the removed edge, a default-backup restore
+    after a task delete, or a change that lifts a refusal. A comment still present
+    after a delete response is a Mismatch, and an undisturbed case still Passes. test:
+    `crates/gtasks/tests/compare.rs::relation_and_membership_races_skip`.
+
+    4.2.2: The sixteen claimed cases replay with ordinary parity or exact cited #24963
+    replacements, keep Python origin and need no Python backend for native legs. test:
+    `tests/e2e/test_tasks_family.py::test_native_tasks_corpus_matches_python`.
+
+    4.2.3: Controlled compare covers every claimed route with stable evidence, at
+    least one ordinary Passed case and zero unwaived mismatches, and all-Skipped or
+    unwaived-Skipped readiness fails. test: `tests/e2e/test_tasks_family.py::test_compare_has_coverage_without_double_effects`.
+
+    4.2.4: A paired node forwards `/api/tasks` requests to the hub''s native family
+    without a database credential. test: `tests/e2e/test_tasks_family.py::test_node_routes_tasks_to_hub`.
+
+    4.2.5: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:tasks-family:4.2:4.2.1
+  - covers:tasks-family:4.2:4.2.6
+  - covers:tasks-family:4.2:4.2.2
+  - covers:tasks-family:4.2:4.2.3
+  - covers:tasks-family:4.2:4.2.4
+  - covers:tasks-family:4.2:4.2.5
+  tdd: false
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Native default for key callers and coherent release
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '4.3.1: Activation is refused unless 4.2''s readiness report
+    passes. test: `crates/gdaemon/tests/tasks_cutover.rs::readiness_gates_tasks_activation`.
+
+    4.3.2: Native, Compare and Proxy selection affect only the Tasks family, and rollback
+    to Proxy leaves native writes readable by Python. test: `crates/gdaemon/tests/tasks_cutover.rs::tasks_backend_switch_is_scoped`.
+
+    4.3.3: With the Python backend unavailable, the sixteen key-caller routes work
+    natively, while claim and cookie requests still proxy. test: `tests/e2e/test_tasks_family.py::test_native_routes_without_python_backend`.
+
+    4.3.4: The activation record names build and installed hashes, readiness evidence,
+    the rollback setting, the announcement and the claim and cookie remainders. behavior:
+    "Tasks activation evidence" in `docs/contracts/tasks-native.md`.
+
+    4.3.5: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:tasks-family:4.3:4.3.1
+  - covers:tasks-family:4.3:4.3.2
+  - covers:tasks-family:4.3:4.3.3
+  - covers:tasks-family:4.3:4.3.4
+  - covers:tasks-family:4.3:4.3.5
+  tdd: false
+  source_section: '4.3'
+  implementation_domain: backend
+- title: Tasks browser admission through the shared verifier
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.4'
+  validation_criteria: '4.4.1: Ordinary cookies reproduce 0.2''s admission, payloads,
+    errors and effects on the sixteen claimed routes through #24967''s verifier only.
+    test: `crates/gdaemon/tests/tasks_browser.rs::ordinary_cookie_routes_match_python`.
+
+    4.4.2: Browser-testing cookies keep loopback, live-capability and selector checks,
+    reach the GET routes, and are refused on every mutation before any effect. test:
+    `crates/gdaemon/tests/tasks_browser.rs::managed_cookie_authority_matches_python`.
+
+    4.4.3: Missing, invalid, expired or revoked credentials gain no Tasks authority,
+    key callers and other families are unchanged, and cookie claim requests still
+    proxy. test: `crates/gdaemon/tests/tasks_browser.rs::browser_admission_fails_closed`.
+
+    4.4.4: Both cookie classes keep credentialed CORS, preflight and refusal headers
+    through #24964''s outer boundary, with no new Origin or CSRF rule. test: `crates/gdaemon/tests/tasks_browser.rs::cors_matches_python`.
+
+    4.4.5: The activation record names the persisted `security-review` label, the
+    pre-dispatch check and the Security Reviewer''s approved step for the exact shipping
+    SHA. behavior: "Tasks browser admission security gate" in `docs/contracts/tasks-native.md`.
+
+    4.4.6: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:tasks-family:4.4:4.4.1
+  - covers:tasks-family:4.4:4.4.2
+  - covers:tasks-family:4.4:4.4.3
+  - covers:tasks-family:4.4:4.4.4
+  - covers:tasks-family:4.4:4.4.5
+  - covers:tasks-family:4.4:4.4.6
+  tdd: false
+  source_section: '4.4'
+  implementation_domain: backend
+- title: gobby-tasks read descriptors
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.3'
+  validation_criteria: '5.1.1: `check_dependency_cycles` matches 0.3''s results and
+    errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+
+    5.1.2: `get_dependency_tree` matches every direction and depth. test: `crates/gtasks/tests/mcp_reads.rs::get_dependency_tree_matches_python`.
+
+    5.1.3: `get_session_tasks` matches session resolution and links. test: `crates/gtasks/tests/mcp_reads.rs::get_session_tasks_matches_python`.
+
+    5.1.4: `get_task` matches the actionable card and the `brief=false` record. test:
+    `crates/gtasks/tests/mcp_reads.rs::get_task_matches_python`.
+
+    5.1.5: `get_task_diff` matches hub-local diffs and asserts its node-checkout-git
+    entry. test: `crates/gtasks/tests/mcp_reads.rs::get_task_diff_matches_python`.
+
+    5.1.6: `get_task_sessions` matches the session list. test: `crates/gtasks/tests/mcp_reads.rs::get_task_sessions_matches_python`.
+
+    5.1.7: `list_blocked_tasks` matches blocking sets and parent scoping. test: `crates/gtasks/tests/mcp_reads.rs::list_blocked_tasks_matches_python`.
+
+    5.1.8: `list_ready_tasks` matches readiness and parent scoping. test: `crates/gtasks/tests/mcp_reads.rs::list_ready_tasks_matches_python`.
+
+    5.1.9: `list_tasks` matches filters, views, `refs`, `next_offset` and project
+    selection. test: `crates/gtasks/tests/mcp_reads.rs::list_tasks_matches_python`.
+
+    5.1.10: `search_tasks` matches ranking, scores and filters. test: `crates/gtasks/tests/mcp_reads.rs::search_tasks_matches_python`.
+
+    5.1.11: `suggest_next_task` matches ordering and proximity scoring. test: `crates/gtasks/tests/mcp_reads.rs::suggest_next_task_matches_python`.
+
+    5.1.12: The eleven tools'' catalog entries, schemas, definition hashes, classifications
+    and validation failures match 0.3, and malformed arguments make no service call.
+    test: `crates/gtasks/tests/mcp_reads.rs::read_catalog_matches_python`.
+
+    5.1.13: Each of the eleven tools returns the safe internal message under its own
+    redaction entry, and deliberate errors keep ordinary parity. test: `crates/gtasks/tests/mcp_reads.rs::read_internal_errors_are_safe`.
+
+    5.1.14: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:tasks-family:5.1:5.1.1
+  - covers:tasks-family:5.1:5.1.2
+  - covers:tasks-family:5.1:5.1.3
+  - covers:tasks-family:5.1:5.1.4
+  - covers:tasks-family:5.1:5.1.5
+  - covers:tasks-family:5.1:5.1.6
+  - covers:tasks-family:5.1:5.1.7
+  - covers:tasks-family:5.1:5.1.8
+  - covers:tasks-family:5.1:5.1.9
+  - covers:tasks-family:5.1:5.1.10
+  - covers:tasks-family:5.1:5.1.11
+  - covers:tasks-family:5.1:5.1.12
+  - covers:tasks-family:5.1:5.1.13
+  - covers:tasks-family:5.1:5.1.14
+  tdd: false
+  source_section: '5.1'
+  implementation_domain: backend
+- title: gobby-tasks lifecycle descriptors
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  validation_criteria: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+    test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`.
+
+    5.2.2: `release_task_claim` matches release rules and refusals. test: `crates/gtasks/tests/mcp_lifecycle.rs::release_task_claim_matches_python`.
+
+    5.2.3: `hand_off_task_claim` matches recipient checks and the dirty-file refusal.
+    test: `crates/gtasks/tests/mcp_lifecycle.rs::hand_off_task_claim_matches_python`.
+
+    5.2.4: `delegate_task` matches delegation rows and refusals. test: `crates/gtasks/tests/mcp_lifecycle.rs::delegate_task_matches_python`.
+
+    5.2.5: `link_task_to_session` matches links and claim authority. test: `crates/gtasks/tests/mcp_lifecycle.rs::link_task_to_session_matches_python`.
+
+    5.2.6: `escalate_task` matches escalation, re-escalation release and lifecycle
+    events. test: `crates/gtasks/tests/mcp_lifecycle.rs::escalate_task_matches_python`.
+
+    5.2.7: `de_escalate_task` matches the recorded decision and events. test: `crates/gtasks/tests/mcp_lifecycle.rs::de_escalate_task_matches_python`.
+
+    5.2.8: `reopen_task` matches reopen rows and refusals. test: `crates/gtasks/tests/mcp_lifecycle.rs::reopen_task_matches_python`.
+
+    5.2.9: `close_task` matches every refusal and gate and asserts its node-checkout-git
+    entry. test: `crates/gtasks/tests/mcp_lifecycle.rs::close_task_matches_python`.
+
+    5.2.10: `repair_closed_candidate` matches repair results and SHA resolution. test:
+    `crates/gtasks/tests/mcp_lifecycle.rs::repair_closed_candidate_matches_python`.
+
+    5.2.11: `record_closing_step` matches its step rows. test: `crates/gtasks/tests/mcp_lifecycle.rs::record_closing_step_matches_python`.
+
+    5.2.12: `record_implementation_step` matches its step rows. test: `crates/gtasks/tests/mcp_lifecycle.rs::record_implementation_step_matches_python`.
+
+    5.2.13: `record_review_step` matches its step rows. test: `crates/gtasks/tests/mcp_lifecycle.rs::record_review_step_matches_python`.
+
+    5.2.14: `record_test_step` matches its step rows. test: `crates/gtasks/tests/mcp_lifecycle.rs::record_test_step_matches_python`.
+
+    5.2.15: Escalate, de-escalate and close publish Python''s `task_progress` frame
+    after commit only when an active run has a parent session. test: `crates/gtasks/tests/mcp_lifecycle.rs::task_progress_notices_match_python`.
+
+    5.2.16: The fourteen tools'' catalog entries, schemas, definition hashes, classifications
+    and validation failures match 0.3, and malformed arguments make no service call.
+    test: `crates/gtasks/tests/mcp_lifecycle.rs::lifecycle_catalog_matches_python`.
+
+    5.2.17: Each of the fourteen tools returns the safe internal message under its
+    own redaction entry with no partial write. test: `crates/gtasks/tests/mcp_lifecycle.rs::lifecycle_internal_errors_are_safe`.
+
+    5.2.18: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:tasks-family:5.2:5.2.1
+  - covers:tasks-family:5.2:5.2.2
+  - covers:tasks-family:5.2:5.2.3
+  - covers:tasks-family:5.2:5.2.4
+  - covers:tasks-family:5.2:5.2.5
+  - covers:tasks-family:5.2:5.2.6
+  - covers:tasks-family:5.2:5.2.7
+  - covers:tasks-family:5.2:5.2.8
+  - covers:tasks-family:5.2:5.2.9
+  - covers:tasks-family:5.2:5.2.10
+  - covers:tasks-family:5.2:5.2.11
+  - covers:tasks-family:5.2:5.2.12
+  - covers:tasks-family:5.2:5.2.13
+  - covers:tasks-family:5.2:5.2.14
+  - covers:tasks-family:5.2:5.2.15
+  - covers:tasks-family:5.2:5.2.16
+  - covers:tasks-family:5.2:5.2.17
+  - covers:tasks-family:5.2:5.2.18
+  tdd: false
+  source_section: '5.2'
+  implementation_domain: backend
+- title: gobby-tasks mutation descriptors
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.2'
+  validation_criteria: '5.3.1: `create_task` matches rows and errors and asserts its
+    gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_python`.
+
+    5.3.2: `update_task` preserves field presence, matches rows and asserts its gate-label-authority
+    entry. test: `crates/gtasks/tests/mcp_mutations.rs::update_task_matches_python`.
+
+    5.3.3: `delete_task` matches cascade, unlink and claim authority. test: `crates/gtasks/tests/mcp_mutations.rs::delete_task_matches_python`.
+
+    5.3.4: `add_label` matches rows and asserts its gate-label-authority entry. test:
+    `crates/gtasks/tests/mcp_mutations.rs::add_label_matches_python`.
+
+    5.3.5: `remove_label` matches rows and asserts its gate-label-authority entry.
+    test: `crates/gtasks/tests/mcp_mutations.rs::remove_label_matches_python`.
+
+    5.3.6: `add_dependency` matches edges and cycle errors. test: `crates/gtasks/tests/mcp_mutations.rs::add_dependency_matches_python`.
+
+    5.3.7: `remove_dependency` matches edge removal. test: `crates/gtasks/tests/mcp_mutations.rs::remove_dependency_matches_python`.
+
+    5.3.8: `link_commit` matches links and asserts its node-checkout-git entry. test:
+    `crates/gtasks/tests/mcp_mutations.rs::link_commit_matches_python`.
+
+    5.3.9: `unlink_commit` matches unlinks and claim authority. test: `crates/gtasks/tests/mcp_mutations.rs::unlink_commit_matches_python`.
+
+    5.3.10: `auto_link_commits` matches scanned links and asserts its node-checkout-git
+    entry. test: `crates/gtasks/tests/mcp_mutations.rs::auto_link_commits_matches_python`.
+
+    5.3.11: `update_observed_files` matches derived files, `require_commits` and its
+    node-checkout-git entry. test: `crates/gtasks/tests/mcp_mutations.rs::update_observed_files_matches_python`.
+
+    5.3.12: `backup_tasks` writes Python''s JSONL to the default path only. test:
+    `crates/gtasks/tests/mcp_mutations.rs::backup_tasks_matches_python`.
+
+    5.3.13: The twelve tools'' catalog entries, schemas, definition hashes, classifications
+    and validation failures match 0.3, and malformed arguments make no service call.
+    test: `crates/gtasks/tests/mcp_mutations.rs::mutation_catalog_matches_python`.
+
+    5.3.14: Each of the twelve tools returns the safe internal message under its own
+    redaction entry with no partial write. test: `crates/gtasks/tests/mcp_mutations.rs::mutation_internal_errors_are_safe`.
+
+    5.3.15: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:tasks-family:5.3:5.3.1
+  - covers:tasks-family:5.3:5.3.2
+  - covers:tasks-family:5.3:5.3.3
+  - covers:tasks-family:5.3:5.3.4
+  - covers:tasks-family:5.3:5.3.5
+  - covers:tasks-family:5.3:5.3.6
+  - covers:tasks-family:5.3:5.3.7
+  - covers:tasks-family:5.3:5.3.8
+  - covers:tasks-family:5.3:5.3.9
+  - covers:tasks-family:5.3:5.3.10
+  - covers:tasks-family:5.3:5.3.11
+  - covers:tasks-family:5.3:5.3.12
+  - covers:tasks-family:5.3:5.3.13
+  - covers:tasks-family:5.3:5.3.14
+  - covers:tasks-family:5.3:5.3.15
+  tdd: false
+  source_section: '5.3'
+  implementation_domain: backend
+- title: gobby-tasks-ops descriptors
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.3'
+  validation_criteria: '5.4.1: `append_description_section` matches section writes.
+    test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+
+    5.4.2: `clear_isolation_pair` matches pair clears. test: `crates/gtasks/tests/mcp_ops.rs::clear_isolation_pair_matches_python`.
+
+    5.4.3: `find_file_overlaps` matches overlap results. test: `crates/gtasks/tests/mcp_ops.rs::find_file_overlaps_matches_python`.
+
+    5.4.4: `get_affected_files` matches file lists and sources. test: `crates/gtasks/tests/mcp_ops.rs::get_affected_files_matches_python`.
+
+    5.4.5: `get_artifacts` matches artifact reads. test: `crates/gtasks/tests/mcp_ops.rs::get_artifacts_matches_python`.
+
+    5.4.6: `land_commit` matches landing results and refusals. test: `crates/gtasks/tests/mcp_ops.rs::land_commit_matches_python`.
+
+    5.4.7: `reindex_tasks` returns Python''s statistics. test: `crates/gtasks/tests/mcp_ops.rs::reindex_tasks_matches_python`.
+
+    5.4.8: `set_affected_files` matches writes, source tags and claim authority. test:
+    `crates/gtasks/tests/mcp_ops.rs::set_affected_files_matches_python`.
+
+    5.4.9: `set_artifact` matches single artifact writes. test: `crates/gtasks/tests/mcp_ops.rs::set_artifact_matches_python`.
+
+    5.4.10: `set_artifacts_atomic` writes all fields or none. test: `crates/gtasks/tests/mcp_ops.rs::set_artifacts_atomic_matches_python`.
+
+    5.4.11: `set_landing_freeze` matches freeze state and authority. test: `crates/gtasks/tests/mcp_ops.rs::set_landing_freeze_matches_python`.
+
+    5.4.12: Passed-in definitions join the `gobby-tasks-ops` server beside the eleven
+    tools, and a duplicate tool name is refused. test: `crates/gtasks/tests/mcp_ops.rs::ops_server_accepts_expansion_definitions`.
+
+    5.4.13: The eleven tools'' catalog entries, schemas, definition hashes, classifications
+    and validation failures match 0.3, and malformed arguments make no service call.
+    test: `crates/gtasks/tests/mcp_ops.rs::ops_catalog_matches_python`.
+
+    5.4.14: Each of the eleven tools returns the safe internal message under its own
+    redaction entry with no partial write. test: `crates/gtasks/tests/mcp_ops.rs::ops_internal_errors_are_safe`.
+
+    5.4.15: gdaemon receives this leaf''s patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    5.4.16: `doctor_tasks` returns 3.11''s cycle and invalid-project checks to `Operator`
+    only. test: `crates/gtasks/tests/mcp_ops.rs::doctor_tasks_is_operator_only`.
+
+    5.4.17: `get_task_stats` returns 3.11''s statistics to `Operator` only. test:
+    `crates/gtasks/tests/mcp_ops.rs::get_task_stats_is_operator_only`.
+
+    5.4.18: `get_validation_history` returns 3.11''s history for a task to `Operator`
+    only. test: `crates/gtasks/tests/mcp_ops.rs::get_validation_history_is_operator_only`.
+
+    5.4.19: `restore_tasks` restores only from the hub''s default backup path, takes
+    no path argument, and refuses every non-`Operator` caller with no write. test:
+    `crates/gtasks/tests/mcp_ops.rs::restore_tasks_is_operator_only`.'
+  labels:
+  - covers:tasks-family:5.4:5.4.1
+  - covers:tasks-family:5.4:5.4.2
+  - covers:tasks-family:5.4:5.4.3
+  - covers:tasks-family:5.4:5.4.4
+  - covers:tasks-family:5.4:5.4.5
+  - covers:tasks-family:5.4:5.4.6
+  - covers:tasks-family:5.4:5.4.7
+  - covers:tasks-family:5.4:5.4.8
+  - covers:tasks-family:5.4:5.4.9
+  - covers:tasks-family:5.4:5.4.10
+  - covers:tasks-family:5.4:5.4.11
+  - covers:tasks-family:5.4:5.4.12
+  - covers:tasks-family:5.4:5.4.13
+  - covers:tasks-family:5.4:5.4.14
+  - covers:tasks-family:5.4:5.4.15
+  - covers:tasks-family:5.4:5.4.16
+  - covers:tasks-family:5.4:5.4.17
+  - covers:tasks-family:5.4:5.4.18
+  - covers:tasks-family:5.4:5.4.19
+  tdd: false
+  source_section: '5.4'
+  implementation_domain: backend
+- title: CLI verb-to-public-API map
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.4'
+  validation_criteria: '5.5.1: Every CLI verb''s data result and typed error in 0.3''s
+    vectors is reproduced by its mapped tool, called as `Operator` with the mapped
+    arguments and projection, except the cited default-path waivers. test: `crates/gtasks/tests/cli_api_map.rs::cli_verbs_match_public_tools`.
+
+    5.5.2: The contract maps all 33 verbs to a public tool, arguments, projection,
+    principal, errors and waiver IDs, and states #21571''s transport, rendering and
+    removal ownership. file: `docs/contracts/tasks-services.md`.'
+  labels:
+  - covers:tasks-family:5.5:5.5.1
+  - covers:tasks-family:5.5:5.5.2
+  tdd: false
+  source_section: '5.5'
+  implementation_domain: backend
+- title: Publish Tasks parity ownership
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.4'
+  - '5.5'
+  validation_criteria: '6.1.1: Exactly sixteen HTTP rows are `delegated`, and the
+    claim, MCP, CLI and expansion rows stay `proxied` with the owner notes and waiver
+    IDs above. behavior: "Tasks parity ownership" in `docs/contracts/parity-ledger-status.d/tasks.json`.
+
+    6.1.2: The regenerated ledger matches the fragment, and a second run changes nothing.
+    file: `docs/contracts/parity-ledger.md`.
+
+    6.1.3: The four Q12 tools appear as `Native extension` rows, each with its native-extension
+    entry and no status mapping. file: `docs/contracts/parity-waivers.json`.'
+  labels:
+  - covers:tasks-family:6.1:6.1.1
+  - covers:tasks-family:6.1:6.1.2
+  - covers:tasks-family:6.1:6.1.3
+  tdd: false
+  source_section: '6.1'
+  implementation_domain: backend
+```

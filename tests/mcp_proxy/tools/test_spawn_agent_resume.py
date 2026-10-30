@@ -41,6 +41,41 @@ def _run(**fields: object) -> SimpleNamespace:
     return SimpleNamespace(resume_metadata_json={}, **fields)
 
 
+@pytest.mark.parametrize("requested", ["assistant", "orchestrator", "default", "custom-seat"])
+@pytest.mark.parametrize("granted", [False, True])
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_resume_retype_follows_destination_definition(
+    requested: str, granted: bool, enabled: bool
+) -> None:
+    target = SimpleNamespace(
+        id="existing-session",
+        project_id="project",
+        source="codex",
+        external_id="recorded-thread",
+        status="expired",
+        agent_run_id=None,
+    )
+    sessions = MagicMock()
+    sessions.resolve_session_reference.return_value = target.id
+    sessions.get.return_value = target
+    definition = make_agent_definition(
+        name=requested,
+        prompts={"agent": "Continue"},
+        capabilities=["accept_resume_retype"] if granted else [],
+        enabled=enabled,
+    )
+    if granted and enabled:
+        resolved = await resume.resolve_seat_resume(
+            sessions, "gobby#123", "project", None, None, MagicMock(), definition
+        )
+        assert resolved.id == target.id
+    else:
+        with pytest.raises(ValueError, match="resume it with"):
+            await resume.resolve_seat_resume(
+                sessions, "gobby#123", "project", None, None, MagicMock(), definition
+            )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stored", "requested"),
@@ -89,16 +124,16 @@ async def test_resume_refuses_a_different_agent_type(
 
 
 @pytest.mark.parametrize(
-    ("stored", "requested"),
+    ("stored", "requested", "allow_retype"),
     [
-        ({}, "developer"),
-        ({"_agent_type": "developer"}, "lane-manager"),
-        ({"_agent_type": "orchestrator"}, "orchestrator"),
-        ({}, "default"),
+        ({}, "developer", True),
+        ({"_agent_type": "developer"}, "lane-manager", True),
+        ({"_agent_type": "orchestrator"}, "orchestrator", False),
+        ({}, "default", False),
     ],
 )
 def test_resume_allows_a_seat_definition_or_the_stored_type(
-    stored_agent_type: MagicMock, stored: dict[str, str], requested: str
+    stored_agent_type: MagicMock, stored: dict[str, str], requested: str, allow_retype: bool
 ) -> None:
     stored_agent_type.return_value = stored
     target = SimpleNamespace(
@@ -113,7 +148,7 @@ def test_resume_allows_a_seat_definition_or_the_stored_type(
     sessions.resolve_session_reference.return_value = target.id
     sessions.get.return_value = target
     resolved = resume.resolve_resume_target(
-        sessions, "gobby#123", "project", None, MagicMock(), requested
+        sessions, "gobby#123", "project", None, MagicMock(), requested, allow_retype=allow_retype
     )
     assert resolved.id == target.id
 

@@ -15,6 +15,7 @@ import pytest
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.hooks.session_types import HookSessionManager
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.skills.parser import ParsedSkill
 from gobby.storage.projects import LocalProjectManager
@@ -22,6 +23,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import resolve_edit_pair
 from gobby.workflows.task_dirty_state import task_dirty_paths
+from tests.fixtures.agent_definitions import seed_seat
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
     patch_local_machine_id,
@@ -78,18 +80,26 @@ class TestToolHandlers:
         )
 
     def test_native_router_cold_starts_only_through_the_gobby_skill(
-        self, event_handlers: EventHandlers
+        self, event_handlers: EventHandlers, temp_db: HubDatabase
     ) -> None:
+        seed_seat(
+            temp_db,
+            "custom-guide",
+            surfaces=["persona"],
+            prompts={"persona": "Guide the workspace."},
+            cold_start_commands=["guide"],
+        )
+        event_handlers._session_manager = MagicMock(spec=HookSessionManager, db=temp_db)
         manager = MagicMock()
         manager.resolve_skill_name.return_value = None
         manager.discover_core_skills.return_value = []
         event_handlers._skill_manager = manager
         router = event_handlers._resolve_skill_tool_call(
-            {"tool_input": {"skill": "gobby", "args": "assistant"}}, "project-1"
+            {"tool_input": {"skill": "gobby", "args": "guide"}}
         )
         assert router is not None
         assert router.context is not None
-        assert 'call_tool("gobby-agents", "cold_start_admin", {"role": "assistant"})' in (
+        assert 'call_tool("gobby-agents", "cold_start_admin", {"role": "custom-guide"})' in (
             router.context
         )
         assert "User arguments" not in router.context
@@ -101,6 +111,35 @@ class TestToolHandlers:
         assert '"path":"references/admin/overview.md"' in capability.context
         assert "cold_start_admin" not in capability.context
         manager.resolve_skill_name.assert_not_called()
+        prompt_context = event_handlers._intercept_skill_command("$gobby guide")
+        assert prompt_context is not None
+        assert '"role": "custom-guide"' in prompt_context
+
+    @pytest.mark.parametrize("carrier", ["prompt", "tool"])
+    def test_ambiguous_cold_start_reports_refusal(
+        self, event_handlers: EventHandlers, temp_db: HubDatabase, carrier: str
+    ) -> None:
+        for name in ("guide-one", "guide-two"):
+            seed_seat(
+                temp_db,
+                name,
+                surfaces=["persona"],
+                prompts={"persona": "Guide this project."},
+                cold_start_commands=["guide"],
+            )
+        event_handlers._session_manager = MagicMock(spec=HookSessionManager, db=temp_db)
+        event_handlers._skill_manager = MagicMock()
+        if carrier == "prompt":
+            context = event_handlers._intercept_skill_command("$gobby guide")
+        else:
+            response = event_handlers._resolve_skill_tool_call(
+                {"tool_input": {"skill": "gobby", "args": "guide"}}
+            )
+            assert response is not None
+            context = response.context
+        assert context is not None
+        assert "multiple definitions" in context
+        assert 'call_tool("gobby-agents", "cold_start_admin"' not in context
 
     @pytest.mark.parametrize("router_request", ["help", "missing"])
     def test_native_router_honors_exclusions_without_hiding_unselected_skills(

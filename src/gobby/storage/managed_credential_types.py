@@ -71,6 +71,10 @@ class CredentialIssuanceError(RuntimeError):
     """A scoped role could not be issued and materialized safely."""
 
 
+class CredentialRotationLostRaceError(CredentialIssuanceError):
+    """A rotation lost its predecessor generation to a concurrent publication."""
+
+
 class CredentialAuthorizationError(ValueError):
     """A managed execution request does not match authoritative session scope."""
 

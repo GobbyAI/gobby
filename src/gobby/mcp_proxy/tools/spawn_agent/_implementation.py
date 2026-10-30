@@ -232,7 +232,7 @@ async def spawn_agent_impl(
 
     gate_result = await asyncio.to_thread(
         validate_plan_for_agent_spawn,
-        agent_lookup_name,
+        agent_body,
         task_id,
         task_manager,
         code_index=code_index,
@@ -430,6 +430,7 @@ async def spawn_agent_impl(
         seat_title=definition_display_name(agent_body.name) if agent_body is not None else None,
         resume_session_id=resume_session_id,
         replaces_tab=replaces_tab,
+        spawn_timeout=effective_timeout,
     )
     if isinstance(placed, dict):
         return placed

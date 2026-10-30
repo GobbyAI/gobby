@@ -634,7 +634,11 @@ async def test_send_message_cancels_permission_when_pre_tool_blocks() -> None:
     assert permission_response["id"] == "permission-1"
     assert permission_response["result"] == {"selectedOption": "cancel"}
     assert pre_tool_calls == [
-        {"tool_name": "Bash", "tool_input": {"command": "python -c 'print(1)'"}}
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "python -c 'print(1)'"},
+            "tool_use_id": "tool-1",
+        }
     ]
     assert [event.content for event in events if isinstance(event, TextChunk)] == ["Denied"]
 
@@ -813,7 +817,9 @@ async def test_permission_request_hands_non_object_input_to_pre_tool_unchanged(
     result = await backend._resolve_permission_request(session, events)
 
     assert result == "cancel"
-    assert pre_tool_calls == [{"tool_name": "Bash", "tool_input": tool_input}]
+    assert pre_tool_calls == [
+        {"tool_name": "Bash", "tool_input": tool_input, "tool_use_id": "tool-1"}
+    ]
 
 
 @pytest.mark.asyncio
@@ -822,8 +828,10 @@ async def test_permission_request_hands_non_object_input_to_pre_tool_unchanged(
     ['{"command": "rm -rf /repo/bu', "", ["rm -rf /repo"], 7],
     ids=["truncated", "empty", "list", "int"],
 )
+@pytest.mark.parametrize("blocked", [False, True])
 async def test_streamed_tool_call_hands_non_object_input_to_pre_tool_unchanged(
     tool_input: object,
+    blocked: bool,
 ) -> None:
     """A streamed tool call's non-object input reaches BEFORE_TOOL as sent (#23168, #23179)."""
     tool_call_line = json.dumps(
@@ -853,12 +861,14 @@ async def test_streamed_tool_call_hands_non_object_input_to_pre_tool_unchanged(
     session.project_path = str(Path.cwd())
     pre_tool_calls: list[dict[str, Any]] = []
 
-    async def record_pre_tool(payload: dict[str, Any]) -> None:
+    async def record_pre_tool(payload: dict[str, Any]) -> dict[str, str] | None:
         pre_tool_calls.append(payload)
+        return {"decision": "block", "reason": "ownership unavailable"} if blocked else None
 
     session._on_pre_tool = record_pre_tool
 
     with (
+        patch.object(backend, "interrupt", new_callable=AsyncMock) as interrupt,
         patch(
             "gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"
         ),
@@ -868,9 +878,17 @@ async def test_streamed_tool_call_hands_non_object_input_to_pre_tool_unchanged(
         ),
     ):
         await backend.attach_session(session, model="gpt-5.4")
-        _ = [event async for event in session.send_message("run a command")]
+        if blocked:
+            with pytest.raises(RuntimeError, match="ownership unavailable"):
+                _ = [event async for event in session.send_message("run a command")]
+            interrupt.assert_awaited_once_with(session)
+        else:
+            _ = [event async for event in session.send_message("run a command")]
+            interrupt.assert_not_awaited()
 
-    assert pre_tool_calls == [{"tool_name": "Bash", "tool_input": tool_input}]
+    assert pre_tool_calls == [
+        {"tool_name": "Bash", "tool_input": tool_input, "tool_use_id": "tool-1"}
+    ]
 
 
 def _exit_spec_session(

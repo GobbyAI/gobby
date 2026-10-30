@@ -1,10 +1,11 @@
 name: plan-adversary
+capabilities: [accept_resume_retype, track_plan_consensus]
 description: |
   Plan Adversary seat for the team-planning runbook. Attacks the plan the writer
   passes it, reaches consensus with the writer over send_message, and stamps
   the M1 task manifest on consensus. Never edits the plan narrative.
 
-version: "2.0"
+version: "2.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -102,11 +103,15 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
+      - "name:guard-durable-memory-writes"
+      - "name:inject-plan-reviewer-lessons"
     exclude:
       - "tag:task-skill-gates"
+      - "name:guard-plan-memory-writes"
 
 step_workflow:
   variables:
@@ -145,6 +150,7 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
+        - "gobby-agents:send_message"
       blocked_mcp_tools:
         - "gobby-plans:derive_plan_handoff_manifest"
         - "gobby-plans:apply_plan_handoff_manifest"

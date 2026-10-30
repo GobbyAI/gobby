@@ -35,12 +35,15 @@ def test_relaunch_seeds_only_absent_step_instance(
         str(uuid.uuid4()), "21000000-0000-4000-8000-000000000001", "codex", sample_project["id"]
     )
     instances = AgentStepInstanceManager(session_manager.db)
+    previous = None
     if existing:
         instances.save(
             make_step_instance(
                 session.id, agent_name="developer", current_step="implement", variables={"keep": 1}
             )
         )
+        previous = instances.get_for_session(session.id)
+        assert previous is not None
     body = make_agent_definition(
         name="developer",
         prompts={"agent": "Continue"},
@@ -62,6 +65,8 @@ def test_relaunch_seeds_only_absent_step_instance(
     assert retained.current_step == ("implement" if existing else "claim")
     if existing:
         assert retained.variables == {"keep": 1}
+        assert previous is not None
+        assert retained.updated_at == previous.updated_at
 
 
 @pytest.mark.asyncio

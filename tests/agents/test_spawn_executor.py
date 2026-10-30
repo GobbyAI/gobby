@@ -870,7 +870,7 @@ class TestExecuteSpawn:
 
             # prepare_terminal_spawn must be called with source='codex' and the
             # caller's agent_run_id threaded through unchanged.
-            mock_preapprove.assert_called_once_with("codex", "/path")
+            mock_preapprove.assert_called_once_with("codex", "/path", ())
             mock_prepare.assert_not_called()
             assert call_order == ["preapprove"]
             assert request.provider == "codex"
@@ -1966,7 +1966,7 @@ class TestExecuteSpawnErrorPaths:
             _runtime_of(request).spawn_error = "tmux failed"
             result = await execute_spawn(request)
 
-        mock_preapprove.assert_called_once_with("codex", "/path")
+        mock_preapprove.assert_called_once_with("codex", "/path", ())
         assert result.success is False
         assert "tmux failed" in (result.error or "")
 

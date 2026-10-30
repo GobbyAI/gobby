@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.sync_rules import resolve_sync_placeholders
 from gobby.workflows.template_hashes import TemplateHashCache
 
 pytestmark = pytest.mark.unit
@@ -94,6 +97,33 @@ def test_seed_stores_json_and_hash_atomically() -> None:
     assert digest == compute_definition_hash(template_json)
     assert cache.get_hash("pipeline", "seeded") == digest
     assert cache.get_template_json("pipeline", "seeded") == template_json
+
+
+def _rule_digest(definition: dict[str, Any]) -> str:
+    resolved = resolve_sync_placeholders(json.dumps(definition))
+    value: str = json.loads(resolved)["effects"][0]["value"]
+    return value
+
+
+def test_rule_digest_matches_template_and_installed_serialization() -> None:
+    body = {
+        "event": "before_agent",
+        "effects": [
+            {"type": "set_variable", "variable": "_policy_revision", "value": "{{ rule_digest }}"}
+        ],
+    }
+    template_json = resolve_sync_placeholders(json.dumps(body, sort_keys=True))
+    installed_json = resolve_sync_placeholders(json.dumps(body))
+    cache = TemplateHashCache()
+    cache.seed("rule", "policy", template_json)
+    row = SimpleNamespace(name="policy", kind="rule", definition_json=installed_json)
+    assert cache.has_drift(row) is False
+
+
+def test_rule_digest_changes_with_rule_content() -> None:
+    before = {"effects": [{"value": "{{ rule_digest }}"}]}
+    after = {"effects": [{"value": "{{ rule_digest }}", "extra": 1}]}
+    assert _rule_digest(before) != _rule_digest(after)
 
 
 def test_annotate_rows_keys_by_kind_not_workflow_type() -> None:

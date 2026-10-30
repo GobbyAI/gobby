@@ -1,4 +1,5 @@
 name: epic-reviewer
+capabilities: [accept_resume_retype]
 description: |
   Epic-level reviewer. Reviews the approved plan, aggregate implementation diff,
   and child validation evidence of an open or closed epic.
@@ -85,9 +86,10 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "name:seat-no-task-close"
+      - "name:seat-no-project-create"
       - "tag:default"
       - "tag:worker-safety"
-      - "tag:task-skill-gates"
       - "name:no-send-keys"
 step_workflow:
   variables:

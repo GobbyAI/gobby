@@ -18,7 +18,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    StrictBool,
     ValidationError,
     field_validator,
     model_validator,
@@ -27,7 +26,7 @@ from pydantic import (
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.storage.definitions import DefinitionNameConflictError, DefinitionNotFoundError
 from gobby.storage.hub.protocol import WorkflowDefinitionMutation
-from gobby.workflows.agent_models import AgentPromptBlocks, TaskStepWrite
+from gobby.workflows.agent_models import AgentPromptBlocks
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -101,6 +100,8 @@ class CreateAgentDefinitionRequest(BaseModel):
 
     Unknown keys are rejected: a field the agent body does not carry would
     otherwise be dropped silently.
+    Lifetime and authority fields (including persistent_workspace,
+    read_all_agent_workspaces and task_step_writes) are operator-configured.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -120,12 +121,12 @@ class CreateAgentDefinitionRequest(BaseModel):
     checkout_mode: str | None = "inherit"
     base_branch: str = "inherit"
     timeout: float = 0
-    persistent_workspace: StrictBool = False
-    task_step_writes: list[TaskStepWrite] = Field(default_factory=list)
     prewarm_pre_commit_store: bool = True
     workflows: dict[str, Any] | None = None
     blocked_tools: list[str] | None = None
     blocked_mcp_tools: list[str] | None = None
+    implementation_domains: list[str] | None = None
+    task_categories: list[str] | None = None
     enabled: bool = True
     tags: list[str] | None = None
     step_workflow: dict[str, Any] | None = None
@@ -144,7 +145,7 @@ class CreateAgentDefinitionRequest(BaseModel):
 
 
 class UpdateAgentDefinitionRequest(BaseModel):
-    """Request body for updating an agent definition; unknown keys are rejected."""
+    """Editable definition fields; operator lifetime/authority keys are rejected."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -162,14 +163,14 @@ class UpdateAgentDefinitionRequest(BaseModel):
     checkout_mode: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
-    persistent_workspace: StrictBool | None = None
-    task_step_writes: list[TaskStepWrite] | None = None
     prewarm_pre_commit_store: bool | None = None
     workflows: dict[str, Any] | None = None
     step_workflow: dict[str, Any] | None = None
     enabled: bool | None = None
     blocked_tools: list[str] | None = None
     blocked_mcp_tools: list[str] | None = None
+    implementation_domains: list[str] | None = None
+    task_categories: list[str] | None = None
     tags: list[str] | None = None
 
     @model_validator(mode="before")
@@ -432,8 +433,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 workflows=workflows,
                 blocked_tools=request.blocked_tools or [],
                 blocked_mcp_tools=request.blocked_mcp_tools or [],
-                persistent_workspace=request.persistent_workspace,
-                task_step_writes=request.task_step_writes,
+                implementation_domains=request.implementation_domains or [],
+                task_categories=request.task_categories or [],
                 step_workflow=request.step_workflow,
             )
             dumped = body.model_dump(mode="json")
@@ -506,8 +507,6 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     "base_branch",
                     "timeout",
                     "prewarm_pre_commit_store",
-                    "persistent_workspace",
-                    "task_step_writes",
                 ):
                     if key in fields:
                         body_dict[key] = fields[key]
@@ -519,6 +518,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     "step_workflow",
                     "blocked_tools",
                     "blocked_mcp_tools",
+                    "implementation_domains",
+                    "task_categories",
                 ):
                     if key in fields:
                         body_dict[key] = fields[key]

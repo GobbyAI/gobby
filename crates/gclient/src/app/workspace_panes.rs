@@ -107,23 +107,30 @@ impl<D: Daemon> Workspace<D> {
     pub(super) fn remove_terminal(&mut self, terminal_id: &str) {
         self.relist.invalidate();
         self.pending_spawns.remove(terminal_id);
+        let removed = self.drop_terminal_panes(terminal_id);
+        if self.focus.is_some_and(|id| removed.contains(&id)) {
+            self.focus = None;
+        }
+    }
+
+    /// Drops every live pane for `terminal_id` and its roster entry, returning
+    /// the dropped ids. Focus is left to the caller.
+    pub(super) fn drop_terminal_panes(&mut self, terminal_id: &str) -> Vec<PaneId> {
         let ids: Vec<PaneId> = self
             .order
             .iter()
             .copied()
             .filter(|id| self.panes[id].terminal_id == terminal_id)
             .collect();
-        for id in ids {
+        for &id in &ids {
             // A host-local reconnect for a replaced or closed pane never
             // attaches; the loop cancels its in-flight connect (#23076).
             self.host_recovering.remove(&id);
             self.panes.remove(&id);
             self.host_recovered.remove(&id);
             self.order.retain(|existing| *existing != id);
-            if self.focus == Some(id) {
-                self.focus = None;
-            }
         }
         self.roster_ids.retain(|id| id != terminal_id);
+        ids
     }
 }
