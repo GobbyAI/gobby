@@ -29,11 +29,11 @@ class TestCatalogIntegrity:
             spec = get_spec(key)
             assert spec is not None, f"Picker entry {key} not in catalog"
 
-    def test_default_key_exists_and_is_nomic(self) -> None:
+    def test_default_key_exists_and_is_qwen3(self) -> None:
         spec = get_spec(DEFAULT_CATALOG_ID)
         assert spec is not None
-        assert spec.family == "nomic"
-        assert spec.dim == 768
+        assert spec.family == "qwen3"
+        assert spec.dim == 1024
 
     def test_all_keys_have_valid_specs(self) -> None:
         for key in all_keys():

@@ -15,6 +15,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.persistence import DEFAULT_EMBEDDING_MODEL
 from gobby.search.keyword import pick_search_backend
 from gobby.search.models import SearchConfig
 from gobby.search.unified import UnifiedSearcher
@@ -109,7 +110,7 @@ class SkillSearch:
         db: HubDatabase,
         config: SearchConfig | None = None,
         refit_threshold: int = 10,
-        embedding_model: str = "nomic-embed-text",
+        embedding_model: str = DEFAULT_EMBEDDING_MODEL,
         embedding_api_base: str | None = None,
         embedding_api_key: str | None = None,
         embedding_dim: int | None = None,

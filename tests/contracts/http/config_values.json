@@ -115,8 +115,8 @@
             "api_base": null,
             "api_key": "@secret@",
             "catalog_key": null,
-            "dim": 768,
-            "model": "nomic-embed-text",
+            "dim": 1024,
+            "model": "qwen3-embedding:0.6b-q8_0",
             "query_prefix": null
           },
           "generation": {
@@ -1210,8 +1210,8 @@
             "api_base": null,
             "api_key": "@secret@",
             "catalog_key": null,
-            "dim": 768,
-            "model": "nomic-embed-text",
+            "dim": 1024,
+            "model": "qwen3-embedding:0.6b-q8_0",
             "query_prefix": null
           },
           "generation": {

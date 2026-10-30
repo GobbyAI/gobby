@@ -13,6 +13,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from gobby.ai.embeddings import EmbeddingService
+from gobby.config.persistence import DEFAULT_EMBEDDING_MODEL
 from gobby.search.similarity import cosine_similarity as _cosine_similarity
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ class EmbeddingBackend:
 
     Supports OpenAI-compatible providers such as:
     - OpenAI (text-embedding-3-small)
-    - Ollama (nomic-embed-text with api_base)
+    - Ollama (qwen3-embedding:0.6b-q8_0 with api_base)
     - LM Studio and other local routers
 
     Example:
@@ -47,7 +48,7 @@ class EmbeddingBackend:
 
     def __init__(
         self,
-        model: str = "nomic-embed-text",
+        model: str = DEFAULT_EMBEDDING_MODEL,
         api_base: str | None = None,
         api_key: str | None = None,
         dim: int | None = None,

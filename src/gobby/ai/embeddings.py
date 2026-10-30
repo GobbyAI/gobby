@@ -24,6 +24,7 @@ import httpx
 
 from gobby.ai import embedding_cache
 from gobby.ai.embedding_cache import EmbeddingGenerationError as EmbeddingGenerationError
+from gobby.config.persistence import DEFAULT_EMBEDDING_MODEL
 
 if TYPE_CHECKING:
     from gobby.config.persistence import EmbeddingsConfig
@@ -181,7 +182,7 @@ def _apply_prefix(text: str, is_query: bool, model: str, query_prefix: str | Non
 
 async def _generate_embeddings(
     texts: list[str],
-    model: str = "nomic-embed-text",
+    model: str = DEFAULT_EMBEDDING_MODEL,
     api_base: str | None = None,
     api_key: str | None = None,
     max_retries: int = _DEFAULT_MAX_RETRIES,
@@ -596,7 +597,7 @@ async def _fetch_embeddings(
 
 async def _generate_embedding(
     text: str,
-    model: str = "nomic-embed-text",
+    model: str = DEFAULT_EMBEDDING_MODEL,
     api_base: str | None = None,
     api_key: str | None = None,
     max_retries: int = _DEFAULT_MAX_RETRIES,
@@ -645,7 +646,7 @@ async def _generate_embedding(
 
 
 def _is_embedding_configured(
-    model: str = "nomic-embed-text",
+    model: str = DEFAULT_EMBEDDING_MODEL,
     api_key: str | None = None,
     api_base: str | None = None,
 ) -> bool:
@@ -732,7 +733,7 @@ def _prune_reachability_cache(now: float, cache_ttl: float, *, incoming: int = 0
 
 
 async def _is_embedding_reachable(
-    model: str = "nomic-embed-text",
+    model: str = DEFAULT_EMBEDDING_MODEL,
     api_key: str | None = None,
     api_base: str | None = None,
     timeout: float = _PROBE_TIMEOUT,
@@ -811,7 +812,7 @@ async def _is_embedding_reachable(
 class EmbeddingService:
     """Daemon embedding service backed by the configured embedding endpoint."""
 
-    model: str = "nomic-embed-text"
+    model: str = DEFAULT_EMBEDDING_MODEL
     api_base: str | None = None
     api_key: str | None = None
     dim: int | None = None
