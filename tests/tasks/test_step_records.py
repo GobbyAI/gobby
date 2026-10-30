@@ -436,6 +436,34 @@ def test_checkout_free_project_closes_under_the_default_policy(temp_db: HubDatab
     assert manager.get_task(chore.id).closed_at is not None
 
 
+def test_second_rejection_claimant_records_its_implementation_step(
+    temp_db: HubDatabase, seats: _Seats, task: Task, team: dict[str, str]
+) -> None:
+    """The claimant that fixes after the second rejection records its implementation step.
+
+    The Dev Manager may hand the fix to a reviewer seat that did not reject, so the claim
+    holder, not the rejecting session, is the fixer.
+    """
+    manager = LocalTaskManager(temp_db)
+    fixer = seats.add("step-reviewer", ["review"])
+    manager.claim_task(task.id, team["developer"])
+    _step(temp_db, task, team["developer"], "implementation", "approved", feedback="Implemented.")
+    _step(temp_db, task, team["reviewer"], "review", "rejected", 1)
+    _step(temp_db, task, team["second_reviewer"], "review", "rejected", 2)
+    manager.claim_task(task.id, fixer, expected_owner=team["developer"])
+    manager.link_commit(task.id, _NEXT[:10])
+
+    with pytest.raises(StepRecordError, match="cannot write the implementation step"):
+        _step(temp_db, task, team["second_reviewer"], "implementation", "approved", 3, sha=_NEXT)
+    record, created = _step(temp_db, task, fixer, "implementation", "approved", 3, sha=_NEXT)
+    assert created
+    assert (record.step, record.status, record.session_id) == (
+        "implementation",
+        "approved",
+        fixer,
+    )
+
+
 def test_round_two_approval_leaves_the_implementation_step_approved(
     temp_db: HubDatabase, task: Task, team: dict[str, str]
 ) -> None:

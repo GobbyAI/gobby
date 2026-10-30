@@ -358,7 +358,7 @@ class EnforcementCompletionMixin:
                 if not handler_matches:
                     continue
             if handler.get("action") == "advance_seat":
-                from gobby.workflows.engine.seat_transitions import advance_seat
+                from gobby.workflows.engine.seat_transitions import SEAT_CONSUMED_KEY, advance_seat
 
                 changes = await offload(
                     advance_seat,
@@ -372,7 +372,8 @@ class EnforcementCompletionMixin:
                 )
                 for changed_name, changed_value in changes.items():
                     instance.variables[changed_name] = changed_value
-                    variables[changed_name] = changed_value
+                    if changed_name != SEAT_CONSUMED_KEY:
+                        variables[changed_name] = changed_value
                     vars_changed = True
                     await self._try_step_audit(
                         self._audit_step_set_variable,
