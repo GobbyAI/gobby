@@ -112,6 +112,21 @@ REFUSALS = [
         {"snapshot": "Thinking..."}, "send_keys_composer_not_idle", id="busy-cli-no-composer"
     ),
     pytest.param(
+        {"snapshot": IDLE_COMPOSER + "\nRunning tests... esc to interrupt"},
+        "send_keys_composer_not_idle",
+        id="stale-composer-live-turn",
+    ),
+    pytest.param(
+        {"snapshot": IDLE_COMPOSER + "\nRunning tests..."},
+        "send_keys_composer_not_idle",
+        id="stale-composer-active-work",
+    ),
+    pytest.param(
+        {"snapshot": IDLE_COMPOSER + "\nesc to interrupt"},
+        "send_keys_composer_not_idle",
+        id="stale-composer-turn-in-flight",
+    ),
+    pytest.param(
         {"lookup_error": RuntimeError("terminal table unavailable")},
         "send_keys_target_unconfirmed",
         id="lookup-raises",

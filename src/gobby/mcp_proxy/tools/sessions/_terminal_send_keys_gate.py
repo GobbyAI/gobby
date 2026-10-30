@@ -124,8 +124,10 @@ async def send_keys_target_refusal(
                 f"the target composer is {composer.state}, not an idle agent composer",
             )
 
-        read_frame = composer_reader(_detection_registry(terminal_manager), cli)
-        if read_frame is None:
+        registry = _detection_registry(terminal_manager)
+        read_frame = composer_reader(registry, cli)
+        manifest = registry.for_provider(cli)
+        if read_frame is None or manifest is None:
             return _refuse(
                 "send_keys_target_unconfirmed",
                 f"no composer probe is installed for the {cli} agent",
@@ -142,7 +144,16 @@ async def send_keys_target_refusal(
             )
         if _CREDENTIAL_PROMPT.search(_last_nonblank_line(text)):
             return _refuse("send_keys_credential_prompt", "the target shows a credential prompt")
-        if read_frame(snapshot).state != "empty":
+        # Composer frames can remain visible during a turn. Inspect the entire
+        # pane too, so provider activity or blocking prompts override that frame.
+        # Status bars include the frame rules and do not establish activity.
+        activity = manifest.match(text)
+        if (
+            activity.issues
+            or activity.match is None
+            or (activity.match.state != "idle" and activity.match.rule_id != "status_bar")
+            or read_frame(snapshot).state != "empty"
+        ):
             return _refuse(
                 "send_keys_composer_not_idle",
                 "the target pane does not show an idle agent composer",
