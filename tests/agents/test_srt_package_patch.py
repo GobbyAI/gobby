@@ -60,6 +60,18 @@ def test_verifier_rejects_unpatched_and_modified_proxy(tmp_path: Path, name: str
         verify_srt_proxy_patch(tmp_path)
 
 
+def test_connect_failure_reporter_writes_only_to_the_journal(tmp_path: Path) -> None:
+    # The proxy shares the sandboxed agent's terminal; console output lands in its composer.
+    proxy = write_srt_proxy_fixture(tmp_path).read_bytes()
+    start = proxy.index(b"function reportConnectFailure(")
+    reporter = proxy[start : proxy.index(b"export function createHttpProxyServer(", start)]
+
+    assert b"globalThis.gobbySrtProxyFailure?.(record);" in reporter
+    assert b"console." not in reporter
+    assert b"process.std" not in reporter
+    assert b"[gobby-srt proxy]" not in proxy
+
+
 _WHICH_PROBE = """
 import {pathToFileURL} from 'node:url';
 const {whichSync} = await import(pathToFileURL(process.argv[1]));
