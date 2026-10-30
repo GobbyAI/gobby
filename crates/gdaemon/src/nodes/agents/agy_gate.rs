@@ -1,12 +1,13 @@
 //! The agy version gate: the port of `ensure_agy_support`.
+use super::executable::find_on_path;
 use std::{
     collections::HashMap,
     fs,
     io::Read,
-    os::unix::fs::{MetadataExt, PermissionsExt},
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Mutex, MutexGuard, OnceLock, PoisonError},
+    sync::{Mutex, MutexGuard, OnceLock, PoisonError, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -15,6 +16,8 @@ use std::{
 pub const AGY_REQUIRED_VERSION: &str = "1.1.18";
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long stdout may still arrive after the probe child has exited.
+const PROBE_DRAIN: Duration = Duration::from_secs(1);
 const PROBE_ATTEMPTS: usize = 3;
 
 /// A probed binary: its real path and the metadata a cached record is keyed by.
@@ -34,7 +37,7 @@ static RECORDS: OnceLock<Mutex<Records>> = OnceLock::new();
 
 /// Probes the `agy` found on `path_env`. `Err` carries the refusal reason.
 pub fn ensure_agy_support(path_env: &str, cwd: &Path) -> Result<(), String> {
-    let Some(binary) = find_on_path(path_env) else {
+    let Some(binary) = find_on_path(path_env, "agy") else {
         return Err(refusal("none"));
     };
     for _ in 0..PROBE_ATTEMPTS {
@@ -113,18 +116,6 @@ fn format_version((major, minor, patch): (u64, u64, u64)) -> String {
     format!("{major}.{minor}.{patch}")
 }
 
-fn find_on_path(path_env: &str) -> Option<PathBuf> {
-    path_env
-        .split(':')
-        .filter(|dir| !dir.is_empty())
-        .map(|dir| Path::new(dir).join("agy"))
-        .find(|candidate| is_executable(candidate))
-}
-
-fn is_executable(path: &Path) -> bool {
-    fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-}
-
 fn identity(binary: &Path) -> Option<Identity> {
     let path = fs::canonicalize(binary).ok()?;
     let meta = fs::metadata(&path).ok()?;
@@ -139,6 +130,8 @@ fn identity(binary: &Path) -> Option<Identity> {
 }
 
 /// Runs `binary --version` and returns its stdout. A timeout or a spawn failure reads as empty.
+/// Stdout drains on its own thread while the child runs, so a large version output cannot
+/// fill the pipe and stall the child into the timeout.
 fn probe(binary: &Path, cwd: &Path) -> String {
     let Ok(mut child) = Command::new(binary)
         .arg("--version")
@@ -150,6 +143,14 @@ fn probe(binary: &Path, cwd: &Path) -> String {
     else {
         return String::new();
     };
+    let (sender, receiver) = mpsc::channel();
+    if let Some(mut stdout) = child.stdout.take() {
+        thread::spawn(move || {
+            let mut output = String::new();
+            let _ = stdout.read_to_string(&mut output);
+            let _ = sender.send(output);
+        });
+    }
     let deadline = Instant::now() + PROBE_TIMEOUT;
     loop {
         match child.try_wait() {
@@ -162,9 +163,5 @@ fn probe(binary: &Path, cwd: &Path) -> String {
             }
         }
     }
-    let mut output = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        let _ = stdout.read_to_string(&mut output);
-    }
-    output
+    receiver.recv_timeout(PROBE_DRAIN).unwrap_or_default()
 }

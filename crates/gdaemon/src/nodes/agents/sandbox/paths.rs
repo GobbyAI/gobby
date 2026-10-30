@@ -708,7 +708,7 @@ pub(super) fn assert_sensitive_path_contract(
         let allowed = resolve_nonstrict(Path::new(&subtree_prefix(allowed_text)));
         let is_glob = allowed_text.contains(['*', '?', '[', '{']);
         for sensitive in &protected {
-            let exposes = sensitive.starts_with(&allowed)
+            let exposes = super::grant_glob::reaches(allowed_text, sensitive)
                 || ((is_glob
                     || grant_cache.contains(sensitive)
                     || private_sockets.contains(sensitive))

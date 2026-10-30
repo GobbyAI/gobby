@@ -121,7 +121,8 @@ impl HostControl {
         unreachable!("the second attempt always returns")
     }
 
-    async fn connect(&self) -> Result<ControlClient<UnixStream>, ControlError> {
+    /// A fresh authenticated connection, for a consumer that holds it across blocking reads.
+    pub async fn connect(&self) -> Result<ControlClient<UnixStream>, ControlError> {
         timeout(READY_DEADLINE, async {
             let token = tokio::fs::read_to_string(self.home.join("gterm-control.token")).await?;
             if token.trim().is_empty() {
