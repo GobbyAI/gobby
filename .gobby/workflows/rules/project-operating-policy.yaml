@@ -16,7 +16,8 @@ rules:
         'log-monitor', 'plan-writer', 'plan-enhancer', 'plan-adversary', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
-      and not variables.get('_project_policy_injected')
+      and (not variables.get('_project_policy_injected')
+        or variables.get('_project_policy_revision') != '{{ rule_digest }}')
     effects:
       - type: set_variable
         variable: project_policy
@@ -199,6 +200,10 @@ rules:
         delivery: on_receipt
         variable: _project_policy_injected
         value: true
+      - type: set_variable
+        delivery: on_receipt
+        variable: _project_policy_revision
+        value: '{{ rule_digest }}'
 
   reset-project-operating-policy-on-context-loss:
     description: "Re-arm the project operating policy after context loss"

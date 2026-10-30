@@ -15,6 +15,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import split_rule_definition_data
@@ -323,10 +324,17 @@ def resolve_sync_placeholders(definition_json: str) -> str:
     - ``{{ gobby_bin }}``: resolved to the absolute path of the ``gobby``
       binary via ``shutil.which``, falling back to
       ``<sys.executable> -m gobby`` when the binary isn't on PATH.
+    - ``{{ rule_digest }}``: resolved to the canonical content hash of the
+      unresolved definition, so key order does not change it. A rule that
+      stores it in a session variable re-fires in live sessions exactly when
+      its synced content changes. Sync and template-hash serialization agree.
 
     Called once per rule during sync so the DB always stores a concrete path
     that works regardless of whether the binary is on the CLI's PATH.
     """
+    if "{{ rule_digest }}" in definition_json:
+        digest = compute_definition_hash(definition_json)
+        definition_json = definition_json.replace("{{ rule_digest }}", digest)
     if "{{ gobby_bin }}" in definition_json:
         gobby_bin = shutil.which("gobby")
         if not gobby_bin:
