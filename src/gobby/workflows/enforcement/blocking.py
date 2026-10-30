@@ -13,7 +13,11 @@ from typing import Any
 
 from gobby.hooks.checkout_reads import CheckoutReadUnavailable, node_origin, path_facts
 from gobby.providers import provider_metadata
-from gobby.providers.path_policy import is_plan_scratch_path, is_project_plan_artifact_path
+from gobby.providers.path_policy import (
+    is_plan_scratch_path,
+    is_project_digest_artifact_path,
+    is_project_plan_artifact_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -695,6 +699,7 @@ def requires_task_for_any_touched_file(
     plan_mode: bool = False,
     event_data: Any = None,
     allow_plan_artifacts: bool = False,
+    allow_digest: bool = False,
 ) -> bool:
     """Return True when any touched file should be task-gated.
 
@@ -702,7 +707,8 @@ def requires_task_for_any_touched_file(
     commands carry none, so the adapter's canonical path extraction in event
     data is the fallback — a bash write whose extracted paths are all plan or
     taskless feedback files is exempt, but a structured Write/Edit of a plan file is
-    not: plan mode and an explicit plan-artifact grant exempt those paths below. The helper still
+    not: plan mode and an explicit plan-artifact grant exempt those paths below. An explicit
+    digest grant exempts only the dated digest report. The helper still
     fails closed: when neither source yields a path for a write-like
     tool, the edit is treated as requiring a task.
     """
@@ -720,6 +726,12 @@ def requires_task_for_any_touched_file(
             and is_project_plan_artifact_path(
                 path, event_data.get("project_path"), include_coverage=True
             )
+        ):
+            continue
+        if (
+            allow_digest is True
+            and isinstance(event_data, dict)
+            and is_project_digest_artifact_path(path, event_data.get("project_path"))
         ):
             continue
         # A native Write/Edit of a plan file needs a claim outside plan mode and the
