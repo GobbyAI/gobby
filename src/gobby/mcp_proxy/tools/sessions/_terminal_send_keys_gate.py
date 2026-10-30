@@ -151,9 +151,10 @@ async def send_keys_target_refusal(
         # pane too, so provider activity or blocking prompts override that frame.
         # Status bars include the frame rules and do not establish activity.
         activity = manifest.match(text)
-        busy = any(
-            manifest.match_rule(rule_id, text).match is not None for rule_id in _BUSY_RULE_IDS
-        )
+        # A busy rule whose pattern times out reports an issue, not a match, and that
+        # uncertainty must refuse as well.
+        busy_checks = [manifest.match_rule(rule_id, text) for rule_id in _BUSY_RULE_IDS]
+        busy = any(check.match is not None or check.issues for check in busy_checks)
         if (
             activity.issues
             or activity.match is None

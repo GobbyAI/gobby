@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from gobby.agents.detection.safe_regex import RegexOutcome, RegexSearchResult, SafeRegex
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import _terminal_send_keys_gate as gate
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import register_send_keys_tool
@@ -29,6 +30,9 @@ IDLE_COMPOSER = "────────────────────\n�
 # Hook-denial scrollback that the bundled stop_hook_blocked rule matches first.
 STOP_HOOK_DENIAL = "Stop hook error: validation failed"
 GOBBY_RULE_DENIAL = "Rule enforced by Gobby: validation required"
+LIVE_SPINNER = "✻ Thinking… (12s · esc to interrupt)"
+# A hook denial scrolled above a live turn, with the framed empty composer below it.
+HOOK_DENIAL_OVER_LIVE_TURN = f"{STOP_HOOK_DENIAL}\n{LIVE_SPINNER}\n{IDLE_COMPOSER}"
 
 
 class _Manager:
@@ -150,6 +154,11 @@ REFUSALS = [
         id="gobby-rule-over-active-work",
     ),
     pytest.param(
+        {"snapshot": HOOK_DENIAL_OVER_LIVE_TURN},
+        "send_keys_composer_not_idle",
+        id="hook-denial-over-spinner-above-frame",
+    ),
+    pytest.param(
         {"lookup_error": RuntimeError("terminal table unavailable")},
         "send_keys_target_unconfirmed",
         id="lookup-raises",
@@ -249,6 +258,47 @@ async def test_refuses_a_versioned_path_that_does_not_exist(
 
     assert refusal is not None
     assert refusal.code == "send_keys_target_unconfirmed"
+
+
+@pytest.fixture
+def busy_rule_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every turn_in_flight pattern report PATTERN_TIMEOUT, as a runaway regex would."""
+    real_search = SafeRegex.search
+
+    def search(self: SafeRegex, text: str) -> RegexSearchResult:
+        if "esc to interrupt" in self.source:
+            return RegexSearchResult(RegexOutcome.PATTERN_TIMEOUT)
+        return real_search(self, text)
+
+    monkeypatch.setattr(SafeRegex, "search", search)
+
+
+@pytest.mark.asyncio
+async def test_a_busy_rule_timeout_over_a_hook_denial_refuses(
+    monkeypatch: pytest.MonkeyPatch, busy_rule_times_out: None
+) -> None:
+    manager = _scene(monkeypatch, snapshot=HOOK_DENIAL_OVER_LIVE_TURN)
+
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+
+    assert refusal is not None
+    assert refusal.code == "send_keys_composer_not_idle"
+
+
+@pytest.mark.asyncio
+async def test_public_send_keys_refuses_a_busy_rule_timeout_without_writing(
+    monkeypatch: pytest.MonkeyPatch,
+    public_send_keys: tuple[Callable[..., Any], AsyncMock, str],
+    busy_rule_times_out: None,
+) -> None:
+    register, writer, target_id = public_send_keys
+    handler = register(_scene(monkeypatch, snapshot=HOOK_DENIAL_OVER_LIVE_TURN))
+
+    result = await handler(session_id=target_id, keys="resume\n")
+
+    assert result["success"] is False
+    assert result["error_code"] == "send_keys_composer_not_idle"
+    writer.assert_not_awaited()
 
 
 @pytest.fixture
