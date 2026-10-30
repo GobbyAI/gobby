@@ -29,6 +29,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.daemon_git import GitFailed, GitResult, GitTimeout, daemon_git
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
@@ -55,7 +56,10 @@ from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from gobby.workflows.task_tool_bindings import TaskToolBindings
-from gobby.workflows.worktree_shell_attribution import OVERLAPS_VARIABLE
+from gobby.workflows.worktree_shell_attribution import (
+    OVERLAPS_VARIABLE,
+    begin_structured_edit_calls,
+)
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
@@ -1891,16 +1895,24 @@ async def test_overlap_holder_native_write_ignores_its_own_registered_edit(
     """The Edit's own in-flight entry, registered before the rules judge it, does not block it."""
     h = guard_harness
     _holder_overlap(h, "owned.txt")
-    SessionVariableManager(h.db).begin_worktree_shell_call(
-        h.current_session.id,
-        str(h.repo),
-        "edit-call",
-        before={},
-        attributable=False,
-        now=time.time(),
+    # Edits register in-flight entries only in a registered linked worktree, as production does.
+    LocalWorktreeManager(h.db).create(
+        project_id=h.project.id,
+        branch_name="task-own-edit",
+        worktree_path=str(h.repo),
+        task_id=h.current_task.id,
+        agent_session_id=h.current_session.id,
     )
+    manager = SessionVariableManager(h.db)
+    native = _native_write(h, "owned.txt", call_id="toolu-edit")
+    # WorkflowHookHandler registers the edit before its rules judge it, in production order.
+    begin_structured_edit_calls(manager, h.current_session.id, native)
+    assert any(
+        call_id.startswith("edit:toolu-edit:")
+        for call_id in manager.worktree_shell_call_entries(h.current_session.id)
+    ), "the edit's own entry must be registered, or this test proves nothing"
 
-    reason = await _dirty_edit_reason(h, _native_write(h, "owned.txt", call_id="edit-call"))
+    reason = await _dirty_edit_reason(h, native)
 
     assert reason == ""
 

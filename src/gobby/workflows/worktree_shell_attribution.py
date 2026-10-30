@@ -358,8 +358,12 @@ class WorktreeShellCallRegistry(ABC):
                     hits.append((str(row["session_id"]), other_call_id))
         return hits
 
-    def has_calls_in_flight(self, root: str, now: float, ignore_call_id: str | None) -> bool:
-        """Whether any session, this one included, has a fresh call in ``root`` besides one id."""
+    def has_calls_in_flight(self, root: str, now: float, request_id: str | None) -> bool:
+        """Whether any session, this one included, has a fresh call in ``root`` besides one request.
+
+        A structured edit registers its own entry under ``edit:<request_id>:<root>`` before its
+        rules judge it, so that request's entries (its shell id and its edit keys) never count.
+        """
         rows = self.db.fetchall(
             """
             SELECT (session_variables.variables -> 'worktree_shell_calls')::text AS calls
@@ -367,11 +371,12 @@ class WorktreeShellCallRegistry(ABC):
             WHERE session_variables.variables ? 'worktree_shell_calls'
             """
         )
+        own_edit_prefix = f"{_EDIT_CALL_PREFIX}{request_id}:"
         return any(
             _is_fresh(entry, now) and entry.get("root") == root
             for row in rows
             for call_id, entry in _json_object(row["calls"]).items()
-            if call_id != ignore_call_id
+            if call_id != request_id and not call_id.startswith(own_edit_prefix)
         )
 
     def _mark_overlapped(self, session_id: str, call_id: str) -> None:

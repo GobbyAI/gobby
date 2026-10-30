@@ -51,6 +51,7 @@ from gobby.workflows.task_tool_bindings import TaskToolBindings, cleanup_task_to
 from gobby.workflows.worktree_shell_attribution import (
     OVERLAPS_VARIABLE,
     begin_structured_edit_calls,
+    release_structured_edit_calls,
 )
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, write_project_marker
 
@@ -58,6 +59,7 @@ pytestmark = pytest.mark.unit
 
 MACHINE_ID = "21000000-0000-4000-8000-000000000003"
 UNOWNED = "no live session owns it"
+RULE_3_EDIT_REQUEST = "toolu-rule3-edit"
 
 
 @pytest.fixture(autouse=True)
@@ -154,7 +156,10 @@ class Checkout:
         )
 
     def rule_3_reason(self, rel_path: str, *, command: str | None = None) -> str:
-        """Rule 3's verdict on an Edit of ``rel_path``, or on a Bash ``command`` writing it."""
+        """Rule 3's verdict on an Edit of ``rel_path``, or on a Bash ``command`` writing it.
+
+        An Edit is judged in production order: registered as in flight first, then released.
+        """
         data: dict[str, Any] = (
             {"tool_name": "Bash", "tool_input": {"command": command, "cwd": str(self.repo)}}
             if command is not None
@@ -171,16 +176,24 @@ class Checkout:
             project_id=self.project_id,
             data=data,
             metadata={"_platform_session_id": self.session_id},
+            request_id=None if command is not None else RULE_3_EDIT_REQUEST,
         )
-        return asyncio.run(
-            foreign_dirty_edit_conflict(
-                self.db,
-                edit,
-                session_id=self.session_id,
-                project_id=self.project_id,
-                project_path=str(self.repo),
+        manager = SessionVariableManager(self.db)
+        if command is None:
+            begin_structured_edit_calls(manager, self.session_id, edit)
+        try:
+            return asyncio.run(
+                foreign_dirty_edit_conflict(
+                    self.db,
+                    edit,
+                    session_id=self.session_id,
+                    project_id=self.project_id,
+                    project_path=str(self.repo),
+                )
             )
-        )
+        finally:
+            if command is None:
+                release_structured_edit_calls(manager, self.session_id, RULE_3_EDIT_REQUEST)
 
 
 @pytest.fixture
@@ -1679,15 +1692,43 @@ def test_overlapping_rewrite_of_an_owned_path_is_refused_with_overlap_named(
 
 
 def test_overlap_record_refuses_an_owned_path_whose_content_still_matches(
-    task_worktree: Checkout,
+    mock_dependencies: dict[str, Any], task_worktree: Checkout
 ) -> None:
-    """An overlap record refuses its path even when the caller's own record matches its content."""
-    SessionVariableManager(task_worktree.db).merge_variables(
-        task_worktree.session_id,
-        {OVERLAPS_VARIABLE: {str(task_worktree.repo): ["owned.txt"]}},
+    """An overlap record refuses shell writes to its path even when the caller's own record matches.
+
+    Once no call is in flight, the holder's native write clears the record, and its commit passes.
+    """
+    checkout = task_worktree
+    SessionVariableManager(checkout.db).merge_variables(
+        checkout.session_id,
+        {OVERLAPS_VARIABLE: {str(checkout.repo): ["owned.txt"]}},
     )
 
-    _assert_refused_for_overlap(task_worktree, "owned.txt")
+    _assert_refused_for_overlap(checkout, "owned.txt")
+
+    handlers = _handlers(mock_dependencies, checkout.db)
+    native = _native_write_event(checkout, "owned.txt")
+    # WorkflowHookHandler registers the edit before its rules judge it.
+    begin_structured_edit_calls(SessionVariableManager(checkout.db), checkout.session_id, native)
+    assert handlers.handle_before_tool(native).decision == "allow"
+    checkout.write("owned.txt", "native rewrite\n")
+    handlers.handle_after_tool(replace(native, event_type=HookEventType.AFTER_TOOL))
+    assert checkout.rule_3_reason("owned.txt") == ""
+
+    _git(checkout.repo, "add", "--", "owned.txt")
+    commit = checkout.tool_event(HookEventType.BEFORE_TOOL, "git commit -m owned")
+    assert (
+        asyncio.run(
+            foreign_staged_commit_conflict(
+                checkout.db,
+                commit,
+                session_id=checkout.session_id,
+                project_id=checkout.project_id,
+                project_path=str(checkout.repo),
+            )
+        )
+        == ""
+    )
 
 
 @pytest.mark.parametrize(
