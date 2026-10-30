@@ -18,7 +18,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -172,13 +172,13 @@ async def admit_team(
         target = await asyncio.to_thread(_open_task, db, task, caller.project_id)
         own = await asyncio.to_thread(_own_record, caller)
         if own is not None:
-            _bound_tab(own.get("tab_title"), tab_title)
+            tab = _bound_tab(own.get("tab_title"), tab_title)
             if own.get("parent_team_id") != parent_team_id:
                 if team_id is None:
                     raise TeamAdmissionRefused(
                         "team_binding_drift", "the team's parent cannot change"
                     )
-            return await _readmit(db, caller, own, target, team_id, reviewer_agent)
+            return await _readmit(db, caller, own, target, team_id, reviewer_agent, tab)
         parent = (
             await asyncio.to_thread(
                 pod_parent, db, caller.session.parent_session_id or "", target.id, parent_team_id
@@ -340,11 +340,15 @@ def _binding(record: dict[str, Any] | None) -> TeamBinding | None:
     return TeamBinding(**values)
 
 
-def _bound_tab(recorded: Any, proposed: str | None) -> None:
+def _bound_tab(recorded: str | None, proposed: str | None) -> str | None:
+    """The team's tab: a recorded tab is fixed; a team recorded without one takes ``proposed``."""
+    if recorded is None:
+        return proposed
     if proposed is not None and proposed != recorded:
         raise TeamAdmissionRefused(
             "team_binding_drift", f"team tab is {recorded!r}, not {proposed!r}"
         )
+    return recorded
 
 
 def _bound_reviewer(reviewers: Any, reviewer_agent: str | None, team_id: str) -> None:
@@ -374,8 +378,12 @@ async def _readmit(
     task: Task,
     team_id: str | None,
     reviewer_agent: str | None,
+    tab_title: str | None,
 ) -> TeamBinding:
-    """The caller already recorded a team: return it, adopting a tree made before a crash."""
+    """The caller already recorded a team: return it, adopting a tree made before a crash.
+
+    ``tab_title`` is the team's bound tab; a record made before tab binding records it now.
+    """
     named = team_id or caller.execution_id
     if own.get("checkout_mode") == _TREELESS and team_id is None:
         # A treeless team is named by its task, so a joined execution re-admits the team it joined.
@@ -390,10 +398,14 @@ async def _readmit(
     _bound_reviewer(own.get("reviewers"), reviewer_agent, str(own.get("team_id")))
     if own.get("task_id") != task.id:
         _team(caller, task, named)
+    rebound = tab_title != own.get("tab_title")
+    own = {**own, "tab_title": tab_title}
     binding = _binding(own)
     if binding is not None:
         if own.get("checkout_mode") != _TREELESS:
             await _verify_tree(db, binding)
+        if rebound:
+            await asyncio.to_thread(_record, caller, own)
         return binding
     if own.get("checkout_mode") == _TREELESS:
         # A treeless record is written whole; an incomplete one must not fall through to a tree.
@@ -406,7 +418,7 @@ async def _readmit(
     )
     if tree is None or not Path(tree.worktree_path).is_dir():
         parent = team_binding(db, str(own["parent_team_id"])) if own.get("parent_team_id") else None
-        return await _create(db, caller, task, reviewer_agent, own.get("tab_title"), parent)
+        return await _create(db, caller, task, reviewer_agent, tab_title, parent)
     if tree.task_id != task.id:
         raise TeamAdmissionRefused(
             "team_branch_taken", f"branch {branch} belongs to tree {tree.id} of another task"
@@ -449,12 +461,17 @@ async def _join(
 ) -> TeamBinding:
     """A replacement or fresh-reviewer execution joins team ``team_id`` for the same task."""
     step, binding = await asyncio.to_thread(_team, caller, task, team_id)
-    _bound_tab(binding.tab_title, tab_title)
+    tab = _bound_tab(binding.tab_title, tab_title)
     _bound_reviewer(binding.reviewers, reviewer_agent, team_id)
+    team = _recorded(step) or {}
     # A treeless team has no tree to verify; its joined executions record the same marker.
-    treeless = (_recorded(step) or {}).get("checkout_mode") == _TREELESS
+    treeless = team.get("checkout_mode") == _TREELESS
     if not treeless:
         await _verify_tree(db, binding)
+    if tab != binding.tab_title:
+        # A team admitted before tab binding records the first proposed tab as its own.
+        binding = replace(binding, tab_title=tab)
+        await asyncio.to_thread(_merge, caller.executions, step, team={**team, "tab_title": tab})
     record = {**asdict(binding), "checkout_mode": _TREELESS} if treeless else asdict(binding)
     if binding.task_id != task.id:
         record["admitted_task_id"] = task.id

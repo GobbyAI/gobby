@@ -6,7 +6,7 @@ import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -65,6 +65,56 @@ async def test_runbook_admission_preserves_its_declared_tab(world: TeamWorld) ->
             )
         assert drift["error_code"] == "team_binding_drift", drift
     assert (await world.admit(runbook, task)).tab_title == tab_title
+
+
+async def test_replacement_binds_the_tab_of_a_team_admitted_unbound(world: TeamWorld) -> None:
+    task = world.case.task("A team admitted before tab binding")
+    original = world.child(task)
+    team = await world.admit(original, task)
+    assert team.tab_title is None
+    world.finish(original)
+
+    tab_title = f"Dev Team - #{task.seq_num}"
+    replacement = world.child(task)
+    joined = await world.admit(replacement, task, team_id=team.team_id, tab_title=tab_title)
+    assert joined == replace(team, tab_title=tab_title)
+    assert world.admit_step_output(replacement)["team"] == asdict(joined)
+    # The team's own record carries the bound tab, so later seats and replacements read it.
+    assert team_lifecycle.team_binding(world.case.db, team.team_id) == joined
+
+    for caller in (replacement, world.child(task)):
+        with session_context_for_test(caller.id):
+            drift = await world.tools.call(
+                "admit_team", {"task": task.id, "team_id": team.team_id, "tab_title": "Other"}
+            )
+        assert drift["error_code"] == "team_binding_drift", drift
+    assert await world.admit(world.child(task), task, team_id=team.team_id) == joined
+
+
+@pytest.mark.parametrize("partial", [False, True])
+async def test_rerun_admission_binds_the_tab_of_its_unbound_record(
+    world: TeamWorld, partial: bool
+) -> None:
+    task = world.case.task("A rerun admission before tab binding")
+    runbook = world.child(task)
+    team = await world.admit(runbook, task)
+    if partial:
+        # The step died after making the tree but before recording it complete.
+        intent = {
+            key: value
+            for key, value in asdict(team).items()
+            if key not in ("worktree_id", "worktree_path")
+        }
+        world.rewrite_admit_output(runbook, {"team": intent})
+
+    tab_title = f"Dev Team - #{task.seq_num}"
+    bound = replace(team, tab_title=tab_title)
+    assert await world.admit(runbook, task, tab_title=tab_title) == bound
+    assert team_lifecycle.team_binding(world.case.db, team.team_id) == bound
+    with session_context_for_test(runbook.id):
+        drift = await world.tools.call("admit_team", {"task": task.id, "tab_title": "Other"})
+    assert drift["error_code"] == "team_binding_drift", drift
+    assert await world.admit(runbook, task) == bound
 
 
 @pytest.mark.parametrize("tab_title", ["", "  "])
