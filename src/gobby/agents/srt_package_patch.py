@@ -90,11 +90,12 @@ _CONNECT_FAILURE_REPORTER = b"""function reportConnectFailure(target, stage, err
         ? 'ETIMEDOUT' : status ? `HTTP_${status}` : 'CONNECT_FAILURE';
     const record = { timestamp: new Date().toISOString(), source: 'srt-proxy',
         operation: 'CONNECT', stage, host, port, error_code: errorCode, status };
-    console.error('[gobby-srt proxy] ' + JSON.stringify(record));
+    // The proxy shares the sandboxed agent's terminal, where any console output
+    // lands in its composer. The run's failure journal is the only channel.
     try {
         globalThis.gobbySrtProxyFailure?.(record);
     } catch {
-        console.error('[gobby-srt proxy] failure journal unavailable');
+        // An unavailable journal drops the record; never fall back to the terminal.
     }
 }
 
@@ -102,7 +103,7 @@ _CONNECT_FAILURE_REPORTER = b"""function reportConnectFailure(target, stage, err
 
 
 def _patch_http_diagnostics(source: bytes) -> bytes:
-    """Keep failures visible without enabling upstream's verbose debug logging."""
+    """Journal CONNECT failures without enabling upstream's verbose debug logging."""
     entry = b"export function createHttpProxyServer(options) {"
     status = b"        const endWithStatus = (payload) => {"
     failure = b"""logForDebugging(`CONNECT tunnel failed: ${err.message}`, {

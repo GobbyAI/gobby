@@ -13,6 +13,7 @@ from tests.srt_fixture_helpers import write_srt_proxy_fixture
 _CONNECT_PROBE = r"""
 import { createServer, createConnection } from 'node:net';
 import { once } from 'node:events';
+import { writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 const { createHttpProxyServer } = await import(pathToFileURL(process.argv[1]));
 const events = [];
@@ -44,11 +45,15 @@ try {
   const refused = await connect(`api.anthropic.com:${port}`);
   const denied = await connect(`blocked.example:${port}`);
   const invalid = await connect(`user:never-log-this-secret@blocked.example:${port}`);
+  globalThis.gobbySrtProxyFailure = () => { throw new Error('journal unavailable'); };
+  const unjournaled = await connect(`blocked.example:${port}`);
+  globalThis.gobbySrtProxyFailure = event => events.push(event);
   origin.listen(port, '127.0.0.1');
   await once(origin, 'listening');
   const replies = await Promise.all(Array.from({length: 32}, (_, index) =>
     connect(`${index % 2 ? 'github.com' : 'api.anthropic.com'}:${port}`)));
-  console.log(JSON.stringify({ refused, denied, invalid, replies, events }));
+  // The proxy shares the agent's terminal, so observations leave through a file.
+  writeFileSync(process.argv[2], JSON.stringify({ refused, denied, invalid, unjournaled, replies, events }));
 } finally {
   await Promise.all([
     new Promise(resolve => proxy.close(resolve)),
@@ -59,7 +64,9 @@ try {
 
 
 @pytest.mark.integration
-def test_connect_failures_are_logged_and_allowed_tunnels_recover(tmp_path: Path) -> None:
+def test_connect_failures_reach_only_the_journal_and_allowed_tunnels_recover(
+    tmp_path: Path,
+) -> None:
     runtime = os.environ.get("GOBBY_SRT_TEST_ROOT")
     node = shutil.which("node")
     if runtime is None or node is None:
@@ -70,25 +77,31 @@ def test_connect_failures_are_logged_and_allowed_tunnels_recover(tmp_path: Path)
         Path(runtime) / "node_modules", tmp_path / "node_modules", copy_function=shutil.copyfile
     )
     proxy = write_srt_proxy_fixture(tmp_path)
+    observations = tmp_path / "observed.json"
     env = {key: value for key, value in os.environ.items() if key != "SRT_DEBUG"}
     result = subprocess.run(
-        [node, "--input-type=module", "-e", _CONNECT_PROBE, str(proxy)],
+        [node, "--input-type=module", "-e", _CONNECT_PROBE, str(proxy), str(observations)],
         capture_output=True,
         text=True,
         timeout=30,
         env=env,
         check=True,
     )
-    observed = json.loads(result.stdout)
+    # The proxy's stdout and stderr are the sandboxed agent's terminal.
+    assert result.stdout == ""
+    assert result.stderr == ""
+    observed = json.loads(observations.read_text(encoding="utf-8"))
     assert observed["refused"].startswith("HTTP/1.1 502")
     assert observed["denied"].startswith("HTTP/1.1 403")
     assert observed["invalid"].startswith("HTTP/1.1 400")
+    assert observed["unjournaled"].startswith("HTTP/1.1 403")
     assert len(observed["replies"]) == 32
     assert all(
         reply.startswith("HTTP/1.1 200") and reply.endswith("pong") for reply in observed["replies"]
     )
     assert any(event["error_code"] == "ECONNREFUSED" for event in observed["events"])
-    assert any(event.get("status") == 403 for event in observed["events"])
-    assert "ECONNREFUSED" in result.stderr and "blocked.example" in result.stderr
-    assert "never-log-this-secret" not in result.stderr
+    assert any(
+        event["host"] == "blocked.example" and event["status"] == 403
+        for event in observed["events"]
+    )
     assert "never-log-this-secret" not in json.dumps(observed["events"])
