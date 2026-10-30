@@ -14,7 +14,10 @@ import type { TerminalViewHandle, TerminalViewProps } from "../TerminalView";
 // real hook under the real tab and stub only the renderer, which is driven
 // through the two callbacks TerminalView uses (`onReady` once at mount,
 // `onSizeChange` on every later grid change).
-const view = vi.hoisted(() => ({ props: null as TerminalViewProps | null }));
+const view = vi.hoisted(() => ({
+  props: null as TerminalViewProps | null,
+  size: null as { rows: number; cols: number } | null,
+}));
 
 vi.mock("../TerminalView", () => ({
   TerminalView: forwardRef<TerminalViewHandle, TerminalViewProps>(
@@ -22,7 +25,7 @@ vi.mock("../TerminalView", () => ({
       view.props = props;
       useImperativeHandle(ref, () => ({
         write: () => undefined,
-        getSize: () => null,
+        getSize: () => view.size,
         setKeyboardOpen: () => undefined,
         applyAttachHistory: () => undefined,
       }));
@@ -91,10 +94,19 @@ function mountedView(): TerminalViewProps {
   return view.props;
 }
 
+function measureGrid(rows: number, cols: number, ready = false): void {
+  act(() => {
+    view.size = { rows, cols };
+    if (ready) mountedView().onReady?.(rows, cols);
+    else mountedView().onSizeChange?.(rows, cols);
+  });
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   mockWs = createMockWebSocket();
   view.props = null;
+  view.size = null;
   window.sessionStorage.clear();
   // Idle shells are hidden under the default "agents" scope.
   window.localStorage.setItem("gobby:terminal:session-scope", "all");
@@ -113,8 +125,8 @@ describe("TerminalTab keeps the PTY on the renderer's grid", () => {
     // Fonts load and the panel settles after the first measurement; under load
     // the daemon is still answering the attach, so there is no attachment to
     // carry the new size yet.
-    act(() => mountedView().onReady?.(24, 80));
-    act(() => mountedView().onSizeChange?.(40, 132));
+    measureGrid(24, 80, true);
+    measureGrid(40, 132);
 
     respondToAttach(ws, "t-a", "att-a");
 
@@ -133,10 +145,10 @@ describe("TerminalTab keeps the PTY on the renderer's grid", () => {
 
   it("opens a replacement attachment at the grid the previous one was last resized to", () => {
     const ws = mountTab(["t-a", "t-b"]);
-    act(() => mountedView().onReady?.(24, 80));
+    measureGrid(24, 80, true);
     respondToAttach(ws, "t-a", "att-a");
 
-    act(() => mountedView().onSizeChange?.(40, 132));
+    measureGrid(40, 132);
     // The attachment live at the time hears about the change.
     expect(lastSent(ws, "terminal_resize")).toMatchObject({
       attachment_id: "att-a",
