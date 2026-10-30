@@ -13,7 +13,11 @@ from typing import Any
 
 from gobby.hooks.checkout_reads import CheckoutReadUnavailable, node_origin, path_facts
 from gobby.providers import provider_metadata
-from gobby.providers.path_policy import is_plan_scratch_path, is_project_plan_artifact_path
+from gobby.providers.path_policy import (
+    is_plan_scratch_path,
+    is_project_digest_artifact_path,
+    is_project_plan_artifact_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +94,7 @@ PROVIDER_DISCOVERY_TOOLS = frozenset({"ToolSearch", "search_tool"})
 # always interrogate a stuck agent (e.g. send_keys into a terminate step
 # whose allow-list only lists kill_agent). Agent enforcement blocks them
 # outright for provider-native subagents. Spawned Gobby agents are gated by the
-# opt-in ``no-send-keys`` rule, which an agent definition selects.
+# ``no-send-keys`` rule, which withholds ``send_keys`` unless the definition holds it.
 OPERATOR_TOOLS = {
     "send_keys",
     "capture_output",
@@ -260,7 +264,7 @@ def is_operator_tool(tool_name: str | None) -> bool:
     or CLI to inspect or poke a running session. They are not agent actions
     and must bypass step/agent MCP allow-lists so an operator can always
     reach a stuck agent. Provider-native subagents are blocked from them by agent
-    enforcement; spawned Gobby agents are gated by the opt-in ``no-send-keys`` rule.
+    enforcement; spawned Gobby agents are gated by the ``no-send-keys`` rule.
 
     Args:
         tool_name: The MCP tool name (from tool_input.tool_name)
@@ -694,7 +698,8 @@ def requires_task_for_any_touched_file(
     source: str | None = None,
     plan_mode: bool = False,
     event_data: Any = None,
-    agent_type: str | None = None,
+    allow_plan_artifacts: bool = False,
+    allow_digest: bool = False,
 ) -> bool:
     """Return True when any touched file should be task-gated.
 
@@ -702,7 +707,8 @@ def requires_task_for_any_touched_file(
     commands carry none, so the adapter's canonical path extraction in event
     data is the fallback — a bash write whose extracted paths are all plan or
     taskless feedback files is exempt, but a structured Write/Edit of a plan file is
-    not: plan mode and the plan-writer seat exempt those paths below. The helper still
+    not: plan mode and an explicit plan-artifact grant exempt those paths below. An explicit
+    digest grant exempts only the dated digest report. The helper still
     fails closed: when neither source yields a path for a write-like
     tool, the edit is treated as requiring a task.
     """
@@ -715,15 +721,21 @@ def requires_task_for_any_touched_file(
 
     for path in touched_paths:
         if (
-            agent_type == "plan-writer"
+            allow_plan_artifacts is True
             and isinstance(event_data, dict)
             and is_project_plan_artifact_path(
                 path, event_data.get("project_path"), include_coverage=True
             )
         ):
             continue
+        if (
+            allow_digest is True
+            and isinstance(event_data, dict)
+            and is_project_digest_artifact_path(path, event_data.get("project_path"))
+        ):
+            continue
         # A native Write/Edit of a plan file needs a claim outside plan mode and the
-        # plan-writer role; only shell writes keep the taskless plan-file exemption.
+        # plan-artifact grant; only shell writes keep the taskless plan-file exemption.
         if not structured_mutation and is_plan_file(path, source):
             continue
         if plan_mode and path.endswith(".md"):

@@ -248,7 +248,7 @@ each D-section's owner `deferred-from:s2-11-hub-hooks-rules:D<n>`.
 | --- | --- | --- |
 | #21562 Sessions | blocks | 7.2 |
 | #21560 Tasks | blocks | 7.3 |
-| #21564 Agents | blocks | 7.4; also receives the report and run rows and the pane store (Decision 13), and owns D2; the Orchestrator binds D2's wait on 3.5 to #21564's restart-recovery leaf at expansion |
+| #21564 Agents | blocks | 7.4; also receives the report and run rows and the pane store (Decision 13), and owns D2; D2's heading makes #21564 wait on 3.5 at expansion, and the Orchestrator may move that edge down to #21564's restart-recovery leaf |
 | #21565 Terminals | blocks | 7.5 |
 | #21580 Skills | blocks | 7.6 |
 | #21566 MCP multiplexer | blocks | 7.7 |
@@ -266,7 +266,7 @@ each D-section's owner `deferred-from:s2-11-hub-hooks-rules:D<n>`.
 | #21569 S2.11 holder | blocked by #24151 | unchanged |
 | #22946 rust-rule-evaluation | closed as superseded (Q1 = B) | Orchestrator |
 | #21570 MCP front door flip | owns D3, the Python MCP proxy's rule-pass sites | D3 |
-| #21592 WS chat route family | owns D1: web chat's lifecycle, then deletion of the Python hook pipeline and rule engine | D1; its edge on this plan targets 7.15, never the epic |
+| #21592 WS chat route family | owns D1: web chat's lifecycle, then deletion of the Python hook pipeline and rule engine | D1; D1's heading makes #21592 wait on 7.15 and #21570 at expansion, never on the epic, and the Orchestrator may move those edges down to #21592's own leaves once it is planned |
 | #21571 CLI | owns the `gobby webhooks` verbs | 7.16 records it |
 
 ## Site Disposition port
@@ -2628,8 +2628,8 @@ Three are bound here:
 `hooks::compose` builds one 2.19 `driver` and returns it beside the family as
 an `Arc`. The pipeline holds one clone, and `serve::run` keeps the other for
 #24884's gateway composition, which takes it (Cross-plan edges). Every Rust
-pass of a session, from a hook or a proxied tool call, then joins one FIFO
-(Decision 4).
+pass of a session, from a hook or a proxied tool call, then joins one FIFO and
+one pending tool context (Decision 4).
 
 `hooks::dispatch::LocalDispatch` sends a request through `FrontDoor::handle`
 with a loopback peer and the local operator credential
@@ -2648,7 +2648,7 @@ one composition step; nothing below it has a caller until it exists.
 - 7.1.2 - Broadcasts reach the native broker, the local runner runs a `run_command` case, and every unbound group returns `SeamUnavailable`. test: `crates/gdaemon/src/hooks/tests.rs::local_seams_bind_and_unbound_groups_refuse`.
 - 7.1.3 - `LocalDispatch` sends a request through authentication and the route table, and it reaches Python when the route is proxied. test: `crates/gdaemon/src/hooks/tests.rs::local_dispatch_uses_the_front_door`.
 - 7.1.4 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
-- 7.1.5 - D2.8: an ingress pass and a pass through a second holder of the shared `driver` for one session run in arrival order while a scripted seam holds the first in flight, and the second reads the variables the first committed. test: `crates/gdaemon/src/hooks/tests.rs::ingress_and_gateway_passes_share_one_session_fifo`.
+- 7.1.5 - D2.8: an ingress pass and a pass through a second holder of the shared `driver` for one session run in arrival order while a scripted seam holds the first in flight, and the second reads the variables the first committed; a second-holder before pass for a tool whose ingress BEFORE_TOOL is still pending sees that context as a duplicate. test: `crates/gdaemon/src/hooks/tests.rs::ingress_and_gateway_passes_share_one_session_fifo`.
 
 ### 7.2 Sessions seam adapter [category: code] (depends: 7.1, #21562)
 `kind: deliverable`
@@ -3308,7 +3308,7 @@ Consumers unchanged:
 - 7.18.1 - The app mounts neither node hook route, the detection-manifest route nor `/api/webhooks`, and the report and run routes still answer. test: `tests/servers/test_node_run_routes.py::test_node_run_routes_survive_hook_route_removal`.
 - 7.18.2 - The five rows stay `delegated` and the ledger matches the inventory. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
 
-## D1 Web chat lifecycle on the Rust pipeline, then the Python pipeline deletion (depends: 7.15)
+## D1 Web chat lifecycle on the Rust pipeline, then the Python pipeline deletion (depends: 7.15, #21570)
 `kind: deferred`
 
 Web chat is the last Python host of rule passes (Decision 4).
@@ -3344,7 +3344,7 @@ deferral:
     - D1.3
 ```
 
-## D2 Startup hook-replay barrier
+## D2 Startup hook-replay barrier (depends: 3.5)
 `kind: deferred`
 
 `src/gobby/runner_hook_replay.py::_run_agent_hook_replay_barrier` calls

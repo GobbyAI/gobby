@@ -150,6 +150,11 @@ async def spawn_remote_route(
                 concrete_provider(request.requested_provider),
                 runner.run_storage,
                 agent_type,
+                allow_retype=(
+                    request.agent_body is not None
+                    and request.agent_body.enabled
+                    and "accept_resume_retype" in request.agent_body.capabilities
+                ),
             )
         except ValueError as exc:
             return spawn_refusal("resume_refused", str(exc))

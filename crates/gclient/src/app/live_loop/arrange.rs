@@ -1,6 +1,6 @@
 //! Client-side layout plans for daemon workspace tabs.
 
-use crate::app::{ArrangeLayout, ArrangeTarget};
+use crate::app::{ArrangeLayout, ArrangeTarget, PaneId};
 use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceErrorCode, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::ui::status::Toast;
@@ -210,6 +210,44 @@ pub(super) async fn apply_arrange(
         chrome.focus_pane(pane);
         focus_live_pane(workspace, pane);
     }
+    Ok(())
+}
+
+/// Move `pane` to the end of `tab`, which the move menu named when it was
+/// built; the window stays on its current tab. A refusal, such as a tab of
+/// another project, lands on the status line.
+pub(super) async fn move_pane_to_tab(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    pane: PaneId,
+    tab: &str,
+) -> Result<(), FrameError> {
+    let slot = chrome
+        .tabs()
+        .tabs
+        .iter()
+        .find_map(|candidate| candidate.slot_for(pane));
+    let Some(daemon_pane) = slot.and_then(|slot| daemon_pane_id(chrome, slot)) else {
+        chrome.notify(Toast::warning("Cannot move: that pane has closed"));
+        return Ok(());
+    };
+    if !chrome
+        .tabs()
+        .tabs
+        .iter()
+        .any(|candidate| candidate.id == tab)
+    {
+        chrome.notify(Toast::warning("Cannot move: that tab has closed"));
+        return Ok(());
+    }
+    let op = WorkspaceOp::PaneMove {
+        pane: daemon_pane,
+        tab: tab.to_owned(),
+        beside: None,
+        axis: None,
+        node: None,
+    };
+    send_op(workspace, chrome, op).await?;
     Ok(())
 }
 

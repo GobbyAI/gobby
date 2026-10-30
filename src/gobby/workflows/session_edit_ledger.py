@@ -84,14 +84,15 @@ class SessionEditLedger(ABC):
         )
 
         normalized_checkout = normalize_task_checkout_root(checkout_root)
-        # Content as this edit left it; a later Gobby edit or claimant shell call replaces it.
-        digests = (
-            path_fingerprints(Path(normalized_checkout), normalized_paths)
-            if normalized_checkout is not None
-            else {}
-        )
 
         def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
+            # Read under the same lock as persistence: a delayed observation must
+            # never replace a newer writer's fingerprint with a pre-lock snapshot.
+            digests = (
+                path_fingerprints(Path(normalized_checkout), normalized_paths)
+                if normalized_checkout is not None
+                else {}
+            )
             task_id = (
                 active_task_id_for_edit(variables)
                 if started_at is None

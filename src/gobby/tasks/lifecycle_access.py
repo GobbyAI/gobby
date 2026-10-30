@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-
-from gobby.storage.definitions import AgentDefinitionManager
+from gobby.config.tasks import TaskProtectionPolicyConfig, load_project_task_protection_policy
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.project_checkouts import require_root
+from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
+from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.machine_id import require_machine_id
-from gobby.workflows.agent_models import AgentDefinitionBody
-from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.agent_models import AgentTaskScope
+from gobby.workflows.agent_resolver import session_agent_definition
 
 
 class CrossProjectTaskForbidden(ValueError):
@@ -24,32 +23,6 @@ class CrossProjectTaskForbidden(ValueError):
         super().__init__("task_not_found")
 
 
-OPERATOR_ROLES = frozenset({"assistant", "orchestrator"})
-
-
-def session_agent_definition(
-    db: HubDatabase, session: Session
-) -> tuple[AgentDefinitionBody, str] | None:
-    """The enabled installed definition a session runs as, with its content digest."""
-    agent_type = (
-        SessionVariableManager(db)
-        .get_variable_subset(session.id, ("_agent_type",))
-        .get("_agent_type")
-    )
-    if not isinstance(agent_type, str) or not agent_type or session.project_id is None:
-        return None
-    definition = AgentDefinitionManager(db).get_by_name(agent_type, session.project_id)
-    if definition is None or not definition.enabled:
-        return None
-    body = AgentDefinitionBody.model_validate(
-        {**definition.definition_json, "name": definition.name}
-    )
-    digest = hashlib.sha256(
-        json.dumps(definition.definition_json, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    return body, digest
-
-
 def session_grants(db: HubDatabase, session_id: str, step: str) -> bool:
     """Whether the enabled definition a session runs as grants ``step`` records."""
     session = SessionManager(db).get(session_id)
@@ -57,14 +30,62 @@ def session_grants(db: HubDatabase, session_id: str, step: str) -> bool:
     return resolved is not None and step in resolved[0].task_step_writes
 
 
+def task_scope_refusal(task: Task, session_id: str, scope: AgentTaskScope) -> str | None:
+    """Explain which declared task constraint excludes the operation, if any."""
+    if scope.task_types is not None and task.task_type not in scope.task_types:
+        return f"The definition's task scope excludes type {task.task_type}."
+    if scope.categories is not None and task.category not in scope.categories:
+        return f"The definition's task scope excludes category {task.category}."
+    if scope.own_claim_only and task.claimed_by_session_id != session_id:
+        return "The definition's task scope requires the caller's own claim."
+    return None
+
+
+def task_protection_refusal(
+    tasks: LocalTaskManager, task: Task, caller_session_id: str
+) -> str | None:
+    """Check each task against its own project's primary-checkout policy.
+
+    Closing a last child can close its parent; reparenting changes both ancestor
+    chains. Callers must check the existing task and any proposed parent.
+    """
+    policies: dict[str, TaskProtectionPolicyConfig] = {}
+    seen: set[str] = set()
+    node: Task | None = task
+    while node is not None and node.id not in seen:
+        seen.add(node.id)
+        if node.project_id not in policies:
+            policies[node.project_id] = (
+                TaskProtectionPolicyConfig()
+                if node.project_id in CHECKOUT_FREE_PROJECT_IDS
+                else load_project_task_protection_policy(
+                    require_root(tasks.db, node.project_id, require_machine_id())
+                )
+            )
+        policy = policies[node.project_id]
+        ref = f"#{node.seq_num}" if node.seq_num is not None else node.id
+        where = f"task {ref}" if node.id == task.id else f"ancestor task {ref}"
+        owner = get_claimed_session_id(node)
+        if policy.foreign_claims and owner and owner != caller_session_id:
+            return f"{where} is claimed by session '{owner}'"
+        protected_labels = set(policy.labels).intersection(node.labels or [])
+        if protected_labels:
+            return f"{where} has protected labels: {', '.join(sorted(protected_labels))}"
+        if ref in policy.subtree_roots or node.id in policy.subtree_roots:
+            return f"{where} is a protected subtree root"
+        node = tasks.get_task(node.parent_task_id) if node.parent_task_id else None
+    return None
+
+
 def is_operator_coordinator(
-    tasks: LocalTaskManager, caller: Session, roles: frozenset[str] = OPERATOR_ROLES
+    tasks: LocalTaskManager, caller: Session, *, capability: str = "coordinate_tasks"
 ) -> bool:
-    """Recognize an enabled operator role on a locally owned root session."""
-    if caller.parent_session_id is not None or caller.machine_id != require_machine_id():
+    """Check a definition's coordinator permission on a locally owned root session."""
+    # Clear successors have parents for lineage; run/depth identify spawned seats.
+    if caller.agent_run_id or caller.agent_depth or caller.machine_id != require_machine_id():
         return False
     definition = session_agent_definition(tasks.db, caller)
-    return definition is not None and definition[0].name in roles
+    return definition is not None and capability in definition[0].capabilities
 
 
 def resolve_lifecycle_task(
@@ -78,8 +99,8 @@ def resolve_lifecycle_task(
     """Resolve local refs normally, and foreign refs only for local coordinators.
 
     This does not authorize claiming or bypass landing/receipt policy. Foreign
-    access requires a descendant owning the task or an enabled operator role on
-    a root session. Identity and lineage come exclusively from stored records.
+    access requires a descendant owning the task or the coordinate_tasks capability
+    on a root session. Identity and lineage come exclusively from stored records.
     """
     target_project = project_id
     local_ref = ref

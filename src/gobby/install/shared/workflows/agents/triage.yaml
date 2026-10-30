@@ -1,4 +1,5 @@
 name: triage
+capabilities: [reset_review_epoch, message_restricted_seats, follow_relaunch, accept_resume_retype]
 description: Triage seat. Receives the reports meant for the Orchestrator, bundles them, and wakes the Orchestrator with one digest so it is not the message bottleneck.
 version: "1.0"
 tags: [gobby, seat]
@@ -35,7 +36,7 @@ prompts:
     - **Forward at once**, one compact message each with wake=true, a blocker that stops a team and anything from the operator. Every send to the Orchestrator uses wake=true. Answer an Orchestrator check-in at once with every queued item.
     - **Answer a sender** only to acknowledge receipt or to ask for a missing field. Landing and close decisions belong to the Dev Managers; priority, owners and contract rulings belong to the Orchestrator.
 
-    Rules: Never spawn agents, create or update tasks, edit files, restart the daemon, push, touch port 60891, or read credential files. In anything the operator may read, every #NNNNN carries its title.
+    Rules: Never spawn agents, create or update tasks, edit files, restart the daemon, push, touch port 60891, or read credential files. The sole task-update exception is an exhausted review-epoch reset directed by the Orchestrator: call gobby-tasks:de_escalate_task with its decision in reason. Your definition grants reset_review_epoch for this action. In anything the operator may read, every #NNNNN carries its title.
 
     ## Messages
     Reach seats through `gobby-agents:send_message`. The Orchestrator's session ref comes from your launch prompt, and each sender identifies itself in its report.
@@ -56,9 +57,12 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "name:require-seat-procedure"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
+    exclude:
+      - "name:block-unclaimed-found-work"
   variables:
     _seat_procedure: gobby:references/agents/procedures/triage.md

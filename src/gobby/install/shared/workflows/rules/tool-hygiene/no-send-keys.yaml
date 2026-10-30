@@ -1,24 +1,25 @@
-tags: [send-keys, gobby]
+tags: [send-keys, gobby, default]
 
-# Terminal control is opt-in per agent definition: a definition that must not
-# type into or read another session's terminal selects this rule with
-# "name:no-send-keys" in workflows.rule_selectors.include. It carries no
-# default tag, so a definition that omits the selector keeps both tools.
-#
-# The engine applies every enabled rule to a session with no resolved agent
-# definition, so the guard keeps the rule off sessions that never selected it,
-# including a root session typed `default` whose definition failed to resolve.
+# send_keys is withheld from every caller except the operator's own unspawned
+# terminal and a definition that grants the send_keys capability. The tool guard
+# comes first, so an evaluation error, which fails closed, refuses the call. The
+# target's composer and foreground checks run in the send_keys handler.
+# capture_output stays governed by block-cross-project-send-keys alone.
 rules:
   no-send-keys:
-    description: "Block send_keys and capture_output for agents whose definition selects this rule"
+    description: "Block send_keys for callers other than the operator terminal and definitions granting the send_keys capability"
     event: before_tool
     enabled: true
     priority: 10
-    when: "variables.get('_agent_type') not in (None, '', 'default')"
+    when: >
+      tool_input.get('server_name') == 'gobby-sessions'
+      and tool_input.get('tool_name') == 'send_keys'
+      and not (
+        operator_session(event.metadata.get('_platform_session_id'))
+        or session_has_capability(event.metadata.get('_platform_session_id'), 'send_keys'))
     effects:
       - type: block
-        mcp_tools: ["gobby-sessions:send_keys", "gobby-sessions:capture_output"]
+        mcp_tools: ["gobby-sessions:send_keys"]
         reason: >-
-          Your agent definition does not grant terminal control, so send_keys and
-          capture_output are unavailable. Use gobby-agents:send_message for
-          cross-session communication.
+          send_keys is reserved for the operator's terminal and definitions granting the
+          send_keys capability. Use gobby-agents:send_message for cross-session communication.

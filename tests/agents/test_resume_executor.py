@@ -40,9 +40,10 @@ async def test_resume_seeds_trust_off_event_loop(monkeypatch: pytest.MonkeyPatch
     loop_thread = threading.get_ident()
     trust_threads: list[int] = []
 
-    def seed(provider: str, cwd: str) -> None:
+    def seed(provider: str, cwd: str, codex_models: tuple[str, ...]) -> None:
         assert provider == "claude"
         assert cwd == metadata["cwd"]
+        assert codex_models == ()
         trust_threads.append(threading.get_ident())
 
     monkeypatch.setattr(resume_executor, "pre_approve_directory", seed)
@@ -199,6 +200,10 @@ async def test_codex_resume_delivers_prompt_via_composer_not_argv(
     spawner.spawn.return_value = _spawn_result()
     finalize = AsyncMock()
     _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+    live_models = MagicMock(return_value=("gpt-future-policy",))
+    seed_trust = MagicMock()
+    monkeypatch.setattr(resume_executor, "active_codex_launch_models", live_models)
+    monkeypatch.setattr(resume_executor, "pre_approve_directory", seed_trust)
 
     result = await resume_executor.resume_agent_run(
         _original_run(),
@@ -208,6 +213,8 @@ async def test_codex_resume_delivers_prompt_via_composer_not_argv(
     )
 
     assert result.success is True
+    live_models.assert_called_once_with(runner.run_storage.db, _resume_metadata()["project_id"])
+    seed_trust.assert_called_once_with("codex", _resume_metadata()["cwd"], ("gpt-future-policy",))
     wrapped = runner._test_runtime.last_request.command
     command = wrapped[wrapped.index("--") + 1 :]
     assert command[0:2] == ["/managed/provider", "resume"]

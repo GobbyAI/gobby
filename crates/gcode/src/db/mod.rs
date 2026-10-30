@@ -24,6 +24,9 @@ pub use resolution::*;
 /// permissions, or replicas.
 pub fn connect_readwrite(database_url: &str) -> anyhow::Result<Client> {
     let mut client = gobby_core::postgres::connect_readwrite(database_url)?;
+    // pg_search's parallel BM25 scans can segfault a worker and restart the hub.
+    // Keep the index enabled, but execute searches in this connection's leader.
+    client.batch_execute("SET max_parallel_workers_per_gather = 0")?;
     schema::validate_runtime_schema(&mut client)?;
     Ok(client)
 }
@@ -47,6 +50,7 @@ pub fn connect_freshness_readwrite(database_url: &str) -> anyhow::Result<Client>
 /// permissions, or replicas.
 pub fn connect_readonly(database_url: &str) -> anyhow::Result<Client> {
     let mut client = gobby_core::postgres::connect_readonly(database_url)?;
+    client.batch_execute("SET max_parallel_workers_per_gather = 0")?;
     schema::validate_runtime_schema(&mut client)?;
     Ok(client)
 }

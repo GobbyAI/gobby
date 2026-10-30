@@ -90,7 +90,10 @@ def _set_session_context() -> Iterator[None]:
             "gobby.mcp_proxy.tools.tasks._context.SessionManager",
             return_value=_checkout_session_manager(),
         ),
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as variables,
     ):
+        variables.return_value.get_variables.return_value = {}
+        variables.return_value.get_variable_subset.return_value = {}
         yield
 
 
@@ -108,7 +111,7 @@ async def test_close_task_does_not_mutate_worktree_status(
             side_effect=_resolving_git,
         ),
         patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.main_checkout_target",
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.task_landing_target",
             return_value=(Path(TEST_REPO_PATH), "0.5.0"),
         ),
         patch(
@@ -134,7 +137,7 @@ async def test_close_task_does_not_mutate_worktree_status(
             task_type="epic",
             created_at=now,
             updated_at=now,
-            commits=["abc123"],
+            commits=["abc123"] if reason == "done" else [],
             seq_num=123,
         )
         mock_task_manager.get_task.return_value = mock_task
@@ -147,6 +150,7 @@ async def test_close_task_does_not_mutate_worktree_status(
                 "task_id": "550e8400-e29b-41d4-a716-446655440000",
                 "reason": reason,
                 "changes_summary": "test changes",
+                **({"superseded_by": "#124"} if reason == "superseded" else {}),
             },
         )
 
@@ -158,8 +162,8 @@ async def test_close_task_does_not_mutate_worktree_status(
         "can_close": True,
         "closed": True,
         "task_id": mock_task.id,
-        "commit_shas": ["abc123"],
-        "candidate_commit_sha": "abc123",
+        "commit_shas": ["abc123"] if reason == "done" else [],
+        "candidate_commit_sha": "abc123" if reason == "done" else None,
     }
     mock_task_manager.close_task.assert_called_once()
     assert mock_task_manager.close_task.call_args.args == (mock_task.id,)

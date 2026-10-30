@@ -753,6 +753,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
 
             feedback_review_config = config.session_feedback.review
             feedback_reviewer = FeedbackReviewerAgent(
+                agent_name=feedback_review_config.agent,
                 db=runner.database,
                 runner=runner.agent_runner,
                 session_manager=runner.session_manager,

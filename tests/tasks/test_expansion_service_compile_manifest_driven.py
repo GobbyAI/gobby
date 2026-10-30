@@ -21,6 +21,7 @@ from gobby.tasks.expansion._contract import _assigned_agent_for_entry
 from gobby.tasks.expansion_qa_coverage import run_expansion_qa_coverage
 from gobby.tasks.expansion_service import ExpansionService
 from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.agent_definitions import make_agent_definition
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
@@ -142,7 +143,49 @@ def test_manifest_entry_rejects_unknown_implementation_domain(tmp_path: Path) ->
     )
 
     with pytest.raises(ValueError, match="Unsupported implementation_domain 'mobile'"):
-        _assigned_agent_for_entry(entry)
+        _assigned_agent_for_entry(entry, [])
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_expansion_resolves_project_definition_routes(
+    service: ExpansionService, sample_project: dict[str, Any], tmp_path: Path, enabled: bool
+) -> None:
+    parent = _parent(service, sample_project)
+    body = make_agent_definition(
+        name="custom-builder",
+        prompts={"agent": "Build the assigned task."},
+        task_categories=["code", "test", "docs"],
+        implementation_domains=["backend"],
+    )
+    for project_id in (None, parent.project_id):
+        service.definition_manager.create(
+            "custom-builder",
+            body.model_dump(mode="json"),
+            project_id=project_id,
+            enabled=True if project_id is None else enabled,
+        )
+    plan = _MANIFEST_PLAN.replace("  assigned_agent: backend-developer\n", "")
+    document = parse_plan(_write_plan(tmp_path, plan), parse_mode="expansion")
+
+    spec = service.compile_plan_to_spec(document, parent)
+
+    expected_agent: str | None = "custom-builder" if enabled else None
+    assert {leaf["assigned_agent"] for leaf in spec["tasks"]} == {expected_agent}
+    code_leaves = [leaf for leaf in spec["tasks"] if leaf["category"] == "code"]
+    assert {leaf["implementation_domain"] for leaf in code_leaves} == {"backend"}
+    assert all(leaf["additional_skills"] == ["test-driven-development"] for leaf in code_leaves)
+    assert all(("Unassigned" in leaf["description"]) is not enabled for leaf in spec["tasks"])
+
+    native = service.normalize_compiled_spec(
+        {
+            "phases": [{"id": "phase-1", "title": "Implement"}],
+            "tasks": [{"category": "code", "implementation_domain": "backend"}],
+        },
+        task=parent,
+        plan_file=None,
+    )
+    assert native["tasks"][0]["assigned_agent"] == ("custom-builder" if enabled else None)
+    assert native["tasks"][0]["implementation_domain"] == "backend"
 
 
 def test_manifest_documentation_task_type_normalizes_to_chore(

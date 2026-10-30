@@ -508,6 +508,51 @@ async def test_timeout_kills_process_group_and_reaps_leader(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failed", [False, True])
+async def test_completed_git_keeps_result_when_loop_resumes_after_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, failed: bool
+) -> None:
+    _write_fake_git(tmp_path)
+    finished = threading.Event()
+    mark_finished = daemon_git._ProcessControl.mark_finished
+    loop = asyncio.get_running_loop()
+    loop_time = loop.time()
+
+    def controlled_loop_time() -> float:
+        return loop_time
+
+    def record_finished(control: daemon_git._ProcessControl) -> None:
+        mark_finished(control)
+        finished.set()
+
+    monkeypatch.setattr(daemon_git._ProcessControl, "mark_finished", record_finished)
+    monkeypatch.setattr(loop, "time", controlled_loop_time)
+    task = asyncio.create_task(
+        DaemonGitService().run(
+            ["status"],
+            cwd=tmp_path,
+            timeout=3600.0,
+            env=_git_env(tmp_path, GIT_TEST_FAIL="1" if failed else ""),
+        )
+    )
+    await asyncio.sleep(0)
+    # Hold result delivery until the worker is done, then make wait_for's timer
+    # due without racing the worker against a short wall-clock deadline.
+    assert finished.wait(timeout=10.0)
+    loop_time += 3601.0
+    result = await task
+
+    if failed:
+        assert isinstance(result, GitFailed)
+        assert result.returncode == 7
+        assert result.stderr == "failed\n"
+    else:
+        assert isinstance(result, GitOk)
+    assert result.stdout == "status"
+    assert "Git command timed out" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_timeout_warning_reports_loop_stall_overrun(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

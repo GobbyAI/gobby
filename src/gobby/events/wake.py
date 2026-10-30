@@ -39,6 +39,7 @@ from gobby.events.wake_active_recovery import (
     reconcile_restart_stale_sessions,
 )
 from gobby.events.wake_notifications import persist_completion_notification
+from gobby.events.wake_sdk import dispatch_sdk_wake
 from gobby.events.wake_terminal_resolution import (
     LiveTerminalResolver,
     SessionTerminalRoute,
@@ -46,7 +47,9 @@ from gobby.events.wake_terminal_resolution import (
 )
 from gobby.hub.machine_routing import is_local_machine
 from gobby.hub.remote_runtime import remote_composer_state
-from gobby.sessions.handoff import PENDING_HANDOFF_VARIABLE
+from gobby.sessions.compact_continuation_store import delivered_compact_continuation
+from gobby.sessions.continuation_retry import continuation_write_refusal
+from gobby.sessions.handoff import PENDING_HANDOFF_VARIABLE, build_handoff_continue_prompt
 from gobby.terminals.composer_attention import sync_composer_attention
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.utils.datetime import utc_now
@@ -609,9 +612,16 @@ class WakeDispatcher:
         agent_depth = getattr(session, "agent_depth", 0) or 0
         session_type = getattr(session, "session_type", None)
         status = getattr(session, "status", None)
-        state_failure = wake_state_failure(session_id, status)
+        handoff_attempt_id = None
+        if status == "awaiting_handoff" and session_type != "web_chat":
+            handoff_attempt_id = await self._run_db(
+                delivered_compact_continuation, self._session_manager.db, session_id
+            )
+        state_failure = None if handoff_attempt_id else wake_state_failure(session_id, status)
         if state_failure is not None:
             return state_failure
+        if handoff_attempt_id:
+            prompt = build_handoff_continue_prompt()
 
         if session_type == "web_chat":
             if not bypass_debounce and not await self._should_send_live_wake(session_id):
@@ -637,6 +647,7 @@ class WakeDispatcher:
                 self._tmux_sender,
                 priority=priority,
                 prompt=prompt,
+                handoff_attempt_id=handoff_attempt_id,
             )
 
         if agent_depth == 0:
@@ -651,41 +662,15 @@ class WakeDispatcher:
         if not bypass_debounce and not await self._should_send_live_wake(session_id):
             return wake_debounced_result(session_id, method="live_wake")
 
-        # SDK agent → try resume via sdk_session_id
-        if self._sdk_resumer:
-            sdk_session_id = await self._resolve_sdk_session_id(session_id)
-            if sdk_session_id:
-                _, state_failure = await self._preflight_live_side_effect(
-                    session_id, priority=priority
-                )
-                if state_failure is not None:
-                    return state_failure
-                try:
-                    await asyncio.wait_for(
-                        self._sdk_resumer(sdk_session_id, f"{prompt}\n"),
-                        timeout=LIVE_WAKE_TIMEOUT_SECONDS,
-                    )
-                except Exception:
-                    logger.warning(
-                        "SDK resume failed for session %s (sdk=%s)",
-                        session_id,
-                        sdk_session_id,
-                        exc_info=True,
-                    )
-                    return {
-                        "session_id": session_id,
-                        "delivered": False,
-                        "method": "sdk",
-                        "error": "sdk_resume_failed",
-                        "error_code": "sdk_resume_failed",
-                        "error_message": "SDK resume failed",
-                    }
-                await self._record_live_wake(session_id, utc_now())
-                return {
-                    "session_id": session_id,
-                    "delivered": True,
-                    "method": "sdk",
-                }
+        sdk_result = await dispatch_sdk_wake(
+            self,
+            session_id,
+            priority=priority,
+            prompt=prompt,
+            timeout_seconds=LIVE_WAKE_TIMEOUT_SECONDS,
+        )
+        if sdk_result is not None:
+            return sdk_result
 
         return wake_failure(
             session_id,
@@ -718,6 +703,7 @@ class WakeDispatcher:
         session_id: str,
         *,
         priority: str = "normal",
+        handoff_attempt_id: str | None = None,
     ) -> tuple[Any | None, dict[str, Any] | None]:
         """Re-read lifecycle state immediately before a wake side effect."""
 
@@ -742,6 +728,21 @@ class WakeDispatcher:
                 "skipped": "session_active",
                 "ism_persisted": True,
             }
+        if handoff_attempt_id is not None:
+            current_attempt = await self._run_db(
+                delivered_compact_continuation, self._session_manager.db, session_id
+            )
+            refusal = await self._run_db(
+                continuation_write_refusal, self._session_manager.db, session_id
+            )
+            if current_attempt == handoff_attempt_id and not refusal and status != "active":
+                return session, None
+            return session, wake_failure(
+                session_id,
+                method=None,
+                error_code="handoff_continuation_withheld",
+                error_message=refusal or "The pending compact changed before its continuation wake",
+            )
         state_failure = wake_state_failure(session_id, status)
         if state_failure is not None:
             return session, state_failure
@@ -761,6 +762,7 @@ class WakeDispatcher:
         *,
         method: str,
         priority: str = "normal",
+        handoff_continuation: bool = False,
     ) -> tuple[dict[str, Any] | None, bool]:
         """Withhold the wake unless the composer ledger admits typing.
 
@@ -801,6 +803,8 @@ class WakeDispatcher:
                 return composer_occupied_result(session_id, method=method), False
             return composer_unconfirmed_result(session_id, method=method), False
         if self._activity_probe is None:
+            if handoff_continuation:
+                return composer_unconfirmed_result(session_id, method=method), False
             return None, False
         try:
             activity = await self._activity_probe(session, terminal)
@@ -812,6 +816,12 @@ class WakeDispatcher:
                 self._attention_manager, self._run_db, session, activity.composer.reason
             )
         if activity.turn_in_flight_fingerprint is not None:
+            return composer_unconfirmed_result(session_id, method=method), False
+        if handoff_continuation:
+            if activity.composer.state == "empty":
+                return None, True
+            if activity.composer.state == "draft":
+                return composer_occupied_result(session_id, method=method), False
             return composer_unconfirmed_result(session_id, method=method), False
         pending = await self._run_db(self._ism_manager.get_undelivered_wake_messages, session_id)
         comms_pending = any(is_operator_comms_wake(message) for message in pending)
@@ -845,6 +855,7 @@ class WakeDispatcher:
         *,
         priority: str = "normal",
         prompt: str = CONTINUE_WAKE_MESSAGE,
+        handoff_attempt_id: str | None = None,
     ) -> dict[str, Any]:
         """Wake a session through the terminal row that hosts it.
 
@@ -861,17 +872,28 @@ class WakeDispatcher:
         # that turned active while this wake waited for the lock is not steered.
         async with composer_action_lock(terminal_id):
             current, state_failure = await self._preflight_live_side_effect(
-                session_id, priority=priority
+                session_id, priority=priority, handoff_attempt_id=handoff_attempt_id
             )
             if state_failure is not None:
                 return state_failure
             if current is not None:
                 session = current
             blocked, confirmed_empty = await self._composer_blocks_wake(
-                session_id, session, terminal, method="terminal", priority=priority
+                session_id,
+                session,
+                terminal,
+                method="terminal",
+                priority=priority,
+                handoff_continuation=handoff_attempt_id is not None,
             )
             if blocked is not None:
                 return blocked
+            if handoff_attempt_id is not None:
+                _, state_failure = await self._preflight_live_side_effect(
+                    session_id, priority=priority, handoff_attempt_id=handoff_attempt_id
+                )
+                if state_failure is not None:
+                    return state_failure
             if confirmed_empty:
                 # The sender needs the positive proof to settle an old wake latch;
                 # merely opting out of a drain does not supply that proof.
@@ -965,30 +987,3 @@ class WakeDispatcher:
             LIVE_WAKE_SENT_AT_VARIABLE,
             submitted_at.isoformat(),
         )
-
-    async def _resolve_sdk_session_id(self, session_id: str) -> str | None:
-        """Look up the SDK session ID for a session via agent_runs.
-
-        Checks if the session is a child of an agent run that captured
-        an sdk_session_id during execution.
-        """
-        agent_run_manager = self._agent_run_manager
-        if agent_run_manager is None:
-            return None
-        try:
-
-            def resolve_sdk_session_id() -> str | None:
-                with agent_run_manager.db.bounded_transaction():
-                    session = self._session_manager.get(session_id)
-                    if session and getattr(session, "external_id", None):
-                        return cast(str | None, session.external_id)
-                    return agent_run_manager.get_sdk_session_id_for_session(session_id)
-
-            return cast(str | None, await self._run_db(resolve_sdk_session_id))
-        except Exception:
-            logger.debug(
-                "Could not resolve sdk_session_id for session %s",
-                session_id,
-                exc_info=True,
-            )
-            return None

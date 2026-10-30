@@ -613,6 +613,17 @@ pub fn pane_state(pane: &Pane) -> RowState {
     }
 }
 
+/// Roster and attention reads a live event asks for. Applying the event only
+/// sets these; the loop drains them into coalesced jobs, so no event awaits a
+/// daemon read.
+#[derive(Debug, Default)]
+pub(super) struct PendingRefetch {
+    /// One roster read per project. A scoped read for a project that is no
+    /// longer focused is dropped when it lands.
+    pub(super) rosters: BTreeSet<String>,
+    pub(super) attention: bool,
+}
+
 /// Refetches queued by live events, flushed once per drain or render tick.
 #[derive(Debug, Default)]
 pub(super) struct PendingSidebar {

@@ -768,12 +768,61 @@ pub(super) fn assert_credential_read_contract(
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn darwin_user_dirs() -> Result<[PathBuf; 2]> {
+    fn location(key: libc::c_int) -> Result<PathBuf> {
+        // SAFETY: confstr permits a null buffer when querying the required size.
+        let length = unsafe { libc::confstr(key, std::ptr::null_mut(), 0) };
+        if length == 0 {
+            bail!("Darwin toolchain cache location unavailable for confstr {key}");
+        }
+        let mut buffer = vec![0_u8; length];
+        // SAFETY: the buffer owns length writable bytes, as requested by confstr.
+        let written = unsafe { libc::confstr(key, buffer.as_mut_ptr().cast(), buffer.len()) };
+        if written == 0 || written > buffer.len() {
+            bail!("Darwin toolchain cache location changed for confstr {key}");
+        }
+        buffer.truncate(written);
+        Ok(PathBuf::from(
+            std::ffi::CStr::from_bytes_with_nul(&buffer)?.to_str()?,
+        ))
+    }
+    Ok([location(65537)?, location(65538)?])
+}
+
+#[cfg(not(target_os = "macos"))]
+fn darwin_user_dirs() -> Result<[PathBuf; 2]> {
+    bail!("Darwin toolchain directories require a Darwin host")
+}
+
+fn darwin_toolchain_write_paths(inputs: &PolicyInputs) -> Result<Vec<String>> {
+    if inputs.platform != "darwin" {
+        return Ok(Vec::new());
+    }
+    let roots = match &inputs.darwin_user_dirs {
+        Some(roots) => roots.clone(),
+        None => darwin_user_dirs()?,
+    };
+    // Josh approved only these two cache grants for #25295 on 2026-10-28.
+    roots
+        .iter()
+        .zip(["xcrun_db-*", "com.apple.DeveloperTools"])
+        .map(|(root, child)| {
+            if !root.is_absolute() || root == Path::new("/") {
+                bail!("invalid Darwin toolchain cache root");
+            }
+            Ok(text(&resolve_nonstrict(&root.join(child))))
+        })
+        .collect()
+}
+
 /// `compute_sandbox_paths`: the resolved grants for one `srt` run, from the
 /// effective sandbox config and the run environment.
 pub(super) fn compute(
     config: &Sandbox,
     inputs: &PolicyInputs,
     env: &BTreeMap<String, String>,
+    workspace_scope: &super::workspace_scope::WorkspaceScope,
 ) -> Result<ResolvedPaths> {
     let home = inputs.home.as_path();
     let gobby = inputs.gobby_home.as_path();
@@ -788,6 +837,7 @@ pub(super) fn compute(
     let write_paths = canonical_paths(
         default_write_paths(config, &workspace, home)
             .into_iter()
+            .chain(darwin_toolchain_write_paths(inputs)?)
             .chain(git_paths)
             .chain(gcode_runtime_write_exceptions(&workspace, gobby, home))
             .chain(provider_write_exceptions(provider, home))
@@ -807,7 +857,7 @@ pub(super) fn compute(
         Some(&workspace),
         home,
     );
-    let deny_read_paths = deny_paths(
+    let mut deny_read_paths = deny_paths(
         sensitive_roots(gobby, home, env)
             .into_iter()
             .chain(credential_denies.iter().cloned())
@@ -854,6 +904,12 @@ pub(super) fn compute(
         &provider_credential_read_exceptions(provider, home),
         home,
     )?;
+    let read_paths = workspace_scope.restrict(read_paths, &write_paths)?;
+    deny_read_paths = dedupe(
+        deny_read_paths
+            .into_iter()
+            .chain(once(text(&workspace_scope.root))),
+    );
 
     Ok(ResolvedPaths {
         read_paths,

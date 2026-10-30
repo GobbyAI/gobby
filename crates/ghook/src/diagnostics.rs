@@ -297,11 +297,17 @@ fn fnv1a64(bytes: &[u8]) -> String {
     format!("fnv1a64:{hash:016x}")
 }
 
-fn daemon_host_port(daemon_url: &str) -> (String, u16) {
-    // This fallback supplies diagnostic metadata only, never a dial target.
-    let endpoint = gobby_core::bootstrap::read_daemon_endpoint().unwrap_or_default();
+pub(crate) fn daemon_host_port(daemon_url: &str) -> (String, u16) {
+    // The checked dial URL is authoritative. Diagnostics must not re-read the
+    // owner's bootstrap, which managed seats cannot access. Missing metadata is
+    // explicit (unknown/0) rather than invented from a default endpoint.
     let trimmed = daemon_url.trim();
     let scheme = trimmed.split_once("://").map(|(scheme, _)| scheme);
+    let fallback_port = match scheme {
+        Some("https") => 443,
+        Some("http") => 80,
+        _ => 0,
+    };
     let authority = trimmed
         .split_once("://")
         .map(|(_, rest)| rest)
@@ -320,7 +326,7 @@ fn daemon_host_port(daemon_url: &str) -> (String, u16) {
         let port = after_host
             .strip_prefix(':')
             .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(endpoint.port);
+            .unwrap_or(fallback_port);
         return (host.to_string(), port);
     }
 
@@ -330,14 +336,9 @@ fn daemon_host_port(daemon_url: &str) -> (String, u16) {
         return (host.to_string(), port);
     }
 
-    let fallback_port = match scheme {
-        Some("https") => 443,
-        Some("http") => 80,
-        _ => endpoint.port,
-    };
     (
         if authority.is_empty() {
-            endpoint.host
+            "unknown".to_string()
         } else {
             authority.to_string()
         },
@@ -357,6 +358,19 @@ mod tests {
     use serde_json::{Value, json};
     use std::collections::BTreeMap;
     use tempfile::tempdir;
+
+    #[test]
+    fn diagnostic_endpoint_uses_supplied_url_only() {
+        for (url, host, port) in [
+            ("https://[::1]/hooks", "::1", 443),
+            ("http://[::1]/hooks", "::1", 80),
+            ("http://[::1]:31579/hooks", "::1", 31579),
+            ("https://daemon.example.test", "daemon.example.test", 443),
+            ("", "unknown", 0),
+        ] {
+            assert_eq!(daemon_host_port(url), (host.to_string(), port), "{url}");
+        }
+    }
 
     fn envelope() -> Envelope {
         Envelope {

@@ -67,32 +67,34 @@ the dispatcher also finds this flag from nested directories and Antigravity work
 ### Planned Shutdown Fail-Open Handling
 
 When Gobby intentionally stops or restarts the daemon, a host CLI may fire a
-Stop or pre-compact hook after the daemon has already exited. For Stop and the
-three registered pre-compact spellings (`pre-compact`, `PreCompact`, and
-`pre_compact`), `ghook` checks
-`$GOBBY_HOME/shutdown_intent_active.json` after project/stdin resolution and
-managed-context checks, before terminal-context injection or enqueue.
+Stop or pre-compact hook after the daemon has already exited. `ghook` enqueues
+the envelope and attempts the live POST as usual. If that POST fails with a
+`Connect` or `Timeout` failure (the supervisor's typed 503 `status:
+"unavailable"` counts as `Connect`), Stop and the three registered pre-compact
+spellings (`pre-compact`, `PreCompact`, and `pre_compact`) check
+`$GOBBY_HOME/shutdown_intent_active.json`. A fresh marker returns the
+provider's continue response with exit 0, and the envelope stays queued for
+replay. Stale markers, HTTP errors, and other hooks keep the normal failure
+behavior.
 
 A marker is accepted when its `timestamp` is fresh and either its `intent` is
 `stop` or `restart`, or its `source` starts with `cli_`, `http_`, `service_`, or
 `mcp_`. An `intent` of `maintenance` uses a 24-hour freshness window; the hub
 maintenance CLI refreshes it on run/resume and clears it when the campaign is
 released or aborted.
-If `{daemon_url}/api/health` is unreachable during that fresh window,
-`ghook` emits the provider's skip response and exits 0. This check is an aliveness
-probe only: any HTTP response from the endpoint counts as reachable, including
-4xx/5xx, and does not imply the daemon is healthy.
 
-If the daemon dies after enqueue but before the live POST completes,
-`ghook` suppresses only `Connect` and `Timeout` failures with a fresh marker. It
-deletes the just-enqueued Stop or pre-compact envelope first; delete failures,
-stale markers, HTTP errors, and other hooks keep the normal fail-closed
-behavior.
+Spawned agent sessions (`GOBBY_IS_SPAWNED_AGENT=1`) pause on a `Connect`
+failure before this check: every hook except Stop, SubagentStop, and Codex
+Interrupt exits 2 with `[Gobby] Daemon down. Please wait.`. A restart is the
+one gap they ride through. With a fresh marker whose `intent` is `restart`,
+Claude's `post-tool-batch` returns the continue response, because its exit 2
+would end the turn. The next tool call still pauses at its pre-tool hook until
+the daemon is back.
 
 Environment knobs:
 
-- `GOBBY_DAEMON_URL` overrides the daemon URL used for Stop preflight, live
-  POSTs, and statusline POSTs.
+- `GOBBY_DAEMON_URL` overrides the daemon URL used for live POSTs and
+  statusline POSTs.
 - `GOBBY_PORT` overrides only the port, dialed on `127.0.0.1`, when
   `GOBBY_DAEMON_URL` is not set.
 - `GOBBY_HOME` controls marker lookup; default is `~/.gobby`.

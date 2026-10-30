@@ -94,7 +94,7 @@ def reconcile_pipeline_invocation(
     if run.started_at is None:
         return _refusal(
             "seat_launch_unsettled",
-            f"Run {run.id} is {run.status} and never started; stop or settle it before a relaunch",
+            f"Run {run.id} never started ({run.status}); settle it and relaunch as a fresh launch",
         )
     refs = (
         WorkspaceManager(db).placement_refs_for_terminal(run.terminal_id)

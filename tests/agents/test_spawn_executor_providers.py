@@ -28,6 +28,7 @@ from gobby.storage.project_checkouts import (
     CheckoutSentinelRejectedError,
     MissingMachineContextError,
 )
+from gobby.utils.project_context import get_project_sandbox_config
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.fixtures.agent_definitions import make_agent_definition
 
@@ -272,6 +273,8 @@ async def test_spawn_creates_absent_directory_write_grants_before_the_sandbox_st
     request.cwd = str(lane)
     request.agent_name = "backend-developer"
     request.resume_metadata_json = {}
+    read_config = MagicMock(wraps=get_project_sandbox_config)
+    monkeypatch.setattr("gobby.utils.project_context.get_project_sandbox_config", read_config)
     monkeypatch.setattr(
         "gobby.storage.project_checkouts.require_root",
         MagicMock(side_effect=CheckoutNotFoundError("Primary checkout unavailable")),
@@ -320,6 +323,12 @@ async def test_spawn_creates_absent_directory_write_grants_before_the_sandbox_st
         "file_grant_is_file": True,
         "glob_parent_exists": False,
     }
+    assert read_config.call_count == 1
+    directories = request.resume_metadata_json["sandbox_directory_write_paths"]
+    assert str(lane / ".nextest") in directories
+    assert str(lane / ".gobby/tmp") in directories
+    assert str(lane / "notes.txt") not in directories
+    assert str(lane / "logs/*.log") not in directories
 
 
 @pytest.mark.asyncio
@@ -345,13 +354,21 @@ async def test_codex_spawn_uses_sandbox_effective_cache_paths(
     monkeypatch.setattr(
         "gobby.agents.spawn_executor_providers._record_resume_launch_details", MagicMock()
     )
-    monkeypatch.setattr("gobby.agents.spawn_executor_providers.pre_approve_directory", MagicMock())
+    seed_trust = MagicMock()
+    live_models = MagicMock(return_value=("gpt-future-policy",))
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.pre_approve_directory", seed_trust)
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers.active_codex_launch_models", live_models
+    )
     build_command = MagicMock(return_value=(["codex"], {}))
     monkeypatch.setattr("gobby.agents.spawn_executor_providers.build_cli_command", build_command)
 
     result = await prepare_codex_spawn(request)
 
     assert isinstance(result, ProviderSpawnPlan)
+    assert request.run_manager is not None
+    live_models.assert_called_once_with(request.run_manager.db, request.project_id)
+    seed_trust.assert_called_once_with("codex", request.cwd, ("gpt-future-policy",))
     config = tomllib.loads("\n".join(build_command.call_args.kwargs["config_overrides"]))
     for name, path in cache_env.items():
         assert config["shell_environment_policy"]["set"][name] == path

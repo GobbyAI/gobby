@@ -490,7 +490,7 @@ def test_fallback_force_approve_no_raise(tmp_path: Path) -> None:
     assert "## Yolo Fallbacks" in text
 
 
-def test_default_assignment_and_tdd_by_category(tmp_path: Path) -> None:
+def test_synthesis_preserves_category_and_tdd_without_assigning_agents(tmp_path: Path) -> None:
     """2.21a.6 — synthesized entries default agent, task_type, and tdd by category."""
     plan = _write(
         tmp_path / "plan.md",
@@ -562,12 +562,12 @@ def test_default_assignment_and_tdd_by_category(tmp_path: Path) -> None:
 
     assert by_section["1.1"].assigned_agent is None
     assert by_section["1.1"].implementation_domain == "backend"
-    assert by_section["1.2"].assigned_agent == "tech-writer"
-    assert by_section["1.3"].assigned_agent == "developer"
-    assert by_section["1.4"].assigned_agent == "developer"
+    assert by_section["1.2"].assigned_agent is None
+    assert by_section["1.3"].assigned_agent is None
+    assert by_section["1.4"].assigned_agent is None
     assert by_section["1.5"].assigned_agent is None
     assert by_section["1.5"].implementation_domain == "backend"
-    assert by_section["1.6"].assigned_agent == "developer"
+    assert by_section["1.6"].assigned_agent is None
     assert by_section["1.7"].assigned_agent is None
     assert by_section["1.7"].implementation_domain == "backend"
 
@@ -575,7 +575,7 @@ def test_default_assignment_and_tdd_by_category(tmp_path: Path) -> None:
         assert entry.task_type == "feature"
 
 
-def test_synthesized_test_entry_uses_category_default_agent(
+def test_synthesized_test_entry_leaves_assignment_open(
     tmp_path: Path,
 ) -> None:
     plan = _write(
@@ -598,7 +598,7 @@ def test_synthesized_test_entry_uses_category_default_agent(
 
     assert outcome == "fresh"
     document = parse_plan(plan, parse_mode="expansion")
-    assert document.manifest_entries[0].assigned_agent == "developer"
+    assert document.manifest_entries[0].assigned_agent is None
 
 
 def test_synthesized_entry_preserves_section_depends_on(tmp_path: Path) -> None:
@@ -1016,7 +1016,7 @@ def test_code_entry_domain_derives_from_targets(
     assert [entry["implementation_domain"] for entry in entries] == [domain]
 
 
-def test_rust_test_entry_routes_to_developer_without_domain(tmp_path: Path) -> None:
+def test_rust_test_entry_leaves_agent_resolution_to_expansion(tmp_path: Path) -> None:
     plan = tmp_path / "plan.md"
     plan.write_text(
         "> **Plan ID:** rust-test-plan\n\n"
@@ -1029,7 +1029,7 @@ def test_rust_test_entry_routes_to_developer_without_domain(tmp_path: Path) -> N
 
     entries = derive_manifest_entries(parse_plan(plan, parse_mode="draft"), {})
 
-    assert [entry["assigned_agent"] for entry in entries] == ["developer"]
+    assert all("assigned_agent" not in entry for entry in entries)
     assert all("implementation_domain" not in entry for entry in entries)
 
 
