@@ -162,12 +162,17 @@ def test_dev_startup_syncs_bundled_content_then_migrates(
         calls.append("migrate")
         return {"success": True}
 
+    def import_workflows(*_args: object, **_kwargs: object) -> dict[str, object]:
+        calls.append("import")
+        return {"synced": 0, "errors": []}
+
     monkeypatch.setattr("gobby.utils.dev.is_dev_mode", lambda _path: True)
     monkeypatch.setattr("gobby.sync_registry.sync_bundled_content_to_db", sync)
     monkeypatch.setattr("gobby.sync_registry.migrate_rule_delivery_dispositions", migrate)
+    monkeypatch.setattr("gobby.workflows.imports.sync_imported_workflows", import_workflows)
 
     runner = cast(GobbyRunner, SimpleNamespace(database=object()))
     run_startup_content_sync(runner)
 
     assert runner._dev_mode is True
-    assert calls == ["sync", "migrate"]
+    assert calls == ["sync", "import", "migrate"]

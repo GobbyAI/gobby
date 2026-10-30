@@ -38,6 +38,8 @@ class _ShellSegmentMetadata:
     neutral_setup: bool = False
     pure_gcode_navigation: bool = False
     read_only_pipeline_filter: bool = False
+    # Explicit proof for execute/nested segments; None uses the ordinary read kind.
+    read_only: bool | None = None
     # An interpreter program fed via stdin (heredoc); its body may prove it
     # read-only or mutating. Python also reports literal write targets.
     stdin_program_interpreter: str | None = None
@@ -54,6 +56,31 @@ class _ShellSegmentMetadata:
     literal_path_root: str | None = None
     # Read operands of a segment classified as a write; navigation judges these.
     navigation_paths: tuple[str, ...] = ()
+
+    @property
+    def proven_read_only(self) -> bool:
+        if (
+            self.repo_mutation
+            or self.confidence != "high"
+            or any(
+                (self.extra or {}).get(flag)
+                for flag in (
+                    "canonical_git_mutation",
+                    "canonical_formatter_mutation",
+                    "canonical_script_execution",
+                    "canonical_unresolved_execution",
+                )
+            )
+        ):
+            return False
+        if self.read_only is not None:
+            return self.read_only
+        return (
+            self.kind in {"read", "search"}
+            or self.neutral_setup
+            or self.pure_gcode_navigation
+            or self.read_only_pipeline_filter
+        )
 
 
 def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:

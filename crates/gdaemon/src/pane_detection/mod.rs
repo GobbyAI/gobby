@@ -1,7 +1,6 @@
 //! Pane detection manifests, the Rust side of `gobby.agents.detection` (#24381, plan 2.12).
 
 mod attention;
-mod casefold_table;
 mod digits;
 mod idle;
 mod loop_tracker;

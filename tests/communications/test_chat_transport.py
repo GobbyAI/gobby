@@ -193,7 +193,8 @@ def _context(
         conversation_id="chat-42",
         sender_id="user-7",
         is_group=False,
-        responder_config=(
+        responder_config={"agent": "fixture-responder"}
+        | (
             responder_config
             if responder_config is not None
             else {"provider": "codex", "model": "gpt-5.6"}
@@ -445,17 +446,33 @@ async def test_backend_reuses_comms_session_key_and_propagates_provider_model() 
         {
             "conversation_id": "session-1",
             "chat_mode": "normal",
-            "agent_name": "comms-agent",
+            "agent_name": "fixture-responder",
             "project_id": PERSONAL_PROJECT_ID,
         },
         {
             "conversation_id": "session-1",
             "chat_mode": "normal",
-            "agent_name": "comms-agent",
+            "agent_name": "fixture-responder",
             "project_id": PERSONAL_PROJECT_ID,
         },
     ]
     assert [sent[1] for sent in manager.sent] == ["reply:first", "reply:second"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "config", [{}, {"agent": None}, {"agent": ""}, {"agent": "  "}, {"agent": 42}]
+)
+async def test_backend_requires_configured_agent(config: dict[str, object]) -> None:
+    host = _FakeChatHost()
+    manager = _FakeManager(supports_edit=False)
+    backend = ChatSessionCommsBackend(host, manager)
+
+    reply = await backend.run_turn(replace(_context(), responder_config=config))
+
+    assert reply is not None and "responder.agent" in reply
+    assert host.configurations == []
+    assert host.calls == []
 
 
 @pytest.mark.asyncio

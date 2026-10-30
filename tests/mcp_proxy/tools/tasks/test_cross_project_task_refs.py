@@ -285,8 +285,8 @@ async def test_cross_project_review_cannot_impersonate_ancestor(world: CrossProj
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", ["assistant", "orchestrator"])
-async def test_installed_operator_role_can_approve_other_project(
+@pytest.mark.parametrize("role", ["assistant", "orchestrator", "custom-coordinator"])
+async def test_declared_coordinator_can_approve_other_project(
     world: CrossProjectWorld, role: str
 ) -> None:
     caller = world.sessions.get(world.stranger_id)
@@ -295,6 +295,7 @@ async def test_installed_operator_role_can_approve_other_project(
         role,
         {
             "prompts": {"agent": "Coordinate the fleet."},
+            "capabilities": ["coordinate_tasks"],
             "task_step_writes": ["review"],
             "workflows": {"rule_selectors": {"include": []}},
         },

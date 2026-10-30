@@ -10,6 +10,7 @@ anchor is ever writable, and the daemon's credential roots stay denied.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from fnmatch import fnmatchcase
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,10 +18,12 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 
 from gobby.agents import resume_executor
 from gobby.agents.agent_workspaces import (
     WORKSPACE_DIR_VARIABLE,
+    assigned_task_worktree,
     epic_workspace_dir,
     session_workspace_dir,
     workspace_git_dir,
@@ -34,8 +37,16 @@ from gobby.agents.spawn_executor_providers import _prepare_provider_sandbox
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.agents.srt_settings import render_srt_settings
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
+from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.worktrees import LocalWorktreeManager, Worktree
+from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.agents.test_resume_executor import (
@@ -44,6 +55,7 @@ from tests.agents.test_resume_executor import (
     _resume_metadata,
     _runner,
 )
+from tests.fixtures.isolated_checkout import insert_isolated_machine
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.team_case import TeamWorld, make_team_world
 from tests.fixtures.team_teardown_case import admitted_team, seated_team
@@ -51,6 +63,210 @@ from tests.fixtures.team_teardown_case import admitted_team, seated_team
 pytestmark = pytest.mark.unit
 
 DEVELOPER = "developer"
+
+
+def _associated_checkout(
+    world: TeamWorld, definition: str
+) -> tuple[SpawnRequest, PreparedSpawn, Worktree]:
+    db = world.case.db
+    project = world.case.project_id
+    developer = world.case.session("developer")
+    folder = session_workspace_dir(project, "default", _seq(db, developer))
+    folder.mkdir(parents=True)
+    task = world.case.task("Shared candidate")
+    worktree = folder / f"task-{task.seq_num}"
+    world.case.git("worktree", "add", "-b", "shared-candidate", str(worktree))
+    registered = LocalWorktreeManager(db).create(
+        project, "shared-candidate", str(worktree), task_id=task.id, agent_session_id=developer
+    )
+    seat = world.case.session(definition)
+    metadata: dict[str, Any] = {}
+    request, context = _request(
+        world, seat, definition, SandboxConfig(enabled=True, backend="srt"), metadata, worktree
+    )
+    run = LocalAgentRunManager(db).create(
+        parent_session_id=world.case.creator,
+        provider="claude",
+        prompt="Validate the shared candidate",
+        agent_name=definition,
+        child_session_id=seat,
+        run_id=context.agent_run_id,
+        task_id=task.id,
+        worktree_id=registered.id,
+    )
+    db.execute("UPDATE sessions SET agent_run_id = %s WHERE id = %s", (run.id, seat))
+    return request, context, registered
+
+
+async def _workspace_decision(
+    world: TeamWorld, request: SpawnRequest, tool_name: str, tool_input: dict[str, str]
+) -> str:
+    template = (
+        Path(__file__).parents[2]
+        / "src/gobby/install/shared/workflows/rules/roles/agent-workspace-scope.yaml"
+    )
+    document = yaml.safe_load(template.read_text())
+    for rule in ("agent-workspace-read-scope", "agent-workspace-write-scope"):
+        body, metadata_fields = split_rule_definition_data(document["rules"][rule])
+        RuleDefinitionManager(world.case.db).create(
+            name=rule,
+            definition_json=RuleDefinitionBody.model_validate(body).model_dump_json(),
+            priority=metadata_fields["priority"],
+            enabled=True,
+            tags=document["tags"],
+        )
+    seat = request.session_id
+    assert seat is not None
+    own = session_workspace_dir(
+        world.case.project_id, request.agent_name, _seq(world.case.db, seat)
+    )
+    variables = {"_agent_type": request.agent_name, WORKSPACE_DIR_VARIABLE: str(own)}
+    data: dict[str, Any] = {"tool_name": tool_name, "cwd": request.cwd, "tool_input": tool_input}
+    normalize_tool_fields(data)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=seat,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        metadata={"_platform_session_id": seat},
+        data=data,
+    )
+    result = await RuleEngine(world.case.db).evaluate(event, session_id=seat, variables=variables)
+    return result.decision
+
+
+@pytest.mark.parametrize("definition", ["code-reviewer", "test-writer"])
+async def test_associated_seat_can_launch_in_developer_task_worktree(
+    world: TeamWorld, definition: str
+) -> None:
+    request, context, registered = _associated_checkout(world, definition)
+    worktree = Path(request.cwd)
+    metadata = request.resume_metadata_json
+    assert metadata is not None
+    config, filesystem, paths = await _spawn(request, context)
+
+    assert _covered(filesystem["allowRead"], worktree)
+    assert _covered(filesystem["allowWrite"], worktree)
+    assert not _covered(filesystem["allowRead"], worktree.parent)
+    assert not _covered(filesystem["allowWrite"], worktree.parent)
+    seat = context.session_id
+    own = session_workspace_dir(world.case.project_id, definition, _seq(world.case.db, seat))
+    _assert_only_own_folders(filesystem, paths, {own, worktree})
+    assert registered.worktree_path in config.extra_write_paths
+
+    with patch("gobby.agents.sandbox_gate.verify_srt_installation_for_launch"):
+        persisted = resolve_resume_sandbox(metadata)
+    resumed, context = _request(world, seat, definition, persisted, {}, worktree)
+    _, filesystem, paths = await _spawn(resumed, context)
+    _assert_only_own_folders(filesystem, paths, {own, worktree})
+
+
+@pytest.mark.parametrize("definition", ["code-reviewer", "test-writer"])
+@pytest.mark.parametrize(
+    ("tool", "field", "relative", "expected"),
+    [
+        ("Read", "file_path", "candidate.txt", "allow"),
+        ("Write", "file_path", "candidate.txt", "allow"),
+        ("Write", "file_path", ".gobby/test-types-baseline.json", "allow"),
+        ("Write", "file_path", ".git/config", "block"),
+        ("Read", "file_path", "../private.txt", "block"),
+        ("Write", "file_path", "../.gobby/config.yaml", "block"),
+        ("Glob", "pattern", "tests/**/*.py", "allow"),
+        ("Glob", "pattern", "../*/tests/*.py", "block"),
+        ("Bash", "command", "cat {worktree}/tests/*.py", "allow"),
+        ("Bash", "command", "uv run pytest {worktree}/tests/test_candidate.py", "allow"),
+        ("Bash", "command", "cat {worktree}/../private.txt", "block"),
+        ("Bash", "command", "tar -xf archive.tar -C {worktree}/unpacked", "allow"),
+        ("Bash", "command", "git archive HEAD | tar -x -C {worktree}/../export", "block"),
+        ("Bash", "command", "tar -xf archive.tar -C {worktree}/.git", "block"),
+        ("Bash", "command", "xargs touch {worktree}/generated.txt", "allow"),
+        ("Bash", "command", "xargs touch {worktree}/.git/config", "block"),
+        ("Bash", "command", 'tar -xf archive.tar -C "$DEST"', "allow"),
+    ],
+)
+async def test_associated_checkout_hook_boundaries(
+    world: TeamWorld, definition: str, tool: str, field: str, relative: str, expected: str
+) -> None:
+    request, _, _ = _associated_checkout(world, definition)
+    value = (
+        relative.format(worktree=request.cwd)
+        if tool == "Bash"
+        else str(Path(request.cwd) / relative)
+    )
+    decision = await _workspace_decision(world, request, tool, {field: value})
+    assert decision == expected
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    ["unassigned", "no-current-run", "other-child", "task", "project", "machine", "inactive"],
+)
+async def test_unrelated_assignment_does_not_grant_checkout(world: TeamWorld, invalid: str) -> None:
+    request, context, registered = _associated_checkout(world, "code-reviewer")
+    db = world.case.db
+    if invalid == "unassigned":
+        db.execute(
+            "UPDATE agent_runs SET worktree_id = NULL WHERE id = %s", (context.agent_run_id,)
+        )
+    elif invalid == "no-current-run":
+        db.execute("UPDATE sessions SET agent_run_id = NULL WHERE id = %s", (context.session_id,))
+    elif invalid == "other-child":
+        db.execute(
+            "UPDATE agent_runs SET child_session_id = %s WHERE id = %s",
+            (world.case.creator, context.agent_run_id),
+        )
+    elif invalid == "task":
+        other_task = world.case.task("Unrelated task")
+        db.execute(
+            "UPDATE agent_runs SET task_id = %s WHERE id = %s",
+            (other_task.id, context.agent_run_id),
+        )
+    elif invalid == "project":
+        other_project = LocalProjectManager(db).create("unrelated-project")
+        db.execute(
+            "UPDATE sessions SET project_id = %s WHERE id = %s",
+            (other_project.id, context.session_id),
+        )
+    elif invalid == "machine":
+        remote_machine = insert_isolated_machine(db)
+        db.execute(
+            "UPDATE worktrees SET machine_id = %s, agent_session_id = NULL WHERE id = %s",
+            (remote_machine, registered.id),
+        )
+    else:
+        db.execute("UPDATE worktrees SET status = 'stale' WHERE id = %s", (registered.id,))
+    assert assigned_task_worktree(db, context.session_id) is None
+    decision = await _workspace_decision(
+        world, request, "Read", {"file_path": str(Path(request.cwd) / "candidate.txt")}
+    )
+    assert decision == "block"
+
+
+@pytest.mark.parametrize("path_kind", ["alias", "bare-seat", "nested"])
+def test_assignment_requires_exact_canonical_checkout(world: TeamWorld, path_kind: str) -> None:
+    request, context, registered = _associated_checkout(world, "code-reviewer")
+    worktree = Path(request.cwd)
+    if path_kind == "alias":
+        invalid_path = worktree.parent / "alias"
+        invalid_path.symlink_to(worktree, target_is_directory=True)
+    elif path_kind == "bare-seat":
+        invalid_path = worktree.parent
+    else:
+        invalid_path = worktree / "nested"
+        invalid_path.mkdir()
+    world.case.db.execute(
+        "UPDATE worktrees SET worktree_path = %s WHERE id = %s", (str(invalid_path), registered.id)
+    )
+    assert assigned_task_worktree(world.case.db, context.session_id) is None
+
+
+async def test_explicit_worktree_assignment_does_not_require_run_task(world: TeamWorld) -> None:
+    request, context, _ = _associated_checkout(world, "code-reviewer")
+    world.case.db.execute(
+        "UPDATE agent_runs SET task_id = NULL WHERE id = %s", (context.agent_run_id,)
+    )
+    _, filesystem, _ = await _spawn(request, context)
+    assert _covered(filesystem["allowWrite"], Path(request.cwd))
 
 
 @pytest.fixture

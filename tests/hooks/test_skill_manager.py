@@ -1,6 +1,6 @@
 """Tests for HookSkillManager."""
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -155,7 +155,7 @@ class TestHookSkillManager:
 
 def _make_mock_skill(**overrides: object) -> MagicMock:
     """Build a mock Skill DB row with sensible defaults."""
-    defaults = {
+    defaults: dict[str, object] = {
         "name": "test-skill",
         "description": "A test skill",
         "content": "# Test",
@@ -181,15 +181,16 @@ def _make_mock_skill(**overrides: object) -> MagicMock:
 class TestDbSkillToParsed:
     """Tests for _db_skill_to_parsed audience_config reconstruction."""
 
-    def test_reconstructs_audience_config(self) -> None:
+    @pytest.mark.parametrize("audience", ["all", "custom-auditor"])
+    def test_reconstructs_audience_config(self, audience: str) -> None:
         """audience_config is reconstructed from metadata.gobby."""
         from gobby.hooks.skill_manager import _db_skill_to_parsed
 
-        skill = _make_mock_skill(metadata={"gobby": {"audience": "all", "triggers": ["test"]}})
+        skill = _make_mock_skill(metadata={"gobby": {"audience": audience, "triggers": ["test"]}})
         parsed = _db_skill_to_parsed(skill)
 
         assert parsed.audience_config is not None
-        assert parsed.audience_config.audience == "all"
+        assert parsed.audience_config.audience == audience
 
     def test_reconstructs_sources(self) -> None:
         """sources field round-trips through DB."""
@@ -333,10 +334,11 @@ class TestProjectScopedSkillCache:
         from gobby.hooks.skill_manager import HookSkillManager
 
         manager = HookSkillManager(db=MagicMock())
-        manager._load_from_db = MagicMock(side_effect=RuntimeError("transient"))  # type: ignore[method-assign]
-        manager._loader.load_directory = MagicMock(side_effect=[[], []])
+        with (
+            patch.object(manager, "_load_from_db", side_effect=RuntimeError("transient")),
+            patch.object(manager._loader, "load_directory", side_effect=[[], []]) as load_directory,
+        ):
+            manager.discover_core_skills("project-a")
+            manager.discover_core_skills("project-a")
 
-        manager.discover_core_skills("project-a")
-        manager.discover_core_skills("project-a")
-
-        assert manager._loader.load_directory.call_count == 2
+        assert load_directory.call_count == 2

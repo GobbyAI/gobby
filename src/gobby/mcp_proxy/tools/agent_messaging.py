@@ -132,16 +132,19 @@ def add_messaging_tools(
             "cannot override from_session. The bundled rule scope-spawned-agent-send-message "
             "limits a spawned agent to the target modes its agent definition lists in "
             "send_message_targets (default: parent only). "
-            "Only Assistant and Triage address the Orchestrator: other seats' direct sends "
-            "to it fail with message_recipient_not_allowed and fanout skips it. "
+            "Recipient admission follows installed definitions: message_sender_capabilities "
+            "requires any listed capability from the sender, with system and operator-terminal "
+            "exemptions. Refused direct sends fail with message_recipient_not_allowed and "
+            "fanout skips that recipient. "
             "Message content never causes wake behavior. Omitting wake requests immediate "
-            "processing for direct session, parent, or agent targets, except that Triage's "
-            "sends to the Orchestrator stay queued; global and project "
+            "processing for direct session, parent, or agent targets; global and project "
             "fanout remains queued without live wakes. wake=true requests immediate "
             "processing even for fanout; wake=false queues without a live wake. A wake may "
             "steer active work; interrupted, awaiting-input, "
-            "awaiting-approval, and awaiting-handoff sessions retain queued content "
-            "without daemon input. Wake-result delivery means trigger dispatch, not "
+            "awaiting-approval, and awaiting-handoff sessions retain queued content. "
+            "An awaiting-handoff terminal with a confirmed compact boundary and an empty "
+            "composer may receive its get_handoff continuation; other holds receive no "
+            "daemon input. Wake-result delivery means trigger dispatch, not "
             "mailbox acknowledgement. Optional priority, message_type, metadata, and wake "
             "are keyword-only. For message_type='task_blocker', metadata.task_id must name "
             "the blocked assigned task. Responses are brief by default: target, recipient "
@@ -322,7 +325,7 @@ def add_messaging_tools(
                             "candidate_binding_error": str(exc),
                         }
 
-            # The mailbox resolves an omitted wake per target and role.
+            # The mailbox resolves an omitted wake per target mode.
             send_result = await mailbox.send(
                 from_session_id=from_id,
                 target=normalized_target,

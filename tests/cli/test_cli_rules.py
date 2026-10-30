@@ -14,12 +14,12 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def cli_runner():
+def cli_runner() -> CliRunner:
     return CliRunner()
 
 
 @pytest.fixture
-def mock_manager():
+def mock_manager() -> MagicMock:
     """Mock RuleDefinitionManager."""
     return MagicMock()
 
@@ -45,7 +45,7 @@ def _make_rule_row(
     tags: list[str] | None = None,
     definition_json: str | None = None,
     workflow_type: str = "rule",
-):
+) -> MagicMock:
     """Create a mock RuleDefinitionRow for rules."""
     row = MagicMock()
     row.id = f"id-{name}"
@@ -91,7 +91,7 @@ def _make_http_response(
 
 
 class TestListRules:
-    def test_list_empty(self, cli_runner, mock_manager) -> None:
+    def test_list_empty(self, cli_runner: CliRunner, mock_manager: MagicMock) -> None:
         from gobby.cli.rules import rules
 
         mock_manager.list_all.return_value = []
@@ -101,7 +101,7 @@ class TestListRules:
             assert result.exit_code == 0
             assert "No rules found" in result.output
 
-    def test_list_with_rules(self, cli_runner, mock_manager) -> None:
+    def test_list_with_rules(self, cli_runner: CliRunner, mock_manager: MagicMock) -> None:
         from gobby.cli.rules import rules
 
         mock_manager.list_all.return_value = [
@@ -115,7 +115,7 @@ class TestListRules:
             assert "rule-a" in result.output
             assert "rule-b" in result.output
 
-    def test_list_filter_by_event(self, cli_runner, mock_manager) -> None:
+    def test_list_filter_by_event(self, cli_runner: CliRunner, mock_manager: MagicMock) -> None:
         from gobby.cli.rules import rules
 
         mock_manager.list_by_event_across_projects.return_value = [
@@ -130,7 +130,7 @@ class TestListRules:
                 "before_tool", enabled=None
             )
 
-    def test_list_filter_by_group(self, cli_runner, mock_manager) -> None:
+    def test_list_filter_by_group(self, cli_runner: CliRunner, mock_manager: MagicMock) -> None:
         from gobby.cli.rules import rules
 
         mock_manager.list_by_group.return_value = [
@@ -143,7 +143,7 @@ class TestListRules:
             assert "group-rule" in result.output
             mock_manager.list_by_group.assert_called_once_with("worker-safety", enabled=None)
 
-    def test_list_filter_enabled(self, cli_runner, mock_manager) -> None:
+    def test_list_filter_enabled(self, cli_runner: CliRunner, mock_manager: MagicMock) -> None:
         from gobby.cli.rules import rules
 
         mock_manager.list_all.return_value = [_make_rule_row("enabled-rule")]
@@ -153,7 +153,7 @@ class TestListRules:
             assert result.exit_code == 0
             mock_manager.list_all.assert_called_once_with(enabled=True)
 
-    def test_list_filter_disabled(self, cli_runner, mock_manager) -> None:
+    def test_list_filter_disabled(self, cli_runner: CliRunner, mock_manager: MagicMock) -> None:
         from gobby.cli.rules import rules
 
         mock_manager.list_all.return_value = [_make_rule_row("disabled-rule", enabled=False)]
@@ -163,7 +163,7 @@ class TestListRules:
             assert result.exit_code == 0
             mock_manager.list_all.assert_called_once_with(enabled=False)
 
-    def test_list_json(self, cli_runner, mock_manager) -> None:
+    def test_list_json(self, cli_runner: CliRunner, mock_manager: MagicMock) -> None:
         from gobby.cli.rules import rules
 
         mock_manager.list_all.return_value = [
@@ -185,7 +185,7 @@ class TestListRules:
 
 
 class TestShowRule:
-    def test_show_found(self, cli_runner, mock_manager) -> None:
+    def test_show_found(self, cli_runner: CliRunner, mock_manager: MagicMock) -> None:
         from gobby.cli.rules import rules
 
         mock_manager.get_by_name.return_value = _make_rule_row("my-rule")
@@ -196,7 +196,7 @@ class TestShowRule:
             assert "my-rule" in result.output
             assert "before_tool" in result.output
 
-    def test_show_not_found(self, cli_runner, mock_manager) -> None:
+    def test_show_not_found(self, cli_runner: CliRunner, mock_manager: MagicMock) -> None:
         from gobby.cli.rules import rules
 
         mock_manager.get_by_name.return_value = None
@@ -206,7 +206,7 @@ class TestShowRule:
             assert result.exit_code == 1
             assert "not found" in result.output
 
-    def test_show_json(self, cli_runner, mock_manager) -> None:
+    def test_show_json(self, cli_runner: CliRunner, mock_manager: MagicMock) -> None:
         from gobby.cli.rules import rules
 
         mock_manager.get_by_name.return_value = _make_rule_row("json-rule")
@@ -264,7 +264,7 @@ class TestShowRule:
 
 
 class TestEnableRule:
-    def test_enable(self, cli_runner) -> None:
+    def test_enable(self, cli_runner: CliRunner) -> None:
         from gobby.cli.rules import rules
 
         mock_client = MagicMock()
@@ -280,7 +280,7 @@ class TestEnableRule:
                 json_data={"enabled": True},
             )
 
-    def test_enable_quotes_rule_name(self, cli_runner) -> None:
+    def test_enable_quotes_rule_name(self, cli_runner: CliRunner) -> None:
         from gobby.cli.rules import rules
 
         mock_client = MagicMock()
@@ -314,7 +314,7 @@ class TestEnableRule:
             json_data={"enabled": True},
         )
 
-    def test_enable_not_found(self, cli_runner) -> None:
+    def test_enable_not_found(self, cli_runner: CliRunner) -> None:
         from gobby.cli.rules import rules
 
         mock_client = MagicMock()
@@ -328,7 +328,7 @@ class TestEnableRule:
             assert result.exit_code == 1
             assert "Rule not found: missing" in result.output
 
-    def test_enable_daemon_error(self, cli_runner) -> None:
+    def test_enable_daemon_error(self, cli_runner: CliRunner) -> None:
         from gobby.cli.rules import rules
 
         mock_client = MagicMock()
@@ -349,7 +349,7 @@ class TestEnableRule:
 
 
 class TestDisableRule:
-    def test_disable(self, cli_runner) -> None:
+    def test_disable(self, cli_runner: CliRunner) -> None:
         from gobby.cli.rules import rules
 
         mock_client = MagicMock()
@@ -365,7 +365,7 @@ class TestDisableRule:
                 json_data={"enabled": False},
             )
 
-    def test_disable_not_found(self, cli_runner) -> None:
+    def test_disable_not_found(self, cli_runner: CliRunner) -> None:
         from gobby.cli.rules import rules
 
         mock_client = MagicMock()
@@ -383,7 +383,7 @@ class TestDisableRule:
 
 
 class TestImportRules:
-    def test_import_file(self, cli_runner, tmp_path) -> None:
+    def test_import_file(self, cli_runner: CliRunner, tmp_path: Path) -> None:
         from gobby.cli.rules import rules
 
         rule_file = tmp_path / "test-rules.yaml"
@@ -398,6 +398,7 @@ class TestImportRules:
             patch(
                 "gobby.cli.installers.shared.registered_project_id", return_value="project-1"
             ) as mock_scope,
+            patch("gobby.workflows.imports.get_project_workflows_root", return_value=None),
             patch("gobby.workflows.sync_rules.sync_rule_file") as mock_sync,
         ):
             mock_sync.return_value = {"success": True, "synced": 1, "updated": 0, "errors": []}
@@ -407,7 +408,7 @@ class TestImportRules:
             mock_scope.assert_called_once_with(mock_db, Path.cwd())
             mock_sync.assert_called_once_with(mock_db, rule_file=rule_file, project_id="project-1")
 
-    def test_import_file_not_found(self, cli_runner) -> None:
+    def test_import_file_not_found(self, cli_runner: CliRunner) -> None:
         from gobby.cli.rules import rules
 
         result = cli_runner.invoke(rules, ["import", "/nonexistent.yaml"])
@@ -449,7 +450,7 @@ class TestImportRules:
             "on_receipt",
         ]
 
-    def test_import_not_yaml(self, cli_runner, tmp_path) -> None:
+    def test_import_not_yaml(self, cli_runner: CliRunner, tmp_path: Path) -> None:
         from gobby.cli.rules import rules
 
         bad_file = tmp_path / "rules.txt"
@@ -466,7 +467,7 @@ class TestImportRules:
 
 
 class TestExportRules:
-    def test_export_all(self, cli_runner, mock_manager) -> None:
+    def test_export_all(self, cli_runner: CliRunner, mock_manager: MagicMock) -> None:
         from gobby.cli.rules import rules
 
         mock_manager.list_all.return_value = [
@@ -480,7 +481,7 @@ class TestExportRules:
             assert "rule-a" in result.output
             assert "rule-b" in result.output
 
-    def test_export_by_group(self, cli_runner, mock_manager) -> None:
+    def test_export_by_group(self, cli_runner: CliRunner, mock_manager: MagicMock) -> None:
         from gobby.cli.rules import rules
 
         mock_manager.list_by_group.return_value = [
@@ -493,7 +494,7 @@ class TestExportRules:
             assert "group-rule" in result.output
             mock_manager.list_by_group.assert_called_once_with("test-group", enabled=None)
 
-    def test_export_empty(self, cli_runner, mock_manager) -> None:
+    def test_export_empty(self, cli_runner: CliRunner, mock_manager: MagicMock) -> None:
         from gobby.cli.rules import rules
 
         mock_manager.list_all.return_value = []
@@ -510,7 +511,7 @@ class TestExportRules:
 
 
 class TestAuditRules:
-    def test_audit_no_entries(self, cli_runner) -> None:
+    def test_audit_no_entries(self, cli_runner: CliRunner) -> None:
         from gobby.cli.rules import rules
 
         with patch("gobby.cli.rules._get_audit_manager") as mock_get:
@@ -522,7 +523,7 @@ class TestAuditRules:
             assert result.exit_code == 0
             assert "No audit entries" in result.output
 
-    def test_audit_with_entries(self, cli_runner) -> None:
+    def test_audit_with_entries(self, cli_runner: CliRunner) -> None:
         from datetime import UTC, datetime
 
         from gobby.cli.rules import rules
@@ -546,7 +547,7 @@ class TestAuditRules:
             assert "BLOCK" in result.output
             assert "before_tool" in result.output
 
-    def test_audit_with_session(self, cli_runner) -> None:
+    def test_audit_with_session(self, cli_runner: CliRunner) -> None:
         from gobby.cli.rules import rules
 
         with patch("gobby.cli.rules._get_audit_manager") as mock_get:
@@ -563,7 +564,7 @@ class TestAuditRules:
                 len(call_kwargs[0]) > 0 and "sess-123" in str(call_kwargs)
             )
 
-    def test_audit_json(self, cli_runner) -> None:
+    def test_audit_json(self, cli_runner: CliRunner) -> None:
         from datetime import UTC, datetime
 
         from gobby.cli.rules import rules

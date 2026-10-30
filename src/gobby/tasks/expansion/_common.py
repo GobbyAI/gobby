@@ -27,73 +27,15 @@ from gobby.storage.hub.protocol import Transaction
 from gobby.tasks.acceptance_references import parse_test_reference
 from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES
 
-_DEFAULT_AGENT = "developer"
 _DEFAULT_PHASE_ID = "phase-1"
-_FRONTEND_SIGNALS = frozenset(
-    {
-        "accessibility",
-        "browser",
-        "client",
-        "component",
-        "css",
-        "eslint",
-        "frontend",
-        "jsx",
-        "lighthouse",
-        "playwright",
-        "react",
-        "routing",
-        "storybook",
-        "svelte",
-        "tailwind",
-        "tsx",
-        "typescript",
-        "ui",
-        "vite",
-        "vue",
-        "web",
-        "webpack",
-    }
-)
-_DETERMINISTIC_FRONTEND_SIGNAL_RE = re.compile(
-    r"\b(?:accessibility|browser|client|component|css|eslint|frontend|lighthouse|"
-    r"jsx|next\.?js|playwright|react|routing|storybook|svelte|tailwind|tsx|"
-    r"typescript|ui|vite|vue|web|webpack)\b|(?:^|[\\/])web[\\/]|app\.tsx",
-    flags=re.IGNORECASE,
-)
-_DETERMINISTIC_AGENT_BY_CATEGORY = {
-    "code": "developer",
-    "refactor": "developer",
-    "test": "developer",
-    "config": "developer",
-    "docs": "tech-writer",
-}
-_BACKEND_SIGNALS = frozenset(
-    {
-        "api",
-        "backend",
-        "cli",
-        "daemon",
-        "database",
-        "mcp",
-        "migration",
-        "mypy",
-        "pytest",
-        "ruff",
-        "scheduler",
-        "server",
-        "storage",
-        "workflow",
-        "worker",
-    }
-)
 
 
 def _append_agent_selection_marker(description: str) -> str:
-    """Record deterministic fallback agent selection in the leaf description."""
+    """Keep unresolved routing visible without inventing an agent assignment."""
     marker = (
         "## Agent Selection\n"
-        "Defaulted to `developer` because no registry agent selection was provided."
+        "Unassigned: no unique enabled spawn definition matches the category and domain. "
+        "Choose an assigned_agent explicitly or update definition routing declarations."
     )
     if "## Agent Selection" in description:
         return description
@@ -108,22 +50,13 @@ def _additional_skills(value: Any) -> list[str]:
     return [str(value)]
 
 
-def _leaf_signal_text(task_item: dict[str, Any]) -> str:
-    values = [
-        task_item.get("title"),
-        task_item.get("description"),
-        task_item.get("category"),
-        " ".join(str(label) for label in task_item.get("labels") or []),
-        " ".join(str(file_path) for file_path in task_item.get("affected_files") or []),
-    ]
-    return " ".join(str(value).lower() for value in values if value)
-
-
 def _available_agent_names(agent_definitions: list[dict[str, Any]]) -> set[str]:
     return {
         str(agent["name"])
         for agent in agent_definitions
-        if agent.get("enabled", True) and agent.get("name")
+        if agent.get("enabled", True) is True
+        and agent.get("name")
+        and "spawn" in agent.get("surfaces", ["spawn"])
     }
 
 
@@ -156,6 +89,8 @@ def list_agent_definitions(
             "enabled": row.enabled,
             "source": row.source,
             "project_id": row.project_id,
+            "task_categories": body.get("task_categories", []),
+            "implementation_domains": body.get("implementation_domains", []),
         }
         if surface_filter and surface_filter not in surfaces:
             continue
@@ -168,17 +103,20 @@ def _select_agent_from_registry(
     agent_definitions: list[dict[str, Any]],
 ) -> str | None:
     available = _available_agent_names(agent_definitions)
-    if not available:
-        return None
-
-    signal_text = _leaf_signal_text(task_item)
     category = str(task_item.get("category", "code"))
-    if category == "docs" and "tech-writer" in available:
-        return "tech-writer"
-    signals = _FRONTEND_SIGNALS | _BACKEND_SIGNALS
-    if "developer" in available and any(signal in signal_text for signal in signals):
-        return "developer"
-    return None
+    domain = task_item.get("implementation_domain")
+    candidates = {
+        str(agent["name"])
+        for agent in agent_definitions
+        if agent.get("name") in available
+        and category in agent.get("task_categories", [])
+        and (
+            category != "code"
+            or not agent.get("implementation_domains")
+            or domain in agent["implementation_domains"]
+        )
+    }
+    return next(iter(candidates)) if len(candidates) == 1 else None
 
 
 def _agent_selection_fields(
@@ -204,7 +142,11 @@ def _agent_selection_fields(
     if selected_agent and selected_agent in available:
         return selected_agent, _additional_skills(task_item.get("additional_skills")), description
 
-    return _DEFAULT_AGENT, [], _append_agent_selection_marker(description)
+    return (
+        None,
+        _additional_skills(task_item.get("additional_skills")),
+        _append_agent_selection_marker(description),
+    )
 
 
 _CONTRACT_PHASE_ID_RE = re.compile(r"^P(?P<number>\d+)$")
@@ -291,24 +233,6 @@ def _contract_section_body(plan_doc: PlanDocument, section: PlanSection) -> str:
             break
         body_lines.append(line)
     return "\n".join(body_lines).strip()
-
-
-def _contract_agent_fields(
-    *,
-    category: str,
-    title: str,
-    description: str,
-) -> tuple[str, list[str], str]:
-    signal_text = f"{title}\n{description}".lower()
-    if _DETERMINISTIC_FRONTEND_SIGNAL_RE.search(signal_text):
-        return "developer", [], description
-    assigned_agent = _DETERMINISTIC_AGENT_BY_CATEGORY.get(category)
-    if assigned_agent is not None:
-        return assigned_agent, [], description
-    raise ValueError(
-        f"contract category {category!r} has no specialist agent and is not eligible for "
-        f"automated leaf creation; valid categories: {sorted(_DETERMINISTIC_AGENT_BY_CATEGORY)}"
-    )
 
 
 def _contract_single_task_id(section_id: str) -> str:

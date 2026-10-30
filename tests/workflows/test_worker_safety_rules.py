@@ -10,6 +10,7 @@ import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -21,6 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -156,17 +158,16 @@ class TestWorkerSafetySync:
             if row.name in EXPECTED_WORKER_SAFETY_RULES:
                 assert body.get("group") == "worker-safety", f"{row.name} missing group"
 
-    def test_agent_scope_persists_through_sync(
+    def test_strict_policy_has_no_fixed_agent_scope(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
-        """agent_scope from YAML should be preserved in definition_json."""
         _sync_bundled(db)
 
-        row = manager.get_by_name("no-push-for-workers")
+        row = manager.get_by_name("no-git-push")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.agent_scope == ["developer"]
+        assert body.agent_scope is None
 
     def test_all_rules_are_valid_pydantic(
         self, db: HubDatabase, manager: RuleDefinitionManager
@@ -180,6 +181,69 @@ class TestWorkerSafetySync:
                 body = RuleDefinitionBody.model_validate(row.definition_json)
                 assert body.event.value == "before_tool"
                 assert _first_effect(body).type == "block"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("rule_name", "agent_type", "tool_name", "tool_input"),
+    [
+        ("no-git-push", "developer", "Bash", {"command": "git push origin topic"}),
+        ("no-git-push", "custom-builder", "Bash", {"command": "git push origin topic"}),
+        (
+            "no-agent-spawn",
+            "merge",
+            "mcp__gobby__call_tool",
+            {
+                "server_name": "gobby-agents",
+                "tool_name": "spawn_agent",
+                "arguments": {"agent": "custom-builder"},
+            },
+        ),
+        (
+            "no-agent-spawn",
+            "custom-integrator",
+            "mcp__gobby__call_tool",
+            {
+                "server_name": "gobby-agents",
+                "tool_name": "spawn_agent",
+                "arguments": {"agent": "custom-builder"},
+            },
+        ),
+    ],
+)
+@pytest.mark.parametrize("selected", [False, True])
+@pytest.mark.parametrize("spawned", [False, True])
+async def test_strict_policies_follow_definition_selection(
+    db: HubDatabase,
+    rule_name: str,
+    agent_type: str,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    selected: bool,
+    spawned: bool,
+) -> None:
+    _sync_bundled(db)
+    db.execute("UPDATE rule_definitions SET enabled = (name = %s)", (rule_name,))
+    seed_seat(
+        db,
+        agent_type,
+        include=["tag:worker-safety", *([f"name:{rule_name}"] if selected else [])],
+    )
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={"tool_name": tool_name, "tool_input": tool_input},
+    )
+
+    response = await RuleEngine(db).evaluate(
+        event,
+        session_id=SESSION_ID,
+        variables={"_agent_type": agent_type, "is_spawned_agent": spawned, "team_manager": True},
+    )
+
+    assert (response.decision == "block") is selected
 
 
 class TestNoPushRule:
@@ -373,6 +437,11 @@ class TestManagedGitIsolationRules:
         command: str,
         spawned: bool,
     ) -> None:
+        seed_seat(
+            db,
+            "isolation-policy-test",
+            include=[f"name:{name}" for name in sorted(MANAGED_GIT_RULES)],
+        )
         db.execute(
             "DELETE FROM rule_definitions WHERE name NOT IN "
             "('block-git-clone', 'block-git-clone-interactive', "
@@ -394,7 +463,7 @@ class TestManagedGitIsolationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"is_spawned_agent": spawned},
+            variables={"_agent_type": "isolation-policy-test", "is_spawned_agent": spawned},
         )
 
         assert response.decision == "block"

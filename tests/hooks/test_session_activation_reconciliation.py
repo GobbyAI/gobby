@@ -418,12 +418,14 @@ def test_spawned_agent_activation_failure_retries_without_default_markers(
     assert variables[MARKER_COMPLETED] is True
 
 
+@pytest.mark.parametrize("definition_state", ["enabled", "disabled", "missing"])
 def test_reconciliation_refreshes_stale_active_rule_names(
     db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
     tmp_path: Path,
+    definition_state: str,
 ) -> None:
     """Refresh stale active rule names from the installed agent definition.
 
@@ -433,16 +435,26 @@ def test_reconciliation_refreshes_stale_active_rule_names(
     """
     session_id = _register_session(session_manager, project_id, tmp_path)
     manager = RuleDefinitionManager(db)
-    AgentDefinitionManager(db).create(
-        name="default",
+    definitions = AgentDefinitionManager(db)
+    definition = definitions.create(
+        name="fixture-policy",
         source="custom",
         definition_json=json.dumps(
             {
-                "name": "default",
+                "name": "fixture-policy",
                 "prompts": {"agent": "Run the assigned task."},
-                "workflows": {"rule_selectors": {"include": ["tag:default"], "exclude": []}},
+                "workflows": {"rule_selectors": {"include": ["name:opt-in-rule"], "exclude": []}},
             }
         ),
+    )
+    if definition_state == "disabled":
+        definitions.update(definition.id, enabled=False)
+    elif definition_state == "missing":
+        definitions.delete(definition.id)
+    manager.create(
+        name="opt-in-rule",
+        tags=[],
+        definition_json={"event": "before_tool", "effects": [{"type": "observe"}]},
     )
     manager.create(
         name="new-default-rule",
@@ -461,7 +473,7 @@ def test_reconciliation_refreshes_stale_active_rule_names(
             MARKER_COMPLETED: True,
             MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
             MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
-            "_agent_type": "default",
+            "_agent_type": "fixture-policy",
             "_active_rule_names": ["stale-rule"],
             "_active_skill_names": None,
             "_skill_format": None,
@@ -479,7 +491,8 @@ def test_reconciliation_refreshes_stale_active_rule_names(
 
     variables = _variables(db, session_id)
     assert result.changed is True
-    assert variables["_active_rule_names"] == ["new-default-rule"]
+    expected = "opt-in-rule" if definition_state == "enabled" else "new-default-rule"
+    assert variables["_active_rule_names"] == [expected]
 
 
 def test_reconciliation_caches_active_rule_names_for_same_agent_and_project(
@@ -1075,6 +1088,7 @@ async def test_spawned_flag_survives_lagging_terminal_pickup_refresh(
 ) -> None:
     RuleDefinitionManager(db).create(
         name="autonomous-only",
+        tags=["default"],
         definition_json=RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
             audience="autonomous",

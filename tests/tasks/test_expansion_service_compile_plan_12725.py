@@ -10,7 +10,6 @@ import pytest
 
 from gobby.plans.parser import ArtifactKind, parse_plan
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN, IMPLEMENTATION_DOMAINS
 from gobby.tasks.expansion._common import _agent_selection_fields
 from gobby.tasks.expansion_service import ExpansionService
 
@@ -84,8 +83,6 @@ def test_plan_12725_compiles_clean(
                 item.item_id,
             )
         expected_agent = entry.assigned_agent
-        if expected_agent is None and entry.implementation_domain is not None:
-            expected_agent = AGENT_BY_IMPLEMENTATION_DOMAIN[entry.implementation_domain]
         assert task["assigned_agent"] == expected_agent, section_id
         assert task["implementation_domain"] == entry.implementation_domain, section_id
         expected_labels = [*entry.labels, *(["tdd:required"] if entry.tdd else [])]
@@ -119,10 +116,7 @@ def test_plan_12725_compiles_clean(
             )
 
 
-def test_domains_route_to_developer() -> None:
-    # Plan 3.2.3: every implementation domain and the default fallback route to
-    # the one developer seat.
-    assert AGENT_BY_IMPLEMENTATION_DOMAIN == dict.fromkeys(IMPLEMENTATION_DOMAINS, "developer")
+def test_missing_registry_leaves_assignment_open() -> None:
     agent, skills, description = _agent_selection_fields({"category": "code"}, [])
-    assert (agent, skills) == ("developer", [])
-    assert "Defaulted to `developer`" in description
+    assert (agent, skills) == (None, [])
+    assert "Unassigned" in description

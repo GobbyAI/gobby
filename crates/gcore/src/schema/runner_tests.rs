@@ -242,7 +242,7 @@ const PRIOR_BASELINE_VERSION: i32 = 419;
 const PRIOR_BASELINE_CHECKSUM: &str =
     "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81";
 
-const GCODE_RLS_TABLES: [&str; 13] = [
+const GCODE_RLS_TABLES: [&str; 14] = [
     "code_indexed_projects",
     "code_indexed_project_states",
     "code_indexed_file_states",
@@ -256,6 +256,7 @@ const GCODE_RLS_TABLES: [&str; 13] = [
     "code_index_prune_dirty_projects",
     "code_communities",
     "code_overlay_pins",
+    "code_overlay_pin_gaps",
 ];
 
 struct ScratchDatabase {
@@ -378,10 +379,18 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
             .iter()
             .map(|(name, command, _, _)| (name.clone(), command.clone()))
             .collect();
-        assert_eq!(operations, expected);
+        // Pin gaps are replaced with DELETE/INSERT and intentionally expose no UPDATE.
+        let expected_operations = if table == "code_overlay_pin_gaps" {
+            &expected[..3]
+        } else {
+            &expected[..]
+        };
+        assert_eq!(operations, expected_operations);
         for (_, command, using_expression, check_expression) in policies {
             let predicate = format!("{using_expression} {check_expression}");
-            if command == "SELECT" && table != "code_overlay_pins" {
+            if command == "SELECT"
+                && !["code_overlay_pins", "code_overlay_pin_gaps"].contains(&table)
+            {
                 assert!(predicate.contains("current_read_code_project_ids"));
             } else {
                 assert!(predicate.contains("current_code_overlay_project_id"));
@@ -394,10 +403,17 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
                 "code_index_prune_dirty_projects",
                 "code_communities",
                 "code_overlay_pins",
+                "code_overlay_pin_gaps",
             ]
             .contains(&table)
             {
-                assert!(predicate.contains("current_machine_id"));
+                // Migration 479 exposes cross-machine file references to content GC;
+                // the issuing-machine restriction still applies to every write.
+                if table == "code_indexed_file_states" && command == "SELECT" {
+                    assert!(!predicate.contains("current_machine_id"));
+                } else {
+                    assert!(predicate.contains("current_machine_id"));
+                }
             }
             assert_ne!(predicate.trim().to_ascii_lowercase(), "true");
             if table == "code_overlay_pins" && ["INSERT", "UPDATE"].contains(&command.as_str()) {
@@ -961,8 +977,8 @@ fn tool_chat_principal_reads_parent_and_writes_only_its_worktree_overlay() -> an
                 )?
                 .get(0);
             assert_eq!(
-                visible_parent_states, 1,
-                "machine scope must filter parent state"
+                visible_parent_states, 2,
+                "content GC must see parent file references on every machine"
             );
 
             let foreign_visible: i64 = scoped

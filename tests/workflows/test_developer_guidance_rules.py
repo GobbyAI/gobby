@@ -13,6 +13,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -20,6 +21,7 @@ SESSION_ID = "11111111-1111-4111-8111-111111111111"
 GUIDANCE_RULES = {
     "require-development-discipline-skill": "gobby:references/development/obligations.md",
     "require-restraint-skill": "restraint",
+    "require-restraint-before-task-growth": "restraint",
 }
 
 
@@ -98,7 +100,6 @@ def test_guidance_rule_structure(
     body = RuleDefinitionBody.model_validate(row.definition_json)
 
     assert body.event.value == "before_tool"
-    assert "canonical_tool_kind" in (body.when or "")
     assert f"skill_loaded('{skill_name}')" in (body.when or "")
     assert body.effects is not None
     assert body.effects[0].reason == f'{{{{ skill_fetch_directive("{skill_name}") }}}}'
@@ -195,6 +196,11 @@ async def test_root_graph_expansion_requires_restraint(
     tool_name: str,
 ) -> None:
     _sync_only_guidance_rules(temp_db)
+    seed_seat(
+        temp_db,
+        "custom-coordinator",
+        include=["tag:default", "name:require-restraint-before-task-growth"],
+    )
     engine = RuleEngine(temp_db)
     event = _mcp_event(server_name, tool_name)
 
@@ -202,6 +208,7 @@ async def test_root_graph_expansion_requires_restraint(
         event,
         session_id=SESSION_ID,
         variables={
+            "_agent_type": "custom-coordinator",
             "is_spawned_agent": False,
             "loaded_skill_references": ["gobby:references/development/obligations.md"],
         },
@@ -210,6 +217,7 @@ async def test_root_graph_expansion_requires_restraint(
         event,
         session_id=SESSION_ID,
         variables={
+            "_agent_type": "custom-coordinator",
             "is_spawned_agent": False,
             "loaded_skills": ["restraint"],
             "loaded_skill_references": [GUIDANCE_RULES["require-development-discipline-skill"]],
@@ -219,6 +227,19 @@ async def test_root_graph_expansion_requires_restraint(
     assert blocked.decision == "block"
     assert skill_fetch_directive("restraint") in (blocked.reason or "")
     assert allowed.decision == "allow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_type", ["default", "custom-coordinator"])
+async def test_task_growth_policy_requires_selection(temp_db: HubDatabase, agent_type: str) -> None:
+    _sync_only_guidance_rules(temp_db)
+    seed_seat(temp_db, agent_type, include=["tag:default"])
+    response = await RuleEngine(temp_db).evaluate(
+        _mcp_event("gobby-tasks", "create_task"),
+        session_id=SESSION_ID,
+        variables={"_agent_type": agent_type},
+    )
+    assert response.decision == "allow"
 
 
 async def test_claiming_source_work_gates_the_first_tool_call_that_touches_the_checkout(

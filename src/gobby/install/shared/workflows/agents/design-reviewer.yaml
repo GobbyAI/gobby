@@ -1,4 +1,5 @@
 name: design-reviewer
+capabilities: [accept_resume_retype]
 description: |
   Design Reviewer seat. Independent visual and accessibility QA of UI candidates
   against the project's .impeccable.md design contract. Reports findings with
@@ -53,6 +54,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:seat-policy"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"

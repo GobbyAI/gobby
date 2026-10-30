@@ -1441,3 +1441,67 @@ fn mentions_staleness(text: &str) -> bool {
     let text = text.to_ascii_lowercase();
     text.contains("stale") || text.contains("out of date")
 }
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn worktree_symbol_at_reads_unindexed_python_body_edits() {
+    let (_tmp, parent_ctx, overlay_ctx) = merged_worktree_pair("symbol-at-python-edit");
+    let rel = "src/authorization.py";
+    let indexed = "def _task_ref(task):\n    return f\"#{task.seq_num}\" if task.seq_num is not None else task.id\n";
+    let current =
+        "def _task_ref(task):\n    return f\"#{task.seq_num}\" if task.seq_num else task.id\n";
+    std::fs::write(parent_ctx.project_root.join(rel), indexed).expect("write parent source");
+    std::fs::write(overlay_ctx.project_root.join(rel), indexed).expect("write worktree source");
+    full_index(&parent_ctx);
+    pin_parent_versions(&overlay_ctx, &parent_ctx, &[rel]);
+
+    // Exercise both a pinned inherited row and a row indexed in the task worktree.
+    let overlay_indexed = format!("# task worktree\n{indexed}");
+    for (owned_row, indexed) in [(false, indexed), (true, overlay_indexed.as_str())] {
+        std::fs::write(overlay_ctx.project_root.join(rel), indexed).expect("reset worktree source");
+        if owned_row {
+            full_index(&overlay_ctx);
+        }
+        std::fs::write(overlay_ctx.project_root.join(rel), current).expect("edit worktree body");
+        let mut conn = db::connect_readonly(&overlay_ctx.database_url).expect("connect test hub");
+        let served = visibility::visible_symbols_for_file(&mut conn, &overlay_ctx, rel)
+            .expect("read indexed symbols");
+        let indexed_symbol = served
+            .iter()
+            .find(|symbol| symbol.name == "_task_ref")
+            .expect("indexed task ref");
+        assert_eq!(
+            indexed_symbol.file_content_hash,
+            hasher::content_hash(indexed.as_bytes())
+        );
+        assert_ne!(
+            indexed_symbol.file_content_hash,
+            hasher::content_hash(current.as_bytes())
+        );
+
+        // No freshness call: symbol-at itself must handle the stale rows.
+        let result = crate::commands::symbol_at::symbol_at_repo(
+            &overlay_ctx,
+            &mut conn,
+            &overlay_ctx.project_root,
+            "src/authorization.py:2",
+            None,
+        )
+        .expect("locate the edited symbol");
+        assert_eq!(
+            result.snippet.trim_end(),
+            current.trim_end(),
+            "owned row: {owned_row}"
+        );
+        assert_eq!(
+            result.symbol.file_content_hash,
+            hasher::content_hash(current.as_bytes())
+        );
+    }
+    invalidate_test_project(&overlay_ctx);
+    invalidate_test_project(&parent_ctx);
+}

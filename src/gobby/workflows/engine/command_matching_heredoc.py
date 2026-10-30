@@ -9,6 +9,7 @@ from gobby.hooks._normalization_shell import HeredocBody, ShellToken, _strip_she
 from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import _SHELLS, _shell_stdin
+from gobby.hooks.shell_execution import shell_execution
 
 # Every other stdin consumer conservatively retains executable heredoc text.
 _DATA_CONSUMERS = frozenset({"cat", "tee", "git", "gh"})
@@ -63,19 +64,36 @@ def classify_heredoc_execution(
         if not token.quoted and token.value == "|":
             stage += 1
     consumers = [_strip_shell_wrappers(words) for words in stages]
-    consumer_executes = [
-        bool(words and shell_command_name(words[0]) not in _DATA_CONSUMERS) for words in consumers
+    # A bare exec preserves stdin. Keep option-bearing and opaque wrappers
+    # conservative rather than widening the data-consumer proof to sudo/xargs.
+    consumers = [
+        _strip_shell_wrappers(words[1:]) if words[:1] == ["exec"] else words for words in consumers
     ]
     unwrapped = [_unwrap(words) for words in stages]
+    parse_only = [
+        bool(execution and execution.parse_only)
+        for words in unwrapped
+        for execution in [shell_execution(words, stdin=True)]
+    ]
+    consumer_executes = [
+        bool(
+            words and shell_command_name(words[0]) not in _DATA_CONSUMERS and not parse_only[index]
+        )
+        for index, words in enumerate(consumers)
+    ]
     downstream_shell = [False] * len(stages)
     shell_seen = False
     for index in range(len(stages) - 1, -1, -1):
         downstream_shell[index] = shell_seen
         words = unwrapped[index]
-        shell_seen |= bool(words and shell_command_name(words[0]) in _SHELLS)
+        shell_seen |= bool(
+            words and shell_command_name(words[0]) in _SHELLS and not parse_only[index]
+        )
     shell_source = any(
-        words and (_shell_stdin(words) or shell_command_name(words[0]) == "ssh")
-        for words in unwrapped
+        words
+        and not parse_only[index]
+        and (_shell_stdin(words) or shell_command_name(words[0]) == "ssh")
+        for index, words in enumerate(unwrapped)
     )
     return HeredocExecution(
         stage_of,

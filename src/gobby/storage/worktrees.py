@@ -272,6 +272,27 @@ class LocalWorktreeManager:
         )
         return Worktree.from_row(row) if row else None
 
+    def get_for_session_run(self, session_id: str) -> Worktree | None:
+        """Return the task worktree assigned to this session's current managed run.
+
+        A cwd or session variable is not an assignment. The persisted run must bind
+        this child, project and machine to the registered task checkout.
+        """
+        row = self.db.fetchone(
+            """
+            SELECT w.* FROM sessions s
+            JOIN agent_runs r ON r.id = s.agent_run_id AND r.child_session_id = s.id
+            JOIN worktrees w ON w.id = r.worktree_id
+            WHERE s.id = %s AND s.machine_id = %s
+              AND r.machine_id = s.machine_id AND w.machine_id = s.machine_id
+              AND w.project_id = s.project_id
+              AND w.workspace_role = 'task' AND w.status = 'active'
+              AND w.task_id IS NOT NULL AND (r.task_id IS NULL OR r.task_id = w.task_id)
+            """,
+            (session_id, require_machine_id()),
+        )
+        return Worktree.from_row(row) if row else None
+
     def has_path_on_other_machine(self, worktree_path: str) -> bool:
         """Return whether another machine owns a record for this filesystem path."""
         row = self.db.fetchone(

@@ -291,6 +291,7 @@ and each attached gclient window switches to that tab and pane.
 | `not_found` | The node, workspace, tab, pane, or terminal does not exist, or a pane has no terminal. |
 | `invalid_ref` | A reference does not parse or names the wrong kind of object. |
 | `invalid_op` | Unknown op, unknown or missing field, wrong field type, or an op the layout rejects. |
+| `invalid_move` | A `pane.move` names a destination tab that belongs to another project. |
 | `terminal_failed` | A pane terminal could not be spawned, read, or written, or workspace ops are not configured. |
 | `busy` | A pane is still spawning its terminal, or the terminal is held by another pane. |
 | `forbidden` | The actor may not act on the target. |

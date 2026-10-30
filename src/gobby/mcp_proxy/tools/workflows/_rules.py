@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from gobby.storage.definitions import preserve_bundled_tag
 from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
 from gobby.workflows.delivery_disposition import (
@@ -42,7 +43,13 @@ def _rule_body(row: RuleDefinitionRow) -> dict[str, Any]:
 def _export_row(row: RuleDefinitionRow) -> Any:
     return SimpleNamespace(
         name=row.name,
-        definition_json=json.dumps(_rule_body(row)),
+        definition_json={
+            **_rule_body(row),
+            "description": row.description,
+            "enabled": row.enabled,
+            "priority": row.priority,
+            "sources": row.sources,
+        },
         tags=row.tags,
     )
 
@@ -284,6 +291,7 @@ def update_rule(
     if not fields:
         return {"success": False, "error": "No fields to update"}
 
+    preserve_bundled_tag(row.tags, fields)
     updated = def_manager.update(row.id, **fields)
     logger.info("Updated rule '%s' (fields=%s)", name, list(fields))
 
@@ -291,7 +299,11 @@ def update_rule(
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
         auto_export_definition(
-            _export_row(updated), project_path, kind="rule", make_global=make_global_template
+            _export_row(updated),
+            project_path,
+            db=def_manager.db,
+            kind="rule",
+            make_global=make_global_template,
         )
     except Exception as e:
         logger.warning("Failed to auto-export updated rule '%s': %s", name, e)
@@ -365,7 +377,11 @@ def create_rule(
         from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 
         auto_export_definition(
-            _export_row(row), project_path, kind="rule", make_global=make_global_template
+            _export_row(row),
+            project_path,
+            db=def_manager.db,
+            kind="rule",
+            make_global=make_global_template,
         )
     except Exception as e:
         logger.warning("Failed to auto-export rule '%s': %s", name, e)

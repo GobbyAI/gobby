@@ -1,4 +1,4 @@
-tags: [task-enforcement, enforcement, lifecycle, gobby, default, task-skill-gates]
+tags: [task-skill-gates]
 
 rules:
   require-tasks-skill-for-mutations:
@@ -7,8 +7,7 @@ rules:
     enabled: true
     priority: 24
     when: >
-      variables.get('_agent_type') == 'default'
-      and (
+      (
         not skill_loaded('gobby:references/tasks/overview.md')
         or (
           (

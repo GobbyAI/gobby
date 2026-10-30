@@ -165,7 +165,7 @@
           "name": "readonly-query",
           "description": "Read the daemon database through query_readonly",
           "path": "references/sessions/readonly-query.md",
-          "when": "Assistant or Orchestrator needs a read-only answer from the daemon database"
+          "when": "An authorized caller needs a read-only answer from the daemon database"
         }
       ]
     },

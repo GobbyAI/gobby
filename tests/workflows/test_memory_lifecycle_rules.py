@@ -43,6 +43,7 @@ from gobby.workflows.memory_review_conditions import classify_memory_review_clos
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import sync_bundled_rules
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -894,15 +895,6 @@ class TestGuardPlanMemoryWrites:
         assert body.when is not None
         assert "variables.get('plan_mode')" in body.when
         assert "pending_memory_recall_request_id" not in body.when
-        assert "'plan-adversary'" in body.when
-        for retired in (
-            "planner",
-            "plan-adversary-old",
-            "plan-adversary-taskless-old",
-            "plan-enhancer-old",
-            "plan-enhancer-taskless-old",
-        ):
-            assert f"'{retired}'" not in body.when
 
 
 # ---------------------------------------------------------------------------
@@ -934,11 +926,12 @@ def _memory_tool_event(tool_name: str) -> HookEvent:
 @pytest.fixture
 def guard_engine(db: HubDatabase) -> RuleEngine:
     _sync_bundled(db)
+    seed_seat(db, "custom-memory-reviewer", include=["name:guard-durable-memory-writes"])
     with db.transaction() as conn:
         conn.execute("UPDATE rule_definitions SET enabled = FALSE")
         conn.execute(
-            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
-            ("guard-plan-memory-writes",),
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name = ANY(%s)",
+            (["guard-plan-memory-writes", "guard-durable-memory-writes"],),
         )
     return RuleEngine(db)
 
@@ -950,7 +943,7 @@ class TestGuardPlanMemoryWritesEngine:
         "planning_context",
         [
             {"plan_mode": True},
-            {"_agent_type": "plan-adversary"},
+            {"_agent_type": "custom-memory-reviewer"},
         ],
     )
     async def test_plan_memory_write_blocks_once_then_allows_retry(
@@ -972,10 +965,11 @@ class TestGuardPlanMemoryWritesEngine:
         assert second.decision == "allow"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("agent_type", ["plan-adversary", "custom-memory-worker"])
     async def test_plan_memory_guard_does_not_affect_normal_sessions(
-        self, guard_engine: RuleEngine
+        self, guard_engine: RuleEngine, agent_type: str
     ) -> None:
-        variables: dict[str, object] = {}
+        variables: dict[str, object] = {"_agent_type": agent_type}
 
         result = await guard_engine.evaluate(
             _memory_tool_event("create_memory"), _GUARD_SESSION_ID, variables

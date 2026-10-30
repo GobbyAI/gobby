@@ -24,18 +24,18 @@
 10 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*20 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
 11 |│                                                          ││       │ Even horizontal ││ Arrange ▸                 │   │|
 11 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 accent/panel_bg+bv*17 surface0/panel_bg*2 accent/panel_bg+bv*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
-12 |│                                                          ││       │ Even vertical   ││ Take control              │   │|
-12 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
-13 |│                                                          ││       │ Main horizontal ││ Copy mode                 │   │|
+12 |│                                                          ││       │ Even vertical   ││ Move to tab ▸             │   │|
+12 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 overlay0/panel_bg+d*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
+13 |│                                                          ││       │ Main horizontal ││ Take control              │   │|
 13 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
-14 |│                                                          ││       │ Main vertical   ││ Send right-clicks to pane │   │|
+14 |│                                                          ││       │ Main vertical   ││ Copy mode                 │   │|
 14 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
-15 |│                                                          ││       │ Tiled           ││ Close pane                │   │|
+15 |│                                                          ││       │ Tiled           ││ Send right-clicks to pane │   │|
 15 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
-16 |│                                                          ││       │ New grid…       │└───────────────────────────┘   │|
-16 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*30 text/panel_bg*3 accent/panel_bg*1
-17 |│                                                          ││       └─────────────────┘                                │|
-17 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*19 text/panel_bg*32 accent/panel_bg*1
+16 |│                                                          ││       │ New grid…       ││ Close pane                │   │|
+16 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
+17 |│                                                          ││       └─────────────────┘└───────────────────────────┘   │|
+17 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*48 text/panel_bg*3 accent/panel_bg*1
 18 |│                                                          ││                                                          │|
 18 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 19 |│                                                          ││                                                          │|

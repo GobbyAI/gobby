@@ -877,6 +877,7 @@ def test_devteam_guard_validates_rendered_report_target(env: _Env, report_to: st
         task=f"#{team.seq_num}",
         workspace=env.workspace_id,
         seats="developer",
+        reviewer_agent="fixture-reviewer",
         report_to=env.parent_session_id if report_to == "operator" else report_to,
     )
     arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
@@ -891,7 +892,7 @@ def test_devteam_guard_validates_rendered_report_target(env: _Env, report_to: st
         result = registry.call_sync("check_runbook_seats", arguments)
     assert arguments["require_report_to"] is True
     if report_to == "operator":
-        assert result["success"] is True and "error" not in result
+        assert result["success"] is True and "error" not in result, result
         assert arguments["report_to"] == env.parent_session_id
     else:
         assert result == {
