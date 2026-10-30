@@ -294,6 +294,59 @@ fn trust_seeds_workspace_and_realpath() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn codex_prunes_stale_projects_only_when_trust_is_pending() -> Result<()> {
+    // Run the pending-path control first, then the already-trusted no-prune case.
+    for pending in [true, false] {
+        let root = tempfile::tempdir()?;
+        let home = root.path().join("home");
+        let real = root.path().join("workspace");
+        let alias = root.path().join("workspace-link");
+        let stale = root.path().join("deleted-generated-workspace");
+        fs::create_dir_all(home.join(".codex"))?;
+        fs::create_dir_all(&real)?;
+        std::os::unix::fs::symlink(&real, &alias)?;
+        let config_path = home.join(".codex/config.toml");
+        fs::write(&config_path, "model = \"keep-model\"\n")?;
+        seed_trust("codex", &home, &alias)?;
+        // The frozen corpus has argv/env cases only. This assertion pins trust.py's
+        // source contract: stale projects are pruned only when a trust path is pending.
+        assert!(!stale.exists());
+        let stale_key = stale.to_str().context("stale path")?;
+        let text = format!(
+            "{}\n[projects.{}]\ntrust_level = \"trusted\"\n",
+            fs::read_to_string(&config_path)?,
+            serde_json::to_string(stale_key)?
+        );
+        fs::write(&config_path, text)?;
+        let requested = if pending {
+            let new_workspace = root.path().join("new-workspace");
+            fs::create_dir_all(&new_workspace)?;
+            new_workspace
+        } else {
+            alias.clone()
+        };
+        seed_trust("codex", &home, &requested)?;
+        let config: toml::Value = toml::from_str(&fs::read_to_string(&config_path)?)?;
+        assert_eq!(config["model"].as_str(), Some("keep-model"));
+        for path in [&alias, &fs::canonicalize(&real)?] {
+            assert_eq!(
+                config["projects"][path.to_str().context("trusted path")?]["trust_level"].as_str(),
+                Some("trusted")
+            );
+        }
+        assert_eq!(
+            config["projects"]
+                .get(stale_key)
+                .and_then(|entry| entry.get("trust_level"))
+                .and_then(toml::Value::as_str),
+            if pending { None } else { Some("trusted") },
+            "stale-project pruning must depend on pending trust paths (pending={pending})"
+        );
+    }
+    Ok(())
+}
+
 struct LaunchFixture {
     tree: SrtTree,
     context: LaunchContext,
@@ -539,10 +592,17 @@ async fn launch_aborts_prepared_child_on_commit_failure() -> Result<()> {
         format!("host-{}", fixture.payload.terminal_id)
     );
     assert_eq!(requests[abort]["grace_ms"], 0);
-    assert_ne!(
-        persisted_state(&fixture.agents.home)?.runs[&fixture.payload.run_id].phase,
-        RunPhase::Launched
-    );
+    let state = persisted_state(&fixture.agents.home)?;
+    assert!(!state.runs.contains_key(&fixture.payload.run_id));
+    let exit = &state
+        .exits
+        .iter()
+        .find(|record| record.exit.run_id == fixture.payload.run_id)
+        .context("durable launch_failed exit missing")?
+        .exit;
+    assert_eq!(exit.reason, ExitReason::LaunchFailed);
+    assert!(!exit.launched);
+    assert_eq!(exit.terminal_id, fixture.payload.terminal_id);
     Ok(())
 }
 
