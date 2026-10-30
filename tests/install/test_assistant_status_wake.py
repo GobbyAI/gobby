@@ -1,0 +1,73 @@
+"""The Assistant owns the scheduled status; the status-report tick wakes it through a pipeline."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+
+pytestmark = pytest.mark.unit
+
+SHARED = Path(__file__).resolve().parents[2] / "src/gobby/install/shared"
+ASSISTANT = SHARED / "workflows/agents/assistant.yaml"
+PROCEDURE = SHARED / "skills/gobby/references/agents/procedures/assistant.md"
+WAKE = SHARED / "workflows/pipelines/assistant-status-wake.yaml"
+
+
+def _assistant_status_prompt() -> str:
+    data: dict[str, Any] = yaml.safe_load(ASSISTANT.read_text(encoding="utf-8"))
+    prompt = data["prompts"]["agent"]
+    assert isinstance(prompt, str)
+    return prompt
+
+
+def test_assistant_definition_owns_status_at_policy_cadence() -> None:
+    prompt = _assistant_status_prompt()
+
+    assert "project_policy.report_cadence_seconds" in prompt
+    assert "send_operator_message" in prompt
+    assert "assistant.md" in prompt
+    assert "Reporter owns" not in prompt
+    assert "Don't assemble status yourself" not in prompt
+
+
+def test_assistant_definition_keeps_attached_pane_mirroring_rule() -> None:
+    prompt = _assistant_status_prompt()
+
+    assert "automatic mirroring" in prompt
+
+
+def test_status_procedure_reads_cadence_from_policy_without_literal() -> None:
+    text = PROCEDURE.read_text(encoding="utf-8")
+
+    assert "project_policy" in text
+    assert "report_cadence_seconds" in text
+    assert "send_operator_message" in text
+    assert "US Central" in text
+    assert "1800" not in text
+
+
+def test_wake_pipeline_has_no_cadence_literal() -> None:
+    assert "1800" not in WAKE.read_text(encoding="utf-8")
+
+
+def test_wake_pipeline_resolves_assistant_then_wakes_that_session() -> None:
+    data: dict[str, Any] = yaml.safe_load(WAKE.read_text(encoding="utf-8"))
+
+    steps = {step["id"]: step for step in data["steps"]}
+    assert list(steps) == ["resolve", "wake"]
+
+    resolve = steps["resolve"]["mcp"]
+    assert (resolve["server"], resolve["tool"]) == ("gobby-sessions", "list_sessions")
+    assert resolve["arguments"]["project_id"] == "${{ project_id }}"
+    assert resolve["arguments"]["agent_type"] == "${{ inputs.agent_type }}"
+
+    wake = steps["wake"]["mcp"]
+    assert (wake["server"], wake["tool"]) == ("gobby-agents", "send_message")
+    assert wake["arguments"]["target"] == "session"
+    assert wake["arguments"]["wake"] is True
+    assert "steps.resolve.output" in steps["wake"]["condition"]
+
+    assert data["inputs"]["agent_type"]["default"] == "assistant"

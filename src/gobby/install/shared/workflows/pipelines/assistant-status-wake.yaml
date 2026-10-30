@@ -1,0 +1,39 @@
+name: assistant-status-wake
+type: pipeline
+version: "1.0"
+description: |
+  Status tick for the operator's Assistant. The status-report cron runs this pipeline at the
+  project-policy cadence. It lists the Assistant sessions in this project, and when exactly one
+  is live it wakes that session with a status tick; the Assistant assembles and delivers the
+  report. Zero or several live matches, or an incomplete listing, send nothing: the wake step
+  is recorded as skipped and the run completes.
+tags: [assistant, status]
+resume_on_restart: false
+
+inputs:
+  agent_type:
+    type: string
+    default: assistant
+    description: "Agent definition whose single live session receives the status tick"
+
+steps:
+  - id: resolve
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        limit: 500
+
+  - id: wake
+    condition: "${{ steps.resolve.output.count == steps.resolve.output.total and len([s for s in steps.resolve.output.sessions if s.status not in ['expired', 'archived']]) == 1 }}"
+    mcp:
+      server: gobby-agents
+      tool: send_message
+      arguments:
+        target: session
+        target_id: "${{ [s for s in steps.resolve.output.sessions if s.status not in ['expired', 'archived']][0].id }}"
+        wake: true
+        message_type: message
+        content: "Status tick. Deliver the scheduled status now: load gobby:references/agents/procedures/assistant.md completely and follow it. Deliver through the configured operator channel only."
