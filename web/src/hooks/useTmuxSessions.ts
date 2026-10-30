@@ -731,6 +731,9 @@ export function useTmuxSessions(
   const hasControl = lease.holder !== null && lease.holder === streamingId;
 
   const resizeTerminal = useCallback((rows: number, cols: number) => {
+    // Recorded before the attachment guard, as handleViewReady does: a resize
+    // that lands while no attachment exists is the grid the next one opens at.
+    readinessRef.current.size(rows, cols);
     const currentStreamingId = streamingIdRef.current;
     if (
       !wsRef.current ||
