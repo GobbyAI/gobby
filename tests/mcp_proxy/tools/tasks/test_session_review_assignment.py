@@ -13,6 +13,7 @@ from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
+from tests.fixtures.review_approvals import grant_step_writes
 
 pytestmark = pytest.mark.unit
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
@@ -48,6 +49,14 @@ async def test_reviewing_assignment_follows_the_verdict_seat_role(
         machine_id=MACHINE_ID,
         source="cli",
         project_id=sample_project["id"],
+    )
+    # A reviewing assignment needs a definition that grants review; the developer grants none.
+    grant_step_writes(
+        temp_db,
+        seat.id,
+        sample_project["id"],
+        agent_name,
+        ("review",) if records_assignment else (),
     )
     LocalAgentRunManager(temp_db).create(
         parent_session_id=owner.id,

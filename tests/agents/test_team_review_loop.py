@@ -14,7 +14,7 @@ from typing import Any, cast
 import pytest
 import yaml
 
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding, bind_reviewer_run
 from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -643,6 +643,91 @@ async def test_only_the_holders_dev_manager_releases_its_claim(world: TeamWorld)
     assert released.get("success") is True, released
     assert released["released_by_session_id"] == manager
     assert tasks.get_task(task.id).claimed_by_session_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "holder_placement", ["original-runbook", "replacement-runbook", "replacement-manager"]
+)
+async def test_replacement_dev_manager_releases_its_teams_claim(
+    world: TeamWorld, holder_placement: str
+) -> None:
+    """A replacement Dev Manager releases a claim its team's seat holds, wherever the seat runs.
+
+    A replacement execution records its own snapshot of the team when it joins, while seats bound
+    later write only the team's live record. The team a seat resolves must match on team identity,
+    not on the whole binding, so the snapshot's stale reviewers do not refuse the same team.
+    """
+    db, project_id = world.case.db, world.case.project_id
+    tasks = LocalTaskManager(db)
+    tools = create_task_registry(tasks)
+    task = world.case.task(TITLE)
+    original = world.child(task)
+    team = await world.admit(original, task)
+    holder: str | None = (
+        seat(world, original, "developer") if holder_placement == "original-runbook" else None
+    )
+    world.finish(original)
+
+    replacement = world.child(task)
+    await world.admit(
+        replacement, task, team_id=team.team_id, tab_title=f"Dev Team - #{task.seq_num}"
+    )
+    reviewer = seat(world, replacement, "code-reviewer")
+    bind_reviewer_run(db, team.team_id, project_id, "code-reviewer", reviewer)
+    manager = seat(world, replacement, "dev-manager", manages=task)
+    if holder_placement == "replacement-runbook":
+        holder = seat(world, replacement, "developer")
+    elif holder_placement == "replacement-manager":
+        holder = world.case.session("developer", parent=manager)
+    assert holder is not None
+    tasks.claim_task(task.id, holder, force=True)
+
+    released = await release(tools, manager, task, holder)
+    assert released.get("success") is True, released
+    assert released["released_by_session_id"] == manager
+    assert tasks.get_task(task.id).claimed_by_session_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "holder_placement", ["original-runbook", "replacement-runbook", "replacement-manager"]
+)
+async def test_replacement_dev_manager_hands_off_its_teams_claim(
+    world: TeamWorld, holder_placement: str
+) -> None:
+    """A replacement Dev Manager moves a claim between its team's seats, whichever execution
+    admitted each seat. The holder and the recipient match on team identity, as a release does."""
+    db, project_id = world.case.db, world.case.project_id
+    tasks = LocalTaskManager(db)
+    tools = create_task_registry(tasks)
+    task = world.case.task(TITLE)
+    original = world.child(task)
+    team = await world.admit(original, task)
+    writer: str | None = (
+        seat(world, original, "test-writer") if holder_placement == "original-runbook" else None
+    )
+    world.finish(original)
+
+    replacement = world.child(task)
+    await world.admit(
+        replacement, task, team_id=team.team_id, tab_title=f"Dev Team - #{task.seq_num}"
+    )
+    reviewer = seat(world, replacement, "code-reviewer")
+    bind_reviewer_run(db, team.team_id, project_id, "code-reviewer", reviewer)
+    manager = seat(world, replacement, "dev-manager", manages=task)
+    developer = seat(world, replacement, "developer")
+    if holder_placement == "replacement-runbook":
+        writer = seat(world, replacement, "test-writer")
+    elif holder_placement == "replacement-manager":
+        writer = world.case.session("test-writer", parent=manager)
+    assert writer is not None
+    tasks.claim_task(task.id, writer, force=True)
+
+    handed = await hand_off(tools, manager, task, writer, developer)
+    assert handed.get("success") is True, handed
+    assert handed["handed_to_session_id"] == developer
+    assert tasks.get_task(task.id).claimed_by_session_id == developer
 
 
 @pytest.mark.asyncio

@@ -43,8 +43,10 @@ def _protocol(tool: str) -> dict[str, str]:
 
 # A synthetic adversary: the consensus transition and the derive gate are the only
 # transitions under test. The derive tool is blocked until consensus moves the seat.
+# Consensus events are read only from a definition that declares track_plan_consensus.
 CONSENSUS_ADVERSARY: dict[str, Any] = {
     "name": "plan-adversary",
+    "capabilities": ["track_plan_consensus"],
     "prompts": {"agent": "Synthetic consensus-gated adversary seat."},
     "workflows": {"rule_selectors": {"include": [], "exclude": []}},
     "step_workflow": {
