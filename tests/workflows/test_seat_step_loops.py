@@ -1497,11 +1497,17 @@ async def _claimed_developer(
     repo = Path(checkout.root_path)
     _git(repo, "init", "-q", "-b", "main")
     _commit_files(repo, "unlinked base", {"README.md": "base\n"})
-    _git(repo, "checkout", "-q", "-b", "seat-work")
+    # The developer works in its own worktree, so the main checkout stays on the integration
+    # branch and holds none of the candidates.
+    work = tmp_path / "work"
+    _git(repo, "worktree", "add", "-q", "-b", "seat-work", str(work), "main")
     definition = _commit_kind_seat()
     run = SeatRun(temp_db, "developer", project_id=checkout.project.id, definition=definition)
     await run.load(*run.vars["required_skills"])
     task = run.task(owner=SESSION_ID)
+    LocalWorktreeManager(temp_db).create(
+        checkout.project.id, "seat-work", str(work), task_id=task.id
+    )
     await run.call(
         "gobby-tasks",
         "claim_task",
@@ -1510,7 +1516,7 @@ async def _claimed_developer(
     )
     await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
     assert run.step == "implement"
-    return run, task, repo
+    return run, task, work
 
 
 def _registry(run: SeatRun, temp_db: HubDatabase) -> InternalToolRegistry:
@@ -1590,8 +1596,6 @@ async def test_developer_unlinking_the_submitting_commit_returns_to_implement(
     sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
     await _link(run, temp_db, task, repo, sha)
     assert run.step == "submit"
-    # The main checkout's branch is the integration branch; the candidate must not be on it.
-    _git(repo, "checkout", "-q", "main")
     await _unlink(run, temp_db, task.id, repo, sha)
     assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
 
@@ -1605,8 +1609,6 @@ async def test_developer_unlinking_the_candidate_beside_red_returns_to_implement
     sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
     await _link(run, temp_db, task, repo, sha)
     assert run.step == "submit"
-    # The main checkout's branch is the integration branch; the candidate must not be on it.
-    _git(repo, "checkout", "-q", "main")
     await _unlink(run, temp_db, task.id, repo, sha)
     assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
 
@@ -1635,8 +1637,6 @@ async def test_developer_declared_candidate_survives_an_ordinary_red_unlink(
     repair = _commit_files(repo, f"[gobby-#{task.seq_num}] test: repair", _TEST_ONLY_REPAIR)
     await _link(run, temp_db, task, repo, repair, candidate=True)
     assert run.step == "submit"
-    # The main checkout's branch is the integration branch; the candidate must not be on it.
-    _git(repo, "checkout", "-q", "main")
     await _unlink(run, temp_db, task.id, repo, red)
     assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
     await _unlink(run, temp_db, task.id, repo, repair)
@@ -1652,8 +1652,6 @@ async def test_developer_declared_candidate_survives_a_production_unlink(
     assert run.step == "submit"
     sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
     await _link(run, temp_db, task, repo, sha)
-    # The main checkout's branch is the integration branch; the candidate must not be on it.
-    _git(repo, "checkout", "-q", "main")
     await _unlink(run, temp_db, task.id, repo, sha)
     assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
     await _unlink(run, temp_db, task.id, repo, repair)

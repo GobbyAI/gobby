@@ -46,6 +46,23 @@ async def integration_refusal(db: HubDatabase, task: Task, sha: str) -> str | No
     return f"Cannot determine whether {sha} is on the integration branch."
 
 
+async def landed_on_integration(db: HubDatabase, task: Task, sha: str) -> bool:
+    """Whether ``sha`` is on the integration branch. An unproven status reads as not landed."""
+    from gobby.tasks.land_commit import LandingGitError, main_checkout_target
+
+    try:
+        target = await main_checkout_target(db, task.project_id)
+    except (LandingGitError, ValueError):
+        return False
+    if target is None:
+        return False
+    repo, branch = target
+    result = await daemon_git.run(
+        ("merge-base", "--is-ancestor", sha, f"refs/heads/{branch}"), cwd=repo
+    )
+    return isinstance(result, GitOk)
+
+
 async def unlink_commit_audited(
     task_manager: LocalTaskManager,
     task: Task,

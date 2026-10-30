@@ -526,7 +526,11 @@ def test_close_gate_reads_the_approval_not_the_stored_status(
 
 @pytest.fixture
 def candidate_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Real Git ancestry with checkout discovery and daemon Git isolated."""
+    """Real Git ancestry with checkout discovery and daemon Git isolated.
+
+    The candidates sit on their own branch, unlanded, while the registered main checkout
+    stays on main at the base commit.
+    """
 
     def git(*args: str) -> str:
         return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
@@ -534,10 +538,13 @@ def candidate_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[s
     git("init", "-b", "main")
     git("config", "user.name", "Candidate regression")
     git("config", "user.email", "test@example.invalid")
+    git("-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", "base")
+    git("checkout", "-b", "candidate")
     commits = []
     for index in range(3):
         git("-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", f"step {index}")
         commits.append(git("rev-parse", "HEAD"))
+    git("checkout", "main")
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
         lambda **_kwargs: str(tmp_path),
@@ -596,6 +603,34 @@ async def test_declared_candidate_relink_accepts_exact_sha_steps(
     with session_context_for_test(team["developer"]):
         repeated = await registry.call("link_commit", {**arguments, "candidate": True})
     assert repeated == declared
+
+
+async def test_relinking_a_landed_commit_declares_no_candidate(
+    temp_db: HubDatabase,
+    task: Task,
+    team: dict[str, str],
+    candidate_history: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Landed history is not a candidate: a relink after landing leaves the developer in implement."""
+    monkeypatch.setattr(
+        "gobby.tasks.land_commit.main_checkout_target",
+        AsyncMock(return_value=(tmp_path, "main")),
+    )
+    subprocess.check_output(["git", "merge", "--ff-only", "candidate"], cwd=tmp_path)
+    manager = LocalTaskManager(temp_db)
+    manager.unlink_commit(task.id, _TIP[:10])
+    landed = candidate_history[-1]
+    manager.link_commit(task.id, landed)
+    registry = create_commit_registry(manager)
+    with session_context_for_test(team["developer"]):
+        relink = await registry.call(
+            "link_commit", {"task_id": task.id, "commit_sha": landed, "candidate": True}
+        )
+    assert "error" not in relink, relink
+    assert relink["declared_candidate"] is None
+    assert manager.get_task(task.id).commits == [landed]
 
 
 async def test_declared_candidate_cannot_demote_a_newer_link(

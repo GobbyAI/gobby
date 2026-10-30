@@ -25,7 +25,7 @@ from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.tasks.commit_order import link_candidate
 from gobby.tasks.commit_ownership import assert_task_commit_paths_available_async
-from gobby.tasks.commit_unlink import unlink_commit_audited
+from gobby.tasks.commit_unlink import landed_on_integration, unlink_commit_audited
 from gobby.tasks.diff_paging import (
     DEFAULT_GIT_TIMEOUT_SECONDS,
     MAX_COMMITS_LIMIT,
@@ -216,6 +216,9 @@ def create_commit_registry(
             declared = candidate and not (
                 test_only and _approved_review_of(task_manager, current_task, normalized)
             )
+            # Landed history is never a new candidate: a relink after landing declares nothing.
+            if declared and await landed_on_integration(task_manager.db, current_task, normalized):
+                declared = False
             task = (
                 await asyncio.to_thread(
                     link_candidate, task_manager, resolved_task_id, normalized, repo_path
