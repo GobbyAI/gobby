@@ -39,6 +39,7 @@ from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import (
 from gobby.storage.agents import TERMINAL_AGENT_RUN_STATUSES
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
+from gobby.storage.sessions._constants import TURN_ENDED_SESSION_STATUSES
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.terminals import TerminalManager
 from gobby.utils.git import run_to_completion
@@ -292,7 +293,7 @@ async def spawn_remote_agent(
                     existing_session_id=resume_target.id,
                     original_run_id=resume_target.agent_run_id,
                     relaunch=True,
-                    paused_seat_not_live=resume_target.status == "paused",
+                    paused_seat_not_live=resume_target.status in TURN_ENDED_SESSION_STATUSES,
                     **shared,
                 )
             prep_task = asyncio.ensure_future(asyncio.to_thread(prepare))

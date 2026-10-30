@@ -253,7 +253,7 @@ def finalize_daemon_resume(
         conn.execute(
             """
             UPDATE sessions
-            SET status = CASE WHEN status = 'paused' THEN 'active' ELSE status END,
+            SET status = CASE WHEN status IN ('paused', 'waiting') THEN 'active' ELSE status END,
                 updated_at = %s
             WHERE id = %s
               AND agent_run_id = %s

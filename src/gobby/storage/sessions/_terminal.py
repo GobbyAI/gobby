@@ -92,7 +92,7 @@ class _TerminalMixin:
             SELECT * FROM sessions
             WHERE project_id = %s AND machine_id = %s AND source = %s
               AND session_type = 'terminal' AND agent_depth = %s
-              AND status IN ('active', 'paused', 'expired')
+              AND status IN ('active', 'paused', 'waiting', 'expired')
               AND terminal_context IS NOT NULL AND id <> %s
               AND created_at <= %s
               AND terminal_context ->> 'parent_pid' = %s

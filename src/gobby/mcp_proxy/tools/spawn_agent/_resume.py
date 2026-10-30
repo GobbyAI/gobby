@@ -9,7 +9,7 @@ from gobby.agents.resume_placement import split_target
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
-from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES, TURN_ENDED_SESSION_STATUSES
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.tasks.state_semantics import is_task_actionable
@@ -79,7 +79,7 @@ def resolve_resume_target(
     if provider and provider != session.source:
         raise ValueError(f"Resume target uses {session.source}, not requested provider {provider}")
     if session.status in LIVE_SESSION_STATUSES and (
-        session.status != "paused"
+        session.status not in TURN_ENDED_SESSION_STATUSES
         or _paused_seat_has_live_pane_or_run(
             session, session_manager.db, run_storage, live_host_epoch
         )

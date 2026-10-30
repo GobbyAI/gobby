@@ -24,6 +24,7 @@ from gobby.agents.tmux.session_manager import TmuxPaneInfo, TmuxSessionManager
 from gobby.sessions.tmux_context import get_tmux_window_id
 from gobby.storage.hook_receipts import retire_session_hook_effects
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
+from gobby.storage.sessions._constants import TURN_ENDED_SESSION_STATUSES
 from gobby.terminal_ownership import (
     TERMINAL_OWNER_STATUSES,
     OwnershipState,
@@ -177,7 +178,11 @@ class SessionLivenessMonitor:
                 continue
 
             native_id = (record.terminal_context or {}).get("gobby_terminal_id")
-            if record.status == "paused" and isinstance(native_id, str) and native_id:
+            if (
+                record.status in TURN_ENDED_SESSION_STATUSES
+                and isinstance(native_id, str)
+                and native_id
+            ):
                 if self.terminal_manager is None:
                     continue
                 try:
@@ -332,7 +337,7 @@ class SessionLivenessMonitor:
 
             native_id = ctx.get("gobby_terminal_id")
             native_candidate = (
-                self._row_value(row, "status") == "paused"
+                self._row_value(row, "status") in TURN_ENDED_SESSION_STATUSES
                 and isinstance(native_id, str)
                 and bool(native_id)
             )

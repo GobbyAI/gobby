@@ -38,6 +38,7 @@ from gobby.providers.version_gate import (
     peek_agy_support,
 )
 from gobby.sessions.title_lifecycle import definition_display_name
+from gobby.storage.sessions._constants import TURN_ENDED_SESSION_STATUSES
 from gobby.terminals.workspace_agent_panes import AgentPaneReserver
 from gobby.utils.git import run_thread_to_completion, run_to_completion
 from gobby.utils.machine_id import get_machine_id, require_machine_id
@@ -764,7 +765,7 @@ async def spawn_agent_impl(
                     "existing_session_id": resume_target.id,
                     "original_run_id": resume_target.agent_run_id,
                     "relaunch": True,
-                    "paused_seat_not_live": resume_target.status == "paused",
+                    "paused_seat_not_live": resume_target.status in TURN_ENDED_SESSION_STATUSES,
                 }
             prepared_spawn = await run_thread_to_completion(
                 prepare,

@@ -24,6 +24,7 @@ ALLOWED_SESSION_STATUSES = frozenset(
     {
         "active",
         "paused",
+        "waiting",
         "interrupted",
         "awaiting_input",
         "awaiting_approval",
@@ -41,12 +42,17 @@ PROTECTED_SESSION_STATUSES = frozenset(
 LIVE_SESSION_STATUS_ORDER = (
     "active",
     "paused",
+    "waiting",
     "interrupted",
     "awaiting_input",
     "awaiting_approval",
     "awaiting_handoff",
 )
 LIVE_SESSION_STATUSES = frozenset(LIVE_SESSION_STATUS_ORDER)
+# Parked between turns: a seat rests here until a wake, resume or expiry moves it on.
+# "waiting" is a routine turn end with an armed coordination wait; "paused" is every
+# other parked turn end. Neither is an operator pause, which only an explicit pause sets.
+TURN_ENDED_SESSION_STATUSES = frozenset({"paused", "waiting"})
 TERMINAL_SESSION_STATUSES = frozenset({"expired", "deleted"})
 
 

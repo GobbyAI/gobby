@@ -14,6 +14,7 @@ from gobby.storage.attention import (
     AttentionStateManager,
     session_attention_entry_id,
 )
+from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import TERMINAL_SESSION_STATUSES
 from gobby.utils.datetime import datetime_to_iso, parse_stored_datetime, to_aware_utc, utc_now
@@ -387,6 +388,17 @@ class TurnLifecycleReducer:
             observe_queued_prompt=True,
         )
 
+    def _has_armed_wait(self, session_id: str) -> bool:
+        try:
+            return CoordinationWaitManager(self._db).has_active_wait(session_id)
+        except Exception:
+            logger.warning(
+                "Failed to read coordination waits for session %s; ending turn as paused",
+                session_id,
+                exc_info=True,
+            )
+            return False
+
     def end_turn(
         self,
         session_id: str,
@@ -394,11 +406,21 @@ class TurnLifecycleReducer:
         evidence: TurnEvidence,
     ) -> TurnLifecycleTransitionResult:
         """Apply terminal evidence; unknown observations retain current state."""
+        # A routine turn end with an armed coordination wait is parked on that wait,
+        # not paused on purpose.
+        awaiting_reply = disposition in {"completed", "ended_non_user"} and self._has_armed_wait(
+            session_id
+        )
 
         def mutate(current: TurnLifecycleState, status: str) -> tuple[TurnLifecycleState, str]:
             if disposition == "unknown":
                 return current, status
-            next_status = "interrupted" if disposition == "user_interrupted" else "paused"
+            if disposition == "user_interrupted":
+                next_status = "interrupted"
+            elif awaiting_reply:
+                next_status = "waiting"
+            else:
+                next_status = "paused"
             updated = replace(
                 self._with_evidence(current, evidence, waits=(), turn_state="terminal"),
                 disposition=disposition,

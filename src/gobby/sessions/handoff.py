@@ -430,7 +430,7 @@ def stage_handoff_attempt(
 
         lock_handoff_staging(conn, str(session_row["machine_id"]))
         prior_status: str | None = None
-        if session_row["status"] in ("active", "paused"):
+        if session_row["status"] in ("active", "paused", "waiting"):
             prior_status = str(session_row["status"])
         variable_row = conn.execute(
             "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",

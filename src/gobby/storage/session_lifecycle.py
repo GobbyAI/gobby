@@ -66,12 +66,15 @@ def rebind_agent_run(
     unless the caller passes ``paused_seat_not_live`` after proving it has no live pane.
     """
     if relaunch_parent_session_id is not None:
-        from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
+        from gobby.storage.sessions._constants import (
+            LIVE_SESSION_STATUS_ORDER,
+            TURN_ENDED_SESSION_STATUSES,
+        )
 
         live_statuses = [
             status
             for status in LIVE_SESSION_STATUS_ORDER
-            if not (paused_seat_not_live and status == "paused")
+            if not (paused_seat_not_live and status in TURN_ENDED_SESSION_STATUSES)
         ]
         cursor = db.execute(
             """
