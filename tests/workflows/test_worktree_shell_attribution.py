@@ -110,6 +110,18 @@ def _begin_edit(manager: SessionVariableManager, session_id: str, call_id: str) 
     )
 
 
+def _begin_read_only(manager: SessionVariableManager, session_id: str, call_id: str) -> None:
+    manager.begin_worktree_shell_call(
+        session_id,
+        ROOT,
+        call_id,
+        before={},
+        attributable=False,
+        now=time.time(),
+        read_only=True,
+    )
+
+
 def _output(tmp_path: Path, name: str, text: str) -> str:
     path = tmp_path / name
     path.write_text(text)
@@ -390,5 +402,45 @@ def test_edit_outside_a_registered_worktree_registers_nothing(
     attribution.begin_structured_edit_calls(
         manager, S2, _tool_event("Edit", {"file_path": "src/a.py"})
     )
+
+    assert manager.worktree_shell_call_entries(S2) == {}
+
+
+@pytest.mark.parametrize("read_first", [True, False])
+def test_read_only_call_neither_marks_nor_is_marked_by_a_concurrent_writer(
+    db: Any,
+    digests: dict[str, str | None],
+    recorded: list[dict[str, Any]],
+    read_first: bool,
+) -> None:
+    """A read-only call overlapping a merge leaves the merge's paths owned and unmarked (#25356)."""
+    manager = SessionVariableManager(db)
+    if read_first:
+        _begin_read_only(manager, S2, "status")
+        _begin_bash(manager, S1, "merge")
+    else:
+        _begin_bash(manager, S1, "merge")
+        _begin_read_only(manager, S2, "status")
+    digests.update({"src/merged.py": "merged"})
+
+    read = manager.settle_worktree_shell_call(
+        S2, ROOT, "status", after=dict(digests), now=time.time()
+    )
+    settled = manager.settle_worktree_shell_call(
+        S1, ROOT, "merge", after=dict(digests), now=time.time()
+    )
+
+    assert read is None
+    assert settled is not None
+    assert settled.overlapped is False
+    assert attribution.overlapped_worktree_paths(manager.get_variables(S1), ROOT) == frozenset()
+    attribution.attribute_settled_call(manager, S1, ROOT, settled, edited_at=time.time())
+    assert [call["paths"] for call in recorded if call["session_id"] == S1] == [["src/merged.py"]]
+
+
+def test_read_only_call_registers_nothing(db: Any) -> None:
+    manager = SessionVariableManager(db)
+
+    _begin_read_only(manager, S2, "status")
 
     assert manager.worktree_shell_call_entries(S2) == {}

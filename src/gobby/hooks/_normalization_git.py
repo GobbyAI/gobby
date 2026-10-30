@@ -492,6 +492,10 @@ def git_command_is_read_only(parts: list[str]) -> bool:
             flag.startswith("--") and "--open-files-in-pager".startswith(flag) for flag in flags
         ):
             return False
+    if operation == "worktree":
+        return arguments[:1] == ["list"] and all(
+            word in {"--porcelain", "-v", "--verbose"} for word in arguments[1:]
+        )
     if operation in {"branch", "tag"}:
         return not arguments or all(
             word in {"--list", "--show-current", "--all", "--remotes", "-a", "-r", "-v", "-vv"}

@@ -20,6 +20,7 @@ from gobby.hooks.checkout_reads import CheckoutReadUnavailable, node_origin
 from gobby.hooks.dispatchers import run_coro_blocking
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse, tool_execution_id
+from gobby.hooks.normalization import is_shell_tool
 from gobby.hooks.terminal_handoff_delivery import schedule_terminal_handoff_delivery
 from gobby.hooks.tool_error_tracker import is_wrapper_echo_event, track_tool_outcome
 from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
@@ -656,6 +657,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 attributable=attributable,
                 now=time.time(),
                 task_started_at=TaskToolBindings(manager, session_id).started_at(event),
+                read_only=event.data.get("canonical_read_only") is True,
             )
         except Exception:
             self.logger.warning("Failed to register worktree shell call", exc_info=True)
@@ -772,7 +774,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
             task_id = task_selected_at(variables, started_at) if started_at is not None else None
             # A native write names its paths, so an overlapping shell call's diff cannot make
             # them foreign: the author owns them, and its overlap record gives way.
-            structured = input_data.get("tool_name") != "Bash"
+            structured = not is_shell_tool(input_data.get("tool_name"))
             for checkout_root, paths in paths_by_checkout.items():
                 # Paths an overlapping shell call changed stay foreign; this call skips them.
                 overlapped = overlapped_worktree_paths(variables, checkout_root)
