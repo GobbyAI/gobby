@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 SEND_MESSAGE_HINT = "Use gobby-agents:send_message for cross-session communication."
 
 _SHELLS = frozenset({"ash", "bash", "csh", "dash", "fish", "ksh", "sh", "tcsh", "zsh"})
+# Bare command names of the agent CLIs, as SessionSource names them. Any other foreground
+# process, a shell or an editor or interpreter alike, is not a composer to type into.
+_AGENT_CLIS = frozenset({"agy", "claude", "codex", "droid", "grok"})
 _CREDENTIAL_PROMPT = re.compile(r"\b(password|passphrase|passcode|pin)\b[^\n]*:\s*$", re.IGNORECASE)
 
 
@@ -66,6 +69,11 @@ async def send_keys_target_refusal(
             )
         if command in _SHELLS:
             return _refuse("send_keys_target_bare_shell", "the target is a bare shell")
+        if command not in _AGENT_CLIS:
+            return _refuse(
+                "send_keys_target_unconfirmed",
+                f"the foreground process {command} is not an agent CLI",
+            )
 
         composer = read_composer(terminal.id)
         if composer.state != "empty":
@@ -76,8 +84,11 @@ async def send_keys_target_refusal(
 
         pane = live_runtime_pane(session_id, terminal_manager, terminal_runtime_registry)
         snapshot = await pane.snapshot(DEFAULT_SNAPSHOT_LINES) if pane is not None else None
-        if snapshot is None:
-            return _refuse("send_keys_target_unconfirmed", "the target pane cannot be read")
+        if snapshot is None or not snapshot.strip():
+            return _refuse(
+                "send_keys_target_unconfirmed",
+                "the target pane cannot be read or is blank",
+            )
         if _CREDENTIAL_PROMPT.search(_last_nonblank_line(snapshot)):
             return _refuse("send_keys_credential_prompt", "the target shows a credential prompt")
     except Exception:
