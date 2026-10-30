@@ -1130,11 +1130,10 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
         _handlers(mock_dependencies, checkout.db).handle_after_tool(
             replace(competing, event_type=HookEventType.AFTER_TOOL)
         )
-    reason = checkout.rule_3_reason("format_me.py")
-    if foreign_finishes_first is None:
-        assert reason == ""
-    else:
-        assert "overlap" in reason and "format_me.py" in reason
+    # Nothing is in flight, so the holder's native write is allowed; shell writes stay refused.
+    assert checkout.rule_3_reason("format_me.py") == ""
+    if foreign_finishes_first is not None:
+        _assert_refused_for_overlap(checkout, "format_me.py")
 
 
 def test_owner_checkpoint_recovers_settled_formatter_output(
@@ -1480,7 +1479,9 @@ def test_git_operation_cannot_exempt_an_overlapping_unattributed_write(
     for event in events:
         handlers.handle_after_tool(event)
     assert "racer.txt" not in checkout.ledger()
-    assert "racer.txt" in checkout.rule_3_reason("racer.txt")
+    # Nothing is in flight, so the holder's native write is allowed; shell writes stay refused.
+    assert checkout.rule_3_reason("racer.txt") == ""
+    _assert_refused_for_overlap(checkout, "racer.txt")
     _git(checkout.repo, "add", "racer.txt")
     reason = asyncio.run(
         foreign_staged_commit_conflict(
@@ -1546,17 +1547,42 @@ def test_overlapping_bash_calls_leave_changed_paths_foreign(
 
     assert "racer.txt" not in checkout.ledger()
     assert "racer.txt" not in checkout.task_ledger()
-    reason = checkout.rule_3_reason("racer.txt")
-    assert "racer.txt" in reason
-    assert re.search(r"\boverlap(?:ped|ping)?\b", reason, re.IGNORECASE), reason
+    # Both calls have finished and none is in flight, so the holder's native write clears the record.
+    assert checkout.rule_3_reason("racer.txt") == ""
+    _assert_refused_for_overlap(checkout, "racer.txt")
 
 
 def _assert_refused_for_overlap(checkout: Checkout, rel_path: str) -> None:
-    """Edit, restore and deletion of ``rel_path`` are each refused, and the refusal names the overlap."""
-    for command in (None, f"git restore -- {rel_path}", f"rm {rel_path}"):
+    """Shell restore and deletion of ``rel_path`` are refused, and the refusal names the overlap."""
+    for command in (f"git restore -- {rel_path}", f"rm {rel_path}"):
         reason = checkout.rule_3_reason(rel_path, command=command)
         assert rel_path in reason, reason
         assert re.search(r"\boverlap(?:ped|ping)?\b", reason, re.IGNORECASE), reason
+
+
+def test_overlapping_read_only_call_leaves_the_writer_unmarked(
+    mock_dependencies: dict[str, Any], task_worktree: Checkout
+) -> None:
+    """A read-only call overlapping a rewrite marks neither call; the rewrite stays owned (#25356)."""
+    checkout = task_worktree
+    handlers = _handlers(mock_dependencies, checkout.db)
+    foreign = replace(checkout, session_id=checkout.foreign_session_id)
+    command = "uv run python /tmp/rewrite.py racer.txt"
+    current_before = checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    reader_before = replace(
+        foreign.tool_event(HookEventType.BEFORE_TOOL, "git status --short"),
+        session_id="foreign-external",
+        request_id="toolu_foreign",
+    )
+    assert not _shell_write_refused(handlers, current_before)
+    assert not _shell_write_refused(handlers, reader_before)
+    checkout.write("racer.txt", "overlapping write\n")
+    current_after = checkout.tool_event(HookEventType.AFTER_TOOL, command)
+    handlers.handle_after_tool(replace(reader_before, event_type=HookEventType.AFTER_TOOL))
+    handlers.handle_after_tool(current_after)
+
+    assert "racer.txt" in checkout.ledger()
+    assert checkout.rule_3_reason("racer.txt") == ""
 
 
 def test_script_deleting_a_clean_tracked_file_attributes_the_deletion(

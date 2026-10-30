@@ -7,6 +7,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import time
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -18,6 +19,7 @@ import psycopg
 import pytest
 from psycopg_pool import PoolTimeout
 
+from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
@@ -53,6 +55,7 @@ from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from gobby.workflows.task_tool_bindings import TaskToolBindings
+from gobby.workflows.worktree_shell_attribution import OVERLAPS_VARIABLE
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
@@ -1792,6 +1795,164 @@ async def test_rule3_unowned_dirt_needs_an_exact_operator_approval(
     assert await decide(h.edit_event("foreign.txt")) == "block"
     (h.repo / "approved.txt").write_text("changed after approval\n", encoding="utf-8")
     assert await decide(h.edit_event("approved.txt")) == "block"
+
+
+def _holder_overlap(h: GuardHarness, path: str) -> None:
+    """Record ``path`` as an overlap-stranded write of this session, and dirty it on disk."""
+    (h.repo / path).write_text("holder rewrite\n", encoding="utf-8")
+    SessionVariableManager(h.db).merge_variables(
+        h.current_session.id, {OVERLAPS_VARIABLE: {str(h.repo): [path]}}
+    )
+
+
+def _native_write(h: GuardHarness, path: str, *, call_id: str | None = None) -> HookEvent:
+    event = h.edit_event(path)
+    event.data.update(
+        {
+            "canonical_tool_kind": "write",
+            "canonical_repo_mutation": True,
+            "canonical_file_paths": [path],
+        }
+    )
+    if call_id is not None:
+        event.data["verification_execution_id"] = call_id
+    return event
+
+
+async def _dirty_edit_reason(h: GuardHarness, event: HookEvent) -> str:
+    return await foreign_dirty_edit_conflict(
+        h.db,
+        event,
+        session_id=h.current_session.id,
+        project_id=h.project.id,
+        project_path=str(h.repo),
+    )
+
+
+@pytest.mark.asyncio
+async def test_overlap_holder_native_write_is_allowed_when_no_call_is_in_flight(
+    guard_harness: GuardHarness,
+) -> None:
+    """Nothing in flight in any session, so the holder's native write is not refused (#25356)."""
+    h = guard_harness
+    _holder_overlap(h, "owned.txt")
+
+    assert await _dirty_edit_reason(h, _native_write(h, "owned.txt")) == ""
+
+
+@pytest.mark.asyncio
+async def test_overlap_holder_native_write_stays_refused_while_another_session_call_runs(
+    guard_harness: GuardHarness,
+) -> None:
+    """A fresh call from another session can still be writing the path, so the write is refused."""
+    h = guard_harness
+    _holder_overlap(h, "owned.txt")
+    SessionVariableManager(h.db).begin_worktree_shell_call(
+        h.foreign_session.id,
+        str(h.repo),
+        "foreign-bash",
+        before={},
+        attributable=False,
+        now=time.time(),
+    )
+
+    reason = await _dirty_edit_reason(h, _native_write(h, "owned.txt"))
+
+    assert "owned.txt" in reason
+    assert "overlapped" in reason
+
+
+@pytest.mark.asyncio
+async def test_overlap_holder_native_write_stays_refused_while_its_own_shell_call_runs(
+    guard_harness: GuardHarness,
+) -> None:
+    """The holder's own concurrent shell call counts as in flight, so its native write is refused."""
+    h = guard_harness
+    _holder_overlap(h, "owned.txt")
+    SessionVariableManager(h.db).begin_worktree_shell_call(
+        h.current_session.id,
+        str(h.repo),
+        "own-bash",
+        before={},
+        attributable=False,
+        now=time.time(),
+    )
+
+    reason = await _dirty_edit_reason(h, _native_write(h, "owned.txt", call_id="edit-call"))
+
+    assert "owned.txt" in reason
+    assert "overlapped" in reason
+
+
+@pytest.mark.asyncio
+async def test_overlap_holder_native_write_ignores_its_own_registered_edit(
+    guard_harness: GuardHarness,
+) -> None:
+    """The Edit's own in-flight entry, registered before the rules judge it, does not block it."""
+    h = guard_harness
+    _holder_overlap(h, "owned.txt")
+    SessionVariableManager(h.db).begin_worktree_shell_call(
+        h.current_session.id,
+        str(h.repo),
+        "edit-call",
+        before={},
+        attributable=False,
+        now=time.time(),
+    )
+
+    reason = await _dirty_edit_reason(h, _native_write(h, "owned.txt", call_id="edit-call"))
+
+    assert reason == ""
+
+
+@pytest.mark.asyncio
+async def test_overlap_holder_native_write_ignores_a_stale_call_from_another_session(
+    guard_harness: GuardHarness,
+) -> None:
+    """A call that started long ago has settled or expired, so it no longer blocks the write."""
+    h = guard_harness
+    _holder_overlap(h, "owned.txt")
+    SessionVariableManager(h.db).begin_worktree_shell_call(
+        h.foreign_session.id,
+        str(h.repo),
+        "stale-bash",
+        before={},
+        attributable=False,
+        now=time.time() - 10 * 86400,
+    )
+
+    assert await _dirty_edit_reason(h, _native_write(h, "owned.txt")) == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    ["git restore -- owned.txt", "rm owned.txt"],
+    ids=["git-restore", "rm"],
+)
+async def test_overlap_shell_write_stays_refused_when_no_call_is_in_flight(
+    guard_harness: GuardHarness, command: str
+) -> None:
+    """Shell restore and deletion of an overlapped path stay refused even with nothing in flight."""
+    h = guard_harness
+    _holder_overlap(h, "owned.txt")
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=h.current_session.external_id,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        cwd=str(h.repo),
+        project_id=h.project.id,
+        data={"tool_name": "Bash", "tool_input": {"command": command}},
+        metadata={"_platform_session_id": h.current_session.id, "project_path": str(h.repo)},
+    )
+    normalize_tool_fields(event.data)
+    assert event.data["canonical_tool_kind"] == "write"
+
+    reason = await _dirty_edit_reason(h, event)
+
+    assert "owned.txt" in reason
+    assert "overlapped" in reason
 
 
 @pytest.mark.asyncio
