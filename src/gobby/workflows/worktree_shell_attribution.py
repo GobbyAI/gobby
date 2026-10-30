@@ -216,8 +216,14 @@ class WorktreeShellCallRegistry(ABC):
         attributable: bool,
         now: float,
         task_started_at: float | None = None,
+        read_only: bool = False,
     ) -> None:
-        """Register one call before it runs, then mark every in-flight call it overlaps."""
+        """Register one call before it runs, then mark every in-flight call it overlaps.
+
+        A read-only call changes nothing, so it registers nothing and marks no other call.
+        """
+        if read_only:
+            return
         entry = {
             "root": root,
             "started_at": now,
@@ -296,6 +302,9 @@ class WorktreeShellCallRegistry(ABC):
         or ends meanwhile, and each of those marks it. Without a readable ``after`` snapshot
         nothing is attributed.
         """
+        # An unregistered call, such as a read-only one, marks nothing: it is not in flight.
+        if call_id not in _calls_of(self.get_variable_subset(session_id, (CALLS_VARIABLE,))):
+            return None
         hits = self._in_flight_elsewhere(session_id, root, now)
         for other_session_id, other_call_id in hits:
             self._mark_overlapped(other_session_id, other_call_id)
@@ -348,6 +357,27 @@ class WorktreeShellCallRegistry(ABC):
                 if _is_fresh(entry, now) and entry.get("root") == root:
                     hits.append((str(row["session_id"]), other_call_id))
         return hits
+
+    def has_calls_in_flight(self, root: str, now: float, request_id: str | None) -> bool:
+        """Whether any session, this one included, has a fresh call in ``root`` besides one request.
+
+        A structured edit registers its own entry under ``edit:<request_id>:<root>`` before its
+        rules judge it, so that request's entries (its shell id and its edit keys) never count.
+        """
+        rows = self.db.fetchall(
+            """
+            SELECT (session_variables.variables -> 'worktree_shell_calls')::text AS calls
+            FROM session_variables
+            WHERE session_variables.variables ? 'worktree_shell_calls'
+            """
+        )
+        own_edit_prefix = f"{_EDIT_CALL_PREFIX}{request_id}:"
+        return any(
+            _is_fresh(entry, now) and entry.get("root") == root
+            for row in rows
+            for call_id, entry in _json_object(row["calls"]).items()
+            if call_id != request_id and not call_id.startswith(own_edit_prefix)
+        )
 
     def _mark_overlapped(self, session_id: str, call_id: str) -> None:
         def mark(variables: dict[str, Any]) -> tuple[None, bool]:

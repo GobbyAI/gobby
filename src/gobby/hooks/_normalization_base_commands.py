@@ -363,7 +363,7 @@ def classify_base_command(
     # Only format's explicit inspection modes prove no writes without that cwd.
     if cmd == "ruff" and parts[1:2] == ["format"] and parts[2:3] in (["--check"], ["--diff"]):
         return _ShellSegmentMetadata("execute", read_only=True)
-    if cmd in {"pwd", "ls", "wc", "stat", "true", "false", "echo", "printf"}:
+    if cmd in {"pwd", "ls", "wc", "stat", "true", "false", "echo", "printf", "uptime"}:
         return _ShellSegmentMetadata("execute", read_only=True)
     # Delegate mode prints file scope and review rules; its only write is ocr's
     # own update-check stamp under ~/.opencodereview.
