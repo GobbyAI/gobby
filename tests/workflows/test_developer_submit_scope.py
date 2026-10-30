@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,8 @@ import yaml
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
-from tests.workflows.test_seat_step_loops import SeatRun
+from tests.workflows.test_resumed_claim_binding import _already_claimed
+from tests.workflows.test_seat_step_loops import SESSION_ID, SHA, SeatRun, _seat
 from tests.workflows.test_submit_review_recovery import _admits, _submitted
 
 pytestmark = pytest.mark.unit
@@ -19,8 +21,7 @@ _RULES = (
 )
 
 
-async def _submit_seat(db: HubDatabase) -> SeatRun:
-    run, _ = await _submitted(db)
+def _load_submit_rule(run: SeatRun) -> None:
     bundle = yaml.safe_load(_RULES.read_text())
     for name, rule in bundle["rules"].items():
         if name == "submitted-candidate-write-scope":
@@ -36,6 +37,33 @@ async def _submit_seat(db: HubDatabase) -> SeatRun:
                 priority=rule["priority"],
                 tags=["inline"],
             )
+
+
+async def _submit_seat(db: HubDatabase) -> SeatRun:
+    run, _ = await _submitted(db)
+    _load_submit_rule(run)
+    return run
+
+
+async def _linked_submit_seat(db: HubDatabase) -> SeatRun:
+    """Link the commit into submit without sending CANDIDATE, as #25187 did."""
+    definition = _seat({"submit": {"allowed_tools": ["Bash", "Read", "mcp__gobby__call_tool"]}})
+    run = SeatRun(db, "developer", definition=definition)
+    task = run.task(owner=SESSION_ID)
+    run.session_vars.update(active_task_id=task.id, claimed_tasks={task.id: f"#{task.seq_num}"})
+    await run.load(*run.vars["required_skills"])
+    await run.call("gobby-tasks", "claim_task", {"task_id": task.id}, _already_claimed(task))
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"id": task.id})
+    db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([SHA]), task.id))
+    await run.call(
+        "gobby-tasks",
+        "link_commit",
+        {"task_id": task.id, "commit_sha": SHA},
+        {"success": True, "production_changes": True},
+    )
+    assert run.step == "submit"
+    assert run.vars["candidate_sent"] is False
+    _load_submit_rule(run)
     return run
 
 
@@ -204,3 +232,52 @@ async def test_submit_reads_files_but_refuses_native_edits(temp_db: HubDatabase)
     assert await _admits(run, "Read", {"file_path": "src/example.py"})
     assert not await _admits(run, "Edit", {"file_path": "src/example.py"})
     assert not await _admits(run, "Write", {"file_path": "src/example.py", "content": "changed"})
+
+
+async def test_submit_admits_rust_test_audit_before_candidate(temp_db: HubDatabase) -> None:
+    """Regression for #25187: a Rust fix's test audit runs in submit before CANDIDATE."""
+    run = await _linked_submit_seat(temp_db)
+    command = (
+        "uv run --no-sync gobby test-quality audit crates/gclient/src/move_pane.rs "
+        "--baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low"
+    )
+    assert await _admits(run, "Bash", {"command": command})
+    assert run.step == "submit"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gcode outline src/gobby/workflows/task_claim_state.py",
+        "gcode symbol-at src/gobby/workflows/task_claim_state.py:10",
+        'gcode search-symbol "claim"',
+        'gcode search-content "git commit"',
+    ],
+)
+async def test_submit_allows_read_only_gcode_navigation(temp_db: HubDatabase, command: str) -> None:
+    run = await _submit_seat(temp_db)
+    assert await _admits(run, "Bash", {"command": command})
+    assert run.step == "submit"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git merge feature",
+        "git rebase main",
+        "git cherry-pick HEAD~1",
+        "git revert HEAD",
+        "git am patch.mbox",
+        "git pull",
+        "git stash push",
+        "git checkout -- src/example.py",
+        'git -C "/tmp/repo name" merge main',
+        'cd "/tmp/repo name" && git rebase main',
+    ],
+)
+async def test_submit_refuses_history_and_worktree_moves(
+    temp_db: HubDatabase, command: str
+) -> None:
+    run = await _submit_seat(temp_db)
+    assert not await _admits(run, "Bash", {"command": command})
+    assert run.step == "submit"

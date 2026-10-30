@@ -294,6 +294,40 @@ def unresolved_execution_metadata(
     )
 
 
+_XARGS_STDIN_FLAGS = frozenset({"-0", "--null", "-r", "--no-run-if-empty"})
+# Batching options only regroup stdin into cat invocations; the value is separate or attached.
+_XARGS_BATCH_FLAGS = frozenset(
+    {
+        "-n",
+        "-L",
+        "-P",
+        "-s",
+        "-d",
+        "--max-args",
+        "--max-lines",
+        "--max-procs",
+        "--max-chars",
+        "--delimiter",
+    }
+)
+
+
+def xargs_runs_cat(parts: list[str]) -> bool:
+    """True when xargs directly runs cat; these flags only split stdin or skip empty input."""
+    index = 1
+    while index < len(parts):
+        flag = parts[index]
+        if flag in _XARGS_STDIN_FLAGS:
+            index += 1
+        elif flag in _XARGS_BATCH_FLAGS:
+            index += 2
+        elif flag[:2] in _XARGS_BATCH_FLAGS or flag.partition("=")[0] in _XARGS_BATCH_FLAGS:
+            index += 1
+        else:
+            break
+    return parts[index : index + 1] == ["cat"]
+
+
 def classify_base_command(
     parts: list[str],
     cwd: str | None,
@@ -441,7 +475,7 @@ def classify_base_command(
             )
         return search
 
-    if cmd == "xargs" and parts[1:2] == ["cat"]:
+    if cmd == "xargs" and xargs_runs_cat(parts):
         # Only direct cat is proven read-only; nested wrappers may write their own outputs.
         # Stdin supplies file operands, not source contents; their scope is unknown.
         navigation = {

@@ -12,6 +12,7 @@ from gobby.hooks._normalization_base_commands import (
     execution_context_is_read_only,
     unresolved_execution_metadata,
     unwrap_execution_command,
+    xargs_runs_cat,
 )
 from gobby.hooks._normalization_bindings import (
     _literal_assignment_bindings,
@@ -861,7 +862,7 @@ def _classify_shell_segment_without_redirection(
     if (
         cmd in {"sudo", "xargs"}
         and parts[1:] not in (["--help"], ["--version"])
-        and not (cmd == "xargs" and parts[1:2] == ["cat"])
+        and not (cmd == "xargs" and xargs_runs_cat(parts))
         and depth < SHELL_WRAPPER_DEPTH
     ):
         wrapper_outputs: list[str] = []
