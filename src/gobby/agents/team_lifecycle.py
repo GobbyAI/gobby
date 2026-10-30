@@ -45,7 +45,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
 from gobby.storage.team_records import ADMISSION_STEP, EPIC_MODE
-from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.tasks.land_commit import LandingGitError, main_checkout_target
 from gobby.tasks.state_semantics import is_task_actionable, is_task_blocked
 from gobby.tasks.step_records import list_task_step_records
@@ -160,9 +160,8 @@ async def admit_team(
         team_id = str(team_uuid)
     caller = await asyncio.to_thread(_team_caller, db, caller_session_id)
     target = await asyncio.to_thread(_open_task, db, task, caller.project_id)
-    if parent_team_id is not None:
-        if team_id is not None or fresh_reviewer or checkout_mode != _WORKTREE:
-            raise TeamAdmissionRefused("pod_options_invalid", "a pod creates its own worktree team")
+    if parent_team_id is not None and checkout_mode != _WORKTREE:
+        raise TeamAdmissionRefused("pod_options_invalid", "a pod creates its own worktree team")
     if reviewer_agent is not None:
         refusal = await asyncio.to_thread(reviewer_refusal, db, caller.project_id, reviewer_agent)
         if refusal is not None:
@@ -179,13 +178,16 @@ async def admit_team(
                         "team_binding_drift", "the team's parent cannot change"
                     )
             return await _readmit(db, caller, own, target, team_id, reviewer_agent, tab)
-        parent = (
-            await asyncio.to_thread(
-                pod_parent, db, caller.session.parent_session_id or "", target.id, parent_team_id
-            )
-            if parent_team_id
-            else None
-        )
+        parent = None
+        if parent_team_id is not None:
+            manager = caller.session.parent_session_id or ""
+            if team_id is None:
+                parent = await asyncio.to_thread(pod_parent, db, manager, target.id, parent_team_id)
+            else:
+                # A relaunch may follow the leaf's claim: only the epic's authority is checked.
+                await asyncio.to_thread(
+                    pod_relaunch, db, manager, target.id, team_id, parent_team_id
+                )
         if team_id is None and checkout_mode == _TREELESS:
             # A treeless admission for a task joins the task's live treeless team.
             team_id = await asyncio.to_thread(_live_treeless_team, db, caller.project_id, target.id)
@@ -553,6 +555,25 @@ def _reserve_fresh_reviewer(
     )
 
 
+def _adoptable_child_tree(
+    db: HubDatabase, tree: Worktree | None, task_id: str, branch: str, base_branch: str
+) -> Worktree | None:
+    """The leaf's live child tree when a pod can adopt it: its pod branch, held by no team.
+
+    An epic leaf can have a child tree cut from the epic branch before its pod is admitted. A
+    tree on another branch, or one a live team already holds, is not adoptable.
+    """
+    if (
+        tree is None
+        or not tree_is_live(tree)
+        or tree.branch_name != branch
+        or tree.base_branch != base_branch
+        or live_teams(db, [task_id]).get(task_id) is not None
+    ):
+        return None
+    return tree
+
+
 async def _create(
     db: HubDatabase,
     caller: _Caller,
@@ -561,13 +582,12 @@ async def _create(
     tab_title: str | None,
     parent: TeamBinding | None = None,
 ) -> TeamBinding:
-    """Record a new team for ``task``, then create its task-titled branch and tree."""
+    """Record a new team for ``task``, then create its task-titled branch and tree.
+
+    A pod adopts the leaf's pre-pod child tree when that tree is its own unteamed pod branch.
+    """
     trees = LocalWorktreeManager(db)
     existing = await asyncio.to_thread(trees.get_by_task, task.id)
-    if existing is not None and tree_is_live(existing):
-        raise TeamAdmissionRefused(
-            "team_exists", f"task {task.id} already has team tree {existing.worktree_path}"
-        )
     mode = SINGLE_MODE if parent else await asyncio.to_thread(_admission_mode, db, task)
     try:
         target = await main_checkout_target(db, caller.project_id)
@@ -601,9 +621,19 @@ async def _create(
         worktree_dir_name=epic_directory,
     )
     branch = generate_branch_name(config)
-    taken = await asyncio.to_thread(trees.get_by_branch, caller.project_id, branch)
-    if taken is not None and tree_is_live(taken):
-        raise TeamAdmissionRefused("team_branch_taken", f"branch {branch} already has a tree")
+    adopted = None
+    if parent is not None:
+        adopted = await asyncio.to_thread(
+            _adoptable_child_tree, db, existing, task.id, branch, base_branch
+        )
+    if existing is not None and tree_is_live(existing) and adopted is None:
+        raise TeamAdmissionRefused(
+            "team_exists", f"task {task.id} already has team tree {existing.worktree_path}"
+        )
+    if adopted is None:
+        taken = await asyncio.to_thread(trees.get_by_branch, caller.project_id, branch)
+        if taken is not None and tree_is_live(taken):
+            raise TeamAdmissionRefused("team_branch_taken", f"branch {branch} already has a tree")
     intent: dict[str, Any] = {
         "team_id": caller.execution_id,
         "task_id": task.id,
@@ -616,6 +646,13 @@ async def _create(
         "parent_team_id": parent.team_id if parent else None,
     }
     await asyncio.to_thread(_record, caller, intent)
+    if adopted is not None:
+        # The pre-pod tree keeps its branch and unmerged commits; the pod team records it.
+        adopted_binding = TeamBinding(
+            **intent, worktree_id=adopted.id, worktree_path=adopted.worktree_path
+        )
+        await asyncio.to_thread(_record, caller, asdict(adopted_binding))
+        return adopted_binding
     handler = WorktreeIsolationHandler(WorktreeGitManager(str(main)), trees)
     try:
         made = await handler.prepare_environment(config)
@@ -736,13 +773,12 @@ def managed_task_team(db: HubDatabase, caller_id: str, task_id: str) -> TeamBind
     )
 
 
-def pod_parent(db: HubDatabase, caller_id: str, task_id: str, parent_id: str) -> TeamBinding:
-    """Only an epic's bound manager may admit a pod for an unclaimed open leaf."""
+def _epic_manager(db: HubDatabase, caller_id: str, task_id: str, parent_id: str) -> TeamBinding:
+    """The epic team ``parent_id`` when ``caller_id`` is its bound Dev Manager, for an open leaf."""
     from gobby.agents.team_dispatch import _is_bound_dev_manager
     from gobby.agents.team_review import seat_team_held
 
     parent = seat_team(db, caller_id)
-    task = LocalTaskManager(db).get_task(task_id)
     if (
         parent is None
         or parent.team_id != parent_id
@@ -757,6 +793,13 @@ def pod_parent(db: HubDatabase, caller_id: str, task_id: str, parent_id: str) ->
         )
     if seat_team_held(db, parent):
         raise TeamAdmissionRefused("team_held", "the epic is held; resume after its hold is lifted")
+    return parent
+
+
+def pod_parent(db: HubDatabase, caller_id: str, task_id: str, parent_id: str) -> TeamBinding:
+    """Only an epic's bound manager may admit a pod for an unclaimed open leaf."""
+    parent = _epic_manager(db, caller_id, task_id, parent_id)
+    task = LocalTaskManager(db).get_task(task_id)
     if task.claimed_by_session_id:
         raise TeamAdmissionRefused(
             "pod_leaf_claimed", "release the leaf claim before admitting its pod"
@@ -764,6 +807,33 @@ def pod_parent(db: HubDatabase, caller_id: str, task_id: str, parent_id: str) ->
     if is_task_blocked(task):
         raise TeamAdmissionRefused("pod_leaf_blocked", "resolve the leaf's dependencies first")
     return parent
+
+
+def pod_relaunch(
+    db: HubDatabase, caller_id: str, task_id: str, team_id: str, parent_id: str | None
+) -> TeamBinding:
+    """The epic's bound manager relaunches the seats of its admitted pod ``team_id``.
+
+    The pod must be a pod of ``parent_id`` when that is given. A relaunch may follow a claim, so
+    only the epic's authority is checked, not the leaf's claim or blocks.
+    """
+    team_uuid = parse_uuid_reference(team_id)
+    binding = None if team_uuid is None else team_binding(db, str(team_uuid))
+    if binding is None:
+        raise TeamAdmissionRefused("team_missing", f"team {team_id} is not admitted")
+    if binding.parent_team_id is None:
+        raise TeamAdmissionRefused("team_not_pod", f"team {team_id} is not a Dev Pod")
+    if parent_id is not None and binding.parent_team_id != parent_id:
+        raise TeamAdmissionRefused(
+            "pod_parent_mismatch",
+            f"team {team_id} is not a pod of epic team {parent_id}; pass team_id alone",
+        )
+    if binding.task_id != task_id:
+        raise TeamAdmissionRefused(
+            "team_task_mismatch", f"team {team_id} is not admitted for task {task_id}"
+        )
+    _epic_manager(db, caller_id, task_id, binding.parent_team_id)
+    return binding
 
 
 async def _verify_tree(db: HubDatabase, binding: TeamBinding) -> None:

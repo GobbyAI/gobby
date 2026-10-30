@@ -106,7 +106,8 @@ async def _manager_spawns_developer(
         "prompt": "Work the leaf",
         "provider": "claude",
         "model": "claude-sonnet-5",
-        "checkout_mode": "worktree",
+        # A team seat joins its team's tree; "worktree" asks for a Dev Pod instead.
+        "checkout_mode": "none",
         "placement": placement,
         "project_path": h.project_path,
     }

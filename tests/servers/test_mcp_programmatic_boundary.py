@@ -129,6 +129,7 @@ def boundary(
     sessions.update_terminal_pickup_metadata(session.id, agent_run_id=run.id)
     variables = SessionVariableManager(temp_db)
     rules = RuleDefinitionManager(temp_db)
+    # The default agent selects only tag:default rules (#22305), so the agent boundary needs them.
     rules.create(
         name="boundary-schema-gate",
         definition_json={
@@ -138,6 +139,7 @@ def boundary(
             "effects": [{"type": "block", "reason": "Fetch the echo schema first"}],
         },
         priority=1,
+        tags=["default"],
     )
     rules.create(
         name="boundary-message-gate",
@@ -147,6 +149,7 @@ def boundary(
             "effects": [{"type": "block", "reason": "Messaging blocked by workflow"}],
         },
         priority=1,
+        tags=["default"],
     )
     for event in ("before_tool", "after_tool"):
         rules.create(
@@ -155,6 +158,7 @@ def boundary(
                 "event": event,
                 "effects": [{"type": "set_variable", "variable": f"saw_{event}", "value": True}],
             },
+            tags=["default"],
         )
     hooks = WorkflowHookHandler(
         rule_engine=RuleEngine(temp_db),
@@ -620,6 +624,7 @@ async def test_shell_rule_can_deny_agent_cli_access(boundary: Boundary) -> None:
             "when": "event.data.get('tool_name') == 'Bash' and 'gobby mcp-proxy' in tool_input.get('command', '')",
             "effects": [{"type": "block", "reason": "CLI access denied"}],
         },
+        tags=["default"],
     )
     response = await boundary.hooks.evaluate_async(
         HookEvent(

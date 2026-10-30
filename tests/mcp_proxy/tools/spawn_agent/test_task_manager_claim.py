@@ -8,6 +8,7 @@ import pytest
 from gobby.agents.isolation import IsolationContext
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
@@ -37,6 +38,8 @@ def _seat_definition(seat: str) -> AgentDefinitionBody:
             prompts={"agent": "Synthetic team manager."},
             model="claude-sonnet-5",
             task_step_writes=["closing"],
+            # Landing authority is declared in the definition (#25228), as dev-manager.yaml does.
+            capabilities=["land_tasks"],
             workflows=make_agent_workflows(variables={"team_manager": True}),
         )
     return make_agent_definition(
@@ -49,6 +52,10 @@ def _seat_definition(seat: str) -> AgentDefinitionBody:
 
 async def _spawn_task_seat(case: LandingCase, task: Task, mock_runner: MagicMock, seat: str) -> str:
     body = _seat_definition(seat)
+    # Landing authority is read from the installed definition, so the seat must be stored too.
+    AgentDefinitionManager(case.db).create(
+        seat, body.model_dump(mode="json", exclude_none=True), project_id=case.project_id
+    )
     runs = LocalAgentRunManager(case.db)
     mock_runner.run_storage = runs
     registry = create_spawn_agent_registry(

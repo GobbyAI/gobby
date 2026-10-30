@@ -46,6 +46,8 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "becomes '<tab_title> - #<seq>', and tab_exists reports that tab of the workspace. "
             "team_id limits live seats to that admitted team's runs and maps "
             "every catalogue seat with such a run under live, requested or not. "
+            "seat_models maps a seat name to the model its launch takes; a seat that launches "
+            "with no model there and none on its agent definition is refused. "
             "On success it returns the checked seats."
         ),
         read_only=True,
@@ -60,6 +62,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         team_id: str | None = None,
         tab_title: str | None = None,
         task: str | None = None,
+        seat_models: dict[str, str | None] | None = None,
     ) -> dict[str, Any]:
         caller_ref = ctx.get_current_session_id()
         if ctx.db is None or not caller_ref:
@@ -81,6 +84,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 team_id=team_id,
                 tab_title=tab_title,
                 task=task,
+                seat_models=seat_models,
             )
         except RunbookSeatRefusal as exc:
             return {"success": False, "error": str(exc), "error_code": "runbook_seat_refused"}

@@ -51,6 +51,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.team_records import ADMISSION_STEP
 from gobby.storage.workflow_audit import WorkflowAuditManager
+from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.git import normalize_commit_sha
 from gobby.utils.session_context import session_context_for_test
@@ -1983,8 +1984,8 @@ async def test_developer_proof_request_matches_linked_candidate_off_the_loop(
         assert loop is not caller
 
 
-def _team_runbook(db: HubDatabase, task: Task, team_id: str) -> str:
-    """A runbook session whose admission step recorded team ``team_id`` for ``task``."""
+def _team_runbook(db: HubDatabase, task: Task, label: str) -> str:
+    """A runbook session whose admission step made a live team for ``task``."""
     runbook = PipelineDefinition(
         name="team-runbook", steps=[PipelineStep(id=ADMISSION_STEP, exec="true")]
     )
@@ -1996,15 +1997,20 @@ def _team_runbook(db: HubDatabase, task: Task, team_id: str) -> str:
         project_id=PROJECT_ID,
     )
     step = executions.create_step_execution(execution.id, ADMISSION_STEP)
+    # A team is live only when its admission names its own execution and its tree is active.
+    tree = LocalWorktreeManager(db).create(
+        PROJECT_ID, f"{label}-branch", f"{label}-worktree_path", task_id=task.id
+    )
     team: dict[str, Any] = {
-        item.name: f"{team_id}-{item.name}"
+        item.name: f"{label}-{item.name}"
         for item in fields(TeamBinding)
         if item.name not in {"reviewers", "mode"}
     }
     team.update(
-        team_id=team_id,
+        team_id=execution.id,
         task_id=task.id,
         project_id=PROJECT_ID,
+        worktree_id=tree.id,
         reviewers={},
         mode="single",
     )
@@ -2034,7 +2040,11 @@ async def reviewer_authorities(
             "name": "dev-manager",
             "version": "1.0",
             "prompts": {"agent": "Manage the team."},
-            "workflows": {"rule_selectors": {"include": []}},
+            # A bound manager's run must declare team_manager, or it is not the task's manager.
+            "workflows": {
+                "rule_selectors": {"include": []},
+                "variables": {"team_manager": True},
+            },
             "capabilities": ["manage_task_claims"],
             "task_step_writes": ["closing"],
         },
