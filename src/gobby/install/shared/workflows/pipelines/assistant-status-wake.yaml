@@ -1,0 +1,91 @@
+name: assistant-status-wake
+type: pipeline
+version: "1.0"
+description: |
+  Status tick for the operator's Assistant. The status-report cron runs this pipeline at the
+  project-policy cadence. It lists the Assistant sessions in this project once per live status,
+  so the status filter applies before the 500-row limit and historical terminal rows never hide
+  a live one. When exactly one session is live it wakes that session with a status
+  tick; the Assistant assembles and delivers the report. Zero or several live matches, or any
+  incomplete listing, send nothing: the wake step is recorded as skipped and the run completes.
+tags: [assistant, status]
+resume_on_restart: false
+
+inputs:
+  agent_type:
+    type: string
+    default: assistant
+    description: "Agent definition whose single live session receives the status tick"
+
+steps:
+  - id: resolve_active
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: active
+        limit: 500
+
+  - id: resolve_paused
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: paused
+        limit: 500
+
+  - id: resolve_interrupted
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: interrupted
+        limit: 500
+
+  - id: resolve_awaiting_input
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: awaiting_input
+        limit: 500
+
+  - id: resolve_awaiting_approval
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: awaiting_approval
+        limit: 500
+
+  - id: resolve_awaiting_handoff
+    mcp:
+      server: gobby-sessions
+      tool: list_sessions
+      arguments:
+        project_id: "${{ project_id }}"
+        agent_type: "${{ inputs.agent_type }}"
+        status: awaiting_handoff
+        limit: 500
+
+  - id: wake
+    condition: "${{ len([r for r in [steps.resolve_active.output, steps.resolve_paused.output, steps.resolve_interrupted.output, steps.resolve_awaiting_input.output, steps.resolve_awaiting_approval.output, steps.resolve_awaiting_handoff.output] if r.count == r.total]) == 6 and len([s for r in [steps.resolve_active.output, steps.resolve_paused.output, steps.resolve_interrupted.output, steps.resolve_awaiting_input.output, steps.resolve_awaiting_approval.output, steps.resolve_awaiting_handoff.output] for s in r.sessions]) == 1 }}"
+    mcp:
+      server: gobby-agents
+      tool: send_message
+      arguments:
+        target: session
+        target_id: "${{ [s for r in [steps.resolve_active.output, steps.resolve_paused.output, steps.resolve_interrupted.output, steps.resolve_awaiting_input.output, steps.resolve_awaiting_approval.output, steps.resolve_awaiting_handoff.output] for s in r.sessions][0].id }}"
+        wake: true
+        message_type: message
+        content: "Status tick. Deliver the scheduled status now: load gobby:references/agents/procedures/assistant.md completely and follow it. Deliver through the configured operator channel only."
