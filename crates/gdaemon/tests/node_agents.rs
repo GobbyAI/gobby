@@ -290,7 +290,7 @@ async fn fake_host_scripts_inventory_and_spawn_lifecycle() -> Result<()> {
             ..request
         })
         .await?;
-    client.spawn_abort(&aborted, 0).await?;
+    client.kill(&aborted.host_terminal_id, 0).await?;
     assert_eq!(client.list().await?.terminals, inventory);
     let requests = host.requests();
     for method in ["hello", "list", "spawn", "spawn_commit", "write", "kill"] {

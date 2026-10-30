@@ -5,7 +5,7 @@ use gobby_daemon::nodes::agents::{
     agy_gate::ensure_agy_support,
     launch::{LaunchContext, launch_with, reconcile, watch_exits},
     provider_command::build_command,
-    provider_env::build_env,
+    provider_env::{EnvInputs, build_env},
     sandbox::runtime::SandboxLaunch,
     trust::seed_trust,
 };
@@ -77,18 +77,21 @@ impl CommandCase {
     fn environment(&self) -> Result<gobby_daemon::nodes::agents::provider_env::ProviderEnv> {
         build_env(
             &self.payload,
-            &self.home,
-            self.fixture["front_door_url"]
-                .as_str()
-                .context("front door")?,
-            Path::new(
-                self.fixture["prompt_file"]
+            &EnvInputs {
+                cwd: &self.cwd,
+                gobby_home: &self.home,
+                front_door_url: self.fixture["front_door_url"]
                     .as_str()
-                    .context("prompt file")?,
-            ),
-            &serde_json::from_value(self.fixture["cache_env"].clone())?,
-            &self.sandbox,
-            &serde_json::from_value(self.fixture["ambient"].clone())?,
+                    .context("front door")?,
+                prompt_file: Path::new(
+                    self.fixture["prompt_file"]
+                        .as_str()
+                        .context("prompt file")?,
+                ),
+                cache_env: &serde_json::from_value(self.fixture["cache_env"].clone())?,
+                sandbox_launch: &self.sandbox,
+                ambient: &serde_json::from_value(self.fixture["ambient"].clone())?,
+            },
         )
     }
 }
@@ -99,8 +102,15 @@ macro_rules! command_case {
         #[test]
         fn $test() -> Result<()> {
             let case = CommandCase::new($name)?;
+            let environment = case.environment()?;
             assert_eq!(
-                build_command(&case.payload, &case.cwd, &case.home, &case.sandbox)?,
+                build_command(
+                    &case.payload,
+                    &case.cwd,
+                    &case.home,
+                    &case.sandbox,
+                    &environment.env
+                )?,
                 serde_json::from_value::<Vec<String>>(case.expected["command"].clone())?,
                 "{} command differs from the frozen oracle",
                 $name
@@ -170,7 +180,14 @@ fn codex_prompt_placement() -> Result<()> {
         let mut case = CommandCase::new(name)?;
         // This retired role must obey the same UI prompt contract as every node agent.
         case.payload.agent_name = Some("task-close-reviewer".into());
-        let argv = build_command(&case.payload, &case.cwd, &case.home, &case.sandbox)?;
+        let environment = case.environment()?;
+        let argv = build_command(
+            &case.payload,
+            &case.cwd,
+            &case.home,
+            &case.sandbox,
+            &environment.env,
+        )?;
         assert!(
             !argv.contains(&case.payload.prompt),
             "{name}: prompt leaked to argv"
@@ -490,10 +507,14 @@ async fn launch_aborts_prepared_child_on_commit_failure() -> Result<()> {
         .context("commit attempt")?;
     let abort = requests
         .iter()
-        .position(|r| r["method"] == "spawn_abort")
+        .position(|r| r["method"] == "kill")
         .context("prepared child must be aborted")?;
     assert!(commit < abort);
-    assert_eq!(requests[abort]["spawn_key"], fixture.payload.run_id);
+    assert_eq!(
+        requests[abort]["host_terminal_id"],
+        format!("host-{}", fixture.payload.terminal_id)
+    );
+    assert_eq!(requests[abort]["grace_ms"], 0);
     assert_ne!(
         persisted_state(&fixture.agents.home)?.runs[&fixture.payload.run_id].phase,
         RunPhase::Launched

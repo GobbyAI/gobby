@@ -204,12 +204,6 @@ impl HostScript {
                     _ => json!({"ok":false,"error":"spawn_key_mismatch"}),
                 }
             }
-            "spawn_abort" => {
-                if let Some(id) = request["terminal_id"].as_str() {
-                    self.pending.remove(id);
-                }
-                self.ack()
-            }
             "kill" => {
                 self.inventory
                     .retain(|item| item["host_terminal_id"] != request["host_terminal_id"]);
