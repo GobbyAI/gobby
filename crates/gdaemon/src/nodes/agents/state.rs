@@ -21,6 +21,10 @@ pub struct AgentState {
     pub removals: BTreeMap<String, WorkspaceRecord>,
     pub cancelled: BTreeMap<String, u64>,
     pub exits: Vec<ExitRecord>,
+    /// Host exits seen while a run was still `Preparing`. `record_launched` settles them once
+    /// the commit succeeds, so a fast exit is not lost before the run is owned.
+    #[serde(default)]
+    pub pending_exits: BTreeMap<String, Option<i64>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +133,15 @@ impl AgentState {
         Some(workspace)
     }
 
+    /// Why a run that ended on its own is recorded: `cancelled` when a cancel record exists.
+    pub fn exit_reason(&self, run_id: &str) -> ExitReason {
+        if self.cancelled.contains_key(run_id) {
+            ExitReason::Cancelled
+        } else {
+            ExitReason::Exited
+        }
+    }
+
     pub fn recover_after_restart(&mut self) {
         let interrupted: Vec<_> = self
             .runs
@@ -142,14 +155,20 @@ impl AgentState {
             .unwrap_or(0);
         for run_id in interrupted {
             self.to_removals(&run_id);
+            let pending = self.pending_exits.remove(&run_id);
             if let Some(run) = self.runs.remove(&run_id) {
+                // A host exit seen before the commit reply means the child ran and ended.
+                let (launched, exit_code, reason) = match pending {
+                    Some(exit_code) => (true, exit_code, self.exit_reason(&run_id)),
+                    None => (false, None, ExitReason::PrepareFailed),
+                };
                 self.exits.push(ExitRecord {
                     exit: ReportExit {
                         run_id,
                         terminal_id: run.terminal_id,
-                        launched: false,
-                        exit_code: None,
-                        reason: ExitReason::PrepareFailed,
+                        launched,
+                        exit_code,
+                        reason,
                         workspace: None,
                         sandbox: None,
                     },

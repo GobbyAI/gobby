@@ -79,6 +79,19 @@ pub async fn launch_with(
     payload: &SpawnPayload,
     cwd: &Path,
 ) -> Result<(), LaunchFailure> {
+    match launch_steps(agents, context, run_id, payload, cwd).await {
+        Ok(()) => Ok(()),
+        Err(failure) => Err(record_failure(agents, run_id, failure).await),
+    }
+}
+
+async fn launch_steps(
+    agents: &NodeAgents,
+    context: &LaunchContext,
+    run_id: &str,
+    payload: &SpawnPayload,
+    cwd: &Path,
+) -> Result<(), LaunchFailure> {
     let (gobby_home, owned_context, owned_run_id, owned_payload, owned_cwd) = (
         agents.home.clone(),
         context.clone(),
@@ -252,6 +265,16 @@ async fn start_child(
         })
         .await
         .map_err(|error| LaunchFailure::new(ExitReason::LaunchFailed, format!("spawn: {error}")))?;
+    let host_terminal_id = prepared.host_terminal_id;
+    // The host can report this child's exit during the commit, so the run must name its host
+    // terminal before the commit is requested.
+    if let Err(error) = record_host(agents, run_id, &host_terminal_id).await {
+        let abort = abort_child(agents, &host_terminal_id).await;
+        return Err(LaunchFailure::new(
+            ExitReason::LaunchFailed,
+            format!("record host: {error}{abort}"),
+        ));
+    }
     let (terminal_id, spawn_key) = (payload.terminal_id.clone(), run_id.to_owned());
     let committed = agents
         .host
@@ -265,9 +288,9 @@ async fn start_child(
         })
         .await;
     match committed {
-        Ok(()) => Ok(prepared.host_terminal_id),
+        Ok(()) => Ok(host_terminal_id),
         Err(error) => {
-            let abort = abort_child(agents, &prepared.host_terminal_id).await;
+            let abort = abort_child(agents, &host_terminal_id).await;
             Err(LaunchFailure::new(
                 ExitReason::LaunchFailed,
                 format!("spawn commit: {error}{abort}"),
@@ -292,6 +315,26 @@ async fn abort_child(agents: &NodeAgents, host_terminal_id: &str) -> String {
     }
 }
 
+/// Names the host terminal of a spawned child on its run. The run stays `Preparing` until the
+/// commit succeeds.
+async fn record_host(
+    agents: &NodeAgents,
+    run_id: &str,
+    host_terminal_id: &str,
+) -> Result<(), String> {
+    let mut state = agents.state.lock().await;
+    let mut next = state.clone();
+    let run = next
+        .runs
+        .get_mut(run_id)
+        .ok_or_else(|| "run is no longer accepted".to_owned())?;
+    run.host_terminal_id = Some(host_terminal_id.to_owned());
+    next.commit(&agents.home, &agents.changed)
+        .map_err(|error| format!("{error:#}"))?;
+    *state = next;
+    Ok(())
+}
+
 /// Marks the run launched with its host terminal id, durably, before the in-memory state moves.
 async fn record_launched(
     agents: &NodeAgents,
@@ -306,10 +349,37 @@ async fn record_launched(
         .ok_or_else(|| "run is no longer accepted".to_owned())?;
     run.phase = RunPhase::Launched;
     run.host_terminal_id = Some(host_terminal_id.to_owned());
+    // An exit the watcher saw during the commit settles now that the run is owned.
+    if let Some(exit_code) = next.pending_exits.get(run_id).copied() {
+        let reason = next.exit_reason(run_id);
+        settle(&mut next, run_id, reason, true, exit_code, now_ms());
+    }
     next.commit(&agents.home, &agents.changed)
         .map_err(|error| format!("{error:#}"))?;
     *state = next;
     Ok(())
+}
+
+/// Records a failed launch as the run's exit, so a launch that returned never leaves its run
+/// owned. A failed commit reports the unrecorded exit beside the launch failure.
+async fn record_failure(
+    agents: &NodeAgents,
+    run_id: &str,
+    failure: LaunchFailure,
+) -> LaunchFailure {
+    let mut state = agents.state.lock().await;
+    let mut next = state.clone();
+    settle(&mut next, run_id, failure.reason, false, None, now_ms());
+    match next.commit(&agents.home, &agents.changed) {
+        Ok(()) => {
+            *state = next;
+            failure
+        }
+        Err(error) => LaunchFailure {
+            detail: format!("{}; record exit: {error:#}", failure.detail),
+            ..failure
+        },
+    }
 }
 
 /// Writes the prompt to `<gobby_home>/node/prompts/<run_id>.md`: mode 0600 in a 0700 directory.
@@ -384,7 +454,8 @@ async fn watch_once(agents: &NodeAgents) -> anyhow::Result<()> {
     }
 }
 
-/// Settles the launched run that owns `host_terminal_id`, if one does. A cancelled run reports
+/// Settles the run that owns `host_terminal_id`, if one does. A launched run settles now; a run
+/// still preparing keeps the exit until its launch records it. A cancelled run reports
 /// `cancelled`; any other run reports `exited`.
 async fn settle_exit(
     agents: &NodeAgents,
@@ -395,21 +466,23 @@ async fn settle_exit(
     let owner = state
         .runs
         .iter()
-        .find(|(_, run)| {
-            run.phase == RunPhase::Launched
-                && run.host_terminal_id.as_deref() == Some(host_terminal_id)
-        })
-        .map(|(run_id, _)| run_id.clone());
-    let Some(run_id) = owner else {
+        .find(|(_, run)| run.host_terminal_id.as_deref() == Some(host_terminal_id))
+        .map(|(run_id, run)| (run_id.clone(), run.phase));
+    let Some((run_id, phase)) = owner else {
         return Ok(());
     };
-    let reason = if state.cancelled.contains_key(&run_id) {
-        ExitReason::Cancelled
-    } else {
-        ExitReason::Exited
-    };
     let mut next = state.clone();
-    settle(&mut next, &run_id, reason, exit_code, now_ms());
+    match phase {
+        RunPhase::Launched => {
+            let reason = next.exit_reason(&run_id);
+            settle(&mut next, &run_id, reason, true, exit_code, now_ms());
+        }
+        // The launch has not recorded this run as launched yet; `record_launched` settles it.
+        RunPhase::Preparing => {
+            next.pending_exits.insert(run_id, exit_code);
+        }
+        RunPhase::Accepted => return Ok(()),
+    }
     next.commit(&agents.home, &agents.changed)?;
     *state = next;
     Ok(())
@@ -439,7 +512,7 @@ pub async fn reconcile(agents: &NodeAgents) -> anyhow::Result<()> {
     }
     let mut next = state.clone();
     for run_id in &absent {
-        settle(&mut next, run_id, ExitReason::Exited, None, now_ms());
+        settle(&mut next, run_id, ExitReason::Exited, true, None, now_ms());
     }
     next.commit(&agents.home, &agents.changed)?;
     *state = next;
@@ -451,16 +524,18 @@ fn settle(
     state: &mut AgentState,
     run_id: &str,
     reason: ExitReason,
+    launched: bool,
     exit_code: Option<i64>,
     ended_at_ms: u64,
 ) {
+    state.pending_exits.remove(run_id);
     let Some(run) = state.runs.get(run_id) else {
         return;
     };
     let exit = ReportExit {
         run_id: run_id.to_owned(),
         terminal_id: run.terminal_id.clone(),
-        launched: true,
+        launched,
         exit_code,
         reason,
         workspace: run.workspace.as_ref().map(report_workspace),
