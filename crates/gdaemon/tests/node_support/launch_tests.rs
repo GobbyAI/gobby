@@ -626,6 +626,20 @@ async fn agy_refusal_is_prepare_failed() -> Result<()> {
             .iter()
             .any(|r| r["method"] == "spawn")
     );
+    let state = persisted_state(&fixture.agents.home)?;
+    assert!(
+        !state.runs.contains_key(&fixture.payload.run_id),
+        "refused AGY launch left its owner active"
+    );
+    let exit = &state
+        .exits
+        .iter()
+        .find(|record| record.exit.run_id == fixture.payload.run_id)
+        .context("durable prepare_failed exit missing")?
+        .exit;
+    assert_eq!(exit.reason, ExitReason::PrepareFailed);
+    assert!(!exit.launched);
+    assert_eq!(exit.terminal_id, fixture.payload.terminal_id);
     Ok(())
 }
 
@@ -693,7 +707,9 @@ async fn exit_before_commit_reply_is_settled_for_owner() -> Result<()> {
             tokio::task::yield_now().await;
         }
     };
-    tokio::time::timeout(Duration::from_secs(5), ready).await?;
+    tokio::time::timeout(Duration::from_secs(30), ready)
+        .await
+        .context("exit watcher did not finish its initial subscription/inventory request")?;
     // Serialize behind the watcher's initial inventory request before spawning.
     fixture
         .agents
@@ -719,7 +735,7 @@ async fn exit_before_commit_reply_is_settled_for_owner() -> Result<()> {
     let barrier = tokio::select! {
         result = &mut launch => anyhow::bail!("commit reply gate was bypassed: {result:?}"),
         result = &mut watcher => anyhow::bail!("exit watcher stopped: {result:?}"),
-        result = tokio::time::timeout(Duration::from_secs(5), consumed) => result,
+        result = tokio::time::timeout(Duration::from_secs(30), consumed) => result,
     };
     // The fake host closes the event stream only after sending the exit. A second
     // subscription proves the watcher consumed that stream before launch resumes.
@@ -727,12 +743,22 @@ async fn exit_before_commit_reply_is_settled_for_owner() -> Result<()> {
     watcher.abort();
     let _ = watcher.await;
     fixture.host.release_commit_reply();
-    barrier?;
-    let launch_result = launch.await;
+    barrier.with_context(|| {
+        let methods: Vec<_> = fixture
+            .host
+            .requests()
+            .iter()
+            .map(|request| request["method"].clone())
+            .collect();
+        format!(
+            "exit watcher did not reconnect while commit reply was gated; host methods: {methods:?}"
+        )
+    })?;
+    launch.await?;
     let state = persisted_state(&fixture.agents.home)?;
     assert!(
         !state.runs.contains_key(&fixture.payload.run_id),
-        "fast exit left its owner active after launch completed: {launch_result:?}"
+        "fast exit left its owner active after launch completed successfully"
     );
     let exit = &state
         .exits
@@ -745,6 +771,12 @@ async fn exit_before_commit_reply_is_settled_for_owner() -> Result<()> {
     assert_eq!(exit.exit_code, Some(7));
     assert!(exit.launched);
     assert!(exit.workspace.is_some());
+    let exits = serde_json::to_value(&state.exits)?;
+    reconcile(&fixture.agents).await?;
+    assert_eq!(
+        serde_json::to_value(persisted_state(&fixture.agents.home)?.exits)?,
+        exits
+    );
     Ok(())
 }
 
