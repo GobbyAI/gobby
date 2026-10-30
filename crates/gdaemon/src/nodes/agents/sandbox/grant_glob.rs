@@ -24,7 +24,7 @@ pub(super) fn reaches(entry: &str, target: &Path) -> bool {
     }
     let literal = normal_names(&prefix);
     let names = normal_names(target);
-    names.len() >= literal.len() + parts.len()
+    names.len() >= literal.len()
         && literal.iter().zip(&names).all(|(want, have)| want == have)
         && parts
             .iter()
@@ -57,10 +57,10 @@ fn name_matches(pattern: &str, name: &OsStr) -> bool {
 fn wildcard_match(pattern: &[char], name: &[char]) -> bool {
     match pattern.split_first() {
         None => name.is_empty(),
-        Some((&'*', rest)) => (0..=name.len()).any(|skip| wildcard_match(rest, &name[skip..])),
-        Some((&'?', rest)) => name
-            .split_first()
-            .is_some_and(|(_, tail)| wildcard_match(rest, tail)),
+        // `?` stands for any run too: a glob reaches a target by component shape, not exact length.
+        Some((&('*' | '?'), rest)) => {
+            (0..=name.len()).any(|skip| wildcard_match(rest, &name[skip..]))
+        }
         Some((&literal, rest)) => name
             .split_first()
             .is_some_and(|(&first, tail)| first == literal && wildcard_match(rest, tail)),
@@ -80,13 +80,14 @@ mod tests {
     }
 
     #[test]
-    fn glob_reaches_only_matched_ancestors() {
+    fn glob_reaches_when_shared_components_match() {
         assert!(reaches("/srv/gobby*", Path::new("/srv/gobby/g")));
         assert!(reaches("/srv/gob?y", Path::new("/srv/gobby/g")));
+        assert!(reaches("/srv/gob?", Path::new("/srv/gobby/g")));
         assert!(reaches("/srv/*/g", Path::new("/srv/gobby/g")));
+        assert!(reaches("/srv/*/g", Path::new("/srv")));
+        assert!(reaches("/srv/*/x", Path::new("/srv/gobby")));
         assert!(!reaches("/srv/xcrun_db-*", Path::new("/srv/gobby/g")));
-        assert!(!reaches("/srv/gob?", Path::new("/srv/gobby/g")));
-        assert!(!reaches("/srv/*/x", Path::new("/srv/gobby")));
     }
 
     #[test]

@@ -144,8 +144,8 @@ fn prepare(
         },
     )
     .map_err(prepare_error)?;
-    let command =
-        build_command(payload, cwd, gobby_home, &sandbox, &provider_env.env).map_err(prepare_error)?;
+    let command = build_command(payload, cwd, gobby_home, &sandbox, &provider_env.env)
+        .map_err(prepare_error)?;
     let argv = wrap_with_prefix(&sandbox, &provider_env.argv_prefix, &command);
     Ok((argv, provider_env.env))
 }
@@ -170,7 +170,10 @@ fn prepare_sandbox(
     let sandbox = prepared
         .map_err(|error| LaunchFailure::new(ExitReason::PrepareFailed, error.to_string()))?;
     removed.map_err(|error| {
-        LaunchFailure::new(ExitReason::PrepareFailed, format!("remove prompt file: {error}"))
+        LaunchFailure::new(
+            ExitReason::PrepareFailed,
+            format!("remove prompt file: {error}"),
+        )
     })?;
     Ok(sandbox)
 }
@@ -318,7 +321,10 @@ fn write_prompt_file(
     let directory = gobby_home.join("node/prompts");
     let path = directory.join(format!("{run_id}.md"));
     write_private(&directory, &path, prompt).map_err(|error| {
-        LaunchFailure::new(ExitReason::PrepareFailed, format!("write prompt file: {error}"))
+        LaunchFailure::new(
+            ExitReason::PrepareFailed,
+            format!("write prompt file: {error}"),
+        )
     })?;
     Ok(path)
 }
@@ -480,5 +486,7 @@ fn report_workspace(workspace: &WorkspaceRecord) -> ReportWorkspace {
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
 }

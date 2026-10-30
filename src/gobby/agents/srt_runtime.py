@@ -29,6 +29,7 @@ from gobby.agents.sandbox_policy import (
     SRT_VIOLATIONS_RELATIVE_PATH,
     assert_sensitive_path_contract,
     canonical_path,
+    grant_reaches,
     managed_execution_root,
     policy_subtree_prefix,
     prepare_sandbox_run_paths,
@@ -643,7 +644,7 @@ async def prepare_sandbox_launch(
     for allowed_path in (*paths.read_paths, *paths.write_paths):
         allowed = Path(policy_subtree_prefix(allowed_path)).resolve(strict=False)
         is_glob = any(char in allowed_path for char in "*?[{")
-        if managed_root.is_relative_to(allowed) or (
+        if grant_reaches(allowed_path, managed_root) or (
             allowed.is_relative_to(managed_root)
             and (is_glob or not allowed.is_relative_to(own_root))
         ):

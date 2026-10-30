@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import logging
 import os
@@ -309,6 +310,40 @@ def policy_subtree_prefix(entry: str) -> str:
     return entry.rstrip("/") + "/"
 
 
+def _name_matches(pattern: str, name: str) -> bool:
+    # `?` may stand for any run here, and bracket or brace classes are not modeled. Both
+    # over-approximate, so such a component may match.
+    if "[" in pattern or "{" in pattern:
+        return True
+    return fnmatch.fnmatchcase(name, pattern.replace("?", "*"))
+
+
+def grant_reaches(entry: str, target: Path) -> bool:
+    """Whether the policy grant `entry` reaches `target`.
+
+    A plain entry covers everything under it. A glob reaches `target` when its literal head is
+    `target`'s ancestor and every component they share matches: a match above `target` covers it,
+    and a match below it exposes part of it. A glob that diverges at a literal component, such as
+    `<tmp>/xcrun_db-*` against `<tmp>/managed-executions`, does not reach it. Mirrors
+    `grant_glob::reaches` in the Rust node.
+    """
+    head = policy_subtree_prefix(entry)
+    prefix = Path(head).resolve(strict=False)
+    if not any(char in entry for char in "*?[{"):
+        return target.is_relative_to(prefix)
+    tail = entry[len(head.rstrip("/")) :].lstrip("/")
+    parts = [part for part in tail.split("/") if part]
+    # `**` spans any number of components; without modeling it, the literal prefix decides.
+    if any("**" in part for part in parts):
+        return target.is_relative_to(prefix)
+    literal = [part for part in prefix.parts if part != "/"]
+    names = [part for part in target.parts if part != "/"]
+    return names[: len(literal)] == literal and all(
+        _name_matches(pattern, name)
+        for pattern, name in zip(parts, names[len(literal) :], strict=False)
+    )
+
+
 def assert_sensitive_path_contract(*allow_lists: list[str]) -> None:
     """Reject sensitive ancestors and every allowance inside the grant cache."""
     protected = [Path(path) for path in sensitive_roots()]
@@ -320,7 +355,7 @@ def assert_sensitive_path_contract(*allow_lists: list[str]) -> None:
         allowed = Path(policy_subtree_prefix(allowed_text)).resolve(strict=False)
         is_glob = any(char in allowed_text for char in "*?[{")
         for sensitive in protected:
-            if sensitive.is_relative_to(allowed) or (
+            if grant_reaches(allowed_text, sensitive) or (
                 (is_glob or sensitive in grant_cache or sensitive in private_sockets)
                 and allowed.is_relative_to(sensitive)
             ):
