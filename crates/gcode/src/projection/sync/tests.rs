@@ -545,12 +545,12 @@ pub(crate) mod serial_db {
             .get(0);
         assert!(projected);
         assert_eq!(
-            vector_flags(&mut check, &source, hash_h.as_str()),
-            (false, false)
-        );
-        assert_eq!(
-            vector_flags(&mut check, &source, hash_k.as_str()),
-            (false, false)
+            [
+                vector_flags(&mut check, &source, hash_h.as_str()),
+                vector_flags(&mut check, &source, hash_k.as_str()),
+            ],
+            baseline,
+            "pinned recovery must leave source flags unchanged"
         );
     }
 
@@ -654,8 +654,11 @@ pub(crate) mod serial_db {
                 "{change}: late completion"
             );
             assert_eq!(
-                vector_flags(&mut check, &source, hash_h.as_str()),
-                (false, false),
+                [
+                    vector_flags(&mut check, &source, hash_h.as_str()),
+                    vector_flags(&mut check, &source, hash_k.as_str()),
+                ],
+                baseline,
                 "{change}"
             );
         }
