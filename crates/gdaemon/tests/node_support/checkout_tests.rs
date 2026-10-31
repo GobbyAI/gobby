@@ -1,9 +1,9 @@
 //! #24378: checkout registration is triggered by the real forwarded hook path.
 
 #[path = "fake_hub.rs"]
-mod fake_hub;
+pub(super) mod fake_hub;
 #[path = "node_home.rs"]
-mod node_home;
+pub(super) mod node_home;
 
 use anyhow::Result;
 use axum::{

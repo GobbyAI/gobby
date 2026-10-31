@@ -21,6 +21,7 @@ pub const TOKEN: &str = "node-host-fixture-token";
 pub const EPOCH: &str = "node-host-fixture-epoch";
 
 pub struct FakeGterm {
+    script: Arc<Mutex<HostScript>>,
     writes: Arc<WriteGate>,
     process: Child,
     task: JoinHandle<()>,
@@ -105,8 +106,11 @@ impl FakeGterm {
             inventory,
             pending: BTreeMap::new(),
             seq: 0,
+            pane: String::new(),
+            refuse_write: false,
         }));
         let task = tokio::spawn({
+            let script = script.clone();
             let writes = writes.clone();
             let requests = requests.clone();
             let drop_next_list = drop_next_list.clone();
@@ -249,6 +253,7 @@ impl FakeGterm {
             }
         });
         Ok(Self {
+            script,
             writes,
             process,
             task,
@@ -310,6 +315,22 @@ impl FakeGterm {
         self.requests.lock().expect("fixture requests").clone()
     }
 
+    pub fn set_pane(&self, text: &str) {
+        self.script.lock().expect("fixture script").pane = text.into();
+    }
+
+    pub fn clear_inventory(&self) {
+        self.script
+            .lock()
+            .expect("fixture script")
+            .inventory
+            .clear();
+    }
+
+    pub fn refuse_writes(&self) {
+        self.script.lock().expect("fixture script").refuse_write = true;
+    }
+
     pub fn pause_next_write(&self) {
         self.writes.pause.store(true, Ordering::SeqCst);
     }
@@ -356,6 +377,8 @@ impl FakeGterm {
 }
 
 struct HostScript {
+    pane: String,
+    refuse_write: bool,
     inventory: Vec<Value>,
     pending: BTreeMap<String, Value>,
     seq: u64,
@@ -399,6 +422,9 @@ impl HostScript {
                     .retain(|_, item| item["host_terminal_id"] != request["host_terminal_id"]);
                 self.ack()
             }
+            "snapshot" => json!({"ok":true,"mode":"text","text":self.pane,
+                "truncated":false,"dropped_bytes":0,"total_bytes":self.pane.len()}),
+            "write" if self.refuse_write => json!({"ok":false,"error":"write_refused"}),
             "write" => self.ack(),
             _ => json!({"ok":false,"error":"unknown_method"}),
         }

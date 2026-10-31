@@ -104,6 +104,15 @@ pub struct Inventory {
     pub terminals: Vec<Value>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Snapshot {
+    pub mode: String,
+    pub text: String,
+    pub truncated: bool,
+    pub dropped_bytes: usize,
+    pub total_bytes: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SpawnRequest {
     pub terminal_id: String,
@@ -416,6 +425,17 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
             events: VecDeque::new(),
             event_bytes: 0,
         }
+    }
+
+    // Compile-only shape for the tests-first snapshot contract (#24379).
+    pub async fn snapshot(
+        &mut self,
+        _host_terminal_id: &str,
+        _mode: &str,
+        _max_bytes: usize,
+        _max_lines: usize,
+    ) -> Result<Snapshot, ControlError> {
+        Err(ControlError::NotAuthenticated)
     }
 
     pub async fn hello(&mut self, control_token: &str) -> Result<Hello, ControlError> {

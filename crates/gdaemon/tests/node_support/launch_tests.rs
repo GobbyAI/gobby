@@ -14,6 +14,9 @@ use std::sync::Arc;
 #[path = "command_tests.rs"]
 mod command_tests;
 
+#[path = "codex_prompt_tests.rs"]
+mod codex_prompt_tests;
+
 fn corpus() -> Result<Value> {
     Ok(serde_json::from_str(include_str!(
         "../fixtures/node_launch/corpus.json"

@@ -1,6 +1,7 @@
 //! Durable node-local agent ownership.
 pub mod agy_gate;
 pub mod checkouts;
+pub mod codex_prompt;
 pub mod commands;
 pub mod executable;
 #[cfg(unix)]
