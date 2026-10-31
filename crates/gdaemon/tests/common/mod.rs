@@ -155,12 +155,11 @@ pub fn local_non_loopback_ipv4() -> Option<IpAddr> {
     (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
 }
 
-/// An address nothing listens on.
+/// An address nothing listens on. Port 1 is privileged, so no unprivileged test can bind it, and
+/// a connect is refused at once. A released ephemeral port can be bound by a parallel test's
+/// listener, which then answers the proxied request instead of refusing it.
 pub async fn refused_addr() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    drop(listener);
-    addr
+    SocketAddr::from((Ipv4Addr::LOCALHOST, 1))
 }
 
 /// What a raw WS backend saw: its upgrade request head and every byte after it.
