@@ -55,7 +55,10 @@ def doctor(ctx: click.Context) -> None:
 @click.option(
     "--model",
     default=None,
-    help="Served model name to use with --provider vllm (default: the endpoint's only model).",
+    help=(
+        "Served model name for --provider vllm or lmstudio (default: vllm's only "
+        "served model, or LM Studio's loaded embedding model)."
+    ),
 )
 @click.pass_context
 def switch(

@@ -8,6 +8,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import httpx
 import pytest
 
 import gobby.ai.embedding_switch_runner as embedding_switch_runner
@@ -891,3 +892,93 @@ def test_default_journal_reads_catalog_key_from_real_embeddings_config(
     assert captured["current_catalog_id"] is None
     assert captured["target_model"] == "mlx-community/Qwen3-Embedding-0.6B-8bit"
     assert captured["target_api_base"] == "http://localhost:8323/v1"
+
+
+@pytest.mark.asyncio
+async def test_abort_cleans_up_an_idle_staging_journal(monkeypatch: pytest.MonkeyPatch) -> None:
+    cleanup_runs: list[tuple[str, str]] = []
+
+    class CleanupRunner:
+        async def run(self, journal: FakeJournal) -> dict[str, Any]:
+            cleanup_runs.append((journal.run_id, journal.phase))
+            return {"aborted": True}
+
+    monkeypatch.setattr(
+        embedding_switch_service,
+        "abort_switch",
+        lambda _store: FakeJournal("idle-run", phase="aborted"),
+    )
+    coordinator = EmbeddingSwitchCoordinator(
+        config_store=None,
+        db=None,
+        fence=None,
+        runner_factory=lambda *_args: CleanupRunner(),
+        load_journal=lambda: FakeJournal("idle-run", phase="staging"),
+    )
+
+    result = await coordinator.abort()
+
+    assert result.status == "aborted"
+    assert result.run_id == "idle-run"
+    assert cleanup_runs == [("idle-run", "aborted")]
+
+
+def _lmstudio_models_transport(rows: list[dict[str, Any]]) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v0/models"
+        return httpx.Response(200, json={"data": rows})
+
+    return httpx.MockTransport(handler)
+
+
+@pytest.mark.asyncio
+async def test_start_lmstudio_uses_the_loaded_embedding_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        {"id": "chat-model", "type": "llm", "state": "loaded"},
+        {"id": "text-embedding-other", "type": "embeddings", "state": "not-loaded"},
+        {"id": "text-embedding-qwen3-embedding-0.6b", "type": "embeddings", "state": "loaded"},
+    ]
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda: real_client(transport=_lmstudio_models_transport(rows)),
+    )
+    calls: list[dict[str, Any]] = []
+    coordinator = _vllm_switch_coordinator(calls)
+
+    result = await coordinator.start(
+        "qwen3-0.6b-q8", "lmstudio", api_base="http://127.0.0.1:1234/v1"
+    )
+
+    assert result.status == "started"
+    assert calls == [
+        {
+            "catalog_key": "qwen3-0.6b-q8",
+            "provider": "lmstudio",
+            "target_model": "text-embedding-qwen3-embedding-0.6b",
+            "target_api_base": "http://127.0.0.1:1234/v1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_start_lmstudio_refuses_without_exactly_one_loaded_embedding_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [{"id": "text-embedding-other", "type": "embeddings", "state": "not-loaded"}]
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda: real_client(transport=_lmstudio_models_transport(rows)),
+    )
+    calls: list[dict[str, Any]] = []
+    coordinator = _vllm_switch_coordinator(calls)
+
+    with pytest.raises(ValueError, match="exactly one loaded embedding model"):
+        await coordinator.start("qwen3-0.6b-q8", "lmstudio", api_base="http://127.0.0.1:1234/v1")
+
+    assert calls == []

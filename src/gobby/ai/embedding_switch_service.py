@@ -12,8 +12,11 @@ from typing import Any, Protocol
 from gobby.ai.embedding_switch import (
     PHASE_ABORTED,
     PHASE_ACTIVE,
+    PHASE_BUILDING,
     PHASE_FLIPPING,
     PHASE_GC,
+    PHASE_STAGING,
+    abort_switch,
     get_switch_status,
     start_switch,
 )
@@ -112,6 +115,11 @@ class EmbeddingSwitchCoordinator:
                 target_model, target_api_base = await self._resolve_vllm_target(
                     catalog_key, config, api_base, model
                 )
+            elif provider_name == "lmstudio":
+                target_api_base = api_base or _provider_api_base(provider_name)
+                if target_api_base is None:
+                    raise ValueError("lmstudio embedding switch requires an api_base")
+                target_model = model or await _lmstudio_loaded_embedding_model(target_api_base)
             journal = self._start_journal(
                 self.config_store,
                 catalog_key,
@@ -186,6 +194,8 @@ class EmbeddingSwitchCoordinator:
         async with self._lock:
             if self._task is None or self._task.done():
                 journal = self._load_journal()
+                if journal is not None and str(journal.phase) in (PHASE_STAGING, PHASE_BUILDING):
+                    journal = abort_switch(self.config_store)
                 if journal is None or str(journal.phase) != PHASE_ABORTED:
                     return SwitchOperationStatus(None, "not_found", "No active embedding switch")
                 self._launch(journal, "cleanup_retry")
@@ -343,3 +353,34 @@ def _default_runner_factory(
         fence=fence,
         config_runtime=config_runtime,
     )
+
+
+async def _lmstudio_loaded_embedding_model(api_base: str, *, timeout: float = 10.0) -> str:
+    """Return the one embedding model LM Studio reports as loaded."""
+    import httpx
+
+    root = api_base.rstrip("/").removesuffix("/v1")
+    url = f"{root}/api/v0/models"
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=timeout)
+            response.raise_for_status()
+            payload: Any = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise ValueError(f"Cannot list LM Studio models at {url}: {exc}") from exc
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    loaded = [
+        str(row["id"])
+        for row in rows or []
+        if isinstance(row, dict)
+        and row.get("type") == "embeddings"
+        and row.get("state") == "loaded"
+        and isinstance(row.get("id"), str)
+    ]
+    if len(loaded) != 1:
+        raise ValueError(
+            "lmstudio embedding switch needs exactly one loaded embedding model "
+            f"(found {len(loaded)}: {', '.join(loaded) or 'none'}); load one in "
+            "LM Studio or pass --model"
+        )
+    return loaded[0]
