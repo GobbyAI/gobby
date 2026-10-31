@@ -12,6 +12,8 @@ description: |
   Approved seats: dev-manager, test-writer, developer and code-reviewer.
 tags: [runbook]
 resume_on_restart: true
+# Flat string inputs only: a nested seat object or an unknown key is refused before admission.
+strict_inputs: true
 
 inputs:
   task:
@@ -110,6 +112,11 @@ steps:
         team_id: "${{ inputs.team_id }}"
         task: "${{ inputs.task }}"
         tab_title: "${{ 'Dev Pod' if inputs.parent_team_id else 'Dev Team' }}"
+        seat_models:
+          dev-manager: "${{ inputs.manager_model }}"
+          test-writer: "${{ inputs.test_writer_model }}"
+          developer: "${{ inputs.developer_model }}"
+          code-reviewer: "${{ inputs.fresh_reviewer_model if inputs.fresh_reviewer else inputs.reviewer_model }}"
         catalogue:
           - name: dev-manager
             title: Dev Manager

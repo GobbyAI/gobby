@@ -47,6 +47,7 @@ DEVTEAM = PipelineDefinition.model_validate(
 )
 SEATS = ("dev-manager", "test-writer", "developer", "code-reviewer")
 RENDERER = StepRenderer(TemplateEngine())
+TEST_MODEL = "claude-test-model"
 
 
 @pytest.mark.asyncio
@@ -142,6 +143,11 @@ def _inputs(task: Task, workspace: str, report_to: str, team_id: str | None) -> 
         report_to=report_to,
         team_id=team_id,
         reviewer_agent="code-reviewer",
+        manager_model=TEST_MODEL,
+        test_writer_model=TEST_MODEL,
+        developer_model=TEST_MODEL,
+        reviewer_model=TEST_MODEL,
+        fresh_reviewer_model=TEST_MODEL,
     )
     return values
 
@@ -463,3 +469,55 @@ async def test_seats_launched_without_a_dev_manager_fall_back_to_report_to(
         prompt = _seat_prompt(run, seat, context)
         assert "No Dev Manager session ref is known" in prompt, seat
         assert f'target_id="{world.case.creator}"' in prompt, seat
+
+
+@pytest.mark.asyncio
+async def test_guard_refuses_a_launching_seat_with_no_model(world: TeamWorld) -> None:
+    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "devteam")[0].id
+    task = world.case.task(TITLE)
+    inputs = _inputs(task, workspace, world.case.creator, None)
+    inputs.update(seats="test-writer", test_writer_model=None)
+    run = _execution(world, task, inputs)
+    context: dict[str, Any] = {"inputs": inputs, "steps": {}}
+    step = next(step for step in DEVTEAM.steps if step.id == "guard")
+    assert step.mcp is not None and step.mcp.arguments is not None
+    arguments = RENDERER.render_mcp_arguments(
+        step.mcp.arguments, _step_context(run, "guard", context), drop_none=True
+    )
+
+    with session_context_for_test(run.id):
+        reply = cast(dict[str, Any], await world.tools.call(step.mcp.tool, arguments))
+
+    assert reply.get("success") is False, reply
+    message = str(reply.get("error"))
+    assert "test-writer" in message and "model" in message, reply
+    assert world.task_branches() == []
+    assert world.tree_ids() == []
+
+
+@pytest.mark.asyncio
+async def test_guard_accepts_a_seat_whose_definition_names_its_model(world: TeamWorld) -> None:
+    body = make_agent_definition(
+        name="custom-reviewer",
+        prompts={"agent": "Review the assigned work."},
+        task_step_writes=["review"],
+    ).model_dump(mode="json")
+    body["model"] = "claude-review-model"
+    AgentDefinitionManager(world.case.db).create(
+        "custom-reviewer", body, project_id=world.case.project_id
+    )
+    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "devteam")[0].id
+    task = world.case.task(TITLE)
+    inputs = _inputs(task, workspace, world.case.creator, None)
+    inputs.update(
+        seats="code-reviewer",
+        reviewer_agent="custom-reviewer",
+        reviewer_model=None,
+        fresh_reviewer_model=None,
+    )
+    run = _execution(world, task, inputs)
+    context: dict[str, Any] = {"inputs": inputs, "steps": {}}
+
+    await _call(world, run, "guard", context)
+
+    assert context["steps"]["guard"]["output"]["launch"] == ("code-reviewer",)

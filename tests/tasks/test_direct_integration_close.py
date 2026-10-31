@@ -106,3 +106,67 @@ async def test_close_selects_steps_from_declared_paths(
         else:
             assert set(step_gate["details"]["missing_steps"]) == {"implementation", "review"}
             assert manager.get_task(task.id).closed_at is None
+
+
+async def test_rename_out_of_undeclared_source_keeps_the_source_path(
+    temp_db: HubDatabase,
+    sample_git_project: dict[str, Any],
+) -> None:
+    """A rename into a declared path still judges the source path it removes."""
+    repo = Path(sample_git_project["repo_path"])
+    marker = repo / ".gobby" / "project.json"
+    policy = json.loads(marker.read_text())
+    policy["task_close_policy"] = {"enforce_step_records": True}
+    marker.write_text(json.dumps(policy))
+    git(repo, "add", ".gobby/project.json")
+    git(repo, "commit", "-m", "enable evidence policy")
+    (repo / "src").mkdir(exist_ok=True)
+    (repo / "src" / "work.py").write_text("value = 1\n")
+    git(repo, "add", "src/work.py")
+    git(repo, "commit", "-m", "unlinked source change")
+    (repo / "policy").mkdir(exist_ok=True)
+    git(repo, "mv", "src/work.py", "policy/custom.yaml")
+    git(repo, "commit", "-m", "rename source into declared policy")
+    sha = git(repo, "rev-parse", "HEAD")
+
+    seat = _Seats(temp_db, sample_git_project["id"]).add(
+        "custom-policy-maintainer",
+        ["closing"],
+        capabilities=("direct_integration_commit",),
+        definition_fields={
+            "direct_integration_commit_paths": ["policy/*.yaml"],
+            "direct_integration_commit_steps": ["closing"],
+        },
+    )
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_git_project["id"],
+        "Rename declared configuration",
+        category="code",
+        validation_criteria="Renamed source keeps its step requirements.",
+    )
+    manager.claim_task(task.id, seat)
+    manager.link_commit(task.id, sha)
+    record_task_step(
+        temp_db,
+        task_id=task.id,
+        session_id=seat,
+        step="closing",
+        submission=StepSubmission(
+            status="approved",
+            epoch=task.review_epoch,
+            round_number=1,
+            commit_sha=sha,
+            feedback="Renamed configuration is landed and checked.",
+        ),
+    )
+    registry = InternalToolRegistry("gobby-tasks")
+    register_close_task(registry, RegistryContext(task_manager=manager))
+
+    with session_context_for_test(seat):
+        preview = await registry.call(
+            "close_task", {"task_id": task.id, "preview": True, "response_detail": "diagnostic"}
+        )
+    assert preview["can_close"] is False, preview
+    step_gate = next(gate for gate in preview["gates"] if gate["name"] == "step_records")
+    assert set(step_gate["details"]["missing_steps"]) == {"implementation", "review"}

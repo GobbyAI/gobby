@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from gobby.agents import team_lifecycle
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding, team_binding
 from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -80,7 +80,7 @@ async def test_replacement_binds_the_tab_of_a_team_admitted_unbound(world: TeamW
     assert joined == replace(team, tab_title=tab_title)
     assert world.admit_step_output(replacement)["team"] == asdict(joined)
     # The team's own record carries the bound tab, so later seats and replacements read it.
-    assert team_lifecycle.team_binding(world.case.db, team.team_id) == joined
+    assert team_binding(world.case.db, team.team_id) == joined
 
     for caller in (replacement, world.child(task)):
         with session_context_for_test(caller.id):
@@ -110,7 +110,7 @@ async def test_rerun_admission_binds_the_tab_of_its_unbound_record(
     tab_title = f"Dev Team - #{task.seq_num}"
     bound = replace(team, tab_title=tab_title)
     assert await world.admit(runbook, task, tab_title=tab_title) == bound
-    assert team_lifecycle.team_binding(world.case.db, team.team_id) == bound
+    assert team_binding(world.case.db, team.team_id) == bound
     with session_context_for_test(runbook.id):
         drift = await world.tools.call("admit_team", {"task": task.id, "tab_title": "Other"})
     assert drift["error_code"] == "team_binding_drift", drift

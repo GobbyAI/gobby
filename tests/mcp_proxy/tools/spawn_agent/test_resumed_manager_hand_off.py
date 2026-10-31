@@ -13,7 +13,8 @@ import pytest
 
 from gobby.agents.isolation import NoneIsolationHandler
 from gobby.agents.session import ChildSessionManager
-from gobby.agents.team_lifecycle import TeamBinding, seat_team
+from gobby.agents.team_admission_records import TeamBinding
+from gobby.agents.team_lifecycle import seat_team
 from gobby.mcp_proxy.tools.spawn_agent import _implementation as implementation
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 from gobby.mcp_proxy.tools.tasks import create_task_registry

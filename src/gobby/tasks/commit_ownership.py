@@ -99,7 +99,7 @@ async def linked_commit_paths(
     paths: dict[str, None] = {}
     for sha in commit_shas:
         result = await daemon_git.run(
-            ["show", "--first-parent", "--format=", "--name-only", "-z", sha],
+            ["show", "--first-parent", "--format=", "--name-only", "--no-renames", "-z", sha],
             cwd=checkout_root,
             timeout=30,
         )

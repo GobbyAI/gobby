@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shlex
@@ -202,8 +201,9 @@ def own_team_tab(session_manager: SessionManager, caller_ref: Any, agent: Any) -
     Placement admits an autonomous fresh seat only where its spawn is for the caller's own
     epic team: the caller is a running team manager whose definition permits the target,
     and the caller's team is an epic. Admission owns the runbook's declared tab title.
-    A single-task team and any other spawn get no tab.
+    A single-task team gets its tab only to relaunch a lost seat; other spawns get none.
     """
+    from gobby.agents.team_dispatch import missing_team_seat
     from gobby.agents.team_lifecycle import seat_team
     from gobby.storage.team_records import EPIC_MODE
 
@@ -217,7 +217,9 @@ def own_team_tab(session_manager: SessionManager, caller_ref: Any, agent: Any) -
     if definition is None or not definition.may_spawn(agent):
         return None
     team = seat_team(session_manager.db, caller.id)
-    if team is None or team.mode != EPIC_MODE:
+    if team is None:
+        return None
+    if team.mode != EPIC_MODE and not missing_team_seat(session_manager.db, team, agent):
         return None
     return team.tab_title
 
@@ -910,6 +912,7 @@ def session_condition_helpers(
     session_manager: SessionManager | None,
 ) -> dict[str, Callable[..., Any]]:
     """Bind the session-scope helpers to the evaluator's session manager."""
+    from gobby.workflows.condition_helpers_pods import dev_pod_launch_allowed
     from gobby.workflows.engine.idle_declaration import readiness_message_completed
 
     return {
@@ -929,8 +932,8 @@ def session_condition_helpers(
             and all(isinstance(path, str) for path in paths)
             and session_declared_paths_cover(session_manager.db, caller_id, paths)
         ),
-        "dev_pod_launch_allowed": lambda caller_id, tool_name, arguments: dev_pod_launch_allowed(
-            session_manager, caller_id, tool_name, arguments
+        "dev_pod_launch_allowed": lambda caller_id, tool_name, arguments, pod_pipelines: (
+            dev_pod_launch_allowed(session_manager, caller_id, tool_name, arguments, pod_pipelines)
         ),
         "seat_readiness_completed": lambda caller_id, output: readiness_message_completed(
             session_manager, caller_id, output
@@ -967,38 +970,3 @@ def session_condition_helpers(
             )
         ),
     }
-
-
-def dev_pod_launch_allowed(
-    sessions: SessionManager | None, caller_ref: Any, tool_name: Any, arguments: Any
-) -> bool:
-    """A bound epic manager may launch only devteam pods for its own open leaves."""
-    from gobby.agents.team_lifecycle import TeamAdmissionRefused, pod_parent
-    from gobby.storage.tasks import LocalTaskManager
-
-    if sessions is None:
-        return False
-    try:
-        if isinstance(arguments, str):
-            arguments = json.loads(arguments)
-        if not isinstance(arguments, dict):
-            return False
-        if tool_name == "run_pipeline" and arguments.get("name") == "devteam":
-            inputs = arguments.get("inputs")
-        elif tool_name == "pipeline:devteam":
-            inputs = arguments
-        else:
-            return False
-        if not isinstance(inputs, dict) or inputs.get("team_id") or inputs.get("fresh_reviewer"):
-            return False
-        parent_id, task_ref = inputs.get("parent_team_id"), inputs.get("task")
-        if not isinstance(parent_id, str) or not isinstance(task_ref, str):
-            return False
-        caller, agent = _spawn_caller(sessions, caller_ref)
-        if _running_team_manager_definition(sessions, caller, agent) is None:
-            return False
-        task_id = LocalTaskManager(sessions.db).resolve_task_reference(task_ref, caller.project_id)
-        pod_parent(sessions.db, caller.id, task_id, parent_id)
-        return True
-    except (ValueError, TeamAdmissionRefused, AgentResolutionError):
-        return False
