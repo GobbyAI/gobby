@@ -512,15 +512,27 @@ fn read_calls_for_file(
 ) -> anyhow::Result<Vec<CallRelation>> {
     let project_id = id_param(project_id)?;
     let rows = conn.query(
-        "SELECT caller_symbol_id, callee_symbol_id, callee_name,
-                callee_target_kind, callee_external_module, file_path, content_hash,
-                line::BIGINT AS line
-         FROM code_calls
-         WHERE project_id = $1 AND file_path = $2 AND content_hash = $3
-         ORDER BY line, caller_symbol_id, callee_name",
+        "SELECT c.caller_symbol_id, c.callee_symbol_id, c.callee_name,
+                c.callee_target_kind, c.callee_external_module, c.file_path, c.content_hash,
+                c.line::BIGINT AS line,
+                callee.file_path AS callee_file_path,
+                callee.file_content_hash AS callee_file_content_hash
+         FROM code_calls c
+         LEFT JOIN code_symbols callee ON callee.id = c.callee_symbol_id
+         WHERE c.project_id = $1 AND c.file_path = $2 AND c.content_hash = $3
+         ORDER BY line, c.caller_symbol_id, c.callee_name",
         &[&project_id, &file_path, &content_hash],
     )?;
-    rows.iter().map(call_relation_from_row).collect()
+    rows.iter()
+        .map(|row| {
+            let mut call = call_relation_from_row(row)?;
+            // The callee's version identity stamps its graph placeholder. An
+            // unresolved callee has no symbol row, so both stay None.
+            call.callee_file_path = row.try_get("callee_file_path")?;
+            call.callee_file_content_hash = row.try_get("callee_file_content_hash")?;
+            Ok(call)
+        })
+        .collect()
 }
 
 fn call_relation_from_row(row: &postgres::Row) -> anyhow::Result<CallRelation> {
@@ -530,6 +542,8 @@ fn call_relation_from_row(row: &postgres::Row) -> anyhow::Result<CallRelation> {
         // NULL caller means module scope; the domain keeps the "" sentinel.
         caller_symbol_id: opt_id_string(row, "caller_symbol_id")?.unwrap_or_default(),
         callee_symbol_id: opt_id_string(row, "callee_symbol_id")?,
+        callee_file_path: None,
+        callee_file_content_hash: None,
         callee_name: row.try_get("callee_name")?,
         callee_target_kind: call_target_kind_from_str(&target_kind)?,
         callee_external_module: non_empty(callee_external_module),

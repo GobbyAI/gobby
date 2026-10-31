@@ -721,7 +721,7 @@ class TestEmbeddingBackend:
 
         assert backend._model == "openai/nomic-embed-text"
         assert backend._api_base == "http://localhost:11434/v1"
-        assert backend._dim == 768
+        assert backend._dim == 1024
 
     @pytest.mark.asyncio
     async def test_fit_and_search(self, caplog: pytest.LogCaptureFixture) -> None:

@@ -752,8 +752,10 @@ fn seeded_views_still_require_a_seed() {
 mod pin_recovery {
     use crate::config::{CodeVectorSettings, EmbeddingConfig, QdrantConfig};
     use crate::db;
-    use crate::models::Symbol;
-    use crate::projection::sync::tests::serial_db::{FILE, pinned_fixture, respond, seed_version};
+    use crate::models::{SearchWarningCause, SearchWarningLane, Symbol};
+    use crate::projection::sync::tests::serial_db::{
+        FILE, pinned_fixture, respond, seed_version, version_hash,
+    };
     use crate::vector::code_symbols::{self, tests::read_http_request};
     use serde_json::json;
     use std::net::{TcpListener, TcpStream};
@@ -768,9 +770,9 @@ mod pin_recovery {
     fn text_search_survives_projection_recovery() {
         let database_url = crate::test_env::postgres_test_database_url("pinned text recovery");
         let mut conn = db::connect_readwrite(&database_url).expect("connect");
-        let (mut ctx, source, _source_cleanup, _overlay_cleanup) =
+        let (mut ctx, source, _source_cleanup, _overlay_cleanup, _root) =
             pinned_fixture(&mut conn, &database_url);
-        let symbol_id = Symbol::make_id(&source, FILE, "hash-h", "run", "function", 0);
+        let symbol_id = Symbol::make_id(&source, FILE, &version_hash("h"), "run", "function", 0);
         let facts = crate::codewiki_facts::CodewikiFacts::from_context(ctx.clone());
         let text = facts.search("run", 10).expect("pinned PostgreSQL search");
         assert_eq!(
@@ -835,9 +837,9 @@ mod pin_recovery {
         };
         let database_url = crate::test_env::postgres_test_database_url("pin projection reads");
         let mut conn = db::connect_readwrite(&database_url).expect("connect");
-        let (mut ctx, source, _source_cleanup, _overlay_cleanup) =
+        let (mut ctx, source, _source_cleanup, _overlay_cleanup, _root) =
             pinned_fixture(&mut conn, &database_url);
-        let symbol_id = Symbol::make_id(&source, FILE, "hash-h", "run", "function", 0);
+        let symbol_id = Symbol::make_id(&source, FILE, &version_hash("h"), "run", "function", 0);
         // The PostgreSQL/BM25 lane remains available before projection recovery.
         let facts = crate::codewiki_facts::CodewikiFacts::from_context(ctx.clone());
         let text = facts.search("run", 10).expect("read pinned text facts");
@@ -863,6 +865,8 @@ mod pin_recovery {
             timeout_seconds: 5,
         });
         ctx.code_vectors = CodeVectorSettings::with_vector_dim(Some(3));
+        let direct =
+            code_symbols::EmbeddingSource::Direct(ctx.embedding.clone().expect("embedding config"));
         let stop = Arc::new(AtomicBool::new(false));
         let namespace = Arc::new(AtomicUsize::new(0));
         let server = {
@@ -892,16 +896,18 @@ mod pin_recovery {
                 }
             })
         };
+        let hash_h = version_hash("h");
+        let hash_k = version_hash("k");
         let mut observed = Vec::new();
         for (hash, projected, backend, expected) in [
-            ("hash-h", false, 0, true),  // live source namespace
-            ("hash-h", false, 1, false), // stray child rows are not recovered rows
-            ("hash-k", true, 1, true),   // completed child projection
-            ("hash-k", true, 0, false),  // source moved; old source projection is excluded
-            ("hash-k", false, 0, false),
-            ("hash-k", false, 1, false), // late/discarded upsert remains unadmitted
+            (hash_h.as_str(), false, 0, true),  // live source namespace
+            (hash_h.as_str(), false, 1, false), // stray child rows are not recovered rows
+            (hash_k.as_str(), true, 1, true),   // completed child projection
+            (hash_k.as_str(), true, 0, false),  // source moved; old source projection is excluded
+            (hash_k.as_str(), false, 0, false),
+            (hash_k.as_str(), false, 1, false), // late/discarded upsert remains unadmitted
         ] {
-            seed_version(&mut conn, &source, hash, hash == "hash-h");
+            seed_version(&mut conn, &source, hash, hash == hash_h.as_str());
             conn.execute(
                 "UPDATE code_overlay_pins SET vector_projected = $2 WHERE overlay_project_id = $1",
                 &[
@@ -911,7 +917,7 @@ mod pin_recovery {
             )
             .expect("set recovery state");
             namespace.store(backend, Ordering::SeqCst);
-            let hits = code_symbols::semantic_search(&ctx, "run", 10);
+            let hits = code_symbols::semantic_search_with_source(&ctx, &direct, "run", 10);
             observed.push(((hash, projected, backend), hits, expected));
         }
         // Simulate rows left by a late child upsert after each invalidating event.
@@ -923,10 +929,10 @@ mod pin_recovery {
                 &[&overlay_uuid],
             )
             .expect("clear child shadow");
-            conn.execute("UPDATE code_overlay_pins SET content_hash = 'hash-h', vector_projected = false WHERE overlay_project_id = $1", &[&overlay_uuid]).expect("restore pin");
+            conn.execute("UPDATE code_overlay_pins SET content_hash = $2, vector_projected = false WHERE overlay_project_id = $1", &[&overlay_uuid, &hash_h]).expect("restore pin");
             match change {
                 "repin" => {
-                    conn.execute("UPDATE code_overlay_pins SET content_hash = 'hash-k' WHERE overlay_project_id = $1", &[&overlay_uuid]).expect("repin");
+                    conn.execute("UPDATE code_overlay_pins SET content_hash = $2 WHERE overlay_project_id = $1", &[&overlay_uuid, &hash_k]).expect("repin");
                 }
                 "purge" => {
                     conn.execute(
@@ -944,7 +950,7 @@ mod pin_recovery {
             }
             observed.push((
                 (change, false, 1),
-                code_symbols::semantic_search(&ctx, "run", 10),
+                code_symbols::semantic_search_with_source(&ctx, &direct, "run", 10),
                 false,
             ));
         }
@@ -963,5 +969,130 @@ mod pin_recovery {
                 "selector/projected/backend={state:?}"
             );
         }
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn graph_reads_report_pending_pin_projection() {
+        let database_url = crate::test_env::postgres_test_database_url("pinned graph pending");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let (ctx, _source, _source_cleanup, _overlay_cleanup, _root) =
+            pinned_fixture(&mut conn, &database_url);
+        let overlay_uuid = db::id_param(&ctx.project_id).expect("child UUID");
+
+        // The fixture pin has no recorded graph projection, so its path serves no
+        // graph facts; graph reads must report that instead of returning empty.
+        let warnings = crate::visibility::graph_versions::pending_projection_warnings(&ctx);
+        assert_eq!(
+            warnings.len(),
+            1,
+            "pending graph pin must warn: {warnings:?}"
+        );
+        assert_eq!(warnings[0].lane, SearchWarningLane::Graph);
+        assert_eq!(warnings[0].cause, SearchWarningCause::ProjectionPending);
+        assert!(
+            warnings[0].message.contains("graph") && warnings[0].message.contains("pending"),
+            "{}",
+            warnings[0].message
+        );
+
+        conn.execute(
+            "UPDATE code_overlay_pins SET graph_projected = true WHERE overlay_project_id = $1",
+            &[&overlay_uuid],
+        )
+        .expect("record graph projection");
+        assert!(
+            crate::visibility::graph_versions::pending_projection_warnings(&ctx).is_empty(),
+            "a recorded graph projection clears the pending warning"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn fresh_pin_graph_reads_admit_source_namespace() {
+        let database_url = crate::test_env::postgres_test_database_url("fresh pin graph source");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let (ctx, source, _source_cleanup, _overlay_cleanup, _root) =
+            pinned_fixture(&mut conn, &database_url);
+        // Point the source selector back at the pinned hash: the pin is fresh, its
+        // graph projection has not landed, and the source still serves that version.
+        let pinned_hash = version_hash("h");
+        seed_version(&mut conn, &source, &pinned_hash, true);
+        let pinned_key = format!("{FILE}|{pinned_hash}");
+
+        let namespaces =
+            crate::visibility::graph_versions::admitted_namespaces(&ctx).expect("admit");
+        let source_namespace = namespaces
+            .iter()
+            .find(|namespace| namespace.project_id == source)
+            .unwrap_or_else(|| panic!("source namespace must serve the fresh pin: {namespaces:?}"));
+        assert_eq!(
+            source_namespace.versions.keys,
+            vec![pinned_key.clone()],
+            "a fresh pin is admitted from the source namespace at its pinned hash"
+        );
+        assert!(
+            namespaces
+                .iter()
+                .filter(|namespace| namespace.project_id == ctx.project_id)
+                .all(|namespace| !namespace.versions.keys.contains(&pinned_key)),
+            "an unprojected pin is not admitted in the child namespace: {namespaces:?}"
+        );
+        assert!(
+            crate::visibility::graph_versions::pending_projection_warnings(&ctx).is_empty(),
+            "a source that still names the pinned hash leaves nothing pending"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn projected_pin_keeps_pinned_version_after_source_moves() {
+        let database_url = crate::test_env::postgres_test_database_url("projected pin graph");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let (ctx, _source, _source_cleanup, _overlay_cleanup, _root) =
+            pinned_fixture(&mut conn, &database_url);
+        let overlay_uuid = db::id_param(&ctx.project_id).expect("child UUID");
+        conn.execute(
+            "UPDATE code_overlay_pins SET graph_projected = true WHERE overlay_project_id = $1",
+            &[&overlay_uuid],
+        )
+        .expect("record graph projection");
+
+        // The fixture's source selector already moved to the "k" version. The projected pin is
+        // served from the child namespace at its pinned hash, never at the new one.
+        let pinned_hash = version_hash("h");
+        let moved_hash = version_hash("k");
+        let namespaces =
+            crate::visibility::graph_versions::admitted_namespaces(&ctx).expect("admit");
+        let child = namespaces
+            .iter()
+            .find(|namespace| namespace.project_id == ctx.project_id)
+            .expect("child namespace");
+        assert!(
+            child
+                .versions
+                .keys
+                .contains(&format!("{FILE}|{pinned_hash}")),
+            "a projected pin keeps serving its pinned version: {child:?}"
+        );
+        assert!(
+            !child
+                .versions
+                .keys
+                .contains(&format!("{FILE}|{moved_hash}")),
+            "the moved source version stays out of the child namespace: {child:?}"
+        );
     }
 }

@@ -345,8 +345,8 @@ PICKER_ENTRIES: list[str] = [
     "qwen3-8b-q8",
 ]
 
-# Default catalog entry for first-time install (unchanged UX).
-DEFAULT_CATALOG_ID = "nomic-v1.5-f16"
+# Default catalog entry for first-time install and for the canonical embedding default.
+DEFAULT_CATALOG_ID = "qwen3-0.6b-q8"
 
 
 def get_spec(key: str) -> EmbeddingModelSpec | None:

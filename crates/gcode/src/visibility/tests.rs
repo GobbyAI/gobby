@@ -175,3 +175,98 @@ fn overlay_shadowing_of_pins() -> anyhow::Result<()> {
     assert_eq!(visible_tree(&mut fixture.conn, &ctx)?.len(), 1);
     Ok(())
 }
+
+#[test]
+fn with_admitted_versions_binds_the_scope_endpoint_set() {
+    use crate::visibility::graph_versions::{AdmittedGraphVersions, with_admitted_versions};
+
+    let admitted = AdmittedGraphVersions {
+        keys: vec!["own.rs|h1".to_string()],
+        paths: vec!["own.rs".to_string()],
+        endpoints: vec!["own.rs|h1".to_string(), "src.rs|h2".to_string()],
+    };
+    let (_, params) = with_admitted_versions(
+        (
+            "MATCH (n) RETURN n".to_string(),
+            std::collections::HashMap::new(),
+        ),
+        &admitted,
+    );
+
+    assert!(params["admitted_endpoints"].contains("src.rs|h2"));
+    assert!(!params["admitted_versions"].contains("src.rs|h2"));
+}
+
+#[test]
+#[cfg_attr(not(gcode_postgres_tests), ignore = "requires PostgreSQL")]
+#[serial_test::serial(serial_db)]
+fn scope_endpoints_union_every_namespace_and_exclude_replaced_pins() -> anyhow::Result<()> {
+    use crate::visibility::graph_versions::admitted_namespaces;
+
+    let mut fixture = pin_fixture::PinFixture::new()?;
+    let source = fixture.source.clone();
+    let overlay = fixture.ctx.project_id.clone();
+    for path in ["inherited.rs", "shadowed.rs", "deleted.rs"] {
+        fixture.version(&source, path, "base", "ancestor")?;
+        fixture.pin(&source, path, "base")?;
+    }
+    fixture.version(&overlay, "shadowed.rs", "child", "child_symbol")?;
+    fixture.version(&overlay, "deleted.rs", TOMBSTONE_HASH, "deleted")?;
+
+    let namespaces = admitted_namespaces(&fixture.ctx)?;
+    let union: std::collections::BTreeSet<String> = namespaces
+        .iter()
+        .flat_map(|namespace| namespace.versions.keys.iter().cloned())
+        .collect();
+    let expected: Vec<String> = union.into_iter().collect();
+    for namespace in &namespaces {
+        assert_eq!(
+            namespace.versions.endpoints, expected,
+            "{} must carry the scope-wide endpoint set",
+            namespace.project_id
+        );
+    }
+
+    let endpoints = &namespaces[0].versions.endpoints;
+    assert!(endpoints.contains(&"inherited.rs|base".to_string()));
+    assert!(endpoints.contains(&"shadowed.rs|child".to_string()));
+    assert!(
+        !endpoints.contains(&"shadowed.rs|base".to_string()),
+        "a pin replaced by the overlay is not an admitted endpoint"
+    );
+    assert!(
+        !endpoints.contains(&"deleted.rs|base".to_string()),
+        "a pin tombstoned by the overlay is not an admitted endpoint"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(not(gcode_postgres_tests), ignore = "requires PostgreSQL")]
+#[serial_test::serial(serial_db)]
+fn child_call_into_a_source_fresh_pin_carries_the_callee_version() -> anyhow::Result<()> {
+    let mut fixture = pin_fixture::PinFixture::new()?;
+    let source = fixture.source.clone();
+    let overlay = fixture.ctx.project_id.clone();
+    let callee = fixture.version(&source, "b.rs", "h2", "callee")?;
+    fixture.pin(&source, "b.rs", "h2")?;
+    let caller = fixture.version(&overlay, "a.rs", "h1", "caller")?;
+    fixture.conn.execute(
+        "INSERT INTO code_calls
+             (project_id, caller_symbol_id, callee_symbol_id, callee_name, file_path, content_hash, line)
+         VALUES ($1, $2, $3, 'callee', 'a.rs', 'h1', 3)",
+        &[
+            &db::id_param(&overlay)?,
+            &db::id_param(&caller.id)?,
+            &db::id_param(&callee.id)?,
+        ],
+    )?;
+
+    let facts = db::read_version_graph_facts(&mut fixture.conn, &overlay, "a.rs", "h1")?;
+    let call = facts.calls.first().expect("the child caller's call");
+
+    assert_eq!(call.callee_symbol_id.as_deref(), Some(callee.id.as_str()));
+    assert_eq!(call.callee_file_path.as_deref(), Some("b.rs"));
+    assert_eq!(call.callee_file_content_hash.as_deref(), Some("h2"));
+    Ok(())
+}

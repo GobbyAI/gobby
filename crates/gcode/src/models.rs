@@ -341,6 +341,12 @@ impl CallTargetKind {
 pub struct CallRelation {
     pub caller_symbol_id: String,
     pub callee_symbol_id: Option<String>,
+    /// File identity of the resolved callee version, read from its symbol row.
+    /// The graph stamps it onto the callee placeholder so admission can check it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callee_file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callee_file_content_hash: Option<String>,
     pub callee_name: String,
     pub callee_target_kind: CallTargetKind,
     pub callee_external_module: Option<String>,
@@ -359,6 +365,8 @@ impl CallRelation {
         Self {
             caller_symbol_id,
             callee_symbol_id: None,
+            callee_file_path: None,
+            callee_file_content_hash: None,
             callee_name,
             callee_target_kind: CallTargetKind::Unresolved,
             callee_external_module: None,
@@ -675,6 +683,7 @@ fn is_false(value: &bool) -> bool {
 #[serde(rename_all = "snake_case")]
 pub enum SearchWarningLane {
     Semantic,
+    Graph,
 }
 
 /// Why a hybrid-search lane degraded.
@@ -682,6 +691,7 @@ pub enum SearchWarningLane {
 #[serde(rename_all = "snake_case")]
 pub enum SearchWarningCause {
     DaemonUnreachable,
+    ProjectionPending,
 }
 
 /// Structured hybrid-search degradation notice.

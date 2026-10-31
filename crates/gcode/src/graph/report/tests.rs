@@ -14,6 +14,11 @@ use super::types::{
     BridgeEdgeInput, BridgeReportSummary, ConfidenceRange, GraphHotspot, GraphReportHotspots,
     NamedCount, ReportCodeEdge, ReportDegradation, ReportGraphSnapshot, ReportNode,
 };
+use super::queries::{
+    report_bridge_edges_query, report_code_edge_counts_query, report_hotspots_query,
+    report_incoming_call_hotspots_query, report_node_counts_query,
+    report_target_frequencies_query,
+};
 use super::*;
 
 #[test]
@@ -592,4 +597,139 @@ fn report_marks_stale_labels() {
             .markdown
             .contains("| 2 | Task close gates | 4 | 0.50 | model |")
     );
+}
+
+const ADMISSION_TOKENS: [&str; 4] = [
+    "$admitted_paths",
+    "$admitted_pairs",
+    "$admitted_map",
+    "$endpoint_map",
+];
+
+fn report_query_cases() -> Vec<(&'static str, String)> {
+    vec![
+        ("nodes", report_node_counts_query("child").0),
+        ("edges", report_code_edge_counts_query("child").0),
+        ("hotspots", report_hotspots_query("child", "symbol", Some(1)).0),
+        (
+            "incoming calls",
+            report_incoming_call_hotspots_query("child", 1).0,
+        ),
+        ("bridges", report_bridge_edges_query("child").0),
+        (
+            "external targets",
+            report_target_frequencies_query("child", "external", 1).0,
+        ),
+        (
+            "unresolved targets",
+            report_target_frequencies_query("child", "unresolved", 1).0,
+        ),
+    ]
+}
+
+fn last_aggregate(branch: &str) -> Option<usize> {
+    [branch.rfind("count("), branch.rfind("sum(")]
+        .into_iter()
+        .flatten()
+        .max()
+}
+
+fn first_admission(branch: &str) -> Option<usize> {
+    ADMISSION_TOKENS
+        .iter()
+        .filter_map(|token| branch.find(token))
+        .min()
+}
+
+#[test]
+fn hotspot_ranking_excludes_replaced_and_tombstoned_targets_before_counting() {
+    // Even a high-degree historical target must not consume the top-1 slot.
+    for (surface, query) in [
+        (
+            "symbol degrees",
+            report_hotspots_query("child", "symbol", Some(1)).0,
+        ),
+        (
+            "incoming calls",
+            report_incoming_call_hotspots_query("child", 1).0,
+        ),
+    ] {
+        for branch in query.split("UNION ALL") {
+            let Some(aggregate) = last_aggregate(branch) else {
+                continue;
+            };
+            let filter = &branch[..aggregate];
+            assert!(
+                filter.contains("IN coalesce($admitted_map[")
+                    || filter.contains("IN coalesce($endpoint_map["),
+                "{surface}: target version admission must precede ranking: {branch}"
+            );
+        }
+    }
+}
+
+#[test]
+fn report_queries_filter_admitted_versions_before_aggregation() {
+    for (surface, query) in report_query_cases() {
+        for branch in query.split("UNION ALL") {
+            let Some(aggregate) = last_aggregate(branch) else {
+                continue;
+            };
+            let admission = first_admission(branch).unwrap_or_else(|| {
+                panic!("{surface}: aggregate must constrain admitted versions: {branch}")
+            });
+            assert!(
+                admission < aggregate,
+                "{surface}: filter must precede aggregation: {branch}"
+            );
+            if branch.contains("-[r") {
+                assert!(
+                    branch[..aggregate].contains("content_hash"),
+                    "{surface}: an edge needs its version hash, path alone is insufficient: {branch}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn report_node_counts_admit_module_and_external_nodes_only_through_admitted_edges() {
+    let (query, _) = report_node_counts_query("child");
+    for label in ["CodeModule", "UnresolvedCallee", "ExternalSymbol"] {
+        assert!(query.contains(label), "{label} nodes are counted: {query}");
+    }
+    // A placeholder is reached through an edge, that edge is admitted by its
+    // version, and only then is the endpoint counted.
+    let edge = query.find("-[r:").expect("placeholder nodes need an edge");
+    let admitted = query[edge..]
+        .find("$admitted_map[")
+        .map(|at| edge + at)
+        .expect("placeholder edge admission");
+    let aggregate = query.rfind("count(n)").expect("aggregate");
+    assert!(
+        edge < admitted && admitted < aggregate,
+        "admitted edge must precede aggregation: {query}"
+    );
+}
+
+#[test]
+fn report_edge_patterns_include_inheritance_rels() {
+    let (query, _) = report_code_edge_counts_query("proj-1");
+    for rel in ["INHERITS", "EXTENDS", "IMPLEMENTS"] {
+        assert!(query.contains(rel), "edge-count query missing {rel}: {query}");
+    }
+}
+
+#[test]
+fn report_queries_anchor_on_admitted_pairs_or_version_maps() {
+    for (surface, query) in report_query_cases() {
+        assert!(
+            query.contains("$admitted_pairs") || query.contains("$admitted_map"),
+            "{surface}: anchor on admitted pairs or version maps: {query}"
+        );
+        assert!(
+            !query.contains("IN $admitted_versions"),
+            "{surface}: per-edge IN $admitted_versions scan: {query}"
+        );
+    }
 }

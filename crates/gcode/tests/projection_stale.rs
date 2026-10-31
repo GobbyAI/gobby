@@ -458,11 +458,7 @@ mod serial_db {
         assert_eq!(skipped["reason"], "indexed_file_not_found");
         assert_eq!(skipped["skipped_files"], 1);
         let requests = fixture.service.requests.lock().expect("request log");
-        let child_collection = gobby_core::qdrant::collection_name(
-            "code_symbols_",
-            gobby_core::qdrant::CollectionScope::Project(&fixture.overlay),
-        )
-        .expect("child collection");
+        let child_collection = gobby_code::test_env::code_symbol_collection(&fixture.overlay);
         assert!(
             requests.iter().any(|request| request.starts_with("PUT ")
                 && request.contains(&child_collection)

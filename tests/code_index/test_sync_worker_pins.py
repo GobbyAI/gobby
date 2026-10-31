@@ -46,6 +46,7 @@ def _file(
     [
         ("moved", True, True),
         ("source-still-current", False, False),
+        ("source-selector-missing", True, True),
         ("owned-shadow", False, False),
         ("tombstone-shadow", False, False),
         ("graph-projected", False, True),
@@ -72,8 +73,14 @@ async def test_worker_schedules_pinned_recovery(
             IndexedProject(id=project_id, root_path=str(root)), mode=IndexWriteMode.OVERLAY
         )
     source_file = _file(code_storage, source_id, source_root, "pinned-version")
-    if case != "source-still-current":
+    if case not in {"source-still-current", "source-selector-missing"}:
         _file(code_storage, source_id, source_root, "new-source-version")
+    if case == "source-selector-missing":
+        with code_storage.db.transaction() as conn:
+            conn.execute(
+                "DELETE FROM code_indexed_file_states WHERE project_id = %s AND file_path = %s",
+                (source_id, PIN_PATH),
+            )
     if case in {"owned-shadow", "tombstone-shadow"}:
         _file(
             code_storage,

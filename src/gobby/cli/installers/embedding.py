@@ -16,7 +16,9 @@ import subprocess
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.local_model import LocalModelError
+from gobby.ai.embedding_catalog import DEFAULT_CATALOG_ID, get_spec, lmstudio_ref_for_key
 from gobby.ai.embeddings import EmbeddingGenerationError, EmbeddingService
+from gobby.config.persistence import DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL
 from gobby.utils import spawn
 
 if TYPE_CHECKING:
@@ -24,21 +26,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_EMBEDDING_DIM = 768
-_LMSTUDIO_MODEL_ID = "text-embedding-nomic-embed-text-v1.5@f16"
-_GENERIC_OPENAI_COMPATIBLE_MODEL = "nomic-embed-text"
+_LMSTUDIO_MODEL_ID = lmstudio_ref_for_key(DEFAULT_CATALOG_ID)
 
 # Provider configuration table
 _PROVIDER_CONFIG: dict[str, dict[str, Any]] = {
     "lmstudio": {
         "model": _LMSTUDIO_MODEL_ID,
         "api_base": "http://localhost:1234/v1",
-        "dim": _DEFAULT_EMBEDDING_DIM,
+        "dim": DEFAULT_EMBEDDING_DIM,
     },
     "ollama": {
-        "model": "nomic-embed-text",
+        "model": DEFAULT_EMBEDDING_MODEL,
         "api_base": "http://localhost:11434/v1",
-        "dim": _DEFAULT_EMBEDDING_DIM,
+        "dim": DEFAULT_EMBEDDING_DIM,
     },
     "openai": {
         "model": "text-embedding-3-small",
@@ -46,9 +46,9 @@ _PROVIDER_CONFIG: dict[str, dict[str, Any]] = {
         "dim": 1536,
     },
     "openai-compatible": {
-        "model": _GENERIC_OPENAI_COMPATIBLE_MODEL,
+        "model": DEFAULT_EMBEDDING_MODEL,
         "api_base": None,
-        "dim": _DEFAULT_EMBEDDING_DIM,
+        "dim": DEFAULT_EMBEDDING_DIM,
     },
     "vllm": {
         # Operator-started server: the served id is resolved live from
@@ -65,9 +65,6 @@ _PROVIDER_CONFIG: dict[str, dict[str, Any]] = {
     },
 }
 
-# LM Studio model key to download (nomic-embed-text-v1.5 GGUF)
-_LMSTUDIO_MODEL_KEY = "nomic-embed-text-v1.5"
-
 
 def _resolve_vllm_served_model_sync(api_base: str, api_key: str | None) -> str:
     """Resolve the single served id from the vLLM server, or raise LocalModelError."""
@@ -82,10 +79,6 @@ def _resolve_vllm_served_model_sync(api_base: str, api_key: str | None) -> str:
     except RuntimeError:
         return asyncio.run(_resolve())
     raise LocalModelError("Cannot resolve the vLLM served model from inside an event loop")
-
-
-# Ollama model name
-_OLLAMA_MODEL_NAME = "nomic-embed-text"
 
 
 def install_embedding(
@@ -326,7 +319,7 @@ def _setup_lmstudio(
             ``text-embedding-nomic-embed-text-v1.5@f16``).
         gguf_repo: HuggingFace GGUF repo for ``lms get`` (e.g.
             ``nomic-ai/nomic-embed-text-v1.5-GGUF``). When None, uses
-            the legacy hardcoded model key.
+            the default catalog entry.
         gguf_filename: GGUF filename within the repo (e.g.
             ``nomic-embed-text-v1.5.f16.gguf``). Used with ``lms get --gguf``.
         search_keyword: Exact requested model identifier or filename to match
@@ -340,6 +333,13 @@ def _setup_lmstudio(
     4. Check `lms ls` for the model — if on disk, `lms load` it
     5. If not on disk, `lms get` then `lms load`
     """
+    if gguf_repo is None or gguf_filename is None:
+        default_spec = get_spec(DEFAULT_CATALOG_ID)
+        if default_spec is None:
+            raise RuntimeError(f"Default embedding catalog key {DEFAULT_CATALOG_ID!r} is missing")
+        gguf_repo = default_spec.gguf_repo
+        gguf_filename = default_spec.gguf_filename
+        search_keyword = search_keyword or default_spec.gguf_filename
     if not shutil.which("lms"):
         return {
             "success": False,
@@ -394,10 +394,7 @@ def _setup_lmstudio(
     # 5. Download if needed
     if not on_disk:
         try:
-            if gguf_repo is not None and gguf_filename is not None:
-                get_cmd = ["lms", "get", gguf_repo, "--gguf", gguf_filename, "-y"]
-            else:
-                get_cmd = ["lms", "get", _LMSTUDIO_MODEL_KEY, "--gguf", "-y"]
+            get_cmd = ["lms", "get", gguf_repo, "--gguf", gguf_filename, "-y"]
             get_result = spawn.run(
                 get_cmd,
                 capture_output=True,
@@ -435,7 +432,7 @@ def _setup_lmstudio(
     return {"success": True, "action": "loaded"}
 
 
-def _setup_ollama(*, ollama_tag: str = _OLLAMA_MODEL_NAME) -> dict[str, Any]:
+def _setup_ollama(*, ollama_tag: str = DEFAULT_EMBEDDING_MODEL) -> dict[str, Any]:
     """Ensure Ollama has the embedding model. Uses ollama CLI.
 
     Args:

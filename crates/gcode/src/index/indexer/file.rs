@@ -9,7 +9,7 @@ use crate::index::semantic::{self, SemanticCallResolver};
 use crate::index::{chunker, hasher, languages, parser, walker};
 use crate::models::{CallTargetKind, ContentChunk, IndexedFile};
 use crate::node::ParsedFacts;
-use crate::vector::code_symbols::vector_text_for_symbol;
+use crate::vector::code_symbols::vector_input_fingerprint;
 
 use super::IndexTimings;
 use super::selector_blob;
@@ -315,13 +315,14 @@ fn reset_changed_projections(
     Ok(())
 }
 
-/// Vector text per symbol id. Upserts keep stored summaries, so the vector
-/// input comes from the stored definitions rather than the parse.
+/// Vector input fingerprint per symbol id. Upserts keep stored summaries, so
+/// the fingerprint comes from the stored definitions rather than the parse.
+/// It reads no source: the stored content hash covers each body.
 fn vector_inputs(facts: &GraphFileFacts) -> BTreeMap<&str, String> {
     facts
         .definitions
         .iter()
-        .map(|symbol| (symbol.id.as_str(), vector_text_for_symbol(symbol)))
+        .map(|symbol| (symbol.id.as_str(), vector_input_fingerprint(symbol)))
         .collect()
 }
 

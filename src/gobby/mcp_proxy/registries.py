@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.persistence import DEFAULT_EMBEDDING_MODEL
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 
 if TYPE_CHECKING:
@@ -509,7 +510,7 @@ def setup_internal_registries(
             return SkillSearch(
                 config=active_config.get_search_config() if active_config is not None else None,
                 db=db,
-                embedding_model=embeddings.model if embeddings else "nomic-embed-text",
+                embedding_model=embeddings.model if embeddings else DEFAULT_EMBEDDING_MODEL,
                 embedding_api_base=embeddings.api_base if embeddings else None,
                 embedding_api_key=embeddings.api_key if embeddings else None,
                 embedding_dim=embeddings.dim if embeddings else None,

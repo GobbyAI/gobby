@@ -28,39 +28,54 @@ fn report_node_name_expr(alias: &str) -> String {
 }
 
 pub(super) fn report_node_counts_query(project_id: &str) -> (String, HashMap<String, String>) {
+    let endpoints = crate::graph::admitted_code_nodes("[startNode(r), endNode(r)]");
     (
         format!(
             "MATCH (n {{project: $project}}) \
-             WHERE n:CodeFile OR n:CodeSymbol OR n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol \
-             RETURN {} AS name, count(n) AS count",
-            report_node_type_case("n")
+             WHERE (n:CodeFile AND n.path IN $admitted_paths) \
+               OR (n:CodeSymbol AND n.file_path + '|' + n.file_content_hash IN $admitted_versions) \
+             RETURN {case} AS name, count(n) AS count \
+             UNION ALL \
+             MATCH (n {{project: $project}})-[r]-(other {{project: $project}}) \
+             WHERE (n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol) \
+               AND coalesce(r.file, startNode(r).path) + '|' + r.content_hash IN $admitted_versions \
+               AND {endpoints} \
+             WITH DISTINCT n \
+             RETURN {case} AS name, count(n) AS count",
+            case = report_node_type_case("n")
         ),
         typed_query::string_params(&[("project", project_id)]),
     )
 }
 
 pub(super) fn report_code_edge_counts_query(project_id: &str) -> (String, HashMap<String, String>) {
+    let endpoints = crate::graph::admitted_code_nodes("[startNode(r), endNode(r)]");
     (
         format!(
             "MATCH (source {{project: $project}})-[r]->(target {{project: $project}}) \
              WHERE type(r) IN {CODE_EDGE_REL_TYPES} \
+               AND coalesce(r.file, startNode(r).path) + '|' + r.content_hash IN $admitted_versions \
+               AND {endpoints} \
              RETURN type(r) AS name, count(r) AS count"
         ),
         typed_query::string_params(&[("project", project_id)]),
     )
 }
 
+/// `limit` of `None` returns every ranked node of the class.
 pub(super) fn report_hotspots_query(
     project_id: &str,
     node_class: &str,
-    top_n: usize,
+    limit: Option<usize>,
 ) -> (String, HashMap<String, String>) {
     let label = match node_class {
         "file" => "CodeFile",
         "module" => "CodeModule",
         _ => "CodeSymbol",
     };
-    let limit = top_n.max(1);
+    let limit_clause = limit.map_or_else(String::new, |limit| format!(" LIMIT {}", limit.max(1)));
+    let outgoing_endpoints = crate::graph::admitted_code_nodes("[startNode(out), endNode(out)]");
+    let incoming_endpoints = crate::graph::admitted_code_nodes("[startNode(inc), endNode(inc)]");
     (
         // Compute in/out degree with two edge-driven aggregations combined by
         // node, instead of seeding every node and double-expanding it. The
@@ -72,18 +87,21 @@ pub(super) fn report_hotspots_query(
             "CALL {{ \
              MATCH (n:{label} {{project: $project}})-[out:{CODE_EDGE_REL_PATTERN}]->(out_target {{project: $project}}) \
              WHERE (out_target:CodeFile OR out_target:CodeSymbol OR out_target:CodeModule OR out_target:UnresolvedCallee OR out_target:ExternalSymbol) \
+             AND coalesce(out.file, startNode(out).path) + '|' + out.content_hash IN $admitted_versions \
+             AND {outgoing_endpoints} \
              RETURN n AS node, count(out) AS outgoing, 0 AS incoming \
              UNION ALL \
              MATCH (in_source {{project: $project}})-[inc:{CODE_EDGE_REL_PATTERN}]->(n:{label} {{project: $project}}) \
              WHERE (in_source:CodeFile OR in_source:CodeSymbol OR in_source:CodeModule OR in_source:UnresolvedCallee OR in_source:ExternalSymbol) \
+             AND coalesce(inc.file, startNode(inc).path) + '|' + inc.content_hash IN $admitted_versions \
+             AND {incoming_endpoints} \
              RETURN n AS node, 0 AS outgoing, count(inc) AS incoming \
              }} \
              WITH node, sum(outgoing) AS outgoing, sum(incoming) AS incoming \
              WITH node, outgoing, incoming, outgoing + incoming AS degree \
              WHERE degree > 0 \
              RETURN {} AS id, {} AS name, {} AS node_type, degree, incoming, outgoing, coalesce(node.file_path, node.path) AS file_path \
-             ORDER BY degree DESC, name ASC, id ASC \
-             LIMIT {limit}",
+             ORDER BY degree DESC, name ASC, id ASC{limit_clause}",
             report_node_id_expr("node"),
             report_node_name_expr("node"),
             report_node_type_case("node")
@@ -97,9 +115,12 @@ pub(super) fn report_incoming_call_hotspots_query(
     top_n: usize,
 ) -> (String, HashMap<String, String>) {
     let limit = top_n.max(1);
+    let endpoints = crate::graph::admitted_code_nodes("[startNode(r), endNode(r)]");
     (
         format!(
             "MATCH (:CodeSymbol {{project: $project}})-[r:CALLS]->(n:CodeSymbol {{project: $project}}) \
+             WHERE r.file + '|' + r.content_hash IN $admitted_versions \
+             AND {endpoints} \
              WITH n, count(r) AS incoming \
              WHERE incoming > 0 \
              RETURN n.id AS id, coalesce(n.name, n.id) AS name, {} AS node_type, incoming AS degree, incoming, 0 AS outgoing, n.file_path AS file_path \
@@ -122,9 +143,12 @@ pub(super) fn report_target_frequencies_query(
         "UnresolvedCallee"
     };
     let limit = top_n.max(1);
+    let endpoints = crate::graph::admitted_code_nodes("[startNode(r), endNode(r)]");
     (
         format!(
             "MATCH (:CodeSymbol {{project: $project}})-[r:CALLS]->(target:{target_label} {{project: $project}}) \
+             WHERE r.file + '|' + r.content_hash IN $admitted_versions \
+             AND {endpoints} \
              RETURN target.id AS id, coalesce(target.name, target.id) AS name, count(r) AS count \
              ORDER BY count DESC, name ASC, id ASC \
              LIMIT {limit}"
@@ -136,6 +160,7 @@ pub(super) fn report_target_frequencies_query(
 pub(super) fn report_bridge_edges_query(project_id: &str) -> (String, HashMap<String, String>) {
     (
         "MATCH (source)-[r:RELATES_TO_CODE]->(target:CodeSymbol {project: $project}) \
+         WHERE target.file_path + '|' + target.file_content_hash IN $admitted_versions \
          RETURN coalesce(source.id, source.uuid, source.name) AS source_id, \
                 target.id AS target_symbol_id, \
                 'RELATES_TO_CODE' AS relation, \
@@ -156,11 +181,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hotspot_ranking_excludes_replaced_and_tombstoned_targets_before_counting() {
+        // Even a high-degree historical target must not consume the top-1 slot.
+        for (surface, query) in [
+            (
+                "symbol degrees",
+                report_hotspots_query("child", "symbol", Some(1)).0,
+            ),
+            (
+                "incoming calls",
+                report_incoming_call_hotspots_query("child", 1).0,
+            ),
+        ] {
+            for branch in query.split("UNION ALL") {
+                let aggregation = branch.find("count(").expect("degree aggregation");
+                let filter = &branch[..aggregation];
+                assert!(
+                    filter.contains(
+                        "node.file_path + '|' + node.file_content_hash IN $admitted_versions"
+                    ),
+                    "{surface}: endpoint version admission must precede ranking"
+                );
+                assert!(
+                    filter.contains("startNode(") && filter.contains("endNode("),
+                    "{surface}: both incident endpoints must be admitted"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn report_queries_filter_admitted_versions_before_aggregation() {
         let queries = [
             ("nodes", report_node_counts_query("child")),
             ("edges", report_code_edge_counts_query("child")),
-            ("hotspots", report_hotspots_query("child", "symbol", 1)),
+            (
+                "hotspots",
+                report_hotspots_query("child", "symbol", Some(1)),
+            ),
             (
                 "incoming calls",
                 report_incoming_call_hotspots_query("child", 1),
@@ -196,8 +254,33 @@ mod tests {
     }
 
     #[test]
+    fn report_node_counts_admit_module_and_external_nodes_only_through_admitted_edges() {
+        let (query, _) = report_node_counts_query("child");
+        for branch in query.split("UNION ALL") {
+            let head = branch.split("RETURN").next().unwrap_or(branch);
+            let retained_only_label = ["CodeModule", "UnresolvedCallee", "ExternalSymbol"]
+                .iter()
+                .any(|label| head.contains(label));
+            if !retained_only_label {
+                continue;
+            }
+            let edge = head
+                .find("-[r")
+                .unwrap_or_else(|| panic!("module and external nodes need an edge: {branch}"));
+            let filter = head.find("$admitted_versions").unwrap_or_else(|| {
+                panic!("module and external nodes need an admitted edge: {branch}")
+            });
+            let aggregate = branch.find("count(").expect("aggregate");
+            assert!(
+                edge < filter && filter < aggregate,
+                "admitted edge must precede aggregation: {branch}"
+            );
+        }
+    }
+
+    #[test]
     fn hotspots_query_uses_label_scoped_seed_and_typed_edges() {
-        let (query, params) = report_hotspots_query("proj-1", "symbol", 6);
+        let (query, params) = report_hotspots_query("proj-1", "symbol", Some(6));
 
         // Seeds from the :CodeSymbol(project) index instead of scanning every
         // project node and filtering by label afterwards, which forced a
@@ -277,10 +360,11 @@ mod tests {
 
     #[test]
     fn hotspots_query_scopes_seed_label_by_node_class() {
-        let (file_query, _) = report_hotspots_query("proj-1", "file", 3);
+        let (file_query, _) = report_hotspots_query("proj-1", "file", Some(3));
         assert!(file_query.contains("MATCH (n:CodeFile {project: $project})"));
 
-        let (module_query, _) = report_hotspots_query("proj-1", "module", 3);
+        let (module_query, _) = report_hotspots_query("proj-1", "module", None);
         assert!(module_query.contains("MATCH (n:CodeModule {project: $project})"));
+        assert!(!module_query.contains("LIMIT"));
     }
 }

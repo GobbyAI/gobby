@@ -30,6 +30,7 @@ from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.utils.logging import ThrottledLogger
 
 if TYPE_CHECKING:
+    from gobby.code_index._storage.files import PinnedFileSync
     from gobby.code_index.context import CodeIndexContext
     from gobby.code_index.gcode_gateway import GcodeGateway
     from gobby.code_index.models import IndexedFile
@@ -405,6 +406,25 @@ async def _sync_pass(
             vectors=vectors_wanted,
             graph=config.graph_enabled,
         )
+        pins: list[PinnedFileSync] = []
+        if gcode_gateway is not None:
+            pins = await _run_db(
+                run_db,
+                storage.get_pending_pinned_files,
+                project.id,
+                limit=batch_size,
+                vectors=vectors_wanted,
+                graph=config.graph_enabled,
+            )
+            for pin in pins:
+                await _sync_pinned_file(
+                    gcode_gateway=gcode_gateway,
+                    config=config,
+                    project_root=root,
+                    pin=pin,
+                    vector_breaker=vector_breaker,
+                    gateway_breaker=gateway_breaker,
+                )
         if not files:
             continue
 
@@ -687,6 +707,57 @@ async def _sync_file(
                 )
 
     return did_work
+
+
+async def _sync_pinned_file(
+    gcode_gateway: GcodeGateway,
+    config: CodeIndexConfig,
+    project_root: Path,
+    pin: PinnedFileSync,
+    vector_breaker: SyncCircuitBreaker | None,
+    gateway_breaker: SyncCircuitBreaker | None,
+) -> None:
+    """Project a moved overlay pin in its own namespace; gcode owns the pin stamps."""
+    if pin.vectors:
+        armed = _arm_breakers(gateway_breaker, vector_breaker)
+        if armed is not None:
+            try:
+                await _sync_vector_file_with_retry(
+                    gcode_gateway=gcode_gateway,
+                    project_root=project_root,
+                    file=pin.file,
+                    timeout=config.sync_worker_projection_timeout_seconds,
+                    breakers=(gateway_breaker, vector_breaker),
+                )
+            except Exception as e:
+                _record_breaker_outcomes(armed, failed=(vector_breaker,))
+                logger.exception(
+                    "Sync worker: pinned vector sync failed for %s: %s",
+                    pin.file.file_path,
+                    e,
+                )
+            else:
+                _record_breaker_outcomes(armed)
+    if pin.graph:
+        armed = _arm_breakers(gateway_breaker)
+        if armed is not None:
+            try:
+                await _sync_graph_file_with_retry(
+                    gcode_gateway=gcode_gateway,
+                    project_root=project_root,
+                    file=pin.file,
+                    timeout=config.sync_worker_projection_timeout_seconds,
+                    breakers=(gateway_breaker,),
+                )
+            except Exception as e:
+                _record_breaker_outcomes(armed, failed=(gateway_breaker,))
+                logger.exception(
+                    "Sync worker: pinned graph sync failed for %s: %s",
+                    pin.file.file_path,
+                    e,
+                )
+            else:
+                _record_breaker_outcomes(armed)
 
 
 def _require_projection_success(result: dict[str, Any], store: str) -> None:

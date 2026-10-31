@@ -312,17 +312,14 @@ fn graph_write_skips_unparsed_import_sentinel_modules() {
 
 #[test]
 fn imports_query_returns_stable_id() {
-    let (query, params) = get_imports_query("project-1", "src/lib.rs", "hash-local");
+    let (query, _params) = get_imports_query("project-1", "src/lib.rs");
 
     assert!(query.contains("m.name AS id"), "{query}");
     assert!(query.contains("m.name AS module_name"), "{query}");
+    assert!(query.contains("[r:IMPORTS]"), "{query}");
     assert!(
-        query.contains("[:IMPORTS {content_hash: $content_hash}]"),
+        query.contains("($path + '|' + r.content_hash) IN $admitted_versions"),
         "{query}"
-    );
-    assert_eq!(
-        params.get("content_hash").map(String::as_str),
-        Some("'hash-local'")
     );
 }
 
@@ -359,8 +356,12 @@ fn symbol_path_queries_stay_project_scoped_and_symbol_only() {
 
     assert!(
         edges_query.contains(
-            "MATCH (source:CodeSymbol {project: $project})-[:CALLS]->(target:CodeSymbol {project: $project})"
+            "MATCH (source:CodeSymbol {project: $project})-[r:CALLS]->(target:CodeSymbol {project: $project})"
         ),
+        "{edges_query}"
+    );
+    assert!(
+        edges_query.contains("(r.file + '|' + r.content_hash) IN $admitted_versions"),
         "{edges_query}"
     );
     assert!(
@@ -377,7 +378,8 @@ fn symbol_path_queries_stay_project_scoped_and_symbol_only() {
     );
 
     let path_ids = vec!["source-1".to_string(), "target-1".to_string()];
-    let (steps_query, step_params) = symbol_path_steps_query("project-1", &path_ids);
+    let admitted = crate::visibility::graph_versions::AdmittedGraphVersions::default();
+    let (steps_query, step_params) = symbol_path_steps_query("project-1", &path_ids, &admitted);
     assert!(
         steps_query.contains("MATCH (symbol:CodeSymbol {project: $project})"),
         "{steps_query}"

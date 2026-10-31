@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -9,6 +10,15 @@ from gobby.code_index._storage.constants import SYNC_FAILURE_COOLOFF_SECONDS
 from gobby.code_index.models import IndexedFile, IndexWriteMode
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.machine_id import require_machine_id
+
+
+@dataclass(frozen=True)
+class PinnedFileSync:
+    """A moved overlay pin with graph and/or vector projection due in the child namespace."""
+
+    file: IndexedFile
+    graph: bool
+    vectors: bool
 
 
 class CodeIndexFileStorageMixin:
@@ -207,6 +217,66 @@ class CodeIndexFileStorageMixin:
             tuple(params),
         )
         return [IndexedFile.from_row(r) for r in rows]
+
+    def get_pending_pinned_files(
+        self,
+        project_id: str,
+        limit: int = 50,
+        *,
+        vectors: bool = True,
+        graph: bool = True,
+        failure_cooloff_seconds: int = SYNC_FAILURE_COOLOFF_SECONDS,
+    ) -> list[PinnedFileSync]:
+        """Get overlay pins whose graph or vector projection is due.
+
+        A pin is due when its source selector no longer names the pinned hash (moved or
+        missing) and no overlay-owned file state shadows the path. Source rows are never
+        written here.
+        """
+        if not (vectors or graph):
+            return []
+        retry_cutoff = (datetime.now(UTC) - timedelta(seconds=failure_cooloff_seconds)).isoformat()
+        rows = self.db.fetchall(
+            """SELECT * FROM (
+                   SELECT p.file_path, p.content_hash,
+                          p.vector_projected IS FALSE
+                            AND (p.vector_attempted_at IS NULL OR p.vector_attempted_at < %s)
+                            AS vector_due,
+                          p.graph_projected IS FALSE
+                            AND (p.graph_attempted_at IS NULL OR p.graph_attempted_at < %s)
+                            AS graph_due
+                   FROM code_overlay_pins p
+                   WHERE p.machine_id = %s AND p.overlay_project_id = %s
+                     AND NOT EXISTS (
+                         SELECT 1 FROM code_indexed_file_states src
+                         WHERE src.machine_id = p.machine_id
+                           AND src.project_id = p.source_project_id
+                           AND src.file_path = p.file_path
+                           AND src.content_hash = p.content_hash)
+                     AND NOT EXISTS (
+                         SELECT 1 FROM code_indexed_file_states own
+                         WHERE own.machine_id = p.machine_id
+                           AND own.project_id = p.overlay_project_id
+                           AND own.file_path = p.file_path)
+               ) pins
+               WHERE (%s AND vector_due) OR (%s AND graph_due)
+               ORDER BY file_path LIMIT %s""",
+            (retry_cutoff, retry_cutoff, require_machine_id(), project_id, vectors, graph, limit),
+        )
+        return [
+            PinnedFileSync(
+                file=IndexedFile(
+                    id=IndexedFile.make_id(project_id, row["file_path"], row["content_hash"]),
+                    project_id=project_id,
+                    file_path=row["file_path"],
+                    language="",
+                    content_hash=row["content_hash"],
+                ),
+                graph=graph and row["graph_due"],
+                vectors=vectors and row["vector_due"],
+            )
+            for row in rows
+        ]
 
     def mark_vectors_synced(self, file_id: str, content_hash: str) -> bool:
         """Mark a file's vectors as synced if the content hash still matches."""

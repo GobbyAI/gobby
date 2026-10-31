@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from gobby.ai.embeddings import EmbeddingService
+from gobby.config.persistence import DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL
 from gobby.projects.fenced_vector_store import project_write_context
 from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 from gobby.search.similarity import cosine_similarity
@@ -25,10 +26,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
-
-# Default embedding model
-DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"
-DEFAULT_EMBEDDING_DIM = 768
 
 _cosine_similarity = cosine_similarity
 

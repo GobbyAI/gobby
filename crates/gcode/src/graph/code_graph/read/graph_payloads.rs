@@ -1,5 +1,10 @@
+use std::cmp::Reverse;
+
+use gobby_core::falkor::Row;
+
 use crate::config::Context;
 use crate::graph::typed_query;
+use crate::visibility::graph_versions::{admitted_namespaces, with_admitted_versions};
 
 use super::super::connection::with_optional_core_graph;
 use super::super::payload::{
@@ -16,80 +21,112 @@ use super::payload_queries::{
 use super::relationship_queries::blast_radius_query;
 use super::support::{clamp_limit, dedupe_limited_blast_rows};
 
+/// Overview order for files: most importers, then most symbols, then path.
+fn overview_file_order(row: &Row) -> (Reverse<usize>, Reverse<usize>, Option<String>) {
+    (
+        Reverse(row_usize(row, &["import_count"]).unwrap_or(0)),
+        Reverse(row_usize(row, &["symbol_count"]).unwrap_or(0)),
+        row_string_owned(row, &["id"]),
+    )
+}
+
 pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<GraphPayload> {
     with_optional_core_graph(ctx, GraphPayload::default, |client| {
+        let namespaces = admitted_namespaces(ctx)?;
         let limit = clamp_limit(limit);
         let link_limit = clamp_limit(limit.saturating_mul(4));
         let max_nodes = limit.saturating_mul(8);
 
-        let (query, params) = project_overview_files_query(&ctx.project_id, limit);
-        let file_rows = client.query(&query, Some(params))?;
+        // Edges never cross namespaces, so each namespace's top files are a superset
+        // of its contribution to the global top files.
+        let mut files = Vec::new();
+        for (owner, namespace) in namespaces.iter().enumerate() {
+            let (query, params) = with_admitted_versions(
+                project_overview_files_query(&namespace.project_id, limit),
+                &namespace.versions,
+            );
+            for row in client.query(&query, Some(params))? {
+                files.push((owner, row));
+            }
+        }
+        files.sort_by(|(_, left), (_, right)| {
+            overview_file_order(left).cmp(&overview_file_order(right))
+        });
+        files.truncate(limit);
+
         let mut payload = GraphPayload::default();
-        for row in &file_rows {
+        for (_, row) in &files {
             add_node_from_row(&mut payload, row, "file");
         }
 
-        let file_paths = payload
-            .nodes()
-            .iter()
-            .filter(|node| node.node_type == "file")
-            .map(|node| node.id.clone())
-            .collect::<Vec<_>>();
-        if file_paths.is_empty() {
-            return Ok(payload);
-        }
+        for (owner, namespace) in namespaces.iter().enumerate() {
+            let file_paths = files
+                .iter()
+                .filter(|(file_owner, _)| *file_owner == owner)
+                .filter_map(|(_, row)| row_string_owned(row, &["id"]))
+                .collect::<Vec<_>>();
+            if file_paths.is_empty() {
+                continue;
+            }
 
-        let (query, params) =
-            project_overview_imports_query(&ctx.project_id, &file_paths, link_limit);
-        for row in client.query(&query, Some(params))? {
-            add_link_from_row(&mut payload, &row);
-            if let Some(module_id) = row_string_owned(&row, &["target"]) {
-                payload.push_node(GraphNode::new(module_id.clone(), module_id, "module"));
+            let (query, params) = with_admitted_versions(
+                project_overview_imports_query(&namespace.project_id, &file_paths, link_limit),
+                &namespace.versions,
+            );
+            for row in client.query(&query, Some(params))? {
+                add_link_from_row(&mut payload, &row);
+                if let Some(module_id) = row_string_owned(&row, &["target"]) {
+                    payload.push_node(GraphNode::new(module_id.clone(), module_id, "module"));
+                }
+                if payload.node_count() >= max_nodes {
+                    break;
+                }
             }
-            if payload.node_count() >= max_nodes {
-                break;
-            }
-        }
 
-        let (query, params) =
-            project_overview_defines_query(&ctx.project_id, &file_paths, link_limit);
-        for row in client.query(&query, Some(params))? {
-            add_link_from_row(&mut payload, &row);
-            if let Some(symbol_id) = row_string_owned(&row, &["target"]) {
-                let mut node = GraphNode::new(
-                    symbol_id.clone(),
-                    row_string_owned(&row, &["symbol_name"]).unwrap_or(symbol_id),
-                    row_string_owned(&row, &["symbol_kind"])
-                        .unwrap_or_else(|| "function".to_string()),
-                );
-                node.kind = row_string_owned(&row, &["symbol_kind"]);
-                node.file_path = row_string_owned(&row, &["symbol_file_path", "source"]);
-                node.line_start = row_usize(&row, &["line_start"]);
-                payload.push_node(node);
+            let (query, params) = with_admitted_versions(
+                project_overview_defines_query(&namespace.project_id, &file_paths, link_limit),
+                &namespace.versions,
+            );
+            for row in client.query(&query, Some(params))? {
+                add_link_from_row(&mut payload, &row);
+                if let Some(symbol_id) = row_string_owned(&row, &["target"]) {
+                    let mut node = GraphNode::new(
+                        symbol_id.clone(),
+                        row_string_owned(&row, &["symbol_name"]).unwrap_or(symbol_id),
+                        row_string_owned(&row, &["symbol_kind"])
+                            .unwrap_or_else(|| "function".to_string()),
+                    );
+                    node.kind = row_string_owned(&row, &["symbol_kind"]);
+                    node.file_path = row_string_owned(&row, &["symbol_file_path", "source"]);
+                    node.line_start = row_usize(&row, &["line_start"]);
+                    payload.push_node(node);
+                }
+                if payload.node_count() >= max_nodes {
+                    break;
+                }
             }
-            if payload.node_count() >= max_nodes {
-                break;
-            }
-        }
 
-        let (query, params) =
-            project_overview_calls_query(&ctx.project_id, &file_paths, link_limit);
-        for row in client.query(&query, Some(params))? {
-            add_link_from_row(&mut payload, &row);
-            if let Some(target_id) = row_string_owned(&row, &["target"]) {
-                let mut node = GraphNode::new(
-                    target_id.clone(),
-                    row_string_owned(&row, &["target_name"]).unwrap_or(target_id),
-                    row_string_owned(&row, &["target_type"])
-                        .unwrap_or_else(|| "unresolved".to_string()),
-                );
-                node.kind = row_string_owned(&row, &["target_kind"]);
-                node.file_path = row_string_owned(&row, &["target_file_path"]);
-                node.line_start = row_usize(&row, &["target_line_start"]);
-                payload.push_node(node);
-            }
-            if payload.node_count() >= max_nodes {
-                break;
+            let (query, params) = with_admitted_versions(
+                project_overview_calls_query(&namespace.project_id, &file_paths, link_limit),
+                &namespace.versions,
+            );
+            for row in client.query(&query, Some(params))? {
+                add_link_from_row(&mut payload, &row);
+                if let Some(target_id) = row_string_owned(&row, &["target"]) {
+                    let mut node = GraphNode::new(
+                        target_id.clone(),
+                        row_string_owned(&row, &["target_name"]).unwrap_or(target_id),
+                        row_string_owned(&row, &["target_type"])
+                            .unwrap_or_else(|| "unresolved".to_string()),
+                    );
+                    node.kind = row_string_owned(&row, &["target_kind"]);
+                    node.file_path = row_string_owned(&row, &["target_file_path"]);
+                    node.line_start = row_usize(&row, &["target_line_start"]);
+                    payload.push_node(node);
+                }
+                if payload.node_count() >= max_nodes {
+                    break;
+                }
             }
         }
 
@@ -104,21 +141,30 @@ pub fn file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<GraphPayload
         file_node.file_path = Some(file_path.to_string());
         payload.push_node(file_node);
 
-        let (query, params) = file_symbols_query(&ctx.project_id, file_path);
-        for row in client.query(&query, Some(params))? {
-            add_node_from_row(&mut payload, &row, "function");
-            if let Some(symbol_id) = row_string_owned(&row, &["id"]) {
-                let mut link = GraphLink::new(file_path, symbol_id, "DEFINES");
-                link.metadata = row_to_projection_metadata(&row);
-                payload.links.push(link);
+        // A path is admitted in one namespace only, so the other namespaces return nothing.
+        for namespace in admitted_namespaces(ctx)? {
+            let (query, params) = with_admitted_versions(
+                file_symbols_query(&namespace.project_id, file_path),
+                &namespace.versions,
+            );
+            for row in client.query(&query, Some(params))? {
+                add_node_from_row(&mut payload, &row, "function");
+                if let Some(symbol_id) = row_string_owned(&row, &["id"]) {
+                    let mut link = GraphLink::new(file_path, symbol_id, "DEFINES");
+                    link.metadata = row_to_projection_metadata(&row);
+                    payload.links.push(link);
+                }
             }
-        }
 
-        let (query, params) = file_calls_query(&ctx.project_id, file_path);
-        for row in client.query(&query, Some(params))? {
-            add_prefixed_node_from_row(&mut payload, &row, "source", "function");
-            add_prefixed_node_from_row(&mut payload, &row, "target", "unresolved");
-            add_link_from_row(&mut payload, &row);
+            let (query, params) = with_admitted_versions(
+                file_calls_query(&namespace.project_id, file_path),
+                &namespace.versions,
+            );
+            for row in client.query(&query, Some(params))? {
+                add_prefixed_node_from_row(&mut payload, &row, "source", "function");
+                add_prefixed_node_from_row(&mut payload, &row, "target", "unresolved");
+                add_link_from_row(&mut payload, &row);
+            }
         }
 
         Ok(payload)
@@ -131,17 +177,32 @@ pub fn symbol_neighbors(
     limit: usize,
 ) -> anyhow::Result<GraphPayload> {
     with_optional_core_graph(ctx, GraphPayload::default, |client| {
-        let mut payload = GraphPayload::with_center(symbol_id.to_string());
-        let (query, params) = blast_radius_center_query(&ctx.project_id, symbol_id);
-        let center_rows = client.query(&query, Some(params))?;
-        let center_node = center_rows
-            .first()
-            .and_then(|row| GraphNode::from_row(row, "function"))
-            .unwrap_or_else(|| GraphNode::new(symbol_id, symbol_id, "function"));
-        payload.push_node(center_node);
+        // A symbol id names one namespace's node, so only its owner returns rows.
+        let mut center = None;
+        let mut rows: Vec<Row> = Vec::new();
+        for namespace in admitted_namespaces(ctx)? {
+            let (query, params) = with_admitted_versions(
+                blast_radius_center_query(&namespace.project_id, symbol_id),
+                &namespace.versions,
+            );
+            let center_rows = client.query(&query, Some(params))?;
+            if center.is_none() {
+                center = center_rows
+                    .first()
+                    .and_then(|row| GraphNode::from_row(row, "function"));
+            }
 
-        let (query, params) = symbol_neighbors_query(&ctx.project_id, symbol_id, limit);
-        let rows = client.query(&query, Some(params))?;
+            let (query, params) = with_admitted_versions(
+                symbol_neighbors_query(&namespace.project_id, symbol_id, limit),
+                &namespace.versions,
+            );
+            rows.extend(client.query(&query, Some(params))?);
+        }
+
+        let mut payload = GraphPayload::with_center(symbol_id.to_string());
+        let center_node =
+            center.unwrap_or_else(|| GraphNode::new(symbol_id, symbol_id, "function"));
+        payload.push_node(center_node);
 
         for row in rows {
             add_node_from_row(&mut payload, &row, "unresolved");
@@ -170,28 +231,63 @@ pub fn blast_radius_graph(
     limit: usize,
 ) -> anyhow::Result<GraphPayload> {
     with_optional_core_graph(ctx, GraphPayload::default, |client| {
+        let namespaces = admitted_namespaces(ctx)?;
         let (center_id, mut center_node, rows) = match target {
             GraphBlastRadiusTarget::SymbolId(symbol_id) => {
-                let (query, params) = blast_radius_center_query(&ctx.project_id, &symbol_id);
-                let center_rows = client.query(&query, Some(params))?;
-                let center_node = center_rows
-                    .first()
-                    .and_then(|row| GraphNode::from_row(row, "function"))
-                    .unwrap_or_else(|| GraphNode::new(&symbol_id, &symbol_id, "function"));
+                // A symbol id names one namespace's node, so only its owner returns rows.
+                let mut center = None;
+                let mut rows = Vec::new();
+                for namespace in &namespaces {
+                    let (query, params) = with_admitted_versions(
+                        blast_radius_center_query(&namespace.project_id, &symbol_id),
+                        &namespace.versions,
+                    );
+                    let center_rows = client.query(&query, Some(params))?;
+                    if center.is_none() {
+                        center = center_rows
+                            .first()
+                            .and_then(|row| GraphNode::from_row(row, "function"));
+                    }
 
-                let query = blast_radius_query(depth, limit);
-                let params =
-                    typed_query::string_params(&[("project", &ctx.project_id), ("id", &symbol_id)]);
-                (symbol_id, center_node, client.query(&query, Some(params))?)
+                    let params = typed_query::string_params(&[
+                        ("project", &namespace.project_id),
+                        ("id", &symbol_id),
+                    ]);
+                    let (query, params) = with_admitted_versions(
+                        (blast_radius_query(depth, limit), params),
+                        &namespace.versions,
+                    );
+                    rows.extend(client.query(&query, Some(params))?);
+                }
+                let center_node =
+                    center.unwrap_or_else(|| GraphNode::new(&symbol_id, &symbol_id, "function"));
+                (symbol_id, center_node, rows)
             }
             GraphBlastRadiusTarget::FilePath(file_path) => {
+                // A path is admitted in one namespace only, so the other namespaces return nothing.
                 let mut rows = vec![];
-                let (query, params) =
-                    blast_radius_file_call_query(&ctx.project_id, &file_path, depth, limit);
-                rows.extend(client.query(&query, Some(params))?);
-                let (query, params) =
-                    blast_radius_file_import_query(&ctx.project_id, &file_path, depth, limit);
-                rows.extend(client.query(&query, Some(params))?);
+                for namespace in &namespaces {
+                    let (query, params) = with_admitted_versions(
+                        blast_radius_file_call_query(
+                            &namespace.project_id,
+                            &file_path,
+                            depth,
+                            limit,
+                        ),
+                        &namespace.versions,
+                    );
+                    rows.extend(client.query(&query, Some(params))?);
+                    let (query, params) = with_admitted_versions(
+                        blast_radius_file_import_query(
+                            &namespace.project_id,
+                            &file_path,
+                            depth,
+                            limit,
+                        ),
+                        &namespace.versions,
+                    );
+                    rows.extend(client.query(&query, Some(params))?);
+                }
                 let rows = dedupe_limited_blast_rows(rows, limit);
                 let mut center_node = GraphNode::new(&file_path, &file_path, "file");
                 center_node.file_path = Some(file_path.clone());

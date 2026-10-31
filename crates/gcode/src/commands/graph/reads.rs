@@ -4,9 +4,10 @@ use crate::commands::token_budget;
 use crate::config::Context;
 use crate::db;
 use crate::graph::code_graph;
-use crate::models::{GraphPathStep, GraphResult, PagedResponse};
+use crate::models::{GraphPathStep, GraphResult, PagedResponse, SearchWarning};
 use crate::output::{self, Format};
 use crate::search::fts::{self, ResolvedGraphSymbol};
+use crate::visibility::graph_versions::pending_projection_warnings;
 use serde::Serialize;
 
 const GRAPH_BACKEND_HINT: &str =
@@ -175,6 +176,8 @@ struct GraphPathResponse {
     path: Vec<GraphPathStep>,
     #[serde(skip_serializing_if = "Option::is_none")]
     hint: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<SearchWarning>,
 }
 
 fn path_endpoint(input: &str, resolved: Option<&ResolvedGraphSymbol>) -> GraphPathEndpoint {
@@ -237,11 +240,13 @@ fn print_symbol_path_response(
         max_depth,
         path,
         hint: hint_for(ctx),
+        warnings: pending_projection_warnings(ctx),
     };
 
     match format {
         Format::Json => output::print_json(&response),
         Format::Text => {
+            token_budget::print_warnings_text(&response.warnings);
             output::print_text(&format_symbol_path_text(
                 &response.from.display_name,
                 &response.to.display_name,
@@ -413,7 +418,9 @@ pub fn callers(
         return Ok(());
     };
 
+    let warnings = pending_projection_warnings(ctx);
     if matches!(format, Format::Text) && results.is_empty() {
+        token_budget::print_warnings_text(&warnings);
         if offset == 0 {
             output::print_text(&format!("No callers found for '{}'", symbol.display_name))?;
             print_graph_hint_text(ctx, None);
@@ -429,6 +436,7 @@ pub fn callers(
         offset,
         limit,
         hint: hint.as_deref(),
+        warnings: &warnings,
     };
     let page = token_budget::paginate(results, meta, token_budget, format, |rows| {
         format_grouped_graph_results(rows, |result| {
@@ -463,7 +471,9 @@ pub fn callees(
         return Ok(());
     };
 
+    let warnings = pending_projection_warnings(ctx);
     if matches!(format, Format::Text) && results.is_empty() {
+        token_budget::print_warnings_text(&warnings);
         if offset == 0 {
             output::print_text(&format!("No callees found for '{}'", symbol.display_name))?;
             print_graph_hint_text(ctx, None);
@@ -479,6 +489,7 @@ pub fn callees(
         offset,
         limit,
         hint: hint.as_deref(),
+        warnings: &warnings,
     };
     let page = token_budget::paginate(results, meta, token_budget, format, |rows| {
         format_grouped_graph_results(rows, |result| {
@@ -512,7 +523,9 @@ pub fn usages(
     else {
         return Ok(());
     };
+    let warnings = pending_projection_warnings(ctx);
     if matches!(format, Format::Text) && results.is_empty() {
+        token_budget::print_warnings_text(&warnings);
         if offset == 0 {
             output::print_text(&format!("No usages found for '{}'", symbol.display_name))?;
             print_graph_hint_text(ctx, None);
@@ -528,6 +541,7 @@ pub fn usages(
         offset,
         limit,
         hint: hint.as_deref(),
+        warnings: &warnings,
     };
     let page = token_budget::paginate(results, meta, token_budget, format, |rows| {
         format_grouped_graph_results(rows, |result| {
@@ -565,7 +579,9 @@ pub fn imports(
         return Ok(());
     };
     let (total, limit, results) = token_budget::window(results, offset, limit);
+    let warnings = pending_projection_warnings(ctx);
     if matches!(format, Format::Text) && results.is_empty() {
+        token_budget::print_warnings_text(&warnings);
         if offset == 0 {
             output::print_text(&format!("No imports found for '{file}'"))?;
             print_graph_hint_text(ctx, None);
@@ -581,6 +597,7 @@ pub fn imports(
         offset,
         limit,
         hint: hint.as_deref(),
+        warnings: &warnings,
     };
     let page = token_budget::paginate(results, meta, token_budget, format, |rows| {
         rows.iter()
@@ -651,7 +668,9 @@ pub fn blast_radius(
         return Ok(());
     };
     let (total, limit, results) = token_budget::window(results, offset, limit);
+    let warnings = pending_projection_warnings(ctx);
     if matches!(format, Format::Text) && results.is_empty() {
+        token_budget::print_warnings_text(&warnings);
         if offset == 0 {
             output::print_text(&format!(
                 "No blast radius found for '{}'",
@@ -670,6 +689,7 @@ pub fn blast_radius(
         offset,
         limit,
         hint: hint.as_deref(),
+        warnings: &warnings,
     };
     let page = token_budget::paginate(results, meta, token_budget, format, |rows| {
         format_grouped_graph_results(rows, format_blast_radius_result_line)

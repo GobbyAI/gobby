@@ -6,6 +6,9 @@ use crate::db;
 use crate::graph::typed_query;
 use crate::models::{GraphPathStep, GraphResult};
 use crate::visibility;
+use crate::visibility::graph_versions::{
+    AdmittedGraphVersions, AdmittedNamespace, admitted_namespaces, with_admitted_versions,
+};
 
 use super::super::connection::with_optional_core_graph;
 use super::super::payload::{row_string_owned, row_usize};
@@ -56,6 +59,22 @@ fn graph_fetch_limit(offset: usize, limit: usize) -> usize {
         .saturating_add(limit)
         .saturating_mul(POST_FILTER_OVERFETCH_FACTOR)
         .min(MAX_GRAPH_LIMIT)
+}
+
+/// Binds the scope's admitted content versions into a relationship query, so
+/// edges from versions the scope does not serve never reach a LIMIT.
+/// Runs `fetch` in every admitted namespace and concatenates the rows. A symbol id or
+/// file path names nodes in one namespace only, so for an anchored read the other
+/// namespaces return nothing and the owner's rows stand alone.
+fn fetch_in_namespaces<T>(
+    ctx: &Context,
+    mut fetch: impl FnMut(&AdmittedNamespace) -> anyhow::Result<Vec<T>>,
+) -> anyhow::Result<Vec<T>> {
+    let mut rows = Vec::new();
+    for namespace in admitted_namespaces(ctx)? {
+        rows.extend(fetch(&namespace)?);
+    }
+    Ok(rows)
 }
 
 fn post_filter_symbol_ids(
@@ -161,10 +180,14 @@ fn count_visible_graph_results(
 pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
     count_visible_graph_results(ctx, |raw_offset, raw_limit| {
         with_optional_core_graph(ctx, Vec::new, |client| {
-            let (query, params) =
-                find_callers_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
-            let rows = client.query(&query, Some(params))?;
-            Ok(rows.iter().map(row_to_graph_result).collect())
+            fetch_in_namespaces(ctx, |namespace| {
+                let (query, params) = with_admitted_versions(
+                    find_callers_query(&namespace.project_id, symbol_id, raw_offset, raw_limit),
+                    &namespace.versions,
+                );
+                let rows = client.query(&query, Some(params))?;
+                Ok(rows.iter().map(row_to_graph_result).collect())
+            })
         })
     })
 }
@@ -172,10 +195,14 @@ pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
 pub fn count_callees(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
     count_visible_graph_results(ctx, |raw_offset, raw_limit| {
         with_optional_core_graph(ctx, Vec::new, |client| {
-            let (query, params) =
-                find_callees_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
-            let rows = client.query(&query, Some(params))?;
-            Ok(rows.iter().map(row_to_graph_result).collect())
+            fetch_in_namespaces(ctx, |namespace| {
+                let (query, params) = with_admitted_versions(
+                    find_callees_query(&namespace.project_id, symbol_id, raw_offset, raw_limit),
+                    &namespace.versions,
+                );
+                let rows = client.query(&query, Some(params))?;
+                Ok(rows.iter().map(row_to_graph_result).collect())
+            })
         })
     })
 }
@@ -183,10 +210,14 @@ pub fn count_callees(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
 pub fn count_usages(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
     count_visible_graph_results(ctx, |raw_offset, raw_limit| {
         with_optional_core_graph(ctx, Vec::new, |client| {
-            let (query, params) =
-                find_usages_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
-            let rows = client.query(&query, Some(params))?;
-            Ok(rows.iter().map(row_to_graph_result).collect())
+            fetch_in_namespaces(ctx, |namespace| {
+                let (query, params) = with_admitted_versions(
+                    find_usages_query(&namespace.project_id, symbol_id, raw_offset, raw_limit),
+                    &namespace.versions,
+                );
+                let rows = client.query(&query, Some(params))?;
+                Ok(rows.iter().map(row_to_graph_result).collect())
+            })
         })
     })
 }
@@ -199,10 +230,14 @@ pub fn find_callers(
 ) -> anyhow::Result<Vec<GraphResult>> {
     collect_visible_graph_results(ctx, offset, limit, |raw_offset, raw_limit| {
         with_optional_core_graph(ctx, Vec::new, |client| {
-            let (query, params) =
-                find_callers_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
-            let rows = client.query(&query, Some(params))?;
-            Ok(rows.iter().map(row_to_graph_result).collect())
+            fetch_in_namespaces(ctx, |namespace| {
+                let (query, params) = with_admitted_versions(
+                    find_callers_query(&namespace.project_id, symbol_id, raw_offset, raw_limit),
+                    &namespace.versions,
+                );
+                let rows = client.query(&query, Some(params))?;
+                Ok(rows.iter().map(row_to_graph_result).collect())
+            })
         })
     })
 }
@@ -215,10 +250,14 @@ pub fn find_callees(
 ) -> anyhow::Result<Vec<GraphResult>> {
     collect_visible_graph_results(ctx, offset, limit, |raw_offset, raw_limit| {
         with_optional_core_graph(ctx, Vec::new, |client| {
-            let (query, params) =
-                find_callees_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
-            let rows = client.query(&query, Some(params))?;
-            Ok(rows.iter().map(row_to_graph_result).collect())
+            fetch_in_namespaces(ctx, |namespace| {
+                let (query, params) = with_admitted_versions(
+                    find_callees_query(&namespace.project_id, symbol_id, raw_offset, raw_limit),
+                    &namespace.versions,
+                );
+                let rows = client.query(&query, Some(params))?;
+                Ok(rows.iter().map(row_to_graph_result).collect())
+            })
         })
     })
 }
@@ -231,10 +270,14 @@ pub fn find_usages(
 ) -> anyhow::Result<Vec<GraphResult>> {
     collect_visible_graph_results(ctx, offset, limit, |raw_offset, raw_limit| {
         with_optional_core_graph(ctx, Vec::new, |client| {
-            let (query, params) =
-                find_usages_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
-            let rows = client.query(&query, Some(params))?;
-            Ok(rows.iter().map(row_to_graph_result).collect())
+            fetch_in_namespaces(ctx, |namespace| {
+                let (query, params) = with_admitted_versions(
+                    find_usages_query(&namespace.project_id, symbol_id, raw_offset, raw_limit),
+                    &namespace.versions,
+                );
+                let rows = client.query(&query, Some(params))?;
+                Ok(rows.iter().map(row_to_graph_result).collect())
+            })
         })
     })
 }
@@ -246,12 +289,17 @@ pub fn find_caller_ids(
 ) -> anyhow::Result<Vec<String>> {
     let fetch_limit = graph_fetch_limit(0, limit);
     let ids = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_caller_ids_query(&ctx.project_id, symbol_id, fetch_limit);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows
-            .iter()
-            .filter_map(|row| row_string_owned(row, &["id"]))
-            .collect())
+        fetch_in_namespaces(ctx, |namespace| {
+            let (query, params) = with_admitted_versions(
+                find_caller_ids_query(&namespace.project_id, symbol_id, fetch_limit),
+                &namespace.versions,
+            );
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows
+                .iter()
+                .filter_map(|row| row_string_owned(row, &["id"]))
+                .collect())
+        })
     })?;
     post_filter_symbol_ids(ctx, ids, limit)
 }
@@ -259,12 +307,17 @@ pub fn find_caller_ids(
 pub fn find_usage_ids(ctx: &Context, symbol_id: &str, limit: usize) -> anyhow::Result<Vec<String>> {
     let fetch_limit = graph_fetch_limit(0, limit);
     let ids = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_usage_ids_query(&ctx.project_id, symbol_id, fetch_limit);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows
-            .iter()
-            .filter_map(|row| row_string_owned(row, &["id"]))
-            .collect())
+        fetch_in_namespaces(ctx, |namespace| {
+            let (query, params) = with_admitted_versions(
+                find_usage_ids_query(&namespace.project_id, symbol_id, fetch_limit),
+                &namespace.versions,
+            );
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows
+                .iter()
+                .filter_map(|row| row_string_owned(row, &["id"]))
+                .collect())
+        })
     })?;
     post_filter_symbol_ids(ctx, ids, limit)
 }
@@ -279,11 +332,18 @@ pub fn find_callers_batch(
         return Ok(vec![]);
     }
     let fetch_limit = graph_fetch_limit(0, limit);
-    let results = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_callers_batch_query(&ctx.project_id, symbol_ids, fetch_limit);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows.iter().map(row_to_graph_result).collect())
+    let mut results = with_optional_core_graph(ctx, Vec::new, |client| {
+        fetch_in_namespaces(ctx, |namespace| {
+            let (query, params) = with_admitted_versions(
+                find_callers_batch_query(&namespace.project_id, symbol_ids, fetch_limit),
+                &namespace.versions,
+            );
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows.iter().map(row_to_graph_result).collect())
+        })
     })?;
+    results.sort_by(|left, right| left.id.cmp(&right.id));
+    results.truncate(fetch_limit);
     post_filter_graph_results(ctx, results).map(|results| results.into_iter().take(limit).collect())
 }
 
@@ -296,14 +356,23 @@ pub fn find_caller_ids_batch(
         return Ok(vec![]);
     }
     let fetch_limit = graph_fetch_limit(0, limit);
-    let ids = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_caller_ids_batch_query(&ctx.project_id, symbol_ids, fetch_limit);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows
-            .iter()
-            .filter_map(|row| row_string_owned(row, &["id"]))
-            .collect())
+    let mut ids = with_optional_core_graph(ctx, Vec::new, |client| {
+        fetch_in_namespaces(ctx, |namespace| {
+            let (query, params) = with_admitted_versions(
+                find_caller_ids_batch_query(&namespace.project_id, symbol_ids, fetch_limit),
+                &namespace.versions,
+            );
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows
+                .iter()
+                .filter_map(|row| row_string_owned(row, &["id"]))
+                .collect())
+        })
     })?;
+    // Each namespace returned its smallest ids, so the batch keeps the smallest overall.
+    ids.sort();
+    ids.dedup();
+    ids.truncate(fetch_limit);
     post_filter_symbol_ids(ctx, ids, limit)
 }
 
@@ -317,11 +386,18 @@ pub fn find_callees_batch(
         return Ok(vec![]);
     }
     let fetch_limit = graph_fetch_limit(0, limit);
-    let results = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_callees_batch_query(&ctx.project_id, symbol_ids, fetch_limit);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows.iter().map(row_to_graph_result).collect())
+    let mut results = with_optional_core_graph(ctx, Vec::new, |client| {
+        fetch_in_namespaces(ctx, |namespace| {
+            let (query, params) = with_admitted_versions(
+                find_callees_batch_query(&namespace.project_id, symbol_ids, fetch_limit),
+                &namespace.versions,
+            );
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows.iter().map(row_to_graph_result).collect())
+        })
     })?;
+    results.sort_by(|left, right| left.id.cmp(&right.id));
+    results.truncate(fetch_limit);
     post_filter_graph_results(ctx, results).map(|results| results.into_iter().take(limit).collect())
 }
 
@@ -334,30 +410,36 @@ pub fn find_callee_ids_batch(
         return Ok(vec![]);
     }
     let fetch_limit = graph_fetch_limit(0, limit);
-    let ids = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_callee_ids_batch_query(&ctx.project_id, symbol_ids, fetch_limit);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows
-            .iter()
-            .filter_map(|row| row_string_owned(row, &["id"]))
-            .collect())
+    let mut ids = with_optional_core_graph(ctx, Vec::new, |client| {
+        fetch_in_namespaces(ctx, |namespace| {
+            let (query, params) = with_admitted_versions(
+                find_callee_ids_batch_query(&namespace.project_id, symbol_ids, fetch_limit),
+                &namespace.versions,
+            );
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows
+                .iter()
+                .filter_map(|row| row_string_owned(row, &["id"]))
+                .collect())
+        })
     })?;
+    // Each namespace returned its smallest ids, so the batch keeps the smallest overall.
+    ids.sort();
+    ids.dedup();
+    ids.truncate(fetch_limit);
     post_filter_symbol_ids(ctx, ids, limit)
 }
 
 pub fn get_imports(ctx: &Context, file_path: &str) -> anyhow::Result<Vec<GraphResult>> {
     with_optional_core_graph(ctx, Vec::new, |client| {
-        // IMPORTS edges are tagged per content version; only the local
-        // machine's active version of the file may contribute edges.
-        let mut conn = db::connect_readonly(&ctx.database_url)?;
-        let Some(content_hash) =
-            visibility::local_active_content_hash(&mut conn, &ctx.project_id, file_path)?
-        else {
-            return Ok(Vec::new());
-        };
-        let (query, params) = get_imports_query(&ctx.project_id, file_path, &content_hash);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows.iter().map(row_to_graph_result).collect())
+        fetch_in_namespaces(ctx, |namespace| {
+            let (query, params) = with_admitted_versions(
+                get_imports_query(&namespace.project_id, file_path),
+                &namespace.versions,
+            );
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows.iter().map(row_to_graph_result).collect())
+        })
     })
 }
 
@@ -369,20 +451,27 @@ pub fn resolve_external_call_target(
         ctx,
         || (None, Vec::new()),
         |client| {
-            let (query, params) = resolve_external_call_target_query(&ctx.project_id, input);
-            let rows = client.query(&query, Some(params))?;
-            let candidates = rows
-                .iter()
-                .filter_map(|row| {
-                    let id = row_string_owned(row, &["id"])?;
-                    let name = row_string_owned(row, &["name"]).unwrap_or_else(|| id.clone());
-                    let module = row_string_owned(row, &["module"]).unwrap_or_default();
-                    Some(ResolvedExternalCallTarget {
-                        id,
-                        display_name: external_call_target_display_name(&name, &module),
-                    })
-                })
-                .collect();
+            let mut candidates: Vec<ResolvedExternalCallTarget> =
+                fetch_in_namespaces(ctx, |namespace| {
+                    let (query, params) =
+                        resolve_external_call_target_query(&namespace.project_id, input);
+                    let rows = client.query(&query, Some(params))?;
+                    Ok(rows
+                        .iter()
+                        .filter_map(|row| {
+                            let id = row_string_owned(row, &["id"])?;
+                            let name =
+                                row_string_owned(row, &["name"]).unwrap_or_else(|| id.clone());
+                            let module = row_string_owned(row, &["module"]).unwrap_or_default();
+                            Some(ResolvedExternalCallTarget {
+                                id,
+                                display_name: external_call_target_display_name(&name, &module),
+                            })
+                        })
+                        .collect())
+                })?;
+            let mut seen = HashSet::new();
+            candidates.retain(|candidate| seen.insert(candidate.id.clone()));
             Ok(select_external_call_target(candidates))
         },
     )
@@ -391,12 +480,14 @@ pub fn resolve_external_call_target(
 fn symbol_callee_edges(
     client: &mut GraphClient,
     project_id: &str,
+    admitted: &AdmittedGraphVersions,
     symbol_ids: &[String],
 ) -> anyhow::Result<Vec<(String, String)>> {
     if symbol_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let (query, params) = symbol_callee_edges_query(project_id, symbol_ids);
+    let (query, params) =
+        with_admitted_versions(symbol_callee_edges_query(project_id, symbol_ids), admitted);
     let rows = client.query(&query, Some(params))?;
     Ok(rows
         .iter()
@@ -429,12 +520,13 @@ fn reconstruct_symbol_path(
 fn symbol_path_steps(
     client: &mut GraphClient,
     project_id: &str,
+    admitted: &AdmittedGraphVersions,
     symbol_ids: &[String],
 ) -> anyhow::Result<Vec<GraphPathStep>> {
     if symbol_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let (query, params) = symbol_path_steps_query(project_id, symbol_ids);
+    let (query, params) = symbol_path_steps_query(project_id, symbol_ids, admitted);
     let rows = client.query(&query, Some(params))?;
     let mut steps_by_id = HashMap::new();
     for row in rows {
@@ -473,54 +565,76 @@ pub fn shortest_symbol_path(
 ) -> anyhow::Result<Vec<GraphPathStep>> {
     let max_depth = max_depth.clamp(1, MAX_SYMBOL_PATH_DEPTH);
     with_optional_core_graph(ctx, Vec::new, |client| {
-        if from_id == to_id {
-            return symbol_path_steps(client, &ctx.project_id, &[from_id.to_string()]);
+        // A route cannot leave the namespace that owns `from_id`, and every other
+        // namespace finds no route, so the first route found is the answer.
+        for namespace in admitted_namespaces(ctx)? {
+            let steps =
+                shortest_path_in_namespace(ctx, client, &namespace, from_id, to_id, max_depth)?;
+            if !steps.is_empty() {
+                return Ok(steps);
+            }
         }
-
-        let mut visited = HashSet::from([from_id.to_string()]);
-        let mut parents = HashMap::new();
-        let mut frontier = vec![from_id.to_string()];
-
-        for _ in 0..max_depth {
-            let edges = symbol_callee_edges(client, &ctx.project_id, &frontier)?;
-            // Routes must not pass through content versions that are not
-            // active on this machine; drop invisible targets before they can
-            // enter the frontier or the parent map.
-            let mut candidates = Vec::new();
-            let mut seen_candidates = HashSet::new();
-            for (_, target_id) in &edges {
-                if !visited.contains(target_id) && seen_candidates.insert(target_id.clone()) {
-                    candidates.push(target_id.clone());
-                }
-            }
-            let candidate_count = candidates.len();
-            let visible_targets: HashSet<String> =
-                post_filter_symbol_ids(ctx, candidates, candidate_count)?
-                    .into_iter()
-                    .collect();
-            let mut next_frontier = Vec::new();
-            for (source_id, target_id) in edges {
-                if !visible_targets.contains(&target_id) {
-                    continue;
-                }
-                if !visited.insert(target_id.clone()) {
-                    continue;
-                }
-                parents.insert(target_id.clone(), source_id);
-                if target_id == to_id {
-                    let symbol_ids = reconstruct_symbol_path(from_id, to_id, &parents);
-                    return symbol_path_steps(client, &ctx.project_id, &symbol_ids);
-                }
-                next_frontier.push(target_id);
-            }
-            if next_frontier.is_empty() {
-                break;
-            }
-            frontier = next_frontier;
-        }
-
         Ok(Vec::new())
     })
+}
+
+fn shortest_path_in_namespace(
+    ctx: &Context,
+    client: &mut GraphClient,
+    namespace: &AdmittedNamespace,
+    from_id: &str,
+    to_id: &str,
+    max_depth: usize,
+) -> anyhow::Result<Vec<GraphPathStep>> {
+    let project_id = namespace.project_id.as_str();
+    let admitted = &namespace.versions;
+    if from_id == to_id {
+        return symbol_path_steps(client, project_id, admitted, &[from_id.to_string()]);
+    }
+
+    let mut visited = HashSet::from([from_id.to_string()]);
+    let mut parents = HashMap::new();
+    let mut frontier = vec![from_id.to_string()];
+
+    for _ in 0..max_depth {
+        let edges = symbol_callee_edges(client, project_id, admitted, &frontier)?;
+        // Routes must not pass through content versions that are not
+        // active on this machine; drop invisible targets before they can
+        // enter the frontier or the parent map.
+        let mut candidates = Vec::new();
+        let mut seen_candidates = HashSet::new();
+        for (_, target_id) in &edges {
+            if !visited.contains(target_id) && seen_candidates.insert(target_id.clone()) {
+                candidates.push(target_id.clone());
+            }
+        }
+        let candidate_count = candidates.len();
+        let visible_targets: HashSet<String> =
+            post_filter_symbol_ids(ctx, candidates, candidate_count)?
+                .into_iter()
+                .collect();
+        let mut next_frontier = Vec::new();
+        for (source_id, target_id) in edges {
+            if !visible_targets.contains(&target_id) {
+                continue;
+            }
+            if !visited.insert(target_id.clone()) {
+                continue;
+            }
+            parents.insert(target_id.clone(), source_id);
+            if target_id == to_id {
+                let symbol_ids = reconstruct_symbol_path(from_id, to_id, &parents);
+                return symbol_path_steps(client, project_id, admitted, &symbol_ids);
+            }
+            next_frontier.push(target_id);
+        }
+        if next_frontier.is_empty() {
+            break;
+        }
+        frontier = next_frontier;
+    }
+
+    Ok(Vec::new())
 }
 
 pub fn blast_radius(
@@ -528,11 +642,20 @@ pub fn blast_radius(
     symbol_id: &str,
     depth: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
+    // A symbol id names one namespace's node, so only its owner returns rows.
     let results = with_optional_core_graph(ctx, Vec::new, |client| {
-        let query = blast_radius_query(depth, MAX_GRAPH_LIMIT);
-        let params = typed_query::string_params(&[("project", &ctx.project_id), ("id", symbol_id)]);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows.iter().map(row_to_graph_result).collect())
+        fetch_in_namespaces(ctx, |namespace| {
+            let params = typed_query::string_params(&[
+                ("project", &namespace.project_id),
+                ("id", symbol_id),
+            ]);
+            let (query, params) = with_admitted_versions(
+                (blast_radius_query(depth, MAX_GRAPH_LIMIT), params),
+                &namespace.versions,
+            );
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows.iter().map(row_to_graph_result).collect())
+        })
     })?;
     post_filter_graph_results(ctx, results)
 }

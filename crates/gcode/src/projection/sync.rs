@@ -11,6 +11,8 @@ use crate::vector::code_symbols::{
 };
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod pinned;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectionTarget {
@@ -619,7 +621,16 @@ fn sync_graph_file(
     file_path: &str,
 ) -> anyhow::Result<ProjectionFileSyncOutcome> {
     let Some(attempt) = db::mark_graph_sync_attempted(conn, &ctx.project_id, file_path)? else {
-        return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
+        let Some(pin) = pinned::begin_graph_attempt(conn, &ctx.project_id, file_path)? else {
+            return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
+        };
+        let written = pinned::sync_graph_attempt(graph, conn, &ctx.project_id, file_path, &pin)?;
+        return Ok(match written {
+            Some(write) => ProjectionFileSyncOutcome::Synced {
+                symbols: write.symbols_synced,
+            },
+            None => ProjectionFileSyncOutcome::SkippedMissingIndexedFile,
+        });
     };
     let facts = db::read_graph_file_facts(conn, &ctx.project_id, file_path)?;
     graph.sync_file(
@@ -656,7 +667,24 @@ impl VectorProjectionState<'_> {
         let Some(attempt) =
             db::mark_vector_sync_attempted(&mut self.conn, &self.ctx.project_id, file_path)?
         else {
-            return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
+            let Some(pin) =
+                pinned::begin_vector_attempt(&mut self.conn, &self.ctx.project_id, file_path)?
+            else {
+                return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
+            };
+            let output = pinned::sync_vector_attempt(
+                &mut self.conn,
+                &self.ctx.project_id,
+                &mut self.lifecycle,
+                file_path,
+                &pin,
+            )?;
+            return Ok(match output {
+                Some(output) => ProjectionFileSyncOutcome::Synced {
+                    symbols: output.symbols,
+                },
+                None => ProjectionFileSyncOutcome::SkippedMissingIndexedFile,
+            });
         };
         let symbols =
             code_symbols::fetch_symbols_for_file(&mut self.conn, &self.ctx.project_id, file_path)?;
@@ -693,6 +721,7 @@ fn vector_lifecycle_from_context(
         embedding,
         ctx.code_vectors.clone(),
     )
+    .map(|lifecycle| lifecycle.with_project_root(ctx.project_root.clone()))
 }
 
 fn typed_projection_error(error: &anyhow::Error) -> ProjectionSyncError {
@@ -722,6 +751,7 @@ fn vector_error_kind(error: &VectorLifecycleError) -> &'static str {
         #[cfg(feature = "ai")]
         VectorLifecycleError::EmbeddingHttp { .. } => "embedding_http",
         VectorLifecycleError::EmbeddingResponse(_) => "embedding_response",
+        VectorLifecycleError::EmbeddingInput(_) => "embedding_input",
         VectorLifecycleError::QdrantHttp { .. } => "qdrant_http",
         VectorLifecycleError::QdrantOperation(_) => "qdrant_operation",
         VectorLifecycleError::InvalidCollectionName(_) => "invalid_collection_name",

@@ -1,3 +1,7 @@
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
+
 use anyhow::Context as _;
 use gobby_core::falkor::GraphClient;
 
@@ -10,11 +14,14 @@ use super::rows::{
     rows_to_named_counts,
 };
 use super::types::{
-    BridgeEdgeInput, CommunityInput, GraphHotspot, GraphReportHotspots, GraphReportSummary,
-    ReportGraphSnapshot, TargetFrequency,
+    BridgeEdgeHypothesis, BridgeEdgeInput, CommunityInput, GraphHotspot, GraphReportHotspots,
+    GraphReportSummary, ReportGraphSnapshot, TargetFrequency,
 };
 use crate::communities::{self, StoredCommunity};
 use crate::config::Context;
+use crate::visibility::graph_versions::{
+    AdmittedGraphVersions, AdmittedNamespace, with_admitted_versions,
+};
 use gobby_core::falkor::Row;
 
 /// The degradation input name for the stored import communities.
@@ -45,75 +52,242 @@ pub(super) fn community_input(rows: anyhow::Result<Vec<StoredCommunity>>) -> Com
     }
 }
 
+/// Loads the report from every admitted namespace and merges the rows. Node and
+/// edge ids are namespace-local, so each namespace is read on its own.
 pub(super) fn load_report_snapshot(
     client: &mut GraphClient,
-    project_id: &str,
+    namespaces: &[AdmittedNamespace],
     top_n: usize,
 ) -> anyhow::Result<ReportGraphSnapshot> {
-    let (query, params) = report_node_counts_query(project_id);
+    let mut parts = Vec::with_capacity(namespaces.len());
+    for namespace in namespaces {
+        parts.push(load_namespace_rows(client, namespace, top_n)?);
+    }
+    Ok(merge_namespace_rows(&parts, top_n))
+}
+
+/// One namespace's share of the report, ranked within the namespace.
+#[derive(Default)]
+struct NamespaceRows {
+    node_counts_by_type: BTreeMap<String, usize>,
+    code_edge_counts: BTreeMap<String, usize>,
+    hotspots: GraphReportHotspots,
+    unresolved_targets: Vec<TargetFrequency>,
+    external_targets: Vec<TargetFrequency>,
+    bridge_edges: Vec<BridgeEdgeHypothesis>,
+}
+
+fn load_namespace_rows(
+    client: &mut GraphClient,
+    namespace: &AdmittedNamespace,
+    top_n: usize,
+) -> anyhow::Result<NamespaceRows> {
+    let project_id = namespace.project_id.as_str();
+    let admitted = &namespace.versions;
+
+    let (query, params) = with_admitted_versions(report_node_counts_query(project_id), admitted);
     let node_counts_by_type = rows_to_named_counts(
         client
             .query(&query, Some(params))
             .context("load graph report node counts")?,
     );
-    let node_count = node_counts_by_type.values().sum();
 
-    let (query, params) = report_code_edge_counts_query(project_id);
+    let (query, params) =
+        with_admitted_versions(report_code_edge_counts_query(project_id), admitted);
     let code_edge_counts = rows_to_named_counts(
         client
             .query(&query, Some(params))
             .context("load graph report code edge counts")?,
     );
-    let edge_count = code_edge_counts.values().sum();
 
-    let summary = GraphReportSummary {
-        node_count,
-        edge_count,
-        node_counts_by_type,
-        code_edge_counts,
-    };
-
+    // Files, symbols, and external or unresolved targets never repeat across
+    // namespaces, so a namespace's top rows cover its share of the global top
+    // rows. Module names do repeat, and one module can gain degree in several
+    // namespaces, so module rows stay unlimited until the merge ranks them.
     let hotspots = GraphReportHotspots {
-        high_degree_files: load_hotspots(client, project_id, "file", top_n)?,
-        high_degree_symbols: load_hotspots(client, project_id, "symbol", top_n)?,
-        high_degree_modules: load_hotspots(client, project_id, "module", top_n)?,
-        incoming_call_hotspots: load_incoming_call_hotspots(client, project_id, top_n)?,
+        high_degree_files: load_hotspots(client, project_id, admitted, "file", Some(top_n))?,
+        high_degree_symbols: load_hotspots(client, project_id, admitted, "symbol", Some(top_n))?,
+        high_degree_modules: load_hotspots(client, project_id, admitted, "module", None)?,
+        incoming_call_hotspots: load_incoming_call_hotspots(client, project_id, admitted, top_n)?,
     };
 
-    let unresolved_targets = load_target_frequencies(client, project_id, "unresolved", top_n)?;
-    let external_targets = load_target_frequencies(client, project_id, "external", top_n)?;
+    let unresolved_targets =
+        load_target_frequencies(client, project_id, admitted, "unresolved", top_n)?;
+    let external_targets =
+        load_target_frequencies(client, project_id, admitted, "external", top_n)?;
 
-    let (query, params) = report_bridge_edges_query(project_id);
+    let (query, params) = with_admitted_versions(report_bridge_edges_query(project_id), admitted);
     let rows = client
         .query(&query, Some(params))
         .context("load graph report bridge edges")?;
-    let bridge_edges = BridgeEdgeInput::available(collect_report_rows(
-        &rows,
-        "bridge edges",
-        row_to_bridge_edge_hypothesis,
-    ));
+    let bridge_edges = collect_report_rows(&rows, "bridge edges", row_to_bridge_edge_hypothesis);
 
-    // ReportGraphSnapshot is metadata-only here: summary, hotspots,
-    // unresolved_targets, external_targets, and bridge_edges are loaded in this
-    // step, while full nodes and code_edges are populated separately.
-    Ok(ReportGraphSnapshot {
-        nodes: vec![],
-        code_edges: vec![],
-        summary: Some(summary),
-        hotspots: Some(hotspots),
-        unresolved_targets: Some(unresolved_targets),
-        external_targets: Some(external_targets),
+    Ok(NamespaceRows {
+        node_counts_by_type,
+        code_edge_counts,
+        hotspots,
+        unresolved_targets,
+        external_targets,
         bridge_edges,
     })
 }
 
+fn merge_namespace_rows(parts: &[NamespaceRows], top_n: usize) -> ReportGraphSnapshot {
+    let node_counts_by_type = sum_counts(parts.iter().map(|part| &part.node_counts_by_type));
+    let code_edge_counts = sum_counts(parts.iter().map(|part| &part.code_edge_counts));
+    let node_count: usize = node_counts_by_type.values().sum();
+    let edge_count: usize = code_edge_counts.values().sum();
+
+    let hotspots = GraphReportHotspots {
+        high_degree_files: merge_hotspots(
+            parts
+                .iter()
+                .map(|part| part.hotspots.high_degree_files.as_slice()),
+            top_n,
+        ),
+        high_degree_symbols: merge_hotspots(
+            parts
+                .iter()
+                .map(|part| part.hotspots.high_degree_symbols.as_slice()),
+            top_n,
+        ),
+        high_degree_modules: merge_hotspots(
+            parts
+                .iter()
+                .map(|part| part.hotspots.high_degree_modules.as_slice()),
+            top_n,
+        ),
+        incoming_call_hotspots: merge_hotspots(
+            parts
+                .iter()
+                .map(|part| part.hotspots.incoming_call_hotspots.as_slice()),
+            top_n,
+        ),
+    };
+    let unresolved_targets = merge_targets(
+        parts.iter().map(|part| part.unresolved_targets.as_slice()),
+        top_n,
+    );
+    let external_targets = merge_targets(
+        parts.iter().map(|part| part.external_targets.as_slice()),
+        top_n,
+    );
+    let bridge_edges = parts
+        .iter()
+        .flat_map(|part| part.bridge_edges.iter().cloned())
+        .collect();
+
+    // ReportGraphSnapshot is metadata-only here: summary, hotspots,
+    // unresolved_targets, external_targets, and bridge_edges are loaded in this
+    // step, while full nodes and code_edges are populated separately.
+    ReportGraphSnapshot {
+        nodes: vec![],
+        code_edges: vec![],
+        summary: Some(GraphReportSummary {
+            node_count,
+            edge_count,
+            node_counts_by_type,
+            code_edge_counts,
+        }),
+        hotspots: Some(hotspots),
+        unresolved_targets: Some(unresolved_targets),
+        external_targets: Some(external_targets),
+        bridge_edges: BridgeEdgeInput::available(bridge_edges),
+    }
+}
+
+fn sum_counts<'a>(
+    counts: impl IntoIterator<Item = &'a BTreeMap<String, usize>>,
+) -> BTreeMap<String, usize> {
+    let mut total: BTreeMap<String, usize> = BTreeMap::new();
+    for map in counts {
+        for (name, count) in map {
+            *total.entry(name.clone()).or_insert(0) += count;
+        }
+    }
+    total
+}
+
+fn merge_hotspots<'a>(
+    lists: impl IntoIterator<Item = &'a [GraphHotspot]>,
+    top_n: usize,
+) -> Vec<GraphHotspot> {
+    merge_ranked(
+        lists,
+        |row| row.id.as_str(),
+        |merged, row| {
+            merged.degree += row.degree;
+            merged.incoming += row.incoming;
+            merged.outgoing += row.outgoing;
+        },
+        |left, right| {
+            right
+                .degree
+                .cmp(&left.degree)
+                .then_with(|| left.name.cmp(&right.name))
+                .then_with(|| left.id.cmp(&right.id))
+        },
+        top_n,
+    )
+}
+
+fn merge_targets<'a>(
+    lists: impl IntoIterator<Item = &'a [TargetFrequency]>,
+    top_n: usize,
+) -> Vec<TargetFrequency> {
+    merge_ranked(
+        lists,
+        |row| row.id.as_str(),
+        |merged, row| merged.count += row.count,
+        |left, right| {
+            right
+                .count
+                .cmp(&left.count)
+                .then_with(|| left.name.cmp(&right.name))
+                .then_with(|| left.id.cmp(&right.id))
+        },
+        top_n,
+    )
+}
+
+/// Combines rows that share an id, ranks the result, and keeps the first `top_n`.
+fn merge_ranked<'a, T: Clone + 'a>(
+    lists: impl IntoIterator<Item = &'a [T]>,
+    id: impl Fn(&T) -> &str,
+    combine: impl Fn(&mut T, &T),
+    order: impl Fn(&T, &T) -> Ordering,
+    top_n: usize,
+) -> Vec<T> {
+    let mut by_id = BTreeMap::<String, T>::new();
+    for row in lists.into_iter().flatten() {
+        match by_id.entry(id(row).to_string()) {
+            Entry::Occupied(mut entry) => combine(entry.get_mut(), row),
+            Entry::Vacant(entry) => {
+                entry.insert(row.clone());
+            }
+        }
+    }
+    let mut merged: Vec<T> = by_id.into_values().collect();
+    merged.sort_by(order);
+    merged.truncate(top_n);
+    merged
+}
+
+#[cfg(test)]
+#[path = "loading/tests.rs"]
+mod tests;
+
 fn load_hotspots(
     client: &mut GraphClient,
     project_id: &str,
+    admitted: &AdmittedGraphVersions,
     node_class: &str,
-    top_n: usize,
+    limit: Option<usize>,
 ) -> anyhow::Result<Vec<GraphHotspot>> {
-    let (query, params) = report_hotspots_query(project_id, node_class, top_n);
+    let (query, params) = with_admitted_versions(
+        report_hotspots_query(project_id, node_class, limit),
+        admitted,
+    );
     let rows = client
         .query(&query, Some(params))
         .with_context(|| format!("load graph report {node_class} hotspots"))?;
@@ -127,9 +301,13 @@ fn load_hotspots(
 fn load_incoming_call_hotspots(
     client: &mut GraphClient,
     project_id: &str,
+    admitted: &AdmittedGraphVersions,
     top_n: usize,
 ) -> anyhow::Result<Vec<GraphHotspot>> {
-    let (query, params) = report_incoming_call_hotspots_query(project_id, top_n);
+    let (query, params) = with_admitted_versions(
+        report_incoming_call_hotspots_query(project_id, top_n),
+        admitted,
+    );
     let rows = client
         .query(&query, Some(params))
         .context("load graph report incoming call hotspots")?;
@@ -143,10 +321,14 @@ fn load_incoming_call_hotspots(
 fn load_target_frequencies(
     client: &mut GraphClient,
     project_id: &str,
+    admitted: &AdmittedGraphVersions,
     target_type: &str,
     top_n: usize,
 ) -> anyhow::Result<Vec<TargetFrequency>> {
-    let (query, params) = report_target_frequencies_query(project_id, target_type, top_n);
+    let (query, params) = with_admitted_versions(
+        report_target_frequencies_query(project_id, target_type, top_n),
+        admitted,
+    );
     let rows = client
         .query(&query, Some(params))
         .with_context(|| format!("load graph report {target_type} target frequencies"))?;

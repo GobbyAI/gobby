@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.persistence import DEFAULT_EMBEDDING_MODEL
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills import (
     get_skill,
@@ -51,7 +52,7 @@ def create_skills_registry(
     hub_manager: HubManager | None = None,
     search: SkillSearch | None = None,
     search_config: SearchConfig | None = None,
-    embedding_model: str = "nomic-embed-text",
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
     embedding_api_base: str | None = None,
     embedding_api_key: str | None = None,
     embedding_dim: int | None = None,
