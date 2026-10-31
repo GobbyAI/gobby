@@ -169,6 +169,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hotspot_ranking_excludes_replaced_and_tombstoned_targets_before_counting() {
+        // Even a high-degree historical target must not consume the top-1 slot.
+        for (surface, query) in [
+            (
+                "symbol degrees",
+                report_hotspots_query("child", "symbol", Some(1)).0,
+            ),
+            (
+                "incoming calls",
+                report_incoming_call_hotspots_query("child", 1).0,
+            ),
+        ] {
+            for branch in query.split("UNION ALL") {
+                let aggregation = branch.find("count(").expect("degree aggregation");
+                let filter = &branch[..aggregation];
+                assert!(
+                    filter.contains(
+                        "node.file_path + '|' + node.file_content_hash IN $admitted_versions"
+                    ),
+                    "{surface}: endpoint version admission must precede ranking"
+                );
+                assert!(
+                    filter.contains("startNode(") && filter.contains("endNode("),
+                    "{surface}: both incident endpoints must be admitted"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn report_queries_filter_admitted_versions_before_aggregation() {
         let queries = [
             ("nodes", report_node_counts_query("child")),

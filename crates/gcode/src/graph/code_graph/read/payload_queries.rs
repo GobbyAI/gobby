@@ -250,6 +250,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn replaced_or_tombstoned_targets_are_filtered_before_payload_output() {
+        // A pinned caller can retain an edge to B@old after B is replaced or
+        // tombstoned. Edge ownership alone must not admit either endpoint.
+        let paths = vec!["a.rs".to_string()];
+        for (surface, query) in [
+            (
+                "overview",
+                project_overview_calls_query("child", &paths, 1).0,
+            ),
+            ("file A or B", file_calls_query("child", "b.rs").0),
+            ("neighbors", symbol_neighbors_query("child", "b-old", 1).0),
+        ] {
+            for branch in query.split("UNION ALL") {
+                let output = branch.find("RETURN").expect("payload returns rows");
+                let filter = &branch[..output];
+                assert!(
+                    filter.contains("startNode(r)") && filter.contains("endNode(r)"),
+                    "{surface}: both endpoints must be admitted before output"
+                );
+                assert!(
+                    filter.contains(
+                        "node.file_path + '|' + node.file_content_hash IN $admitted_versions"
+                    ),
+                    "{surface}: replaced/tombstoned target version must be excluded"
+                );
+                assert!(
+                    filter.contains("coalesce(") && filter.contains(", false)"),
+                    "{surface}: unversioned CodeSymbol placeholders must fail closed"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn blast_radius_excludes_unadmitted_intermediate_symbols_before_limit() {
+        let query = blast_radius_file_call_query("child", "b.rs", 3, 1).0;
+        let aggregation = query.find("WITH affected").expect("distance aggregation");
+        let filter = &query[..aggregation];
+        assert!(
+            filter.contains("nodes(path)"),
+            "every path node must be admitted"
+        );
+        assert!(
+            filter.contains("node.file_content_hash IN $admitted_versions"),
+            "a replaced intermediate symbol must not connect an otherwise admitted path"
+        );
+    }
+
+    #[test]
     fn projection_payload_queries_filter_versions_before_limits() {
         let paths = vec!["src/lib.rs".to_string()];
         let queries = [
