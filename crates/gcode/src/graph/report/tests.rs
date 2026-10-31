@@ -640,12 +640,12 @@ fn last_aggregate(branch: &str) -> Option<usize> {
 }
 
 fn first_admission(branch: &str) -> Option<usize> {
-    // Union branches import the maps bound by the query head (`WITH am, em`).
-    // The import is the admission point: every edge filter follows it.
+    // Admission is a version-map lookup inside an edge or endpoint filter. A bare
+    // `WITH am, em` import filters nothing, so it does not count.
     ADMISSION_TOKENS
         .iter()
         .copied()
-        .chain(["WITH am, em"])
+        .chain(["IN coalesce(am[", "IN coalesce(em["])
         .filter_map(|token| branch.find(token))
         .min()
 }
