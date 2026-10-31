@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from gobby.agents import agent_workspaces
+from gobby.utils.daemon_git import GitOk
 
 pytestmark = pytest.mark.unit
 
@@ -82,8 +84,12 @@ async def test_skipped_paths_are_not_rediscovered_but_new_notes_are_backed_up(
     assert status.stdout == f"?? {new_note}\0"
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["odd\nnotes.md", "odd\rnotes.md", "odd\t[?]*notes.md", "odd\n# END GOBBY WORKSPACE EXCLUDES"],
+)
 async def test_newline_skipped_path_stays_out_and_unrelated_notes_back_up(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
     project_id = "33333333-3333-4333-8333-333333333333"
@@ -91,15 +97,32 @@ async def test_newline_skipped_path_stays_out_and_unrelated_notes_back_up(
     folder = anchor / "developer/session-1"
     folder.mkdir(parents=True)
     (folder / "notes.md").write_text("keep this evidence\n")
-    (folder / "odd\nnotes.md").symlink_to(folder / "notes.md")
+    skipped = f"developer/session-1/{name}"
+    (anchor / skipped).symlink_to(folder / "notes.md")
     assert await agent_workspaces.commit_workspace(project_id, "timer")
+    statuses: list[str] = []
+    git = agent_workspaces._git
+
+    async def observe_git(project_id: str, *args: str, **kwargs: Any) -> GitOk:
+        result = await git(project_id, *args, **kwargs)
+        if args[0] == "status":
+            statuses.append(result.stdout)
+        return result
+
+    monkeypatch.setattr(agent_workspaces, "_git", observe_git)
     for cycle in range(2):
         note = folder / f"plan-{cycle}" / "notes.md"
         note.parent.mkdir()
         note.write_text(f"unrelated notes {cycle}\n")
         assert await agent_workspaces.commit_workspace(project_id, "timer")
+        assert statuses[-1] == f"?? developer/session-1/plan-{cycle}/notes.md\0"
         tracked = await agent_workspaces._git(project_id, "ls-files", "-z")
         names = set(tracked.stdout.split("\0")) - {""}
         assert f"developer/session-1/plan-{cycle}/notes.md" in names
-        assert "developer/session-1/odd\nnotes.md" not in names
-    assert (folder / "odd\nnotes.md").is_symlink()
+        assert skipped not in names
+    assert (anchor / skipped).is_symlink()
+    (anchor / skipped).unlink()
+    (anchor / skipped).write_text("replaced with eligible evidence\n")
+    assert await agent_workspaces.commit_workspace(project_id, "timer")
+    tracked = await git(project_id, "ls-files", "-z")
+    assert skipped in tracked.stdout.split("\0")

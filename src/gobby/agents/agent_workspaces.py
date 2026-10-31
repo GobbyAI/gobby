@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import fnmatch
+import json
 import logging
 import os
 import re
@@ -177,6 +178,7 @@ async def _git(
     *args: str,
     timeout: float = WORKSPACE_GIT_TIMEOUT_SECONDS,
     env: Mapping[str, str] | None = None,
+    literal_pathspecs: bool = True,
 ) -> GitOk:
     anchor = workspace_anchor(project_id)
     index_lock = workspace_git_dir(project_id) / "index.lock"
@@ -184,7 +186,7 @@ async def _git(
     result = await daemon_git.run(
         [
             "--no-optional-locks",
-            "--literal-pathspecs",
+            "--literal-pathspecs" if literal_pathspecs else "--no-literal-pathspecs",
             f"--git-dir={workspace_git_dir(project_id)}",
             f"--work-tree={anchor}",
             *args,
@@ -277,47 +279,53 @@ def _still_skipped(full: Path) -> bool:
         return False
 
 
-def _sync_exclusions(project_id: str, skipped: Sequence[str] = ()) -> int:
-    """Rewrite the managed exclude block; return how many paths it newly hides.
+def _sync_exclusions(project_id: str, skipped: Sequence[str] = ()) -> tuple[int, list[str]]:
+    """Return newly skipped count and exact status exclusions after syncing Git ignores.
 
     Git status hides each recorded untracked path, so a skipped path is listed and logged
     once instead of on every backup cycle. A recorded path is dropped once it stops being skipped.
-    Only printable names are recorded: a line break or other control character cannot be written
-    as one exact ignore line, so such a path stays skipped but unhidden.
+    Nonprintable names live in escaped JSON comments and use literal status pathspecs,
+    since line-based ignore rules cannot represent them exactly.
     """
     anchor = workspace_anchor(project_id)
     exclude = workspace_git_dir(project_id) / "info" / "exclude"
     begin, end = "# BEGIN GOBBY WORKSPACE EXCLUDES", "# END GOBBY WORKSPACE EXCLUDES"
     text = exclude.read_text() if exclude.exists() else ""
-    prefix, found, remainder = text.partition(begin)
-    block, _, suffix = remainder.partition(end) if found else ("", "", "")
+    prefix, found, remainder = text.partition(f"{begin}\n")
+    block, _, suffix = remainder.partition(f"\n{end}") if found else ("", "", "")
     previous = {
         re.sub(r"\\(.)", r"\1", line[1:]) for line in block.split("\n") if line.startswith("/")
     }
-    recorded = {
-        path
-        for path in (*previous, *skipped)
-        if path.isprintable() and _still_skipped(anchor / path)
-    }
+    marker = "# GOBBY SKIPPED "
+    for line in block.split("\n"):
+        if line.startswith(marker):
+            path = json.loads(line[len(marker) :])
+            if isinstance(path, str):
+                previous.add(path)
+    recorded = {path for path in (*previous, *skipped) if _still_skipped(anchor / path)}
     patterns = [
         *sorted(_SECRET_NAMES),
         *(f"{name}/" for name in _GENERATED_DIRECTORIES),
-        *(_exclude_pattern(path) for path in sorted(recorded)),
+        *(
+            _exclude_pattern(path) if path.isprintable() else marker + json.dumps(path)
+            for path in sorted(recorded)
+        ),
     ]
     managed = f"{prefix.rstrip()}\n{begin}\n" + "\n".join(patterns) + f"\n{end}{suffix}"
     if managed != text:
         exclude.parent.mkdir(parents=True, exist_ok=True)
         exclude.write_text(managed)
-    return len(recorded - previous)
+    return len(recorded - previous), sorted(path for path in recorded if not path.isprintable())
 
 
-async def _prepare_exclusions(project_id: str) -> None:
+async def _prepare_exclusions(project_id: str) -> list[str]:
     """Hide generated and still-skipped paths from Git status; retire old tracked copies."""
-    _sync_exclusions(project_id)
+    _, status_exclusions = _sync_exclusions(project_id)
     tracked = await _git(project_id, "ls-files", "-z")
     retired = [path for path in tracked.stdout.split("\0") if path and _excluded_path(path)]
     for chunk in _chunks(retired):
         await _git(project_id, "rm", "--cached", "--force", "--ignore-unmatch", "--", *chunk)
+    return status_exclusions
 
 
 def _eligible_paths(anchor: Path, paths: Sequence[str]) -> tuple[list[str], list[str]]:
@@ -341,15 +349,24 @@ def _chunks(paths: Sequence[str]) -> Iterator[Sequence[str]]:
 
 async def _commit_locked(project_id: str, trigger: str) -> str | None:
     anchor = workspace_anchor(project_id)
-    await _prepare_exclusions(project_id)
+    status_exclusions = await _prepare_exclusions(project_id)
     status = await _git(
-        project_id, "status", "--porcelain", "-z", "--untracked-files=all", "--no-renames"
+        project_id,
+        "status",
+        "--porcelain",
+        "-z",
+        "--untracked-files=all",
+        "--no-renames",
+        "--",
+        ".",
+        *(f":(exclude,literal){path}" for path in status_exclusions),
+        literal_pathspecs=False,
     )
     if not status.stdout:
         return None
     entries = parse_porcelain_v1_z(status.stdout)
     eligible, skipped = _eligible_paths(anchor, [entry.path for entry in entries])
-    added = _sync_exclusions(project_id, skipped)
+    added, _ = _sync_exclusions(project_id, skipped)
     if added:
         logger.info(
             "agent workspace skipped %d new symlinks or oversized files for %s", added, project_id
