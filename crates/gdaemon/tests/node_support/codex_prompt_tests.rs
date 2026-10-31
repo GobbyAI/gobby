@@ -367,6 +367,71 @@ async fn codex_prompt_held_inventory_fails_at_deadline() -> Result<()> {
 }
 
 #[tokio::test(start_paused = true)]
+async fn codex_prompt_late_inventory_preserves_deadline_failure() -> Result<()> {
+    use std::{future::Future, task::Context};
+
+    let mut fixture = PromptFixture::new().await?;
+    fixture.host.set_pane("last startup pane");
+    fixture.hub.script(
+        FAILURE,
+        vec![(StatusCode::OK, json!({"transitioned":true}))],
+    );
+    // Poll explicitly so delivery can be descheduled while its reply and
+    // deadline both become ready. The host and hub keep running normally.
+    let mut delivery = Box::pin(deliver(
+        Arc::clone(&fixture.home.node),
+        RUN.into(),
+        PROMPT.into(),
+    ));
+    let mut context = Context::from_waker(std::task::Waker::noop());
+    for _ in 0..20 {
+        assert!(delivery.as_mut().poll(&mut context).is_pending());
+        pump().await;
+        if fixture.requests("list").len() == 1 {
+            break;
+        }
+    }
+    assert_eq!(fixture.requests("list").len(), 1);
+    // Finish the first inventory, then start a missing-terminal probe at 104 s.
+    assert!(delivery.as_mut().poll(&mut context).is_pending());
+    fixture.host.clear_inventory();
+    fixture.host.pause_next_list_reply();
+    tokio::time::advance(Duration::from_secs(104)).await;
+    for _ in 0..20 {
+        assert!(delivery.as_mut().poll(&mut context).is_pending());
+        pump().await;
+        if fixture.requests("list").len() == 2 {
+            break;
+        }
+    }
+    assert_eq!(fixture.requests("list").len(), 2);
+    fixture.host.wait_for_list_snapshot().await;
+    fixture.host.release_list_reply();
+    pump().await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    let mut finished = false;
+    for _ in 0..20 {
+        if delivery.as_mut().poll(&mut context).is_ready() {
+            finished = true;
+            break;
+        }
+        pump().await;
+    }
+    assert!(finished, "the failure report must finish delivery");
+
+    let requests = fixture.hub.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].body["code"], "codex_composer_not_ready");
+    assert_eq!(requests[0].body["pane"], "last startup pane");
+    let detail = requests[0].body["detail"].as_str().context("detail")?;
+    for counter in ["captures=2", "snapshot_errors=0", "liveness_errors=0"] {
+        assert!(detail.contains(counter), "missing {counter} in {detail}");
+    }
+    assert!(fixture.requests("write").is_empty());
+    fixture.assert_no_signal().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn codex_prompt_held_snapshot_fails_at_deadline() -> Result<()> {
     let mut fixture = PromptFixture::new().await?;
     fixture.host.set_pane("loading");

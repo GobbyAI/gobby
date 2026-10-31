@@ -171,7 +171,7 @@ async fn wait_for_composer(
             Err(_) => probe.snapshot_errors += 1,
         }
         match inventory(node, probe_limit(deadline)).await {
-            Ok(inventory) if !is_live(&inventory, terminal_id) => {
+            Ok(inventory) if Instant::now() < deadline && !is_live(&inventory, terminal_id) => {
                 return Err(Stop::Failed {
                     code: "codex_terminal_exited_before_composer",
                     detail: format!("terminal {terminal_id} left the host inventory"),
