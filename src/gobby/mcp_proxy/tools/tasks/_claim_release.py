@@ -1,5 +1,6 @@
 """Coordinator release of a named seat's task claim, and the Dev Manager's in-team hand-off."""
 
+from dataclasses import dataclass
 from typing import Any
 
 from gobby.agents.team_admission_records import TeamBinding
@@ -14,11 +15,10 @@ from gobby.storage.hub.protocol import (
     SessionVariableTransfer,
 )
 from gobby.storage.session_models import Session
-from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.tasks.attributed_roots import is_ignorable_attributed_root
 from gobby.tasks.lifecycle_access import is_operator_coordinator
-from gobby.tasks.step_records import fixer_round, list_task_step_records
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.agent_resolver import session_agent_definition
 from gobby.workflows.task_claim_state import task_edited_checkout_paths, task_edited_file_set
@@ -196,33 +196,68 @@ def _managed_team(ctx: RegistryContext, caller: Session, task_id: str) -> TeamBi
     return managed_task_team(db, caller.id, task_id)
 
 
-def _recipient_refusal(
-    db: HubDatabase, caller_id: str, recipient: Session, task_id: str, epoch: int
-) -> dict[str, str] | None:
-    """Refuse a move that disqualifies the seat the review sequence needs next.
+@dataclass(frozen=True)
+class ClaimTransfer:
+    """A committed claim move: the task as the recipient now holds it, and its event."""
 
-    A former claimant never lands or reviews the task, so the seats that close it never
-    take its claim, and the epoch's reviewer takes it only at the second rejection.
+    task: Task
+    event_id: int
+
+
+class ClaimTransferRefused(Exception):
+    """A claim move that a check refused; ``payload`` is the error result a caller returns."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        super().__init__(str(payload.get("error", "claim transfer refused")))
+        self.payload = payload
+
+
+def transfer_task_claim(
+    ctx: RegistryContext,
+    *,
+    task_id: str,
+    holder: Session,
+    recipient: Session,
+    project_id: str | None,
+    actor_id: str,
+    reason: str,
+) -> ClaimTransfer:
+    """Move a claim from ``holder`` to ``recipient`` as one locked transfer.
+
+    The holder check, the dirty-file check and the move commit together. A refusal raises
+    ``ClaimTransferRefused`` and rolls the transaction back, so no caller sees a partial move.
     """
-    definition = session_agent_definition(db, recipient)
-    if recipient.id == caller_id or (
-        definition is not None and "land_tasks" in definition[0].capabilities
-    ):
-        return {
-            "error": "The seat that closes the task cannot hold its claim",
-            "error_code": "closer_claim_forbidden",
-        }
-    records = list_task_step_records(db, task_id)
-    reviewed = any(
-        record.step == "review" and record.epoch == epoch and record.session_id == recipient.id
-        for record in records
-    )
-    if reviewed and not fixer_round(records, epoch):
-        return {
-            "error": "A reviewer of this epoch takes the claim only at the second rejection",
-            "error_code": "reviewer_claim_early",
-        }
-    return None
+    db = ctx.task_manager.db
+    # claim_task_for_agent re-takes these exact locks, so the checks and the move commit as one.
+    with db.transaction_immediate(AgentTaskClaimMutation(recipient.id)) as conn:
+        row = conn.execute(
+            "SELECT claimed_by_session_id, project_id, closed_at FROM tasks "
+            "WHERE id = %s FOR UPDATE",
+            (task_id,),
+        ).fetchone()
+        if row is None or str(row["project_id"]) != project_id:
+            raise ClaimTransferRefused({"error": "Task not found", "error_code": "task_not_found"})
+        if row["closed_at"] is not None or str(row["claimed_by_session_id"]) != holder.id:
+            raise ClaimTransferRefused(dict(_STALE_HOLDER))
+        if holder.id == recipient.id:
+            raise ClaimTransferRefused(
+                {"error": "The recipient already holds the claim", "error_code": "same_seat"}
+            )
+        conn.acquire_additional_lock(SessionVariableTransfer((holder.id, recipient.id)))
+        refusal = _uncommitted_refusal(ctx, holder, task_id)
+        if refusal is not None:
+            raise ClaimTransferRefused(refusal)
+        handed = ctx.task_manager.claim_task_for_agent(
+            task_id, session_id=recipient.id, expected_owner=holder.id
+        )
+        event = TaskLifecycleEventManager(db).record_lifecycle_event(
+            task_id,
+            "claim:held",
+            "claim:handed_off",
+            f"Handed claim from {holder.id} to {recipient.id}: {reason}",
+            by_actor=actor_id,
+        )
+    return ClaimTransfer(task=handed, event_id=event.id)
 
 
 def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
@@ -262,45 +297,16 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
                     "error": "The holder and the recipient must be seats of the task's team",
                     "error_code": "team_seat_required",
                 }
-            # claim_task_for_agent re-takes these exact locks, so the ownership check, the
-            # dirty-file check and the move commit as one transfer.
-            with db.transaction_immediate(AgentTaskClaimMutation(recipient.id)) as conn:
-                row = conn.execute(
-                    "SELECT claimed_by_session_id, project_id, closed_at, review_epoch FROM tasks "
-                    "WHERE id = %s FOR UPDATE",
-                    (resolved_id,),
-                ).fetchone()
-                if row is None or str(row["project_id"]) != caller.project_id:
-                    return {"error": "Task not found", "error_code": "task_not_found"}
-                if row["closed_at"] is not None or str(row["claimed_by_session_id"]) != holder.id:
-                    return dict(_STALE_HOLDER)
-                if holder.id == recipient.id:
-                    return {
-                        "error": "The recipient already holds the claim",
-                        "error_code": "same_seat",
-                    }
-                refusal = _recipient_refusal(
-                    db, caller.id, recipient, resolved_id, int(row["review_epoch"])
-                )
-                if refusal is not None:
-                    return refusal
-                sessions = {recipient.id}
-                sessions.add(holder.id)
-                conn.acquire_additional_lock(SessionVariableTransfer(tuple(sessions)))
-                refusal = _uncommitted_refusal(ctx, holder, resolved_id)
-                if refusal is not None:
-                    return refusal
-                handed = ctx.task_manager.claim_task_for_agent(
-                    resolved_id, session_id=recipient.id, expected_owner=holder.id
-                )
-                event = TaskLifecycleEventManager(db).record_lifecycle_event(
-                    resolved_id,
-                    "claim:held",
-                    "claim:handed_off",
-                    f"Handed claim from {holder.id} to {recipient.id}: {reason.strip()}",
-                    by_actor=caller.id,
-                )
-            record_claimant_state(ctx, recipient.id, handed)
+            transfer = transfer_task_claim(
+                ctx,
+                task_id=resolved_id,
+                holder=holder,
+                recipient=recipient,
+                project_id=caller.project_id,
+                actor_id=caller.id,
+                reason=reason.strip(),
+            )
+            record_claimant_state(ctx, recipient.id, transfer.task)
             return {
                 "success": True,
                 "task_id": resolved_id,
@@ -308,8 +314,10 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
                 "handed_to_session_id": recipient.id,
                 "handed_by_session_id": caller.id,
                 "reason": reason.strip(),
-                "event_id": event.id,
+                "event_id": transfer.event_id,
             }
+        except ClaimTransferRefused as refused:
+            return refused.payload
         except (TaskNotFoundError, ValueError) as exc:
             return {"error": str(exc)}
 
@@ -317,10 +325,9 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
         name="hand_off_task_claim",
         description=(
             "The task's Dev Manager: move the task claim from its holder to another seat of the "
-            "same team. The holder must still own the task and have no uncommitted "
-            "task-attributed files; the transfer is atomic and recorded with the reason. A seat "
-            "that closes the task never takes its claim, and a reviewer of the current epoch "
-            "takes it only at the second rejection."
+            "same team, the manual recovery path for a stalled hand-off. The holder must still "
+            "own the task and have no uncommitted task-attributed files; the transfer is atomic "
+            "and recorded with the reason."
         ),
         input_schema={
             "type": "object",

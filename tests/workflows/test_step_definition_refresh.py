@@ -135,6 +135,7 @@ def _reviewer_definition() -> AgentDefinitionBody:
     return AgentDefinitionBody.model_validate(
         {
             "name": "code-reviewer",
+            "task_step_writes": ["review"],
             "prompts": {"agent": "Synthetic reviewer seat."},
             "workflows": {"rule_selectors": {"include": []}},
             "task_step_writes": ["review"],
@@ -191,7 +192,7 @@ async def test_reloaded_reviewer_ends_only_on_terminal_event(
     hub_db: HubDatabase, tmp_path: Path, recreate_engine: bool, seat_ids: tuple[str, str]
 ) -> None:
     session_id, project_id = seat_ids
-    # Spawned seats name their definition in _agent_type, which advance_seat resolves.
+    # Authority resolves from the seat's activated definition, so the session names it.
     SessionVariableManager(hub_db).set_variable(session_id, "_agent_type", "code-reviewer")
     recipient, sha = str(uuid4()), "a" * 40
     hub_db.execute(

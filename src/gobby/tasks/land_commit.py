@@ -22,7 +22,6 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.inter_session_messages import InterSessionMessageManager
-from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskAlreadyEscalatedError
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
@@ -44,6 +43,7 @@ from gobby.tasks.step_records import (
     approved_task_step,
     independent_review_approval,
     list_task_step_records,
+    maker_sessions,
 )
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 from gobby.utils.git import git_subprocess_env
@@ -372,7 +372,7 @@ def _manages_task(db: HubDatabase, task: Task, caller_session_id: str) -> bool:
 
 
 def _review_blockers(
-    task: Task, records: list[TaskStepRecord], sha: str, caller: str, claimants: set[str]
+    task: Task, records: list[TaskStepRecord], sha: str, caller: str, excluded: set[str]
 ) -> list[str]:
     blockers: list[str] = []
     if any(
@@ -394,7 +394,7 @@ def _review_blockers(
         and record.epoch == task.review_epoch
         and record.commit_sha == sha
         and "approve_security_review" in record.agent_capabilities
-        and record.session_id not in {caller, *claimants}
+        and record.session_id not in {caller, *excluded}
         for record in records
     ):
         blockers.append("security_review_missing")
@@ -528,17 +528,20 @@ async def land_candidate(
                 tip = await _tip(main, branch)
                 receipts = list_close_receipts(db, task.id)
                 records = list_task_step_records(db, task.id)
-                with db.transaction() as conn:
-                    claimants = claimant_sessions(conn, task.id)
+                makers = maker_sessions(records)
                 blockers: list[str] = []
                 if not _manages_task(db, current_task, caller_session_id):
                     blockers.append("caller_not_task_manager")
-                if current_task.claimed_by_session_id == caller_session_id:
-                    blockers.append("caller_is_claimant")
-                elif caller_session_id in claimants:
-                    blockers.append("caller_was_claimant")
+                # The claim moves along the team chain, so only authorship bars a closer.
+                if caller_session_id in makers:
+                    blockers.append("caller_is_maker")
+                # A security approval must come from a seat outside the task's authorship and
+                # outside its current claim.
+                excluded = set(makers)
+                if current_task.claimed_by_session_id:
+                    excluded.add(current_task.claimed_by_session_id)
                 blockers += _review_blockers(
-                    current_task, records, sha, caller_session_id, claimants
+                    current_task, records, sha, caller_session_id, excluded
                 )
                 if not linked:
                     blockers.append("candidate_not_linked")

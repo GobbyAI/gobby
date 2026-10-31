@@ -330,7 +330,7 @@ async def test_epic_leaf_uses_single_task_fixer_and_fresh_reviewer(world: TeamWo
     assert moved.get("success") is True, moved
     assert tasks.get_task(leaf.id).claimed_by_session_id == reviewer
     submit(team.db, reviewer, leaf, "implementation", "approved", 3, sha)
-    with pytest.raises(StepRecordError, match="claimant"):
+    with pytest.raises(StepRecordError, match="cannot review its own task"):
         submit(team.db, reviewer, leaf, "review", "approved", 3, sha)
 
     fresh = world.child(leaf)

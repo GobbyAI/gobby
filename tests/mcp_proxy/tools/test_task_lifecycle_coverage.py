@@ -281,7 +281,11 @@ class TestCloseTask(_CloseTaskGitIsolation):
     ) -> None:
         task = _make_task(task_type="epic")
         mock_task_manager.get_task.return_value = task
-        with patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as archive:
+        # The closer's definition grants close_without_work; the mocked database cannot grant it.
+        with (
+            patch.object(lifecycle_close, "session_has_capability_or_operator", return_value=True),
+            patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as archive,
+        ):
             result = await _create_registry(mock_task_manager).call(
                 "close_task", {"task_id": task.id, "reason": "moot"}
             )
@@ -412,6 +416,8 @@ class TestCloseTask(_CloseTaskGitIsolation):
             "active_task_id": epic.id,
             "task_edited_files": {},
         }
+        # The closer carries no _agent_type, so it is not a definition-bound seat.
+        mock_svm.get_variable_subset.return_value = {}
         mock_svm.merge_variables.side_effect = lambda *_args, **_kwargs: order.append("cleanup")
 
         with (
