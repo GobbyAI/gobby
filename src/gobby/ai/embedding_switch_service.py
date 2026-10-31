@@ -234,11 +234,10 @@ class EmbeddingSwitchCoordinator:
         journal = self._load_journal()
         if journal is None:
             return SwitchOperationStatus(None, "not_found", "No embedding switch exists")
-        return SwitchOperationStatus(
-            str(journal.run_id),
-            str(journal.phase),
-            "Embedding switch is persisted and idle",
-        )
+        message = "Embedding switch is persisted and idle"
+        if journal.error:
+            message = f"{message}; last error: {journal.error}"
+        return SwitchOperationStatus(str(journal.run_id), str(journal.phase), message)
 
     def _launch(self, journal: Any, status: str) -> SwitchOperationStatus:
         self.control = EmbeddingSwitchControl()
@@ -263,7 +262,15 @@ class EmbeddingSwitchCoordinator:
 
     def _observe_task_result(self, task: asyncio.Task[Any], *, run_id: str) -> None:
         try:
-            task.result()
+            # The runner journals a phase error and returns it in the report.
+            error = getattr(task.result(), "error", None)
+            if error:
+                logger.error(
+                    "Embedding switch %s stopped with an error: %s",
+                    run_id,
+                    error,
+                    extra={"run_id": run_id},
+                )
         except asyncio.CancelledError:
             logger.info(
                 "Embedding switch background task was cancelled",
