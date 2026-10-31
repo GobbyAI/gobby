@@ -679,6 +679,7 @@ fn codex_symlink_seed_is_refused_with_a_warning() -> Result<()> {
 }
 
 #[tokio::test]
+// test-quality: allow UNCONDITIONAL_SKIP -- not a test: the child process that codex_symlink_seed_is_refused_with_a_warning runs with --ignored to capture the launch warning
 #[ignore = "subprocess helper for capturing the launch trust warning"]
 async fn codex_symlink_warning_child() -> Result<()> {
     let mut fixture = LaunchFixture::new().await?;
