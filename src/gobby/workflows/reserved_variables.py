@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 HANDOFF_TURN_END_PENDING_VARIABLE = "_handoff_turn_end_pending"
 # The Unix-socket root an SRT launch granted its own run; only the launch records it.
 SRT_RUN_SOCKET_ROOT_VARIABLE = "_agent_srt_socket_root"
+# Full SHAs of the two-parent merges a session authored; a base-merge candidate binds to one.
+AUTHORED_MERGES_VARIABLE = "_authored_merge_commits"
 
 if TYPE_CHECKING:
     from gobby.storage.definitions.rules import RuleDefinitionRow
@@ -14,6 +16,7 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         # Names the session's agent definition, which selects its rules and
         # send_message target modes; only spawn and persona application set it.
         "_agent_type",
+        AUTHORED_MERGES_VARIABLE,
         "_block_reasons_shown",
         HANDOFF_TURN_END_PENDING_VARIABLE,
         SRT_RUN_SOCKET_ROOT_VARIABLE,

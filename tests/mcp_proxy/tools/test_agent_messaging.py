@@ -146,6 +146,20 @@ def mock_db() -> MagicMock:
     return db
 
 
+@pytest.fixture(autouse=True)
+def admit_recipients(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Admit every recipient: the mock DB holds no seat rows to resolve senders against.
+
+    These tests cover tool shape; admission runs against the real database in its own suites.
+    """
+    from gobby.agents.team_communications import RecipientPolicy
+
+    monkeypatch.setattr(
+        "gobby.sessions.mailbox.recipient_policy",
+        lambda db, sender_id, recipient_ids: RecipientPolicy(frozenset()),
+    )
+
+
 @pytest.fixture
 def messaging_registry(
     mock_session_manager: MagicMock,
