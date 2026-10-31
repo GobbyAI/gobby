@@ -65,7 +65,7 @@ pub(super) fn row_to_bridge_edge_hypothesis(row: &Row) -> Option<BridgeEdgeHypot
     ))
 }
 
-fn row_string(row: &Row, keys: &[&str]) -> Option<String> {
+pub(super) fn row_string(row: &Row, keys: &[&str]) -> Option<String> {
     for key in keys {
         let Some(value) = row.get(*key).and_then(Value::as_str) else {
             continue;
@@ -77,7 +77,7 @@ fn row_string(row: &Row, keys: &[&str]) -> Option<String> {
     None
 }
 
-fn row_usize(row: &Row, keys: &[&str]) -> Option<usize> {
+pub(super) fn row_usize(row: &Row, keys: &[&str]) -> Option<usize> {
     for key in keys {
         let Some(value) = row.get(*key) else {
             continue;

@@ -10,7 +10,7 @@ use super::support::{
 /// CALLS edges are admitted per content version of the file they were projected from.
 fn call_edge_version_filter() -> String {
     format!(
-        "r.file + '|' + r.content_hash IN $admitted_versions AND {}",
+        "(r.file + '|' + r.content_hash) IN $admitted_versions AND {}",
         crate::graph::admitted_code_nodes("[startNode(r), endNode(r)]")
     )
 }
@@ -283,7 +283,7 @@ pub(crate) fn get_imports_query(
     (
         "MATCH (f:CodeFile {path: $path, project: $project})\
          -[r:IMPORTS]->(m:CodeModule) \
-         WHERE $path + '|' + r.content_hash IN $admitted_versions \
+         WHERE ($path + '|' + r.content_hash) IN $admitted_versions \
          RETURN m.name AS id, m.name AS module_name"
             .to_string(),
         typed_query::string_params(&[("project", project_id), ("path", file_path)]),
@@ -326,11 +326,11 @@ pub(crate) fn blast_radius_query(depth: usize, limit: usize) -> String {
     format!(
         "{anchor} \
          MATCH path = (affected:CodeSymbol {{project: $project}})-[:CALLS*1..{depth}]->(target) \
-         WHERE all(rel IN relationships(path) WHERE rel.file + '|' + rel.content_hash IN $admitted_versions) \
+         WHERE all(rel IN relationships(path) WHERE (rel.file + '|' + rel.content_hash) IN $admitted_versions) \
          AND {path_nodes} \
          WITH affected, min(length(path)) AS distance \
          OPTIONAL MATCH (file:CodeFile {{project: $project}})-[d:DEFINES]->(affected) \
-         WHERE file.path + '|' + d.content_hash IN $admitted_versions \
+         WHERE (file.path + '|' + d.content_hash) IN $admitted_versions \
          RETURN DISTINCT affected.id AS node_id, \
                 affected.name AS node_name, \
                 affected.kind AS kind, file.path AS file_path, \
@@ -503,8 +503,8 @@ mod tests {
     #[test]
     fn relationship_edge_queries_filter_admitted_versions_before_aggregation() {
         let ids = vec!["symbol-1".to_string()];
-        let call_filter = "r.file + '|' + r.content_hash IN $admitted_versions";
-        let import_filter = "$path + '|' + r.content_hash IN $admitted_versions";
+        let call_filter = "(r.file + '|' + r.content_hash) IN $admitted_versions";
+        let import_filter = "($path + '|' + r.content_hash) IN $admitted_versions";
         let queries = [
             (
                 "callers",

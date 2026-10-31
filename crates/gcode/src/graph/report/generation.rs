@@ -33,27 +33,43 @@ pub fn generate_report_with_options(
         return Err(ProjectGraphReportError::GraphServiceNotConfigured);
     };
 
+    let t0 = std::time::Instant::now(); // SPIKE-TIMING
+    eprintln!("SPIKE pre entry_epoch {:.3}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())); // SPIKE-TIMING
     let connection_config = config.connection_config();
     let options = options.normalized();
     let communities = load_report_communities(ctx);
+    eprintln!("SPIKE pre communities {:?}", t0.elapsed()); // SPIKE-TIMING
     let result = gobby_core::falkor::with_graph(
         Some(&connection_config),
         &config.graph_name,
         ReportGraphSnapshot::default(),
         |client| {
+            eprintln!("SPIKE pre closure_entry {:?}", t0.elapsed()); // SPIKE-TIMING
+            let started = std::time::Instant::now(); // SPIKE-TIMING
             let namespaces = admitted_namespaces(ctx)?;
+            eprintln!("SPIKE pre admitted {:?} namespaces={}", started.elapsed(), namespaces.len()); // SPIKE-TIMING
+            if std::env::var_os("SPIKE_PRE_ONLY").is_some() { // SPIKE-TIMING
+                eprintln!("SPIKE pre exit_after_admitted total {:?}", t0.elapsed()); // SPIKE-TIMING
+                std::process::exit(0); // SPIKE-TIMING
+            } // SPIKE-TIMING
             load_report_snapshot(client, &namespaces, options.top_n)
         },
     );
+    eprintln!("SPIKE pre with_graph_returned {:?}", t0.elapsed()); // SPIKE-TIMING
 
     match result {
-        Ok((snapshot, ServiceState::Available)) => Ok(generate_report_from_snapshot_with_options(
-            &ctx.project_id,
-            now_iso8601(),
-            snapshot,
-            communities,
-            options,
-        )),
+        Ok((snapshot, ServiceState::Available)) => {
+            eprintln!("SPIKE pre snapshot_ready {:?}", t0.elapsed()); // SPIKE-TIMING
+            let report = generate_report_from_snapshot_with_options(
+                &ctx.project_id,
+                now_iso8601(),
+                snapshot,
+                communities,
+                options,
+            );
+            eprintln!("SPIKE pre render_done {:?}", t0.elapsed()); // SPIKE-TIMING
+            Ok(report)
+        }
         Ok((_, ServiceState::NotConfigured)) => {
             Err(ProjectGraphReportError::GraphServiceNotConfigured)
         }

@@ -2,9 +2,20 @@ use std::collections::HashMap;
 
 use crate::graph::typed_query;
 
-const CODE_EDGE_REL_TYPES: &str =
-    "['DEFINES', 'IMPORTS', 'CALLS', 'INHERITS', 'EXTENDS', 'IMPLEMENTS']";
 const CODE_EDGE_REL_PATTERN: &str = "DEFINES|IMPORTS|CALLS|INHERITS|EXTENDS|IMPLEMENTS";
+
+/// Admission test over one grouped target row. `sym`, `p`, `h`, `vp`, `vh` are
+/// the target's `CodeSymbol` flag, own path and hash, and stamped path and hash.
+/// Non-symbol targets always pass; symbols pass by their own version or by a
+/// stamped callee version. The test runs once per distinct target version, not
+/// once per edge.
+const ADMITTED_TARGET: &str = "NOT sym \
+     OR h IN coalesce($admitted_map[p], []) \
+     OR vh IN coalesce($endpoint_map[vp], [])";
+
+/// Edge-version check for rows that the seed does not imply (`chk`): the edge's own
+/// hash `eh` must be an admitted version of its file `ef`. Other rows pass.
+const ADMITTED_EDGE: &str = "CASE WHEN chk THEN eh IN coalesce($admitted_map[ef], []) ELSE true END";
 
 pub(super) fn report_node_type_case(alias: &str) -> String {
     format!(
@@ -27,20 +38,89 @@ fn report_node_name_expr(alias: &str) -> String {
     format!("coalesce({alias}.name, {alias}.path, {alias}.id)")
 }
 
+/// One row per candidate edge: `src`, `ty`, `t`, the target's symbol flag, own path
+/// and hash, stamped path and hash, then `chk`, `ef` and `eh` (see `ADMITTED_EDGE`).
+fn edge_columns(chk: &str, ef: &str, eh: &str) -> String {
+    format!(
+        "src, type(r) AS ty, t, (t:CodeSymbol) AS sym, t.file_path AS p, \
+         t.file_content_hash AS h, t.version_file_path AS vp, \
+         t.version_content_hash AS vh, {chk} AS chk, {ef} AS ef, {eh} AS eh"
+    )
+}
+
+/// Edges seeded by an admitted version. A file-anchored edge (DEFINES, IMPORTS)
+/// starts at an admitted file version; a symbol-anchored edge starts at an admitted
+/// symbol version. Both match `r.content_hash` to the seed, so they need no check.
+/// The last branch takes a symbol's edges that name another file (`r.file`); those
+/// need the `ef`/`eh` check.
+fn seeded_edge_rows() -> String {
+    let seeded = edge_columns("false", "NULL", "NULL");
+    let foreign = edge_columns("true", "r.file", "r.content_hash");
+    format!(
+        "UNWIND $admitted_pairs AS v \
+         MATCH (src:CodeFile {{project: $project, path: v.p}})-[r:{CODE_EDGE_REL_PATTERN}]->(t {{project: $project}}) \
+         WHERE r.content_hash = v.h AND coalesce(r.file, src.path) = src.path \
+         RETURN {seeded} \
+         UNION ALL \
+         UNWIND $admitted_pairs AS v \
+         MATCH (src:CodeSymbol {{project: $project, file_path: v.p}})-[r:{CODE_EDGE_REL_PATTERN}]->(t {{project: $project}}) \
+         WHERE src.file_content_hash = v.h AND r.content_hash = v.h \
+           AND coalesce(r.file, src.file_path) = src.file_path \
+         RETURN {seeded} \
+         UNION ALL \
+         UNWIND $admitted_pairs AS v \
+         MATCH (src:CodeSymbol {{project: $project, file_path: v.p}})-[r:{CODE_EDGE_REL_PATTERN}]->(t {{project: $project}}) \
+         WHERE src.file_content_hash = v.h AND r.file IS NOT NULL AND r.file <> src.file_path \
+         RETURN {foreign}"
+    )
+}
+
+/// Edges whose source is a placeholder (module, unresolved callee, external symbol).
+/// The source is not seeded, so each row is checked by its own edge version.
+fn placeholder_edge_rows() -> String {
+    let body = edge_columns("true", "coalesce(r.file, src.path)", "r.content_hash");
+    ["CodeModule", "UnresolvedCallee", "ExternalSymbol"]
+        .map(|label| {
+            format!(
+                "MATCH (src:{label} {{project: $project}})-[r:{CODE_EDGE_REL_PATTERN}]->(t {{project: $project}}) \
+                 RETURN {body}"
+            )
+        })
+        .join(" UNION ALL ")
+}
+
+/// Every admitted candidate edge row (see `edge_columns`).
+fn admitted_edge_rows() -> String {
+    format!("{} UNION ALL {}", seeded_edge_rows(), placeholder_edge_rows())
+}
+
+/// Admitted nodes by identity: files by admitted path, symbols by admitted
+/// version, and placeholders (modules, unresolved callees, external symbols)
+/// that an admitted edge reaches.
 pub(super) fn report_node_counts_query(project_id: &str) -> (String, HashMap<String, String>) {
-    let endpoints = crate::graph::admitted_code_nodes("[startNode(r), endNode(r)]");
+    let edges = admitted_edge_rows();
+    let placeholder_edges = placeholder_edge_rows();
     (
         format!(
-            "MATCH (n {{project: $project}}) \
-             WHERE (n:CodeFile AND n.path IN $admitted_paths) \
-               OR (n:CodeSymbol AND n.file_path + '|' + n.file_content_hash IN $admitted_versions) \
+            "MATCH (n:CodeFile {{project: $project}}) \
+             WHERE n.path IN $admitted_paths \
              RETURN {case} AS name, count(n) AS count \
              UNION ALL \
-             MATCH (n {{project: $project}})-[r]-(other {{project: $project}}) \
-             WHERE (n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol) \
-               AND coalesce(r.file, startNode(r).path) + '|' + r.content_hash IN $admitted_versions \
-               AND {endpoints} \
+             UNWIND $admitted_pairs AS v \
+             MATCH (n:CodeSymbol {{project: $project, file_path: v.p}}) \
+             WHERE n.file_content_hash = v.h \
+             RETURN {case} AS name, count(n) AS count \
+             UNION ALL \
+             CALL {{ \
+               CALL {{ {edges} }} \
+               WITH t AS n, sym, chk, ef, eh WHERE NOT sym AND ({ADMITTED_EDGE}) RETURN n \
+               UNION ALL \
+               CALL {{ {placeholder_edges} }} \
+               WITH src AS n, sym, chk, ef, eh, p, h, vp, vh \
+               WHERE ({ADMITTED_EDGE}) AND ({ADMITTED_TARGET}) RETURN n \
+             }} \
              WITH DISTINCT n \
+             WHERE n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol \
              RETURN {case} AS name, count(n) AS count",
             case = report_node_type_case("n")
         ),
@@ -49,20 +129,42 @@ pub(super) fn report_node_counts_query(project_id: &str) -> (String, HashMap<Str
 }
 
 pub(super) fn report_code_edge_counts_query(project_id: &str) -> (String, HashMap<String, String>) {
-    let endpoints = crate::graph::admitted_code_nodes("[startNode(r), endNode(r)]");
+    let edges = admitted_edge_rows();
     (
         format!(
-            "MATCH (source {{project: $project}})-[r]->(target {{project: $project}}) \
-             WHERE type(r) IN {CODE_EDGE_REL_TYPES} \
-               AND coalesce(r.file, startNode(r).path) + '|' + r.content_hash IN $admitted_versions \
-               AND {endpoints} \
-             RETURN type(r) AS name, count(r) AS count"
+            "CALL {{ {edges} }} \
+             WITH ty, sym, p, h, vp, vh, chk, ef, eh, count(*) AS c \
+             WHERE ({ADMITTED_EDGE}) AND ({ADMITTED_TARGET}) \
+             RETURN ty AS name, sum(c) AS count"
         ),
         typed_query::string_params(&[("project", project_id)]),
     )
 }
 
+/// Binds the admission maps once per query. A per-row `$admitted_map[...]`
+/// parameter lookup timed out on large graphs; a bound variable does not.
+const BIND_ADMISSION_MAPS: &str = "WITH $admitted_map AS am, $endpoint_map AS em";
+
+/// Imports the bound maps into a `CALL {}` branch. The engine accepts only simple
+/// variable references there, so every union branch imports them again.
+const IMPORT_ADMISSION_MAPS: &str = "WITH am, em";
+
+/// Admission of one endpoint in map form: only CodeSymbol nodes carry a file
+/// version, checked against the admitted and endpoint version maps.
+fn admitted_endpoint(alias: &str) -> String {
+    format!(
+        "(NOT {alias}:CodeSymbol \
+         OR {alias}.file_content_hash IN coalesce(am[{alias}.file_path], []) \
+         OR {alias}.version_content_hash IN coalesce(em[{alias}.version_file_path], []))"
+    )
+}
+
 /// `limit` of `None` returns every ranked node of the class.
+///
+/// Degree is the sum of an outgoing and an incoming count per node, computed in
+/// one union so only the ranked rows return. A result set above the engine's
+/// 10000-row cap is truncated silently, so per-direction rows cannot be returned
+/// in full.
 pub(super) fn report_hotspots_query(
     project_id: &str,
     node_class: &str,
@@ -74,28 +176,28 @@ pub(super) fn report_hotspots_query(
         _ => "CodeSymbol",
     };
     let limit_clause = limit.map_or_else(String::new, |limit| format!(" LIMIT {}", limit.max(1)));
-    let outgoing_endpoints = crate::graph::admitted_code_nodes("[startNode(out), endNode(out)]");
-    let incoming_endpoints = crate::graph::admitted_code_nodes("[startNode(inc), endNode(inc)]");
+    let node_admitted = admitted_endpoint("n");
+    let out_admitted = admitted_endpoint("out_target");
+    let in_admitted = admitted_endpoint("in_source");
     (
-        // Compute in/out degree with two edge-driven aggregations combined by
-        // node, instead of seeding every node and double-expanding it. The
-        // node-driven form carried all ~70k symbols (including zero-degree
-        // ones) through the second OPTIONAL MATCH and timed out server-side on
-        // large graphs; the edge-driven form only touches nodes that have
-        // edges and returns in well under a second (task #17679).
         format!(
-            "CALL {{ \
+            "{BIND_ADMISSION_MAPS} \
+             CALL {{ \
+             {IMPORT_ADMISSION_MAPS} \
              MATCH (n:{label} {{project: $project}})-[out:{CODE_EDGE_REL_PATTERN}]->(out_target {{project: $project}}) \
              WHERE (out_target:CodeFile OR out_target:CodeSymbol OR out_target:CodeModule OR out_target:UnresolvedCallee OR out_target:ExternalSymbol) \
-             AND coalesce(out.file, startNode(out).path) + '|' + out.content_hash IN $admitted_versions \
-             AND {outgoing_endpoints} \
-             RETURN n AS node, count(out) AS outgoing, 0 AS incoming \
+               AND out.content_hash IN coalesce(am[coalesce(out.file, startNode(out).path)], []) \
+               AND {node_admitted} AND {out_admitted} \
+             WITH n, count(out) AS outgoing \
+             RETURN n AS node, outgoing, 0 AS incoming \
              UNION ALL \
+             {IMPORT_ADMISSION_MAPS} \
              MATCH (in_source {{project: $project}})-[inc:{CODE_EDGE_REL_PATTERN}]->(n:{label} {{project: $project}}) \
              WHERE (in_source:CodeFile OR in_source:CodeSymbol OR in_source:CodeModule OR in_source:UnresolvedCallee OR in_source:ExternalSymbol) \
-             AND coalesce(inc.file, startNode(inc).path) + '|' + inc.content_hash IN $admitted_versions \
-             AND {incoming_endpoints} \
-             RETURN n AS node, 0 AS outgoing, count(inc) AS incoming \
+               AND inc.content_hash IN coalesce(am[coalesce(inc.file, startNode(inc).path)], []) \
+               AND {in_admitted} AND {node_admitted} \
+             WITH n, count(inc) AS incoming \
+             RETURN n AS node, 0 AS outgoing, incoming \
              }} \
              WITH node, sum(outgoing) AS outgoing, sum(incoming) AS incoming \
              WITH node, outgoing, incoming, outgoing + incoming AS degree \
@@ -110,19 +212,25 @@ pub(super) fn report_hotspots_query(
     )
 }
 
+/// A CALLS edge seeded by an admitted caller version: a same-file edge by the
+/// caller's version, or a foreign-file edge (`r.file`) by its own version.
+const SEEDED_CALL_EDGE: &str = "src.file_content_hash = v.h \
+     AND ((r.content_hash = v.h AND coalesce(r.file, src.file_path) = src.file_path) \
+          OR (r.file IS NOT NULL AND r.file <> src.file_path AND r.content_hash IN coalesce(am[r.file], [])))";
+
 pub(super) fn report_incoming_call_hotspots_query(
     project_id: &str,
     top_n: usize,
 ) -> (String, HashMap<String, String>) {
     let limit = top_n.max(1);
-    let endpoints = crate::graph::admitted_code_nodes("[startNode(r), endNode(r)]");
+    let node_admitted = admitted_endpoint("n");
     (
         format!(
-            "MATCH (:CodeSymbol {{project: $project}})-[r:CALLS]->(n:CodeSymbol {{project: $project}}) \
-             WHERE r.file + '|' + r.content_hash IN $admitted_versions \
-             AND {endpoints} \
+            "{BIND_ADMISSION_MAPS} \
+             UNWIND $admitted_pairs AS v \
+             MATCH (src:CodeSymbol {{project: $project, file_path: v.p}})-[r:CALLS]->(n:CodeSymbol {{project: $project}}) \
+             WHERE {SEEDED_CALL_EDGE} AND {node_admitted} \
              WITH n, count(r) AS incoming \
-             WHERE incoming > 0 \
              RETURN n.id AS id, coalesce(n.name, n.id) AS name, {} AS node_type, incoming AS degree, incoming, 0 AS outgoing, n.file_path AS file_path \
              ORDER BY degree DESC, name ASC, id ASC \
              LIMIT {limit}",
@@ -143,12 +251,12 @@ pub(super) fn report_target_frequencies_query(
         "UnresolvedCallee"
     };
     let limit = top_n.max(1);
-    let endpoints = crate::graph::admitted_code_nodes("[startNode(r), endNode(r)]");
     (
         format!(
-            "MATCH (:CodeSymbol {{project: $project}})-[r:CALLS]->(target:{target_label} {{project: $project}}) \
-             WHERE r.file + '|' + r.content_hash IN $admitted_versions \
-             AND {endpoints} \
+            "{BIND_ADMISSION_MAPS} \
+             UNWIND $admitted_pairs AS v \
+             MATCH (src:CodeSymbol {{project: $project, file_path: v.p}})-[r:CALLS]->(target:{target_label} {{project: $project}}) \
+             WHERE {SEEDED_CALL_EDGE} \
              RETURN target.id AS id, coalesce(target.name, target.id) AS name, count(r) AS count \
              ORDER BY count DESC, name ASC, id ASC \
              LIMIT {limit}"
@@ -159,8 +267,9 @@ pub(super) fn report_target_frequencies_query(
 
 pub(super) fn report_bridge_edges_query(project_id: &str) -> (String, HashMap<String, String>) {
     (
-        "MATCH (source)-[r:RELATES_TO_CODE]->(target:CodeSymbol {project: $project}) \
-         WHERE target.file_path + '|' + target.file_content_hash IN $admitted_versions \
+        "UNWIND $admitted_pairs AS v \
+         MATCH (target:CodeSymbol {project: $project, file_path: v.p})<-[r:RELATES_TO_CODE]-(source) \
+         WHERE target.file_content_hash = v.h \
          RETURN coalesce(source.id, source.uuid, source.name) AS source_id, \
                 target.id AS target_symbol_id, \
                 'RELATES_TO_CODE' AS relation, \
@@ -174,197 +283,4 @@ pub(super) fn report_bridge_edges_query(project_id: &str) -> (String, HashMap<St
             .to_string(),
         typed_query::string_params(&[("project", project_id)]),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hotspot_ranking_excludes_replaced_and_tombstoned_targets_before_counting() {
-        // Even a high-degree historical target must not consume the top-1 slot.
-        for (surface, query) in [
-            (
-                "symbol degrees",
-                report_hotspots_query("child", "symbol", Some(1)).0,
-            ),
-            (
-                "incoming calls",
-                report_incoming_call_hotspots_query("child", 1).0,
-            ),
-        ] {
-            for branch in query.split("UNION ALL") {
-                let aggregation = branch.find("count(").expect("degree aggregation");
-                let filter = &branch[..aggregation];
-                assert!(
-                    filter.contains(
-                        "node.file_path + '|' + node.file_content_hash IN $admitted_versions"
-                    ),
-                    "{surface}: endpoint version admission must precede ranking"
-                );
-                assert!(
-                    filter.contains("startNode(") && filter.contains("endNode("),
-                    "{surface}: both incident endpoints must be admitted"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn report_queries_filter_admitted_versions_before_aggregation() {
-        let queries = [
-            ("nodes", report_node_counts_query("child")),
-            ("edges", report_code_edge_counts_query("child")),
-            (
-                "hotspots",
-                report_hotspots_query("child", "symbol", Some(1)),
-            ),
-            (
-                "incoming calls",
-                report_incoming_call_hotspots_query("child", 1),
-            ),
-            ("bridges", report_bridge_edges_query("child")),
-            (
-                "external targets",
-                report_target_frequencies_query("child", "external", 1),
-            ),
-            (
-                "unresolved targets",
-                report_target_frequencies_query("child", "unresolved", 1),
-            ),
-        ];
-        for (surface, (query, _)) in queries {
-            for branch in query.split("UNION ALL") {
-                let filter = branch.find("$admitted_versions").unwrap_or_else(|| {
-                    panic!("{surface}: aggregate must constrain admitted versions")
-                });
-                let aggregate = branch
-                    .find("count(")
-                    .unwrap_or_else(|| branch.find("RETURN").expect("output"));
-                assert!(
-                    filter < aggregate,
-                    "{surface}: filter must precede aggregation"
-                );
-                assert!(
-                    branch[..aggregate].contains("content_hash"),
-                    "{surface}: path alone is insufficient"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn report_node_counts_admit_module_and_external_nodes_only_through_admitted_edges() {
-        let (query, _) = report_node_counts_query("child");
-        for branch in query.split("UNION ALL") {
-            let head = branch.split("RETURN").next().unwrap_or(branch);
-            let retained_only_label = ["CodeModule", "UnresolvedCallee", "ExternalSymbol"]
-                .iter()
-                .any(|label| head.contains(label));
-            if !retained_only_label {
-                continue;
-            }
-            let edge = head
-                .find("-[r")
-                .unwrap_or_else(|| panic!("module and external nodes need an edge: {branch}"));
-            let filter = head.find("$admitted_versions").unwrap_or_else(|| {
-                panic!("module and external nodes need an admitted edge: {branch}")
-            });
-            let aggregate = branch.find("count(").expect("aggregate");
-            assert!(
-                edge < filter && filter < aggregate,
-                "admitted edge must precede aggregation: {branch}"
-            );
-        }
-    }
-
-    #[test]
-    fn hotspots_query_uses_label_scoped_seed_and_typed_edges() {
-        let (query, params) = report_hotspots_query("proj-1", "symbol", Some(6));
-
-        // Seeds from the :CodeSymbol(project) index instead of scanning every
-        // project node and filtering by label afterwards, which forced a
-        // full-graph scan and timed out on large graphs (task #17679).
-        assert!(
-            query.contains("MATCH (n:CodeSymbol {project: $project})"),
-            "expected label-scoped seed, got: {query}"
-        );
-        assert!(
-            !query.contains("WHERE n:CodeSymbol"),
-            "label-less MATCH + WHERE label filter regressed: {query}"
-        );
-
-        // Traverses the DEFINES/IMPORTS/CALLS/INHERITS/EXTENDS/IMPLEMENTS
-        // relationship-type matrices directly instead of expanding every edge
-        // and filtering by type().
-        assert!(
-            query.contains("-[out:DEFINES|IMPORTS|CALLS|INHERITS|EXTENDS|IMPLEMENTS]->"),
-            "expected typed outgoing traversal, got: {query}"
-        );
-        assert!(
-            query.contains("-[inc:DEFINES|IMPORTS|CALLS|INHERITS|EXTENDS|IMPLEMENTS]->"),
-            "expected typed incoming traversal, got: {query}"
-        );
-        assert!(
-            !query.contains("type(out) IN"),
-            "untyped-then-type()-filter anti-pattern regressed: {query}"
-        );
-        assert!(
-            !query.contains("type(inc) IN"),
-            "untyped incoming filter regressed: {query}"
-        );
-
-        // Degree is computed by two edge-driven aggregations combined per node,
-        // not by seeding every node and double-expanding it (which timed out).
-        assert!(
-            query.contains("CALL {") && query.contains("UNION ALL"),
-            "expected edge-driven CALL/UNION ALL aggregation, got: {query}"
-        );
-        assert!(
-            query.contains("sum(outgoing)") && query.contains("sum(incoming)"),
-            "expected per-node re-aggregation, got: {query}"
-        );
-        assert!(
-            !query.contains("OPTIONAL MATCH"),
-            "node-driven double-expansion regressed: {query}"
-        );
-
-        // top_n is still pushed down as the LIMIT.
-        assert!(
-            query.contains("LIMIT 6"),
-            "expected pushed-down limit, got: {query}"
-        );
-        assert!(params.contains_key("project"));
-    }
-
-    #[test]
-    fn report_edge_patterns_include_inheritance_rels() {
-        for rel in ["INHERITS", "EXTENDS", "IMPLEMENTS"] {
-            assert!(
-                CODE_EDGE_REL_TYPES.contains(rel),
-                "CODE_EDGE_REL_TYPES missing {rel}: {CODE_EDGE_REL_TYPES}"
-            );
-            assert!(
-                CODE_EDGE_REL_PATTERN.contains(rel),
-                "CODE_EDGE_REL_PATTERN missing {rel}: {CODE_EDGE_REL_PATTERN}"
-            );
-        }
-        let (query, _) = report_code_edge_counts_query("proj-1");
-        for rel in ["INHERITS", "EXTENDS", "IMPLEMENTS"] {
-            assert!(
-                query.contains(rel),
-                "edge-count query missing {rel}: {query}"
-            );
-        }
-    }
-
-    #[test]
-    fn hotspots_query_scopes_seed_label_by_node_class() {
-        let (file_query, _) = report_hotspots_query("proj-1", "file", Some(3));
-        assert!(file_query.contains("MATCH (n:CodeFile {project: $project})"));
-
-        let (module_query, _) = report_hotspots_query("proj-1", "module", None);
-        assert!(module_query.contains("MATCH (n:CodeModule {project: $project})"));
-        assert!(!module_query.contains("LIMIT"));
-    }
 }

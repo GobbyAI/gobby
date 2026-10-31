@@ -1,4 +1,6 @@
 mod generation;
+mod head_queries; // SPIKE-PARITY
+mod spike_oracle; // SPIKE-PARITY
 mod loading;
 mod queries;
 mod render;

@@ -215,6 +215,48 @@ impl VersionSet {
     }
 }
 
+/// Cypher list of `{p, h}` maps, one per admitted `path|hash` key. Hashes are
+/// hex, so the last `|` separates the path from the hash.
+fn admitted_pair_literal(keys: &[String]) -> String {
+    keys.iter()
+        .filter_map(|key| key.rsplit_once('|'))
+        .map(|(path, hash)| {
+            format!(
+                "{{p: {}, h: {}}}",
+                typed_query::cypher_string_literal(path),
+                typed_query::cypher_string_literal(hash)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Cypher map from each path to its admitted hashes, so `$map[path]` is a keyed
+/// lookup instead of a scan over every `path|hash` key.
+fn hash_map_literal(keys: &[String]) -> String {
+    let mut by_path = BTreeMap::<&str, Vec<&str>>::new();
+    for key in keys {
+        if let Some((path, hash)) = key.rsplit_once('|') {
+            by_path.entry(path).or_default().push(hash);
+        }
+    }
+    by_path
+        .iter()
+        .map(|(path, hashes)| {
+            format!(
+                "`{}`: [{}]",
+                path.replace('`', "``"),
+                hashes
+                    .iter()
+                    .map(|hash| typed_query::cypher_string_literal(hash))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Binds `$admitted_versions` and `$admitted_paths` into a query built by a
 /// payload or report builder.
 pub(crate) fn with_admitted_versions(
@@ -224,6 +266,18 @@ pub(crate) fn with_admitted_versions(
     params.insert(
         "admitted_versions".to_string(),
         format!("[{}]", typed_query::id_list_literal(&admitted.keys)),
+    );
+    params.insert(
+        "admitted_pairs".to_string(),
+        format!("[{}]", admitted_pair_literal(&admitted.keys)),
+    );
+    params.insert(
+        "admitted_map".to_string(),
+        format!("{{{}}}", hash_map_literal(&admitted.keys)),
+    );
+    params.insert(
+        "endpoint_map".to_string(),
+        format!("{{{}}}", hash_map_literal(&admitted.endpoints)),
     );
     params.insert(
         "admitted_paths".to_string(),

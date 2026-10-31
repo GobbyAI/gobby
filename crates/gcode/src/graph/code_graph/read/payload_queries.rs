@@ -17,10 +17,10 @@ pub(super) fn project_overview_files_query(
             "MATCH (f:CodeFile {{project: $project}}) \
              WHERE f.path IN $admitted_paths \
              OPTIONAL MATCH (f)-[d:DEFINES]->(s:CodeSymbol) \
-             WHERE f.path + '|' + d.content_hash IN $admitted_versions \
+             WHERE (f.path + '|' + d.content_hash) IN $admitted_versions \
              WITH f, count(DISTINCT s) AS sym_count \
              OPTIONAL MATCH (f)-[i:IMPORTS]->(m:CodeModule) \
-             WHERE f.path + '|' + i.content_hash IN $admitted_versions \
+             WHERE (f.path + '|' + i.content_hash) IN $admitted_versions \
              WITH f, sym_count, count(m) AS imp_count \
              RETURN f.path AS id, f.path AS name, 'file' AS type, \
                     f.path AS file_path, sym_count AS symbol_count, imp_count AS import_count \
@@ -41,7 +41,7 @@ pub(super) fn project_overview_imports_query(
     (
         format!(
             "MATCH (f:CodeFile {{project: $project}})-[r:IMPORTS]->(m:CodeModule {{project: $project}}) \
-             WHERE f.path IN [{file_paths}] AND f.path + '|' + r.content_hash IN $admitted_versions \
+             WHERE f.path IN [{file_paths}] AND (f.path + '|' + r.content_hash) IN $admitted_versions \
              RETURN f.path AS source, m.name AS target, 'IMPORTS' AS type, {LINK_METADATA_RETURN} \
              LIMIT {limit}"
         ),
@@ -59,7 +59,7 @@ pub(super) fn project_overview_defines_query(
     (
         format!(
             "MATCH (f:CodeFile {{project: $project}})-[r:DEFINES]->(s:CodeSymbol {{project: $project}}) \
-             WHERE f.path IN [{file_paths}] AND f.path + '|' + r.content_hash IN $admitted_versions \
+             WHERE f.path IN [{file_paths}] AND (f.path + '|' + r.content_hash) IN $admitted_versions \
              RETURN f.path AS source, s.id AS target, 'DEFINES' AS type, \
                     s.name AS symbol_name, s.kind AS symbol_kind, \
                     s.file_path AS symbol_file_path, s.line_start AS line_start, \
@@ -82,7 +82,7 @@ pub(super) fn project_overview_calls_query(
         format!(
             "MATCH (f:CodeFile {{project: $project}})-[:DEFINES]->(s:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
              WHERE f.path IN [{file_paths}] AND ({CALL_TARGET_PREDICATE}) \
-             AND r.file + '|' + r.content_hash IN $admitted_versions \
+             AND (r.file + '|' + r.content_hash) IN $admitted_versions \
              AND {endpoints} \
              RETURN s.id AS source, target.id AS target, 'CALLS' AS type, \
                     target.name AS target_name, {TARGET_TYPE_CASE} AS target_type, \
@@ -102,7 +102,7 @@ pub(super) fn file_symbols_query(
     (
         format!(
             "MATCH (:CodeFile {{path: $path, project: $project}})-[r:DEFINES]->(s:CodeSymbol {{project: $project}}) \
-             WHERE $path + '|' + r.content_hash IN $admitted_versions \
+             WHERE ($path + '|' + r.content_hash) IN $admitted_versions \
              RETURN s.id AS id, s.name AS name, coalesce(s.kind, 'function') AS type, \
                     s.kind AS kind, s.file_path AS file_path, \
                     s.line_start AS line_start, s.signature AS signature, \
@@ -139,7 +139,7 @@ pub(in crate::graph::code_graph) fn file_calls_query(
         format!(
             "MATCH (source:CodeSymbol {{project: $project, file_path: $path}})-[r:CALLS]->(target {{project: $project}}) \
              WHERE ({CALL_TARGET_PREDICATE}) \
-             AND r.file + '|' + r.content_hash IN $admitted_versions \
+             AND (r.file + '|' + r.content_hash) IN $admitted_versions \
              AND {endpoints} \
              {columns} \
              UNION ALL \
@@ -148,7 +148,7 @@ pub(in crate::graph::code_graph) fn file_calls_query(
              MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target) \
              WHERE source.file_path IS NULL OR source.file_path <> $path \
              WITH source, r, target \
-             WHERE r.file + '|' + r.content_hash IN $admitted_versions \
+             WHERE (r.file + '|' + r.content_hash) IN $admitted_versions \
              AND {endpoints} \
              {columns}"
         ),
@@ -168,7 +168,7 @@ pub(super) fn symbol_neighbors_query(
         format!(
             "{anchor} \
              MATCH (center)-[r:CALLS]-(neighbor {{project: $project}}) \
-             WHERE ({NEIGHBOR_PREDICATE}) AND r.file + '|' + r.content_hash IN $admitted_versions \
+             WHERE ({NEIGHBOR_PREDICATE}) AND (r.file + '|' + r.content_hash) IN $admitted_versions \
              AND {endpoints} \
              RETURN neighbor.id AS id, neighbor.name AS name, {NEIGHBOR_TYPE_CASE} AS type, \
                     neighbor.kind AS kind, neighbor.file_path AS file_path, \
@@ -209,13 +209,13 @@ pub(super) fn blast_radius_file_call_query(
     (
         format!(
             "MATCH (tf:CodeFile {{path: $path, project: $project}})-[td:DEFINES]->(target_sym:CodeSymbol {{project: $project}}) \
-             WHERE $path + '|' + td.content_hash IN $admitted_versions \
+             WHERE ($path + '|' + td.content_hash) IN $admitted_versions \
              MATCH path = (affected:CodeSymbol {{project: $project}})-[:CALLS*1..{depth}]->(target_sym) \
-             WHERE all(rel IN relationships(path) WHERE rel.file + '|' + rel.content_hash IN $admitted_versions) \
+             WHERE all(rel IN relationships(path) WHERE (rel.file + '|' + rel.content_hash) IN $admitted_versions) \
              AND {path_nodes} \
              WITH affected, min(length(path)) AS distance \
              OPTIONAL MATCH (file:CodeFile {{project: $project}})-[d:DEFINES]->(affected) \
-             WHERE file.path + '|' + d.content_hash IN $admitted_versions \
+             WHERE (file.path + '|' + d.content_hash) IN $admitted_versions \
              RETURN DISTINCT affected.id AS node_id, \
                     affected.name AS node_name, \
                     affected.kind AS kind, file.path AS file_path, \
@@ -239,10 +239,10 @@ pub(in crate::graph::code_graph) fn blast_radius_file_import_query(
     (
         format!(
             "MATCH (tf:CodeFile {{path: $path, project: $project}})-[ti:IMPORTS]->(m:CodeModule {{project: $project}}) \
-             WHERE $path + '|' + ti.content_hash IN $admitted_versions \
+             WHERE ($path + '|' + ti.content_hash) IN $admitted_versions \
              MATCH path = (importer:CodeFile {{project: $project}})-[:IMPORTS*1..{depth}]-(m) \
              WHERE importer.path <> $path \
-               AND all(rel IN relationships(path) WHERE startNode(rel).path + '|' + rel.content_hash IN $admitted_versions) \
+               AND all(rel IN relationships(path) WHERE (startNode(rel).path + '|' + rel.content_hash) IN $admitted_versions) \
              WITH importer, min(length(path)) AS distance \
              RETURN DISTINCT importer.path AS node_id, \
                     importer.path AS node_name, NULL AS kind, importer.path AS file_path, \
@@ -280,7 +280,7 @@ mod tests {
                 );
                 assert!(
                     filter.contains(
-                        "node.file_path + '|' + node.file_content_hash IN $admitted_versions"
+                        "(node.file_path + '|' + node.file_content_hash) IN $admitted_versions"
                     ),
                     "{surface}: replaced/tombstoned target version must be excluded"
                 );
@@ -290,7 +290,7 @@ mod tests {
                 );
                 assert!(
                     filter.contains(
-                        "node.version_file_path + '|' + node.version_content_hash IN $admitted_endpoints"
+                        "(node.version_file_path + '|' + node.version_content_hash) IN $admitted_endpoints"
                     ),
                     "{surface}: a callee placeholder must be admitted by its stamped version \
                      against the scope endpoint set, so a child-owned caller reaches a \
@@ -310,7 +310,7 @@ mod tests {
             "every path node must be admitted"
         );
         assert!(
-            filter.contains("node.file_content_hash IN $admitted_versions"),
+            filter.contains("(node.file_path + '|' + node.file_content_hash) IN $admitted_versions"),
             "a replaced intermediate symbol must not connect an otherwise admitted path"
         );
     }

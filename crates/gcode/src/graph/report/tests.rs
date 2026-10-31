@@ -8,16 +8,15 @@ use super::generation::{
     generate_report_from_snapshot, generate_report_from_snapshot_with_options,
 };
 use super::loading::{CODE_COMMUNITIES_INPUT, MISSING_COMMUNITIES_DETAIL, community_input};
+use super::queries::{
+    report_bridge_edges_query, report_code_edge_counts_query, report_hotspots_query,
+    report_incoming_call_hotspots_query, report_node_counts_query, report_target_frequencies_query,
+};
 use super::render::render_markdown;
 use super::summary::{CODE_GRAPH_INPUT, summarize_bridge_edges, summarize_hotspots};
 use super::types::{
     BridgeEdgeInput, BridgeReportSummary, ConfidenceRange, GraphHotspot, GraphReportHotspots,
     NamedCount, ReportCodeEdge, ReportDegradation, ReportGraphSnapshot, ReportNode,
-};
-use super::queries::{
-    report_bridge_edges_query, report_code_edge_counts_query, report_hotspots_query,
-    report_incoming_call_hotspots_query, report_node_counts_query,
-    report_target_frequencies_query,
 };
 use super::*;
 
@@ -610,7 +609,10 @@ fn report_query_cases() -> Vec<(&'static str, String)> {
     vec![
         ("nodes", report_node_counts_query("child").0),
         ("edges", report_code_edge_counts_query("child").0),
-        ("hotspots", report_hotspots_query("child", "symbol", Some(1)).0),
+        (
+            "hotspots",
+            report_hotspots_query("child", "symbol", Some(1)).0,
+        ),
         (
             "incoming calls",
             report_incoming_call_hotspots_query("child", 1).0,
@@ -642,7 +644,7 @@ fn first_admission(branch: &str) -> Option<usize> {
 }
 
 #[test]
-fn hotspot_ranking_excludes_replaced_and_tombstoned_targets_before_counting() {
+fn hotspot_ranking_excludes_replaced_and_tombstoned_targets_before_ranking() {
     // Even a high-degree historical target must not consume the top-1 slot.
     for (surface, query) in [
         (
@@ -655,13 +657,13 @@ fn hotspot_ranking_excludes_replaced_and_tombstoned_targets_before_counting() {
         ),
     ] {
         for branch in query.split("UNION ALL") {
-            let Some(aggregate) = last_aggregate(branch) else {
+            // The branch's count is the ranking input. A later outer sum() is not.
+            let Some(count) = branch.rfind("count(") else {
                 continue;
             };
-            let filter = &branch[..aggregate];
+            let filter = &branch[..count];
             assert!(
-                filter.contains("IN coalesce($admitted_map[")
-                    || filter.contains("IN coalesce($endpoint_map["),
+                filter.contains("IN coalesce(am[") || filter.contains("IN coalesce(em["),
                 "{surface}: target version admission must precede ranking: {branch}"
             );
         }
@@ -716,7 +718,10 @@ fn report_node_counts_admit_module_and_external_nodes_only_through_admitted_edge
 fn report_edge_patterns_include_inheritance_rels() {
     let (query, _) = report_code_edge_counts_query("proj-1");
     for rel in ["INHERITS", "EXTENDS", "IMPLEMENTS"] {
-        assert!(query.contains(rel), "edge-count query missing {rel}: {query}");
+        assert!(
+            query.contains(rel),
+            "edge-count query missing {rel}: {query}"
+        );
     }
 }
 
@@ -732,4 +737,301 @@ fn report_queries_anchor_on_admitted_pairs_or_version_maps() {
             "{surface}: per-edge IN $admitted_versions scan: {query}"
         );
     }
+}
+
+#[test]
+fn hotspots_query_uses_label_scoped_seed_and_typed_edges() {
+    let (query, params) = report_hotspots_query("proj-1", "symbol", None);
+
+    // Each branch seeds from the labeled node over the typed edge set. Neither
+    // branch scans every project node and filters by label afterwards.
+    assert!(
+        query.contains("MATCH (n:CodeSymbol {project: $project})-[out:DEFINES|IMPORTS|CALLS|INHERITS|EXTENDS|IMPLEMENTS]->"),
+        "expected label-scoped typed outgoing traversal, got: {query}"
+    );
+    assert!(
+        query.contains("MATCH (in_source {project: $project})-[inc:DEFINES|IMPORTS|CALLS|INHERITS|EXTENDS|IMPLEMENTS]->(n:CodeSymbol {project: $project})"),
+        "expected typed incoming traversal onto the labeled node, got: {query}"
+    );
+    assert!(
+        !query.contains("WHERE n:CodeSymbol"),
+        "label-less MATCH + WHERE label filter regressed: {query}"
+    );
+    assert!(
+        !query.contains("type(out) IN") && !query.contains("type(inc) IN"),
+        "untyped-then-type()-filter anti-pattern regressed: {query}"
+    );
+    assert!(
+        !query.contains("OPTIONAL MATCH"),
+        "node-driven double-expansion regressed: {query}"
+    );
+    // The maps bind once before the CALL; each union branch imports them. A
+    // per-row map parameter lookup timed out.
+    assert!(
+        query.starts_with("WITH $admitted_map AS am, $endpoint_map AS em CALL {"),
+        "maps must bind once before the CALL: {query}"
+    );
+    assert_eq!(
+        query.matches("WITH am, em MATCH").count(),
+        2,
+        "each union branch must import the bound maps: {query}"
+    );
+    assert!(
+        !query.contains("$admitted_map[") && !query.contains("$endpoint_map["),
+        "per-row map parameter lookup regressed: {query}"
+    );
+    assert!(query.contains("count(out) AS outgoing"));
+    assert!(query.contains("count(inc) AS incoming"));
+    assert!(query.contains("sum(outgoing) AS outgoing"));
+    // Unbounded: every ranked node returns; the limit applies after the merge.
+    assert!(
+        !query.contains("LIMIT"),
+        "unbounded query must not limit early: {query}"
+    );
+    assert!(params.contains_key("project"));
+}
+
+#[test]
+fn hotspots_query_scopes_seed_label_by_node_class() {
+    let (file, _) = report_hotspots_query("proj-1", "file", Some(3));
+    assert!(file.contains("MATCH (n:CodeFile {project: $project})-[out:"));
+    assert!(file.contains("(n:CodeFile {project: $project})"));
+    assert!(
+        file.ends_with(" LIMIT 3"),
+        "file hotspots keep their limit: {file}"
+    );
+
+    let (module, _) = report_hotspots_query("proj-1", "module", None);
+    assert!(module.contains("MATCH (n:CodeModule {project: $project})-[out:"));
+    assert!(module.contains("(n:CodeModule {project: $project})"));
+    assert!(
+        !module.contains("LIMIT"),
+        "module hotspots are unbounded: {module}"
+    );
+}
+
+#[test]
+fn call_queries_keep_foreign_file_calls_by_their_own_version() {
+    // A symbol's CALLS edge can name another file (`r.file`). The old form counted
+    // those edges; the admitted version of that file must still gate them.
+    for (surface, query) in [
+        (
+            "incoming calls",
+            report_incoming_call_hotspots_query("child", 1).0,
+        ),
+        (
+            "external targets",
+            report_target_frequencies_query("child", "external", 1).0,
+        ),
+        (
+            "unresolved targets",
+            report_target_frequencies_query("child", "unresolved", 1).0,
+        ),
+    ] {
+        assert!(
+            query.contains("r.file <> src.file_path")
+                && query.contains("r.content_hash IN coalesce(am[r.file], [])"),
+            "{surface}: foreign-file CALLS must be admitted by their own version: {query}"
+        );
+    }
+}
+
+/// Fixture nodes for the live hotspot test. `a.hub.old` replaces `a.hub` and
+/// `c.dead` is tombstoned; neither may reach any count.
+const LIVE_NODES: &[&str] = &[
+    "CREATE (:CodeSymbol {project: 'p1', id: 'a.hub', name: 'hub', file_path: 'a.py', file_content_hash: 'ha2'})",
+    "CREATE (:CodeSymbol {project: 'p1', id: 'a.hub.old', name: 'hub', file_path: 'a.py', file_content_hash: 'ha1'})",
+    "CREATE (:CodeSymbol {project: 'p1', id: 'b.f', name: 'f', file_path: 'b.py', file_content_hash: 'hb1'})",
+    "CREATE (:CodeSymbol {project: 'p1', id: 'b.g', name: 'g', file_path: 'b.py', file_content_hash: 'hb1'})",
+    "CREATE (:CodeSymbol {project: 'p1', id: 'c.live', name: 'live', file_path: 'c.py', file_content_hash: 'hc1'})",
+    "CREATE (:CodeSymbol {project: 'p1', id: 'c.dead', name: 'dead', file_path: 'c.py', file_content_hash: 'hc0'})",
+    "CREATE (:UnresolvedCallee {project: 'p1', id: 'u.x', name: 'x'})",
+    "CREATE (:UnresolvedCallee {project: 'p1', id: 'u.y', name: 'y'})",
+    "CREATE (:ExternalSymbol {project: 'p1', id: 'x.z', name: 'z'})",
+];
+
+/// CALLS edges as (source, target, edge file, edge content hash). The admitted
+/// versions are a.py|ha2, b.py|hb1 and c.py|hc1. Rows whose edge file differs
+/// from the source file are foreign-file CALLS.
+const LIVE_CALLS: &[(&str, &str, &str, &str)] = &[
+    ("a.hub", "b.f", "a.py", "ha2"),
+    ("b.f", "a.hub", "b.py", "hb1"),
+    ("b.g", "a.hub", "b.py", "hb1"),
+    ("b.g", "a.hub", "a.py", "ha2"),
+    ("a.hub.old", "b.f", "a.py", "ha1"),
+    ("b.g", "c.dead", "b.py", "hb1"),
+    ("b.f", "c.live", "b.py", "hb1"),
+    ("b.f", "u.x", "b.py", "hb1"),
+    ("b.g", "u.x", "a.py", "ha2"),
+    ("a.hub", "u.x", "a.py", "ha2"),
+    ("c.live", "u.y", "c.py", "hc1"),
+    ("a.hub", "x.z", "a.py", "ha2"),
+    ("b.g", "x.z", "b.py", "hb1"),
+    ("b.g", "a.hub.old", "b.py", "hb1"),
+    ("b.f", "a.hub.old", "b.py", "hb1"),
+    ("c.live", "a.hub.old", "c.py", "hc1"),
+    ("a.hub.old", "c.live", "a.py", "ha1"),
+    ("a.hub.old", "x.z", "a.py", "ha1"),
+    ("b.g", "a.hub.old", "b.py", "hb1"),
+    ("b.f", "a.hub.old", "b.py", "hb1"),
+];
+
+fn live_text(row: &gobby_core::falkor::Row, key: &str) -> String {
+    row.get(key)
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn live_number(row: &gobby_core::falkor::Row, key: &str) -> i64 {
+    // Mirrors `row_usize`: some engine integers arrive float-backed.
+    row.get(key)
+        .and_then(|value| value.as_i64().or_else(|| value.as_f64().map(|v| v as i64)))
+        .unwrap_or(-1)
+}
+
+fn live_pairs(rows: &[gobby_core::falkor::Row], key: &str, value: &str) -> Vec<(String, i64)> {
+    rows.iter()
+        .map(|row| (live_text(row, key), live_number(row, value)))
+        .collect()
+}
+
+/// Engine-backed check of the hotspot, incoming-call and target queries against
+/// exact fixture rows. Runs only when `GCODE_HOTSPOT_TEST_FALKOR_URL` names a
+/// loopback FalkorDB such as `redis://127.0.0.1:63790`; unset, it returns early.
+/// The graph name is unique per run, so no production graph is touched.
+#[test]
+fn live_hotspot_queries_return_exact_fixture_rows() -> anyhow::Result<()> {
+    use super::queries as builders;
+    use crate::visibility::graph_versions::{AdmittedGraphVersions, with_admitted_versions};
+
+    let Some(raw_url) = std::env::var_os("GCODE_HOTSPOT_TEST_FALKOR_URL") else {
+        return Ok(());
+    };
+    let url = reqwest::Url::parse(
+        raw_url
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("utf-8 url"))?,
+    )?;
+    anyhow::ensure!(
+        url.host_str() == Some("127.0.0.1"),
+        "live hotspot test requires a loopback FalkorDB"
+    );
+    anyhow::ensure!(
+        ![None, Some(6379), Some(6380), Some(6333), Some(16379)].contains(&url.port()),
+        "production FalkorDB ports refused"
+    );
+    anyhow::ensure!(
+        url.username().is_empty() && url.password().is_none(),
+        "live hotspot test takes no credentials"
+    );
+    let config = gobby_core::config::FalkorConfig {
+        host: "127.0.0.1".to_string(),
+        port: url.port().ok_or_else(|| anyhow::anyhow!("test port"))?,
+        password: None,
+    };
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let graph_name = format!("gcode_hotspot_live_{nanos}");
+    let mut client = gobby_core::falkor::GraphClient::from_config(&config, &graph_name)?;
+
+    for node in LIVE_NODES {
+        client.query(node, None)?;
+    }
+    for (source, target, file, hash) in LIVE_CALLS {
+        let statement = format!(
+            "MATCH (a {{project: 'p1', id: '{source}'}}), (b {{project: 'p1', id: '{target}'}}) \
+             CREATE (a)-[:CALLS {{file: '{file}', content_hash: '{hash}'}}]->(b)"
+        );
+        client.query(&statement, None)?;
+    }
+
+    let versions = AdmittedGraphVersions {
+        keys: ["a.py|ha2", "b.py|hb1", "c.py|hc1"]
+            .map(String::from)
+            .to_vec(),
+        paths: ["a.py", "b.py", "c.py"].map(String::from).to_vec(),
+        endpoints: ["a.py|ha2", "b.py|hb1", "c.py|hc1"]
+            .map(String::from)
+            .to_vec(),
+    };
+    let mut run = |(query, params): (String, std::collections::HashMap<String, String>)| {
+        let (query, params) = with_admitted_versions((query, params), &versions);
+        client.query(&query, Some(params))
+    };
+
+    let top_symbol = run(builders::report_hotspots_query("p1", "symbol", Some(1)))?;
+    let top_symbol: Vec<(String, i64, i64, i64)> = top_symbol
+        .iter()
+        .map(|row| {
+            (
+                live_text(row, "id"),
+                live_number(row, "degree"),
+                live_number(row, "incoming"),
+                live_number(row, "outgoing"),
+            )
+        })
+        .collect();
+    assert_eq!(top_symbol, vec![("a.hub".to_string(), 6, 3, 3)]);
+
+    let all_symbols = run(builders::report_hotspots_query("p1", "symbol", None))?;
+    let all_symbols: Vec<(String, i64)> = live_pairs(&all_symbols, "id", "degree");
+    assert_eq!(
+        all_symbols,
+        vec![
+            ("a.hub".to_string(), 6),
+            ("b.f".to_string(), 4),
+            ("b.g".to_string(), 4),
+            ("c.live".to_string(), 2),
+        ]
+    );
+
+    let incoming = run(builders::report_incoming_call_hotspots_query("p1", 3))?;
+    assert_eq!(
+        live_pairs(&incoming, "id", "degree"),
+        vec![
+            ("a.hub".to_string(), 3),
+            ("b.f".to_string(), 1),
+            ("c.live".to_string(), 1),
+        ]
+    );
+
+    let unresolved = run(builders::report_target_frequencies_query(
+        "p1",
+        "unresolved",
+        2,
+    ))?;
+    assert_eq!(
+        live_pairs(&unresolved, "id", "count"),
+        vec![("u.x".to_string(), 3), ("u.y".to_string(), 1)]
+    );
+
+    let external = run(builders::report_target_frequencies_query(
+        "p1", "external", 1,
+    ))?;
+    assert_eq!(
+        live_pairs(&external, "id", "count"),
+        vec![("x.z".to_string(), 2)]
+    );
+
+    let mut node_counts = std::collections::BTreeMap::new();
+    for row in run(builders::report_node_counts_query("p1"))? {
+        *node_counts.entry(live_text(&row, "name")).or_insert(0) += live_number(&row, "count");
+    }
+    assert_eq!(
+        node_counts,
+        std::collections::BTreeMap::from([
+            ("external".to_string(), 1),
+            ("symbol".to_string(), 4),
+            ("unresolved".to_string(), 2),
+        ])
+    );
+
+    let edges = run(builders::report_code_edge_counts_query("p1"))?;
+    assert_eq!(
+        live_pairs(&edges, "name", "count"),
+        vec![("CALLS".to_string(), 11)]
+    );
+    Ok(())
 }
