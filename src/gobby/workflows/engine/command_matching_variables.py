@@ -8,8 +8,9 @@ literal ``ps`` does.
 The pinned ps shim is known without an assignment: ``gobby.agents.constants.GOBBY_PS_SHIM``
 names a ``ps`` in every seat that sets it. A name the command line never sets stays text,
 so a value that comes from the environment is outside this check. A parameter operator
-other than a default (``${x:0:2}``, ``${!x}``) cannot be evaluated here, so it reads as
-``ps``, the reading that must not run unseen.
+other than a default (``${x:0:2}``, ``${!x}``) and a braced body this matcher cannot parse
+(``${=x}``, ``${(P)y}``) cannot be evaluated here, so each reads as ``ps``, the reading
+that must not run unseen.
 """
 
 from __future__ import annotations
@@ -23,10 +24,13 @@ from gobby.agents.constants import GOBBY_PS_SHIM
 _OPAQUE_VALUE = "ps"
 _ASSIGNMENT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.DOTALL)
 # One level of nested braces is enough for ``${x:-${y}}``; deeper nesting reads as opaque.
+# A braced body that does not start with a name (zsh flags such as ``${=x}``, ``${(P)y}``)
+# matches the last alternative and reads as opaque.
 _REFERENCE = re.compile(
     r"\$(?:\{(?P<indirect>!?)(?P<braced>[A-Za-z_][A-Za-z0-9_]*)"
     r"(?P<operator>(?:[^{}]|\$\{[^{}]*\})*)\}"
-    r"|(?P<bare>[A-Za-z_][A-Za-z0-9_]*))"
+    r"|(?P<bare>[A-Za-z_][A-Za-z0-9_]*)"
+    r"|\{(?P<unparsed>(?:[^{}]|\$\{[^{}]*\})*)\})"
 )
 _DEFAULT = re.compile(r":?-(.*)", re.DOTALL)
 # Builtins whose leading assignments set shell variables, as plain assignments do.
@@ -80,6 +84,8 @@ def _expand(text: str, names: dict[str, str]) -> str:
 
 
 def _reference_value(match: re.Match[str], names: dict[str, str]) -> str:
+    if match["unparsed"] is not None:
+        return _OPAQUE_VALUE
     if match["bare"] is not None:
         return names.get(match["bare"], match[0])
     name, operator = match["braced"], match["operator"]

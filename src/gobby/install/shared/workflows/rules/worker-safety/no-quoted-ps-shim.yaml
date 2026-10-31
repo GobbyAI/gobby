@@ -1,14 +1,15 @@
 tags: [worker-safety, enforcement, default, gobby]
 
-# mask_quoted blanks a quoted "$GOBBY_PS_SHIM", so no-process-environment-listing cannot
-# see it. Refusing the quoted spelling outright keeps the pinned shim under that -o check
-# (#25368). The prescribed form is the bare variable, $GOBBY_PS_SHIM or ${GOBBY_PS_SHIM},
-# followed by a space, separator or end of line. Any other spelling is refused here: quotes
-# before or after the name (`$GOBBY_PS_SHIM""`), a ${...} operator or default, and the
-# shim adjoined to anything else. Its wrapper list matches no-process-environment-listing,
-# so a quoted shim behind rtk, nohup or timeout is refused too. A quoted shim behind an
-# option operand that is not a known wrapper (`timeout -s KILL 5 "$GOBBY_PS_SHIM"`) is
-# refused by the listing rule only when it lists, a residual of this prefix-anchored check.
+# Refuses a quoted or non-canonical $GOBBY_PS_SHIM, the pinned ps shim (#25368). The engine
+# expands the pinned name before it matches, but a quoted or braced spelling still hides the
+# shim from the listing check, so it is refused here outright. The prescribed form is the bare
+# variable, $GOBBY_PS_SHIM or ${GOBBY_PS_SHIM}, followed by a space, separator or end of line.
+# Any other spelling is refused: quotes before or after the name (`$GOBBY_PS_SHIM""`), a braced
+# body that names the shim with an operator or zsh flag (`${GOBBY_PS_SHIM:-...}`,
+# `${=GOBBY_PS_SHIM}`), and the shim adjoined to anything else. The wrapper list matches
+# no-process-environment-listing, so a quoted shim behind rtk, nohup or timeout is refused too.
+# The shim itself refuses argv outside its -o allow-list, so a quoted shim behind an option
+# operand that is not a known wrapper is caught there.
 rules:
   no-quoted-ps-shim:
     description: "Block a quoted or non-canonical $GOBBY_PS_SHIM, the pinned ps shim, because quoting or adjoining text hides it from the process-listing check."
@@ -20,5 +21,5 @@ rules:
         tools: [Bash]
         # Raw text on purpose: mask_quoted would blank the quoted variable it must see.
         mask_quoted: false
-        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S*|sudo|command|do|then|else|env|exec|nice|time|xargs|watch|rtk|timeout|gtimeout|caffeinate|stdbuf|ionice|setsid|nohup|-\S+|\d+(?:\.\d+)?[smhd]?)\s+)*(?:[\x22\x27]\$\{?GOBBY_PS_SHIM|\$\{?GOBBY_PS_SHIM(?!\}?(?:[ \t\n;&|)]|$)))'
-        reason: "The pinned $GOBBY_PS_SHIM must be written as a bare $GOBBY_PS_SHIM or ${GOBBY_PS_SHIM}, followed by a space, separator or end of line, with an allowed -o list. Quotes before or after the name, a ${...} operator or default, and any other adjoining text hide the command from the process-listing check."
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S*|sudo|command|do|then|else|env|exec|nice|time|xargs|watch|rtk|timeout|gtimeout|caffeinate|stdbuf|ionice|setsid|nohup|-\S+|\d+(?:\.\d+)?[smhd]?)\s+)*(?:[\x22\x27]\$\{?GOBBY_PS_SHIM|\$GOBBY_PS_SHIM(?!\}?(?:[ \t\n;&|)]|$))|\$\{(?!GOBBY_PS_SHIM\}(?:[ \t\n;&|)]|$))[^}]*GOBBY_PS_SHIM)'
+        reason: "The pinned $GOBBY_PS_SHIM must be written as a bare $GOBBY_PS_SHIM or ${GOBBY_PS_SHIM}, followed by a space, separator or end of line, with an allowed -o list. Quotes before or after the name, a braced operator or zsh flag naming the shim such as ${GOBBY_PS_SHIM:-...} or ${=GOBBY_PS_SHIM}, and any other adjoining text hide the command from the process-listing check."

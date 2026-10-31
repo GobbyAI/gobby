@@ -7,6 +7,7 @@ once no sandboxed seat needs a ``ps`` binary.
 from __future__ import annotations
 
 import os
+import re
 import subprocess  # nosec B404 # asserts on a locally re-signed system binary.
 import sys
 from pathlib import Path
@@ -15,7 +16,14 @@ from typing import Any
 import pytest
 
 from gobby.agents import droid_ps_shim
-from gobby.agents.droid_ps_shim import droid_ps_shim_dir, ps_shim_path_env
+from gobby.agents.droid_ps_shim import PS_WRAPPER, droid_ps_shim_dir, ps_shim_path_env
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_RUST_WRAPPER = _REPO_ROOT / "crates/gdaemon/src/nodes/agents/sandbox/ps_shim_wrapper.sh"
+_LISTING_RULE = (
+    _REPO_ROOT
+    / "src/gobby/install/shared/workflows/rules/worker-safety/no-process-environment-listing.yaml"
+)
 
 pytestmark = pytest.mark.unit
 
@@ -81,11 +89,12 @@ class TestDroidPsShimDir:
         shim = directory / "ps"
         assert shim.is_file()
         assert shim.stat().st_mode & 0o111
-        assert shim.read_bytes() == b"signed"
+        assert shim.read_text(encoding="utf-8") == PS_WRAPPER
+        assert (directory / "ps-bin").read_bytes() == b"signed"
         assert len(calls) == 1
         assert calls[0][0] == str(droid_ps_shim.CODESIGN)
         assert calls[0][1:4] == ["-f", "-s", "-"]
-        assert calls[0][4].startswith(str(directory / ".ps."))
+        assert calls[0][4].startswith(str(directory / ".ps-bin."))
 
     def test_reuses_the_cached_copy_instead_of_re_signing(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -139,3 +148,96 @@ def test_the_real_shim_answers_the_supervisor_probe(
     )
     assert probe.returncode == 0, probe.stderr
     assert probe.stdout.strip() == str(os.getppid())
+
+
+def test_wrapper_mirrors_the_rust_embedded_source() -> None:
+    """The Rust daemon embeds ps_shim_wrapper.sh; the Python copy must stay byte-identical."""
+    assert PS_WRAPPER == _RUST_WRAPPER.read_text(encoding="utf-8")
+
+
+def _wrapper_columns() -> set[str]:
+    line = next(line for line in PS_WRAPPER.splitlines() if line.lstrip().startswith("pid|"))
+    return set(line.strip().removesuffix(") ;;").split("|"))
+
+
+def _listing_rule_columns() -> set[str]:
+    pattern = _LISTING_RULE.read_text(encoding="utf-8")
+    match = re.search(r"\(\?:(pid\|[^)]*)\)", pattern)
+    assert match is not None, "the listing rule no longer lists its ps columns"
+    columns: set[str] = set()
+    for alternative in match.group(1).split("|"):
+        if alternative == "etimes?":
+            columns.update({"etime", "etimes"})
+        else:
+            columns.add(alternative)
+    return columns
+
+
+def test_wrapper_columns_match_the_listing_rule() -> None:
+    """A column allowed by one of the two checks and refused by the other is a drift."""
+    assert _wrapper_columns() == _listing_rule_columns()
+
+
+@pytest.fixture
+def shim_dir(tmp_path: Path) -> Path:
+    """A shim directory with the wrapper and a stub binary that echoes its argv."""
+    directory = tmp_path / "shim"
+    directory.mkdir()
+    wrapper = directory / "ps"
+    wrapper.write_text(PS_WRAPPER, encoding="utf-8")
+    wrapper.chmod(0o755)
+    real = directory / "ps-bin"
+    real.write_text('#!/bin/sh\necho "ran $*"\n', encoding="utf-8")
+    real.chmod(0o755)
+    return directory
+
+
+def _run_wrapper(directory: Path, argv: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # nosec B603 # fixed argv, a stub shim in the test's tmp dir.
+        [str(directory / "ps"), *argv],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["-axo", "pid,ppid,etime,comm"],
+        ["-o", "ppid=", "-p", "4242"],  # Droid's supervisor probe.
+        ["-axo", "pid="],
+        ["-p", "123", "-o", "pid,etime"],
+        ["-ww", "-o", "pid,etime,user"],
+        ["-o", "lstart,pcpu,rss"],
+    ],
+)
+def test_wrapper_runs_the_allowed_listings(shim_dir: Path, argv: list[str]) -> None:
+    result = _run_wrapper(shim_dir, argv)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"ran {' '.join(argv)}\n"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        [],
+        ["aux"],
+        ["-e"],
+        ["-o", "args"],
+        ["-axo", "command"],
+        ["-o", "comm,args"],
+        ["-E", "-o", "pid"],
+        ["-o"],
+        ["-o", "pid,"],
+        ["-p", "-o", "pid"],
+        ["-o", "pid", "-e"],
+        ["-o", "pid", "--", "x"],
+    ],
+)
+def test_wrapper_refuses_anything_outside_the_allow_list(shim_dir: Path, argv: list[str]) -> None:
+    result = _run_wrapper(shim_dir, argv)
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "refused" in result.stderr

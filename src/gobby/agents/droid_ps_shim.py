@@ -26,6 +26,12 @@ hoc clears that, and the copy needs no setuid bit for this probe, which only
 inspects the caller's own process. The shim is therefore the real ``ps`` reporting
 the true parent pid, so Droid's orphan cleanup keeps working instead of being
 faked out by a stubbed response.
+
+The shim directory's ``ps`` is a wrapper, not the binary. It checks its argv against the
+non-argument allow-list (#25368) and then runs the re-signed copy ``ps-bin`` beside it, so
+``ps aux`` and other argument listings are refused where the seat runs them. The wrapper
+text is mirrored byte for byte in ``crates/gdaemon/.../sandbox/ps_shim_wrapper.sh``, which
+the Rust daemon embeds; a parity test keeps the two in step.
 """
 
 from __future__ import annotations
@@ -50,11 +56,86 @@ logger = logging.getLogger(__name__)
 SYSTEM_PS = Path("/bin/ps")
 CODESIGN = Path("/usr/bin/codesign")
 _SHIM_DIRNAME = "droid-ps-shim"
+REAL_PS_NAME = "ps-bin"
+# Mirror of crates/gdaemon/src/nodes/agents/sandbox/ps_shim_wrapper.sh (parity-tested).
+PS_WRAPPER = """#!/bin/sh
+# Refuses argv outside the sandbox-safe ps allow-list, then runs the re-signed copy beside
+# it as ps-bin (#25368). Only -o with non-argument columns and the selector flags
+# -A -a -x -r -w -W -p -q -U -G -g -t reach ps, so `ps aux`, `ps -e` and `ps -o args`
+# never list other processes' arguments. The column list must match the
+# no-process-environment-listing rule and the Python copy in droid_ps_shim.py.
+
+refuse() {
+    echo "ps: refused: only -o with non-argument columns may list processes" >&2
+    exit 1
+}
+
+# A comma-separated -o list of allowed columns, each with an optional plain header.
+valid_columns() {
+    list=$1
+    while :; do
+        item=${list%%,*}
+        name=${item%%=*}
+        header=
+        case $item in *=*) header=${item#*=} ;; esac
+        case $header in *[!A-Za-z0-9_]*) return 1 ;; esac
+        case $name in
+            pid|ppid|pgid|uid|user|gid|group|etime|etimes|time|stat|state|tt|tty|lstart|start|pcpu|pmem|rss|vsz|nice|pri|comm) ;;
+            *) return 1 ;;
+        esac
+        case $list in
+            *,*) list=${list#*,} ;;
+            *) return 0 ;;
+        esac
+    done
+}
+
+expect=
+seen_columns=
+for arg; do
+    if [ -n "$expect" ]; then
+        case $expect in
+            columns) valid_columns "$arg" || refuse ;;
+            operand)
+                case $arg in
+                    '' | *[!A-Za-z0-9_.,:]*) refuse ;;
+                esac
+                ;;
+        esac
+        expect=
+        continue
+    fi
+    case $arg in
+        -?*) ;;
+        *) refuse ;;
+    esac
+    options=${arg#-}
+    while [ -n "$options" ]; do
+        option=${options%"${options#?}"}
+        options=${options#?}
+        case $option in
+            A | a | x | r | w | W) ;;
+            o)
+                [ -z "$options" ] || refuse
+                expect=columns
+                seen_columns=1
+                ;;
+            p | q | U | G | g | t)
+                [ -z "$options" ] || refuse
+                expect=operand
+                ;;
+            *) refuse ;;
+        esac
+    done
+done
+[ -z "$expect" ] && [ -n "$seen_columns" ] || refuse
+exec "${0%/*}/ps-bin" "$@"
+"""
 
 
-def _source_digest(path: Path) -> str:
-    """Digest the system binary so an OS update re-signs a fresh copy."""
-    digest = hashlib.sha256()
+def _shim_digest(path: Path) -> str:
+    """Digest the system binary and the wrapper, so either change re-stages a fresh shim."""
+    digest = hashlib.sha256(PS_WRAPPER.encode("utf-8"))
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
@@ -71,12 +152,12 @@ def droid_ps_shim_dir() -> Path | None:
     if sys.platform != "darwin" or not SYSTEM_PS.exists() or not CODESIGN.exists():
         return None
     try:
-        directory = get_gobby_home() / "runtime" / _SHIM_DIRNAME / _source_digest(SYSTEM_PS)
+        directory = get_gobby_home() / "runtime" / _SHIM_DIRNAME / _shim_digest(SYSTEM_PS)
         target = directory / "ps"
         if target.exists():
             return directory
         directory.mkdir(parents=True, exist_ok=True)
-        staged = directory / f".ps.{os.getpid()}.tmp"
+        staged = directory / f".{REAL_PS_NAME}.{os.getpid()}.tmp"
         try:
             shutil.copyfile(SYSTEM_PS, staged)
             os.chmod(staged, 0o755)  # nosec B103 # mirrors /bin/ps; user-owned home.
@@ -86,6 +167,14 @@ def droid_ps_shim_dir() -> Path | None:
                 capture_output=True,
                 timeout=30,
             )
+            os.replace(staged, directory / REAL_PS_NAME)
+        finally:
+            staged.unlink(missing_ok=True)
+        # The wrapper lands last: its presence means the binary beside it is in place.
+        staged = directory / f".ps.{os.getpid()}.tmp"
+        try:
+            staged.write_text(PS_WRAPPER, encoding="utf-8")
+            os.chmod(staged, 0o755)  # nosec B103 # a script the seat's shell execs.
             os.replace(staged, target)
         finally:
             staged.unlink(missing_ok=True)

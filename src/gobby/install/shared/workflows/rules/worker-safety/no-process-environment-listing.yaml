@@ -20,8 +20,9 @@ rules:
         # Quoted or variable -o lists are refused too, because mask_quoted blanks them.
         # The pinned $GOBBY_PS_SHIM is ps (#25368), so it takes the same -o rule, and so does a
         # name the same command line assigns (`x=ps; $x aux`), which the engine expands before
-        # this check. A quoted "$GOBBY_PS_SHIM" is blanked as data here; no-quoted-ps-shim
-        # refuses that form.
+        # this check. A braced spelling the engine cannot parse (`${=GOBBY_PS_SHIM}`) reads as
+        # ps too. A quoted "$GOBBY_PS_SHIM" is blanked as data here; no-quoted-ps-shim refuses
+        # that form, and the shim itself refuses argv outside the -o list.
         # rtk is a wrapper (#25368), so `rtk ps aux` and `rtk ps -e` take the same -o rule.
         # timeout, gtimeout, caffeinate, stdbuf, ionice, setsid and nohup run their operand
         # unchanged, so they are wrappers too. The engine reads past their option operands

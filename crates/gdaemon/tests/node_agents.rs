@@ -2304,21 +2304,25 @@ fn chokepoint_droid_ps_shim() -> Result<()> {
     let node = monitor_node(&tree, "exit 0\n")?;
     let _monitor = StopMonitor(monitor_pidfile(&tree));
     let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
+    // The shim directory is keyed by the wrapper and the system binary (ps_shim.rs).
     let ps = fs::read("/bin/ps")?;
+    let mut keyed = include_bytes!("../src/nodes/agents/sandbox/ps_shim_wrapper.sh").to_vec();
+    keyed.extend_from_slice(&ps);
     let shim_dir = tree
         .path("gobby_home")
         .join("runtime/droid-ps-shim")
-        .join(sha256_hex(&ps));
+        .join(sha256_hex(&keyed));
     let shim = shim_dir.join("ps");
-    // Ad hoc signing rewrites the copy's bytes, so the copy is checked by its signature and
-    // by running it as `ps` to report this process's parent.
+    let real = shim_dir.join("ps-bin");
+    // Ad hoc signing rewrites the copy's bytes, so the copy is checked by its signature. The
+    // wrapper is a script and runs the copy; the probe runs the wrapper as `ps`.
     assert!(
         Command::new("/usr/bin/codesign")
             .arg("--verify")
-            .arg(&shim)
+            .arg(&real)
             .status()?
             .success(),
-        "the shim is not validly signed"
+        "the shim copy is not validly signed"
     );
     let pid = std::process::id().to_string();
     let output = Command::new(&shim)
@@ -2331,6 +2335,12 @@ fn chokepoint_droid_ps_shim() -> Result<()> {
         String::from_utf8(output.stdout)?.trim(),
         parent.to_string(),
         "the shim did not report this process's parent"
+    );
+    // #25368: the wrapper refuses argument listings before the copy runs.
+    let listing = Command::new(&shim).arg("aux").output()?;
+    anyhow::ensure!(
+        !listing.status.success(),
+        "the shim listed process arguments"
     );
     assert_eq!(file_mode(&shim)?, 0o755, "the shim is not executable");
     assert!(

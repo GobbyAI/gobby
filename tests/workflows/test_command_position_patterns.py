@@ -621,6 +621,12 @@ RULE_CASES = (
             "x=ps; timeout 5 $x aux",
             "export x=ps; bash -c '$x aux'",
             "export x=ps; echo '$x aux' | sh",
+            # #25368 round 5: zsh parameter forms the engine cannot parse read as ps.
+            "${=GOBBY_PS_SHIM} aux",
+            "${~GOBBY_PS_SHIM} aux",
+            "${^GOBBY_PS_SHIM} aux",
+            "y=GOBBY_PS_SHIM; ${(P)y} aux",
+            "x=ps; ${=x} aux",
         ),
         allowed=(
             "pgrep -f gobby.runner",
@@ -648,6 +654,7 @@ RULE_CASES = (
             '"$GOBBY_PS_SHIM" -axo pid,ppid,etime,comm',
             "x=ps; $x -axo pid,ppid,etime,comm",
             "export x=ps; $x -axo pid,ppid,etime,comm",
+            "${GOBBY_PS_SHIM} -axo pid,ppid,etime,comm",
             "x=uname; $x -a",
             "x=ps; echo $x",
             'x=ps; echo "$x aux"',
@@ -682,6 +689,11 @@ RULE_CASES = (
             "${GOBBY_PS_SHIM:-/bin/ps} -axo pid,ppid",
             'rtk $GOBBY_PS_SHIM"" -e',
             "timeout 5 ${GOBBY_PS_SHIM:-/bin/ps} -axo pid",
+            # #25368 round 5: any braced spelling that is not the canonical ${GOBBY_PS_SHIM}.
+            "${=GOBBY_PS_SHIM} -axo pid,ppid",
+            "${~GOBBY_PS_SHIM} -axo pid,ppid",
+            "${^GOBBY_PS_SHIM} -axo pid,ppid",
+            "nohup ${=GOBBY_PS_SHIM} -axo pid",
         ),
         allowed=(
             "$GOBBY_PS_SHIM -axo pid,ppid,etime,comm",
