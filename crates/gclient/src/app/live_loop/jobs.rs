@@ -201,6 +201,8 @@ pub enum JobResult {
 #[derive(Debug)]
 pub struct OwnedShell {
     pub terminal_id: String,
+    /// The pane the daemon placed the shell in.
+    pub pane_id: String,
     /// The draft tab the new shell replaced, and the tab the daemon made for it.
     pub draft: Option<(String, String)>,
     /// The daemon's workspace after a draft replacement, installed on the loop.

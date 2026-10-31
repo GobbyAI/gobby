@@ -99,7 +99,7 @@ pub(super) fn apply_shell(
     }
     match shell.snapshot {
         Some(snapshot) => workspace.apply_workspace_snapshot(snapshot),
-        None => workspace.expect_placement(&terminal_id),
+        None => workspace.expect_replied_placement(&terminal_id, &shell.pane_id),
     }
     if let Some(warning) = shell.tab_order_warning {
         chrome.notify(Toast::warning(warning));
@@ -264,14 +264,23 @@ pub(super) fn settle_panes(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
 ) {
+    if jobs.ledger.awaiting_panes.is_empty() {
+        return;
+    }
     let outcomes = jobs.outcomes().clone();
+    let generation = workspace.daemon().generation();
     let mut waiting = Vec::new();
     for entry in std::mem::take(&mut jobs.ledger.awaiting_panes) {
         match workspace.pane_for_terminal(&entry.terminal_id) {
             Some(pane) => {
                 // A settled pane attaches on the next tick, as `apply_open` marks
-                // an opened one; an attached pane at this generation is not due.
-                workspace.pane_mut(pane).attach_retry_at = Some(tokio::time::Instant::now());
+                // an opened one. A pane already attached at this generation is not
+                // marked: a stale mark would re-attach it after a later detach.
+                let attached = workspace.pane(pane).attached_generation() == Some(generation)
+                    || workspace.attached_generation.get(&pane) == Some(&generation);
+                if !attached {
+                    workspace.pane_mut(pane).attach_retry_at = Some(tokio::time::Instant::now());
+                }
                 match entry.then {
                     PaneAction::Place {
                         placement,

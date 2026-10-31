@@ -166,6 +166,9 @@ async fn split_right_with_a_held_control_or_create_reply_keeps_the_window_live()
             if held_kind == "terminal_release_control" {
                 probe.next_pane().await;
                 wait_for_websocket_requests(&mock, held_kind, 1).await;
+                // The split below commits and focuses its new shell, which
+                // the direct host does not serve: probe while the release is held.
+                assert_direct_progress_while_held(&probe, &host, &release).await;
             }
             chord(&probe, 'i').await;
             wait_until("split request", || {
@@ -177,8 +180,6 @@ async fn split_right_with_a_held_control_or_create_reply_keeps_the_window_live()
                     attach_requests(&mock, FIRST_SHELL).is_empty(),
                     "no placement before commit"
                 );
-                assert_direct_progress_while_held(&probe, &host, &release).await;
-            } else {
                 assert_direct_progress_while_held(&probe, &host, &release).await;
             }
             wait_until("new shell viewport", || {
@@ -209,6 +210,11 @@ async fn split_right_with_a_held_control_or_create_reply_keeps_the_window_live()
             .tabs
             .iter()
             .any(|tab| tab.slots.values().any(|id| *id == pane)));
+        assert_eq!(
+            chrome.focused_pane(),
+            Some(pane),
+            "the committed split takes focus"
+        );
         assert_eq!(operations(&mock, "pane.split").len(), 1);
         mock.shutdown().await;
     }

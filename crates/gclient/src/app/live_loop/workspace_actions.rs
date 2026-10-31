@@ -131,6 +131,12 @@ pub(super) fn spawn_owned_live_shell(
                     detail: "workspace shell op omitted terminal_id".into(),
                 })?
                 .to_owned();
+            let pane_id = reply.result["panes"][0]["id"]
+                .as_str()
+                .ok_or_else(|| DaemonError::Protocol {
+                    detail: "workspace shell op omitted the pane id".into(),
+                })?
+                .to_owned();
             let draft = match replacing_draft {
                 Some(draft_id) => {
                     let created = reply.result["tabs"][0]["id"]
@@ -177,6 +183,7 @@ pub(super) fn spawn_owned_live_shell(
             };
             Ok(OwnedShell {
                 terminal_id,
+                pane_id,
                 draft,
                 snapshot,
                 tab_order_warning,
