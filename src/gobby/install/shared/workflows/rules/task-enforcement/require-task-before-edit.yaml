@@ -8,6 +8,10 @@ rules:
     priority: 31
     when: >
       variables.get('require_task_before_edit')
+      and not (
+        session_has_capability(event.metadata.get('_platform_session_id'), 'merge_base_commits')
+        and (base_merge_git_step or base_merge_write)
+      )
       and (not variables.get('task_claimed') or claims_without_edit_target(variables))
       and (
         event.data.get('canonical_script_execution')
