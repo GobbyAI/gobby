@@ -270,12 +270,12 @@ def _exclude_pattern(path: str) -> str:
 
 
 def _still_skipped(full: Path) -> bool:
-    """Symlinks and oversized files are never committed; a missing or small file is not skipped."""
-    if full.is_symlink():
-        return True
+    """Symlinks and oversized files are skipped; a path that is gone, unreadable or small is not."""
     try:
+        if full.is_symlink():
+            return True
         return full.stat().st_size > WORKSPACE_FILE_LIMIT_BYTES
-    except FileNotFoundError:
+    except OSError:
         return False
 
 
