@@ -7,8 +7,12 @@ task's tests or implementation.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.close_receipts import CloseReceiptError, list_close_receipts, record_close_receipt
 from gobby.tasks.step_records import StepRecordError, StepSubmission, record_task_step
@@ -19,7 +23,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def case(temp_db, sample_project, tmp_path) -> LandingCase:  # type: ignore[no-untyped-def]
+def case(temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path) -> LandingCase:
     return make_landing_case(temp_db, sample_project, tmp_path)
 
 

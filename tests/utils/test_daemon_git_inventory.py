@@ -369,6 +369,13 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # commit_workspace runs ensure_workspace, the only caller of _init_git_dir, through
     # asyncio.to_thread before it commits, so the git init never runs on the loop.
     ("src/gobby/agents/agent_workspaces.py", "_init_git_dir"),
+    # spawn_workspace_write_paths runs through asyncio.to_thread in the spawn and resume
+    # executors and through run_db in the websocket launch; the workflow condition helper
+    # reaches it through the evaluator's offload, so the task checkout lookup never runs on the loop.
+    ("src/gobby/agents/agent_workspaces.py", "assigned_task_worktree"),
+    # sync_epic_review runs only inside dispatch_for_caller, which the spawn tool runs through
+    # asyncio.to_thread, so the epic tip merge check never runs on the loop.
+    ("src/gobby/agents/team_review.py", "_merged_tips"),
 }
 
 _ALLOWED_SYNC_FACADE_CALLERS = {

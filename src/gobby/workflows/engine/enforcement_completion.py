@@ -384,6 +384,17 @@ class EnforcementCompletionMixin:
                         changed_name,
                         changed_value,
                     )
+            elif handler.get("action") == "hand_off_claim":
+                from gobby.workflows.engine.claim_handoff import hand_off_claim
+
+                await offload(
+                    hand_off_claim,
+                    self.db,
+                    session_id,
+                    str(handler.get("hop") or ""),
+                    mcp_tool,
+                    tool_output,
+                )
             elif handler.get("action") == "set_variable":
                 var_name = handler.get("variable")
                 ctx = {

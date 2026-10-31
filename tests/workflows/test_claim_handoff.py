@@ -12,14 +12,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pytest
-from gobby.workflows.engine.claim_handoff import hand_off_claim
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.tasks.step_records import StepSubmission, TaskStep, record_task_step
-from gobby.workflows.engine.seat_messages import candidate_event
+from gobby.workflows.engine.claim_handoff import HandOff, hand_off_claim
+from gobby.workflows.engine.seat_messages import candidate_event, is_task_coordinator
 from gobby.workflows.engine.seat_transitions import _candidate_rejection
 from tests.fixtures.landing_case import LandingCase, make_landing_case
 from tests.fixtures.review_approvals import grant_review_writes, grant_step_writes
@@ -74,7 +75,6 @@ async def _chain(world: TeamWorld, title: str) -> Chain:
     impl_sha = case.candidate("lane-impl", {"docs/chain.md": "GREEN"}, base=tests_sha)
     tasks = LocalTaskManager(db)
     tasks.link_commit(team.task.id, tests_sha)
-    tasks.link_commit(team.task.id, impl_sha)
     tasks.claim_task(team.task.id, writer, force=True)
     return Chain(
         case=case,
@@ -87,6 +87,11 @@ async def _chain(world: TeamWorld, title: str) -> Chain:
         tests_sha=tests_sha,
         impl_sha=impl_sha,
     )
+
+
+def _implement(chain: Chain) -> None:
+    """Link the implementation commit as the task's latest, after the test commit is recorded."""
+    LocalTaskManager(chain.db).link_commit(chain.task.id, chain.impl_sha)
 
 
 def _record(
@@ -119,7 +124,7 @@ def _send(chain: Chain, sender: str, content: str, *recipients: str) -> list[str
     return [messages.create_message(sender, recipient, content).id for recipient in recipients]
 
 
-def _hand(chain: Chain, sender: str, hop: str, ids: list[str]) -> dict[str, Any]:
+def _hand(chain: Chain, sender: str, hop: str, ids: list[str]) -> HandOff:
     return hand_off_claim(chain.db, sender, hop, SEND, {"message_ids": ids})
 
 
@@ -150,6 +155,7 @@ async def test_candidate_hands_the_claim_to_the_reviewer_once(world: TeamWorld, 
         sender, sha = chain.writer, chain.tests_sha
     else:
         sender, sha = chain.developer, chain.impl_sha
+        _implement(chain)
         LocalTaskManager(chain.db).claim_task(chain.task.id, sender, force=True)
     # The sender relays one CANDIDATE to its Dev Manager and to the reviewer: two messages.
     ids = _send(chain, sender, _candidate(chain, sha), chain.manager, chain.reviewer)
@@ -189,6 +195,7 @@ async def test_reviewer_land_on_implementation_hands_the_claim_to_the_dev_manage
 ) -> None:
     chain = await _chain(world, "Implementation LAND closes")
     _record(chain, chain.writer, "test", chain.tests_sha)
+    _implement(chain)
     LocalTaskManager(chain.db).claim_task(chain.task.id, chain.developer, force=True)
     _record(chain, chain.developer, "implementation", chain.impl_sha)
     LocalTaskManager(chain.db).claim_task(chain.task.id, chain.reviewer, force=True)
@@ -214,6 +221,8 @@ async def test_bounce_returns_the_claim_to_the_maker(
     chain = await _chain(world, f"BOUNCE returns {step} to its maker")
     sha = chain.tests_sha if step == "test" else chain.impl_sha
     author = {"writer": chain.writer, "developer": chain.developer}[maker]
+    if step == "implementation":
+        _implement(chain)
     _record(chain, author, step, sha)
     LocalTaskManager(chain.db).claim_task(chain.task.id, chain.reviewer, force=True)
     _record(chain, chain.reviewer, "review", sha, status="rejected", round_number=1)
@@ -230,6 +239,7 @@ async def test_second_bounce_keeps_the_claim_with_the_reviewer_who_fixes(
 ) -> None:
     chain = await _chain(world, "Second BOUNCE is the fixer round")
     _record(chain, chain.writer, "test", chain.tests_sha)
+    _implement(chain)
     LocalTaskManager(chain.db).claim_task(chain.task.id, chain.developer, force=True)
     _record(chain, chain.developer, "implementation", chain.impl_sha)
     LocalTaskManager(chain.db).claim_task(chain.task.id, chain.reviewer, force=True)
@@ -251,6 +261,7 @@ async def test_second_bounce_keeps_the_claim_with_the_reviewer_who_fixes(
 
 async def test_no_live_seat_records_a_pending_hand_off(world: TeamWorld) -> None:
     chain = await _chain(world, "No live reviewer")
+    _implement(chain)
     LocalTaskManager(chain.db).claim_task(chain.task.id, chain.developer, force=True)
     chain.db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (chain.reviewer,))
     ids = _send(chain, chain.developer, _candidate(chain, chain.impl_sha), chain.reviewer)
@@ -273,6 +284,7 @@ async def test_a_maker_of_the_work_is_never_handed_review(world: TeamWorld) -> N
         ("review", "implementation"),
     )
     _record(chain, chain.reviewer, "implementation", chain.tests_sha)
+    _implement(chain)
     LocalTaskManager(chain.db).claim_task(chain.task.id, chain.developer, force=True)
     ids = _send(chain, chain.developer, _candidate(chain, chain.impl_sha), chain.reviewer)
 
@@ -285,6 +297,7 @@ async def test_a_maker_of_the_work_is_never_handed_review(world: TeamWorld) -> N
 
 async def test_reviewer_reads_the_candidate_after_the_hop(world: TeamWorld) -> None:
     chain = await _chain(world, "Binding follows the claim at send time")
+    _implement(chain)
     LocalTaskManager(chain.db).claim_task(chain.task.id, chain.developer, force=True)
     ids = _send(chain, chain.developer, _candidate(chain, chain.impl_sha), chain.reviewer)
     _hand(chain, chain.developer, "review", ids)
@@ -296,3 +309,24 @@ async def test_reviewer_reads_the_candidate_after_the_hop(world: TeamWorld) -> N
     rejection = _candidate_rejection(chain.db, {}, event, chain.reviewer)
 
     assert rejection is None
+
+
+async def test_reviewer_holding_the_claim_withdraws_its_own_candidate(world: TeamWorld) -> None:
+    chain = await _chain(world, "Reviewer withdraws its candidate")
+    _implement(chain)
+    LocalTaskManager(chain.db).claim_task(chain.task.id, chain.developer, force=True)
+    ids = _send(chain, chain.developer, _candidate(chain, chain.impl_sha), chain.reviewer)
+    _hand(chain, chain.developer, "review", ids)
+    SessionTaskManager(chain.db).link_task(chain.reviewer, chain.task.id, "reviewing")
+    ids = _send(
+        chain,
+        chain.reviewer,
+        f"EVENT=CANDIDATE_WITHDRAWN TASK=#{chain.task.seq_num} SHA={chain.impl_sha} NOTE=withdrawn",
+        chain.developer,
+    )
+    message = InterSessionMessageManager(chain.db).get_message(ids[0])
+    assert message is not None
+    event = candidate_event(chain.db, message)
+    assert event is not None
+
+    assert is_task_coordinator(chain.db, event, chain.reviewer)
