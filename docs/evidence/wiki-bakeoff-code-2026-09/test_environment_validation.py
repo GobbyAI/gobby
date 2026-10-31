@@ -205,7 +205,7 @@ def _write_source_manifest(root: Path, files: list[dict[str, Any]]) -> dict[str,
 
 def _file_item(root: Path, path: str) -> dict[str, Any]:
     record = file_record(root, root / "sources/gobby" / path)
-    return {"path": path, "type": "file", "mode": "0644", **record}
+    return {**record, "path": path, "type": "file", "mode": "0644"}
 
 
 def _symlink_item(path: str, target: str) -> dict[str, Any]:
