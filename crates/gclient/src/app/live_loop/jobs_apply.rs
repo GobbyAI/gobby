@@ -16,6 +16,10 @@ use super::control::{
 use super::daemon_ops::{apply_kills, apply_ops};
 use super::jobs::{JobOutcome, JobResult, LoopJobs, OpIntent};
 
+#[cfg(test)]
+#[path = "jobs_apply_tests.rs"]
+mod tests;
+
 pub(super) fn apply_job_outcome(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,

@@ -15,6 +15,9 @@
 
 mod mock_daemon;
 
+#[path = "loop_liveness/lifecycle.rs"]
+mod lifecycle;
+
 use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
