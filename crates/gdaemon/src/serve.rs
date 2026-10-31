@@ -222,6 +222,7 @@ pub fn run() -> Result<()> {
             crate::nodes::agents::workspace::retry_removals(&node.agents).await?;
             let mut heartbeat = crate::heartbeat::HeartbeatHost::new();
             crate::nodes::hooks::drain::register_jobs(&mut heartbeat, node.clone())?;
+            crate::nodes::agents::reports::register_jobs(&mut heartbeat, node.clone())?;
             let http = bind_listeners(&bootstrap.bind_host, bootstrap.daemon_port).await?;
             let ws = bind_listeners(&bootstrap.bind_host, bootstrap.websocket_port).await?;
             let doors = http
@@ -236,6 +237,11 @@ pub fn run() -> Result<()> {
                 node.clone(),
                 crate::nodes::channel::ChannelTiming::default(),
             ));
+            let reporter = tokio::spawn(crate::nodes::agents::reports::report_loop(node.clone()));
+            let agents = node.agents.clone();
+            let exit_watch = tokio::spawn(async move {
+                crate::nodes::agents::launch::watch_exits(&agents).await
+            });
             let result = serve_doors(
                 doors,
                 tls.map(|loaded| loaded.config),
@@ -245,6 +251,10 @@ pub fn run() -> Result<()> {
             .await;
             channel.abort();
             let _ = channel.await;
+            reporter.abort();
+            let _ = reporter.await;
+            exit_watch.abort();
+            let _ = exit_watch.await;
             // Stop supervision only; live terminal processes survive a daemon restart.
             drop(terminal_host);
             drop(claim);

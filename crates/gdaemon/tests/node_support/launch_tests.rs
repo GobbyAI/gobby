@@ -821,7 +821,11 @@ async fn reconcile_after_restart() -> Result<()> {
             state.runs.contains_key("present"),
             "epoch {epoch}: live pane was lost"
         );
-        assert!(!state.runs.contains_key("missing"));
+        assert_eq!(
+            state.runs.get("missing").map(|run| run.phase),
+            Some(RunPhase::Exited),
+            "epoch {epoch}: launched exit keeps its record until a report acknowledges it"
+        );
         let exit = &state
             .exits
             .iter()
@@ -902,9 +906,10 @@ async fn exit_before_commit_reply_is_settled_for_owner() -> Result<()> {
     })?;
     launch.await?;
     let state = persisted_state(&fixture.agents.home)?;
-    assert!(
-        !state.runs.contains_key(&fixture.payload.run_id),
-        "fast exit left its owner active after launch completed successfully"
+    assert_eq!(
+        state.runs.get(&fixture.payload.run_id).map(|run| run.phase),
+        Some(RunPhase::Exited),
+        "fast exit must settle its owner after launch completed successfully"
     );
     let exit = &state
         .exits
@@ -972,7 +977,14 @@ async fn exit_events_record_exits() -> Result<()> {
         let settled = async {
             loop {
                 let changed = agents.changed.notified();
-                if !agents.state.lock().await.runs.contains_key("run-exit") {
+                if agents
+                    .state
+                    .lock()
+                    .await
+                    .runs
+                    .get("run-exit")
+                    .is_some_and(|run| run.phase == RunPhase::Exited)
+                {
                     break;
                 }
                 changed.await;

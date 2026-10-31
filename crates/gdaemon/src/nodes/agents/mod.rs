@@ -30,6 +30,8 @@ pub struct NodeAgents {
     pub home: PathBuf,
     pub state: Mutex<AgentState>,
     pub changed: Notify,
+    /// Serializes node reports, so a slower report never posts after a newer one.
+    pub report_lock: Mutex<()>,
     /// Arrival-ordered turns for the commands that name each run.
     lanes: Arc<lanes::Lanes>,
     /// Runs whose preparation task is still live.
@@ -71,6 +73,7 @@ impl NodeAgents {
             home: home.to_owned(),
             state: Mutex::new(state),
             changed,
+            report_lock: Mutex::new(()),
             lanes: Arc::default(),
             preparing: Default::default(),
             #[cfg(unix)]

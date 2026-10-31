@@ -174,7 +174,9 @@ impl CommandsFixture {
             .clone();
         assert_eq!(exit.reason, reason);
         assert_eq!(exit.launched, launched);
-        assert!(!state.runs.contains_key(id));
+        // A launched exit keeps its record as Exited until a report carrying it gets 200.
+        let retained = state.runs.get(id).map(|run| run.phase);
+        assert_eq!(retained, launched.then_some(RunPhase::Exited));
         Ok(exit)
     }
 

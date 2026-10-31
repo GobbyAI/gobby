@@ -42,6 +42,9 @@ pub enum RunPhase {
     Accepted,
     Preparing,
     Launched,
+    /// The run ended and its exit awaits a report. The record keeps the launched workspace
+    /// until a report carrying the exit gets 200.
+    Exited,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,8 +78,16 @@ pub struct ExitRecord {
 }
 
 impl AgentState {
-    /// Call under NodeAgents::state's mutex, held through the durable rename.
+    /// Persists the state and wakes the report loop. Call under NodeAgents::state's mutex.
     pub fn commit(&self, home: &Path, changed: &Notify) -> Result<()> {
+        self.persist(home)?;
+        changed.notify_one();
+        Ok(())
+    }
+
+    /// Persists the state without waking the report loop, so a report's own bookkeeping never
+    /// starts another report. Call under NodeAgents::state's mutex, held through the durable rename.
+    pub fn persist(&self, home: &Path) -> Result<()> {
         let directory = home.join("node");
         let path = directory.join("agents.json");
         let temporary = directory.join("agents.json.tmp");
@@ -114,18 +125,23 @@ impl AgentState {
             File::open(&directory)?.sync_all()?;
             Ok(())
         })();
-        result.with_context(|| format!("commit node agent state {}", path.display()))?;
-        changed.notify_one();
-        Ok(())
+        result.with_context(|| format!("commit node agent state {}", path.display()))
     }
 
-    pub fn next_revision(&mut self, home: &Path, changed: &Notify) -> Result<u64> {
+    /// Takes the next report revision and persists it before the report is built.
+    pub fn take_report_revision(&mut self, home: &Path) -> Result<u64> {
         self.revision = self
             .revision
             .checked_add(1)
             .context("node report revision exhausted")?;
-        self.commit(home, changed)?;
+        self.persist(home)?;
         Ok(self.revision)
+    }
+
+    pub fn next_revision(&mut self, home: &Path, changed: &Notify) -> Result<u64> {
+        let revision = self.take_report_revision(home)?;
+        changed.notify_one();
+        Ok(revision)
     }
 
     pub fn live_and_accepted(&self) -> usize {
@@ -162,7 +178,7 @@ impl AgentState {
         let interrupted: Vec<_> = self
             .runs
             .iter()
-            .filter(|(_, run)| run.phase != RunPhase::Launched)
+            .filter(|(_, run)| matches!(run.phase, RunPhase::Accepted | RunPhase::Preparing))
             .map(|(run_id, _)| run_id.clone())
             .collect();
         let ended_at_ms = SystemTime::now()

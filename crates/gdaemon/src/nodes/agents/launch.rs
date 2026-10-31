@@ -571,7 +571,7 @@ async fn settle_exit(
         RunPhase::Preparing => {
             next.pending_exits.insert(run_id, exit_code);
         }
-        RunPhase::Accepted => return Ok(()),
+        RunPhase::Accepted | RunPhase::Exited => return Ok(()),
     }
     next.commit(&agents.home, &agents.changed)?;
     *state = next;
@@ -622,7 +622,9 @@ pub async fn reconcile(agents: &NodeAgents) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Drops a launched run and records its exit. The run's workspace queues for removal.
+/// Records a run's exit. A launched run stays `Exited`, keeping its workspace record, until a
+/// report carrying the exit gets 200. A run that never launched drops now and queues its
+/// workspace for removal.
 fn settle(
     state: &mut AgentState,
     run_id: &str,
@@ -632,7 +634,7 @@ fn settle(
     ended_at_ms: u64,
 ) {
     state.pending_exits.remove(run_id);
-    let Some(run) = state.runs.get(run_id) else {
+    let Some(run) = state.runs.get_mut(run_id) else {
         return;
     };
     let exit = ReportExit {
@@ -641,11 +643,19 @@ fn settle(
         launched,
         exit_code,
         reason,
-        workspace: run.workspace.as_ref().map(WorkspaceRecord::report),
+        workspace: run
+            .workspace
+            .as_ref()
+            .filter(|_| launched)
+            .map(WorkspaceRecord::report),
         sandbox: None,
     };
-    state.to_removals(run_id);
-    state.runs.remove(run_id);
+    if launched {
+        run.phase = RunPhase::Exited;
+    } else {
+        state.to_removals(run_id);
+        state.runs.remove(run_id);
+    }
     state.exits.push(ExitRecord { exit, ended_at_ms });
 }
 

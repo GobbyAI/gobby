@@ -314,7 +314,7 @@ async fn apply(
     }
 }
 
-async fn request(
+pub(crate) async fn request(
     node: &NodeServices,
     route: &str,
     payload: &Value,
