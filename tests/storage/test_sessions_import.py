@@ -132,7 +132,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "expected_session: 'Session | None' = None, source_hash: 'str | None' = None) -> 'Session | None'",
     "move_to_project": "(self, session_id: 'str', project_id: 'str') -> 'Session | None'",
     "normalize_automatic_title_refs": "(self) -> 'int'",
-    "pause_inactive_active_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
+    "idle_inactive_active_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "persist_summary_state": "(self, session_id: 'str', *, summary_markdown: 'str', "
     "generation_mode: 'str', source_context_hash: 'str | None' = None, "
     "summary_path: 'str | None | UnsetType' = UNSET, "

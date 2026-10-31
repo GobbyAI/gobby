@@ -40,7 +40,13 @@ function lifecyclePresentation(status: string): LifecyclePresentation {
           ? "info"
           : status === "awaiting_approval" || status === "awaiting_handoff"
             ? "warning"
-            : "paused";
+            : status === "idle"
+              ? "idle"
+              : status === "waiting"
+                ? "waiting"
+                : status === "paused" || status === "interrupted"
+                  ? "paused"
+                  : "unknown";
   const glyph =
     status === "awaiting_input"
       ? EyeGlyph

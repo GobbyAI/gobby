@@ -167,7 +167,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
 
                 Args:
                     project_id: Filter by project ID
-            status: Filter by status (active, paused, interrupted, awaiting_input,
+            status: Filter by status (active, paused, waiting, idle, interrupted, awaiting_input,
                 awaiting_approval, awaiting_handoff, expired, archived)
         source: Filter by CLI source (claude, grok, codex, droid, agy)
                     machine_id: Filter by client machine id

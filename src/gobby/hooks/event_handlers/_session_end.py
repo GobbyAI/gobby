@@ -96,13 +96,13 @@ class SessionEndMixin(EventHandlersBase):
         ):
             # Gobby no longer spawns tmux, so every tmux pane is hand-started and
             # outlives the CLI that ended in it.
-            end_status = "paused"
+            end_status = session.status if session.status in {"paused", "interrupted"} else "idle"
         elif (
             end_reason == SessionEndReason.IDLE
             and session is not None
             and session.session_type == "web_chat"
         ):
-            end_status = "paused"
+            end_status = session.status if session.status in {"paused", "interrupted"} else "idle"
         else:
             end_status = "expired"
         terminal_outcome = end_status == "expired"
@@ -228,7 +228,7 @@ class SessionEndMixin(EventHandlersBase):
 
         # Mark as awaiting_handoff only for explicit handoff exits. Ordinary
         # session ends should expire; live turn completion is handled by
-        # AFTER_AGENT/STOP as paused. A clear predecessor already awaiting its
+        # AFTER_AGENT/STOP as idle or waiting. A clear predecessor already awaiting its
         # successor keeps that status: the successor's bind expires it.
         if (
             session is not None

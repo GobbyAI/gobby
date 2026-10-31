@@ -96,7 +96,7 @@ async def test_codex_idle_recovery_rechecks_composer_and_exact_row(race: str) ->
 
     assert result == ("composer_draft" if race == "composer_changed" else "row_changed")
     assert reads == []
-    manager._pause_idle_prompt_active.assert_not_called()
+    manager._idle_prompt_active.assert_not_called()
 
 
 def test_live_wake_signal_is_neutral() -> None:
@@ -1029,7 +1029,7 @@ class TestWakeDispatch:
         session_manager: MagicMock,
         ism_manager: MagicMock,
     ) -> None:
-        """An active Claude row idle at its prompt is paused and takes the wake at once (#25155)."""
+        """An active Claude row idle at its prompt takes the wake at once (#25155)."""
         session = FakeSession(
             id=WAKE_SESSION_ID,
             terminal_context={"tmux_pane": "%12"},
@@ -1045,13 +1045,13 @@ class TestWakeDispatch:
         async def probe(_session: object, _terminal: object | None) -> TerminalActivity:
             return idle
 
-        def pause(session_id: str, *, observed_updated_at: datetime) -> FakeSession:
+        def reconcile(session_id: str, *, observed_updated_at: datetime) -> FakeSession:
             assert session_id == session.id
             assert observed_updated_at == session.updated_at
-            session.status = "paused"
+            session.status = "idle"
             return session
 
-        session_manager._pause_idle_prompt_active = pause
+        session_manager._idle_prompt_active = reconcile
 
         async def flush(_session_id: str) -> None:
             return None
@@ -1074,7 +1074,7 @@ class TestWakeDispatch:
         assert result.get("skipped") is None
         assert result["delivered"] is True
         await asyncio.wait_for(wake_delivered.wait(), 0.5)
-        assert session.status == "paused"
+        assert session.status == "idle"
 
     async def test_idle_codex_prompt_touched_after_restart_receives_deferred_wake(
         self,
@@ -1096,7 +1096,7 @@ class TestWakeDispatch:
         terminal_manager = MagicMock()
         terminal_manager.resolve_live_for_session.return_value = terminal
         probe_count = 0
-        pause_count = 0
+        reconcile_count = 0
 
         async def probe(_session: object, observed_terminal: object | None) -> TerminalActivity:
             nonlocal probe_count
@@ -1104,15 +1104,15 @@ class TestWakeDispatch:
             probe_count += 1
             return idle
 
-        def pause(session_id: str, *, observed_updated_at: datetime) -> FakeSession:
-            nonlocal pause_count
+        def reconcile(session_id: str, *, observed_updated_at: datetime) -> FakeSession:
+            nonlocal reconcile_count
             assert session_id == session.id
             assert observed_updated_at == session.updated_at
-            pause_count += 1
-            session.status = "paused"
+            reconcile_count += 1
+            session.status = "idle"
             return session
 
-        session_manager._pause_idle_prompt_active = pause
+        session_manager._idle_prompt_active = reconcile
 
         async def flush(_session_id: str) -> None:
             return None
@@ -1139,8 +1139,8 @@ class TestWakeDispatch:
         result = await asyncio.wait_for(dispatcher.dispatch_live_wake(WAKE_SESSION_ID), 0.5)
         assert result["skipped"] == "session_active"
         await asyncio.wait_for(delivered.wait(), 0.5)
-        assert session.status == "paused"
-        assert (probe_count, pause_count) == (2, 1)
+        assert session.status == "idle"
+        assert (probe_count, reconcile_count) == (2, 1)
 
     @pytest.mark.parametrize("source", ["claude", "codex"])
     @pytest.mark.parametrize("kind", ["in_flight", "draft"])
@@ -1174,7 +1174,7 @@ class TestWakeDispatch:
         def pause(*_args: object, **_kwargs: object) -> None:
             raise AssertionError("idle-prompt pause must not run")
 
-        session_manager._pause_idle_prompt_active = pause
+        session_manager._idle_prompt_active = pause
 
         async def flush(_session_id: str) -> None:
             return None

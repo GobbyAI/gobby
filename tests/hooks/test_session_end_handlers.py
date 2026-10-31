@@ -632,14 +632,16 @@ class TestSessionEndHandling:
             "sess-123", "expired"
         )
 
-    def test_session_end_idle_reason_pauses_session(
-        self, mock_dependencies: dict[str, Any]
+    @pytest.mark.parametrize("initial_status", ["active", "paused", "interrupted"])
+    def test_session_end_idle_reason_idles_session(
+        self, mock_dependencies: dict[str, Any], initial_status: str
     ) -> None:
         """Idle eviction keeps a durable web-chat row resumable."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = "run-456"
         mock_session.session_type = "web_chat"
+        mock_session.status = initial_status
         mock_dependencies["session_storage"].get.return_value = mock_session
 
         handlers = EventHandlers(**mock_dependencies)
@@ -655,7 +657,7 @@ class TestSessionEndHandling:
 
         assert response.decision == "allow"
         mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
-            "sess-123", "paused"
+            "sess-123", "idle" if initial_status == "active" else initial_status
         )
         mock_dependencies["session_storage"].update_status.assert_not_called()
         mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
@@ -686,7 +688,7 @@ class TestSessionEndHandling:
             "sess-123", "expired"
         )
 
-    def test_session_end_pauses_interactive_tmux_session(
+    def test_session_end_idles_interactive_tmux_session(
         self, mock_dependencies: dict[str, Any]
     ) -> None:
         mock_session = MagicMock()
@@ -712,7 +714,7 @@ class TestSessionEndHandling:
 
         assert response.decision == "allow"
         mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
-            "sess-123", "paused"
+            "sess-123", "idle"
         )
         mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
         manager_cls.return_value.delete_for_session.assert_not_called()

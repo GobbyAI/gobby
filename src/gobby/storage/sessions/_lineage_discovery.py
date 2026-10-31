@@ -7,9 +7,12 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.storage.session_models import Session
 from gobby.storage.sql_dialect import newer_than_now_expr
 
+from ._constants import TERMINAL_SESSION_STATUSES
 from ._discovery_helpers import handoff_candidate_matches, parse_terminal_context_value
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from gobby.storage.hub.protocol import HubDatabase
 
 MAX_HANDOFF_PARENT_CANDIDATES = 8
@@ -130,3 +133,49 @@ class _LineageDiscoveryMixin:
                 return False
             seen.add(parent_id)
             current_id = parent_id
+
+
+def nearest_live_parent_ids(
+    db: HubDatabase, parent_ids: Iterable[str | None]
+) -> dict[str, str | None]:
+    """Map each parent id to its nearest ancestor that is not terminal.
+
+    The agents tree renders a seat under the nearest ancestor still live, so
+    seats of a pipeline that ended as `deleted` render under that pipeline's own
+    parent. Stored parent_session_id lineage is left unchanged. A missing row
+    counts as live and keeps its id; a chain that cycles through terminal rows
+    resolves to None.
+
+    Args:
+        db: Hub database that holds the session rows.
+        parent_ids: Stored parent ids to resolve; None entries are skipped.
+
+    Returns:
+        Dict from each parent id to its rendered parent id, or None.
+    """
+    cursors = {pid: pid for pid in parent_ids if pid is not None}
+    walked: dict[str, set[str]] = {start: set() for start in cursors}
+    links: dict[str, tuple[str | None, str | None]] = {}
+    resolved: dict[str, str | None] = {}
+    while cursors:
+        unknown = sorted({current for current in cursors.values() if current not in links})
+        if unknown:
+            placeholders = ", ".join("%s" for _ in unknown)
+            rows = db.fetchall(
+                f"SELECT id, parent_session_id, status FROM sessions WHERE id IN ({placeholders})",  # nosec B608
+                tuple(unknown),
+            )
+            found = {row["id"]: (row["parent_session_id"], row["status"]) for row in rows}
+            links.update((current, found.get(current, (None, None))) for current in unknown)
+        pending: dict[str, str] = {}
+        for start, current in cursors.items():
+            parent, status = links[current]
+            if status not in TERMINAL_SESSION_STATUSES:
+                resolved[start] = current
+            elif parent is None or current in walked[start]:
+                resolved[start] = None
+            else:
+                walked[start].add(current)
+                pending[start] = parent
+        cursors = pending
+    return resolved

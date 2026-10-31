@@ -316,14 +316,14 @@ def test_expired_session_resumes_only_after_ownership_revival(
     assert transcript_row["transcript_processed"] is False
 
     # A turn with an unknown disposition never settles the session; a completed
-    # turn pauses it.
+    # turn ends it idle.
     handlers.handle_after_agent(
         _event(HookEventType.AFTER_AGENT, session_id, tmp_path, turn_disposition="completed")
     )
 
-    paused = session_manager.get(session_id)
-    assert paused is not None
-    assert paused.status == "paused"
+    ended = session_manager.get(session_id)
+    assert ended is not None
+    assert ended.status == "idle"
 
 
 def test_missing_agent_type_restored_before_rules(

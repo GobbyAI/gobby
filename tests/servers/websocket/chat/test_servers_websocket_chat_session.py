@@ -392,7 +392,7 @@ class TestChatTurnReasoningPersistence:
         assert updates == [
             ("db-session", {"reasoning_effort": "xhigh"}),
             ("db-session", {"status": "active"}),
-            ("db-session", {"status": "paused"}),
+            ("db-session", {"status": "idle"}),
         ]
 
 

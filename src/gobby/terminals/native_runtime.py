@@ -65,6 +65,11 @@ MAX_SPAWN_ERROR_CODE_LENGTH = 128
 # The host escalates to SIGKILL after grace; allow for its delivery and reap.
 GROUP_EXIT_MARGIN_SECONDS = 2.0
 GROUP_EXIT_POLL_SECONDS = 0.05
+# Text longer than this reaches the child as one bracketed paste; a shorter
+# text write can lose its head while the composer is still reading it.
+NATIVE_PASTE_THRESHOLD_CHARS = 2000
+# A Return that submits a paste must arrive in its own read, after the paste.
+PASTE_SUBMIT_DELAY_MS = 15
 type NativeSpawnSettlement = Literal["fail_pending", "fail_pending_kill", "pending"]
 
 
@@ -115,6 +120,22 @@ def _host_error_detail(exc: HostCommandError) -> str | None:
     if exc.stage:
         return f"stage: {exc.stage}"
     return None
+
+
+def _host_text_operations(operation: NativeBatchOperation) -> list[HostBatchOperation]:
+    """Encode a text op for the host; long text becomes one paste.
+
+    A trailing Return leaves the paste as its own key op, so it submits after
+    the paste is read. Text at or under the threshold keeps its single write.
+    """
+    text = operation.payload
+    body = text.removesuffix("\r")
+    if len(body) <= NATIVE_PASTE_THRESHOLD_CHARS:
+        return [HostBatchOperation("text", text.encode("utf-8"), delay_ms=operation.delay_ms)]
+    operations = [HostBatchOperation("paste", body.encode("utf-8"), delay_ms=operation.delay_ms)]
+    if body != text:
+        operations.append(HostBatchOperation("key", b"\r", delay_ms=PASTE_SUBMIT_DELAY_MS))
+    return operations
 
 
 def classify_native_spawn_failure(
@@ -501,16 +522,15 @@ class NativeTerminalRuntime(NativeFrameStreamMixin, NativeHostProbeMixin):
                     if not is_named_key(operation.payload):
                         invalid_key = True
                         break
-                    data = encode_named_key(operation.payload)
-                else:
-                    data = operation.payload.encode("utf-8")
-                operations.append(
-                    HostBatchOperation(
-                        kind=operation.kind,
-                        data=data,
-                        delay_ms=operation.delay_ms,
+                    operations.append(
+                        HostBatchOperation(
+                            kind="key",
+                            data=encode_named_key(operation.payload),
+                            delay_ms=operation.delay_ms,
+                        )
                     )
-                )
+                else:
+                    operations.extend(_host_text_operations(operation))
             if invalid_key:
                 results[target.result_id] = NativeBatchResult(
                     target.result_id,

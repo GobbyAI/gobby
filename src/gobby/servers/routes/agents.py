@@ -125,6 +125,8 @@ class CreateAgentDefinitionRequest(BaseModel):
     workflows: dict[str, Any] | None = None
     blocked_tools: list[str] | None = None
     blocked_mcp_tools: list[str] | None = None
+    implementation_domains: list[str] | None = None
+    task_categories: list[str] | None = None
     enabled: bool = True
     tags: list[str] | None = None
     step_workflow: dict[str, Any] | None = None
@@ -167,6 +169,8 @@ class UpdateAgentDefinitionRequest(BaseModel):
     enabled: bool | None = None
     blocked_tools: list[str] | None = None
     blocked_mcp_tools: list[str] | None = None
+    implementation_domains: list[str] | None = None
+    task_categories: list[str] | None = None
     tags: list[str] | None = None
 
     @model_validator(mode="before")
@@ -429,6 +433,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 workflows=workflows,
                 blocked_tools=request.blocked_tools or [],
                 blocked_mcp_tools=request.blocked_mcp_tools or [],
+                implementation_domains=request.implementation_domains or [],
+                task_categories=request.task_categories or [],
                 step_workflow=request.step_workflow,
             )
             dumped = body.model_dump(mode="json")
@@ -512,6 +518,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     "step_workflow",
                     "blocked_tools",
                     "blocked_mcp_tools",
+                    "implementation_domains",
+                    "task_categories",
                 ):
                     if key in fields:
                         body_dict[key] = fields[key]
@@ -752,6 +760,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         try:
             from gobby.storage.agents import LocalAgentRunManager
+            from gobby.storage.sessions._lineage_discovery import nearest_live_parent_ids
 
             def load_runs() -> tuple[list[dict[str, Any]], list[str]]:
                 manager = LocalAgentRunManager(server.services.database)
@@ -759,6 +768,13 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     status=status, limit=limit, project_id=project_id
                 )
                 projections = [run.to_list_dict() for run in records]
+                live_parents = nearest_live_parent_ids(
+                    server.services.database, [d.get("parent_session_id") for d in projections]
+                )
+                for projection in projections:
+                    parent_id = projection.get("parent_session_id")
+                    if parent_id is not None:
+                        projection["parent_session_id"] = live_parents[parent_id]
                 session_ids = [run.child_session_id for run in records if run.child_session_id]
                 return projections, session_ids
 

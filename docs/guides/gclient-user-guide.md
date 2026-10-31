@@ -252,9 +252,9 @@ first in the keybinding help as the attention legend:
 | --- | --- | --- | --- |
 | `⍾` | needs you | need you | waiting on you: an approval, a question, an error it cannot pass; the row's first line also carries the words `needs you` when they fit beside the title |
 | `▶` | active | active | running a turn |
-| `○` | idle | idle | at its prompt, nothing pending |
+| `○` | idle | idle | at its prompt, or ended its turn on an armed wait or background work |
 | `◆` | output unseen | idle | finished since you last looked; clears when its pane is focused |
-| `‖` | held | idle | a run someone paused on purpose; never an agent idle at its prompt |
+| `‖` | held | idle | paused on purpose or interrupted by you |
 | `◌` | gone | gone | process or relay missing (see *Orphaned terminals*) |
 | `·` | no state yet | idle | the first seconds after a spawn, before the daemon has a state |
 

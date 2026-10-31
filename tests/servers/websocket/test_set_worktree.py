@@ -118,7 +118,7 @@ async def test_set_worktree_updates_workspace_identity_before_teardown() -> None
         (
             ("sess-1",),
             {
-                "status": "paused",
+                "status": "idle",
                 "workspace_path": "/repo/worktree",
                 "workspace_generation": 4,
             },
@@ -166,7 +166,7 @@ async def test_set_project_invalidates_workspace_identity_before_teardown() -> N
         (
             ("sess-1",),
             {
-                "status": "paused",
+                "status": "idle",
                 "project_id": "proj-new",
                 "workspace_path": None,
                 "workspace_generation": 3,

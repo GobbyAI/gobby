@@ -58,11 +58,11 @@ class _LifecycleDelegateMixin:
 
         return cleanup_expired_session_state(self.db)
 
-    def pause_inactive_active_sessions(self: _ManagerState, timeout_minutes: int = 30) -> int:
-        """Pause active sessions inactive too long. Delegates to session_lifecycle."""
-        from gobby.storage.session_lifecycle import pause_inactive_active_sessions as _pause
+    def idle_inactive_active_sessions(self: _ManagerState, timeout_minutes: int = 30) -> int:
+        """Idle active sessions inactive too long. Delegates to session_lifecycle."""
+        from gobby.storage.session_lifecycle import idle_inactive_active_sessions as _idle
 
-        return _pause(
+        return _idle(
             self.db,
             timeout_minutes,
             status_notifier=self._notify_status_transition,

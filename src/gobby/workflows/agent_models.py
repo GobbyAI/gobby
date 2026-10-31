@@ -29,6 +29,7 @@ SPAWN_ANY_AGENT = "*"
 DIRECT_INTEGRATION_COMMIT = "direct_integration_commit"
 
 SendMessageTarget = Literal["global", "project", "parent", "session", "agent"]
+TaskStepWrite = Literal["test", "implementation", "review", "closing"]
 
 
 def _parent_only() -> list[SendMessageTarget]:
@@ -239,7 +240,7 @@ class AgentDefinitionBody(BaseModel):
         default_factory=list,
         description="Enabled definitions that must receive the same report to finish a monitor tick.",
     )
-    task_step_writes: list[Literal["test", "implementation", "review", "closing"]] = Field(
+    task_step_writes: list[TaskStepWrite] = Field(
         default_factory=list,
         description="Task step records this definition may write through dedicated tools.",
     )

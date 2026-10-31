@@ -2,7 +2,7 @@
 
 import asyncio
 import base64
-from typing import Any, Literal, cast
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -82,6 +82,47 @@ async def test_batch_text_carriage_return_retains_ledger_submit_flag() -> None:
     assert ledger.read(terminal.id) == LedgerRead("empty"), "the submit flag survives paste routing"
 
 
+@pytest.mark.parametrize(
+    ("text", "kind"),
+    [("x" * 2000, "text"), ("x" * 2001, "paste")],
+    ids=["at-threshold", "over-threshold"],
+)
+@pytest.mark.asyncio
+async def test_native_batch_text_pastes_only_past_threshold(text: str, kind: str) -> None:
+    host = FakeHostClient()
+    runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
+    terminal = _native_terminal(host, host_terminal_id="ht-1")
+    results = await runtime.write_batch(
+        [NativeBatchTarget("seat", terminal, (NativeBatchOperation("text", text),))]
+    )
+    assert isinstance(results[0].outcome, Delivered)
+    operations = [op for batch in host.batches for target in batch for op in target.operations]
+    assert [(op.kind, op.data) for op in operations] == [(kind, text.encode("utf-8"))]
+
+
+@pytest.mark.asyncio
+async def test_long_text_return_pastes_body_then_submits_with_separate_key() -> None:
+    host = FakeHostClient()
+    ledger = ComposerLedger()
+    runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch, composer_ledger=ledger)
+    terminal = _native_terminal(host, host_terminal_id="ht-1")
+    ledger.release(terminal.id)
+    body = "x" * 2001
+    text = body + "\r"
+    results = await runtime.write_batch(
+        [NativeBatchTarget("seat", terminal, (NativeBatchOperation("text", text),))]
+    )
+    assert isinstance(results[0].outcome, Delivered)
+    operations = [op for batch in host.batches for target in batch for op in target.operations]
+    assert [(op.kind, op.data, op.delay_ms) for op in operations] == [
+        ("paste", body.encode("utf-8"), 0),
+        ("key", b"\r", 15),
+    ]
+    assert ledger.read(terminal.id) == LedgerRead("held", pending=text)
+    ledger.record_submit(terminal.id)
+    assert ledger.read(terminal.id) == LedgerRead("empty")
+
+
 @pytest.mark.asyncio
 async def test_host_batch_client_encodes_paste_without_losing_bytes(
     monkeypatch: pytest.MonkeyPatch,
@@ -96,8 +137,7 @@ async def test_host_batch_client_encodes_paste_without_losing_bytes(
     roundtrip = AsyncMock(return_value={"results": [result]})
     monkeypatch.setattr(client, "_mutating_roundtrip", roundtrip)
     text = ("HEAD:" + "界" * 2001 + ":TAIL").encode("utf-8")
-    # Exercise the new wire kind against the old Literal before implementation.
-    paste = HostBatchOperation(cast(Literal["text", "key"], "paste"), text, delay_ms=15)
+    paste = HostBatchOperation("paste", text, delay_ms=15)
     try:
         results = await client.write_batch(
             [HostBatchTarget("seat", "ht-1", (paste, HostBatchOperation("key", b"\r")))]

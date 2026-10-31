@@ -3834,7 +3834,7 @@
           "activation": "live",
           "machineExport": false,
           "default": 30,
-          "description": "Minutes of inactivity before active sessions are marked paused"
+          "description": "Minutes of inactivity before active sessions are marked idle"
         },
         "session_lifecycle.expire_check_interval_minutes": {
           "type": "integer",

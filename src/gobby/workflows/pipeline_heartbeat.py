@@ -15,7 +15,10 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
-from gobby.storage.sessions._constants import PROTECTED_SESSION_STATUSES
+from gobby.storage.sessions._constants import (
+    PROTECTED_SESSION_STATUSES,
+    TURN_ENDED_SESSION_STATUSES,
+)
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.tasks.state_semantics import (
     get_claimed_session_id,
@@ -224,7 +227,7 @@ class PipelineHeartbeat:
                 return False
             if session.status == "active" or session.status in PROTECTED_SESSION_STATUSES:
                 return True
-            if session.status == "paused":
+            if session.status in TURN_ENDED_SESSION_STATUSES:
                 # Agent sessions with no active run are dead (process exited)
                 # Interactive sessions are alive (user is thinking)
                 return getattr(session, "agent_depth", 0) == 0

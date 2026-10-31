@@ -38,8 +38,11 @@ call_tool("gobby-sessions", "get_handoff", {})
 
 | State | Meaning |
 | :--- | :--- |
-| `active`, `paused` | Working or between turns. |
-| `interrupted`, `awaiting_input`, `awaiting_approval` | Protected interaction states; automatic wake waits for safe provider evidence. |
+| `active` | Working on a turn. |
+| `waiting` | A turn ended with an armed coordination wait (`wait_for_*`); the seat is parked on that wait. |
+| `idle` | A turn ended with nothing armed, including turns that left background work running. Not held. |
+| `paused` | An explicit operator pause, or a recovered stale-active row. Held. |
+| `interrupted`, `awaiting_input`, `awaiting_approval` | Protected interaction states; automatic wake waits for safe provider evidence. An interrupt is held. |
 | `awaiting_handoff` | A context boundary is pending; inspect its marker and delivery result. |
 | `completed`, `cancelled`, `closed` | Lifecycle outcomes accepted by the status model. |
 | `expired`, `deleted` | Terminal storage states; ordinary status updates cannot revive them. |

@@ -223,7 +223,7 @@ class TestSafeSend:
         ]
         persisted_session = session_manager.get(stored_session.id)
         assert persisted_session is not None
-        assert persisted_session.status == "paused"
+        assert persisted_session.status == "idle"
         assert persisted_session.usage_output_tokens == 5
 
 

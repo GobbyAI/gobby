@@ -84,7 +84,7 @@ async def test_external_capacity_failure_is_observable_in_one_poll(
 
     current = session_manager.get(session.id)
     assert current is not None
-    assert current.status == "paused"
+    assert current.status == "idle"
     state = attention.get(session_attention_entry_id(session.id))
     assert state is not None
     assert state.reason == "provider_error"
@@ -155,7 +155,7 @@ async def test_external_capacity_retries_are_bounded_and_deduplicated(
 
     current = session_manager.get(session.id)
     assert current is not None
-    assert current.status == "paused"
+    assert current.status == "idle"
     state = attention.get(session_attention_entry_id(session.id))
     assert state is not None
     assert state.reason == "provider_error"
@@ -295,7 +295,7 @@ async def test_failed_delivery_is_bounded_separately_from_successful_retries(
 
     current = session_manager.get(session.id)
     assert current is not None
-    assert current.status == "paused"
+    assert current.status == "idle"
     assert not any(kind == "text" for kind, _payload in runtime.write_log)
 
 

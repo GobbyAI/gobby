@@ -59,7 +59,7 @@ def _fail_delivered_readiness(db: HubDatabase, session_id: str, attempt_id: str)
         # Keep the attempt check and recovery atomic: a newer marker must not
         # release its predecessor's wait, and fresh activity must stay active.
         released = conn.execute(
-            "UPDATE sessions SET status = 'paused', updated_at = %s "
+            "UPDATE sessions SET status = 'idle', updated_at = %s "
             "WHERE id = %s AND status = 'awaiting_handoff'",
             (datetime.now(UTC).isoformat(), session_id),
         ).rowcount

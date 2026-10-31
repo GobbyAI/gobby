@@ -501,6 +501,8 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         session_stats: dict[str, Any] = {
             "active": 0,
             "paused": 0,
+            "waiting": 0,
+            "idle": 0,
             "awaiting_handoff": 0,
             "total": 0,
         }

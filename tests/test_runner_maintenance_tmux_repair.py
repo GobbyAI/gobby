@@ -221,6 +221,8 @@ async def test_repair_loop_enforces_only_paned_sessions() -> None:
             [
                 "active",
                 "paused",
+                "waiting",
+                "idle",
                 "interrupted",
                 "awaiting_input",
                 "awaiting_approval",
@@ -280,6 +282,8 @@ async def test_repair_loop_repairs_one_best_session_per_tmux_pane() -> None:
             [
                 "active",
                 "paused",
+                "waiting",
+                "idle",
                 "interrupted",
                 "awaiting_input",
                 "awaiting_approval",
@@ -535,6 +539,8 @@ async def test_repair_loop_uses_configured_session_list_limit() -> None:
             [
                 "active",
                 "paused",
+                "waiting",
+                "idle",
                 "interrupted",
                 "awaiting_input",
                 "awaiting_approval",
@@ -563,6 +569,8 @@ async def test_repair_loop_normalizes_nonpositive_session_list_limit() -> None:
             [
                 "active",
                 "paused",
+                "waiting",
+                "idle",
                 "interrupted",
                 "awaiting_input",
                 "awaiting_approval",
@@ -629,6 +637,8 @@ async def test_repair_loop_survives_list_failure(caplog: pytest.LogCaptureFixtur
             [
                 "active",
                 "paused",
+                "waiting",
+                "idle",
                 "interrupted",
                 "awaiting_input",
                 "awaiting_approval",

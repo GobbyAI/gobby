@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions._constants import TURN_ENDED_SESSION_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,8 @@ class WakeReplayCoordinator:
         self._owner_loop = loop
 
     def on_status_transition(self, transition: SessionStatusTransition) -> None:
-        """Schedule replay only after a committed transition to paused."""
-        if transition.status != "paused":
+        """Schedule replay only after a committed transition to a parked turn end."""
+        if transition.status not in TURN_ENDED_SESSION_STATUSES:
             return
         with self._state_lock:
             if self._closed:

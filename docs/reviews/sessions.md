@@ -278,6 +278,6 @@ session/storage examples. Dispositions apply to every item in each preceding `Wh
 - **No XSS through rendered transcripts** — the web UI uses ReactMarkdown without rehype-raw and no dangerouslySetInnerHTML; rendered output is structured JSON end-to-end.
 - **Gzip archive writes are atomic** (tmp + `os.replace`); path traversal in transcript lookup is guarded (`glob.escape`, separator rejection).
 - **Mailbox fanout dedupe/ordering, coordinator cache TTL/invalidations, and cross-project direct-send fences are correct and tested**; concurrent session registration cannot duplicate rows (advisory lock + unique-index recovery); parent attribution survives interleavings (COALESCE on that axis is correct).
-- **`pause_inactive_active_sessions` not bumping `updated_at` is intentional** (preserves the real-activity expiry clock); lifecycle sweeps are single-instance with bounded, exception-safe shutdown.
+- **`idle_inactive_active_sessions` not bumping `updated_at` is intentional** (preserves the real-activity expiry clock); lifecycle sweeps are single-instance with bounded, exception-safe shutdown.
 - **Codex `reasoning` items carry only encrypted content** (nothing user-visible lost); grok chunk coalescing is correct for the persisted format; codex `last_token_usage` preference is correct delta semantics.
 - **`%s` placeholders are correct** per repo convention (CLAUDE.md's `$N` mandate is stale doc drift).

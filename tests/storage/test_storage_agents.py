@@ -597,11 +597,13 @@ class TestLocalAgentRunManager:
             (child_session.id, "expired")
         ]
 
-    def test_daemon_stop_pauses_child_session_after_terminal_commit(
+    @pytest.mark.parametrize("initial_status", ["active", "paused", "interrupted"])
+    def test_daemon_stop_idles_child_session_after_terminal_commit(
         self,
         agent_manager: LocalAgentRunManager,
         session_manager: SessionManager,
         sample_session: dict[str, Any],
+        initial_status: str,
     ) -> None:
         transitions: list[SessionStatusTransition] = []
         session_manager.register_status_transition_listener(transitions.append)
@@ -626,15 +628,18 @@ class TestLocalAgentRunManager:
             agent_run_id=agent_run.id,
         )
         notifying_manager.start(agent_run.id)
+        session_manager.update_status(child_session.id, initial_status)
+        transitions.clear()
 
         notifying_manager.cancel(agent_run.id, terminal_reason="daemon_stop")
 
         updated_session = session_manager.get(child_session.id)
         assert updated_session is not None
-        assert updated_session.status == "paused"
-        assert [(event.session_id, event.status) for event in transitions] == [
-            (child_session.id, "paused")
-        ]
+        expected = "idle" if initial_status == "active" else initial_status
+        assert updated_session.status == expected
+        assert [(event.session_id, event.status) for event in transitions] == (
+            [(child_session.id, "idle")] if initial_status == "active" else []
+        )
 
     def test_complete_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test completing nonexistent run returns None."""
@@ -882,7 +887,7 @@ class TestLocalAgentRunManager:
         )
         paused = session_manager.get(child_session_id)
         assert paused is not None
-        assert paused.status == "paused"
+        assert paused.status == "idle"
 
         successor = agent_manager.create(
             parent_session_id=sample_session["id"],
@@ -924,7 +929,7 @@ class TestLocalAgentRunManager:
         session_manager: SessionManager,
         sample_session: dict[str, Any],
     ) -> None:
-        """An unconsumed daemon-stop original keeps its parked session paused."""
+        """An unconsumed daemon-stop original keeps its parked session resumable and idle."""
         original, child_session_id = self._seed_parked_owned_run(
             agent_manager,
             session_manager,
@@ -937,7 +942,7 @@ class TestLocalAgentRunManager:
         assert expired == 0
         parked = session_manager.get(child_session_id)
         assert parked is not None
-        assert parked.status == "paused"
+        assert parked.status == "idle"
         assert parked.agent_run_id == original.id
 
     def test_terminal_sweep_expires_session_owned_by_plain_terminal_run(

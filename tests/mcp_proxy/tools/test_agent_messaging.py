@@ -21,6 +21,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
+from gobby.agents.team_communications import RecipientPolicy
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.hooks.event_enrichment import EventEnricher
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
@@ -152,8 +153,6 @@ def admit_recipients(monkeypatch: pytest.MonkeyPatch) -> None:
 
     These tests cover tool shape; admission runs against the real database in its own suites.
     """
-    from gobby.agents.team_communications import RecipientPolicy
-
     monkeypatch.setattr(
         "gobby.sessions.mailbox.recipient_policy",
         lambda db, sender_id, recipient_ids: RecipientPolicy(frozenset()),

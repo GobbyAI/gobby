@@ -106,7 +106,7 @@ def test_queued_prompt_stop_uses_transcript_order(
     assert current is not None
     if ending_key == "queued-prompt":
         assert result.applied
-        assert current.status == "paused"
+        assert current.status == "idle"
         assert result.lifecycle.provider_turn_key == "queued-prompt"
         assert result.lifecycle.generation == 2
     else:
@@ -133,7 +133,7 @@ def test_keyless_evidence_keeps_existing_lifecycle_semantics(
     assert result.reason != "stale_provider_turn"
     current = seat.sessions.get(seat.session_id)
     assert current is not None
-    assert current.status == ("paused" if event_kind == "stop" else "active")
+    assert current.status == ("idle" if event_kind == "stop" else "active")
     stored = seat.lifecycle.get(seat.session_id)
     assert stored.provider_turn_key == "original-prompt"
     assert stored.generation == 1
@@ -297,7 +297,7 @@ def test_queued_turn_keeps_a_later_interrupt_block(
     assert response.decision == "allow"
     current = seat.sessions.get(seat.session_id)
     assert current is not None
-    assert current.status == ("paused" if disposition == "completed" else "interrupted")
+    assert current.status == ("idle" if disposition == "completed" else "interrupted")
     assert ledger.read(terminal.id) == LedgerRead("blocked", "interrupt")
 
 
@@ -411,7 +411,7 @@ async def test_queued_stop_recovers_native_composer_and_pending_wake(
         with seat.transcript.open("a") as stream:
             stream.write(json.dumps({"type": "system", "subtype": "turn_duration"}) + "\n")
         session = seat.sessions.get(seat.session_id)
-        assert session is not None and session.status == "paused"
+        assert session is not None and session.status == "idle"
         activity = await probe_terminal_activity(session, terminal)
         assert activity.composer.state == ("empty" if draft_position == "none" else "draft")
         await drain_asyncio_tasks(cycles=10)

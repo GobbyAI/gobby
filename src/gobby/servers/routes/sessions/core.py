@@ -22,6 +22,7 @@ from gobby.servers.models import (
 from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.sessions.acp_lifecycle import attach_acp_block
 from gobby.storage.machines import MachineNotRegisteredError
+from gobby.storage.sessions._lineage_discovery import nearest_live_parent_ids
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.storage.token_events import TokenEventStore
 from gobby.telemetry.instruments import inc_counter
@@ -549,6 +550,11 @@ def register_core_routes(
                 created_after=created_after,
                 created_before=created_before,
             )
+            live_parents = await server.run_db(
+                nearest_live_parent_ids,
+                server.session_manager.db,
+                [session.parent_session_id for session in sessions],
+            )
 
             # Build resumability info if requested
             resumability: dict[str, tuple[bool, str | None]] = {}
@@ -572,6 +578,8 @@ def register_core_routes(
                         continue
 
                 session_data = session.to_dict()
+                if session.parent_session_id is not None:
+                    session_data["parent_session_id"] = live_parents[session.parent_session_id]
                 # Computed ACP enrichment (not persisted): present only for ACP
                 # web-chat rows, so the UI's Boolean(session.acp) detection works.
                 attach_acp_block(session_data, session, acp_runtime_manager)

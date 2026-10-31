@@ -19,7 +19,7 @@ pub enum RowState {
     Attention,
     /// The terminal's host is gone; the row can only be destroyed.
     Orphaned,
-    /// The session's turn ended waiting on input, approval, or a handoff.
+    /// Held: an operator paused the session or the user interrupted its turn.
     Paused,
     /// Output is arriving on an attached pane.
     Working,

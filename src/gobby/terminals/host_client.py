@@ -159,7 +159,7 @@ class PingResult:
 
 @dataclass(frozen=True)
 class HostBatchOperation:
-    kind: Literal["text", "key"]
+    kind: Literal["text", "key", "paste"]
     data: bytes
     delay_ms: int = 0
 
@@ -604,7 +604,7 @@ class HostClient:
             total_delay_ms = 0
             operations: list[dict[str, Any]] = []
             for operation in target.operations:
-                if operation.kind not in {"text", "key"}:
+                if operation.kind not in {"text", "key", "paste"}:
                     raise HostCommandError("invalid_kind")
                 if operation.delay_ms < 0 or operation.delay_ms > MAX_WRITE_BATCH_DELAY_MS:
                     raise HostCommandError("invalid_delay")

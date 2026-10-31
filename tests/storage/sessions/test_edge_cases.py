@@ -102,12 +102,12 @@ class TestSessionEdgeCases:
                 24,
             )
 
-    def test_pause_inactive_sessions_logs_when_sessions_paused(
+    def test_idle_inactive_sessions_logs_when_sessions_idled(
         self,
         session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
-        """Test that pause_inactive_active_sessions logs when sessions are paused."""
+        """Test that idle_inactive_active_sessions logs when sessions are idled."""
         # Create an active session
         session = session_manager.register(
             external_id="pause-log-test",
@@ -123,10 +123,10 @@ class TestSessionEdgeCases:
         )
 
         with patch("gobby.storage.session_lifecycle.logger") as mock_logger:
-            count = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
+            count = session_manager.idle_inactive_active_sessions(timeout_minutes=30)
             assert count == 1
             mock_logger.info.assert_called_once_with(
-                "Paused %s inactive active sessions (>%sm)",
+                "Idled %s inactive active sessions (>%sm)",
                 1,
                 30,
             )

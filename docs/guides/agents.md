@@ -510,7 +510,9 @@ Coordination tools:
 
 For a coordinated hold, call `wait_for_coordination(owner_session="#123", ... )`
 with exactly one condition: `coordination_key="unique-release-key"`,
-`statuses=["paused", "completed"]`, or `reply=True`. The owner releases a keyed
+`statuses=["idle", "waiting", "paused"]`, or `reply=True`. A `paused` subscription matches
+only an operator pause. Routine turn ends are `idle` (no wait armed) or `waiting` (wait armed);
+list them explicitly to wake on them. The owner releases a keyed
 wait by sending you a `coordination_release` message with
 `metadata.coordination_key` equal to that key. Ordinary message text has no
 release or wake semantics for a keyed wait.

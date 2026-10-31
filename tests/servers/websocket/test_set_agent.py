@@ -151,7 +151,7 @@ class TestSetAgentWithExistingSession:
 
         await server._handle_set_agent(ws, {"conversation_id": "conv-1", "agent_name": "new-agent"})
 
-        server.session_manager.update.assert_called_once_with("db-456", status="paused")
+        server.session_manager.update.assert_called_once_with("db-456", status="idle")
         assert server._pending_agents["conv-1"] == "new-agent"
 
     async def test_stores_pending_agent_after_teardown(self) -> None:

@@ -351,12 +351,12 @@ class TestSessionManagerPruning:
             (session.id, "expired")
         ]
 
-    def test_pause_inactive_active_sessions(
+    def test_idle_inactive_active_sessions(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, str],
     ) -> None:
-        """Test pausing inactive active sessions."""
+        """Test idling inactive active sessions."""
         session = session_manager.register(
             external_id="active-idle",
             machine_id="20000000-0000-4000-8000-000000000001",
@@ -373,16 +373,15 @@ class TestSessionManagerPruning:
         transitions: list[SessionStatusTransition] = []
         session_manager.register_status_transition_listener(transitions.append)
 
-        count = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
+        count = session_manager.idle_inactive_active_sessions(timeout_minutes=30)
         assert count == 1
 
-        paused = session_manager.get(session.id)
-        assert paused.status == "paused"
-        assert [(event.session_id, event.status) for event in transitions] == [
-            (session.id, "paused")
-        ]
+        idle = session_manager.get(session.id)
+        assert idle is not None
+        assert idle.status == "idle"
+        assert [(event.session_id, event.status) for event in transitions] == [(session.id, "idle")]
 
-    def test_pause_inactive_active_sessions_preserves_last_activity_time(
+    def test_idle_inactive_active_sessions_preserves_last_activity_time(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, str],
@@ -405,7 +404,7 @@ class TestSessionManagerPruning:
             (session.id,),
         )
 
-        count = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
+        count = session_manager.idle_inactive_active_sessions(timeout_minutes=30)
         assert count == 1
 
         after = session_manager.db.fetchone(
@@ -435,7 +434,7 @@ class TestSessionManagerPruning:
             (session.id,),
         )
 
-        paused = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
+        paused = session_manager.idle_inactive_active_sessions(timeout_minutes=30)
         expired = session_manager.expire_stale_sessions(timeout_hours=24)
 
         assert paused == 1
@@ -445,7 +444,7 @@ class TestSessionManagerPruning:
         assert stale.status == "expired"
 
     @pytest.mark.parametrize("target_field", ["tmux_pane", "tmux_window_id"])
-    def test_tmux_backed_session_pauses_without_refresh_and_survives_stale_expiry(
+    def test_tmux_backed_session_idles_without_refresh_and_survives_stale_expiry(
         self,
         session_manager: SessionManager,
         sample_project: dict,
@@ -465,7 +464,7 @@ class TestSessionManagerPruning:
         )
         before = session_manager.get(session.id)
 
-        paused = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
+        paused = session_manager.idle_inactive_active_sessions(timeout_minutes=30)
         expired = session_manager.expire_stale_sessions(timeout_hours=24)
 
         after = session_manager.get(session.id)
@@ -473,7 +472,7 @@ class TestSessionManagerPruning:
         assert after is not None
         assert paused == 1
         assert expired == 0
-        assert after.status == "paused"
+        assert after.status == "idle"
         assert after.updated_at == before.updated_at
 
     @pytest.mark.parametrize("target_field", ["tmux_pane", "tmux_window_id"])
@@ -527,7 +526,7 @@ class TestSessionManagerPruning:
             (session.id,),
         )
 
-        paused = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
+        paused = session_manager.idle_inactive_active_sessions(timeout_minutes=30)
         expired = session_manager.expire_stale_sessions(timeout_hours=24)
 
         stale = session_manager.get(session.id)
@@ -1085,12 +1084,12 @@ class TestSessionManagerPruning:
         count = session_manager.expire_stale_sessions(timeout_hours=24)
         assert count == 0
 
-    def test_pause_inactive_active_sessions_no_inactive(
+    def test_idle_inactive_active_sessions_no_inactive(
         self,
         session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
-        """Test pause_inactive_active_sessions returns 0 when no inactive sessions."""
+        """Test idle_inactive_active_sessions returns 0 when no inactive sessions."""
         session_manager.register(
             external_id="active-session",
             machine_id="20000000-0000-4000-8000-000000000001",
@@ -1098,7 +1097,7 @@ class TestSessionManagerPruning:
             project_id=sample_project["id"],
         )
 
-        count = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
+        count = session_manager.idle_inactive_active_sessions(timeout_minutes=30)
         assert count == 0
 
     def test_get_pending_transcript_sessions_with_limit(

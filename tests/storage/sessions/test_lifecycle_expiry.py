@@ -199,7 +199,7 @@ def test_expire_stale_sessions_keys_on_last_activity_not_updated_at(
 
 
 @pytest.mark.integration
-def test_pause_inactive_keys_on_last_activity(
+def test_idle_inactive_keys_on_last_activity(
     session_mgr: SessionManager,
     project_id: str,
 ) -> None:
@@ -234,12 +234,12 @@ def test_pause_inactive_keys_on_last_activity(
         (busy.id,),
     )
 
-    paused = session_mgr.pause_inactive_active_sessions(timeout_minutes=30)
+    paused = session_mgr.idle_inactive_active_sessions(timeout_minutes=30)
 
     assert paused == 1
     refreshed_idle = session_mgr.get(idle.id)
     refreshed_busy = session_mgr.get(busy.id)
-    assert refreshed_idle is not None and refreshed_idle.status == "paused"
+    assert refreshed_idle is not None and refreshed_idle.status == "idle"
     assert refreshed_busy is not None and refreshed_busy.status == "active"
 
 
