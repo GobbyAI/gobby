@@ -610,6 +610,8 @@ async fn report_tick_retries_removals() -> Result<()> {
     // The report may be queued for report_loop or sent directly by the job; allow both.
     let settled = tokio::time::timeout(Duration::from_secs(3), async {
         loop {
+            // The job notifies after each commit it makes and once more when it ends.
+            let changed = f.node.agents.changed.notified();
             if let Ok(report) = f.hub.received.try_recv() {
                 report.answer(StatusCode::OK, json!({}));
             }
@@ -617,7 +619,7 @@ async fn report_tick_retries_removals() -> Result<()> {
             if state.removals.is_empty() && !state.cancelled.contains_key("expired") {
                 return Ok::<_, anyhow::Error>(state);
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            changed.await;
         }
     })
     .await;
@@ -679,23 +681,25 @@ async fn node_registers_report_job() -> Result<()> {
     // Observe the actual serve entrypoint, not a source-text registration assertion.
     let startup = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            assert!(
-                child.try_wait()?.is_none(),
-                "isolated node exited: {}",
-                fs::read_to_string(&log)?
-            );
-            if let Ok(report) = hub.received.try_recv() {
-                saw_report = true;
-                report.answer(StatusCode::OK, json!({}));
+            tokio::select! {
+                report = hub.received.recv() => {
+                    let report = report.context("hub open")?;
+                    saw_report = true;
+                    report.answer(StatusCode::OK, json!({}));
+                }
+                () = host.wait_for_subscription(), if !saw_subscription => {
+                    saw_subscription = true;
+                }
+                status = child.wait() => {
+                    anyhow::bail!(
+                        "isolated node exited {status:?}: {}",
+                        fs::read_to_string(&log)?
+                    );
+                }
             }
-            saw_subscription |= host
-                .requests()
-                .iter()
-                .any(|r| r["method"] == "subscribe_events");
             if saw_report && saw_subscription {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         Ok::<_, anyhow::Error>(())
     })

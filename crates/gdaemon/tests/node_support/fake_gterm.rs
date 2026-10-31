@@ -33,6 +33,7 @@ pub struct FakeGterm {
     resume_commit: Arc<Notify>,
     pause_list: Arc<AtomicBool>,
     list_snapshot: Arc<Notify>,
+    subscription: Arc<Notify>,
     resume_list: Arc<Notify>,
     spawn_reply: Arc<ReplyGate>,
     commit_reply: Arc<ReplyGate>,
@@ -96,6 +97,7 @@ impl FakeGterm {
         let resume_commit = Arc::new(Notify::new());
         let pause_list = Arc::new(AtomicBool::new(false));
         let list_snapshot = Arc::new(Notify::new());
+        let subscription = Arc::new(Notify::new());
         let resume_list = Arc::new(Notify::new());
         let spawn_reply = Arc::new(ReplyGate::default());
         let commit_reply = Arc::new(ReplyGate::default());
@@ -115,6 +117,7 @@ impl FakeGterm {
             let resume_commit = resume_commit.clone();
             let pause_list = pause_list.clone();
             let list_snapshot = list_snapshot.clone();
+            let subscription = subscription.clone();
             let resume_list = resume_list.clone();
             let spawn_reply = spawn_reply.clone();
             let commit_reply = commit_reply.clone();
@@ -136,6 +139,7 @@ impl FakeGterm {
                             let resume_commit = resume_commit.clone();
                             let pause_list = pause_list.clone();
                             let list_snapshot = list_snapshot.clone();
+                            let subscription = subscription.clone();
                             let resume_list = resume_list.clone();
                             let spawn_reply = spawn_reply.clone();
                             let commit_reply = commit_reply.clone();
@@ -186,7 +190,10 @@ impl FakeGterm {
                                     } else if method == "spawn_commit" && reject_next_commit.swap(false, Ordering::SeqCst) {
                                         json!({"ok":false,"error":"spawn_key_mismatch"})
                                     } else {
-                                        subscribed |= method == "subscribe_events";
+                                        if method == "subscribe_events" {
+                                            subscribed = true;
+                                            subscription.notify_one();
+                                        }
                                         script.lock().expect("fixture inventory").reply(&request, pid)
                                     };
                                     if method == "list" && pause_list.swap(false, Ordering::SeqCst) {
@@ -254,6 +261,7 @@ impl FakeGterm {
             resume_commit,
             pause_list,
             list_snapshot,
+            subscription,
             resume_list,
             spawn_reply,
             commit_reply,
@@ -287,6 +295,11 @@ impl FakeGterm {
 
     pub async fn wait_for_list_snapshot(&self) {
         self.list_snapshot.notified().await;
+    }
+
+    /// Resolves once the host has accepted a `subscribe_events` request.
+    pub async fn wait_for_subscription(&self) {
+        self.subscription.notified().await;
     }
 
     pub fn release_list_reply(&self) {
