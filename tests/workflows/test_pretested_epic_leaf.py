@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
+from gobby.agents.team_communications import recipient_policy
 from gobby.hooks.events import HookEventType
+from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
@@ -45,6 +49,33 @@ def epic_developer(temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> Sea
     bind_task_manager(
         temp_db, manager=OWNER_ID, parent=COORDINATOR_ID, project_id=PROJECT_ID, task=epic
     )
+    runs = LocalAgentRunManager(temp_db)
+    child = runs.create(
+        parent_session_id=OWNER_ID,
+        provider="codex",
+        prompt="Implement the assigned epic leaf",
+        agent_name="developer",
+        child_session_id=SESSION_ID,
+        task_id=epic.id,
+        machine_id=AUTHORITY_MACHINE_ID,
+    )
+    runs.start(child.id)
+    temp_db.execute(
+        "UPDATE sessions SET agent_run_id = %s, parent_session_id = %s WHERE id = %s",
+        (child.id, OWNER_ID, SESSION_ID),
+    )
+    run.session_vars["is_spawned_agent"] = True
+    definitions = AgentDefinitionManager(temp_db)
+    for name in ("orchestrator", "code-reviewer"):
+        body = yaml.safe_load(
+            (root / f"src/gobby/install/shared/workflows/agents/{name}.yaml").read_text()
+        )
+        body.pop("network", None)
+        existing = definitions.get_by_name(name, PROJECT_ID)
+        if existing is None:
+            definitions.create(name=name, definition_json=json.dumps(body))
+        else:
+            definitions.update(existing.id, definition_json=json.dumps(body))
     return run
 
 
@@ -88,19 +119,19 @@ async def test_claim_of_pretested_epic_leaf_reaches_implementation(epic_develope
 
 
 @pytest.mark.parametrize(
-    ("destination", "allowed"),
+    ("destination", "hook_allowed", "allowed"),
     [
-        ({"target": "session", "target_id": OWNER_ID}, True),
-        ({"target": "session", "target_id": PEER_ID}, False),
-        ({"target": "session", "target_id": COORDINATOR_ID}, False),
-        ({"target": "project"}, False),
-        ({"target": "global"}, False),
-        ({"target": "parent"}, False),
+        ({"target": "session", "target_id": OWNER_ID}, True, True),
+        ({"target": "session", "target_id": PEER_ID}, True, True),
+        ({"target": "session", "target_id": COORDINATOR_ID}, True, False),
+        ({"target": "project"}, False, False),
+        ({"target": "global"}, False, False),
+        ({"target": "parent"}, True, True),
     ],
     ids=["team-manager", "peer", "other-coordinator", "project", "global", "parent"],
 )
-async def test_await_tests_allows_only_the_team_manager(
-    epic_developer: SeatRun, destination: dict[str, Any], allowed: bool
+async def test_await_tests_preserves_spawned_developer_message_policy(
+    epic_developer: SeatRun, destination: dict[str, Any], hook_allowed: bool, allowed: bool
 ) -> None:
     leaf = _leaf(epic_developer)
     await _claim_and_route(epic_developer, leaf)
@@ -124,5 +155,11 @@ async def test_await_tests_allows_only_the_team_manager(
         event, session_id=SESSION_ID, variables=epic_developer.session_vars
     )
 
-    assert (response.decision == "allow") is allowed, response.reason
+    assert (response.decision == "allow") is hook_allowed, response.reason
+    if not hook_allowed:
+        assert "scope-spawned-agent-send-message" in (response.reason or "")
+    if destination["target"] == "session":
+        recipient = destination["target_id"]
+        policy = recipient_policy(epic_developer.db, SESSION_ID, [recipient])
+        assert (hook_allowed and recipient not in policy.withheld) is allowed
     assert epic_developer.step == "await_tests"
