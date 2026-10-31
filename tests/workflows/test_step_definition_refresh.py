@@ -138,6 +138,7 @@ def _reviewer_definition() -> AgentDefinitionBody:
             "task_step_writes": ["review"],
             "prompts": {"agent": "Synthetic reviewer seat."},
             "workflows": {"rule_selectors": {"include": []}},
+            "task_step_writes": ["review"],
             "step_workflow": {
                 "variables": {
                     "candidate_received": False,
