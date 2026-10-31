@@ -21,11 +21,11 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
     resolve_project_repo_path,
     resolve_task_repo_path,
 )
-from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.tasks.commit_order import link_candidate
 from gobby.tasks.commit_ownership import assert_task_commit_paths_available_async
-from gobby.tasks.commit_unlink import unlink_commit_audited
+from gobby.tasks.commit_unlink import landed_on_integration, unlink_commit_audited
 from gobby.tasks.diff_paging import (
     DEFAULT_GIT_TIMEOUT_SECONDS,
     MAX_COMMITS_LIMIT,
@@ -36,6 +36,7 @@ from gobby.tasks.diff_paging import (
     DiffPage,
     DiffPagingError,
 )
+from gobby.tasks.step_records import current_task_steps, list_task_step_records
 from gobby.utils.daemon_git import normalize_commit_sha
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
@@ -50,6 +51,18 @@ __all__ = ["create_commit_registry"]
 def _is_test_path(path: str) -> bool:
     """A path under a tests/ directory is test evidence, not production code."""
     return path.startswith("tests/") or "/tests/" in path
+
+
+def _approved_review_of(task_manager: "LocalTaskManager", task: Task, sha: str) -> bool:
+    """Whether the task's current review round approved this commit, by canonical SHA prefix."""
+    records = list_task_step_records(task_manager.db, task.id)
+    review = current_task_steps(records, task.review_epoch).get("review")
+    return (
+        review is not None
+        and review.status == "approved"
+        and review.commit_sha is not None
+        and review.commit_sha.startswith(sha)
+    )
 
 
 async def _carries_production(commits: list[str], repo_path: str | None) -> bool:
@@ -197,19 +210,37 @@ def create_commit_registry(
                 repo_path,
                 [normalized],
             )
-            production = any(not _is_test_path(path) for path in changed)
+            production_changes = any(not _is_test_path(path) for path in changed)
+            test_only = bool(changed) and not production_changes
+            # A test-only commit that a review approved is test-phase evidence, not a candidate.
+            declared = candidate and not (
+                test_only and _approved_review_of(task_manager, current_task, normalized)
+            )
+            # Landed history is never a new candidate, and an unproven landing status refuses the
+            # candidate before anything persists.
+            if declared:
+                landed = await landed_on_integration(task_manager.db, current_task, normalized)
+                if landed is None:
+                    return {
+                        "error": f"Cannot determine whether {normalized} is on the integration "
+                        "branch; refusing to declare it a candidate."
+                    }
+                if landed:
+                    declared = False
             # Judge the test step before this link can change the evidence it reads.
             from gobby.tasks.out_of_order_links import (
                 has_approved_test_step,
                 record_out_of_order_link,
             )
 
-            out_of_order = production and not has_approved_test_step(task_manager.db, current_task)
+            out_of_order = production_changes and not has_approved_test_step(
+                task_manager.db, current_task
+            )
             task = (
                 await asyncio.to_thread(
                     link_candidate, task_manager, resolved_task_id, normalized, repo_path
                 )
-                if candidate
+                if declared
                 else task_manager.link_commit(resolved_task_id, normalized)
             )
             if out_of_order:
@@ -222,8 +253,8 @@ def create_commit_registry(
             return {
                 "task_id": task.id,
                 "commits": task.commits or [],
-                "production_changes": production,
-                "declared_candidate": normalized if candidate else None,
+                "production_changes": production_changes,
+                "declared_candidate": normalized if declared else None,
             }
         except (ValueError, RuntimeError) as e:
             return {"error": str(e)}
