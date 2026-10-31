@@ -299,6 +299,7 @@ async def test_oversized_get_task_preserves_test_gate(seat: SeatRun, approval: s
 @pytest.mark.parametrize(
     "agent,source,target",
     [
+        ("developer", "route_skills", "load_additional_skills"),
         ("developer", "implement", "claim"),
         ("developer", "submit", "claim"),
         ("epic-reviewer", "claim", "load_skill"),
@@ -306,7 +307,7 @@ async def test_oversized_get_task_preserves_test_gate(seat: SeatRun, approval: s
     ],
 )
 @pytest.mark.parametrize("oversized", [False, True], ids=["inline", "offloaded"])
-async def test_get_task_closed_transitions_survive_offload(
+async def test_get_task_field_transitions_survive_offload(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
     agent: str,
@@ -314,7 +315,7 @@ async def test_get_task_closed_transitions_survive_offload(
     target: str,
     oversized: bool,
 ) -> None:
-    """Exercise every bundled closed-card field consumer using its real YAML handlers."""
+    """Exercise bundled identity/closed-card consumers using their real YAML handlers."""
     patch_local_machine_id(monkeypatch, AUTHORITY_MACHINE_ID)
     path = (
         Path(__file__).resolve().parents[2]
@@ -347,12 +348,13 @@ async def test_get_task_closed_transitions_survive_offload(
     assert instance is not None
     instance.variables.update(assigned_task_id=task.id, assigned_task_uuid=task.id)
     run.instances.save(instance)
-    # Seed the observed state; testing close gates would require an unrelated checkout.
-    temp_db.execute(
-        "UPDATE tasks SET closed_at = CURRENT_TIMESTAMP, closed_reason = 'done', "
-        "claimed_by_session_id = NULL WHERE id = %s",
-        (task.id,),
-    )
+    if source != "route_skills":
+        # Seed the observed state; testing close gates requires an unrelated checkout.
+        temp_db.execute(
+            "UPDATE tasks SET closed_at = CURRENT_TIMESTAMP, closed_reason = 'done', "
+            "claimed_by_session_id = NULL WHERE id = %s",
+            (task.id,),
+        )
     if oversized:
         output = await _offloaded_task_card(run, task)
     else:
