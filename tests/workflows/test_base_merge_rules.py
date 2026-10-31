@@ -20,6 +20,7 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.config.shell_lexing import ParsedShellCommand
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -27,6 +28,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.workflows.base_merge_commits import base_merge_admission
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
@@ -35,6 +37,107 @@ from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.fixtures.landing_case import LandingCase, make_landing_case
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git commit -m "$(touch pwned)"',
+        'git commit -m "`touch pwned`"',
+        'git commit -m "prefix $(touch pwned) suffix"',
+        "git commit -m \"$(printf %s 'literal'; touch pwned)\"",
+        'git commit -m "$\\\n(touch pwned)"',
+        'git commit -m "$((1 + $(touch pwned; printf 0)))"',
+        "git commit -m #'\ntouch pwned\n'",
+        'git commit -m "x\n<<EOF "\ntouch pwned\nEOF',
+        "git commit -m 'x\n<<EOF '\ntouch pwned\nEOF",
+        'git commit -F "x\n<<EOF "\ntouch pwned\nEOF',
+        "git commit -F 'x\n<<EOF '\ntouch pwned\nEOF",
+        "git commit --no-edit\ntouch pwned",
+        "git commit --no-edit; touch pwned",
+        "git commit --no-edit | touch pwned",
+        "git commit --no-edit && touch pwned",
+        "git commit --no-edit > pwned",
+        'git commit -m "safe message"',
+        "git commit -m 'literal $()'",
+        "git commit -m 'literal\nmessage'",
+        "git commit -F message.txt",
+        "git merge --quit",
+        "git add shared.txt",
+        "git merge --no-commit integration",
+        "git merge --ff-only integration",
+        "git merge -unsafe",
+        "git add -- -unsafe",
+        "git -C -unsafe commit --no-edit",
+    ],
+)
+async def test_raw_grammar_refuses_bypasses_before_an_all_clear_lexer(
+    seat: tuple[WorkflowHookHandler, Session, Path],
+    temp_db: HubDatabase,
+    command: str,
+) -> None:
+    """Criterion 5: lexer bugs cannot turn arbitrary raw text into a merge grant."""
+    handler, session, worktree = seat
+    _start_conflicting_base_merge(worktree)
+    _seat(temp_db, session, "merge-seat", granted=True, selectors=GATED_RULES)
+    all_clear = ParsedShellCommand(segments=(("git", "commit", "--no-edit"),), operators=())
+
+    with patch(
+        "gobby.workflows.base_merge_commits.parse_shell_command",
+        return_value=all_clear,
+        create=True,
+    ) as lexer:
+        response = await handler._evaluate_rules(_bash_event(session, worktree, command))
+
+    assert response.decision == "block", command
+    lexer.assert_not_called()
+
+
+@pytest.mark.parametrize("with_cwd", [False, True], ids=["git", "git-C"])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        "merge integration",
+        "merge --no-ff integration",
+        "merge --no-edit integration",
+        "merge --no-ff --no-edit integration",
+        "merge --continue",
+        "merge --abort",
+        "add -- shared.txt",
+        "add -- shared.txt ./shared.txt",
+        "commit --no-edit",
+        "commit -m 'Merge base: #25385 (task/main), safe_message.'",
+        "commit --no-edit -m 'Merge base'",
+    ],
+)
+async def test_closed_grammar_forms_are_admitted_during_base_merge(
+    seat: tuple[WorkflowHookHandler, Session, Path],
+    temp_db: HubDatabase,
+    arguments: str,
+    with_cwd: bool,
+) -> None:
+    """Every allowed spelling still passes the real worktree and merge-state checks."""
+    _, session, worktree = seat
+    if arguments.startswith("add "):
+        _conflict_base_merge(worktree)
+    else:
+        _start_conflicting_base_merge(worktree)
+    _seat(temp_db, session, "merge-seat", granted=True, selectors=GATED_RULES)
+    prefix = f"git -C {worktree}" if with_cwd else "git"
+
+    admission = await base_merge_admission(
+        temp_db,
+        session_id=session.id,
+        project_id=session.project_id,
+        project_path=str(worktree),
+        cwd=str(worktree),
+        command=f"{prefix} {arguments}",
+        tool_kind="shell",
+        tool_input={},
+    )
+
+    assert admission.git_step, f"{prefix} {arguments}"
+
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
 CAPABILITY = "merge_base_commits"
@@ -368,7 +471,7 @@ async def test_conflicted_base_merge_resolves_and_stages_through_the_gates(
     assert resolve.decision == "allow"
     (worktree / "shared.txt").write_text("resolved\n")
 
-    stage = await handler._evaluate_rules(_bash_event(session, worktree, "git add shared.txt"))
+    stage = await handler._evaluate_rules(_bash_event(session, worktree, "git add -- shared.txt"))
     assert stage.decision == "allow"
     _git(worktree, "add", "shared.txt")
 
@@ -501,7 +604,7 @@ async def test_merge_commit_with_shell_expansion_is_refused(
 
 
 @pytest.mark.parametrize("message", ["'$(literal)'", "'`literal`'", r'"\$(literal)"'])
-async def test_merge_commit_with_literal_substitution_text_is_admitted(
+async def test_merge_commit_with_literal_substitution_outside_safe_charset_is_refused(
     seat: tuple[WorkflowHookHandler, Session, Path], temp_db: HubDatabase, message: str
 ) -> None:
     handler, session, worktree = seat
@@ -512,4 +615,4 @@ async def test_merge_commit_with_literal_substitution_text_is_admitted(
         _bash_event(session, worktree, f"git commit -m {message}")
     )
 
-    assert response.decision == "allow"
+    assert response.decision == "block"

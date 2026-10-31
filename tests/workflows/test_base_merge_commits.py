@@ -116,7 +116,6 @@ async def test_plain_commit_without_a_merge_in_progress_is_refused(repo: Path) -
     [
         "git merge integration && rm -rf build",
         "cd /elsewhere && git merge integration",
-        "git -C /elsewhere merge integration",
         "git --git-dir=/elsewhere/.git merge integration",
         "echo hi",
         "",
@@ -129,9 +128,9 @@ def test_compound_cd_and_global_options_do_not_parse_as_one_git_step(
     assert _lone_git_command(command) is None
 
 
-def test_quoted_operators_inside_a_commit_message_stay_one_git_step() -> None:
-    assert _lone_git_command('git commit -m "a && b"') == ["git", "commit", "-m", "a && b"]
-    assert _lone_git_command('git commit -m "a > b"') == ["git", "commit", "-m", "a > b"]
+def test_quoted_operators_outside_safe_message_charset_are_refused() -> None:
+    assert _lone_git_command('git commit -m "a && b"') is None
+    assert _lone_git_command('git commit -m "a > b"') is None
 
 
 @pytest.mark.parametrize(

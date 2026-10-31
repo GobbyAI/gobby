@@ -12,6 +12,22 @@ from gobby.config.shell_lexing import safe_split
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("quote", ['"', "'"])
+@pytest.mark.parametrize("flag", ["-m", "-F"])
+def test_fake_heredoc_in_multiline_quoted_argument_preserves_later_commands(
+    quote: str, flag: str
+) -> None:
+    parsed = shell_lexing.parse_shell_command(
+        f"git commit {flag} {quote}x\n<<EOF {quote}\ntouch pwned\nEOF"
+    )
+
+    assert parsed.segments == (
+        ("git", "commit", flag, "x\n<<EOF "),
+        ("touch", "pwned"),
+        ("EOF",),
+    )
+
+
 def test_safe_split_caches_tokens_and_returns_fresh_lists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
