@@ -9,6 +9,7 @@ pub mod launch;
 pub mod provider_command;
 pub mod provider_env;
 pub mod repair;
+pub mod reports;
 pub mod sandbox;
 pub mod state;
 pub mod trust;

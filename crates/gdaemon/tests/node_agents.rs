@@ -10,6 +10,8 @@ mod fd_hygiene;
 mod fixer_regressions;
 #[path = "node_support/launch_tests.rs"]
 mod launch_tests;
+#[path = "node_support/report_tests.rs"]
+mod report_tests;
 #[path = "node_support/workspace_fixtures.rs"]
 mod workspace_fixtures;
 
