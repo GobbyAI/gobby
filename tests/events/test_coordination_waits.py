@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -31,6 +32,26 @@ from gobby.utils.session_context import session_context_for_test
 from tests.terminals.fakes import make_memory_terminal
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize("role", ["dev-manager", "orchestrator"])
+@pytest.mark.parametrize("surface", ["definition", "procedure"])
+def test_documented_monitoring_wait_registers_and_receives_reply(
+    harness: CoordinationHarness, role: str, surface: str
+) -> None:
+    shared = Path(__file__).resolve().parents[2] / "src/gobby/install/shared"
+    path = (
+        shared / "workflows/agents" / f"{role}.yaml"
+        if surface == "definition"
+        else shared / "skills/gobby/references/agents/procedures" / f"{role}.md"
+    )
+    calls = re.findall(r"wait_for_coordination\(([^)]*timeout=900[^)]*)\)", path.read_text())
+    assert calls, "Monitoring guidance must provide a complete executable wait call"
+    for arguments in calls:
+        row = harness.wait(reply="reply=true" in arguments, timeout=900)
+        assert row["outcome"] == "waiting"
+        harness.reply()
+        assert harness.row(str(row["id"]))["outcome"] == "replied"
 
 
 @dataclass

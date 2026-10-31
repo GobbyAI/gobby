@@ -53,15 +53,15 @@ async def test_pipeline_spawn_refuses_unresolved_supplied_caller(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "allowed, network, caller_name",
+    "allowed, network, caller_name, overrides_network",
     [
-        (False, None, "pipeline-caller"),
-        (True, None, "pipeline-caller"),
-        (True, "trusted", "pipeline-caller"),
-        (True, "trusted", "default"),
-        (True, "none", "orchestrator"),
-        (True, "trusted", "root"),
-        (True, "none", "root"),
+        (False, None, "pipeline-caller", False),
+        (True, None, "pipeline-caller", False),
+        (True, "trusted", "pipeline-caller", False),
+        (True, "trusted", "default", True),
+        (True, "none", "orchestrator", True),
+        (True, "trusted", "root", False),
+        (True, "none", "root", False),
     ],
     ids=[
         "forbidden",
@@ -80,6 +80,7 @@ async def test_pipeline_spawn_obeys_spawnable_agents(
     allowed: bool,
     network: str | None,
     caller_name: str,
+    overrides_network: bool,
 ) -> None:
     """Use the real spawn closure even when the pipeline skips before_tool rules."""
     project_id = str(sample_project["id"])
@@ -102,9 +103,10 @@ async def test_pipeline_spawn_obeys_spawnable_agents(
     )
     sessions.update_terminal_pickup_metadata(child.id, agent_run_id=run.id)
     definitions = AgentDefinitionManager(temp_db)
-    for name, spawnable in [
-        (caller_name, ["pipeline-target"] if allowed else []),
-        ("pipeline-target", []),
+    caller_capabilities = ["override_spawn_network"] if overrides_network else []
+    for name, spawnable, capabilities in [
+        (caller_name, ["pipeline-target"] if allowed else [], caller_capabilities),
+        ("pipeline-target", [], []),
     ]:
         definitions.create(
             name,
@@ -114,6 +116,7 @@ async def test_pipeline_spawn_obeys_spawnable_agents(
                 "prompts": {"agent": "Work."},
                 "workflows": {"rule_selectors": {"include": []}},
                 "spawnable_agents": spawnable,
+                "capabilities": capabilities,
             },
             project_id=project_id,
         )
@@ -155,7 +158,7 @@ async def test_pipeline_spawn_obeys_spawnable_agents(
         "session_id": root.id if caller_name == "root" else child.id,
         "project_id": project_id,
     }
-    if allowed and (network is None or caller_name in ("default", "orchestrator", "root")):
+    if allowed and (network is None or overrides_network or caller_name == "root"):
         result = await execute_mcp_step(step, context, lambda: proxy, session_manager=sessions)
         assert result["run_id"] == "mock-launch"
         launch.assert_awaited_once()

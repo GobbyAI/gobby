@@ -108,12 +108,14 @@ def test_receipt_is_stored_once_as_a_reserved_comment(
     assert [receipt.id for receipt in list_close_receipts(temp_db, task.id)] == [first.id]
 
 
-def test_claimant_cannot_record_its_own_landing(
+def test_claim_holder_that_authored_nothing_may_record_the_landing(
     temp_db: HubDatabase, task: Task, roles: dict[str, str]
 ) -> None:
-    with pytest.raises(CloseReceiptError, match="claimant"):
-        _record(temp_db, task, roles["claimant"])
-    assert list_close_receipts(temp_db, task.id) == []
+    # The claim moves along the team chain; only a session that made the work is barred.
+    landing, created = _record(temp_db, task, roles["claimant"])
+
+    assert created is True
+    assert landing.author_session_id == roles["claimant"]
 
 
 def test_every_claim_writer_records_the_claimant(

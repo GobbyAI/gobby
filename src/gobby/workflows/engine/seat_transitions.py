@@ -13,6 +13,7 @@ from gobby.mcp_proxy.tools.task_repo_paths import resolve_task_repo_path
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessage
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.tasks.lifecycle_access import session_grants
@@ -196,12 +197,24 @@ def _monitor_message(
     }
 
 
+def _claimant_at(db: HubDatabase, event: CandidateEvent) -> str | None:
+    """The session that claimed the task when the message was sent.
+
+    A hand-off moves the claim after the sender speaks, so a message binds to the claimant it was
+    sent under. The current claimant is the fallback when no claim predates the message.
+    """
+    for row in SessionTaskManager(db).get_task_sessions(event.task.id):  # newest first
+        if row["action"] == "claimed" and row["created_at"] <= event.message.sent_at:
+            return str(row["session_id"])
+    return event.task.claimed_by_session_id
+
+
 def _candidate_rejection(
     db: HubDatabase, variables: dict[str, Any], event: CandidateEvent, reviewer_session_id: str
 ) -> str | None:
     if event.message.id in (variables.get(SEAT_CONSUMED_KEY) or []):
         return "message already consumed"
-    relayed = event.message.from_session != event.task.claimed_by_session_id
+    relayed = event.message.from_session != _claimant_at(db, event)
     # A relay binds only from the bound Dev Manager, for a SHA the claimant linked.
     if relayed and not is_relaying_dev_manager(db, event, reviewer_session_id):
         return "sender does not claim task"

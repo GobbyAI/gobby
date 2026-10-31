@@ -19,7 +19,6 @@ from gobby.config.tasks import TaskClosePolicyConfig, load_project_task_close_po
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.project_checkouts import require_root
 from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
-from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.storage.tasks._de_escalation import REVIEW_EXHAUSTED, REVIEW_REJECTION_LIMIT
@@ -355,19 +354,30 @@ def _is_running_definition_seat(conn: Transaction, session_id: str, definition: 
     return row is not None
 
 
+def maker_sessions(records: list[TaskStepRecord]) -> set[str]:
+    """Sessions that wrote the task's tests or implementation.
+
+    Independence follows authorship. Holding the claim does not: the claim moves along the team
+    chain, so a reviewer or closer may hold it without having made the work.
+    """
+    return {record.session_id for record in records if record.step in {"test", "implementation"}}
+
+
+def maker_sessions_in(conn: Transaction, task_id: str) -> set[str]:
+    """``maker_sessions`` read inside the caller's transaction, so its lock covers the read."""
+    return maker_sessions(_records(conn, task_id))
+
+
 def _require_independent_reviewer(
     db: HubDatabase,
-    conn: Transaction,
     task: Task,
     session_id: str,
     records: list[TaskStepRecord],
 ) -> None:
-    if task.claimed_by_session_id == session_id or session_id in claimant_sessions(conn, task.id):
-        raise StepRecordError("a current or former claimant cannot review its own task")
-    if any(
-        record.step == "implementation" and record.session_id == session_id for record in records
-    ):
-        raise StepRecordError("an implementer cannot review its own task")
+    if session_id in maker_sessions(records):
+        raise StepRecordError(
+            "an author of this task's tests or implementation cannot review its own task"
+        )
     variables = SessionVariableManager(db).get_variables(session_id)
     if task_edited_file_set(variables, task.id):
         raise StepRecordError("a session with task-attributed edits cannot review its own task")
@@ -522,7 +532,7 @@ def record_task_step(
                 raise StepRecordError(
                     "review round must follow the current epoch's rejection count"
                 )
-            _require_independent_reviewer(db, conn, task, session_id, records)
+            _require_independent_reviewer(db, task, session_id, records)
         now = utc_now()
         record = TaskStepRecord(
             **submission.model_dump(),

@@ -246,13 +246,9 @@ def test_independent_exact_sha_review(
     )
     _step(temp_db, task, implementer, "implementation", "approved", feedback="Implemented.")
     manager.claim_task(task.id, claimant, expected_owner=team["developer"])
-
-    with pytest.raises(StepRecordError, match="claimant"):
-        _step(temp_db, task, claimant, "review", "approved")
+    # Holding the claim does not bar review; authorship does. The claimant made no work.
     manager.claim_task(task.id, team["developer"], expected_owner=claimant)
-    with pytest.raises(StepRecordError, match="claimant"):
-        _step(temp_db, task, claimant, "review", "approved")
-    with pytest.raises(StepRecordError, match="implementer"):
+    with pytest.raises(StepRecordError, match="author"):
         _step(temp_db, task, implementer, "review", "approved")
     with pytest.raises(StepRecordError, match="task-attributed edits"):
         _step(temp_db, task, editor, "review", "approved")
