@@ -26,7 +26,11 @@ from qdrant_client.models import Filter
 from gobby.memory.dream.models import DreamCandidate, RelatedMemoryEvidence
 from gobby.memory.services.keyword import MemoryKeywordSearchService
 from gobby.memory.vectorstore_filters import memory_scope_filter
-from gobby.search.keyword import is_pg_search_parse_error, sanitize_pg_search_query
+from gobby.search.keyword import (
+    BM25_SERIAL_QUERY,
+    is_pg_search_parse_error,
+    sanitize_pg_search_query,
+)
 from gobby.storage.hub.async_ops import run_bounded_db
 from gobby.storage.memories_crud import map_get_memories_rows, render_get_memories_statement
 from gobby.storage.memories_scope import MemoryScope
@@ -599,6 +603,7 @@ async def _keyword_hits_bulk(
     async def execute(connection: Any, _remaining: float) -> list[Any]:
         stats.mark_admitted()
         async with connection.cursor(row_factory=dict_row) as cursor:
+            await cursor.execute(BM25_SERIAL_QUERY)
             await cursor.execute(sql, params)
             return list(await cursor.fetchall())
 

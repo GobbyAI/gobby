@@ -61,7 +61,9 @@ async def test_placed_resume_is_admitted_only_for_the_team_managers_own_seat(
 ) -> None:
     h = harness
     workspace = _workspace(h)
-    _define_agent(h.db, "dev-manager", None, variables={"team_manager": True})
+    _define_agent(
+        h.db, "dev-manager", None, variables={"team_manager": True}, resumable=("developer",)
+    )
     placement = {"tab": {"workspace": workspace.id, "title": "seat"}}
 
     async def place(resume_session_id: str | None) -> PlacedLaunch | dict[str, Any] | None:
@@ -96,15 +98,20 @@ def _restore_real_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def _manager_spawns_developer(
-    manager: str, h: spawn_placement._Harness, leaf: Task, placement: dict[str, Any]
+    manager: str,
+    h: spawn_placement._Harness,
+    leaf: Task,
+    placement: dict[str, Any],
+    team_id: str,
 ) -> dict[str, Any]:
+    # The procedure's own-team route: a primary seat joins the team tree, never a pod checkout.
     arguments: dict[str, Any] = {
         "agent": "developer",
         "task_id": leaf.id,
         "prompt": "Work the leaf",
         "provider": "claude",
         "model": "claude-sonnet-5",
-        "checkout_mode": "worktree",
+        "seat_context": {"team_id": team_id},
         "placement": placement,
         "project_path": h.project_path,
     }
@@ -122,9 +129,9 @@ async def test_epic_manager_places_its_fresh_seat_into_its_own_team_tab(
     epic = new_task(world, TITLE, epic=True)
     other = new_task(world, "Another team's epic", epic=True)
     new_task(world, LEAF_TITLE, parent=epic)
-    team = await epic_team(world, epic)
+    tab_title = f"Product Studio - #{epic.seq_num}"
+    team = await epic_team(world, epic, tab_title=tab_title)
     h = placed_harness
-    tab_title = f"Dev Team - #{epic.seq_num}"
     team_pane = spawn_placement._held_seat(h, tab_title, state="exited")
     spawn_placement._held_seat(h, f"Dev Team - #{other.seq_num}", state="exited")
     spawn_placement._held_seat(h, "Operator", state="exited")
@@ -183,7 +190,9 @@ async def test_epic_manager_fresh_seat_stays_refused_outside_its_team(
             "axis": "right",
             "title": "developer",
         }
-        result = await _manager_spawns_developer(team.manager, h, leaf, {"split": split})
+        result = await _manager_spawns_developer(
+            team.manager, h, leaf, {"split": split}, team.binding.team_id
+        )
         assert result["success"] is False, (title, result)
         assert result["placement_error"] == "forbidden", (title, result)
     assert h.launches == []
@@ -221,7 +230,9 @@ async def test_epic_manager_spawn_seats_its_developer_in_its_own_team_tab(
         "title": "developer",
     }
 
-    reply = await _manager_spawns_developer(team.manager, h, leaf, {"split": split})
+    reply = await _manager_spawns_developer(
+        team.manager, h, leaf, {"split": split}, team.binding.team_id
+    )
 
     assert reply["success"] is True, reply
     tab_panes = [

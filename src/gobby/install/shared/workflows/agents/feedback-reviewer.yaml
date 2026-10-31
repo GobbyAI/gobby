@@ -1,4 +1,5 @@
 name: feedback-reviewer
+capabilities: [accept_resume_retype]
 description: |
   Taskless nightly reviewer that clusters session feedback and returns a
   Markdown report and validated findings for human-reviewed tasks.
@@ -58,6 +59,8 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "name:seat-no-task-close"
+      - "name:seat-no-project-create"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"

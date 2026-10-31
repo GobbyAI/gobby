@@ -10,7 +10,8 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from gobby.agents.team_lifecycle import SeatTarget, TeamAdmissionRefused, check_team_spawn
+from gobby.agents.team_admission_records import SeatTarget, TeamAdmissionRefused
+from gobby.agents.team_lifecycle import check_team_spawn
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import _definition_snapshot
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -94,7 +95,7 @@ def reconcile_pipeline_invocation(
     if run.started_at is None:
         return _refusal(
             "seat_launch_unsettled",
-            f"Run {run.id} is {run.status} and never started; stop or settle it before a relaunch",
+            f"Run {run.id} never started ({run.status}); settle it and relaunch as a fresh launch",
         )
     refs = (
         WorkspaceManager(db).placement_refs_for_terminal(run.terminal_id)

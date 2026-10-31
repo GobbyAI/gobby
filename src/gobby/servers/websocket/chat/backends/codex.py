@@ -139,7 +139,9 @@ class CodexManagedChatSession(
         task_key = dedup_key
         task = self._before_tool_inflight_tasks.get(task_key)
         if task is None:
-            task = asyncio.create_task(self._apply_pre_tool_lifecycle(tool_name, tool_input))
+            task = asyncio.create_task(
+                self._apply_pre_tool_lifecycle(tool_name, tool_input, tool_execution_id=dedup_key)
+            )
             self._before_tool_inflight_tasks[task_key] = task
 
             def _finalize_pre_tool_task(

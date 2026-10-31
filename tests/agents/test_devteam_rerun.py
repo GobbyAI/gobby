@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 import yaml
 
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
@@ -23,8 +24,16 @@ from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_executor import step_invocation_id
 from gobby.workflows.templates import TemplateEngine
 from tests.agents._yaml_helpers import flat
+from tests.fixtures.agent_definitions import make_agent_definition
 from tests.fixtures.landing_case import make_landing_case
-from tests.fixtures.team_case import TITLE, TeamWorld, execution_id, make_team_world, running_seat
+from tests.fixtures.team_case import (
+    TITLE,
+    TeamWorld,
+    execution_id,
+    make_team_world,
+    running_seat,
+    synthetic_manager_body,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -38,6 +47,7 @@ DEVTEAM = PipelineDefinition.model_validate(
 )
 SEATS = ("dev-manager", "test-writer", "developer", "code-reviewer")
 RENDERER = StepRenderer(TemplateEngine())
+TEST_MODEL = "claude-test-model"
 
 
 @pytest.mark.asyncio
@@ -110,7 +120,15 @@ def world(
     for name in SEATS:
         definitions.create(
             name=name,
-            definition_json={"name": name, "version": "1.0", "enabled": True},
+            definition_json=(
+                synthetic_manager_body()
+                if name == "dev-manager"
+                else make_agent_definition(
+                    name=name,
+                    prompts={"agent": "Perform the assigned work."},
+                    task_step_writes=["review"] if name == "code-reviewer" else [],
+                ).model_dump(mode="json")
+            ),
             project_id=world.case.project_id,
             enabled=True,
         )
@@ -119,7 +137,18 @@ def world(
 
 def _inputs(task: Task, workspace: str, report_to: str, team_id: str | None) -> dict[str, Any]:
     values = {name: spec.get("default") for name, spec in DEVTEAM.inputs.items()}
-    values.update(task=task.id, workspace=workspace, report_to=report_to, team_id=team_id)
+    values.update(
+        task=task.id,
+        workspace=workspace,
+        report_to=report_to,
+        team_id=team_id,
+        reviewer_agent="code-reviewer",
+        manager_model=TEST_MODEL,
+        test_writer_model=TEST_MODEL,
+        developer_model=TEST_MODEL,
+        reviewer_model=TEST_MODEL,
+        fresh_reviewer_model=TEST_MODEL,
+    )
     return values
 
 
@@ -200,18 +229,25 @@ async def _launch(world: TeamWorld, run: Session, inputs: dict[str, Any]) -> lis
 
 
 async def _team_with_live(
-    world: TeamWorld, task: Task, workspace: str, roles: tuple[str, ...]
+    world: TeamWorld,
+    task: Task,
+    workspace: str,
+    roles: tuple[str, ...],
+    *,
+    reviewer_agent: str = "code-reviewer",
 ) -> str:
     """Launch a devteam for ``task``, leave ``roles`` live and finish it; return the team id."""
-    original = _execution(world, task, _inputs(task, workspace, world.case.creator, None))
-    team = await world.admit(original, task)
+    inputs = _inputs(task, workspace, world.case.creator, None)
+    inputs["reviewer_agent"] = reviewer_agent
+    original = _execution(world, task, inputs)
+    context = await _admit(world, original, inputs)
     for role in roles:
         seat = running_seat(world, original, role)
         world.case.db.execute(
             "UPDATE agent_runs SET task_id = %s WHERE id = %s", (task.id, seat.agent_run_id)
         )
     world.finish(original)
-    return team.team_id
+    return str(context["steps"]["admit"]["output"]["team"]["team_id"])
 
 
 @pytest.mark.asyncio
@@ -237,6 +273,73 @@ async def test_rerun_with_team_id_launches_only_the_missing_seats(
 
     assert launched == ["developer"]
     assert other_launched == ["dev-manager", "test-writer", "code-reviewer"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ended", [False, True])
+async def test_replacement_guard_ignores_cancelled_run_with_live_session(
+    world: TeamWorld, ended: bool
+) -> None:
+    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "devteam")[0].id
+    task = world.case.task(TITLE)
+    original_inputs = _inputs(task, workspace, world.case.creator, None)
+    original = _execution(world, task, original_inputs)
+    original_context = await _admit(world, original, original_inputs)
+    developer = running_seat(world, original, "developer")
+    assert developer.agent_run_id is not None
+    if ended:
+        LocalAgentRunManager(world.case.db).cancel(developer.agent_run_id)
+    world.finish(original)
+
+    inputs = _inputs(
+        task,
+        workspace,
+        world.case.creator,
+        original_context["steps"]["admit"]["output"]["team"]["team_id"],
+    )
+    inputs["seats"] = "developer"
+    replacement = _execution(world, task, inputs)
+    context = await _admit(world, replacement, inputs)
+
+    assert _launched(replacement, context) == (["developer"] if ended else [])
+    assert context["steps"]["guard"]["output"]["live"].get("developer") == (
+        None if ended else developer.id
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_seat", SEATS)
+async def test_failed_first_seat_relaunch_opens_missing_team_tab(
+    world: TeamWorld, first_seat: str
+) -> None:
+    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "devteam")[0].id
+    task = world.case.task(TITLE)
+    original_inputs = _inputs(task, workspace, world.case.creator, None)
+    original = _execution(world, task, original_inputs)
+    original_context = await _admit(world, original, original_inputs)
+    world.fail(original)
+    trees = world.tree_ids()
+    inputs = _inputs(
+        task,
+        workspace,
+        world.case.creator,
+        original_context["steps"]["admit"]["output"]["team"]["team_id"],
+    )
+    inputs["seats"] = first_seat
+    replacement = _execution(world, task, inputs)
+
+    context = await _admit(world, replacement, inputs)
+    step = next(step for step in DEVTEAM.steps if step.id == first_seat)
+    assert step.mcp is not None
+    arguments = RENDERER.render_mcp_arguments(
+        step.mcp.arguments or {}, _step_context(replacement, first_seat, context), drop_none=True
+    )
+
+    assert _launched(replacement, context) == [first_seat]
+    assert arguments["placement"] == {
+        "tab": {"workspace": workspace, "title": f"Dev Team - #{task.seq_num}"}
+    }
+    assert world.tree_ids() == trees
 
 
 @pytest.mark.asyncio
@@ -306,6 +409,44 @@ async def test_fresh_reviewer_names_the_live_dev_manager_session(world: TeamWorl
     assert _names_dev_manager(_seat_prompt(run, "code-reviewer", context), live["dev-manager"])
 
 
+@pytest.mark.parametrize("already_live", [False, True])
+async def test_guard_uses_configured_reviewer_definition(
+    world: TeamWorld, already_live: bool
+) -> None:
+    definitions = AgentDefinitionManager(world.case.db)
+    definitions.create(
+        "custom-reviewer",
+        make_agent_definition(
+            name="custom-reviewer",
+            prompts={"agent": "Review the assigned work."},
+            task_step_writes=["review"],
+        ).model_dump(mode="json"),
+        project_id=world.case.project_id,
+    )
+    default_reviewer = definitions.get_by_name("code-reviewer", world.case.project_id)
+    assert default_reviewer is not None
+    definitions.toggle_enabled(default_reviewer.id)
+    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "devteam")[0].id
+    task = world.case.task(TITLE)
+    team_id = (
+        await _team_with_live(
+            world, task, workspace, ("custom-reviewer",), reviewer_agent="custom-reviewer"
+        )
+        if already_live
+        else None
+    )
+    inputs = _inputs(task, workspace, world.case.creator, team_id)
+    inputs.update(seats="code-reviewer", reviewer_agent="custom-reviewer")
+    run = _execution(world, task, inputs)
+    context: dict[str, Any] = {"inputs": inputs, "steps": {}}
+
+    await _call(world, run, "guard", context)
+
+    output = context["steps"]["guard"]["output"]
+    assert output["launch"] == (() if already_live else ("code-reviewer",))
+    assert ("code-reviewer" in output["live"]) is already_live
+
+
 @pytest.mark.asyncio
 async def test_seats_launched_without_a_dev_manager_fall_back_to_report_to(
     world: TeamWorld,
@@ -328,3 +469,55 @@ async def test_seats_launched_without_a_dev_manager_fall_back_to_report_to(
         prompt = _seat_prompt(run, seat, context)
         assert "No Dev Manager session ref is known" in prompt, seat
         assert f'target_id="{world.case.creator}"' in prompt, seat
+
+
+@pytest.mark.asyncio
+async def test_guard_refuses_a_launching_seat_with_no_model(world: TeamWorld) -> None:
+    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "devteam")[0].id
+    task = world.case.task(TITLE)
+    inputs = _inputs(task, workspace, world.case.creator, None)
+    inputs.update(seats="test-writer", test_writer_model=None)
+    run = _execution(world, task, inputs)
+    context: dict[str, Any] = {"inputs": inputs, "steps": {}}
+    step = next(step for step in DEVTEAM.steps if step.id == "guard")
+    assert step.mcp is not None and step.mcp.arguments is not None
+    arguments = RENDERER.render_mcp_arguments(
+        step.mcp.arguments, _step_context(run, "guard", context), drop_none=True
+    )
+
+    with session_context_for_test(run.id):
+        reply = cast(dict[str, Any], await world.tools.call(step.mcp.tool, arguments))
+
+    assert reply.get("success") is False, reply
+    message = str(reply.get("error"))
+    assert "test-writer" in message and "model" in message, reply
+    assert world.task_branches() == []
+    assert world.tree_ids() == []
+
+
+@pytest.mark.asyncio
+async def test_guard_accepts_a_seat_whose_definition_names_its_model(world: TeamWorld) -> None:
+    body = make_agent_definition(
+        name="custom-reviewer",
+        prompts={"agent": "Review the assigned work."},
+        task_step_writes=["review"],
+    ).model_dump(mode="json")
+    body["model"] = "claude-review-model"
+    AgentDefinitionManager(world.case.db).create(
+        "custom-reviewer", body, project_id=world.case.project_id
+    )
+    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "devteam")[0].id
+    task = world.case.task(TITLE)
+    inputs = _inputs(task, workspace, world.case.creator, None)
+    inputs.update(
+        seats="code-reviewer",
+        reviewer_agent="custom-reviewer",
+        reviewer_model=None,
+        fresh_reviewer_model=None,
+    )
+    run = _execution(world, task, inputs)
+    context: dict[str, Any] = {"inputs": inputs, "steps": {}}
+
+    await _call(world, run, "guard", context)
+
+    assert context["steps"]["guard"]["output"]["launch"] == ("code-reviewer",)

@@ -29,7 +29,7 @@ import yaml
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.runner import AgentRunner
-from gobby.agents.team_lifecycle import TeamBinding
+from gobby.agents.team_admission_records import TeamBinding
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -52,6 +52,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.team_records import ADMISSION_STEP
 from gobby.storage.workflow_audit import WorkflowAuditManager
+from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.git import normalize_commit_sha
 from gobby.utils.session_context import session_context_for_test
@@ -170,7 +171,7 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
                 "implementation_complete": False,
                 "candidate_sent": False,
                 "bounced": False,
-                "_developer_handoff_tasks": [],
+                "pending_completion_tasks": [],
                 "additional_skills": [],
                 "skills_routed": False,
             },
@@ -245,6 +246,7 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
     },
     "plan-adversary": {
         "name": "plan-adversary",
+        "capabilities": ["track_plan_consensus"],
         "prompts": {"agent": "Synthetic plan-adversary seat."},
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         "step_workflow": {
@@ -276,6 +278,7 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
     },
     "log-monitor": {
         "name": "log-monitor",
+        "monitor_report_recipients": ["triage"],
         "prompts": {"agent": "Synthetic log-monitor seat."},
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         "step_workflow": {
@@ -284,8 +287,7 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
                 "tick_done": False,
                 "tick_window": None,
                 "_window_report": None,
-                "triage_reported": False,
-                "log_monitor_reported": False,
+                "_reported_to": [],
             },
             "steps": [
                 {"name": "tick", "on_mcp_success": [_advance("gobby-agents", "send_message")]}
@@ -294,6 +296,7 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
     },
     "metrics-monitor": {
         "name": "metrics-monitor",
+        "monitor_report_recipients": ["triage", "log-monitor"],
         "prompts": {"agent": "Synthetic metrics-monitor seat."},
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         "step_workflow": {
@@ -302,14 +305,13 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
                 "tick_done": False,
                 "tick_window": None,
                 "_window_report": None,
-                "triage_reported": False,
-                "log_monitor_reported": False,
+                "_reported_to": [],
             },
             "steps": [
                 {
                     "name": "tick",
                     "on_mcp_success": [_advance("gobby-agents", "send_message")],
-                    "transitions": [{"to": "report", "when": "vars.tick_window"}],
+                    "transitions": [{"to": "report", "when": "vars.tick_done"}],
                 },
                 {
                     "name": "report",
@@ -439,14 +441,14 @@ _HANDOFF_SEAT = _seat(
                 _set(
                     "gobby-tasks",
                     "escalate_task",
-                    "_developer_handoff_tasks",
-                    "(vars._developer_handoff_tasks or []) + [vars.assigned_task_id] "
+                    "pending_completion_tasks",
+                    "(vars.pending_completion_tasks or []) + [vars.assigned_task_id] "
                     "if str(tool_input.get('reason', '')).startswith('Handed off: reviewer LAND') "
-                    "else vars._developer_handoff_tasks",
+                    "else vars.pending_completion_tasks",
                 ),
                 _set("gobby-tasks", "escalate_task", "assigned_task_id", None),
             ],
-            "transitions": [{"to": "claim", "when": "vars._developer_handoff_tasks"}],
+            "transitions": [{"to": "claim", "when": "vars.pending_completion_tasks"}],
         }
     }
 )
@@ -600,6 +602,7 @@ class SeatRun:
                 "version": "1.0",
                 "prompts": {"agent": "Coordinate the seat protocol."},
                 "workflows": {"rule_selectors": {"include": []}},
+                "capabilities": ["manage_task_claims"],
                 "task_step_writes": ["review"],
             },
             project_id=project_id,
@@ -967,7 +970,7 @@ async def test_developer_landed_retest_escalation_returns_to_claim(
     handoff = {"task_id": task.id, "reason": f"Handed off: reviewer LAND at {sha}; retest"}
     await run.call("gobby-tasks", "escalate_task", handoff)
     assert run.step == "claim"
-    assert run.vars["_developer_handoff_tasks"] == [task.id]
+    assert run.vars["pending_completion_tasks"] == [task.id]
 
 
 @pytest.mark.parametrize("preview", [False, True])
@@ -989,7 +992,7 @@ async def test_developer_closes_unsubmitted_no_commit_research(
     assert run.step == "implement"
     assert not task.commits
     assert not run.vars["candidate_sent"]
-    assert run.vars["_developer_handoff_tasks"] == []
+    assert run.vars["pending_completion_tasks"] == []
     arguments = {
         "task_id": task_ref if use_ref else task.id,
         "preview": preview,
@@ -1417,9 +1420,47 @@ _PRODUCTION_FIX = {"src/gobby/red_fix.py": "VALUE = 1\n"}
 _TEST_ONLY_REPAIR = {
     "tests/workflows/test_repair_only.py": "def test_repair_only():\n    assert True\n"
 }
-_BUNDLED_DEVELOPER = (
-    Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents/developer.yaml"
-)
+
+
+def _commit_kind_seat() -> dict[str, Any]:
+    """Exercise commit-result handlers without depending on an installed seat policy."""
+    remember = _set(
+        "gobby-tasks",
+        "link_commit",
+        "declared_candidates",
+        "vars.declared_candidates + [tool_output.get('declared_candidate')]",
+    )
+    remember["when"] = "tool_output.get('declared_candidate') is not None"
+    forget = _set(
+        "gobby-tasks",
+        "unlink_commit",
+        "declared_candidates",
+        "[sha for sha in vars.declared_candidates if sha in tool_output.get('commits', [])]",
+    )
+    completion = _set(
+        "gobby-tasks",
+        "unlink_commit",
+        "implementation_complete",
+        "tool_output.get('production_commits_remain') or bool(vars.declared_candidates)",
+    )
+    definition = _seat(
+        {
+            "implement": {"on_mcp_success": [remember]},
+            "submit": {
+                "on_mcp_success": [remember, forget, completion],
+                "transitions": [{"to": "implement", "when": "not vars.implementation_complete"}],
+            },
+        }
+    )
+    workflow = definition["step_workflow"]
+    workflow["variables"]["declared_candidates"] = []
+    implement = next(step for step in workflow["steps"] if step["name"] == "implement")
+    for handler in implement["on_mcp_success"][:2]:
+        handler["when"] = (
+            "tool_output.get('production_changes') is True "
+            "or tool_output.get('declared_candidate') is not None"
+        )
+    return definition
 
 
 def _commit_files(repo: Path, message: str, files: dict[str, str]) -> str:
@@ -1456,11 +1497,17 @@ async def _claimed_developer(
     repo = Path(checkout.root_path)
     _git(repo, "init", "-q", "-b", "main")
     _commit_files(repo, "unlinked base", {"README.md": "base\n"})
-    _git(repo, "checkout", "-q", "-b", "seat-work")
-    definition = yaml.safe_load(_BUNDLED_DEVELOPER.read_text())
+    # The developer works in its own worktree, so the main checkout stays on the integration
+    # branch and holds none of the candidates.
+    work = tmp_path / "work"
+    _git(repo, "worktree", "add", "-q", "-b", "seat-work", str(work), "main")
+    definition = _commit_kind_seat()
     run = SeatRun(temp_db, "developer", project_id=checkout.project.id, definition=definition)
     await run.load(*run.vars["required_skills"])
     task = run.task(owner=SESSION_ID)
+    LocalWorktreeManager(temp_db).create(
+        checkout.project.id, "seat-work", str(work), task_id=task.id
+    )
     await run.call(
         "gobby-tasks",
         "claim_task",
@@ -1469,7 +1516,7 @@ async def _claimed_developer(
     )
     await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
     assert run.step == "implement"
-    return run, task, repo
+    return run, task, work
 
 
 def _registry(run: SeatRun, temp_db: HubDatabase) -> InternalToolRegistry:
@@ -1522,6 +1569,17 @@ async def test_developer_linked_test_only_red_commit_stays_in_implement(
     assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
 
 
+async def test_developer_candidate_on_test_phase_approved_red_commit_stays_in_implement(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, f"[gobby-#{task.seq_num}] test: red", _TEST_ONLY_RED)
+    await _link(run, temp_db, task, repo, sha)
+    approve_review(temp_db, task_id=task.id, reviewer_session_id=COORDINATOR_ID, commit_sha=sha)
+    await _link(run, temp_db, task, repo, sha, candidate=True)
+    assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
+
+
 async def test_developer_linked_production_commit_moves_to_submit(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1538,8 +1596,6 @@ async def test_developer_unlinking_the_submitting_commit_returns_to_implement(
     sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
     await _link(run, temp_db, task, repo, sha)
     assert run.step == "submit"
-    # The main checkout's branch is the integration branch; the candidate must not be on it.
-    _git(repo, "checkout", "-q", "main")
     await _unlink(run, temp_db, task.id, repo, sha)
     assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
 
@@ -1553,8 +1609,6 @@ async def test_developer_unlinking_the_candidate_beside_red_returns_to_implement
     sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
     await _link(run, temp_db, task, repo, sha)
     assert run.step == "submit"
-    # The main checkout's branch is the integration branch; the candidate must not be on it.
-    _git(repo, "checkout", "-q", "main")
     await _unlink(run, temp_db, task.id, repo, sha)
     assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
 
@@ -1583,8 +1637,6 @@ async def test_developer_declared_candidate_survives_an_ordinary_red_unlink(
     repair = _commit_files(repo, f"[gobby-#{task.seq_num}] test: repair", _TEST_ONLY_REPAIR)
     await _link(run, temp_db, task, repo, repair, candidate=True)
     assert run.step == "submit"
-    # The main checkout's branch is the integration branch; the candidate must not be on it.
-    _git(repo, "checkout", "-q", "main")
     await _unlink(run, temp_db, task.id, repo, red)
     assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
     await _unlink(run, temp_db, task.id, repo, repair)
@@ -1600,18 +1652,29 @@ async def test_developer_declared_candidate_survives_a_production_unlink(
     assert run.step == "submit"
     sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
     await _link(run, temp_db, task, repo, sha)
-    # The main checkout's branch is the integration branch; the candidate must not be on it.
-    _git(repo, "checkout", "-q", "main")
     await _unlink(run, temp_db, task.id, repo, sha)
     assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
     await _unlink(run, temp_db, task.id, repo, repair)
     assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
 
 
+@pytest.mark.parametrize("also_reviews", [False, True])
 async def test_developer_bounce_requires_incoming_assigned_reviewer(
     linked_developer: tuple[SeatRun, Task, str, str],
+    also_reviews: bool,
 ) -> None:
     run, task, sha, unlinked_sha = linked_developer
+    if also_reviews:
+        definitions = AgentDefinitionManager(run.db)
+        definition = definitions.get_by_name("developer", run.project_id)
+        assert definition is not None
+        definitions.update(
+            definition.id,
+            definition_json={
+                **definition.definition_json,
+                "task_step_writes": ["implementation", "review"],
+            },
+        )
     line = f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=BOUNCE"
     await run.send(line)
     assert run.step == "submit"
@@ -1781,6 +1844,103 @@ async def test_developer_submit_returns_to_implement_on_reviewer_request(
     assert run.vars["implementation_complete"] is False
 
 
+async def test_lost_bounce_transition_keeps_its_message_readable(
+    linked_developer: tuple[SeatRun, Task, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run, task, sha, _ = linked_developer
+    lost: list[str] = []
+    save = AgentStepInstanceManager.save
+
+    def lose_first_bounce_write(
+        self: AgentStepInstanceManager,
+        instance: AgentStepInstance,
+        *,
+        if_match: tuple[str, datetime] | None = None,
+    ) -> None:
+        at_implement = instance.current_step == "implement"
+        if at_implement and instance.variables.get("bounced") is True and not lost:
+            lost.append(instance.id)
+            raise StaleStepInstanceWriteError("a concurrent write won the step instance")
+        save(self, instance, if_match=if_match)
+
+    monkeypatch.setattr(AgentStepInstanceManager, "save", lose_first_bounce_write)
+    message_id = await run.incoming(
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=BOUNCE", PEER_ID
+    )
+    assert lost, "the bounce transition never reached the step instance write"
+    assert run.step == "submit"
+    message = InterSessionMessageManager(run.db).get_message(message_id)
+    assert message is not None
+    await run.call(
+        "gobby-agents",
+        "get_inter_session_message",
+        {"message_id": message_id},
+        {"success": True, "message": message.to_dict()},
+    )
+    assert (run.step, run.vars["bounced"]) == ("implement", True)
+
+
+_BUNDLED_CODE_REVIEWER = (
+    Path(__file__).resolve().parents[2]
+    / "src/gobby/install/shared/workflows/agents/code-reviewer.yaml"
+)
+
+
+def _bundled_code_reviewer() -> dict[str, Any]:
+    return cast(dict[str, Any], yaml.safe_load(_BUNDLED_CODE_REVIEWER.read_text(encoding="utf-8")))
+
+
+@pytest.mark.parametrize("shape", ["plain", "wrapped", "already_claimed"])
+async def test_reviewer_first_claim_after_release_enters_fix(
+    temp_db: HubDatabase, shape: str
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer", definition=_bundled_code_reviewer())
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    assert run.step == "await"
+    claimed: dict[str, Any] = {"task_id": task.id, "ref": f"#{task.seq_num}", "title": task.title}
+    if shape == "wrapped":
+        # The live proxy wraps the claim and drops the inner success flag.
+        output: dict[str, Any] = {"success": True, "result": claimed}
+    else:
+        output = {"success": True, **claimed}
+        if shape == "already_claimed":
+            output["already_claimed"] = True
+    await run.call("gobby-tasks", "claim_task", {"task_id": task.id}, output)
+    assert (run.step, run.vars["fixing"]) == ("fix", True)
+
+
+async def test_reviewer_failed_claim_keeps_await(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "code-reviewer", definition=_bundled_code_reviewer())
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"success": False, "error": "task is claimed by another session"},
+    )
+    assert (run.step, run.vars["fixing"]) == ("await", False)
+
+
+async def test_reviewer_in_await_releases_its_own_claim_without_fixing(
+    temp_db: HubDatabase,
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer", definition=_bundled_code_reviewer())
+    await run.load(*run.vars["required_skills"])
+    task = run.task(owner=SESSION_ID)
+    release = {
+        "task_id": task.id,
+        "holder_session_ref": SESSION_ID,
+        "reason": "Withdrawn before review",
+    }
+    assert run.step == "await"
+    assert await run.admits("gobby-tasks", "release_task_claim", release)
+    await run.call("gobby-tasks", "release_task_claim", release, {"success": True})
+    assert (run.step, run.vars["fixing"]) == ("await", False)
+
+
 async def test_developer_without_a_commit_stays_in_implement_on_no_work_bounce(
     temp_db: HubDatabase,
 ) -> None:
@@ -1931,8 +2091,12 @@ async def test_developer_proof_request_matches_linked_candidate_off_the_loop(
         assert loop is not caller
 
 
-def _team_runbook(db: HubDatabase, task: Task, team_id: str) -> str:
-    """A runbook session whose admission step recorded team ``team_id`` for ``task``."""
+def _team_runbook(db: HubDatabase, task: Task) -> str:
+    """A runbook session whose admission step admits a live team for ``task``.
+
+    A live team is keyed by its admission execution and holds an active worktree, the
+    shape ``live_team_rows_sql`` reads.
+    """
     runbook = PipelineDefinition(
         name="team-runbook", steps=[PipelineStep(id=ADMISSION_STEP, exec="true")]
     )
@@ -1944,15 +2108,19 @@ def _team_runbook(db: HubDatabase, task: Task, team_id: str) -> str:
         project_id=PROJECT_ID,
     )
     step = executions.create_step_execution(execution.id, ADMISSION_STEP)
+    worktree = LocalWorktreeManager(db).create(
+        PROJECT_ID, f"team-{execution.id}", f"/worktrees/{execution.id}", task_id=task.id
+    )
     team: dict[str, Any] = {
-        item.name: f"{team_id}-{item.name}"
+        item.name: f"{execution.id}-{item.name}"
         for item in fields(TeamBinding)
         if item.name not in {"reviewers", "mode"}
     }
     team.update(
-        team_id=team_id,
+        team_id=execution.id,
         task_id=task.id,
         project_id=PROJECT_ID,
+        worktree_id=worktree.id,
         reviewers={},
         mode="single",
     )
@@ -1975,21 +2143,26 @@ async def reviewer_authorities(
     await run.load(*run.vars["required_skills"])
     task = run.task()
     other_task = run.task()
-    # The binding test reads the closing grant from the installed definition.
+    # The binding test reads the closing grant and team-manager flag from the installed definition.
     AgentDefinitionManager(temp_db).create(
         "dev-manager",
         {
             "name": "dev-manager",
             "version": "1.0",
             "prompts": {"agent": "Manage the team."},
-            "workflows": {"rule_selectors": {"include": []}},
+            # A bound manager's run must declare team_manager, or it is not the task's manager.
+            "workflows": {
+                "rule_selectors": {"include": []},
+                "variables": {"team_manager": True},
+            },
+            "capabilities": ["manage_task_claims"],
             "task_step_writes": ["closing"],
         },
         project_id=PROJECT_ID,
     )
     teams = {
-        "own": _team_runbook(temp_db, task, "team-own"),
-        "other": _team_runbook(temp_db, other_task, "team-other"),
+        "own": _team_runbook(temp_db, task),
+        "other": _team_runbook(temp_db, other_task),
     }
     actors = {
         "author": OWNER_ID,
@@ -2006,6 +2179,7 @@ async def reviewer_authorities(
             project_id=PROJECT_ID,
             machine_id=AUTHORITY_MACHINE_ID,
             parent_session_id=teams[team],
+            agent_depth=1,
         )
         actors[name] = actor_session.id
         SessionVariableManager(temp_db).set_variable(actor_session.id, "_agent_type", "dev-manager")
@@ -2108,25 +2282,147 @@ async def test_reviewer_withdrawal_refuses_another_unit(
     assert run.step == step
 
 
+@pytest.mark.parametrize("name", ["developer", "fixture-builder"])
+@pytest.mark.parametrize("grant", [True, False])
+async def test_skill_routing_requires_definition_grant(
+    temp_db: HubDatabase, name: str, grant: bool
+) -> None:
+    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["developer"]))
+    definition.update(name=name, task_step_writes=["implementation"] if grant else [])
+    run = SeatRun(temp_db, name, definition=definition)
+    task = run.task(owner=SESSION_ID, skills=["python"])
+    instance = run.instances.get_for_session(SESSION_ID)
+    assert instance is not None
+    instance.current_step = "route_skills"
+    instance.variables["assigned_task_id"] = task.id
+    run.instances.save(instance)
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id})
+    assert run.vars["skills_routed"] is grant
+    assert run.vars["additional_skills"] == (["python"] if grant else [])
+
+
+@pytest.mark.parametrize("name", ["plan-adversary", "fixture-plan-review"])
+@pytest.mark.parametrize("grant", [True, False])
+@pytest.mark.parametrize("monitor", [True, False])
+async def test_consensus_tracking_requires_declared_capability(
+    temp_db: HubDatabase, name: str, grant: bool, monitor: bool
+) -> None:
+    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["plan-adversary"]))
+    definition.update(name=name, capabilities=["track_plan_consensus"] if grant else [])
+    definition["monitor_report_recipients"] = ["fixture-observer"] if monitor else []
+    run = SeatRun(temp_db, name, definition=definition)
+    await run.load(*run.vars["required_skills"])
+    await run.send(f"EVENT=CONSENSUS SHA={SHA} NOTE=approved")
+    assert run.vars["consensus"] is grant
+    assert run.step == ("stamp" if grant else "review")
+
+
+@pytest.mark.parametrize("target_enabled", [True, False])
+async def test_monitor_routing_uses_declared_recipients(
+    temp_db: HubDatabase, target_enabled: bool
+) -> None:
+    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["metrics-monitor"]))
+    targets = ["fixture-observer-a", "fixture-observer-b"]
+    definition.update(name="fixture-monitor", monitor_report_recipients=targets)
+    run = SeatRun(temp_db, "fixture-monitor", definition=definition)
+    for recipient, name in zip((COORDINATOR_ID, PEER_ID), targets, strict=True):
+        AgentDefinitionManager(temp_db).create(
+            name,
+            {
+                "name": name,
+                "prompts": {"agent": "Observe reports."},
+                "workflows": {"rule_selectors": {"include": []}},
+            },
+            project_id=run.project_id,
+        )
+        SessionVariableManager(temp_db).set_variable(recipient, "_agent_type", name)
+    await run.load(*run.vars["required_skills"])
+    definitions = AgentDefinitionManager(temp_db)
+    recipient_definition = definitions.get_by_name(targets[0], run.project_id)
+    assert recipient_definition is not None
+    if not target_enabled:
+        definitions.update(recipient_definition.id, enabled=False)
+        await run.send("Systems nominal | custom window", COORDINATOR_ID)
+        assert run.step == "tick"
+        assert run.vars["tick_window"] is None
+        definitions.update(recipient_definition.id, enabled=True)
+    await run.send("Systems nominal | custom window", COORDINATOR_ID)
+    assert run.step == "report"
+    await run.send("Systems nominal | custom window", PEER_ID)
+    assert run.step == "tick"
+    assert run.vars["tick_done"] is False
+
+
+def _declare_report_recipient(run: SeatRun, recipient: str, name: str) -> None:
+    definitions = AgentDefinitionManager(run.db)
+    if definitions.get_by_name(name, run.project_id) is None:
+        definitions.create(
+            name,
+            {
+                "name": name,
+                "prompts": {"agent": "Observe the monitor report."},
+                "workflows": {"rule_selectors": {"include": []}},
+            },
+            project_id=run.project_id,
+        )
+    SessionVariableManager(run.db).set_variable(recipient, "_agent_type", name)
+
+
+@pytest.mark.parametrize("name", ["log-monitor", "metrics-monitor"])
+async def test_monitor_name_has_no_undeclared_reporting_handler(
+    temp_db: HubDatabase, name: str
+) -> None:
+    definition = json.loads(json.dumps(_SYNTHETIC_SEATS[name]))
+    definition["monitor_report_recipients"] = []
+    run = SeatRun(temp_db, name, definition=definition)
+    _declare_report_recipient(run, COORDINATOR_ID, "triage")
+    await run.load(*run.vars["required_skills"])
+    await run.send("Systems nominal | ignored window", COORDINATOR_ID)
+    assert run.vars["tick_window"] is None
+    assert run.step == "tick"
+
+
+async def test_monitor_fanout_counts_every_delivered_recipient(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "metrics-monitor")
+    _declare_report_recipient(run, COORDINATOR_ID, "triage")
+    _declare_report_recipient(run, PEER_ID, "log-monitor")
+    await run.load(*run.vars["required_skills"])
+    window = "Systems nominal | shared fanout window"
+    messages = InterSessionMessageManager(temp_db)
+    message_ids = [
+        messages.create_message(SESSION_ID, recipient, window).id
+        for recipient in (COORDINATOR_ID, PEER_ID)
+    ]
+    await run.call(
+        *SEND,
+        {"target": "project", "content": window},
+        {"success": True, "message_ids": message_ids},
+    )
+    assert run.vars["tick_done"] is False
+    assert set(run.vars["_reported_to"]) == {"triage", "log-monitor"}
+    assert set(message_ids).issubset(run.vars["_seat_consumed_messages"])
+    assert run.step == "tick"
+
+
 @pytest.mark.parametrize("name", ["log-monitor", "metrics-monitor"])
 async def test_monitor_windows_complete_from_durable_reports(
     temp_db: HubDatabase, name: str
 ) -> None:
     run = SeatRun(temp_db, name)
-    SessionVariableManager(run.db).set_variable(PEER_ID, "_agent_type", "log-monitor")
+    _declare_report_recipient(run, PEER_ID, "log-monitor")
     # Monitors report to Triage; a report to the Orchestrator completes nothing.
     SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "orchestrator")
     await run.load(*run.vars["required_skills"])
     await run.send("Systems nominal | sample window", COORDINATOR_ID)
     assert run.step == "tick" and run.vars["tick_window"] is None
-    SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "triage")
+    _declare_report_recipient(run, COORDINATOR_ID, "triage")
     for _ in range(2):
         await run.send("Systems nominal | sample window", COORDINATOR_ID)
         if name == "metrics-monitor":
             assert run.step == "report"
             await run.send("Systems nominal | a different window", PEER_ID)
             assert run.step == "report"
-            assert run.vars["log_monitor_reported"] is False
+            assert "log-monitor" not in run.vars["_reported_to"]
             await run.send("Systems nominal | sample window", PEER_ID)
         assert run.step == "tick"
         assert run.vars["tick_done"] is False
@@ -2138,8 +2434,8 @@ async def test_metrics_monitor_window_needs_both_delivered_recipients(
     temp_db: HubDatabase, target_form: str
 ) -> None:
     run = SeatRun(temp_db, "metrics-monitor")
-    SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "triage")
-    SessionVariableManager(run.db).set_variable(PEER_ID, "_agent_type", "log-monitor")
+    _declare_report_recipient(run, COORDINATOR_ID, "triage")
+    _declare_report_recipient(run, PEER_ID, "log-monitor")
     await run.load(*run.vars["required_skills"])
     window = "Systems nominal | sample window"
 
@@ -2166,12 +2462,12 @@ async def test_metrics_monitor_window_needs_both_delivered_recipients(
     # A delivered triage report opens the window and still waits on the log monitor.
     await deliver(COORDINATOR_ID)
     assert run.step == "report"
-    assert run.vars["triage_reported"] is True
+    assert "triage" in run.vars["_reported_to"]
     # A failed log-monitor delivery and a non-recipient target leave the window open.
     await deliver(PEER_ID, succeeded=False)
     await deliver(OWNER_ID)
     assert run.step == "report"
-    assert run.vars["log_monitor_reported"] is False
+    assert "log-monitor" not in run.vars["_reported_to"]
     # Only a delivered log-monitor report completes the window.
     await deliver(PEER_ID)
     assert run.step == "tick"

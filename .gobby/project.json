@@ -5,6 +5,11 @@
   "task_close_policy": {
     "enforce_step_records": true
   },
+  "task_protection_policy": {
+    "foreign_claims": true,
+    "labels": ["deferred-by-josh"],
+    "subtree_roots": ["#22978", "#22225"]
+  },
   "verification": {
     "unit_tests": "uv run pytest tests/ -v",
     "type_check": "uv run mypy src/ --no-incremental",

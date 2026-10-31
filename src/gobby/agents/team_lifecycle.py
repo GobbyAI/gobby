@@ -15,24 +15,39 @@ worktree or clone or carry another task.
 from __future__ import annotations
 
 import asyncio
-import json
-import logging
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
-from gobby.agents.isolation_models import SpawnConfig, generate_branch_name
-from gobby.agents.isolation_worktree import WorktreeIsolationHandler
+from gobby.agents.team_admission_records import (
+    ENDED_EXECUTIONS,
+    TREELESS,
+    Caller,
+    SeatTarget,
+    TeamAdmissionRefused,
+    TeamBinding,
+    admission_step,
+    binding_from_record,
+    merge_step_output,
+    own_record,
+    record_team,
+    recorded_team,
+    step_output,
+    team_binding,
+)
 from gobby.agents.team_launch_inputs import reviewer_refusal
 from gobby.agents.team_scope import (
-    SINGLE_MODE,
-    ScopeRefused,
-    admission_mode,
-    epic_names,
-    tree_is_live,
+    epic_team_above,
+    live_teams,
+    open_leaf_below,
 )
-from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
+from gobby.agents.team_tree_provisioning import (
+    create_team_tree,
+    create_treeless_team,
+    live_treeless_team,
+    verify_tree,
+)
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -43,74 +58,18 @@ from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
 from gobby.storage.team_records import ADMISSION_STEP, EPIC_MODE
 from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.tasks.land_commit import LandingGitError, main_checkout_target
+from gobby.tasks.state_semantics import is_task_actionable, is_task_blocked
 from gobby.tasks.step_records import list_task_step_records
-from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.uuid_validation import parse_uuid_reference
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline_executor import step_invocation_id
 from gobby.workflows.pipeline_state import ExecutionStatus, StepExecution
-from gobby.worktrees.git import WorktreeGitManager
 
-logger = logging.getLogger(__name__)
 _PIPELINE_SOURCE = "pipeline"
 _PIPELINE_PREFIX = "pipeline-"
 _SEAT_DEPTH_LIMIT = 5
 _TREE_FIELDS = frozenset({"worktree_id", "worktree_path"})
 _WORKTREE = "worktree"
-_TREELESS = "none"
-
-
-@dataclass(frozen=True)
-class TeamBinding:
-    """One admitted team: its task, branch and worktree, and the admitting execution."""
-
-    team_id: str
-    task_id: str
-    project_id: str
-    branch: str
-    base_branch: str
-    # None for a treeless team, whose admission records an explicit null for its tree.
-    worktree_id: str | None
-    worktree_path: str | None
-    # One entry per reviewer definition the team binds; None until its seat exists.
-    reviewers: dict[str, str | None] = field(default_factory=dict)
-    # One entry per implementation domain: the live primary that works the team tree.
-    primaries: dict[str, str | None] = field(default_factory=dict)
-    # "epic" for a team bound to an epic's open leaves; "single" for one task.
-    mode: str = SINGLE_MODE
-
-
-@dataclass(frozen=True)
-class SeatTarget:
-    """Where a pipeline seat spawn asks to run, as spawn_agent received it."""
-
-    task_id: str | None = None
-    checkout_mode: str | None = None
-    branch_name: str | None = None
-    base_branch: str | None = None
-    clone_id: str | None = None
-    worktree_id: str | None = None
-    project_path: str | None = None
-
-
-class TeamAdmissionRefused(Exception):
-    """Team admission or a team seat spawn is refused; ``code`` names the cause."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-@dataclass(frozen=True)
-class _Caller:
-    """A running team runbook execution and its admission step row."""
-
-    session: Session
-    project_id: str
-    executions: LocalPipelineExecutionManager
-    execution_id: str
-    step: StepExecution
 
 
 async def admit_team(
@@ -119,10 +78,12 @@ async def admit_team(
     caller_session_id: str,
     task: str,
     team_id: str | None = None,
+    parent_team_id: str | None = None,
     fresh_reviewer: bool = False,
     exclude_reviewers: Sequence[str] = (),
     reviewer_agent: str | None = None,
     checkout_mode: str = _WORKTREE,
+    tab_title: str | None = None,
 ) -> TeamBinding:
     """Admit the caller execution's team for ``task``, or join team ``team_id``.
 
@@ -130,15 +91,18 @@ async def admit_team(
     after the second rejection handed the claim to a reviewer, as the epoch's one fresh reviewer.
     ``checkout_mode="none"`` admits a treeless team: no branch or tree, seats in the main
     checkout. A treeless admission for a task joins the task's live treeless team.
+    ``tab_title`` is the resolved tab from the runbook seat guard, fixed on first admission.
     """
     if fresh_reviewer and team_id is None:
         raise TeamAdmissionRefused(
             "fresh_reviewer_team_required", "a fresh reviewer joins an admitted team: pass team_id"
         )
-    if checkout_mode not in (_WORKTREE, _TREELESS):
+    if checkout_mode not in (_WORKTREE, TREELESS):
         raise TeamAdmissionRefused(
             "checkout_mode_invalid", f"checkout_mode {checkout_mode} is not worktree or none"
         )
+    if tab_title is not None and not tab_title.strip():
+        raise TeamAdmissionRefused("team_tab_invalid", "tab_title must be nonblank when supplied")
     if team_id is not None:
         team_uuid = parse_uuid_reference(team_id)
         if team_uuid is None:
@@ -148,27 +112,50 @@ async def admit_team(
         team_id = str(team_uuid)
     caller = await asyncio.to_thread(_team_caller, db, caller_session_id)
     target = await asyncio.to_thread(_open_task, db, task, caller.project_id)
+    if parent_team_id is not None and checkout_mode != _WORKTREE:
+        raise TeamAdmissionRefused("pod_options_invalid", "a pod creates its own worktree team")
     if reviewer_agent is not None:
         refusal = await asyncio.to_thread(reviewer_refusal, db, caller.project_id, reviewer_agent)
         if refusal is not None:
             raise TeamAdmissionRefused("reviewer_refused", refusal)
     async with db.advisory_lock(MainCheckoutLanding(caller.project_id)):
-        own = await asyncio.to_thread(_own_record, caller)
+        # Admission may have waited while the task was closed or escalated.
+        target = await asyncio.to_thread(_open_task, db, task, caller.project_id)
+        own = await asyncio.to_thread(own_record, caller)
         if own is not None:
-            return await _readmit(db, caller, own, target, team_id, reviewer_agent)
-        if team_id is None and checkout_mode == _TREELESS:
+            tab = _bound_tab(own.get("tab_title"), tab_title)
+            if own.get("parent_team_id") != parent_team_id:
+                if team_id is None:
+                    raise TeamAdmissionRefused(
+                        "team_binding_drift", "the team's parent cannot change"
+                    )
+            return await _readmit(db, caller, own, target, team_id, reviewer_agent, tab)
+        parent = None
+        if parent_team_id is not None:
+            manager = caller.session.parent_session_id or ""
+            if team_id is None:
+                parent = await asyncio.to_thread(pod_parent, db, manager, target.id, parent_team_id)
+            else:
+                # A relaunch may follow the leaf's claim: only the epic's authority is checked.
+                await asyncio.to_thread(
+                    pod_relaunch, db, manager, target.id, team_id, parent_team_id
+                )
+        if team_id is None and checkout_mode == TREELESS:
             # A treeless admission for a task joins the task's live treeless team.
-            team_id = await asyncio.to_thread(_live_treeless_team, db, caller.project_id, target.id)
+            team_id = await asyncio.to_thread(live_treeless_team, db, caller.project_id, target.id)
         if team_id is None:
             # Only a team with no record is new; recorded and joined teams keep working.
-            if checkout_mode == _TREELESS:
-                return await _create_treeless(db, caller, target, reviewer_agent)
-            return await _create(db, caller, target, reviewer_agent)
+            if checkout_mode == TREELESS:
+                return await create_treeless_team(db, caller, target, reviewer_agent, tab_title)
+            return await create_team_tree(db, caller, target, reviewer_agent, tab_title, parent)
         if fresh_reviewer:
+            if tab_title is not None:
+                _, binding = await asyncio.to_thread(_team, caller, target, team_id)
+                _bound_tab(binding.tab_title, tab_title)
             await asyncio.to_thread(
                 _reserve_fresh_reviewer, db, caller, target, team_id, exclude_reviewers
             )
-        return await _join(db, caller, target, team_id, reviewer_agent)
+        return await _join(db, caller, target, team_id, reviewer_agent, tab_title)
 
 
 def check_team_spawn(db: HubDatabase, caller: Session, target: SeatTarget) -> None:
@@ -212,7 +199,7 @@ def check_team_spawn(db: HubDatabase, caller: Session, target: SeatTarget) -> No
         )
 
 
-def _team_caller(db: HubDatabase, caller_session_id: str) -> _Caller:
+def _team_caller(db: HubDatabase, caller_session_id: str) -> Caller:
     session = SessionManager(db).get(caller_session_id)
     if (
         session is None
@@ -230,13 +217,13 @@ def _team_caller(db: HubDatabase, caller_session_id: str) -> _Caller:
         raise TeamAdmissionRefused(
             "team_caller_invalid", f"pipeline execution {execution_id} is not running"
         )
-    step = _admission_step(executions, execution_id)
+    step = admission_step(executions, execution_id)
     if step is None:
         raise TeamAdmissionRefused(
             "team_caller_invalid",
             f"execution {execution_id} admits a team only from its '{ADMISSION_STEP}' step",
         )
-    return _Caller(session, session.project_id, executions, execution_id, step)
+    return Caller(session, session.project_id, executions, execution_id, step)
 
 
 def _open_task(db: HubDatabase, ref: str, project_id: str) -> Task:
@@ -247,59 +234,22 @@ def _open_task(db: HubDatabase, ref: str, project_id: str) -> Task:
         raise TeamAdmissionRefused("team_task_unknown", str(exc)) from exc
     if task.closed_at is not None:
         raise TeamAdmissionRefused("team_task_closed", f"task {task.id} is closed")
+    if not is_task_actionable(task):
+        raise TeamAdmissionRefused("team_task_not_actionable", f"task {task.id} is not actionable")
     if task.seq_num is None:
         raise TeamAdmissionRefused("team_task_unknown", f"task {task.id} has no sequence number")
     return task
 
 
-def _admission_step(
-    executions: LocalPipelineExecutionManager, execution_id: str
-) -> StepExecution | None:
-    steps = executions.get_steps_for_execution(execution_id)
-    return next((step for step in steps if step.step_id == ADMISSION_STEP), None)
-
-
-def _output(step: StepExecution | None) -> dict[str, Any]:
-    try:
-        output = json.loads(step.output_json or "null") if step is not None else None
-    except json.JSONDecodeError:
-        return {}
-    return output if isinstance(output, dict) else {}
-
-
-def _merge(executions: LocalPipelineExecutionManager, step: StepExecution, **keys: Any) -> None:
-    """Set ``keys`` in an admission step's output and keep its other keys."""
-    output = {**_output(step), **keys}
-    executions.update_step_execution(step.id, output_json=json.dumps(output))
-
-
-def _recorded(step: StepExecution | None) -> dict[str, Any] | None:
-    """The team record in an admission step's output, complete or not."""
-    record = _output(step).get("team")
-    return record if isinstance(record, dict) else None
-
-
-def _binding(record: dict[str, Any] | None) -> TeamBinding | None:
-    if record is None:
-        return None
-    values: dict[str, Any] = {}
-    for item in fields(TeamBinding):
-        value = record.get(item.name)
-        if item.name in ("reviewers", "primaries"):
-            # The admission intent carries neither map until a seat binds.
-            values[item.name] = dict(value) if isinstance(value, dict) else {}
-            continue
-        if item.name == "mode":
-            # Records admitted before epic mode carry no mode: they are single-task teams.
-            values[item.name] = value if isinstance(value, str) and value else SINGLE_MODE
-            continue
-        if item.name in ("worktree_id", "worktree_path") and item.name in record and value is None:
-            values[item.name] = None
-            continue
-        if not isinstance(value, str) or not value:
-            return None
-        values[item.name] = value
-    return TeamBinding(**values)
+def _bound_tab(recorded: str | None, proposed: str | None) -> str | None:
+    """The team's tab: a recorded tab is fixed; a team recorded without one takes ``proposed``."""
+    if recorded is None:
+        return proposed
+    if proposed is not None and proposed != recorded:
+        raise TeamAdmissionRefused(
+            "team_binding_drift", f"team tab is {recorded!r}, not {proposed!r}"
+        )
+    return recorded
 
 
 def _bound_reviewer(reviewers: Any, reviewer_agent: str | None, team_id: str) -> None:
@@ -313,41 +263,43 @@ def _bound_reviewer(reviewers: Any, reviewer_agent: str | None, team_id: str) ->
         )
 
 
-def _own_record(caller: _Caller) -> dict[str, Any] | None:
-    return _recorded(_admission_step(caller.executions, caller.execution_id))
-
-
-def _record(caller: _Caller, record: dict[str, Any]) -> None:
-    step = _admission_step(caller.executions, caller.execution_id) or caller.step
-    _merge(caller.executions, step, team=record)
-
-
 async def _readmit(
     db: HubDatabase,
-    caller: _Caller,
+    caller: Caller,
     own: dict[str, Any],
     task: Task,
     team_id: str | None,
     reviewer_agent: str | None,
+    tab_title: str | None,
 ) -> TeamBinding:
-    """The caller already recorded a team: return it, adopting a tree made before a crash."""
+    """The caller already recorded a team: return it, adopting a tree made before a crash.
+
+    ``tab_title`` is the team's bound tab; a record made before tab binding records it now.
+    """
     named = team_id or caller.execution_id
-    if own.get("checkout_mode") == _TREELESS and team_id is None:
+    if own.get("checkout_mode") == TREELESS and team_id is None:
         # A treeless team is named by its task, so a joined execution re-admits the team it joined.
         named = str(own.get("team_id"))
-    if own.get("task_id") != task.id or own.get("team_id") != named:
+    admitted_task = own.get("admitted_task_id", own.get("task_id"))
+    if admitted_task != task.id or own.get("team_id") != named:
         raise TeamAdmissionRefused(
             "team_binding_drift",
             f"execution {caller.execution_id} is bound to team {own.get('team_id')} "
             f"for task {own.get('task_id')}",
         )
     _bound_reviewer(own.get("reviewers"), reviewer_agent, str(own.get("team_id")))
-    binding = _binding(own)
+    if own.get("task_id") != task.id:
+        _team(caller, task, named)
+    rebound = tab_title != own.get("tab_title")
+    own = {**own, "tab_title": tab_title}
+    binding = binding_from_record(own)
     if binding is not None:
-        if own.get("checkout_mode") != _TREELESS:
-            await _verify_tree(db, binding)
+        if own.get("checkout_mode") != TREELESS:
+            await verify_tree(db, binding)
+        if rebound:
+            await asyncio.to_thread(record_team, caller, own)
         return binding
-    if own.get("checkout_mode") == _TREELESS:
+    if own.get("checkout_mode") == TREELESS:
         # A treeless record is written whole; an incomplete one must not fall through to a tree.
         raise TeamAdmissionRefused(
             "team_binding_drift", f"treeless team {own.get('team_id')} has an incomplete record"
@@ -357,29 +309,34 @@ async def _readmit(
         LocalWorktreeManager(db).get_by_branch, caller.project_id, str(branch)
     )
     if tree is None or not Path(tree.worktree_path).is_dir():
-        return await _create(db, caller, task, reviewer_agent)
+        parent = team_binding(db, str(own["parent_team_id"])) if own.get("parent_team_id") else None
+        return await create_team_tree(db, caller, task, reviewer_agent, tab_title, parent)
     if tree.task_id != task.id:
         raise TeamAdmissionRefused(
             "team_branch_taken", f"branch {branch} belongs to tree {tree.id} of another task"
         )
     binding = TeamBinding(
-        **{key: own[key] for key in own if key not in _TREE_FIELDS},
+        **{key: own[key] for key in own if key not in _TREE_FIELDS | {"admitted_task_id"}},
         worktree_id=tree.id,
         worktree_path=tree.worktree_path,
     )
-    await _verify_tree(db, binding)
-    await asyncio.to_thread(_record, caller, asdict(binding))
+    await verify_tree(db, binding)
+    await asyncio.to_thread(record_team, caller, asdict(binding))
     return binding
 
 
-def _team(caller: _Caller, task: Task, team_id: str) -> tuple[StepExecution, TeamBinding]:
+def _team(caller: Caller, task: Task, team_id: str) -> tuple[StepExecution, TeamBinding]:
     """Team ``team_id``'s admission step and its complete binding for ``task``."""
     team = caller.executions.get_execution(team_id)
-    step = _admission_step(caller.executions, team_id) if team else None
-    binding = _binding(_recorded(step))
+    step = admission_step(caller.executions, team_id) if team else None
+    binding = binding_from_record(recorded_team(step))
     if step is None or binding is None or binding.project_id != caller.project_id:
         raise TeamAdmissionRefused("team_missing", f"team {team_id} has no complete admission")
-    if binding.task_id != task.id:
+    if binding.task_id != task.id and not (
+        binding.mode == EPIC_MODE
+        and open_leaf_below(caller.executions.db, binding.task_id, task.id) is not None
+        and task.id not in live_teams(caller.executions.db, [task.id])
+    ):
         raise TeamAdmissionRefused(
             "team_task_mismatch", f"team {team_id} is bound to task {binding.task_id}"
         )
@@ -387,23 +344,33 @@ def _team(caller: _Caller, task: Task, team_id: str) -> tuple[StepExecution, Tea
 
 
 async def _join(
-    db: HubDatabase, caller: _Caller, task: Task, team_id: str, reviewer_agent: str | None
+    db: HubDatabase,
+    caller: Caller,
+    task: Task,
+    team_id: str,
+    reviewer_agent: str | None,
+    tab_title: str | None,
 ) -> TeamBinding:
     """A replacement or fresh-reviewer execution joins team ``team_id`` for the same task."""
     step, binding = await asyncio.to_thread(_team, caller, task, team_id)
+    tab = _bound_tab(binding.tab_title, tab_title)
     _bound_reviewer(binding.reviewers, reviewer_agent, team_id)
+    team = recorded_team(step) or {}
     # A treeless team has no tree to verify; its joined executions record the same marker.
-    treeless = (_recorded(step) or {}).get("checkout_mode") == _TREELESS
+    treeless = team.get("checkout_mode") == TREELESS
     if not treeless:
-        await _verify_tree(db, binding)
-    record = {**asdict(binding), "checkout_mode": _TREELESS} if treeless else asdict(binding)
-    await asyncio.to_thread(_record, caller, record)
+        await verify_tree(db, binding)
+    if tab != binding.tab_title:
+        # A team admitted before tab binding records the first proposed tab as its own.
+        binding = replace(binding, tab_title=tab)
+        await asyncio.to_thread(
+            merge_step_output, caller.executions, step, team={**team, "tab_title": tab}
+        )
+    record = {**asdict(binding), "checkout_mode": TREELESS} if treeless else asdict(binding)
+    if binding.task_id != task.id:
+        record["admitted_task_id"] = task.id
+    await asyncio.to_thread(record_team, caller, record)
     return binding
-
-
-_ENDED_EXECUTIONS = frozenset(
-    {ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED}
-)
 
 
 def _holds_epoch(db: HubDatabase, executions: LocalPipelineExecutionManager, holder: str) -> bool:
@@ -414,22 +381,17 @@ def _holds_epoch(db: HubDatabase, executions: LocalPipelineExecutionManager, hol
     refused spawn leaves no active seat, so it frees the slot for a relaunch.
     """
     execution = executions.get_execution(holder)
-    if execution is None or execution.status not in _ENDED_EXECUTIONS:
+    if execution is None or execution.status not in ENDED_EXECUTIONS:
         return True
     reviewer = LocalAgentRunManager(db).get(step_invocation_id(holder, "code-reviewer"))
     return reviewer is not None and reviewer.status in ACTIVE_AGENT_RUN_STATUSES
 
 
 def _reserve_fresh_reviewer(
-    db: HubDatabase, caller: _Caller, task: Task, team_id: str, exclude_reviewers: Sequence[str]
+    db: HubDatabase, caller: Caller, task: Task, team_id: str, exclude_reviewers: Sequence[str]
 ) -> None:
     """Record the caller as the epoch's fresh reviewer once rejection two moved the claim."""
     step, binding = _team(caller, task, team_id)
-    if binding.mode == EPIC_MODE:
-        raise TeamAdmissionRefused(
-            "fresh_reviewer_epic_mode",
-            "an epic team takes no fresh reviewer; reviews stay in place",
-        )
     current = LocalTaskManager(db).get_task(task.id, caller.project_id)
     epoch = current.review_epoch
     reviews = [
@@ -460,9 +422,10 @@ def _reserve_fresh_reviewer(
         raise TeamAdmissionRefused(
             "fresh_reviewer_claim", f"task {task.id}'s claim has not passed to a reviewer"
         )
-    reserved = _output(step).get("fresh_reviewers")
+    reserved = step_output(step).get("fresh_reviewers")
     reserved = reserved if isinstance(reserved, dict) else {}
-    holder = reserved.get(str(epoch))
+    reservation = f"{task.id}:{epoch}" if binding.mode == EPIC_MODE else str(epoch)
+    holder = reserved.get(reservation)
     if (
         holder is not None
         and holder != caller.execution_id
@@ -472,162 +435,106 @@ def _reserve_fresh_reviewer(
             "fresh_reviewer_exists",
             f"execution {holder} is team {team_id}'s epoch {epoch} fresh reviewer",
         )
-    _merge(
+    merge_step_output(
         caller.executions,
         step,
-        fresh_reviewers={**reserved, str(epoch): caller.execution_id},
+        fresh_reviewers={**reserved, reservation: caller.execution_id},
     )
 
 
-async def _create(
-    db: HubDatabase, caller: _Caller, task: Task, reviewer_agent: str | None
+def task_team(db: HubDatabase, task_id: str) -> TeamBinding | None:
+    """The leaf's own team, or its containing epic team for a primary leaf."""
+    scoped = live_teams(db, [task_id]).get(task_id) or epic_team_above(db, task_id)
+    return team_binding(db, scoped.team_id) if scoped else None
+
+
+def managed_task_team(db: HubDatabase, caller_id: str, task_id: str) -> TeamBinding | None:
+    """Resolve a manager's own team or one of its leaf pods."""
+    from gobby.agents.team_dispatch import _is_bound_dev_manager
+
+    manager = seat_team(db, caller_id)
+    if manager is None or not _is_bound_dev_manager(db, caller_id, manager.task_id):
+        return None
+    if task_id != manager.task_id and (
+        manager.mode != EPIC_MODE or open_leaf_below(db, manager.task_id, task_id) is None
+    ):
+        return None
+    team = task_team(db, task_id)
+    return (
+        team
+        if team and (team.team_id == manager.team_id or team.parent_team_id == manager.team_id)
+        else None
+    )
+
+
+def _epic_manager(db: HubDatabase, caller_id: str, task_id: str, parent_id: str) -> TeamBinding:
+    """The epic team ``parent_id`` when ``caller_id`` is its bound Dev Manager, for an open leaf."""
+    from gobby.agents.team_dispatch import _is_bound_dev_manager
+    from gobby.agents.team_review import seat_team_held
+
+    parent = seat_team(db, caller_id)
+    if (
+        parent is None
+        or parent.team_id != parent_id
+        or parent.mode != EPIC_MODE
+        or (live := live_teams(db, [parent.task_id]).get(parent.task_id)) is None
+        or live.team_id != parent.team_id
+        or not _is_bound_dev_manager(db, caller_id, parent.task_id)
+        or open_leaf_below(db, parent.task_id, task_id) is None
+    ):
+        raise TeamAdmissionRefused(
+            "pod_parent_invalid", "only the epic's Dev Manager admits a leaf pod"
+        )
+    if seat_team_held(db, parent):
+        raise TeamAdmissionRefused("team_held", "the epic is held; resume after its hold is lifted")
+    return parent
+
+
+def pod_parent(db: HubDatabase, caller_id: str, task_id: str, parent_id: str) -> TeamBinding:
+    """Only an epic's bound manager may admit a pod for an unclaimed open leaf."""
+    parent = _epic_manager(db, caller_id, task_id, parent_id)
+    task = LocalTaskManager(db).get_task(task_id)
+    if task.claimed_by_session_id:
+        raise TeamAdmissionRefused(
+            "pod_leaf_claimed", "release the leaf claim before admitting its pod"
+        )
+    if is_task_blocked(task):
+        raise TeamAdmissionRefused("pod_leaf_blocked", "resolve the leaf's dependencies first")
+    return parent
+
+
+def pod_relaunch(
+    db: HubDatabase, caller_id: str, task_id: str, team_id: str, parent_id: str | None
 ) -> TeamBinding:
-    """Record a new team for ``task``, then create its task-titled branch and tree."""
-    trees = LocalWorktreeManager(db)
-    existing = await asyncio.to_thread(trees.get_by_task, task.id)
-    if existing is not None and tree_is_live(existing):
+    """The epic's bound manager relaunches the seats of its admitted pod ``team_id``.
+
+    The pod must be a pod of ``parent_id`` when that is given. A relaunch may follow a claim, so
+    only the epic's authority is checked, not the leaf's claim or blocks.
+    """
+    team_uuid = parse_uuid_reference(team_id)
+    binding = None if team_uuid is None else team_binding(db, str(team_uuid))
+    if binding is None:
+        raise TeamAdmissionRefused("team_missing", f"team {team_id} is not admitted")
+    if binding.parent_team_id is None:
+        raise TeamAdmissionRefused("team_not_pod", f"team {team_id} is not a Dev Pod")
+    if parent_id is not None and binding.parent_team_id != parent_id:
         raise TeamAdmissionRefused(
-            "team_exists", f"task {task.id} already has team tree {existing.worktree_path}"
+            "pod_parent_mismatch",
+            f"team {team_id} is not a pod of epic team {parent_id}; pass team_id alone",
         )
-    mode = await asyncio.to_thread(_admission_mode, db, task)
-    try:
-        target = await main_checkout_target(db, caller.project_id)
-    except LandingGitError as exc:
-        raise TeamAdmissionRefused("main_checkout_unavailable", str(exc)) from exc
-    if target is None:
-        raise TeamAdmissionRefused("main_checkout_unavailable", "main checkout is detached")
-    main, base_branch = target
-    # An epic team takes its epic branch and directory; a single team keeps the task's
-    # generate_branch_name task-<seq>-<title-slug>.
-    epic_branch, epic_directory = epic_names(task) if mode == EPIC_MODE else (None, None)
-    config = SpawnConfig(
-        prompt="",
-        task_id=task.id,
-        task_title=task.title,
-        task_seq_num=task.seq_num,
-        branch_name=epic_branch,
-        branch_prefix=None,
-        base_branch=base_branch,
-        project_id=caller.project_id,
-        project_path=str(main),
-        provider=caller.session.source,
-        parent_session_id=caller.session.id,
-        worktree_dir_name=epic_directory,
-    )
-    branch = generate_branch_name(config)
-    taken = await asyncio.to_thread(trees.get_by_branch, caller.project_id, branch)
-    if taken is not None and tree_is_live(taken):
-        raise TeamAdmissionRefused("team_branch_taken", f"branch {branch} already has a tree")
-    intent: dict[str, Any] = {
-        "team_id": caller.execution_id,
-        "task_id": task.id,
-        "project_id": caller.project_id,
-        "branch": branch,
-        "base_branch": base_branch,
-        "reviewers": {reviewer_agent: None} if reviewer_agent is not None else {},
-        "mode": mode,
-    }
-    await asyncio.to_thread(_record, caller, intent)
-    handler = WorktreeIsolationHandler(WorktreeGitManager(str(main)), trees)
-    try:
-        made = await handler.prepare_environment(config)
-    except Exception as exc:
-        await handler.cleanup_environment(config)
-        raise TeamAdmissionRefused("team_tree_failed", str(exc)) from exc
-    handler.commit_environment(config)
-    if made.branch_name != branch or made.worktree_id is None:
+    if binding.task_id != task_id:
         raise TeamAdmissionRefused(
-            "team_tree_failed", f"tree {made.worktree_id} is not on branch {branch}"
+            "team_task_mismatch", f"team {team_id} is not admitted for task {task_id}"
         )
-    binding = TeamBinding(**intent, worktree_id=made.worktree_id, worktree_path=made.cwd)
-    await asyncio.to_thread(_record, caller, asdict(binding))
-    # Seats join this tree without the isolation preflight that normally pins it.
     try:
-        await GcodeGateway().pin_project(Path(made.cwd))
-    except (GcodeGatewayError, OSError) as exc:
-        logger.warning("Failed to pin team code index for %s: %s", made.cwd, exc)
+        _epic_manager(db, caller_id, task_id, binding.parent_team_id)
+    except TeamAdmissionRefused as exc:
+        if exc.code != "pod_parent_invalid":
+            raise
+        raise TeamAdmissionRefused(
+            exc.code, f"{exc}; to relaunch an admitted pod, pass team_id alone"
+        ) from exc
     return binding
-
-
-async def _create_treeless(
-    db: HubDatabase, caller: _Caller, task: Task, reviewer_agent: str | None
-) -> TeamBinding:
-    """Record a treeless team for ``task``: no branch or tree, its seats work in the main checkout."""
-    existing = await asyncio.to_thread(LocalWorktreeManager(db).get_by_task, task.id)
-    if existing is not None and tree_is_live(existing):
-        raise TeamAdmissionRefused(
-            "team_exists", f"task {task.id} already has team tree {existing.worktree_path}"
-        )
-    mode = await asyncio.to_thread(_admission_mode, db, task)
-    if mode == EPIC_MODE:
-        raise TeamAdmissionRefused(
-            "checkout_mode_epic", f"epic {task.id} needs a team tree; checkout_mode none is single"
-        )
-    try:
-        target = await main_checkout_target(db, caller.project_id)
-    except LandingGitError as exc:
-        raise TeamAdmissionRefused("main_checkout_unavailable", str(exc)) from exc
-    if target is None:
-        raise TeamAdmissionRefused("main_checkout_unavailable", "main checkout is detached")
-    main, branch = target
-    binding = TeamBinding(
-        team_id=caller.execution_id,
-        task_id=task.id,
-        project_id=caller.project_id,
-        branch=branch,
-        base_branch=branch,
-        worktree_id=None,
-        worktree_path=str(main),
-        reviewers={reviewer_agent: None} if reviewer_agent is not None else {},
-        mode=mode,
-    )
-    await asyncio.to_thread(_record, caller, {**asdict(binding), "checkout_mode": _TREELESS})
-    return binding
-
-
-def _live_treeless_team(db: HubDatabase, project_id: str, task_id: str) -> str | None:
-    """The task's treeless team whose teardown has not run yet, or None."""
-    rows = db.fetchall(
-        """
-SELECT * FROM step_executions
-WHERE step_id = %s
-AND output_json #>> '{team,team_id}' = execution_id::text
-AND output_json #>> '{team,task_id}' = %s
-AND output_json #>> '{team,checkout_mode}' = %s
-AND output_json #>> '{teardown,outcome}' IS NULL
-ORDER BY id
-""",
-        (ADMISSION_STEP, task_id, _TREELESS),
-    )
-    for row in rows:
-        binding = _binding(_recorded(StepExecution.from_row(row)))
-        if binding is not None and binding.project_id == project_id:
-            return binding.team_id
-    return None
-
-
-def _admission_mode(db: HubDatabase, task: Task) -> str:
-    try:
-        return admission_mode(db, task)
-    except ScopeRefused as exc:
-        raise TeamAdmissionRefused(exc.code, str(exc)) from exc
-
-
-async def _verify_tree(db: HubDatabase, binding: TeamBinding) -> None:
-    """The team's tree still exists on its recorded branch."""
-    if binding.worktree_id is None or binding.worktree_path is None:
-        raise TeamAdmissionRefused("team_tree_missing", f"team {binding.team_id} has no tree")
-    tree = await asyncio.to_thread(LocalWorktreeManager(db).get, binding.worktree_id)
-    if tree is None or not tree_is_live(tree) or tree.branch_name != binding.branch:
-        raise TeamAdmissionRefused(
-            "team_tree_missing", f"team {binding.team_id} tree {binding.worktree_id} is gone"
-        )
-    result = await daemon_git.run(("branch", "--show-current"), cwd=binding.worktree_path)
-    if not isinstance(result, GitOk) or result.stdout.strip() != binding.branch:
-        raise TeamAdmissionRefused(
-            "team_tree_missing",
-            f"team {binding.team_id} tree {binding.worktree_path} is not on {binding.branch}",
-        )
 
 
 def _caller_binding(db: HubDatabase, caller: Session) -> TeamBinding | None:
@@ -645,7 +552,7 @@ def _caller_binding(db: HubDatabase, caller: Session) -> TeamBinding | None:
         return None
     if all(step.id != ADMISSION_STEP for step in definition.steps):
         return None
-    binding = _binding(_recorded(_admission_step(executions, execution_id)))
+    binding = binding_from_record(recorded_team(admission_step(executions, execution_id)))
     if binding is None:
         raise TeamAdmissionRefused(
             "team_admission_incomplete",
@@ -655,12 +562,13 @@ def _caller_binding(db: HubDatabase, caller: Session) -> TeamBinding | None:
 
 
 def _seat_parents(db: HubDatabase, seat: Session) -> list[str]:
-    """The seat's parent, then the parents its runs were launched under, newest first.
+    """The original run's parent first, then resumed runs and the current session parent.
 
     A resume re-parents the seat to the resumer, so the runbook that launched it sits on
-    the resume chain: each resumed run names the run it resumed.
+    the resume chain: each resumed run names the run it resumed. The original team
+    remains authoritative even when a parent epic's manager resumes a pod seat.
     """
-    parents = [seat.parent_session_id] if seat.parent_session_id else []
+    parents: list[str] = []
     runs = LocalAgentRunManager(db)
     run = runs.get(seat.agent_run_id) if seat.agent_run_id else None
     seen: set[str] = set()
@@ -669,6 +577,9 @@ def _seat_parents(db: HubDatabase, seat: Session) -> list[str]:
         parents.append(run.parent_session_id)
         previous = (run.resume_metadata_json or {}).get("resume_previous_run_id")
         run = runs.get(previous) if isinstance(previous, str) else None
+    parents.reverse()
+    if seat.parent_session_id:
+        parents.append(seat.parent_session_id)
     return parents
 
 
@@ -726,12 +637,12 @@ def _bind_run(
     db: HubDatabase, team_id: str, project_id: str, key: str, name: str, run_id: str
 ) -> None:
     executions = LocalPipelineExecutionManager(db, project_id)
-    step = _admission_step(executions, team_id)
-    record = _recorded(step)
+    step = admission_step(executions, team_id)
+    record = recorded_team(step)
     if step is None or record is None:
         raise TeamAdmissionRefused("team_missing", f"team {team_id} has no admission record")
     bound = {**(record.get(key) or {}), name: run_id}
-    _merge(executions, step, team={**record, key: bound})
+    merge_step_output(executions, step, team={**record, key: bound})
 
 
 def _task_id(db: HubDatabase, ref: str, binding: TeamBinding) -> str | None:

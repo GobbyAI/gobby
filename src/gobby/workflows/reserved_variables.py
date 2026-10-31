@@ -3,7 +3,8 @@
 from typing import TYPE_CHECKING
 
 HANDOFF_TURN_END_PENDING_VARIABLE = "_handoff_turn_end_pending"
-DEVELOPER_HANDOFF_TASKS_VARIABLE = "_developer_handoff_tasks"
+# The Unix-socket root an SRT launch granted its own run; only the launch records it.
+SRT_RUN_SOCKET_ROOT_VARIABLE = "_agent_srt_socket_root"
 
 if TYPE_CHECKING:
     from gobby.storage.definitions.rules import RuleDefinitionRow
@@ -13,9 +14,9 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         # Names the session's agent definition, which selects its rules and
         # send_message target modes; only spawn and persona application set it.
         "_agent_type",
-        DEVELOPER_HANDOFF_TASKS_VARIABLE,
         "_block_reasons_shown",
         HANDOFF_TURN_END_PENDING_VARIABLE,
+        SRT_RUN_SOCKET_ROOT_VARIABLE,
         "consecutive_tool_blocks",
         # Claim-sweep shields: each keeps an owner's claims through an absence,
         # so only their dedicated writers may place or clear them.
@@ -28,6 +29,12 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         # Edit ledgers the foreign-dirty edit gate trusts; only the edit observer writes them.
         "session_dirty_file_checkouts",
         "session_dirty_files",
+        "session_unclaimed_edits",
+        "git_operation_ownership",
+        # Closure review evidence is authoritative across implementer/coordinator sessions.
+        "_memory_task_review_records",
+        "_memory_pending_task_reviews",
+        "_memory_review_stop_delivered",
         "task_edited_file_checkouts",
         "grok_pending_briefing",
         "grok_pending_delivery",
@@ -45,6 +52,7 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
 )
 
 RESERVED_WORKFLOW_VARIABLE_PREFIXES = (
+    "_agent_workspace_",
     "_last_blocked_",
     "edit_write_",
     "enforce_",

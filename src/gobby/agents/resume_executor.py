@@ -55,8 +55,12 @@ from gobby.agents.spawn_executor_support import (
     schedule_codex_prompt_delivery,
 )
 from gobby.agents.spawners.command_builder import build_cli_command
-from gobby.agents.srt_runtime import SrtRuntimeError, prepare_sandbox_launch
-from gobby.agents.trust import pre_approve_directory
+from gobby.agents.srt_runtime import (
+    SrtRuntimeError,
+    prepare_sandbox_launch,
+    record_run_socket_root,
+)
+from gobby.agents.trust import active_codex_launch_models, pre_approve_directory
 from gobby.ai.codex_endpoint import (
     codex_endpoint_config_overrides,
     codex_endpoint_env,
@@ -375,6 +379,7 @@ async def resume_agent_run(
     # A cancelled verifier thread finishes on its own; it reads only the SRT install.
     # A snapshot from before the seat's workspace grants names no folder of its own. Grant
     # them as spawn does, and create the grant directories before the sandbox starts.
+    from gobby.agents.agent_workspaces import spawn_workspace_write_paths
     from gobby.agents.spawn_executor_providers import ensure_sandbox_write_directories
 
     try:
@@ -386,11 +391,17 @@ async def resume_agent_run(
             spawn_context.session_id,
             agent_name,
         )
+        seat_directories = await asyncio.to_thread(
+            spawn_workspace_write_paths,
+            runner.run_storage.db,
+            spawn_context.session_id,
+            agent_name,
+        )
+        directories = _str_list(resume_metadata.get("sandbox_directory_write_paths"))
         await asyncio.to_thread(
             ensure_sandbox_write_directories,
-            sandbox_config,
+            [*directories, *seat_directories],
             cwd,
-            _metadata_str(resume_metadata, "project_path"),
         )
     except asyncio.CancelledError:
         await run_to_completion(park())
@@ -439,6 +450,9 @@ async def resume_agent_run(
     )
     if launch.policy_hash and callable(update_policy_hash):
         update_policy_hash(spawn_context.session_id, launch.policy_hash)
+    await asyncio.to_thread(
+        record_run_socket_root, runner.run_storage.db, spawn_context.session_id, launch
+    )
 
     sandbox_args = launch.provider_args
     config_overrides = list(
@@ -539,7 +553,12 @@ async def resume_agent_run(
         )
         return ResumeAgentResult(False, run_id=run_id, error="resume_launch_phase_cas_failed")
 
-    await asyncio.to_thread(pre_approve_directory, provider, cwd)
+    codex_models = (
+        await asyncio.to_thread(active_codex_launch_models, runner.run_storage.db, project_id)
+        if provider == "codex"
+        else ()
+    )
+    await asyncio.to_thread(pre_approve_directory, provider, cwd, codex_models)
     from gobby.agents.spawn_executor import _runtime_spawn
     from gobby.agents.spawn_executor_providers import ProviderSpawnPlan
     from gobby.agents.spawn_models import SpawnRequest

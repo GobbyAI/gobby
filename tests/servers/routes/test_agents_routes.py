@@ -1630,19 +1630,37 @@ class TestListDefinitionsSourceFilter:
 
 
 class TestUpdateDefinitionNestedFields:
-    # Endpoint credentials, spawn/message authority, run lifetime and the
-    # sync-owned sandbox network are not editable through PUT.
+    # Endpoint credentials, permissions and task scopes, spawn/message authority, review
+    # authority, run lifetime, routing and the sync-owned sandbox network are operator-configured:
+    # neither POST nor PUT accepts them, and web Duplicate does not copy them.
     IMMUTABLE_BODY_FIELDS = frozenset(
         {
             "api_base",
             "api_token",
+            "capabilities",
+            "cold_start_commands",
+            "cold_start_counterpart",
             "communications_admin",
             "execution_mode",
             "idle_ttl_seconds",
+            "implementation_domains",
+            "message_sender_capabilities",
+            "monitor_report_recipients",
             "network",
             "operator_messaging",
+            "persistent_workspace",
+            "read_all_agent_workspaces",
+            "required_review_capabilities",
+            "respect_task_protections",
+            "resumable_team_agents",
             "send_message_targets",
             "spawnable_agents",
+            "supplemental_review",
+            "task_categories",
+            "task_close_reasons",
+            "task_close_scope",
+            "task_step_scope",
+            "task_step_writes",
         }
     )
     # Row columns the requests carry that the body does not store.
@@ -1676,6 +1694,11 @@ class TestUpdateDefinitionNestedFields:
             ("idle_ttl_seconds", 900),
             ("operator_messaging", True),
             ("communications_admin", True),
+            ("persistent_workspace", True),
+            ("read_all_agent_workspaces", True),
+            ("task_step_writes", ["implementation"]),
+            ("capabilities", ["land_tasks"]),
+            ("resumable_team_agents", ["developer"]),
         ],
     )
     @pytest.mark.parametrize("method", ["post", "put"])

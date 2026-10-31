@@ -8,11 +8,6 @@ TDD_ELIGIBLE_CATEGORIES: frozenset[str] = frozenset({"code", "config"})
 # Code implementation routing domains. These route software implementation
 # leaves without overloading the task category field.
 IMPLEMENTATION_DOMAINS: frozenset[str] = frozenset({"backend", "frontend", "fullstack"})
-AGENT_BY_IMPLEMENTATION_DOMAIN: dict[str, str] = {
-    "backend": "developer",
-    "frontend": "developer",
-    "fullstack": "developer",
-}
 
 # Categories that expansion may emit as executable leaves. These all start at
 # development in build stage manifests.
@@ -27,7 +22,6 @@ AUTOMATED_LEAF_CATEGORIES: frozenset[str] = frozenset(
 )
 
 __all__ = [
-    "AGENT_BY_IMPLEMENTATION_DOMAIN",
     "AUTOMATED_LEAF_CATEGORIES",
     "DEVELOPMENT_FORWARD_LEAF_CATEGORIES",
     "IMPLEMENTATION_DOMAINS",

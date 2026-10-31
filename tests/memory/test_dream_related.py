@@ -784,6 +784,8 @@ def test_keyword_scope_sql_contract(
 def test_rendered_statement_parity(scope: RetrievalScope) -> None:
     db = MagicMock()
     db.fetchall.return_value = []
+    transaction = db.transaction.return_value.__enter__.return_value
+    transaction.execute.return_value.fetchall.return_value = []
     service = MemoryKeywordSearchService(db)
     rendered_keyword = service.render_search(
         "rare terms",
@@ -797,7 +799,7 @@ def test_rendered_statement_parity(scope: RetrievalScope) -> None:
         project_id=scope.project_id,
         scope=scope.kind,
     )
-    assert rendered_keyword == db.fetchall.call_args.args
+    assert rendered_keyword == transaction.execute.call_args.args
 
     db.fetchall.reset_mock()
     storage = LocalMemoryManager(db)

@@ -1,0 +1,28 @@
+tags: [roles, enforcement, gobby, default]
+
+rules:
+  non-operator-no-project-create:
+    description: "Non-operator sessions require a declared project-creation exemption"
+    event: before_tool
+    enabled: true
+    priority: 10
+    when: "not operator_session(event.metadata.get('_platform_session_id'))"
+    effects:
+      - type: block
+        tools: [Bash]
+        mcp_tools: ["gobby:init_project"]
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(uv\\s+run\\s+)?gobby\\s+(?:--config(?:=|\\s+)\\S+\\s+)?(?:init\\b|install\\b[^;&|\\n]*--no-interactive\\b)|^(?!\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:[^\\s;&|]*/)?(?:grep|rg|gcode)\\b).*/api/projects/init\\b"
+        reason: "This definition does not permit project creation. Send the request to your coordinator."
+
+  unassigned-session-no-task-close:
+    description: "Spawned sessions and persona overlays require declared closing authority"
+    event: before_tool
+    enabled: true
+    priority: 10
+    when: >-
+      (variables.get('is_spawned_agent') or variables.get('_persona_name'))
+      and not ((tool_input.get('arguments') or tool_input) or {}).get('preview')
+    effects:
+      - type: block
+        mcp_tools: ["gobby-tasks:close_task"]
+        reason: "This definition does not grant task closure. Hand the result to your coordinator; close_task(preview=true) remains available."

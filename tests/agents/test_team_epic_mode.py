@@ -9,7 +9,8 @@ from typing import Any, cast
 import pytest
 
 from gobby.agents.isolation_models import SpawnConfig, generate_branch_name
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding, seat_team
+from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_lifecycle import seat_team
 from gobby.agents.team_teardown import reconcile_team_teardowns
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.agents import AgentRun
@@ -199,6 +200,32 @@ async def test_descendant_claims_scoped_to_team(world: TeamWorld) -> None:
     unrelated = new_task(world, "Unrelated task")
     reply = await claim(outsider, unrelated)
     assert reply.get("success") is True, reply
+
+
+@pytest.mark.asyncio
+async def test_team_seat_cannot_claim_its_epic_root(world: TeamWorld) -> None:
+    """An epic root has no acceptance criteria, so its team's seats claim only its open leaves."""
+    db = world.case.db
+    tasks = LocalTaskManager(db)
+    tools = create_task_registry(tasks)
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    runbook = world.child(epic)
+    await world.admit(runbook, epic)
+    seat = world.case.session("test-writer", parent=runbook.id)
+
+    async def claim(task: Task) -> dict[str, Any]:
+        with session_context_for_test(seat):
+            return cast(dict[str, Any], await tools.call("claim_task", {"task_id": task.id}))
+
+    refused = await claim(epic)
+    assert refused.get("success") is not True, refused
+    assert refused.get("error_code") == "TASK_CLAIM_CONFLICT", refused
+    assert tasks.get_task(epic.id).claimed_by_session_id is None
+
+    reply = await claim(leaf)
+    assert reply.get("success") is True, reply
+    assert tasks.get_task(leaf.id).claimed_by_session_id == seat
 
 
 @pytest.mark.asyncio

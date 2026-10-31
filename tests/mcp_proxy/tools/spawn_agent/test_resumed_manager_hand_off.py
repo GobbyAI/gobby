@@ -13,7 +13,8 @@ import pytest
 
 from gobby.agents.isolation import NoneIsolationHandler
 from gobby.agents.session import ChildSessionManager
-from gobby.agents.team_lifecycle import TeamBinding, seat_team
+from gobby.agents.team_admission_records import TeamBinding
+from gobby.agents.team_lifecycle import seat_team
 from gobby.mcp_proxy.tools.spawn_agent import _implementation as implementation
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 from gobby.mcp_proxy.tools.tasks import create_task_registry
@@ -28,6 +29,7 @@ from gobby.workflows.agent_models import (
     AgentSelector,
     AgentWorkflows,
 )
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.landing_case import (
     DEV_MANAGER,
     LandingCase,
@@ -54,6 +56,8 @@ class CrashedTeam:
 
 
 def _seat(db: HubDatabase, session_id: str, runbook: str, role: str) -> None:
+    # A seat resumes only as the definition it was launched with, recorded as its agent type.
+    SessionVariableManager(db).set_variable(session_id, "_agent_type", role)
     LocalAgentRunManager(db).create(
         parent_session_id=runbook,
         provider="claude",

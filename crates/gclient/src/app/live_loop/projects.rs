@@ -46,8 +46,9 @@ pub async fn focus_project(
         chrome.focus_project(current);
     }
     workspace.select_project(project_id);
-    workspace.fetch_roster().await?;
-    workspace.attach_ready_panes().await?;
+    // The roster lands beside the loop and is installed only if this project
+    // is still focused then; the switch never waits on it.
+    workspace.request_roster(project_id);
     // The new project's sessions and runs arrive from a background
     // refetch; the switch itself never waits on git status.
     workspace.request_focused_sessions();

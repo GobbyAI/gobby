@@ -6,16 +6,17 @@ import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
+from gobby.agents import team_lifecycle
+from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding, team_binding
 from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.session_context import session_context_for_test
@@ -42,6 +43,88 @@ def tree_id_of(binding: TeamBinding) -> str:
     """The team tree id a binding names; these tests always admit a team with one."""
     assert binding.worktree_id is not None
     return binding.worktree_id
+
+
+async def test_runbook_admission_preserves_its_declared_tab(world: TeamWorld) -> None:
+    task = world.case.task("A custom team tab")
+    runbook = world.child(task)
+    tab_title = f"Product Studio - #{task.seq_num}"
+    with session_context_for_test(runbook.id):
+        result = await world.tools.call("admit_team", {"task": task.id, "tab_title": tab_title})
+    assert result["success"], result
+    assert result["team"]["tab_title"] == tab_title
+    assert (await world.admit(runbook, task)).tab_title == tab_title
+    replacement = world.child(task)
+    joined = await world.admit(replacement, task, team_id=result["team"]["team_id"])
+    assert joined.tab_title == tab_title
+    for caller in (runbook, world.child(task)):
+        with session_context_for_test(caller.id):
+            drift = await world.tools.call(
+                "admit_team",
+                {"task": task.id, "team_id": result["team"]["team_id"], "tab_title": "Other"},
+            )
+        assert drift["error_code"] == "team_binding_drift", drift
+    assert (await world.admit(runbook, task)).tab_title == tab_title
+
+
+async def test_replacement_binds_the_tab_of_a_team_admitted_unbound(world: TeamWorld) -> None:
+    task = world.case.task("A team admitted before tab binding")
+    original = world.child(task)
+    team = await world.admit(original, task)
+    assert team.tab_title is None
+    world.finish(original)
+
+    tab_title = f"Dev Team - #{task.seq_num}"
+    replacement = world.child(task)
+    joined = await world.admit(replacement, task, team_id=team.team_id, tab_title=tab_title)
+    assert joined == replace(team, tab_title=tab_title)
+    assert world.admit_step_output(replacement)["team"] == asdict(joined)
+    # The team's own record carries the bound tab, so later seats and replacements read it.
+    assert team_binding(world.case.db, team.team_id) == joined
+
+    for caller in (replacement, world.child(task)):
+        with session_context_for_test(caller.id):
+            drift = await world.tools.call(
+                "admit_team", {"task": task.id, "team_id": team.team_id, "tab_title": "Other"}
+            )
+        assert drift["error_code"] == "team_binding_drift", drift
+    assert await world.admit(world.child(task), task, team_id=team.team_id) == joined
+
+
+@pytest.mark.parametrize("partial", [False, True])
+async def test_rerun_admission_binds_the_tab_of_its_unbound_record(
+    world: TeamWorld, partial: bool
+) -> None:
+    task = world.case.task("A rerun admission before tab binding")
+    runbook = world.child(task)
+    team = await world.admit(runbook, task)
+    if partial:
+        # The step died after making the tree but before recording it complete.
+        intent = {
+            key: value
+            for key, value in asdict(team).items()
+            if key not in ("worktree_id", "worktree_path")
+        }
+        world.rewrite_admit_output(runbook, {"team": intent})
+
+    tab_title = f"Dev Team - #{task.seq_num}"
+    bound = replace(team, tab_title=tab_title)
+    assert await world.admit(runbook, task, tab_title=tab_title) == bound
+    assert team_binding(world.case.db, team.team_id) == bound
+    with session_context_for_test(runbook.id):
+        drift = await world.tools.call("admit_team", {"task": task.id, "tab_title": "Other"})
+    assert drift["error_code"] == "team_binding_drift", drift
+    assert await world.admit(runbook, task) == bound
+
+
+@pytest.mark.parametrize("tab_title", ["", "  "])
+async def test_team_admission_rejects_a_blank_tab(world: TeamWorld, tab_title: str) -> None:
+    task = world.case.task("No blank team tab")
+    runbook = world.child(task)
+    with session_context_for_test(runbook.id):
+        result = await world.tools.call("admit_team", {"task": task.id, "tab_title": tab_title})
+    assert result["error_code"] == "team_tab_invalid", result
+    assert world.tree_ids() == []
 
 
 @pytest.fixture
@@ -301,6 +384,64 @@ async def test_closed_task_refuses_its_landed_team(world: TeamWorld) -> None:
     with pytest.raises(TeamAdmissionRefused) as refused:
         await world.admit(world.child(task), task, team_id=team.team_id)
     assert refused.value.code == "team_task_closed"
+
+
+@pytest.mark.parametrize("checkout_mode", ["worktree", "none"])
+async def test_escalated_task_refuses_admission_before_creating_a_tree(
+    world: TeamWorld, checkout_mode: str
+) -> None:
+    task = world.case.task(TITLE)
+    caller = world.child(task)
+    world.case.db.execute(
+        "UPDATE tasks SET escalated_at = CURRENT_TIMESTAMP, escalation_reason = %s WHERE id = %s",
+        ("Awaiting a product decision", task.id),
+    )
+    trees, branches = world.tree_ids(), world.task_branches()
+
+    with pytest.raises(TeamAdmissionRefused, match="not actionable") as refused:
+        await world.admit(caller, task, checkout_mode=checkout_mode)
+
+    assert refused.value.code == "team_task_not_actionable"
+    assert world.tree_ids() == trees
+    assert world.task_branches() == branches
+    assert not world.admit_step_output(caller).get("team")
+
+
+@pytest.mark.parametrize("checkout_mode", ["worktree", "none"])
+async def test_task_escalated_while_admission_waits_creates_no_team(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, checkout_mode: str
+) -> None:
+    task = world.case.task(TITLE)
+    caller = world.child(task)
+    trees, branches = world.tree_ids(), world.task_branches()
+    task_read = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    open_task = team_lifecycle._open_task
+
+    def observe_task_read(db: HubDatabase, ref: str, project_id: str) -> Task:
+        snapshot = open_task(db, ref, project_id)
+        loop.call_soon_threadsafe(task_read.set)
+        return snapshot
+
+    monkeypatch.setattr(team_lifecycle, "_open_task", observe_task_read)
+    async with asyncio.timeout(10):
+        async with world.case.db.advisory_lock(MainCheckoutLanding(world.case.project_id)):
+            admission = asyncio.create_task(world.admit(caller, task, checkout_mode=checkout_mode))
+            await task_read.wait()
+            await asyncio.to_thread(
+                world.case.db.execute,
+                "UPDATE tasks SET escalated_at = CURRENT_TIMESTAMP, escalation_reason = %s "
+                "WHERE id = %s",
+                ("Escalated while admission waited", task.id),
+            )
+
+        with pytest.raises(TeamAdmissionRefused, match="not actionable") as refused:
+            await admission
+
+    assert refused.value.code == "team_task_not_actionable"
+    assert world.tree_ids() == trees
+    assert world.task_branches() == branches
+    assert not world.admit_step_output(caller).get("team")
 
 
 async def test_treeless_team_admits_without_a_tree(world: TeamWorld) -> None:

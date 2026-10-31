@@ -211,9 +211,11 @@ class AgyManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBa
         self,
         tool_name: str,
         tool_input: object,
+        *,
+        tool_execution_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Native ghook is the sole BEFORE_TOOL authority for AGY (plan row 5.3.5)."""
-        del tool_name, tool_input
+        del tool_name, tool_input, tool_execution_id
         return None
 
     async def _apply_post_tool_lifecycle(
@@ -223,9 +225,11 @@ class AgyManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBa
         tool_response: Any,
         *,
         is_error: bool | None = None,
+        tool_execution_id: str | None = None,
+        pending: bool = False,
     ) -> dict[str, Any] | None:
         """Native ghook is the sole AFTER_TOOL authority for AGY (plan row 5.3.5)."""
-        del tool_name, tool_input, tool_response, is_error
+        del tool_name, tool_input, tool_response, is_error, tool_execution_id, pending
         return None
 
     async def send_message(

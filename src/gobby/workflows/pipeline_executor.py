@@ -804,7 +804,12 @@ class PipelineExecutor(
                 return execution
 
             except asyncio.CancelledError:
-                self._close_pipeline_session(pipeline_session_id, caller_session_id)
+                # A resumable pipeline re-registers this child when it resumes, and its
+                # steps spawn under it; a closed child would refuse every reserved spawn.
+                # Cancellers that end the execution instead (cancel_pipeline, a cron
+                # timeout) close the child themselves.
+                if not pipeline.resume_on_restart:
+                    self._close_pipeline_session(pipeline_session_id, caller_session_id)
                 raise
 
             except ApprovalRequired:

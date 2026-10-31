@@ -203,6 +203,19 @@ pub async fn run_live_loop<B: Backend>(
     }
 
     while workspace.exit_reason().is_none() {
+        // Reads that events and focus changes flagged, issued before the next select.
+        jobs.drain_pending_refetch(workspace, chrome);
+        // A roster that landed after a switch installed panes no attach or
+        // focus has reached yet, as the startup roster's answer does below.
+        if workspace.roster_landed
+            && reconnect_job.is_none()
+            && reconnect_stage.is_none()
+            && supervisor.next_attempt_at().is_none()
+        {
+            workspace.roster_landed = false;
+            recoveries.extend(workspace.start_due_attaches(Instant::now(), true));
+            request_focused_control(workspace, chrome);
+        }
         // The click and the keystroke only record the control request they
         // need; it is started here so neither ever waits on the daemon
         // (#22573).
@@ -295,16 +308,7 @@ pub async fn run_live_loop<B: Backend>(
                             workspace.queue_initial_sidebar_fetch();
                             sync_live_chrome(workspace, chrome);
                             recoveries.extend(workspace.start_due_attaches(Instant::now(), true));
-                            if let Some(pane_id) = chrome.focused_pane() {
-                                workspace.focus = Some(pane_id);
-                                if !workspace.pane(pane_id).is_held()
-                                    && !workspace.pane(pane_id).take_back
-                                {
-                                    // The loop sends this once the pane's new
-                                    // attachment becomes live.
-                                    workspace.request_control(pane_id, false);
-                                }
-                            }
+                            request_focused_control(workspace, chrome);
                             events = Some(receiver);
                             supervisor.handshake_complete(generation);
                             chrome.connection.retry_at = None;
@@ -361,10 +365,18 @@ pub async fn run_live_loop<B: Backend>(
                         }
                         sync_live_chrome(workspace, chrome);
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        if let Err(error) = workspace.apply_live_event(DaemonEvent::Lagged).await {
-                            begin_reconnect(workspace, chrome, &mut supervisor, &daemon, error);
-                        }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        // The raw receiver is the only place the skipped count
+                        // exists; the decoded `DaemonEvent::Lagged` path has none.
+                        tracing::warn!(
+                            source = "websocket receiver",
+                            skipped,
+                            generation = workspace.daemon().generation().0,
+                            elapsed_ms = u64::try_from(workspace.last_event_at.elapsed().as_millis())
+                                .unwrap_or(u64::MAX),
+                            "event stream lagged; refetching roster, attention and sidebar"
+                        );
+                        workspace.repair_lag();
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         events = None;
@@ -441,7 +453,11 @@ pub async fn run_live_loop<B: Backend>(
             result = await_relist_job(&mut relist_job), if relist_job.is_some() => {
                 relist_job = None;
                 match result {
-                    Ok(relist) => workspace.apply_relist(relist),
+                    Ok(relist) => {
+                        if workspace.apply_relist(relist) {
+                            workspace.roster_landed = true;
+                        }
+                    }
                     Err(error) => begin_reconnect(workspace, chrome, &mut supervisor, &daemon, error),
                 }
                 sync_live_chrome(workspace, chrome);
@@ -673,6 +689,17 @@ pub async fn run_live_loop<B: Backend>(
     match (loop_error, shutdown_result) {
         (Some(error), _) => Err(error),
         (None, result) => result,
+    }
+}
+
+/// Asks for control of the focused pane, unless another client holds it.
+fn request_focused_control(workspace: &mut Workspace<LiveDaemon>, chrome: &Chrome) {
+    if let Some(pane_id) = chrome.focused_pane() {
+        workspace.focus = Some(pane_id);
+        if !workspace.pane(pane_id).is_held() && !workspace.pane(pane_id).take_back {
+            // The loop sends this once the pane's new attachment becomes live.
+            workspace.request_control(pane_id, false);
+        }
     }
 }
 

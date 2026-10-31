@@ -166,6 +166,12 @@ class HookEvent:
     protocol_cursor: str | int | None = None
 
 
+def tool_execution_id(event: HookEvent) -> str | None:
+    """Correlate native and wrapped tool observations using their durable execution ID."""
+    outer_id = event.data.get("verification_execution_id")
+    return outer_id if isinstance(outer_id, str) and outer_id else event.request_id
+
+
 def correlate_hook_lifecycle(event: HookEvent) -> HookEvent:
     """Populate common provider correlation fields from normalized event data."""
 

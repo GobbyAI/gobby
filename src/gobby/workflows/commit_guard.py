@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
@@ -16,6 +17,7 @@ from psycopg_pool import PoolTimeout
 
 from gobby.hooks._path_scope import checkout_root
 from gobby.hooks.checkout_reads import event_machine_id
+from gobby.hooks.events import tool_execution_id
 from gobby.hooks.normalization import is_shell_tool, tool_input_error
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.daemon_git import GitFailed, GitOk, GitResult, daemon_git, parse_porcelain_v1_z
@@ -39,6 +41,11 @@ from gobby.workflows.git_commit_parsing import (
     GitCommitInvocation,
     parse_git_commit_invocations,
     resolve_commit_inspect_cwd,
+)
+from gobby.workflows.git_operation_ownership import (
+    GitOperationInspectionError,
+    latest_edit_time,
+    operation_exemptions,
 )
 from gobby.workflows.ledger_reconcile import (
     SESSION_DIRTY_FILE_CHECKOUTS_VARIABLE,
@@ -188,7 +195,11 @@ async def foreign_staged_commit_conflict(
                     ) from exc
             owners = owners_by_checkout[checkout_root]
             if not owners:
-                continue
+                variables = await asyncio.to_thread(
+                    SessionVariableManager(db).get_variables, session_id
+                )
+                if not overlapped_worktree_paths(variables, checkout_root):
+                    continue
 
             inspect_cwd = resolve_commit_inspect_cwd(
                 invocation,
@@ -240,15 +251,38 @@ async def foreign_staged_commit_conflict(
         conflicts: set[ForeignPathOwner] = set()
         for checkout_root, owned_candidates in candidates_by_checkout.items():
             owners = owners_by_checkout[checkout_root]
+            variables = await asyncio.to_thread(
+                SessionVariableManager(db).get_variables, session_id
+            )
+            operation_candidates = await _operation_paths(checkout_root)
+            overlapped_operation = (
+                owned_candidates
+                & operation_candidates
+                & overlapped_worktree_paths(variables, checkout_root)
+            )
+            if overlapped_operation:
+                return (
+                    "Commit blocked: Git operation paths have ambiguous overlapping writes: "
+                    + ", ".join(sorted(overlapped_operation))
+                    + ". Resolve their ownership before committing."
+                )
+            operation_paths, protected = await operation_exemptions(
+                variables, checkout_root, operation_candidates, owners
+            )
             current_owned = await asyncio.to_thread(
                 _current_owned_paths, db, session_id, checkout_root
             )
+            current_owned = {
+                path
+                for path in current_owned
+                if not any(task_edit_path_covers(path, foreign) for foreign in protected)
+            }
             owned_candidates = {
                 path
                 for path in owned_candidates
                 if not any(task_edit_path_covers(own, path) for own in current_owned)
             }
-            owned_candidates -= await _operation_paths(checkout_root)
+            owned_candidates -= operation_paths
             scoped_owners = scope_foreign_owners(owners, owned_candidates, current_owned)
             dirty_paths = await _dirty_owned_paths_releasing_clean(
                 db,
@@ -260,7 +294,12 @@ async def foreign_staged_commit_conflict(
                 raise DirtyEditOwnershipInspectionError("git status unavailable for owned paths")
             conflicts.update(owner for path in dirty_paths for owner in scoped_owners.get(path, ()))
         return format_conflict_reason(conflicts) if conflicts else ""
-    except DirtyEditOwnershipInspectionError as exc:
+    except (
+        DirtyEditOwnershipInspectionError,
+        GitOperationInspectionError,
+        psycopg.OperationalError,
+        PoolTimeout,
+    ) as exc:
         logger.warning(
             "Cross-session commit ownership inspection failed",
             extra={"session_id": session_id, "project_id": project_id},
@@ -280,6 +319,7 @@ async def foreign_dirty_edit_conflict(
 ) -> str:
     """Refuse first-touch writes to dirt, regardless of task claim ownership."""
     data = event.data if isinstance(event.data, dict) else {}
+    native_write = not is_shell_tool(data.get("tool_name"))
     if data.get("canonical_tool_kind") != "write":
         return ""
     try:
@@ -311,8 +351,35 @@ async def foreign_dirty_edit_conflict(
                 root,
                 session_dirty_file_set_for_checkout(variables, root),
             )
+            owners = await asyncio.to_thread(
+                _live_path_owners,
+                db,
+                checkout_root=root,
+                paths=rels,
+                exclude_session_id=session_id,
+            )
+            operation_paths, protected = await operation_exemptions(
+                variables, root, await _operation_paths(root), owners
+            )
+            own = {
+                path
+                for path in own
+                if not any(task_edit_path_covers(path, foreign) for foreign in protected)
+            }
             # An overlapped path stays foreign even when this session's own record matches it.
             overlapped_here = overlapped_worktree_paths(variables, root)
+            # A native write may clear the holder's stranded record once no call is in flight;
+            # shell writes and commits stay refused under overlap.
+            clearable = (
+                native_write
+                and bool(overlapped_here)
+                and not await asyncio.to_thread(
+                    SessionVariableManager(db).has_calls_in_flight,
+                    root,
+                    time.time(),
+                    tool_execution_id(event),
+                )
+            )
             candidates = {
                 rel
                 for rel in rels
@@ -320,20 +387,12 @@ async def foreign_dirty_edit_conflict(
             }
             if not candidates:
                 continue
-            operation_paths = await _operation_paths(root)
             candidates -= operation_paths
             if not candidates:
                 continue
             dirty = await task_dirty_paths_async(candidates, root)
             if dirty is None:
                 return format_unverified_dirty_edit_reason(candidates)
-            owners = await asyncio.to_thread(
-                _live_path_owners,
-                db,
-                checkout_root=root,
-                paths=candidates,
-                exclude_session_id=session_id,
-            )
             scoped = scope_foreign_owners(owners, candidates, own)
             clean = {
                 path
@@ -366,12 +425,13 @@ async def foreign_dirty_edit_conflict(
                 holders = [
                     owner
                     for owner in overlapping
-                    if (owner.owner_task_id or owner.ledger_task_id) not in own_tasks
+                    if path in protected
+                    or (owner.owner_task_id or owner.ledger_task_id) not in own_tasks
                 ]
                 if holders:
                     conflicts.update(replace(owner, path=path) for owner in holders)
                 elif overlapped_path:
-                    if path not in approved:
+                    if path not in approved and not clearable:
                         root_overlapped.add(path)
                 elif not (
                     overlapping
@@ -390,7 +450,7 @@ async def foreign_dirty_edit_conflict(
             f"(database ownership inspection failed: {exc}). "
             "Fix that cause, or retry once the daemon and repository are available."
         )
-    except DirtyEditOwnershipInspectionError as exc:
+    except (DirtyEditOwnershipInspectionError, GitOperationInspectionError) as exc:
         logger.warning("Cross-session dirty edit ownership inspection failed", exc_info=True)
         return (
             f"Edit blocked: Gobby could not verify dirty-path ownership ({exc}). "
@@ -527,6 +587,8 @@ def _live_path_owners(
                 "task_edited_file_checkouts",
                 "task_live_edit_starts",
                 "task_selection_history",
+                "task_edited_checkout_times",
+                "session_unclaimed_edits",
             ),
         )
         held: AbstractSet[str] = session_dirty_file_set_for_checkout(variables, checkout_root)
@@ -578,6 +640,7 @@ def _live_path_owners(
                     owner_session_id=owner_session_id,
                     owner_task_id=task_id,
                     ledger_task_id=ledger_owners.get(path),
+                    edited_at=latest_edit_time(variables, checkout_root, path),
                 )
             )
     return {path: tuple(holders) for path, holders in owners.items()}
@@ -618,7 +681,9 @@ def _current_owned_paths(db: HubDatabase, session_id: str, checkout_root: str) -
         raise DirtyEditOwnershipInspectionError(
             f"database ownership inspection failed: {exc}"
         ) from exc
-    return session_dirty_file_set_for_checkout(variables, checkout_root)
+    return content_recorded_paths(
+        variables, checkout_root, session_dirty_file_set_for_checkout(variables, checkout_root)
+    )
 
 
 def _release_clean_ledger_entries(

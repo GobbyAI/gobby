@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.workflows import task_claim_state
+from gobby.workflows.checkout_fingerprint import path_fingerprints
 from gobby.workflows.task_claim_state import (
     active_task_id_for_edit,
     add_claimed_task,
@@ -386,3 +387,57 @@ class TestTargetTaskHasEdits:
         variables: dict[str, Any] = {"task_edited_files": {"task-1": []}}
 
         assert target_task_has_edits(variables, "task-1") is False
+
+
+class TestAdoptUnclaimedEdits:
+    """A session's pre-claim write is adopted only when no live claim holds its path."""
+
+    def _pending_write(self, tmp_path: Path, **overrides: Any) -> tuple[dict[str, Any], str]:
+        root = str(tmp_path)
+        (tmp_path / "shared.py").write_text("rewritten before the claim\n")
+        digest = path_fingerprints(tmp_path, ["shared.py"])["shared.py"]
+        variables: dict[str, Any] = {
+            "session_dirty_file_checkouts": {root: ["shared.py"]},
+            "session_unclaimed_edits": {
+                root: {"shared.py": {"digest": digest, "edited_at": 100.0}}
+            },
+            # The earlier claim committed shared.py, reconciled it clean and released it.
+            "task_edited_file_checkouts": {"old": {root: ["shared.py"]}},
+            "task_live_edit_starts": {},
+        }
+        variables.update(overrides)
+        return variables, root
+
+    def test_pre_claim_rewrite_adopted_after_reconciled_old_claim(self, tmp_path: Path) -> None:
+        variables, root = self._pending_write(tmp_path)
+
+        task_claim_state.adopt_unclaimed_edits(variables, "new")
+
+        assert variables["session_unclaimed_edits"] is None
+        assert variables["task_live_edit_starts"]["new"][root] == {"shared.py": 100.0}
+        assert variables["task_edited_file_checkouts"]["new"][root] == ["shared.py"]
+
+    def test_live_interval_of_another_claim_still_holds_the_path(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        variables, _ = self._pending_write(
+            tmp_path,
+            claimed_tasks={"old": "#1", "new": "#2"},
+            task_live_edit_starts={"old": {root: {"shared.py": 50.0}}},
+        )
+
+        task_claim_state.adopt_unclaimed_edits(variables, "new")
+
+        assert variables["session_unclaimed_edits"] is None
+        assert "shared.py" not in variables["task_live_edit_starts"].get("new", {}).get(root, {})
+        assert variables["task_live_edit_starts"]["old"][root] == {"shared.py": 50.0}
+
+    def test_content_changed_after_the_pre_claim_write_is_not_adopted(self, tmp_path: Path) -> None:
+        variables, root = self._pending_write(tmp_path)
+        (tmp_path / "shared.py").write_text("changed again after the write\n")
+
+        task_claim_state.adopt_unclaimed_edits(variables, "new")
+
+        assert variables["session_unclaimed_edits"] is None
+        assert "shared.py" not in variables.get("task_live_edit_starts", {}).get("new", {}).get(
+            root, {}
+        )

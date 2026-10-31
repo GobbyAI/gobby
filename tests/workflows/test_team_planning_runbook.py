@@ -16,6 +16,18 @@ PIPELINE = (
     / "src/gobby/install/shared/workflows/pipelines/team-planning.yaml"
 )
 SEAT_NAMES = ("plan-writer", "plan-adversary", "plan-enhancer")
+STEP_ORDER = (
+    "guard",
+    "target",
+    "planning-children-count",
+    "planning-children",
+    "planning-child",
+    "plan-writer",
+    "plan-adversary",
+    "plan-enhancer",
+    "notify-writer",
+    "arrange",
+)
 
 
 def _definition() -> PipelineDefinition:
@@ -31,17 +43,25 @@ def _context(definition: PipelineDefinition, seats: str) -> dict[str, Any]:
         project_path="/pilot/shared-checkout",
         report_to="gobby#14972",
     )
-    guard_output = {"tab_title": "Team Planning - #25186", "launch": seats.split(",")}
+    guard_output = {
+        "tab_title": "Team Planning - #25186",
+        "tab_exists": False,
+        "launch": seats.split(","),
+    }
     return {
         "inputs": inputs,
-        "steps": {"guard": {"output": guard_output}},
+        "steps": {
+            "guard": {"output": guard_output},
+            "target": {"output": {"title": "Planning runbook"}},
+            "planning-child": {"output": {"ref": "#25400"}},
+        },
         "invocation_id": "pilot-run",
     }
 
 
 def test_team_planning_launches_enhancer_seat() -> None:
     definition = _definition()
-    assert [step.id for step in definition.steps] == ["guard", *SEAT_NAMES, "arrange"]
+    assert [step.id for step in definition.steps] == list(STEP_ORDER)
     assert "plan-enhancer" in definition.inputs["seats"]["description"]
     for name in ("provider", "model", "reasoning_effort"):
         assert f"plan_enhancer_{name}" in definition.inputs

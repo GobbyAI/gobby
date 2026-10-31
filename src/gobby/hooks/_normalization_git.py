@@ -339,6 +339,198 @@ def _checkout_probe(git_cwd: str) -> Path:
     return Path(git_cwd) if checkout_reads.node_origin() else Path(git_cwd).resolve()
 
 
+def _git_apply_flags(arguments: list[str]) -> set[str] | None:
+    """Prove apply options without treating their values or operands as flags."""
+    value_options = {
+        "--include",
+        "--exclude",
+        "--directory",
+        "--whitespace",
+        "--build-fake-ancestor",
+        "-p",
+        "-C",
+    }
+    switches = {
+        "--stat",
+        "--numstat",
+        "--summary",
+        "--check",
+        "--index",
+        "--cached",
+        "--apply",
+        "--3way",
+        "--ours",
+        "--theirs",
+        "--union",
+        "--intent-to-add",
+        "--unsafe-paths",
+        "--allow-empty",
+        "--no-add",
+        "--reverse",
+        "--reject",
+        "--binary",
+        "--allow-binary-replacement",
+        "--inaccurate-eof",
+        "--recount",
+        "--ignore-space-change",
+        "--ignore-whitespace",
+        "--verbose",
+        "--quiet",
+        "--help",
+        "-3",
+        "-N",
+        "-R",
+        "-z",
+        "-v",
+        "-q",
+        "-h",
+    }
+    if any(
+        _contains_unexpanded_shell_reference(argument)
+        or any(character in argument for character in "*?[{}")
+        for argument in arguments
+    ):
+        return None
+    flags: set[str] = set()
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        index += 1
+        if argument == "--":
+            break
+        if not argument.startswith("-") or argument == "-":
+            continue
+        if argument.startswith("--"):
+            option, separator, value = argument.partition("=")
+            if option in value_options:
+                if not separator:
+                    if index == len(arguments):
+                        return None
+                    value = arguments[index]
+                    index += 1
+                if not value:
+                    return None
+            elif option not in switches or separator:
+                return None
+            flags.add(option)
+            continue
+        for offset, character in enumerate(argument[1:], start=1):
+            option = f"-{character}"
+            if option in value_options:
+                value = argument[offset + 1 :]
+                if not value:
+                    if index == len(arguments):
+                        return None
+                    value = arguments[index]
+                    index += 1
+                if not value.isdecimal():
+                    return None
+                flags.add(option)
+                break
+            if option not in switches:
+                return None
+            flags.add(option)
+    return flags
+
+
+def _classify_git_apply(arguments: list[str], unknown_selector: bool) -> _ShellSegmentMetadata:
+    flags = _git_apply_flags(arguments)
+    unknown_write = _ShellSegmentMetadata("write", repo_mutation=True)
+    if flags is None or unknown_selector:
+        return unknown_write
+    if flags & {"-h", "--help"}:
+        return _ShellSegmentMetadata("execute")
+    # This writes a separate index file even in inspection modes. Its destination
+    # is deliberately left unproven until it has its own complete scope handling.
+    if "--build-fake-ancestor" in flags:
+        return unknown_write
+    if "--apply" not in flags and flags & {"--check", "--stat", "--numstat", "--summary"}:
+        return _ShellSegmentMetadata("execute")
+    if "--reject" in flags:
+        # Rejected hunks create worktree .rej files even with --cached.
+        return unknown_write
+    if "--cached" in flags:
+        # Like git add/restore --staged: require a task, without claiming file edits.
+        return _ShellSegmentMetadata("execute", repo_mutation=True)
+    return unknown_write
+
+
+def git_command_is_read_only(parts: list[str]) -> bool:
+    """Prove ordinary Git inspection without resolving executable aliases or config."""
+    if parts[1:] in (["--version"], ["--help"], ["--exec-path"]):
+        return True
+    command, _, _ = git_command_parts(parts, None, None)
+    # Only global options configure execution; `git log -c` selects combined diffs.
+    index = 1
+    command_index = len(parts) - len(command) + 1
+    while index < command_index:
+        word = parts[index]
+        if word.startswith(("-c", "--config-env", "--exec-path")):
+            return False
+        index += (
+            2 if word in {"-C", "--git-dir", "--work-tree", "--namespace", "--exec-path"} else 1
+        )
+    operation = command[1] if len(command) > 1 else ""
+    arguments = command[2:]
+    if any(word == "--ext-diff" or word.startswith("--output") for word in arguments):
+        return False
+    if operation == "ls-remote":
+        flags, _ = _git_option_flags(arguments, {"-o", "--server-option", "--sort"}, set())
+        if any(
+            flag.startswith("--")
+            and any(option.startswith(flag) for option in ("--upload-pack", "--exec"))
+            for flag in flags
+        ):
+            return False
+    if operation == "grep":
+        flags, _ = _git_option_flags(
+            arguments,
+            {"-e", "-f", "-A", "-B", "-C", "-m", "--max-count", "--threads", "--max-depth"},
+            set(),
+        )
+        if "-O" in flags or any(
+            flag.startswith("--") and "--open-files-in-pager".startswith(flag) for flag in flags
+        ):
+            return False
+    if operation == "worktree":
+        return arguments[:1] == ["list"] and all(
+            word in {"--porcelain", "-v", "--verbose"} for word in arguments[1:]
+        )
+    if operation in {"branch", "tag"}:
+        return not arguments or all(
+            word in {"--list", "--show-current", "--all", "--remotes", "-a", "-r", "-v", "-vv"}
+            for word in arguments
+        )
+    return operation in {
+        "annotate",
+        "blame",
+        "cat-file",
+        "check-attr",
+        "check-ignore",
+        "check-mailmap",
+        "count-objects",
+        "describe",
+        "diff",
+        "diff-files",
+        "diff-index",
+        "diff-tree",
+        "for-each-ref",
+        "grep",
+        "log",
+        "ls-files",
+        "ls-remote",
+        "ls-tree",
+        "merge-base",
+        "name-rev",
+        "rev-list",
+        "rev-parse",
+        "show",
+        "show-branch",
+        "show-ref",
+        "status",
+    }
+
+
 def classify_git_mutation(
     parts: list[str], cwd: str | None, base_cwd: Path | None
 ) -> _ShellSegmentMetadata | None:
@@ -496,9 +688,7 @@ def classify_git_mutation(
     ):
         return _ShellSegmentMetadata("execute", repo_mutation=True)
     if operation == "apply":
-        if any(flag in arguments for flag in {"--check", "--stat", "--numstat"}):
-            return _ShellSegmentMetadata("execute")
-        return _ShellSegmentMetadata("write", repo_mutation=True)
+        return _classify_git_apply(arguments, unknown)
     if operation in {"add", "checkout", "restore", "rm", "mv"}:
         if unknown:
             return _ShellSegmentMetadata("write", repo_mutation=True)
@@ -540,6 +730,15 @@ def classify_git_mutation(
             paths=tuple(_rebase_shell_paths(paths, git_cwd)),
             repo_mutation=True,
         )
+    operation_extra: dict[str, Any] = {}
+    if (
+        operation in {"merge", "rebase", "cherry-pick", "revert", "pull"}
+        and not unknown
+        and git_cwd
+    ):
+        root = checkout_root(_checkout_probe(git_cwd))
+        if root is not None:
+            operation_extra["canonical_git_operation_roots"] = [str(root)]
     if operation == "revert" or (operation == "cherry-pick" and recovery):
         if not unknown and git_cwd and recovery:
             return _ShellSegmentMetadata(
@@ -547,9 +746,12 @@ def classify_git_mutation(
                 paths=(git_cwd,),
                 repo_mutation=True,
                 extra={
+                    **operation_extra,
                     "canonical_edit_file_paths": [],
                     "canonical_git_sequencer_scope_paths": [git_cwd],
                 },
             )
-        return _ShellSegmentMetadata("write", repo_mutation=True)
+        return _ShellSegmentMetadata("write", repo_mutation=True, extra=operation_extra)
+    if operation_extra:
+        return _ShellSegmentMetadata("execute", repo_mutation=True, extra=operation_extra)
     return None

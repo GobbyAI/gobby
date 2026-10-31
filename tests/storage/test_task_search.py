@@ -1,7 +1,6 @@
 """Tests for task search functionality."""
 
 from pathlib import Path
-from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -255,19 +254,16 @@ class TestTaskSearchBackend:
         """Task search uses the shared sanitizer without losing phrase syntax."""
         from gobby.storage.tasks._search import TaskSearchBackend
 
-        class FakePostgresDB:
-            dialect = "postgres"
+        db = MagicMock(spec=HubDatabase, dialect="postgres")
+        transaction = db.transaction.return_value.__enter__.return_value
+        transaction.execute.return_value.fetchall.return_value = []
 
-            def __init__(self) -> None:
-                self.params: tuple[Any, ...] = ()
-
-            def fetchall(self, _sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
-                self.params = params
-                return []
-
-        db = FakePostgresDB()
-        assert TaskSearchBackend(cast(HubDatabase, db)).search('"agent-prompt cap"', top_k=10) == []
-        assert db.params == ('"agent-prompt cap"', '"agent-prompt cap"', 10)
+        assert TaskSearchBackend(db).search('"agent-prompt cap"', top_k=10) == []
+        assert transaction.execute.call_args.args[1] == (
+            '"agent-prompt cap"',
+            '"agent-prompt cap"',
+            10,
+        )
 
     def test_pg_search_query_neutralizes_boolean_operators_outside_phrases(self) -> None:
         """Boolean-looking terms remain literal search terms outside phrases."""
@@ -298,7 +294,11 @@ class TestTaskSearchBackend:
         from gobby.storage.tasks._search import TaskSearchBackend
 
         database = MagicMock(spec=HubDatabase, dialect="postgres")
-        database.fetchall.side_effect = RuntimeError("could not parse query string: `content:(-)`")
+        transaction = database.transaction.return_value.__enter__.return_value
+        transaction.execute.side_effect = [
+            None,
+            RuntimeError("could not parse query string: `content:(-)`"),
+        ]
 
         with pytest.raises(SearchQuerySyntaxError, match="plain words") as exc_info:
             TaskSearchBackend(database).search("alpha", top_k=5)
@@ -311,7 +311,8 @@ class TestTaskSearchBackend:
         from gobby.storage.tasks._search import TaskSearchBackend
 
         database = MagicMock(spec=HubDatabase, dialect="postgres")
-        database.fetchall.return_value = []
+        transaction = database.transaction.return_value.__enter__.return_value
+        transaction.execute.return_value.fetchall.return_value = []
 
         assert TaskSearchBackend(database).search("alpha", top_k=5) == []
 
@@ -320,7 +321,8 @@ class TestTaskSearchBackend:
         from gobby.storage.tasks._search import TaskSearchBackend
 
         database = MagicMock(spec=HubDatabase, dialect="postgres")
-        database.fetchall.side_effect = RuntimeError("database connection lost")
+        transaction = database.transaction.return_value.__enter__.return_value
+        transaction.execute.side_effect = [None, RuntimeError("database connection lost")]
 
         with pytest.raises(RuntimeError, match="connection lost"):
             TaskSearchBackend(database).search("alpha", top_k=5)
@@ -334,45 +336,29 @@ class TestTaskSearchBackend:
         """
         from gobby.search.keyword import BM25SearchBackend
 
-        class FakePostgresDB:
-            dialect = "postgres"
-
-            def __init__(self) -> None:
-                self.sql = ""
-                self.params: tuple[Any, ...] = ()
-
-            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
-                self.sql = sql
-                self.params = params
-                return [{"id": "mem-a", "score": 3.0}]
-
-        db = FakePostgresDB()
+        db = MagicMock(spec=HubDatabase, dialect="postgres")
+        transaction = db.transaction.return_value.__enter__.return_value
+        transaction.execute.return_value.fetchall.return_value = [{"id": "mem-a", "score": 3.0}]
         results = BM25SearchBackend(db, "memories").search(
             "alpha", 5, filters={"project_id": "proj-1"}
         )
 
         assert [(hit.id, hit.score) for hit in results] == [("mem-a", 1.0)]
-        assert "deleted_at IS NULL" in db.sql
-        assert "(memories.project_id = %s OR memories.is_global IS TRUE)" in db.sql
+        sql, params = transaction.execute.call_args.args
+        assert "deleted_at IS NULL" in sql
+        assert "(memories.project_id = %s OR memories.is_global IS TRUE)" in sql
         # The active clause carries no bound parameter: two search-column terms, the
         # project_id filter, then the limit.
-        assert db.params == ("alpha", "alpha", "proj-1", 5)
+        assert params == ("alpha", "alpha", "proj-1", 5)
 
     def test_task_keyword_search_has_no_active_clause(self) -> None:
         """Tables without a soft-delete column (tasks) get no ``deleted_at`` clause."""
         from gobby.search.keyword import BM25SearchBackend
 
-        class FakePostgresDB:
-            dialect = "postgres"
+        db = MagicMock(spec=HubDatabase, dialect="postgres")
+        transaction = db.transaction.return_value.__enter__.return_value
+        transaction.execute.return_value.fetchall.return_value = [{"id": "task-a", "score": 1.0}]
+        results = BM25SearchBackend(db, "tasks").search("alpha", 5)
 
-            def __init__(self) -> None:
-                self.sql = ""
-
-            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
-                self.sql = sql
-                return [{"id": "task-a", "score": 1.0}]
-
-        db = FakePostgresDB()
-        BM25SearchBackend(db, "tasks").search("alpha", 5)
-
-        assert "deleted_at" not in db.sql
+        assert [(hit.id, hit.score) for hit in results] == [("task-a", 1.0)]
+        assert "deleted_at" not in transaction.execute.call_args.args[0]

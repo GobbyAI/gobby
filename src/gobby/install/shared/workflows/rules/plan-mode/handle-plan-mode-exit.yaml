@@ -16,15 +16,3 @@ rules:
       - type: set_variable
         variable: plan_skill_directive_delivered
         value: false
-
-  reset-plan-directive-on-resolved-mode-exit:
-    description: "Reset directive delivery after authoritative Plan Mode exit"
-    event: turn_start
-    enabled: true
-    priority: 9
-    agent_scope: [default]
-    when: "not variables.get('plan_mode') and variables.get('plan_skill_directive_delivered')"
-    effects:
-      - type: set_variable
-        variable: plan_skill_directive_delivered
-        value: false

@@ -23,6 +23,7 @@ from gobby.workflows.found_work_gate import (
 )
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -284,33 +285,24 @@ async def test_bundled_rule_blocks_interactive_sessions(temp_db: HubDatabase) ->
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("agent_type", "blocked"),
-    [
-        ("orchestrator", False),
-        ("assistant", False),
-        ("dev-manager", False),
-        ("triage", False),
-        ("release-manager", False),
-        ("reporter", False),
-        ("developer", True),
-        ("test-writer", True),
-        ("default", True),
-        (None, True),
-    ],
-)
-async def test_bundled_rule_exempts_coordinator_seats(
-    temp_db: HubDatabase, agent_type: str | None, blocked: bool
+@pytest.mark.parametrize("agent_type", ["orchestrator", "custom-coordinator"])
+@pytest.mark.parametrize("exempt", [False, True])
+async def test_bundled_rule_uses_definition_exemptions(
+    temp_db: HubDatabase, agent_type: str, exempt: bool
 ) -> None:
-    """Coordinator seats file work and never code it; every other agent type is gated."""
     sync_bundled_rules(temp_db, get_bundled_rules_path())
+    seed_seat(
+        temp_db,
+        agent_type,
+        include=["tag:default"],
+        exclude=["name:block-unclaimed-found-work"] if exempt else [],
+    )
     variables: dict[str, Any] = {
+        "_agent_type": agent_type,
         "_memory_initial_stop_checked": True,
         "is_spawned_agent": False,
         "stop_attempts": 0,
     }
-    if agent_type is not None:
-        variables["_agent_type"] = agent_type
     session_id = "11111111-1111-4111-8111-111111111111"
 
     response = await RuleEngine(temp_db).evaluate(
@@ -323,8 +315,8 @@ async def test_bundled_rule_exempts_coordinator_seats(
         },
     )
 
-    assert (response.decision == "block") is blocked
-    if blocked:
+    assert (response.decision == "block") is not exempt
+    if not exempt:
         assert "Filing is not a terminal state" in (response.reason or "")
 
 

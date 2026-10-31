@@ -503,13 +503,17 @@ call_tool("gobby-sessions", "register_session", {
 
 Terminal tools prefer the managed terminal runtime and fall back to tmux.
 Capture can fall back to transcript-tail evidence; inspect `via` and truncation
-metadata before treating it as a live screen. `send_keys` requires caller context,
-rejects autonomous agent-run callers, and permits only self, same-project, or
-ancestor/descendant targets. The bundled `block-cross-project-send-keys` rule
-enforces that target scope on `send_keys` and `capture_output` before dispatch,
-and a condition that fails to evaluate refuses the call. The bundled
-`block-web-chat-send-keys` rule refuses both tools to web-chat sessions. Use
-`gobby-agents:send_message` for messages.
+metadata before treating it as a live screen. `send_keys` requires caller context
+and the `send_keys` capability, which only the Orchestrator and Assistant
+definitions hold; the operator's unspawned terminal is exempt. It permits only
+self, same-project, or ancestor/descendant targets, and its target must show an
+idle agent CLI composer. The bundled `no-send-keys` rule enforces the capability
+gate. The bundled `block-cross-project-send-keys` rule enforces target scope on
+`send_keys` and `capture_output` before dispatch, and a condition that fails to
+evaluate refuses the call. The handler refuses bare shells, empty or dead
+terminals, sessions with no live agent CLI, draft or held composers, and
+credential prompts. The bundled `block-web-chat-send-keys` rule refuses both
+tools to web-chat sessions. Use `gobby-agents:send_message` for messages.
 `terminate_terminal` applies the same actor scope and is the explicit operation
 that may kill an external terminal; workspace close operations still release
 external terminals without killing them.

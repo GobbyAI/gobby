@@ -6,16 +6,16 @@ tagged `runbook` whose steps place agent seats. Find one with
 `gobby pipelines list --tag runbook`.
 
 Launch from an operator surface (CLI, web, gclient), an authorized cron
-`pipeline` job, or the Orchestrator seat; the Assistant seat launches only
-while the Orchestrator is down. Every other agent seat is blocked from
-`run_pipeline`, the exposed `pipeline:<name>` tools and a shell
-`gobby pipelines run`, and sends the request to Triage. Pass every
+`pipeline` job, or a definition whose installed rule selectors permit pipeline
+launches. The selected launch rules cover `run_pipeline`, exposed
+`pipeline:<name>` tools and shell `gobby pipelines run`; a refused seat sends
+the request to its authorized coordinator. Pass every
 project-specific value as an input, plus the runbook's entry under the project
 policy's `launch_defaults`.
 
-Admin is not a runbook. `/gobby admin` (`$gobby admin` in Codex) makes the
-typing pane the Orchestrator and opens the Assistant beside it in the same tab;
-`/gobby assistant` does the same from the Assistant's side.
+Cold start is separate from runbooks. Bare commands declared in an installed
+definition's `cold_start_commands` activate it and reuse or open its declared
+`cold_start_counterpart`. The bundled examples use `admin` and `assistant`.
 
 | Runbook | Seats | Required inputs |
 | --- | --- | --- |
@@ -25,8 +25,9 @@ typing pane the Orchestrator and opens the Assistant beside it in the same tab;
 
 ## Support
 
-Only the Assistant and Triage can message the Orchestrator, so Triage goes
-first: `seats=triage` with `report_to=<Orchestrator ref>`. Once Triage reports
+The bundled recipient policy requires `message_restricted_seats`, which the
+example Triage definition declares. Launch it first: `seats=triage` with
+`report_to=<Orchestrator ref>`. Once Triage reports
 its ref, run `support` again with `report_to=<Triage ref>`. Its guard skips each
 seat whose agent already runs live in the project on this machine, so a re-run
 launches only the missing seats into the one Support tab. The Orchestrator
@@ -48,6 +49,20 @@ line reaches the Orchestrator through Triage. Relaunch with `team_id=<TEAM>`,
 `fresh_reviewer=true`, `exclude_reviewers=<REVIEWERS>` and
 `report_to=<Dev Manager ref>`; only a fresh code reviewer launches, under the
 `fresh_reviewer_*` identity.
+
+For an epic, the four primary seats persist until the epic closes. Its bound Dev
+Manager may launch `devteam` for an open parallel leaf with
+`parent_team_id=<epic team UUID>` and `report_to=<Dev Manager ref>`. This creates a
+single-task Dev Pod with its own Test Writer, Developer and Code Reviewer on a
+sub-branch of epic main, in `Dev Pod - #<leaf>`. Do not pass the epic as `team_id`:
+that joins the primary team instead. Single-task teams cannot launch pods.
+
+Every leaf follows Dev Manager, Test Writer, Code Reviewer, Developer, Code
+Reviewer, Dev Manager, using the existing single-task review rounds. A pod's
+fresh reviewer joins its own `team_id`; a primary leaf's joins the epic team.
+The Dev Manager lands a leaf on epic main and closes it immediately. The daemon
+ends that pod's seats and removes its worktree; the epic's primary seats persist.
+The epic tip lands on the integration branch before the epic itself closes.
 
 ## Planning
 

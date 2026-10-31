@@ -18,7 +18,7 @@ from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.engine._offload import offload
-from gobby.workflows.step_binding import release_lost_binding
+from gobby.workflows.step_binding import pending_claim_handlers, release_lost_binding
 from gobby.workflows.step_instances import (
     AgentStepInstanceManager,
     StaleStepInstanceWriteError,
@@ -358,7 +358,7 @@ class EnforcementCompletionMixin:
                 if not handler_matches:
                     continue
             if handler.get("action") == "advance_seat":
-                from gobby.workflows.engine.seat_transitions import advance_seat
+                from gobby.workflows.engine.seat_transitions import SEAT_CONSUMED_KEY, advance_seat
 
                 changes = await offload(
                     advance_seat,
@@ -372,7 +372,8 @@ class EnforcementCompletionMixin:
                 )
                 for changed_name, changed_value in changes.items():
                     instance.variables[changed_name] = changed_value
-                    variables[changed_name] = changed_value
+                    if changed_name != SEAT_CONSUMED_KEY:
+                        variables[changed_name] = changed_value
                     vars_changed = True
                     await self._try_step_audit(
                         self._audit_step_set_variable,
@@ -494,6 +495,7 @@ class EnforcementCompletionMixin:
         claim_result = (
             tool_output.get("result") or tool_output if isinstance(tool_output, dict) else None
         )
+        early_claim_handlers = None
         if (
             not tool_failed
             and (mcp_server, mcp_tool_name) == ("gobby-tasks", "claim_task")
@@ -513,6 +515,7 @@ class EnforcementCompletionMixin:
                     return None
                 step = rebound_step
                 cas_token = (str(instance.id), instance.updated_at)
+            early_claim_handlers = pending_claim_handlers(instance)
         if not tool_failed:
             await self._try_step_audit(
                 self._audit_step_tool_call,
@@ -526,6 +529,8 @@ class EnforcementCompletionMixin:
             )
 
         handlers = step.on_mcp_error if tool_failed else step.on_mcp_success
+        if early_claim_handlers is not None:
+            handlers = early_claim_handlers
         handler_tool_input = self._step_handler_tool_input(tool_input, project_id=event.project_id)
 
         instance_mgr = self.instance_manager

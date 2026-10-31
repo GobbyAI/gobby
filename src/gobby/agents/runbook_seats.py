@@ -25,6 +25,7 @@ from gobby.storage.sessions import LIVE_SESSION_STATUSES, SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.utils.uuid_validation import parse_uuid_reference
+from gobby.workflows.agent_resolver import resolve_agent_with_row
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
 
 PIPELINE_CHILD_PREFIX = "pipeline-"
@@ -83,6 +84,7 @@ def check_runbook_seats(
     team_id: str | None = None,
     tab_title: str | None = None,
     task: str | None = None,
+    seat_models: Mapping[str, str | None] | None = None,
 ) -> AdmittedSeats:
     """Admit ``requested`` seats or raise ``RunbookSeatRefusal``.
 
@@ -101,6 +103,8 @@ def check_runbook_seats(
     reviewer's request still reports its team's live Dev Manager; only runs admitted to that team
     count. ``tab_title`` names the runbook tab; with ``task`` it becomes ``<tab_title> - #<seq>``.
     ``tab_exists`` says whether the workspace has that tab; two such tabs refuse.
+    ``seat_models`` maps each seat to the model its launch takes; with it, a launching seat that
+    has no model there and none on its agent definition refuses.
     """
     if (require_report_to and report_to is None) or (
         report_to is not None and not report_to.strip()
@@ -123,6 +127,7 @@ def check_runbook_seats(
             team_id=team_id,
             tab_title=tab_title,
             task=task,
+            seat_models=seat_models,
         )
     except RunbookSeatRefusal:
         raise
@@ -177,6 +182,7 @@ def _admit(
     team_id: str | None,
     tab_title: str | None,
     task: str | None,
+    seat_models: Mapping[str, str | None] | None,
 ) -> AdmittedSeats:
     session = stores.sessions.get(caller_session_id)
     if (
@@ -210,11 +216,43 @@ def _admit(
         live = _live_seats(stores, session, seats, team_id=None)
     else:
         live = {}
-    tab = _runbook_tab_title(stores.tasks, project_id, tab_title, task)
+    tab_task = task
+    if team_id is not None:
+        from gobby.agents.team_admission_records import team_binding
+
+        binding = team_binding(stores.tasks.db, team_id)
+        if binding is not None:
+            tab_task = binding.task_id
+            if binding.parent_team_id is not None:
+                if binding.tab_title is not None:
+                    tab_title = binding.tab_title
+                    tab_task = None  # The stored title already includes the task suffix.
+                managers = {
+                    seat.name
+                    for seat in catalogue
+                    if (
+                        resolved := resolve_agent_with_row(
+                            seat.agent, stores.tasks.db, project_id=project_id
+                        )
+                    )
+                    is not None
+                    and resolved[1].enabled
+                    and resolved[0].enabled
+                    and resolved[0].workflows.variables.get("team_manager") is True
+                }
+                seats = tuple(seat for seat in seats if seat.name not in managers)
+                parent_live = _live_seats(
+                    stores, session, catalogue, team_id=binding.parent_team_id
+                )
+                live.update({name: parent_live[name] for name in managers if name in parent_live})
+    launch = tuple(seat.name for seat in seats if not (skip_live_seats and seat.name in live))
+    if seat_models is not None:
+        _refuse_unmodeled_launches(stores.definitions, project_id, seats, launch, seat_models)
+    tab = _runbook_tab_title(stores.tasks, project_id, tab_title, tab_task)
     return AdmittedSeats(
         workspace_id=workspace_id,
         seats=seats,
-        launch=tuple(seat.name for seat in seats if not (skip_live_seats and seat.name in live)),
+        launch=launch,
         live=live,
         tab_title=tab,
         tab_exists=tab is not None and _tab_exists(stores.workspaces, workspace_id, tab),
@@ -394,3 +432,25 @@ def _refuse_unresolved_agents(
             unresolved.append(f"seat '{seat.name}' agent definition '{seat.agent}' is disabled")
     if unresolved:
         raise RunbookSeatRefusal("; ".join(unresolved))
+
+
+def _refuse_unmodeled_launches(
+    definitions: AgentDefinitionManager,
+    project_id: str,
+    seats: Sequence[CatalogueSeat],
+    launch: Sequence[str],
+    seat_models: Mapping[str, str | None],
+) -> None:
+    """Refuse a launching seat with neither a model input nor a model on its definition."""
+    unmodeled: list[str] = []
+    for seat in seats:
+        if seat.name not in launch or seat_models.get(seat.name):
+            continue
+        row = definitions.get_by_name(seat.agent, project_id=project_id)
+        if row is not None and not row.definition_json.get("model"):
+            unmodeled.append(
+                f"seat '{seat.name}' launches with no model: set its model input or a model "
+                f"on agent definition '{seat.agent}'"
+            )
+    if unmodeled:
+        raise RunbookSeatRefusal("; ".join(unmodeled))

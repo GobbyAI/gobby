@@ -870,7 +870,7 @@ class TestExecuteSpawn:
 
             # prepare_terminal_spawn must be called with source='codex' and the
             # caller's agent_run_id threaded through unchanged.
-            mock_preapprove.assert_called_once_with("codex", "/path")
+            mock_preapprove.assert_called_once_with("codex", "/path", ())
             mock_prepare.assert_not_called()
             assert call_order == ["preapprove"]
             assert request.provider == "codex"
@@ -1116,6 +1116,8 @@ class TestExecuteSpawn:
         """Test that Codex terminal spawn applies sandbox flags."""
         sandbox_config = SandboxConfig(enabled=True, mode="permissive")
         mock_session_manager = MagicMock()
+        # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
+        mock_session_manager._storage.db.fetchone.return_value = None
         request = SpawnRequest(
             prompt="Test",
             cwd="/path",
@@ -1272,6 +1274,8 @@ class TestExecuteSpawn:
     async def test_grok_terminal_spawn_applies_sandbox_config(self) -> None:
         """Grok spawn passes built-in sandbox profile flags."""
         mock_session_manager = MagicMock()
+        # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
+        mock_session_manager._storage.db.fetchone.return_value = None
         request = SpawnRequest(
             prompt="Test",
             cwd="/path",
@@ -1449,6 +1453,8 @@ class TestExecuteSpawn:
         from gobby.agents.srt_runtime import SandboxLaunch
 
         mock_session_manager = MagicMock()
+        # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
+        mock_session_manager._storage.db.fetchone.return_value = None
         request = SpawnRequest(
             prompt="Test",
             cwd="/repo",
@@ -1616,6 +1622,8 @@ class TestExecuteSpawnSandbox:
         """Test that sandbox_config is resolved and passed to the terminal runtime."""
         sandbox_config = SandboxConfig(enabled=True, mode="permissive")
         mock_session_manager = MagicMock()
+        # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
+        mock_session_manager._storage.db.fetchone.return_value = None
 
         # The seat's own folder is named from its session row, which spawn reads at spawn time.
         def fetch_session_row(sql: str, _params: object) -> MagicMock:
@@ -1966,7 +1974,7 @@ class TestExecuteSpawnErrorPaths:
             _runtime_of(request).spawn_error = "tmux failed"
             result = await execute_spawn(request)
 
-        mock_preapprove.assert_called_once_with("codex", "/path")
+        mock_preapprove.assert_called_once_with("codex", "/path", ())
         assert result.success is False
         assert "tmux failed" in (result.error or "")
 

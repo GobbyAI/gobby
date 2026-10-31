@@ -164,11 +164,21 @@ def monitor_harness(
         event_file = root / "events"
         event_file.write_text("")
         fake_log = root / "log.mjs"
+        # The child records its start before it announces readiness, so the
+        # monitor's ready signal implies the record exists. The slow-start stall
+        # sits between the two lines: a readiness-first child reports ready while
+        # the record is still missing for the whole stall.
+        stall = (
+            "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);\n"
+            if getattr(request, "param", None) == "slow-start"
+            else ""
+        )
         fake_log.write_text(
             f"#!{node}\n"
             "import { openSync, fstatSync, readSync, closeSync, appendFileSync } from 'node:fs';\n"
-            "console.log('Filtering the log data using test predicate');\n"
-            f"appendFileSync({json.dumps(str(root / 'starts'))}, 'start\\n');\n"
+            + f"appendFileSync({json.dumps(str(root / 'starts'))}, 'start\\n');\n"
+            + stall
+            + "console.log('Filtering the log data using test predicate');\n"
             f"const events = {json.dumps(str(event_file))};\n"
             "const fd = openSync(events, 'r'); let offset = 0; let pending = '';\n"
             "const owner = process.ppid;\n"
@@ -219,6 +229,12 @@ def monitor_harness(
             .replace("spawn('/usr/bin/log', [", f"spawn({json.dumps(str(fake_log))}, [")
             .replace("execFileAsync('/bin/ps',", f"execFileAsync({json.dumps(str(fake_ps))},")
             .replace("function sharedTransport(", "export function sharedTransport(")
+            .replace(
+                "const backlogLimit = 32 * 1024 * 1024",
+                "const backlogLimit = 32768"
+                if getattr(request, "param", None) == "small-backlog"
+                else "const backlogLimit = 32 * 1024 * 1024",
+            )
             .replace(
                 "const monitorRegistrationTimeoutMs = 30000",
                 f"const monitorRegistrationTimeoutMs = {request.param if isinstance(getattr(request, 'param', None), int) else 30000}",
@@ -298,7 +314,7 @@ def _wait_path(path: Path, *, absent: bool = False, minimum_bytes: int = 1) -> N
     pytest.fail(f"backlog path did not reach expected state: {path}")
 
 
-@pytest.mark.parametrize("monitor_harness", [None, "symlink-temp"], indirect=True)
+@pytest.mark.parametrize("monitor_harness", [None, "symlink-temp", "slow-start"], indirect=True)
 def test_one_stream_routes_complete_events_and_failure_closes_all(
     monitor_harness: MonitorHarness,
 ) -> None:

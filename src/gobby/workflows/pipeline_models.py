@@ -148,6 +148,8 @@ class PipelineDefinition(BaseModel):
     # Input/output schema
     inputs: dict[str, Any] = Field(default_factory=dict)
     outputs: dict[str, Any] = Field(default_factory=dict)
+    # Refuse run inputs that are undeclared or nest a value where a string input is declared
+    strict_inputs: bool = False
 
     # Pipeline steps
     steps: list[PipelineStep] = Field(default_factory=list)

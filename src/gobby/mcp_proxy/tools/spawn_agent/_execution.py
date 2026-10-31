@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Mapping
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import (
     SpawnCleanupOnce,
@@ -20,9 +22,29 @@ from gobby.mcp_proxy.tools.spawn_agent._response import build_spawn_response
 from gobby.mcp_proxy.tools.spawn_agent._runtime import _persist_spawn_runtime
 from gobby.mcp_proxy.tools.spawn_agent._step_state import apply_claimed_step_update
 from gobby.sessions.title_lifecycle import update_title_for_claim
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 
 logger = logging.getLogger(__name__)
+
+
+def _record_spawn_receipt(
+    db: HubDatabase, *, run_id: str, child_session_id: str, parent_session_id: str
+) -> None:
+    """Keep launch identity discoverable even when the caller loses the tool response."""
+    InterSessionMessageManager(db).create_message(
+        from_session=child_session_id,
+        to_session=parent_session_id,
+        content=(
+            f"Agent started: run {run_id}, session {child_session_id}. "
+            f"This receipt survives an interrupted spawn response. "
+            f'Use stop_agent(run_id="{run_id}") if this run is no longer wanted.'
+        ),
+        message_type="agent_started",
+        metadata_json=json.dumps({"run_id": run_id, "child_session_id": child_session_id}),
+        message_id=str(uuid5(NAMESPACE_URL, f"gobby:agent-started:{parent_session_id}:{run_id}")),
+    )
 
 
 def _is_team_manager(agent_body: Any) -> bool:
@@ -371,5 +393,12 @@ async def finalize_executed_spawn(
         reasoning=reasoning,
         terminal=terminal,
         placement=placement,
+    )
+    await asyncio.to_thread(
+        _record_spawn_receipt,
+        db,
+        run_id=run_id,
+        child_session_id=spawn_result.child_session_id,
+        parent_session_id=parent_session_id,
     )
     return response

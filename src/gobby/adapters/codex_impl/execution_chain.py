@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
+from gobby.adapters.codex_impl.cell_shell_reach import may_reach_shell, static_code
 from gobby.config.validation_detection import classify_validation_segments
 from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
 from gobby.hooks.normalization import normalize_tool_display_fields
@@ -41,10 +41,6 @@ _EXEC_COMMAND_LITERAL_RE = re.compile(
     r'(?:^|[{,])\s*(?:cmd|"cmd")\s*:\s*("(?:\\.|[^"\\])*")',
     re.DOTALL,
 )
-_EXEC_WORKDIR_LITERAL_RE = re.compile(
-    r'(?:^|[{,])\s*(?:workdir|"workdir")\s*:\s*("(?:\\.|[^"\\])*")',
-    re.DOTALL,
-)
 _EXEC_RESULT_CALL_RE = re.compile(r"\btools\.(?:exec_command|write_stdin)\s*\(")
 _AWAITED_TOOL_RESULT_RE = re.compile(r"await\s+tools\.[$\w]+\s*\(")
 _TOOL_RESULT_BINDING_RE = re.compile(
@@ -53,7 +49,7 @@ _TOOL_RESULT_BINDING_RE = re.compile(
 _OUTPUT_CALL_RE = re.compile(r"(?<![$\w.])(?:text|console\.[$\w]+)\s*\(")
 _STRINGIFY_RE = re.compile(r"JSON\.stringify\s*\(")
 _REPEATED_EXEC_SCAFFOLD_RE = re.compile(
-    r"\b(?:do|for|while)\b|\.(?:forEach|map|reduce)\s*\(|\bPromise\.all\s*\("
+    r"\b(?:do|for|while)\b|\.(?:forEach|map|reduce)\s*\(|\bPromise\.(?:all|allSettled|race|any)\s*\("
 )
 _WRITE_STDIN_CALL_RE = re.compile(r"\btools\.write_stdin\s*\(")
 _WRITE_STDIN_ARGS_RE = re.compile(
@@ -75,9 +71,10 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
         return command if isinstance(command, str) and command else None
     if not isinstance(arguments, str):
         return None
-    if len(_EXEC_COMMAND_CALL_RE.findall(arguments)) != 1:
+    call = _single_exec_command_argument(arguments)
+    if call is None:
         return None
-    matches = _EXEC_COMMAND_LITERAL_RE.findall(arguments)
+    matches = _EXEC_COMMAND_LITERAL_RE.findall(call)
     if len(matches) != 1:
         return None
     scaffold = arguments.replace(matches[0], '""', 1)
@@ -88,6 +85,18 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
     except (TypeError, ValueError):
         return None
     return command if isinstance(command, str) and command else None
+
+
+def _single_exec_command_argument(arguments: str) -> str | None:
+    """Return the argument text of the one exec_command call that is code, not string text."""
+    code = static_code(arguments)
+    if code is None:
+        return None
+    calls = list(_EXEC_COMMAND_CALL_RE.finditer(code))
+    if len(calls) != 1:
+        return None
+    opened = _call_argument(arguments, calls[0].end() - 1)
+    return opened[0] if opened is not None else None
 
 
 def _call_argument(source: str, open_paren: int) -> tuple[str, int] | None:
@@ -152,12 +161,14 @@ def _prints_tool_result(arguments: str, output: re.Match[str], names: list[str])
 
 
 def validate_functions_exec_wrapper(arguments: Any) -> str | None:
-    """Reject ambiguous nested shell wrappers before they execute."""
+    """Explain why a wrapper cannot supply literal shell provenance."""
     if isinstance(arguments, dict) and "arguments" in arguments:
         return validate_functions_exec_wrapper(arguments["arguments"])
     if not isinstance(arguments, str):
         return None
-    call_count = len(_EXEC_COMMAND_CALL_RE.findall(arguments))
+    code = static_code(arguments)
+    # Ambiguous syntax counts every raw occurrence, so a hidden call still refuses.
+    call_count = len(_EXEC_COMMAND_CALL_RE.findall(arguments if code is None else code))
     if call_count == 0:
         return None
     if call_count > 1:
@@ -170,6 +181,9 @@ def validate_functions_exec_wrapper(arguments: Any) -> str | None:
             "functions.exec shell wrapper command must be one statically attributable literal "
             "exec_command call"
         )
+    fields = _functions_exec_arguments(arguments)
+    if fields is None or ("workdir" in fields and _literal_workdir(fields["workdir"]) is None):
+        return "functions.exec shell wrapper arguments must be one statically attributable literal object"
     return None
 
 
@@ -188,33 +202,80 @@ def extract_direct_exec_command(arguments: Any) -> str | None:
 
 
 def extract_direct_exec_workdir(arguments: Any) -> str | None:
-    """Extract the absolute ``workdir`` of one direct Codex ``exec_command`` call."""
+    """Extract the literal ``workdir`` of one direct Codex ``exec_command`` call."""
     decoded = arguments
     if isinstance(arguments, str):
         try:
             decoded = json.loads(arguments)
         except (TypeError, ValueError):
             return None
-    return _absolute_path(decoded.get("workdir")) if isinstance(decoded, dict) else None
+    return _literal_workdir(decoded.get("workdir")) if isinstance(decoded, dict) else None
 
 
 def extract_functions_exec_workdir(arguments: Any) -> str | None:
-    """Extract the literal absolute ``workdir`` of the one nested ``exec_command``."""
+    """Extract the literal ``workdir`` of the one nested ``exec_command``."""
     if isinstance(arguments, dict):
-        return _absolute_path(arguments.get("workdir"))
-    if extract_functions_exec_command(arguments) is None:
-        return None
-    matches = _EXEC_WORKDIR_LITERAL_RE.findall(arguments)
-    if len(matches) != 1:
-        return None
-    try:
-        return _absolute_path(json.loads(matches[0]))
-    except (TypeError, ValueError):
-        return None
+        return _literal_workdir(arguments.get("workdir"))
+    fields = _functions_exec_arguments(arguments)
+    return _literal_workdir(fields.get("workdir")) if fields is not None else None
 
 
-def _absolute_path(value: Any) -> str | None:
-    return value if isinstance(value, str) and os.path.isabs(value) else None
+def functions_exec_shell_input(arguments: Any) -> dict[str, str] | None:
+    """Normalize one proven literal shell call for native and managed before hooks."""
+    if isinstance(arguments, dict):
+        arguments = arguments.get("arguments")
+    if validate_functions_exec_wrapper(arguments) is not None:
+        return None
+    command = extract_functions_exec_command(arguments)
+    if command is None:
+        return None
+    tool_input = {"command": command}
+    workdir = extract_functions_exec_workdir(arguments)
+    if workdir is not None:
+        tool_input["workdir"] = workdir
+    return tool_input
+
+
+def _functions_exec_arguments(arguments: Any) -> dict[str, Any] | None:
+    """Read a single literal argument object, rejecting computed or overwritten fields."""
+    if not isinstance(arguments, str):
+        return None
+    calls = list(_EXEC_COMMAND_CALL_RE.finditer(arguments))
+    if len(calls) != 1:
+        return None
+    source = arguments[calls[0].end() :].lstrip()
+    if not source.startswith("{"):
+        return None
+    decoder = json.JSONDecoder()
+    fields: dict[str, Any] = {}
+    source = source[1:].lstrip()
+    while source and not source.startswith("}"):
+        key_match = re.match(r'("(?:\\.|[^"\\])*"|[$A-Za-z_][$\w]*)\s*:', source)
+        if key_match is None:
+            return None
+        raw_key = key_match[1]
+        try:
+            key = json.loads(raw_key) if raw_key.startswith('"') else raw_key
+        except ValueError:
+            return None
+        if key in fields:
+            return None
+        source = source[key_match.end() :].lstrip()
+        try:
+            value, end = decoder.raw_decode(source)
+        except ValueError:
+            return None
+        fields[key] = value
+        source = source[end:].lstrip()
+        if source.startswith(","):
+            source = source[1:].lstrip()
+        elif not source.startswith("}"):
+            return None
+    return fields if source.startswith("}") and source[1:].lstrip().startswith(")") else None
+
+
+def _literal_workdir(value: Any) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _normalize_session_id(value: Any) -> str | None:
@@ -558,6 +619,8 @@ class ExecutionChainCorrelator:
         self._ambiguous_cells: dict[str, None] = {}
         self._ambiguous_sessions: dict[str, None] = {}
         self._live_sequence = 0
+        self._overflowed = False
+        self._pending_overflowed = False
 
     def register_call(
         self,
@@ -584,7 +647,11 @@ class ExecutionChainCorrelator:
                     expects_serialized_result=_prints_whole_tool_results(arguments),
                     workdir=extract_functions_exec_workdir(arguments),
                 )
-            elif session_id is not None:
+            # A poll beside an unattributable launch stays opaque, so the launch
+            # still poisons every concurrent cwd proof.
+            elif session_id is not None and not (
+                isinstance(arguments, str) and _EXEC_COMMAND_CALL_RE.search(arguments)
+            ):
                 execution = self._sessions.get(session_id)
                 if execution is not None:
                     # Each poll cell prints its own way, so trust follows this cell.
@@ -594,7 +661,9 @@ class ExecutionChainCorrelator:
                 typed = extract_functions_write_stdin_command(arguments)
                 if execution is not None and typed:
                     execution = replace(execution, literal_command=typed)
-            elif allow_unattributed:
+            # Only a cell that can start a shell blocks cwd proof. An MCP-only cell that
+            # merely mentions exec_command in its text stays out of the chain.
+            elif allow_unattributed and may_reach_shell(arguments):
                 execution = PendingExecution(call_id)
         elif name in WRITE_STDIN_NAMES:
             session_id = extract_direct_write_stdin_session_id(arguments)
@@ -726,7 +795,10 @@ class ExecutionChainCorrelator:
         arguments = data.get("arguments", data.get("tool_input"))
         command = data.pop("_dynamic_exec_command", None)
         if isinstance(command, str) and command:
+            workdir = extract_functions_exec_workdir(arguments)
             arguments = {"cmd": command}
+            if workdir is not None:
+                arguments["workdir"] = workdir
         self._live_sequence += 1
         call_id = str(
             data.get("callId")
@@ -752,7 +824,13 @@ class ExecutionChainCorrelator:
         data["tool_input"] = (
             {"command": execution.literal_command} if execution.literal_command is not None else {}
         )
+        if execution.workdir is not None:
+            data["tool_input"]["workdir"] = execution.workdir
         data["verification_execution_id"] = execution.outer_call_id
+        # An undecidable PTY chunk is still attached to its running process.
+        # Consumers must retain edit snapshots and task fences until its receipt.
+        if resolution.state == "unknown" and execution.session_id in self._sessions:
+            data["_verification_pending"] = True
         if resolution.state == "pending":
             data["_verification_pending"] = True
             data["tool_result"] = {
@@ -781,6 +859,14 @@ class ExecutionChainCorrelator:
         normalize_tool_display_fields(data)
         return data
 
+    def abandon_unresolved_calls(self) -> None:
+        """Drop calls whose output a compaction boundary discarded.
+
+        Cells and sessions keep their state: a yielded cell or running process still
+        has its own output or session id and resolves later.
+        """
+        self._calls.clear()
+
     def snapshot_state(self) -> dict[str, Any]:
         return {
             "calls": {key: value.to_state() for key, value in self._calls.items()},
@@ -788,9 +874,13 @@ class ExecutionChainCorrelator:
             "sessions": {key: value.to_state() for key, value in self._sessions.items()},
             "ambiguous_cells": list(self._ambiguous_cells),
             "ambiguous_sessions": list(self._ambiguous_sessions),
+            "complete": not self._overflowed,
+            "pending_complete": not self._pending_overflowed,
         }
 
     def hydrate_state(self, state: Mapping[str, Any]) -> None:
+        self._overflowed = state.get("complete") is False
+        self._pending_overflowed = state.get("pending_complete", state.get("complete")) is False
         self._calls = self._hydrate_map(state.get("calls"))
         self._cells = self._hydrate_map(state.get("cells"))
         self._sessions = self._hydrate_map(state.get("sessions"))
@@ -835,12 +925,18 @@ class ExecutionChainCorrelator:
         ):
             pending.pop(key, None)
             if len(ambiguous) >= self._max_pending and key not in ambiguous:
+                self._overflowed = True
+                if pending is not self._sessions:
+                    self._pending_overflowed = True
                 ambiguous.pop(next(iter(ambiguous)))
             ambiguous[key] = None
             return
         if ambiguous is not None and key in ambiguous:
             return
         if key not in pending and len(pending) >= self._max_pending:
+            self._overflowed = True
+            if pending is not self._sessions:
+                self._pending_overflowed = True
             pending.pop(next(iter(pending)))
         pending[key] = execution
 

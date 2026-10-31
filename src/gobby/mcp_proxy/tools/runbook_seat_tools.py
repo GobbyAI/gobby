@@ -6,7 +6,8 @@ from dataclasses import asdict
 from typing import Any
 
 from gobby.agents.runbook_seats import RunbookSeatRefusal, RunbookSeatStores, check_runbook_seats
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, admit_team
+from gobby.agents.team_admission_records import TeamAdmissionRefused
+from gobby.agents.team_lifecycle import admit_team
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.agents import LocalAgentRunManager
@@ -46,6 +47,8 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "becomes '<tab_title> - #<seq>', and tab_exists reports that tab of the workspace. "
             "team_id limits live seats to that admitted team's runs and maps "
             "every catalogue seat with such a run under live, requested or not. "
+            "seat_models maps a seat name to the model its launch takes; a seat that launches "
+            "with no model there and none on its agent definition is refused. "
             "On success it returns the checked seats."
         ),
         read_only=True,
@@ -60,6 +63,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         team_id: str | None = None,
         tab_title: str | None = None,
         task: str | None = None,
+        seat_models: dict[str, str | None] | None = None,
     ) -> dict[str, Any]:
         caller_ref = ctx.get_current_session_id()
         if ctx.db is None or not caller_ref:
@@ -81,6 +85,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 team_id=team_id,
                 tab_title=tab_title,
                 task=task,
+                seat_models=seat_models,
             )
         except RunbookSeatRefusal as exc:
             return {"success": False, "error": str(exc), "error_code": "runbook_seat_refused"}
@@ -104,16 +109,19 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "reviewed in the epoch, and the claim already handed to one of them. "
             "checkout_mode=none admits a treeless team with no branch or tree; its seats run "
             "in the main checkout, and a re-admit for the task joins it. Returns the "
-            "team plus task_id, branch, worktree and project_path for the seat steps."
+            "team plus task_id, branch, worktree and project_path for the seat steps. "
+            "Pass the seat guard's resolved tab_title to bind later team seats to that tab."
         ),
     )
     async def admit_team_tool(
         task: str,
         team_id: str | None = None,
+        parent_team_id: str | None = None,
         fresh_reviewer: bool = False,
         exclude_reviewers: str | None = None,
         reviewer_agent: str | None = None,
         checkout_mode: str = "worktree",
+        tab_title: str | None = None,
     ) -> dict[str, Any]:
         caller_ref = ctx.get_current_session_id()
         if ctx.db is None or not caller_ref:
@@ -128,12 +136,14 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 caller_session_id=ctx.resolve_session_id(caller_ref),
                 task=task,
                 team_id=team_id,
+                parent_team_id=parent_team_id,
                 fresh_reviewer=fresh_reviewer,
                 exclude_reviewers=[
                     ref.strip() for ref in (exclude_reviewers or "").split(",") if ref.strip()
                 ],
                 reviewer_agent=reviewer_agent,
                 checkout_mode=checkout_mode,
+                tab_title=tab_title,
             )
         except TeamAdmissionRefused as exc:
             return {"success": False, "error": str(exc), "error_code": exc.code}

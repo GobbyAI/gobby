@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import subprocess
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
+from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -25,6 +31,8 @@ from gobby.tasks.step_records import (
     record_task_step,
     task_step_requirements,
 )
+from gobby.utils.daemon_git import GitFailed, GitResult, GitTimeout, daemon_git
+from gobby.utils.git import normalize_commit_sha
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
@@ -47,7 +55,14 @@ class _Seats:
         self.project_id = project_id
         self.next_seq = 1700
 
-    def add(self, definition: str, writes: list[str]) -> str:
+    def add(
+        self,
+        definition: str,
+        writes: list[str],
+        *,
+        capabilities: tuple[str, ...] = (),
+        definition_fields: dict[str, Any] | None = None,
+    ) -> str:
         definitions = AgentDefinitionManager(self.db)
         if definitions.get_by_name(definition, self.project_id) is None:
             definitions.create(
@@ -58,6 +73,8 @@ class _Seats:
                     "prompts": {"agent": "Record the assigned task step."},
                     "workflows": {"rule_selectors": {"include": []}},
                     "task_step_writes": writes,
+                    "capabilities": list(capabilities),
+                    **(definition_fields or {}),
                 },
                 project_id=self.project_id,
             )
@@ -137,6 +154,36 @@ def _step(
             commit_sha=sha,
         ),
     )
+
+
+@pytest.mark.parametrize("definition", ["researcher", "fixture-author"])
+@pytest.mark.parametrize(
+    "scope",
+    [
+        {},
+        {"task_types": ["research_spike"]},
+        {"categories": ["research"]},
+        {"own_claim_only": True},
+    ],
+)
+def test_step_task_scope_is_declared_by_definition(
+    temp_db: HubDatabase, task: Task, seats: _Seats, definition: str, scope: dict[str, object]
+) -> None:
+    writer = seats.add(
+        definition,
+        ["implementation"],
+        definition_fields={"task_step_scope": scope},
+    )
+    if scope:
+        with pytest.raises(StepRecordError):
+            _step(temp_db, task, writer, "implementation", "approved")
+    else:
+        record, created = _step(temp_db, task, writer, "implementation", "approved")
+        assert created
+        assert (
+            approved_task_step(task, list_task_step_records(temp_db, task.id), "implementation")
+            == record
+        )
 
 
 def test_review_record_is_atomic_and_idempotent(
@@ -280,8 +327,8 @@ def test_three_rejections_and_audited_reset(
     assert manager.get_task(task.id).review_status == "valid"
 
 
-@pytest.mark.parametrize("authority", ["triage", "operator"])
-async def test_only_triage_or_the_operator_resets_an_exhausted_review(
+@pytest.mark.parametrize("authority", ["custom-coordinator", "orchestrator", "operator"])
+async def test_declared_capability_or_operator_resets_an_exhausted_review(
     temp_db: HubDatabase, task: Task, team: dict[str, str], seats: _Seats, authority: str
 ) -> None:
     manager = LocalTaskManager(temp_db)
@@ -305,8 +352,12 @@ async def test_only_triage_or_the_operator_resets_an_exhausted_review(
     assert held.is_escalated
     assert (held.review_epoch, held.review_fail_count) == (1, 3)
 
-    if authority == "triage":
-        resetter = seats.add("triage", [])
+    # A familiar seat name carries no authority without a declaration.
+    unprivileged = seats.add("triage", [])
+    assert (await de_escalate(unprivileged)).get("error_code") == "REVIEW_RESET_FORBIDDEN"
+
+    if authority != "operator":
+        resetter = seats.add(authority, [], capabilities=("reset_review_epoch",))
     else:
         # The operator's own terminal: a root session with no agent run and no seat role.
         resetter = str(uuid4())
@@ -387,6 +438,34 @@ def test_checkout_free_project_closes_under_the_default_policy(temp_db: HubDatab
     assert manager.get_task(chore.id).closed_at is not None
 
 
+def test_second_rejection_claimant_records_its_implementation_step(
+    temp_db: HubDatabase, seats: _Seats, task: Task, team: dict[str, str]
+) -> None:
+    """The claimant that fixes after the second rejection records its implementation step.
+
+    The Dev Manager may hand the fix to a reviewer seat that did not reject, so the claim
+    holder, not the rejecting session, is the fixer.
+    """
+    manager = LocalTaskManager(temp_db)
+    fixer = seats.add("step-reviewer", ["review"])
+    manager.claim_task(task.id, team["developer"])
+    _step(temp_db, task, team["developer"], "implementation", "approved", feedback="Implemented.")
+    _step(temp_db, task, team["reviewer"], "review", "rejected", 1)
+    _step(temp_db, task, team["second_reviewer"], "review", "rejected", 2)
+    manager.claim_task(task.id, fixer, expected_owner=team["developer"])
+    manager.link_commit(task.id, _NEXT[:10])
+
+    with pytest.raises(StepRecordError, match="cannot write the implementation step"):
+        _step(temp_db, task, team["second_reviewer"], "implementation", "approved", 3, sha=_NEXT)
+    record, created = _step(temp_db, task, fixer, "implementation", "approved", 3, sha=_NEXT)
+    assert created
+    assert (record.step, record.status, record.session_id) == (
+        "implementation",
+        "approved",
+        fixer,
+    )
+
+
 def test_round_two_approval_leaves_the_implementation_step_approved(
     temp_db: HubDatabase, task: Task, team: dict[str, str]
 ) -> None:
@@ -445,3 +524,172 @@ def test_close_gate_reads_the_approval_not_the_stored_status(
     missing = task_step_requirements(temp_db, manager.get_task(task.id)).missing
 
     assert missing == ("closing",)
+
+
+@pytest.fixture
+def candidate_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Real Git ancestry with checkout discovery and daemon Git isolated.
+
+    The candidates sit on their own branch, unlanded, while the registered main checkout
+    stays on main at the base commit.
+    """
+
+    def git(*args: str) -> str:
+        return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
+
+    git("init", "-b", "main")
+    git("config", "user.name", "Candidate regression")
+    git("config", "user.email", "test@example.invalid")
+    git("-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", "base")
+    git("checkout", "-b", "candidate")
+    commits = []
+    for index in range(3):
+        git("-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", f"step {index}")
+        commits.append(git("rev-parse", "HEAD"))
+    git("checkout", "main")
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
+        lambda **_kwargs: str(tmp_path),
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.task_commits.normalize_commit_sha",
+        AsyncMock(side_effect=normalize_commit_sha),
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.tasks._task_scope.collect_net_commit_paths_async",
+        AsyncMock(return_value=SimpleNamespace(changed=frozenset(), deleted=frozenset())),
+    )
+    return commits
+
+
+@pytest.mark.parametrize("stored_short", [False, True])
+@pytest.mark.parametrize("requested_short", [False, True])
+async def test_declared_candidate_relink_accepts_exact_sha_steps(
+    temp_db: HubDatabase,
+    task: Task,
+    team: dict[str, str],
+    candidate_history: list[str],
+    stored_short: bool,
+    requested_short: bool,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    manager.unlink_commit(task.id, _TIP[:10])
+    old, middle, candidate = candidate_history
+    stored = candidate[:10] if stored_short else candidate
+    for sha in (stored, old, middle):
+        manager.link_commit(task.id, sha)
+    registry = create_commit_registry(manager)
+    arguments = {
+        "task_id": task.id,
+        "commit_sha": candidate[:7] if requested_short else candidate,
+    }
+    with session_context_for_test(team["developer"]):
+        ordinary = await registry.call("link_commit", arguments)
+        assert ordinary["commits"] == [stored, old, middle]
+        assert ordinary["declared_candidate"] is None
+        declared = await registry.call("link_commit", {**arguments, "candidate": True})
+    assert "error" not in declared, declared
+    steps: tuple[tuple[TaskStep, str], ...] = (
+        ("implementation", "developer"),
+        ("review", "reviewer"),
+        ("closing", "closer"),
+    )
+    for step, seat in steps:
+        record, created = _step(temp_db, task, team[seat], step, "approved", sha=candidate)
+        assert created and record.commit_sha == candidate
+        with pytest.raises(StepRecordError, match="latest linked commit"):
+            _step(temp_db, task, team[seat], step, "approved", sha=middle)
+    assert declared["commits"] == [old, middle, stored]
+    assert candidate.startswith(declared["declared_candidate"])
+    assert manager.get_task(task.id).commits == [old, middle, stored]
+    with session_context_for_test(team["developer"]):
+        repeated = await registry.call("link_commit", {**arguments, "candidate": True})
+    assert repeated == declared
+
+
+async def test_relinking_a_landed_commit_declares_no_candidate(
+    temp_db: HubDatabase,
+    task: Task,
+    team: dict[str, str],
+    candidate_history: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Landed history is not a candidate: a relink after landing leaves the developer in implement."""
+    monkeypatch.setattr(
+        "gobby.tasks.land_commit.main_checkout_target",
+        AsyncMock(return_value=(tmp_path, "main")),
+    )
+    subprocess.check_output(["git", "merge", "--ff-only", "candidate"], cwd=tmp_path)
+    manager = LocalTaskManager(temp_db)
+    manager.unlink_commit(task.id, _TIP[:10])
+    landed = candidate_history[-1]
+    manager.link_commit(task.id, landed)
+    registry = create_commit_registry(manager)
+    with session_context_for_test(team["developer"]):
+        relink = await registry.call(
+            "link_commit", {"task_id": task.id, "commit_sha": landed, "candidate": True}
+        )
+    assert "error" not in relink, relink
+    assert relink["declared_candidate"] is None
+    assert manager.get_task(task.id).commits == [landed]
+
+
+@pytest.mark.parametrize("unprovable", ["git_failed", "timeout", "detached_target"])
+async def test_unprovable_landing_status_refuses_the_candidate(
+    temp_db: HubDatabase,
+    task: Task,
+    team: dict[str, str],
+    candidate_history: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unprovable: str,
+) -> None:
+    """A candidate whose landing status is unproven is refused before anything persists."""
+    manager = LocalTaskManager(temp_db)
+    manager.unlink_commit(task.id, _TIP[:10])
+    target = None if unprovable == "detached_target" else (tmp_path, "main")
+    monkeypatch.setattr(
+        "gobby.tasks.land_commit.main_checkout_target",
+        AsyncMock(return_value=target),
+    )
+    failure: GitResult = (
+        GitTimeout("timeout", ("git", "merge-base"), 10.0)
+        if unprovable == "timeout"
+        else GitFailed("failed", ("git", "merge-base"), 128, "", "fatal: bad object")
+    )
+    real_run = daemon_git.run
+
+    async def run(args: Sequence[str], **kwargs: Any) -> GitResult:
+        return failure if args[0] == "merge-base" else await real_run(args, **kwargs)
+
+    monkeypatch.setattr(daemon_git, "run", run)
+    before = manager.get_task(task.id).commits
+    registry = create_commit_registry(manager)
+    candidate = candidate_history[-1]
+    with session_context_for_test(team["developer"]):
+        relink = await registry.call(
+            "link_commit", {"task_id": task.id, "commit_sha": candidate, "candidate": True}
+        )
+    assert "integration branch" in relink.get("error", ""), relink
+    assert "declared_candidate" not in relink
+    assert manager.get_task(task.id).commits == before
+
+
+async def test_declared_candidate_cannot_demote_a_newer_link(
+    temp_db: HubDatabase, task: Task, team: dict[str, str], candidate_history: list[str]
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    manager.unlink_commit(task.id, _TIP[:10])
+    old, middle, newest = candidate_history
+    for sha in (old, newest):
+        manager.link_commit(task.id, sha)
+    registry = create_commit_registry(manager)
+    with session_context_for_test(team["developer"]):
+        for candidate in (old, middle):
+            refused = await registry.call(
+                "link_commit", {"task_id": task.id, "commit_sha": candidate, "candidate": True}
+            )
+            assert "must descend from every other linked commit" in refused.get("error", "")
+            assert "declared_candidate" not in refused
+            assert manager.get_task(task.id).commits == [old, newest]

@@ -13,6 +13,7 @@ from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.workflows.definitions import PipelineDefinition
+from gobby.workflows.pipeline_inputs import input_refusal
 from gobby.workflows.pipeline_state import (
     ApprovalRequired,
     ExecutionStatus,
@@ -100,6 +101,7 @@ class PipelineExecutionManager(Protocol):
     ) -> PipelineExecution | None: ...
 
     def claim_failed_execution_for_resume(self, execution_id: str) -> PipelineExecution | None: ...
+    def close_pipeline_child_session(self, execution_id: str) -> None: ...
     def update_step_execution(
         self,
         step_execution_id: int,
@@ -340,6 +342,9 @@ async def cancel_pipeline(
 
     if background_task and background_task is not asyncio.current_task():
         await asyncio.gather(background_task, return_exceptions=True)
+    # A resumable pipeline keeps its child through a task cancel for restart recovery;
+    # a cancelled execution never resumes, so close it here.
+    execution_manager.close_pipeline_child_session(execution_id)
 
     # Kill only the runs snapshotted from the pipeline child session. Never fall back
     # to execution.session_id: an early cancellation may still hold the caller there.
@@ -423,6 +428,10 @@ async def run_pipeline(
 
     if not pipeline.enabled:
         return {"success": False, "error": f"Pipeline '{name}' is disabled"}
+
+    refusal = input_refusal(pipeline, inputs)
+    if refusal is not None:
+        return {"success": False, "error": refusal}
 
     # Pre-create execution record so we can return the ID immediately
     try:
@@ -777,15 +786,11 @@ async def resume_interrupted_pipelines(
                 execution.id,
                 e,
             )
+            await _run_sync_db(run_db, execution_manager.close_pipeline_child_session, execution.id)
             continue
 
-        if not pipeline:
-            continue
-
-        if not pipeline.enabled:
-            continue
-
-        if not getattr(pipeline, "resume_on_restart", False):
+        if not pipeline or not pipeline.enabled or not pipeline.resume_on_restart:
+            await _run_sync_db(run_db, execution_manager.close_pipeline_child_session, execution.id)
             continue
 
         snapshot = _definition_snapshot(execution)
@@ -805,6 +810,7 @@ async def resume_interrupted_pipelines(
                     execution.id,
                     e,
                 )
+            await _run_sync_db(run_db, execution_manager.close_pipeline_child_session, execution.id)
             continue
 
         # Parse stored inputs

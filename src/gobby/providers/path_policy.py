@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -157,6 +158,28 @@ def is_plan_scratch_path(
     return any(candidate == root or candidate.is_relative_to(root) for root in roots)
 
 
+def _project_relative_path(path: str, project_root: str | Path | None) -> Path | None:
+    """The resolved `path` relative to the project root, or None when it lies outside."""
+    if not isinstance(path, str) or not path.strip() or project_root is None:
+        return None
+
+    resolved_project = _resolve_path(Path(project_root).expanduser())
+    if resolved_project is None:
+        return None
+
+    candidate = Path(path.strip()).expanduser()
+    if not candidate.is_absolute():
+        candidate = resolved_project / candidate
+    resolved_candidate = _resolve_path(candidate)
+    if resolved_candidate is None:
+        return None
+
+    try:
+        return resolved_candidate.relative_to(resolved_project)
+    except ValueError:
+        return None
+
+
 def is_project_plan_artifact_path(
     path: str,
     project_root: str | Path | None,
@@ -164,23 +187,8 @@ def is_project_plan_artifact_path(
     include_coverage: bool = False,
 ) -> bool:
     """Recognize project Markdown plans and optionally their coverage artifacts."""
-    if not isinstance(path, str) or not path.strip() or project_root is None:
-        return False
-
-    resolved_project = _resolve_path(Path(project_root).expanduser())
-    if resolved_project is None:
-        return False
-
-    candidate = Path(path.strip()).expanduser()
-    if not candidate.is_absolute():
-        candidate = resolved_project / candidate
-    resolved_candidate = _resolve_path(candidate)
-    if resolved_candidate is None:
-        return False
-
-    try:
-        relative = resolved_candidate.relative_to(resolved_project)
-    except ValueError:
+    relative = _project_relative_path(path, project_root)
+    if relative is None:
         return False
 
     return (
@@ -190,4 +198,21 @@ def is_project_plan_artifact_path(
             relative.suffix == ".md"
             or (include_coverage and len(relative.parts) >= 4 and relative.parts[2] == "coverage")
         )
+    )
+
+
+_DIGEST_NAME = re.compile(r"gobby-digest-[0-9]{4}-[0-9]{2}-[0-9]{2}\.md")
+
+
+def is_project_digest_artifact_path(path: str, project_root: str | Path | None) -> bool:
+    """Recognize the Archivist's dated digest directly under `<project>/.gobby/reports/`.
+
+    The optional `.tmp.<pid>.<hex>` staging sibling is not matched; it stays task-gated.
+    """
+    relative = _project_relative_path(path, project_root)
+    return (
+        relative is not None
+        and len(relative.parts) == 3
+        and relative.parts[:2] == (".gobby", "reports")
+        and _DIGEST_NAME.fullmatch(relative.parts[2]) is not None
     )

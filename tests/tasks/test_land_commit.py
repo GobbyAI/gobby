@@ -17,6 +17,7 @@ import psycopg
 import pytest
 
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -33,7 +34,7 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import add_claimed_task
 from tests.fixtures.landing_case import LandingCase, make_landing_case
-from tests.fixtures.review_approvals import reject_review
+from tests.fixtures.review_approvals import grant_step_writes, reject_review
 
 pytestmark = pytest.mark.unit
 
@@ -98,6 +99,33 @@ async def test_approved_review_record_at_exact_tip_lands(case: LandingCase) -> N
     assert landed["landed"] is True
     assert landed["landed_tip"] == sha
     assert case.git("rev-parse", "trunk") == sha
+
+
+@pytest.mark.parametrize("name", ["researcher", "custom-lander"])
+@pytest.mark.parametrize("granted", [True, False])
+async def test_task_bound_landing_requires_declared_permission(
+    case: LandingCase, name: str, granted: bool
+) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "reviewed record"})
+    task = case.reviewed(sha)
+    manager = case.manager_for(task)
+    grant_step_writes(
+        case.db,
+        manager,
+        case.project_id,
+        name,
+        ("closing",),
+        capabilities=("land_tasks",) if granted else (),
+    )
+
+    result = await case.land(task, sha, caller=manager)
+
+    assert result["landed"] is granted
+    if granted:
+        assert case.git("rev-parse", "trunk") == sha
+    else:
+        assert result["blockers"] == ["caller_not_task_manager"]
+        assert case.git("rev-parse", "trunk") == case.base
 
 
 async def test_land_preview_follows_the_approval_not_a_drifted_stored_status(
@@ -165,6 +193,66 @@ async def test_security_review_task_refuses_code_only_approval(case: LandingCase
     assert case.git("rev-parse", "trunk") == case.base
 
 
+@pytest.mark.parametrize("name", ["security-reviewer", "fixture-specialist"])
+@pytest.mark.parametrize("supplemental", [True, False])
+def test_review_classification_comes_from_definition(
+    case: LandingCase, name: str, supplemental: bool
+) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "review me"})
+    task = case.task()
+    case.link(task, sha)
+    reviewer = case.security_reviewer(name, granted=False, supplemental=supplemental)
+    case.approve_as(task, sha, reviewer)
+
+    stored = LocalTaskManager(case.db).get_task(task.id)
+    assert stored.review_status == ("pending" if supplemental else "valid")
+
+
+@pytest.mark.parametrize("name", ["security-reviewer", "fixture-specialist"])
+@pytest.mark.parametrize("granted", [True, False])
+async def test_security_approval_uses_declared_capability(
+    case: LandingCase, name: str, granted: bool
+) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "review me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.approve(task, sha)
+    case.approve_as(task, sha, case.security_reviewer(name, granted=granted))
+
+    result = await case.land(task, sha)
+    assert result["landed"] is granted
+    if granted:
+        assert case.git("rev-parse", "trunk") == sha
+    else:
+        assert result["blockers"] == ["security_review_missing"]
+
+
+@pytest.mark.parametrize("name", ["security-reviewer", "fixture-specialist"])
+def test_supplemental_review_requires_running_definition_seat(case: LandingCase, name: str) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "review me"})
+    task = case.task()
+    case.link(task, sha)
+    with pytest.raises(StepRecordError, match="running"):
+        case.approve_as(task, sha, case.security_seat(name, granted=False))
+
+
+async def test_recorded_security_authority_survives_definition_disable(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "review me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.approve(task, sha)
+    specialist = case.security_reviewer("fixture-specialist")
+    case.approve_as(task, sha, specialist)
+    definitions = AgentDefinitionManager(case.db)
+    definition = definitions.get_by_name("fixture-specialist", case.project_id)
+    assert definition is not None
+    definitions.update(definition.id, enabled=False)
+
+    result = await case.land(task, sha)
+    assert result["landed"] is True
+    assert case.git("rev-parse", "trunk") == sha
+
+
 async def test_security_review_task_lands_with_code_and_security_approvals(
     case: LandingCase,
 ) -> None:
@@ -225,7 +313,7 @@ async def test_security_reviewer_records_only_approvals(case: LandingCase) -> No
     sha = case.candidate("lane", {"docs/change.md": "land me"})
     task = case.task(labels=["security-review"])
     case.link(task, sha)
-    with pytest.raises(StepRecordError, match="security-reviewer"):
+    with pytest.raises(StepRecordError, match="supplemental review records only approvals"):
         reject_review(
             case.db, task_id=task.id, reviewer_session_id=case.security_reviewer(), commit_sha=sha
         )
@@ -237,7 +325,7 @@ async def test_security_approval_needs_a_running_security_reviewer_seat(case: La
     task = case.task(labels=["security-review"])
     case.link(task, sha)
     case.approve(task, sha)
-    with pytest.raises(StepRecordError, match="running security-reviewer seat"):
+    with pytest.raises(StepRecordError, match="running definition seat"):
         case.approve_as(task, sha, case.security_seat())
     refused = await case.land(task, sha)
     assert refused["landed"] is False
@@ -312,7 +400,7 @@ async def test_fast_forward_lands_exact_candidate(case: LandingCase) -> None:
     assert result["landed_tip"] == sha
     assert result["observed_tip"] == sha
     assert result["activation_class"] == "none"
-    assert result["project_sync_required"] is False
+    assert "project_sync_required" not in result
     assert result["retest_required"] is False
     assert case.git("rev-parse", "trunk") == sha
     assert (case.repo / "docs/change.md").read_text() == "land me"
@@ -690,6 +778,41 @@ async def test_already_landed_candidate_records_landing_once(
     assert len(receipts) == 1
     assert manager.get_messages(case.claimant) == original_messages
     assert case.git("rev-parse", "trunk") != first["observed_tip"]
+
+
+@pytest.mark.parametrize("activation", ["none", "restart", "sync"])
+async def test_recovery_accepts_historical_sync_entries(case: LandingCase, activation: str) -> None:
+    historical = case.candidate("historical", {".gobby/workflows/rules/old.yaml": "old"})
+    case.git(
+        "merge",
+        "--ff-only",
+        historical,
+        env={"GIT_REFLOG_ACTION": f"gobby-land candidate={historical} mode=ff class=sync"},
+    )
+    sha = case.candidate("current", {"docs/current.md": "current"}, base=historical)
+    task = case.task()
+    case.link(task, sha)
+    case.approve(task, sha)
+    case.git(
+        "merge",
+        "--ff-only",
+        sha,
+        env={
+            "GIT_REFLOG_ACTION": (
+                f"gobby-land candidate={sha} mode=ff class={activation} lander={case.creator}"
+            )
+        },
+    )
+
+    result = await case.land(task, sha)
+
+    assert result["landed"] is True
+    assert result["provenance"] == "reflog"
+    assert result["activation_class"] == ("restart" if activation == "sync" else activation)
+    assert result["landed_by_session_id"] == case.creator
+    assert result["landed_tip"] == sha
+    assert await case.land(task, sha) == result
+    assert len([r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]) == 1
 
 
 async def test_foreign_fast_forward_uses_stored_old_tip(case: LandingCase) -> None:
@@ -1147,11 +1270,11 @@ async def test_ref_moved_before_failure_reports_landing(case: LandingCase) -> No
 @pytest.mark.parametrize(
     ("other_path", "expected_class"),
     [
-        ("docs/change.md", "sync"),
+        ("docs/change.md", "restart"),
         ("src/gobby/example.py", "restart"),
         ("crates/gobby-core/src/lib.rs", "cutover"),
-        ("web/src/example.ts", "ui_build"),
-        ("src/gobby/install/shared/workflows/agents/example.yaml", "reload"),
+        ("web/src/example.ts", "restart"),
+        ("src/gobby/install/shared/workflows/agents/example.yaml", "restart"),
     ],
 )
 async def test_project_workflow_sync_landing_and_recovery(
@@ -1177,18 +1300,18 @@ async def test_project_workflow_sync_landing_and_recovery(
     assert pending["landed"] is True
     assert pending["receipt_pending"] is True
     assert pending["activation_class"] == expected_class
-    assert pending["project_sync_required"] is True
+    assert "project_sync_required" not in pending
     assert recovered["activation_class"] == expected_class
-    assert recovered["project_sync_required"] is True
+    assert "project_sync_required" not in recovered
     assert recovered["provenance"] == "reflog"
     assert recovered["mode"] == ("merge" if move_tip else "ff")
     assert recovered["retest_required"] is False
     assert replay == recovered
     [receipt] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
-    assert receipt.facts["project_sync_required"] is True
+    assert "project_sync_required" not in receipt.facts
     manager = InterSessionMessageManager(case.db)
     [message] = manager.get_messages(case.claimant)
-    assert f"activation {expected_class}; project workflow sync required" in message.content
+    assert message.content.endswith(f"activation {expected_class}")
 
 
 @pytest.mark.parametrize("move_tip", [False, True])
@@ -1213,7 +1336,7 @@ async def test_exact_landing_recovery_preserves_trailer_when_diff_fails(
     ):
         recovered = await case.land(task, sha)
 
-    assert recovered["activation_class"] == "sync"
+    assert recovered["activation_class"] == "restart"
     assert recovered["provenance"] == "reflog"
     assert recovered["mode"] == ("merge" if move_tip else "ff")
     assert recovered["retest_required"] is False
@@ -1221,7 +1344,7 @@ async def test_exact_landing_recovery_preserves_trailer_when_diff_fails(
 
 
 @pytest.mark.parametrize("pipeline_in_candidate", [False, True])
-async def test_stacked_recovery_reports_only_candidates_project_sync(
+async def test_stacked_recovery_reports_only_candidates_activation(
     case: LandingCase, pipeline_in_candidate: bool
 ) -> None:
     pipeline = ".gobby/workflows/pipelines/example-lane.yml"
@@ -1245,9 +1368,9 @@ async def test_stacked_recovery_reports_only_candidates_project_sync(
 
     recovered = await case.land(task, sha)
     assert recovered["provenance"] == "reflog"
-    assert recovered["project_sync_required"] is pipeline_in_candidate
+    assert "project_sync_required" not in recovered
     assert recovered["landed_by_session_id"] == "unknown"
-    assert recovered["activation_class"] == ("sync" if pipeline_in_candidate else "none")
+    assert recovered["activation_class"] == ("restart" if pipeline_in_candidate else "none")
     assert await case.land(task, sha) == recovered
 
 
