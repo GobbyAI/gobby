@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Iterator
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -69,6 +70,12 @@ pytestmark = pytest.mark.unit
         "git merge -unsafe",
         "git add -- -unsafe",
         "git -C -unsafe commit --no-edit",
+        'git merge "$(touch pwned)"',
+        'git merge "`touch pwned`"',
+        'git add -- "$(touch pwned)"',
+        'git add -- "`touch pwned`"',
+        'git -C "$(touch pwned)" commit --no-edit',
+        'git -C "`touch pwned`" merge --abort',
     ],
 )
 async def test_raw_grammar_refuses_bypasses_before_an_all_clear_lexer(
@@ -82,15 +89,38 @@ async def test_raw_grammar_refuses_bypasses_before_an_all_clear_lexer(
     _seat(temp_db, session, "merge-seat", granted=True, selectors=GATED_RULES)
     all_clear = ParsedShellCommand(segments=(("git", "commit", "--no-edit"),), operators=())
 
-    with patch(
-        "gobby.workflows.base_merge_commits.parse_shell_command",
-        return_value=all_clear,
-        create=True,
-    ) as lexer:
+    with ExitStack() as patches:
+        lexers: list[MagicMock] = []
+        for module in (
+            "gobby.config.shell_lexing",
+            "gobby.config.validation_detection",
+            "gobby.hooks.code_navigation_recovery",
+            "gobby.workflows.code_review_scope",
+            "gobby.workflows.engine.proxy_hooks",
+            "gobby.workflows.found_work_gate",
+            "gobby.workflows.base_merge_commits",
+        ):
+            lexers.append(
+                patches.enter_context(
+                    patch(f"{module}.parse_shell_command", return_value=all_clear, create=True)
+                )
+            )
+        admission = await base_merge_admission(
+            temp_db,
+            session_id=session.id,
+            project_id=session.project_id,
+            project_path=str(worktree),
+            cwd=str(worktree),
+            command=command,
+            tool_kind="shell",
+            tool_input={},
+        )
+        assert not admission.git_step, command
+        for lexer in lexers:
+            lexer.assert_not_called()
         response = await handler._evaluate_rules(_bash_event(session, worktree, command))
 
     assert response.decision == "block", command
-    lexer.assert_not_called()
 
 
 @pytest.mark.parametrize("with_cwd", [False, True], ids=["git", "git-C"])
@@ -137,6 +167,89 @@ async def test_closed_grammar_forms_are_admitted_during_base_merge(
     )
 
     assert admission.git_step, f"{prefix} {arguments}"
+
+
+@pytest.mark.parametrize("arguments", ["commit --no-edit", "merge --abort"])
+async def test_git_c_target_in_base_merge_is_admitted_from_main_checkout(
+    seat: tuple[WorkflowHookHandler, Session, Path],
+    temp_db: HubDatabase,
+    arguments: str,
+) -> None:
+    _, session, worktree = seat
+    _start_conflicting_base_merge(worktree)
+    _seat(temp_db, session, "merge-seat", granted=True, selectors=GATED_RULES)
+    main = Path(_git(worktree, "rev-parse", "--git-common-dir")).parent
+
+    admission = await base_merge_admission(
+        temp_db,
+        session_id=session.id,
+        project_id=session.project_id,
+        project_path=str(main),
+        cwd=str(main),
+        command=f"git -C {worktree} {arguments}",
+        tool_kind="shell",
+        tool_input={},
+    )
+
+    assert admission.git_step
+
+
+@pytest.mark.parametrize(
+    "target_kind,arguments",
+    [
+        ("registered", "commit --no-edit"),
+        ("registered", "merge --abort"),
+        ("main", "commit --no-edit"),
+        ("main", "merge --abort"),
+        ("unregistered", "commit --no-edit"),
+        ("unregistered", "merge --abort"),
+        ("elsewhere", "merge integration"),
+    ],
+)
+async def test_git_c_cannot_borrow_cwd_base_merge_admission(
+    seat: tuple[WorkflowHookHandler, Session, Path],
+    temp_db: HubDatabase,
+    target_kind: str,
+    arguments: str,
+) -> None:
+    _, session, worktree = seat
+    _start_conflicting_base_merge(worktree)
+    _seat(temp_db, session, "merge-seat", granted=True, selectors=GATED_RULES)
+    main = Path(_git(worktree, "rev-parse", "--git-common-dir")).parent
+    if target_kind == "elsewhere":
+        target = Path("/elsewhere")
+    elif target_kind == "main":
+        target = main
+    else:
+        target = worktree.parent / "other-task"
+        _git(main, "worktree", "add", "-q", "-b", "other-task", str(target), "integration")
+        target = Path(_git(target, "rev-parse", "--show-toplevel"))
+        if target_kind == "registered":
+            task = LocalTaskManager(temp_db).create_task(
+                project_id=session.project_id,
+                title="Another task without a base merge",
+                validation_criteria="It cannot borrow another worktree's merge admission.",
+            )
+            LocalWorktreeManager(temp_db).create(
+                project_id=session.project_id,
+                branch_name="other-task",
+                worktree_path=str(target),
+                base_branch="integration",
+                task_id=task.id,
+            )
+
+    admission = await base_merge_admission(
+        temp_db,
+        session_id=session.id,
+        project_id=session.project_id,
+        project_path=str(worktree),
+        cwd=str(worktree),
+        command=f"git -C {target} {arguments}",
+        tool_kind="shell",
+        tool_input={},
+    )
+
+    assert not admission.git_step
 
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
