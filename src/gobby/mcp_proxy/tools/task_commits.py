@@ -227,6 +227,15 @@ def create_commit_registry(
                     }
                 if landed:
                     declared = False
+            # Judge the test step before this link can change the evidence it reads.
+            from gobby.tasks.out_of_order_links import (
+                has_approved_test_step,
+                record_out_of_order_link,
+            )
+
+            out_of_order = production_changes and not has_approved_test_step(
+                task_manager.db, current_task
+            )
             task = (
                 await asyncio.to_thread(
                     link_candidate, task_manager, resolved_task_id, normalized, repo_path
@@ -236,6 +245,13 @@ def create_commit_registry(
                     link_keeping_tip, task_manager, resolved_task_id, normalized, repo_path
                 )
             )
+            if out_of_order:
+                record_out_of_order_link(
+                    task_manager.db,
+                    task,
+                    commit_sha=normalized,
+                    session_id=get_current_session_id(),
+                )
             return {
                 "task_id": task.id,
                 "commits": task.commits or [],
