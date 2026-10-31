@@ -40,6 +40,14 @@ def _can_release(ctx: RegistryContext, caller: Session, holder: Session, task_id
     return team is not None and _is_team_seat(ctx.task_manager.db, holder.id, team)
 
 
+def _may_release_own_claim(ctx: RegistryContext, caller: Session, holder: Session) -> bool:
+    """The holder releasing its own claim, when its definition declares release_own_claim."""
+    if caller.id != holder.id:
+        return False
+    definition = session_agent_definition(ctx.task_manager.db, caller)
+    return definition is not None and "release_own_claim" in definition[0].capabilities
+
+
 def _is_team_seat(db: HubDatabase, session_id: str, team: TeamBinding) -> bool:
     """Whether the session is a seat of ``team``'s task. A relaunch and a fallback launch admit
     their own team record for the same task, so the task identifies the team, not the record;
@@ -106,9 +114,13 @@ def register_release_task_claim(registry: InternalToolRegistry, ctx: RegistryCon
             )
             holder = ctx.session_manager.get(holder_id)
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
-            if holder is None or not _can_release(ctx, caller, holder, resolved_id):
+            if holder is None or not (
+                _can_release(ctx, caller, holder, resolved_id)
+                or _may_release_own_claim(ctx, caller, holder)
+            ):
                 return {
-                    "error": "Only the Orchestrator or the holder's Dev Manager may release a claim",
+                    "error": "Only the Orchestrator, the holder's Dev Manager, or the holder "
+                    "declaring release_own_claim may release a claim",
                     "error_code": "coordinator_required",
                 }
             db = ctx.task_manager.db
