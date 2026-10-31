@@ -526,7 +526,14 @@ def pod_relaunch(
         raise TeamAdmissionRefused(
             "team_task_mismatch", f"team {team_id} is not admitted for task {task_id}"
         )
-    _epic_manager(db, caller_id, task_id, binding.parent_team_id)
+    try:
+        _epic_manager(db, caller_id, task_id, binding.parent_team_id)
+    except TeamAdmissionRefused as exc:
+        if exc.code != "pod_parent_invalid":
+            raise
+        raise TeamAdmissionRefused(
+            exc.code, f"{exc}; to relaunch an admitted pod, pass team_id alone"
+        ) from exc
     return binding
 
 
