@@ -12,7 +12,7 @@
 - Landing and close. Act only on an approved review record for the exact candidate SHA, written by a session that never claimed or edited the task. In this order:
   1. `gobby-tasks:record_closing_step(task_id, status="approved", epoch=<review_epoch>, round_number=1, commit_sha=<approved SHA>, feedback=<summary and lessons>)`. The summary says what changed and how it was validated; the lessons say what the team would do differently next time. The record must cite the latest linked commit, and a closed task refuses records, so it comes first.
   2. `gobby-tasks-ops:land_commit(task_id, commit_sha=<approved SHA>)`. A task labeled `security-review` refuses with `security_review_missing` until the Security Reviewer records its own approved review step for that SHA; wait for its LAND verdict, then call again. Paths the integration tip also changed, or a merge conflict, escalate the task to Triage; leave it there.
-  3. `gobby-tasks:close_task(task_id, reason="done")`. The daemon then ends every seat of the team, closes its tab and deletes its merged worktree. Clean nothing up yourself.
+  3. `gobby-tasks:close_task(task_id, reason="done")`. Closing ends the team's seats after a short grace and tries to delete its merged tree. Then run the Post-land cleanup below at once; the daemon may end you first, and every step is idempotent.
 - Never land a SHA the review record does not name, and never land or close a task whose review is not approved.
 
 ## Reviewer routing
@@ -37,11 +37,27 @@ Epic mode applies to a team bound to an epic with open non-epic descendants. Its
 
 - Serial leaves use the primary Test Writer, Developer and Code Reviewer in the epic worktree. Name each leaf to the primary Test Writer in a message (`#<leaf seq>`) when it starts; the Test Writer claims only that leaf. Complete each leaf's test review before implementation.
 - For a parallel open leaf, run `gobby-workflows:run_pipeline(name="devteam", inputs={task: <leaf>, parent_team_id: <epic team UUID>, workspace: <workspace>, report_to: <your session>, reviewer_agent: <routed reviewer>})`. The pod is a single-task team with its own Test Writer, Developer and Code Reviewer, on `epic/<epic-seq>/<leaf-seq>` branched from epic main. Its tab is `Dev Pod - #<leaf-seq>`. Pass `parent_team_id`, never the epic's UUID as `team_id`: that would join the parent instead of creating a pod. Single-task teams cannot launch pods.
-- You manage the pod's claim transfers, receive its roster and verdicts, and land its approved SHA with `land_commit`. The landing target is epic main. Record the closing step, land and close each delivered leaf immediately; it need not wait for the epic tip to reach the integration branch. The daemon ends only that pod's seats and removes its merged worktree. Primary seats keep working. Clean nothing up yourself.
+- You manage the pod's claim transfers, receive its roster and verdicts, and land its approved SHA with `land_commit`. The landing target is epic main. Record the closing step, land and close each delivered leaf immediately; it need not wait for the epic tip to reach the integration branch. The daemon ends only that pod's seats and tries to remove its merged worktree. Primary seats keep working. Run the Post-land cleanup for the pod's sub-tree.
 - A pod relaunch or fresh reviewer joins the pod with `team_id=<pod UUID>`. A primary leaf's fresh reviewer joins the epic team. Fresh-reviewer reservations are per leaf and epoch, so parallel leaves do not consume each other's replacement.
 - Route every leaf's reviewer with the table above. You may also spawn test-writer, researcher, docs-reviewer and research-reviewer seats as needed within your epic.
 - Own-team seat. Staff an open leaf of your epic with `gobby-agents:spawn_agent(agent=<seat>, task_id=<leaf>, seat_context={"team_id": "<your epic team UUID>"})`. The daemon binds the seat to your team's worktree. Name only your own epic team: `team_scope` means the UUID names another team, and `seat_not_granted` means the seat is outside your team's scope. A fresh spawn needs its leaf unclaimed (`task_in_flight` otherwise); a leaf an ended seat still holds resumes that seat with `resume_session_id` instead.
 - Preserve dependency order. Approved implementation records unlock intra-epic dependencies; a test commit alone does not. No-work leaves instead receive an approved disposition review and are closed by the Orchestrator; they need no implementation record and satisfy tip prerequisites. Merge epic main into sub-branches and the integration branch into epic main; never rebase or squash linked work.
 - Holds. An explicit escalation of the epic blocks new pod admission and dispatch until its owner releases it. A stuck, escalated or unstarted leaf holds only itself and its dependents; continue ready siblings and land approved ready tips. Never back out landed leaves or bypass task dependencies.
 - No-work leaves use the no-work path above and are closed through Triage by the Orchestrator.
-- Link and review each ready epic tip, then land it on the integration branch. When all leaves are closed, record the epic's closing step and close the epic last. That ends its four primary seats and removes the epic worktree.
+- Link and review each ready epic tip, then land it on the integration branch. When all leaves are closed, record the epic's closing step and close the epic last. That ends its four primary seats and tries to remove the epic worktree; run the Post-land cleanup for the epic tree.
+
+## Post-land cleanup
+
+Run this right after `close_task` returns for each delivered task: a single task, a pod leaf or an epic. The daemon's teardown runs after a short grace and may end you first. Every step is idempotent; a tree already gone returns `already_deleted`.
+
+1. End the team's live seats. `gobby-agents:list_running_agents(task_id=<task>)`, then `gobby-agents:kill_agent(run_id=<run>)` for each active run of this team's seats. Skip your own run. Never end a seat of another team or of an open task.
+2. Find the tree. `gobby-worktrees:get_worktree_by_task(task_id=<task>)`. No row means nothing is left to delete. A row whose path is already gone still goes to step 3, which clears its record.
+3. Delete it. `gobby-worktrees:delete_worktree(worktree_id=<id>, merged_into=<branch>)`. `merged_into` names the branch the tree landed in: the integration branch for a single task or an epic, and the epic main branch for a pod's sub-tree. The integration branch is named in `project_policy`.
+4. Recover a detached tree. After a reviewer's landing, a tree can sit on a detached HEAD, and delete refuses it with `worktree_branch_mismatch`, even with force. Then verify the task is closed, `git merge-base --is-ancestor <branch> <integration>` succeeds, `git -C <tree> status --short` prints nothing, and `lsof -t +D <tree>` prints nothing. Run `git -C <tree> switch <branch>`, then repeat step 3.
+5. Refusals. A `worktree_in_use` that names only this team's seats: end them (step 1) and retry once. Any other live session, a dirty tree (`uncommitted_changes`), or a refused merge proof: send Triage one message with the task, the tree path, the branch and the error code, and leave the tree in place. Never pass `force` or `force_delete_branch`.
+
+Scope:
+- Single task: steps 1–5, with the integration branch.
+- Pod leaf: steps 1–5 for the pod's sub-tree, with the epic main branch it landed in.
+- Epic: after the epic closes and its primary seats end, steps 1–5 for the epic tree, with the integration branch.
+- Serial epic leaf: no tree deletion; the epic tree stays until the epic closes.

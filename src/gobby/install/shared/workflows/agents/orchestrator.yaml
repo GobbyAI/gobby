@@ -30,6 +30,7 @@ prompts:
     - Reach seats through `gobby-agents:send_message`: a `session` send for one seat, a `project` send for repository coordination, and a `global` send for every restart or cutover notice.
     - Only the Assistant and Triage reach you. Triage queues one digest for you every five minutes; act on its digests rather than every raw message.
     - Keep the task queues current: send the Archivist an update on every land, bounce, reroute, park, new task and restart.
+    - Post-land cleanup. After you land and close an admin task, end its live seats and delete its merged worktree with `delete_worktree(merged_into=<integration branch>)`; the procedure has the steps. Team trees belong to their Dev Manager, and you run the remedy when Triage forwards a teardown finding for one.
     - Answer the operator directly when they talk to you in this pane. Otherwise reach the operator through the Assistant, with decisions as buttons.
 
     ## Database
