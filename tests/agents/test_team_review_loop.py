@@ -1126,6 +1126,55 @@ async def test_bound_dev_manager_relayed_candidate_opens_review(
 
 
 @pytest.mark.asyncio
+async def test_relayed_candidate_hands_the_claim_through_land(world: TeamWorld) -> None:
+    """A relayed CANDIDATE moves the claim to the fresh reviewer; its LAND moves it on."""
+    team = await team_in_review(world)
+    db, task_id = world.case.db, team.task.id
+    reviewer_at_await(db, team.sol)
+
+    _, relayed = await read_candidate(db, team.sol, team.manager, team.task, team.candidate)
+
+    assert relayed.current_step == "review"
+    assert LocalTaskManager(db).get_task(task_id).claimed_by_session_id == team.sol
+    submit(db, team.sol, task_id, "review", "approved", 1, team.candidate)
+    messages = InternalToolRegistry(name="gobby-agents", description="Reviewer LAND")
+    add_messaging_tools(messages, InterSessionMessageManager(db), SessionManager(db), db)
+    sent, completed = await complete_seat_tool(
+        db,
+        team.sol,
+        messages,
+        "send_message",
+        {
+            "target": "session",
+            "target_id": team.manager,
+            "content": (
+                f"EVENT=CANDIDATE_VERDICT TASK=#{team.task.seq_num} "
+                f"SHA={team.candidate} VERDICT=LAND NOTE=Approved."
+            ),
+        },
+    )
+
+    assert sent["success"] is True
+    assert_candidate_cleared(completed)
+    assert LocalTaskManager(db).get_task(task_id).claimed_by_session_id == team.manager
+
+
+@pytest.mark.asyncio
+async def test_relayed_candidate_waits_while_the_claimant_has_live_edits(world: TeamWorld) -> None:
+    team = await team_in_review(world)
+    db, task_id = world.case.db, team.task.id
+    reviewer_at_await(db, team.sol)
+    SessionVariableManager(db).merge_variables(
+        team.developer, {"task_edited_files": {task_id: ["scroll_live.py"]}}
+    )
+
+    _, instance = await read_candidate(db, team.sol, team.manager, team.task, team.candidate)
+
+    assert instance.variables.get("candidate_received") is not True
+    assert LocalTaskManager(db).get_task(task_id).claimed_by_session_id == team.developer
+
+
+@pytest.mark.asyncio
 async def test_relayed_candidate_for_unlinked_commit_is_refused(world: TeamWorld) -> None:
     team = await team_in_review(world)
     reviewer_at_await(world.case.db, team.sol)

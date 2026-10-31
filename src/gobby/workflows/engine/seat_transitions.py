@@ -314,6 +314,25 @@ def _claim_to_reviewer(
     return {"fixing": False}
 
 
+def _relay_hands_claim(db: HubDatabase, reviewer_id: str, event: CandidateEvent) -> bool:
+    """A reviewer reading the bound Dev Manager's relay of a claimant's CANDIDATE takes the claim.
+
+    _candidate_rejection has already authenticated the relay: the bound Dev Manager sent it, and
+    the SHA is linked to the claimant. The claimant's edit ledger guards the move, because its
+    live edits belong to the claimant's session, not the reviewer's.
+    """
+    holder_id = event.task.claimed_by_session_id
+    # A no-work unit has no commit to land, so its holder keeps the claim to record the verdict.
+    if event.sha is None or holder_id is None:
+        return True
+    if holder_id in (reviewer_id, event.message.from_session):
+        return True
+    if not _same_team(db, holder_id, reviewer_id):
+        return False
+    holder_variables = SessionVariableManager(db).get_variables(holder_id)
+    return _move_claim(db, event.task.id, holder_id, reviewer_id, holder_variables, handed=True)
+
+
 def _claim_to_closer(
     db: HubDatabase, session_id: str, event: CandidateEvent, variables: dict[str, Any]
 ) -> None:
@@ -369,6 +388,8 @@ def _reviewer_message(
         received_at = event.message.sent_at.isoformat()
         if same_unit:
             return {"candidate_received_at": received_at}
+        if not _relay_hands_claim(db, session_id, event):
+            return {}
         return {
             "candidate_received": True,
             "verdict_ready": False,
