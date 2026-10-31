@@ -199,4 +199,44 @@ mod tests {
         assert!(queries[0].cypher.contains("MERGE (f:CodeFile"));
         assert!(queries[1].cypher.contains("UNWIND $symbols AS symbol"));
     }
+
+    #[test]
+    fn callee_version_is_stamped_onto_the_placeholder_it_resolves_to() {
+        let mut call = crate::models::CallRelation::new(
+            "caller-1".to_string(),
+            "callee".to_string(),
+            "src/lib.rs".to_string(),
+            3,
+        )
+        .with_symbol_target("callee-1".to_string());
+        call.callee_file_path = Some("src/callee.rs".to_string());
+        call.callee_file_content_hash = Some("hash-callee".to_string());
+        let calls = partition_call_graph_items("proj", "src/lib.rs", &[call]);
+
+        let query = super::super::mutation::add_symbol_calls_query(
+            "proj",
+            &calls.symbol,
+            "hash-2",
+            "tok-2",
+        )
+        .expect("symbol call query");
+
+        // A placeholder created in a child project has no native file props. The
+        // stamp records the callee's own version. coalesce keeps a prior stamp
+        // when a later row has none, so a stamp never drops out on re-projection.
+        assert!(
+            query.cypher.contains(
+                "SET callee.version_file_path = coalesce(call.callee_file_path, callee.version_file_path)"
+            ),
+            "{}",
+            query.cypher
+        );
+        assert!(
+            query.cypher.contains(
+                "callee.version_content_hash = coalesce(call.callee_file_content_hash, callee.version_content_hash)"
+            ),
+            "{}",
+            query.cypher
+        );
+    }
 }

@@ -520,12 +520,13 @@ fn reconstruct_symbol_path(
 fn symbol_path_steps(
     client: &mut GraphClient,
     project_id: &str,
+    admitted: &AdmittedGraphVersions,
     symbol_ids: &[String],
 ) -> anyhow::Result<Vec<GraphPathStep>> {
     if symbol_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let (query, params) = symbol_path_steps_query(project_id, symbol_ids);
+    let (query, params) = symbol_path_steps_query(project_id, symbol_ids, admitted);
     let rows = client.query(&query, Some(params))?;
     let mut steps_by_id = HashMap::new();
     for row in rows {
@@ -586,11 +587,11 @@ fn shortest_path_in_namespace(
     max_depth: usize,
 ) -> anyhow::Result<Vec<GraphPathStep>> {
     let project_id = namespace.project_id.as_str();
+    let admitted = &namespace.versions;
     if from_id == to_id {
-        return symbol_path_steps(client, project_id, &[from_id.to_string()]);
+        return symbol_path_steps(client, project_id, admitted, &[from_id.to_string()]);
     }
 
-    let admitted = &namespace.versions;
     let mut visited = HashSet::from([from_id.to_string()]);
     let mut parents = HashMap::new();
     let mut frontier = vec![from_id.to_string()];
@@ -623,7 +624,7 @@ fn shortest_path_in_namespace(
             parents.insert(target_id.clone(), source_id);
             if target_id == to_id {
                 let symbol_ids = reconstruct_symbol_path(from_id, to_id, &parents);
-                return symbol_path_steps(client, project_id, &symbol_ids);
+                return symbol_path_steps(client, project_id, admitted, &symbol_ids);
             }
             next_frontier.push(target_id);
         }

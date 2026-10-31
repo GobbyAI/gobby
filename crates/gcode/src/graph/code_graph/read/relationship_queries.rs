@@ -255,20 +255,24 @@ pub(crate) fn symbol_callee_edges_query(
 pub(crate) fn symbol_path_steps_query(
     project_id: &str,
     symbol_ids: &[String],
+    admitted: &crate::visibility::graph_versions::AdmittedGraphVersions,
 ) -> (String, HashMap<String, String>) {
     let ids = typed_query::id_list_literal(symbol_ids);
     let symbols = crate::graph::admitted_code_nodes("[symbol]");
-    (
-        format!(
-            "MATCH (symbol:CodeSymbol {{project: $project}}) \
-             WHERE symbol.id IN [{ids}] \
-             AND {symbols} \
-             RETURN symbol.id AS symbol_id, \
-                    coalesce(symbol.name, symbol.id) AS symbol_name, \
-                    coalesce(symbol.file_path, '') AS file_path, \
-                    coalesce(symbol.line_start, 0) AS line"
+    crate::visibility::graph_versions::with_admitted_versions(
+        (
+            format!(
+                "MATCH (symbol:CodeSymbol {{project: $project}}) \
+                 WHERE symbol.id IN [{ids}] \
+                 AND {symbols} \
+                 RETURN symbol.id AS symbol_id, \
+                        coalesce(symbol.name, symbol.id) AS symbol_name, \
+                        coalesce(symbol.file_path, '') AS file_path, \
+                        coalesce(symbol.line_start, 0) AS line"
+            ),
+            typed_query::string_params(&[("project", project_id)]),
         ),
-        typed_query::string_params(&[("project", project_id)]),
+        admitted,
     )
 }
 
@@ -474,6 +478,26 @@ mod tests {
             );
             assert!(query.contains("src.id IN ['symbol-1']"), "{query}");
         }
+    }
+
+    #[test]
+    fn symbol_path_steps_query_binds_the_namespace_admitted_versions() {
+        use crate::visibility::graph_versions::AdmittedGraphVersions;
+
+        let admitted = AdmittedGraphVersions {
+            keys: vec!["own.rs|h1".to_string()],
+            paths: vec!["own.rs".to_string()],
+            endpoints: vec!["own.rs|h1".to_string(), "src.rs|h2".to_string()],
+        };
+        let (query, params) =
+            symbol_path_steps_query("project-1", &["symbol-1".to_string()], &admitted);
+
+        // The endpoint predicate reads $admitted_versions and $admitted_endpoints.
+        // A caller that binds only $project fails the whole path render.
+        assert!(query.contains("$admitted_versions"), "{query}");
+        assert!(query.contains("$admitted_endpoints"), "{query}");
+        assert!(params.contains_key("admitted_versions"), "{params:?}");
+        assert!(params.contains_key("admitted_endpoints"), "{params:?}");
     }
 
     #[test]

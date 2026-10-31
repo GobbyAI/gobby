@@ -58,6 +58,8 @@ fn upsert_calls_batches_commands_and_preserves_row_semantics() {
     let missing = CallRelation {
         caller_symbol_id: String::new(),
         callee_symbol_id: None,
+        callee_file_path: None,
+        callee_file_content_hash: None,
         callee_name: "shared".to_string(),
         callee_target_kind: CallTargetKind::Unresolved,
         callee_external_module: None,

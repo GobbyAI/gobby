@@ -73,6 +73,9 @@ pub(crate) struct AdmittedGraphVersions {
     pub(crate) keys: Vec<String>,
     /// Every path with at least one admitted version.
     pub(crate) paths: Vec<String>,
+    /// `path|content_hash` for every version admitted by any namespace in the scope.
+    /// Edge endpoints that resolve to a callee placeholder check this set.
+    pub(crate) endpoints: Vec<String>,
 }
 
 /// One graph namespace a read runs in: the project id its nodes carry and the
@@ -177,6 +180,17 @@ pub(crate) fn admitted_namespaces(ctx: &Context) -> anyhow::Result<Vec<AdmittedN
                 versions: set.into_versions(),
             }),
     );
+    // Every namespace in the scope shares one endpoint set. A callee placeholder
+    // in one namespace can name a version that another namespace serves.
+    let endpoints: Vec<String> = namespaces
+        .iter()
+        .flat_map(|namespace| namespace.versions.keys.iter().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    for namespace in &mut namespaces {
+        namespace.versions.endpoints = endpoints.clone();
+    }
     Ok(namespaces)
 }
 
@@ -196,6 +210,7 @@ impl VersionSet {
         AdmittedGraphVersions {
             keys: self.keys.into_iter().collect(),
             paths: self.paths.into_iter().collect(),
+            endpoints: Vec::new(),
         }
     }
 }
@@ -213,6 +228,10 @@ pub(crate) fn with_admitted_versions(
     params.insert(
         "admitted_paths".to_string(),
         format!("[{}]", typed_query::id_list_literal(&admitted.paths)),
+    );
+    params.insert(
+        "admitted_endpoints".to_string(),
+        format!("[{}]", typed_query::id_list_literal(&admitted.endpoints)),
     );
     (query, params)
 }

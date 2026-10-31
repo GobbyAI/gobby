@@ -378,7 +378,8 @@ fn symbol_path_queries_stay_project_scoped_and_symbol_only() {
     );
 
     let path_ids = vec!["source-1".to_string(), "target-1".to_string()];
-    let (steps_query, step_params) = symbol_path_steps_query("project-1", &path_ids);
+    let admitted = crate::visibility::graph_versions::AdmittedGraphVersions::default();
+    let (steps_query, step_params) = symbol_path_steps_query("project-1", &path_ids, &admitted);
     assert!(
         steps_query.contains("MATCH (symbol:CodeSymbol {project: $project})"),
         "{steps_query}"

@@ -48,6 +48,8 @@ const ADD_SYMBOL_CALLS_CYPHER: &str = "UNWIND $symbol_calls AS call
          MERGE (caller:CodeSymbol {id: call.caller_id, project: $project})
          MERGE (callee:CodeSymbol {id: call.target_id, project: $project})
          ON CREATE SET callee.name = call.callee_name, callee.updated_at = timestamp()
+         SET callee.version_file_path = coalesce(call.callee_file_path, callee.version_file_path),
+             callee.version_content_hash = coalesce(call.callee_file_content_hash, callee.version_content_hash)
          MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line, content_hash: $content_hash}]->(callee)
          SET r.provenance = $provenance,
              r.confidence = $confidence,
@@ -569,6 +571,8 @@ pub(in crate::graph::code_graph) struct CallGraphItem {
     pub(in crate::graph::code_graph) file_path: String,
     line: usize,
     callee_module: Option<String>,
+    callee_file_path: Option<String>,
+    callee_file_content_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -633,6 +637,8 @@ pub(in crate::graph::code_graph) fn partition_call_graph_items(
             file_path: file_path.to_string(),
             line: call.line,
             callee_module: target.module().map(str::to_string),
+            callee_file_path: call.callee_file_path.clone(),
+            callee_file_content_hash: call.callee_file_content_hash.clone(),
         };
         match target {
             GraphCallTarget::Symbol { .. } => groups.symbol.push(item),
@@ -819,10 +825,21 @@ fn call_rows(calls: &[CallGraphItem]) -> anyhow::Result<TypedValue> {
                         "callee_module",
                         TypedValue::String(call.callee_module.clone().unwrap_or_default()),
                     ),
+                    ("callee_file_path", optional_string(&call.callee_file_path)),
+                    (
+                        "callee_file_content_hash",
+                        optional_string(&call.callee_file_content_hash),
+                    ),
                 ]))
             })
             .collect::<anyhow::Result<Vec<_>>>()?,
     ))
+}
+
+/// An unresolved callee has no version stamp, so its row carries null and the
+/// Cypher `coalesce` keeps whatever the placeholder already holds.
+fn optional_string(value: &Option<String>) -> TypedValue {
+    value.clone().map_or(TypedValue::Null, TypedValue::String)
 }
 
 pub(super) fn add_symbol_calls_query(

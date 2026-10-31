@@ -285,8 +285,16 @@ mod tests {
                     "{surface}: replaced/tombstoned target version must be excluded"
                 );
                 assert!(
-                    filter.contains("coalesce(") && filter.contains(", false)"),
-                    "{surface}: unversioned CodeSymbol placeholders must fail closed"
+                    filter.contains("NOT node:CodeSymbol"),
+                    "{surface}: non-symbol path nodes must bypass the version check"
+                );
+                assert!(
+                    filter.contains(
+                        "node.version_file_path + '|' + node.version_content_hash IN $admitted_endpoints"
+                    ),
+                    "{surface}: a callee placeholder must be admitted by its stamped version \
+                     against the scope endpoint set, so a child-owned caller reaches a \
+                     source-fresh pinned callee"
                 );
             }
         }
