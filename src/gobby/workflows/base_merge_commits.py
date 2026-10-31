@@ -9,10 +9,14 @@ the capability covers, and reads nothing else from the definition:
   worktree with no tracked changes;
 - while such a merge is in progress (`MERGE_HEAD` is an admitted tip), the
   `git commit` or `git merge --continue` that completes it, when every staged
-  path is one the merge brings in, and `git merge --abort` or `--quit` to unwind;
+  path is one the merge brings in, and `git merge --abort` to unwind;
 - a `git add` of paths that the same in-progress merge left conflicted;
 - a structured write to one of those paths. A shell command never earns a path
   grant, because its output and its side effects are not named.
+
+The git call must match the closed grammar in `_FORMS` on its raw command text, as one
+line, before any shell lexing reads it; anything else is not admitted. A `-C <path>`
+names the worktree the call runs in, and that worktree is the merge root.
 
 Admitted tips are the integration branch of the project's main checkout and the
 landing branch of the worktree's task (an epic's branch for a leaf). A merge is not
@@ -24,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,7 +37,6 @@ from typing import Any
 import psycopg
 from psycopg_pool import PoolTimeout
 
-from gobby.config.shell_lexing import parse_shell_command
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
@@ -46,9 +50,22 @@ logger = logging.getLogger(__name__)
 
 CAPABILITY = "merge_base_commits"
 _GIT_TIMEOUT = 10.0
-_MERGE_FLAGS = frozenset({"--no-edit", "--no-ff", "--ff", "--ff-only", "--no-commit"})
-_CONTINUE_FLAGS = frozenset({"--continue", "--no-edit"})
-_COMMIT_VALUE_FLAGS = frozenset({"-m", "--message", "-F", "--file"})
+_MERGE_FLAGS = frozenset({"--no-edit", "--no-ff"})
+_COMMIT_VALUE_FLAGS = frozenset({"-m"})
+_PATH = r"(?!-)[A-Za-z0-9._/-]+"
+_MESSAGE = r"[A-Za-z0-9 ._:#()/,-]+"
+_GIT = rf"git(?: -C (?P<target>{_PATH}))? "
+# The closed grammar. Each form must match the whole raw command text on one line.
+_FORMS = tuple(
+    re.compile(form)
+    for form in (
+        rf"{_GIT}(?P<args>merge(?: --no-ff)?(?: --no-edit)? {_PATH})",
+        rf"{_GIT}(?P<args>merge --(?:continue|abort))",
+        rf"{_GIT}(?P<args>add -- {_PATH}(?: {_PATH})*)",
+        rf"{_GIT}(?P<args>commit --no-edit)",
+        rf"{_GIT}(?P<args>commit(?: --no-edit)? -m) '(?P<message>{_MESSAGE})'",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -80,7 +97,17 @@ async def base_merge_admission(
     """
     if not is_session_uuid(session_id) or not session_has_capability(db, session_id, CAPABILITY):
         return NOT_ADMITTED
-    root = await resolve_git_worktree_root_async(cwd, project_path)
+    call = _lone_git_command(command)
+    if command and call is None:
+        return NOT_ADMITTED
+    anchor = cwd
+    if call is not None and call.target is not None:
+        # `-C` names the worktree the call runs in. Its root is the merge root, with no
+        # fallback to the tool's cwd: a missing or non-git target is refused.
+        anchor = str(Path(cwd or project_path) / call.target)
+        root = await resolve_git_worktree_root_async(anchor)
+    else:
+        root = await resolve_git_worktree_root_async(cwd, project_path)
     if root is None:
         return NOT_ADMITTED
     try:
@@ -96,13 +123,13 @@ async def base_merge_admission(
         return NOT_ADMITTED
 
     merge_head = await _git(root, "rev-parse", "-q", "--verify", "MERGE_HEAD")
-    tokens = _lone_git_command(command)
+    tokens = call.tokens if call is not None else None
     if merge_head is not None:
         if merge_head not in tips:
             return NOT_ADMITTED
         git_step = tokens is not None and (
             await _completes_admitted_merge(root, merge_head, tokens)
-            or await _stages_conflicted_paths(root, tokens, cwd)
+            or await _stages_conflicted_paths(root, tokens, anchor)
         )
         # Only a structured write earns a path grant. A shell command's output is unnamed.
         write = (
@@ -133,22 +160,33 @@ async def _admitted_tips(db: HubDatabase, task: Task, root: str) -> frozenset[st
     return frozenset(tips)
 
 
-def _lone_git_command(command: str | None) -> list[str] | None:
-    """The one git invocation a command runs, or None for anything else.
+@dataclass(frozen=True)
+class _GitCall:
+    """A git call the closed grammar admits: its `-C` path and its argument tokens."""
 
-    A second segment, a `cd`, or a global `-C`/`--git-dir` option could point the
-    step at another repository or widen it, and a redirection writes a file the
-    admission never names, so each of those refuses.
+    target: str | None
+    tokens: list[str]
+
+
+def _lone_git_command(command: str | None) -> _GitCall | None:
+    """The one git call a raw command spells in the closed grammar, or None.
+
+    The whole text must fit one form. A second segment, a `cd`, a global option, a
+    redirection, a quote, a comment, a heredoc or a substitution fails the match, so
+    no shell reading decides admission. A `-C` path is the call's target.
     """
-    if not isinstance(command, str) or not command.strip():
+    if not isinstance(command, str):
         return None
-    parsed = parse_shell_command(command)
-    if parsed.redirected or parsed.expanded or parsed.commented or len(parsed.segments) != 1:
-        return None
-    tokens = list(parsed.segments[0])
-    if len(tokens) < 2 or tokens[0] != "git" or tokens[1].startswith("-"):
-        return None
-    return tokens
+    for form in _FORMS:
+        match = form.fullmatch(command)
+        if match is None:
+            continue
+        tokens = ["git", *(token for token in match["args"].split(" ") if token != "--")]
+        message = match.groupdict().get("message")
+        if message is not None:
+            tokens.append(message)
+        return _GitCall(target=match["target"], tokens=tokens)
+    return None
 
 
 def _merge_head_arg(args: Sequence[str]) -> str | None:
@@ -194,13 +232,13 @@ async def _starts_admitted_merge(root: str, tokens: list[str], tips: frozenset[s
 async def _completes_admitted_merge(root: str, merge_head: str, tokens: list[str]) -> bool:
     """Whether this git call completes or unwinds the in-progress merge."""
     subcommand, args = tokens[1], tokens[2:]
-    if subcommand == "merge" and args in (["--abort"], ["--quit"]):
+    if subcommand == "merge" and args == ["--abort"]:
         return True
     if subcommand == "commit":
         if not _plain_commit_args(args):
             return False
     elif subcommand == "merge":
-        if "--continue" not in args or not set(args) <= _CONTINUE_FLAGS:
+        if args != ["--continue"]:
             return False
     else:
         return False

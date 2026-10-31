@@ -197,7 +197,7 @@ async def test_commit_options_that_widen_the_staged_set_are_refused(repo: Path) 
 async def test_merge_unwind_is_admitted_during_a_base_merge(repo: Path) -> None:
     merge_head = _start_conflicting_base_merge(repo)
     assert await _completes_admitted_merge(str(repo), merge_head, ["git", "merge", "--abort"])
-    assert await _completes_admitted_merge(str(repo), merge_head, ["git", "merge", "--quit"])
+    assert not await _completes_admitted_merge(str(repo), merge_head, ["git", "merge", "--quit"])
 
 
 async def test_conflicted_paths_are_writable_and_others_are_not(repo: Path) -> None:

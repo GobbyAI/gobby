@@ -140,12 +140,14 @@ def _strip_heredoc_bodies(command: str) -> str:
     """
     lines = command.split("\n")
     kept: list[str] = []
+    quote: str | None = None
     index = 0
     while index < len(lines):
         line = lines[index]
         kept.append(line)
         index += 1
-        for dedent, delimiter in _heredoc_openers(line):
+        openers, quote = _heredoc_openers(line, quote)
+        for dedent, delimiter in openers:
             while index < len(lines):
                 terminator = lines[index].rstrip()
                 index += 1
@@ -154,11 +156,14 @@ def _strip_heredoc_bodies(command: str) -> str:
     return "\n".join(kept)
 
 
-def _heredoc_openers(line: str) -> list[tuple[bool, str]]:
-    """Return unquoted here-document operators and their quote-removed words."""
+def _heredoc_openers(line: str, quote: str | None) -> tuple[list[tuple[bool, str]], str | None]:
+    """Return unquoted here-document operators and the quote open at the line's end.
+
+    `quote` is the quote an earlier line left open. A quote that spans lines keeps a
+    `<<` inside it literal, so it opens no here-document.
+    """
     openers: list[tuple[bool, str]] = []
-    quote: str | None = None
-    at_word_start = True
+    at_word_start = quote is None
     index = 0
     while index < len(line):
         char = line[index]
@@ -197,7 +202,7 @@ def _heredoc_openers(line: str) -> list[tuple[bool, str]]:
             continue
         at_word_start = char in " \t;&|<>()"
         index += 1
-    return openers
+    return openers, quote
 
 
 def _parse_heredoc_delimiter(value: str) -> str | None:

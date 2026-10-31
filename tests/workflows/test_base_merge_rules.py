@@ -118,8 +118,8 @@ async def test_raw_grammar_refuses_bypasses_before_an_all_clear_lexer(
         assert not admission.git_step, command
         for lexer in lexers:
             lexer.assert_not_called()
-        response = await handler._evaluate_rules(_bash_event(session, worktree, command))
 
+    response = await handler._evaluate_rules(_bash_event(session, worktree, command))
     assert response.decision == "block", command
 
 
@@ -150,8 +150,9 @@ async def test_closed_grammar_forms_are_admitted_during_base_merge(
     _, session, worktree = seat
     if arguments.startswith("add "):
         _conflict_base_merge(worktree)
-    else:
+    elif arguments.startswith(("commit ", "merge --continue", "merge --abort")):
         _start_conflicting_base_merge(worktree)
+    # A merge start runs on the clean task worktree, before any merge is in progress.
     _seat(temp_db, session, "merge-seat", granted=True, selectors=GATED_RULES)
     prefix = f"git -C {worktree}" if with_cwd else "git"
 
@@ -664,7 +665,7 @@ async def test_base_merge_lands_through_land_commit_without_a_claim(
     )
     assert resolve.decision == "allow"
     (worktree / "shared.txt").write_text("resolved\n")
-    stage = await handler._evaluate_rules(_bash_event(session, worktree, "git add shared.txt"))
+    stage = await handler._evaluate_rules(_bash_event(session, worktree, "git add -- shared.txt"))
     assert stage.decision == "allow"
     _git(worktree, "add", "shared.txt")
     commit = await handler._evaluate_rules(_bash_event(session, worktree, "git commit --no-edit"))

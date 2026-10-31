@@ -191,6 +191,8 @@ def _create_rule(
         definition_json=body.model_dump_json(),
         priority=priority,
         enabled=True,
+        # Without an agent definition the engine evaluates only rules tagged "default".
+        tags=["default"],
     )
 
 
