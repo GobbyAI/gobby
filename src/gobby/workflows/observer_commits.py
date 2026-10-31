@@ -4,16 +4,22 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.utils.git import run_git_command
-from gobby.workflows.git_commit_parsing import parse_git_commit_invocations
+from gobby.workflows.git_commit_parsing import (
+    parse_git_commit_invocations,
+    resolve_commit_inspect_cwd,
+)
+from gobby.workflows.git_lone_command import lone_git_command
 from gobby.workflows.observer_utils import (
     _extract_shell_command,
     _extract_shell_output_text,
     _shell_tool_succeeded,
     _successful_close_result,
 )
+from gobby.workflows.reserved_variables import AUTHORED_MERGES_VARIABLE
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -23,10 +29,9 @@ logger = logging.getLogger("gobby.workflows.observers")
 # Pattern matching git's commit success output: [branch hash] message.
 # Branch labels can contain spaces for detached HEAD output.
 _GIT_COMMIT_RE = re.compile(r"^\[[^\]\n]+ [a-f0-9]{7,}\]", re.MULTILINE)
-
-# Full SHAs of the two-parent commits this session made. A base-merge candidate binds only
-# to a commit its own sender authored, so this list is the sender's record of authorship.
-AUTHORED_MERGES_VARIABLE = "_authored_merge_commits"
+# git prints this at the start of a line when a merge it ran committed cleanly.
+_MERGE_MADE_RE = re.compile(r"^Merge made by ", re.MULTILINE)
+# The ledger keeps the newest merges; reserved_variables.AUTHORED_MERGES_VARIABLE names it.
 _AUTHORED_MERGES_LIMIT = 50
 
 
@@ -94,15 +99,12 @@ def detect_commit_link(event: HookEvent, variables: dict[str, Any], session_id: 
     logger.debug("Session %s: task_has_commits=true (via %s)", session_id, inner_tool)
 
 
-def _record_authored_merge(event: HookEvent, variables: dict[str, Any]) -> None:
-    """Record HEAD when the commit just made is a merge this session authored."""
-    cwd = event.cwd
-    if not cwd:
-        return
-    head = run_git_command(["git", "rev-parse", "--verify", "-q", "HEAD^{commit}"], cwd)
+def _record_authored_merge(repo: Path, variables: dict[str, Any]) -> None:
+    """Record HEAD of ``repo`` when that HEAD is a merge commit this session created."""
+    head = run_git_command(["git", "rev-parse", "--verify", "-q", "HEAD^{commit}"], repo)
     if (
         head is None
-        or run_git_command(["git", "rev-parse", "--verify", "-q", "HEAD^2"], cwd) is None
+        or run_git_command(["git", "rev-parse", "--verify", "-q", "HEAD^2"], repo) is None
     ):
         return
     recorded = [
@@ -113,6 +115,39 @@ def _record_authored_merge(event: HookEvent, variables: dict[str, Any]) -> None:
     ]
 
 
+def _record_commit_merges(event: HookEvent, command: str, variables: dict[str, Any]) -> None:
+    """Record HEAD of each repository a commit in this command landed in.
+
+    ``git -C <path>`` and ``cd`` name the repository a commit landed in, so a commit made
+    elsewhere is not credited to the event's working directory. A commit whose directory
+    git cannot verify is not credited at all.
+    """
+    cwd = event.cwd
+    if not cwd:
+        return
+    for invocation in parse_git_commit_invocations(command):
+        if invocation.cwd_unverified:
+            continue
+        repo = resolve_commit_inspect_cwd(invocation, event_cwd=cwd, project_path=cwd)
+        _record_authored_merge(Path(repo), variables)
+
+
+def _record_clean_merge(
+    event: HookEvent, command: str, output: str, variables: dict[str, Any]
+) -> None:
+    """Record the merge a plain ``git merge`` committed cleanly, in the repository it named.
+
+    git prints ``Merge made by`` only when it creates a merge commit, so a merge that is
+    already up to date is never credited.
+    """
+    cwd = event.cwd
+    call = lone_git_command(command)
+    if not cwd or call is None or call.tokens[1:2] != ["merge"]:
+        return
+    if _MERGE_MADE_RE.search(output):
+        _record_authored_merge(Path(cwd) / (call.target or "."), variables)
+
+
 def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: str) -> bool:
     """Detect git commit success output from shell tool invocations."""
     if not event.data:
@@ -120,11 +155,15 @@ def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: 
 
     command = _extract_shell_command(event)
     outcome = _shell_tool_succeeded(event)
-    if not _is_git_commit_command(command) or outcome is False:
+    if outcome is False:
         return False
 
     raw_output = event.data.get("tool_output")
     output = _extract_shell_output_text(raw_output)
+    if not _is_git_commit_command(command):
+        _record_clean_merge(event, command, output, variables)
+        return False
+
     if not output:
         if raw_output:
             logger.debug(
@@ -137,14 +176,14 @@ def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: 
     if _GIT_COMMIT_RE.search(output):
         variables["task_has_commits"] = True
         variables["_found_work_fix_commit_turn"] = True
-        _record_authored_merge(event, variables)
+        _record_commit_merges(event, command, variables)
         logger.debug("Session %s: task_has_commits=true (Bash git commit output)", session_id)
         return True
 
     if outcome is True and _looks_like_commit_success(output):
         variables["task_has_commits"] = True
         variables["_found_work_fix_commit_turn"] = True
-        _record_authored_merge(event, variables)
+        _record_commit_merges(event, command, variables)
         logger.debug(
             "Session %s: task_has_commits=true (Bash git commit command fallback)",
             session_id,

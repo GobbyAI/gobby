@@ -14,8 +14,8 @@ the capability covers, and reads nothing else from the definition:
 - a structured write to one of those paths. A shell command never earns a path
   grant, because its output and its side effects are not named.
 
-The git call must match the closed grammar in `_FORMS` on its raw command text, as one
-line, before any shell lexing reads it; anything else is not admitted. A `-C <path>`
+The git call must match the closed grammar in `git_lone_command` on its raw command text,
+as one line, before any shell lexing reads it; anything else is not admitted. A `-C <path>`
 names the worktree the call runs in, and that worktree is the merge root.
 
 Admitted tips are the integration branch of the project's main checkout and the
@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +44,7 @@ from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.git import run_git_command
 from gobby.workflows.agent_resolver import session_has_capability
 from gobby.workflows.enforcement.blocking import get_touched_file_paths
+from gobby.workflows.git_lone_command import lone_git_command
 from gobby.workflows.git_utils import resolve_git_worktree_root_async
 
 logger = logging.getLogger(__name__)
@@ -53,20 +53,6 @@ CAPABILITY = "merge_base_commits"
 _GIT_TIMEOUT = 10.0
 _MERGE_FLAGS = frozenset({"--no-edit", "--no-ff"})
 _COMMIT_VALUE_FLAGS = frozenset({"-m"})
-_PATH = r"(?!-)[A-Za-z0-9._/-]+"
-_MESSAGE = r"[A-Za-z0-9 ._:#()/,-]+"
-_GIT = rf"git(?: -C (?P<target>{_PATH}))? "
-# The closed grammar. Each form must match the whole raw command text on one line.
-_FORMS = tuple(
-    re.compile(form)
-    for form in (
-        rf"{_GIT}(?P<args>merge(?: --no-ff)?(?: --no-edit)? {_PATH})",
-        rf"{_GIT}(?P<args>merge --(?:continue|abort))",
-        rf"{_GIT}(?P<args>add -- {_PATH}(?: {_PATH})*)",
-        rf"{_GIT}(?P<args>commit --no-edit)",
-        rf"{_GIT}(?P<args>commit(?: --no-edit)? -m) '(?P<message>{_MESSAGE})'",
-    )
-)
 
 
 @dataclass(frozen=True)
@@ -98,7 +84,7 @@ async def base_merge_admission(
     """
     if not is_session_uuid(session_id) or not session_has_capability(db, session_id, CAPABILITY):
         return NOT_ADMITTED
-    call = _lone_git_command(command)
+    call = lone_git_command(command)
     if command and call is None:
         return NOT_ADMITTED
     anchor = cwd
@@ -221,35 +207,6 @@ def _checkout_branch(checkout: Path) -> str | None:
     if ref is None or not ref.startswith("refs/heads/"):
         return None
     return ref.removeprefix("refs/heads/")
-
-
-@dataclass(frozen=True)
-class _GitCall:
-    """A git call the closed grammar admits: its `-C` path and its argument tokens."""
-
-    target: str | None
-    tokens: list[str]
-
-
-def _lone_git_command(command: str | None) -> _GitCall | None:
-    """The one git call a raw command spells in the closed grammar, or None.
-
-    The whole text must fit one form. A second segment, a `cd`, a global option, a
-    redirection, a quote, a comment, a heredoc or a substitution fails the match, so
-    no shell reading decides admission. A `-C` path is the call's target.
-    """
-    if not isinstance(command, str):
-        return None
-    for form in _FORMS:
-        match = form.fullmatch(command)
-        if match is None:
-            continue
-        tokens = ["git", *(token for token in match["args"].split(" ") if token != "--")]
-        message = match.groupdict().get("message")
-        if message is not None:
-            tokens.append(message)
-        return _GitCall(target=match["target"], tokens=tokens)
-    return None
 
 
 def _merge_head_arg(args: Sequence[str]) -> str | None:

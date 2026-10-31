@@ -248,7 +248,7 @@ def _base_merge_rejection(db: HubDatabase, event: CandidateEvent) -> str | None:
     admitted tip: the integration branch or the epic's branch.
     """
     from gobby.workflows.base_merge_commits import CAPABILITY, admitted_parent_tips
-    from gobby.workflows.observer_commits import AUTHORED_MERGES_VARIABLE
+    from gobby.workflows.reserved_variables import AUTHORED_MERGES_VARIABLE
 
     refused = "sender does not claim task"
     sender = SessionManager(db).get(event.message.from_session)
