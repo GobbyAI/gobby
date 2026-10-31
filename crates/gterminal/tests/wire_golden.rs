@@ -256,7 +256,7 @@ fn golden_corpus_bytes_and_fragmented_reads() {
     );
     write_json(
         "control_kill.json",
-        serde_json::json!({"id":"kill-1","method":"kill","operation_seq":2,"host_terminal_id":"ht-1","grace_ms":50}),
+        serde_json::json!({"id":"kill-1","method":"kill","operation_seq":2,"host_terminal_id":"ht-1","grace_ms":50,"signal":"TERM"}),
     );
     write_json(
         "control_resize.json",

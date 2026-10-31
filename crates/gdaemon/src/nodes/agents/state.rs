@@ -138,8 +138,10 @@ impl AgentState {
             .retain(|_, cancelled_at| now_ms.saturating_sub(*cancelled_at) <= RETENTION_MS);
     }
 
+    /// Queues the run's workspace for removal and returns it. The run keeps its record, so the
+    /// exit report still carries the workspace; callers drop the run themselves.
     pub fn to_removals(&mut self, run_id: &str) -> Option<WorkspaceRecord> {
-        let workspace = self.runs.get_mut(run_id)?.workspace.take()?;
+        let workspace = self.runs.get(run_id)?.workspace.clone()?;
         if workspace.reused {
             return None;
         }

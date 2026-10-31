@@ -16,18 +16,32 @@ pub mod workspace;
 use anyhow::{Context, Result};
 use state::AgentState;
 use std::{
+    collections::HashMap,
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
+    sync::{Arc, PoisonError},
 };
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, watch};
 
 pub struct NodeAgents {
     pub home: PathBuf,
     pub state: Mutex<AgentState>,
     pub changed: Notify,
+    /// FIFO gates ordering one run's terminal commands. An entry lives while a command holds it.
+    gates: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Runs whose preparation task is still live.
+    preparing: std::sync::Mutex<HashMap<String, Preparing>>,
     #[cfg(unix)]
     pub host: host::HostControl,
+}
+
+/// A live preparation task. The task holds `busy` until it ends, so a cancel that waits on
+/// `busy` reads the run's final phase.
+struct Preparing {
+    /// Set by a cancel; the task selects on it, which stops an awaited seed child.
+    cancel: watch::Sender<bool>,
+    busy: Arc<Mutex<()>>,
 }
 
 impl NodeAgents {
@@ -55,8 +69,28 @@ impl NodeAgents {
             home: home.to_owned(),
             state: Mutex::new(state),
             changed,
+            gates: Default::default(),
+            preparing: Default::default(),
             #[cfg(unix)]
             host: host::HostControl::new(home),
         })
+    }
+
+    /// The FIFO gate for `run_id`'s terminal commands.
+    fn gate(&self, run_id: &str) -> Arc<Mutex<()>> {
+        let mut gates = self.gates.lock().unwrap_or_else(PoisonError::into_inner);
+        Arc::clone(gates.entry(run_id.to_owned()).or_default())
+    }
+
+    /// Drop `run_id`'s gate once no command holds it. Clones are made only under this lock,
+    /// so a count of one means no command is waiting on or holding the gate.
+    fn release_gate(&self, run_id: &str) {
+        let mut gates = self.gates.lock().unwrap_or_else(PoisonError::into_inner);
+        if gates
+            .get(run_id)
+            .is_some_and(|gate| Arc::strong_count(gate) == 1)
+        {
+            gates.remove(run_id);
+        }
     }
 }

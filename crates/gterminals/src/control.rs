@@ -45,8 +45,27 @@ pub enum ControlError {
     Closed,
     #[error(transparent)]
     Event(#[from] EventError),
+    /// The request never completed on the wire, so the host never ran it and a retry cannot repeat it.
+    #[error("control request was not sent: {0}")]
+    NotSent(std::io::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+/// The signal a `kill` asks the host to send. `Term` gets the grace period before SIGKILL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KillSignal {
+    Term,
+    Kill,
+}
+
+impl KillSignal {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Term => "TERM",
+            Self::Kill => "KILL",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -518,12 +537,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
         host_terminal_id: &str,
         grace_ms: u64,
     ) -> Result<(), ControlError> {
-        self.mutating(
-            "kill",
-            json!({"host_terminal_id": host_terminal_id, "grace_ms": grace_ms}),
-        )
-        .await
-        .map(drop)
+        self.kill_signal(host_terminal_id, grace_ms, KillSignal::Term)
+            .await
+    }
+
+    pub async fn kill_signal(
+        &mut self,
+        host_terminal_id: &str,
+        grace_ms: u64,
+        signal: KillSignal,
+    ) -> Result<(), ControlError> {
+        let fields = json!({
+            "host_terminal_id": host_terminal_id,
+            "grace_ms": grace_ms,
+            "signal": signal.as_str(),
+        });
+        self.mutating("kill", fields).await.map(drop)
     }
 
     pub async fn resize(
@@ -696,7 +725,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
         if line.len() > MAX_CONTROL_LINE {
             return Err(ControlError::RequestTooLarge);
         }
-        self.stream.write_all(&line).await?;
+        self.stream
+            .write_all(&line)
+            .await
+            .map_err(ControlError::NotSent)?;
         self.stream.flush().await?;
         loop {
             let reply = self.read_line().await?;

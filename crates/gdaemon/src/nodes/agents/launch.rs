@@ -11,6 +11,7 @@ use super::{
     },
     state::{AgentState, ExitRecord, RunPhase, WorkspaceRecord},
     trust::seed_trust,
+    workspace,
 };
 use crate::node_commands::{ExitReason, ReportExit, SpawnPayload};
 use gobby_terminals::control::{EventCursor, HostEventKind, SpawnRequest};
@@ -52,7 +53,7 @@ pub struct LaunchFailure {
 }
 
 impl LaunchFailure {
-    fn new(reason: ExitReason, detail: impl Into<String>) -> Self {
+    pub(super) fn new(reason: ExitReason, detail: impl Into<String>) -> Self {
         Self {
             reason,
             detail: detail.into(),
@@ -359,15 +360,43 @@ async fn record_launched(
 }
 
 /// Records a failed launch as the run's exit, so a launch that returned never leaves its run
-/// owned. A failed commit reports the unrecorded exit beside the launch failure.
-async fn record_failure(
+/// owned. The workspace leaves disk before the exit commits, so an observed exit means it is
+/// gone; a failed removal stays queued for `retry_removals`. A failed commit reports the
+/// unrecorded exit beside the launch failure.
+pub(super) async fn record_failure(
     agents: &NodeAgents,
     run_id: &str,
     failure: LaunchFailure,
 ) -> LaunchFailure {
+    let queued = {
+        let mut state = agents.state.lock().await;
+        let mut next = state.clone();
+        let queued = next.to_removals(run_id);
+        if let Err(error) = next.commit(&agents.home, &agents.changed) {
+            return LaunchFailure {
+                detail: format!("{}; record exit: {error:#}", failure.detail),
+                ..failure
+            };
+        }
+        *state = next;
+        queued
+    };
+    let removed = match queued {
+        Some(record) => match workspace::remove(&record).await {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("gdaemon node: keeping removal record for run {run_id}: {error:#}");
+                false
+            }
+        },
+        None => false,
+    };
     let mut state = agents.state.lock().await;
     let mut next = state.clone();
     settle(&mut next, run_id, failure.reason, false, None, now_ms());
+    if removed {
+        next.removals.remove(run_id);
+    }
     match next.commit(&agents.home, &agents.changed) {
         Ok(()) => {
             *state = next;
@@ -522,7 +551,8 @@ pub async fn reconcile(agents: &NodeAgents) -> anyhow::Result<()> {
     }
     let mut next = state.clone();
     for run_id in &absent {
-        settle(&mut next, run_id, ExitReason::Exited, true, None, now_ms());
+        let reason = next.exit_reason(run_id);
+        settle(&mut next, run_id, reason, true, None, now_ms());
     }
     next.commit(&agents.home, &agents.changed)?;
     *state = next;
@@ -556,7 +586,7 @@ fn settle(
     state.exits.push(ExitRecord { exit, ended_at_ms });
 }
 
-fn now_ms() -> u64 {
+pub(super) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| {

@@ -71,16 +71,26 @@ async fn group_exits_by(pgid: i32, deadline: Instant) -> bool {
     }
 }
 
-/// SIGTERM the group, SIGKILL it after `grace`, and report whether it is gone.
-async fn terminate_group(pgid: i32, grace: Duration) -> bool {
+/// The signal a `kill` request asked for. `Term` gets SIGTERM and the grace before SIGKILL;
+/// `Kill` sends SIGKILL at once.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KillSignal {
+    Term,
+    Kill,
+}
+
+/// Signal the group (TERM first unless `Kill`), SIGKILL it after `grace`, and report whether it is gone.
+async fn terminate_group(pgid: i32, grace: Duration, signal: KillSignal) -> bool {
     if pgid <= 0 {
         return false;
     }
-    if let Err(err) = kill_group(pgid, libc::SIGTERM) {
-        tracing::debug!(%err, pgid, "kill_group SIGTERM failed");
-    }
-    if group_exits_by(pgid, Instant::now() + grace).await {
-        return true;
+    if signal == KillSignal::Term {
+        if let Err(err) = kill_group(pgid, libc::SIGTERM) {
+            tracing::debug!(%err, pgid, "kill_group SIGTERM failed");
+        }
+        if group_exits_by(pgid, Instant::now() + grace).await {
+            return true;
+        }
     }
     if let Err(err) = kill_group(pgid, libc::SIGKILL) {
         tracing::debug!(%err, pgid, "kill_group SIGKILL failed");
@@ -545,6 +555,15 @@ impl HostState {
         extra: &Map<String, Value>,
         grace_ms: Option<u64>,
     ) -> Value {
+        // Absent means TERM: Python callers send kill without the field.
+        let signal = match extra.get("signal") {
+            None => KillSignal::Term,
+            Some(value) => match value.as_str() {
+                Some("TERM") => KillSignal::Term,
+                Some("KILL") => KillSignal::Kill,
+                _ => return err("invalid_signal"),
+            },
+        };
         // Owned: the proof task below outlives a dropped connection.
         let Ok(gate) = Arc::clone(&self.mutation_gate).try_read_owned() else {
             return err("host_upgrading");
@@ -579,7 +598,7 @@ impl HostState {
         let grace = Duration::from_millis(grace_ms);
         let proof = tokio::spawn(async move {
             let _gate = gate;
-            let proven = terminate_group(pgid, grace).await;
+            let proven = terminate_group(pgid, grace, signal).await;
             let mut inner = state.inner.lock().await;
             if proven {
                 remove_terminal_slot(&mut inner, &identity, None);

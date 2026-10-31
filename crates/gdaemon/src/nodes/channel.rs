@@ -390,6 +390,13 @@ async fn connect_client(
     Ok(socket)
 }
 
+/// The frame a text message carries when it is a node command; `None` for any other message.
+fn command_frame(text: &str) -> Option<serde_json::Value> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .filter(|frame| frame["type"] == "command")
+}
+
 #[cfg(unix)]
 pub async fn run_client(node: Arc<crate::state::NodeServices>, timing: ChannelTiming) {
     use tokio_tungstenite::tungstenite::Message as PeerMessage;
@@ -409,6 +416,8 @@ pub async fn run_client(node: Arc<crate::state::NodeServices>, timing: ChannelTi
                 timing.ping_interval,
             );
             pings.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // Command replies leave through this loop, the socket's only writer.
+            let (replies_tx, mut replies) = tokio::sync::mpsc::unbounded_channel::<String>();
             loop {
                 tokio::select! {
                     biased;
@@ -416,7 +425,28 @@ pub async fn run_client(node: Arc<crate::state::NodeServices>, timing: ChannelTi
                     frame = socket.next() => {
                         match frame {
                             Some(Ok(PeerMessage::Close(_))) | Some(Err(_)) | None => break,
+                            Some(Ok(PeerMessage::Text(text))) => {
+                                idle = Instant::now() + timing.idle_timeout;
+                                if let Some(command) = command_frame(text.as_str()) {
+                                    let reply_tx = replies_tx.clone();
+                                    let agents = Arc::clone(&node.agents);
+                                    let launch = Arc::clone(&node.launch);
+                                    tokio::spawn(async move {
+                                        let reply = crate::nodes::agents::commands::dispatch(
+                                            agents, launch, command,
+                                        )
+                                        .await;
+                                        let _ = reply_tx.send(reply.to_string());
+                                    });
+                                }
+                            }
                             Some(Ok(_)) => idle = Instant::now() + timing.idle_timeout,
+                        }
+                    },
+                    Some(reply) = replies.recv() => {
+                        if !matches!(tokio::time::timeout_at(idle,
+                            socket.send(PeerMessage::Text(reply.into()))).await, Ok(Ok(()))) {
+                            break;
                         }
                     },
                     _ = pings.tick() => {

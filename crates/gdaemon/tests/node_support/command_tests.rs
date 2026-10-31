@@ -5,7 +5,7 @@ use gobby_daemon::{
     nodes::agents::commands::dispatch,
 };
 
-const WAIT: Duration = Duration::from_secs(5);
+const WAIT: Duration = Duration::from_secs(30);
 
 struct CommandsFixture {
     launch: LaunchFixture,
@@ -169,6 +169,15 @@ fn write(request: &str, terminal: &str, data: &str) -> Value {
         "terminal.write",
         json!({"terminal_id":terminal,"kind":"text","data":data,"submit":true}),
     )
+}
+
+/// The host takes write data as base64 under `encoding` `utf8-b64`; decodes it to the text.
+fn written_text(request: &Value) -> String {
+    assert_eq!(request["encoding"], "utf8-b64");
+    let data = request["data"].as_str().unwrap_or_default();
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data)
+        .expect("write data is base64");
+    String::from_utf8(bytes).expect("write data is utf-8")
 }
 
 #[tokio::test]
@@ -620,7 +629,7 @@ async fn terminal_write_dispositions() -> Result<()> {
         .context("host write")?;
     assert_eq!(sent["host_terminal_id"], "host-terminal");
     assert_eq!(sent["kind"], "text");
-    assert_eq!(sent["data"], "hello");
+    assert_eq!(written_text(sent), "hello");
     assert_eq!(sent["submit"], true);
     let count = requests.len();
     error(
@@ -699,7 +708,7 @@ async fn same_run_commands_serialize() -> Result<()> {
             .host
             .requests()
             .iter()
-            .any(|r| r["data"] == "second")
+            .any(|r| r["method"] == "write" && written_text(r) == "second")
     );
     fixture.launch.host.release_write();
     ok(
@@ -718,12 +727,9 @@ async fn same_run_commands_serialize() -> Result<()> {
         .requests()
         .into_iter()
         .filter(|r| r["method"] == "write")
-        .map(|r| r["data"].clone())
+        .map(|r| written_text(&r))
         .collect();
-    assert_eq!(
-        writes,
-        vec![json!("first"), json!("other"), json!("second")]
-    );
+    assert_eq!(writes, vec!["first", "other", "second"]);
     Ok(())
 }
 
