@@ -36,6 +36,7 @@ from gobby.hub.caller_scope import bind_caller, reset_caller
 from gobby.hub.machine_routing import RoutedMachine
 from gobby.hub.node_client import NodeCommandError
 from gobby.hub.remote_spawn import RemoteSpawnRequest, spawn_remote_agent
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent._factory import create_spawn_agent_registry
 from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import _roll_back_run
 from gobby.mcp_proxy.tools.spawn_agent._remote_routing import spawn_remote_route
@@ -1308,77 +1309,220 @@ async def test_spawn_needs_owned_machine(
     assert node.send.await_count == 3
 
 
-async def test_remote_write_grant_refused(
+async def test_remote_write_grant_forwarded_for_node_validation(
     temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    remote_parent: str,
+    sample_project: dict[str, str],
+    local_parent: str,
     remote_machine: str,
     node: AsyncMock,
     runner: MagicMock,
+    spawn_registry: InternalToolRegistry,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Refused whether or not the caller holds a recorded grant for the same path."""
-    release = tmp_path / "release"
-    release.mkdir()
-    before = _row_counts(temp_db)
+    """An explicit coordinator assertion forwards paths that exist only on the node."""
+    release = tmp_path / "node-only" / "release"
+    assert not release.exists()
+    monkeypatch.setattr(factory, "enforce_spawn_caller", AsyncMock(return_value=local_parent))
 
-    refused = await spawn_remote_route(
-        temp_db,
-        routed=_routed(remote_machine),
-        session_manager=SessionManager(temp_db),
-        task_manager=LocalTaskManager(temp_db),
-        runner=runner,
-        daemon_config=DaemonConfig(),
-        placement=None,
-        request=_request(
-            remote_parent,
-            sample_project["id"],
-            extra_write_paths=[str(release)],
-            write_paths_reason="release",
-        ),
+    result = await spawn_registry.call(
+        "spawn_agent",
+        {
+            "prompt": "Review the release",
+            "parent_session_id": local_parent,
+            "machine": remote_machine,
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "extra_write_paths": [str(release)],
+            "write_paths_reason": "node release review",
+        },
     )
 
-    assert refused["success"] is False
-    assert refused["error_code"] == "remote_write_grant_unsupported"
-    assert refused["stage"] == "none"
-    assert _row_counts(temp_db) == before
-    node.send.assert_not_awaited()
+    assert result["success"] is True, result
+    _assert_node_write_grant(temp_db, runner, node, remote_machine, str(release), result)
+    assert not release.exists(), "remote grants must not create paths on the hub"
 
 
-async def test_http_remote_write_grant_refused(
+async def test_http_remote_write_grant_forwarded_for_node_validation(
     temp_db: HubDatabase,
-    sample_project: dict[str, Any],
+    sample_project: dict[str, str],
     remote_machine: str,
     node: AsyncMock,
     runner: MagicMock,
     tmp_path: Path,
 ) -> None:
-    release = tmp_path / "release"
-    release.mkdir()
+    release = tmp_path / "node-only" / "release"
+    assert not release.exists()
     task = LocalTaskManager(temp_db).create_task(
         title="HTTP write grant",
         task_type="task",
         project_id=sample_project["id"],
-        validation_criteria="Refused before rows.",
+        validation_criteria="The target node validates its own external write roots.",
     )
     body = {
         "task_id": task.id,
-        "prompt": "x",
+        "prompt": "Review the release",
         "machine": remote_machine,
         "provider": "claude",
+        "model": "claude-sonnet-5",
         "extra_write_paths": [str(release)],
-        "write_paths_reason": "release",
+        "write_paths_reason": "node release review",
     }
-    before = _row_counts(temp_db)
 
     with _owner_http_client(temp_db, TEST_USER_ID, runner) as client:
-        refused = client.post("/api/agents/spawn", json=body)
+        response = client.post("/api/agents/spawn", json=body)
 
-    assert refused.status_code == 400
-    assert refused.json()["error_code"] == "remote_write_grant_unsupported"
-    after = _row_counts(temp_db)
-    assert (after["agent_runs"], after["terminals"]) == (before["agent_runs"], before["terminals"])
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["success"] is True, result
+    _assert_node_write_grant(temp_db, runner, node, remote_machine, str(release), result)
+    assert not release.exists(), "remote grants must not create paths on the hub"
+
+
+def _assert_node_write_grant(
+    db: HubDatabase,
+    runner: MagicMock,
+    node: AsyncMock,
+    machine_id: str,
+    requested_root: str,
+    result: dict[str, object],
+) -> None:
+    node.send.assert_awaited_once()
+    sent = node.send.await_args
+    assert sent is not None
+    (target, command, payload), _ = sent
+    assert (target, command) == (machine_id, "agent.spawn")
+    assert payload["sandbox"]["extra_write_paths"] == [requested_root]
+    run_id = result["run_id"]
+    assert isinstance(run_id, str)
+    assert _owners(db, run_id) == {"run": machine_id, "session": machine_id, "terminal": machine_id}
+    run = runner.run_storage.get(run_id)
+    assert run is not None
+    grant = run.resume_metadata_json[GRANT_KEY]
+    assert grant["machine_id"] == machine_id
+    assert grant["requested_roots"] == [requested_root]
+    assert grant["reason"] == "node release review"
+    assert grant["parent_run_id"] is None, "an explicit assertion is not inherited authority"
+    assert grant["asserting_session_id"] == run.parent_session_id
+
+
+async def test_hub_caller_grant_refused_for_node_target(
+    temp_db: HubDatabase,
+    sample_project: dict[str, str],
+    local_parent: str,
+    local_machine: str,
+    remote_machine: str,
+    node: AsyncMock,
+    runner: MagicMock,
+    spawn_registry: InternalToolRegistry,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An inherited grant on machine A cannot authorize the same pathname on B."""
+    release = tmp_path / "release"
+    release.mkdir()
+    grant = authorize_write_grant(
+        [str(release)],
+        "release on machine A",
+        caller_session_id=local_parent,
+        parent_session_id=None,
+        session_manager=SessionManager(temp_db),
+        run_storage=runner.run_storage,
+        launch_machine_id=local_machine,
+    )
+    assert grant is not None
+    grant["machine_id"] = local_machine
+    managed_parent = _insert_session(temp_db, sample_project["id"], local_machine)
+    runner.run_storage.create(
+        parent_session_id=local_parent,
+        provider="claude",
+        prompt="Managed work on machine A",
+        child_session_id=managed_parent,
+        machine_id=local_machine,
+        resume_metadata_json={GRANT_KEY: grant},
+    )
+    monkeypatch.setattr(factory, "enforce_spawn_caller", AsyncMock(return_value=managed_parent))
+    before = _row_counts(temp_db)
+
+    refused = await spawn_registry.call(
+        "spawn_agent",
+        {
+            "prompt": "Try the same pathname on machine B",
+            "parent_session_id": managed_parent,
+            "machine": remote_machine,
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "extra_write_paths": [str(release)],
+            "write_paths_reason": "delegate release review",
+        },
+    )
+
+    assert refused["success"] is False
+    assert _row_counts(temp_db) == before, "refuse replay before session, run, or terminal rows"
     node.send.assert_not_awaited()
+    assert "machine" in refused["error"].lower()
+    assert refused.get("error_code") != "remote_write_grant_unsupported", (
+        "refuse the inherited machine-A authority, rather than every remote grant"
+    )
+
+
+@pytest.mark.parametrize("entrypoint", ["mcp", "http"])
+async def test_remote_write_grant_rejected_by_node(
+    entrypoint: str,
+    temp_db: HubDatabase,
+    sample_project: dict[str, str],
+    local_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    runner: MagicMock,
+    spawn_registry: InternalToolRegistry,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hub-local existence cannot override the target node's filesystem refusal."""
+    release = tmp_path / "hub-only-release"
+    release.mkdir()
+    message = f"Target node cannot resolve external write root: {release}"
+    node.send.side_effect = NodeCommandError("invalid_write_grant", message, "none")
+    monkeypatch.setattr(factory, "enforce_spawn_caller", AsyncMock(return_value=local_parent))
+    task = LocalTaskManager(temp_db).create_task(
+        title="Node validates its external roots",
+        task_type="task",
+        project_id=sample_project["id"],
+        validation_criteria="The node refusal reaches both public spawn entrypoints.",
+    )
+    body: dict[str, object] = {
+        "task_id": task.id,
+        "prompt": "Review the release",
+        "machine": remote_machine,
+        "provider": "claude",
+        "model": "claude-sonnet-5",
+        "extra_write_paths": [str(release)],
+        "write_paths_reason": "node release review",
+    }
+
+    if entrypoint == "mcp":
+        result = await spawn_registry.call(
+            "spawn_agent", {**body, "parent_session_id": local_parent}
+        )
+    else:
+        with _owner_http_client(temp_db, TEST_USER_ID, runner) as client:
+            response = client.post("/api/agents/spawn", json=body)
+        assert response.status_code == 400, response.text
+        result = response.json()
+
+    assert result["success"] is False
+    assert result["error_code"] == "invalid_write_grant", result
+    assert result["error"] == message
+    assert result["stage"] == "none"
+    node.send.assert_awaited_once()
+    sent = node.send.await_args
+    assert sent is not None
+    (target, command, payload), _ = sent
+    assert (target, command) == (remote_machine, "agent.spawn")
+    assert payload["sandbox"]["extra_write_paths"] == [str(release)]
+    assert _state(temp_db, "agent_runs", payload["run_id"]) == "cancelled"
+    assert _state(temp_db, "terminals", payload["run_id"]) == "exited"
 
 
 async def test_machine_count_failure_releases_lease(
