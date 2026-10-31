@@ -26,6 +26,7 @@ from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.srt_settings import render_srt_settings
 from gobby.config.shell_lexing import ParsedShellCommand
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -41,7 +42,8 @@ from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
-from tests.fixtures.landing_case import LandingCase, make_landing_case
+from tests.fixtures.landing_case import LandingCase, bind_task_manager, make_landing_case
+from tests.fixtures.team_case import make_team_world
 
 pytestmark = pytest.mark.unit
 
@@ -393,7 +395,14 @@ def seat(
 
 
 def _seat(
-    db: HubDatabase, session: Session, name: str, *, granted: bool, selectors: list[str]
+    db: HubDatabase,
+    session: Session,
+    name: str,
+    *,
+    granted: bool,
+    selectors: list[str],
+    extra_capabilities: tuple[str, ...] = (),
+    team_manager: bool = False,
 ) -> None:
     """A synthetic seat; only its capability list and rule selection matter to the gates."""
     AgentDefinitionManager(db).create(
@@ -401,8 +410,11 @@ def _seat(
         {
             "name": name,
             "prompts": {"agent": "Merge the integration branch into the task."},
-            "workflows": {"rule_selectors": {"include": selectors}},
-            "capabilities": [CAPABILITY] if granted else [],
+            "workflows": {
+                "rule_selectors": {"include": selectors},
+                "variables": {"team_manager": team_manager},
+            },
+            "capabilities": [*([CAPABILITY] if granted else []), *extra_capabilities],
         },
         project_id=session.project_id,
         enabled=True,
@@ -945,3 +957,134 @@ async def test_team_worktree_scope_is_static_in_srt_launch_policy(
     assert (str(worktree) in writes) == granted
     assert str(worktree.parent) not in writes
     assert str(unrelated.resolve()) not in writes
+
+
+@pytest.mark.parametrize(
+    "sender_kind,claim_state,linked",
+    [
+        (sender, claim, linked)
+        for sender in ("team-manager", "root-coordinator")
+        for claim in ("claimed", "released", "never-claimed")
+        for linked in (True, False)
+    ]
+    + [
+        ("unbound-manager", "never-claimed", True),
+        ("other-team-manager", "never-claimed", True),
+        ("team-developer", "never-claimed", True),
+    ],
+)
+async def test_base_merge_candidate_sender_claim_and_link_matrix(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _local_machine_identity: None,
+    sender_kind: str,
+    claim_state: str,
+    linked: bool,
+) -> None:
+    """A coordinator's authored base merge binds independently of the maker's claim lifecycle."""
+    case = make_landing_case(temp_db, sample_project, tmp_path)
+    case.direct({"shared.txt": "base\n"})
+    world = make_team_world(case, tmp_path, monkeypatch)
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        case.project_id, "Merge candidate bindings", validation_criteria="Bind."
+    )
+    runbook = world.child(task)
+    binding = await world.admit(runbook, task)
+    assert binding.worktree_path is not None
+    worktree = Path(binding.worktree_path).resolve()
+    handler, root = _register_seat(temp_db, case.project_id)
+
+    if claim_state != "never-claimed":
+        tasks.claim_task(task.id, case.claimant)
+        if claim_state == "released":
+            tasks.release_task_claim(task.id)
+    manager = sender_kind in {"team-manager", "unbound-manager", "other-team-manager"}
+    if sender_kind == "root-coordinator":
+        sender = root
+    else:
+        parent = runbook
+        managed_task = task
+        if sender_kind == "other-team-manager":
+            managed_task = tasks.create_task(
+                case.project_id, "Other team", validation_criteria="Separate team."
+            )
+            parent = world.child(managed_task)
+            await world.admit(parent, managed_task)
+        parent_id = case.creator if sender_kind == "unbound-manager" else parent.id
+        sender_id = case.session(sender_kind, parent=parent_id)
+        if manager and sender_kind != "unbound-manager":
+            bind_task_manager(
+                temp_db,
+                manager=sender_id,
+                parent=parent_id,
+                project_id=case.project_id,
+                task=managed_task,
+            )
+        else:
+            LocalAgentRunManager(temp_db).create(
+                parent_session_id=parent_id,
+                provider="claude",
+                prompt="Candidate sender.",
+                agent_name=sender_kind,
+                child_session_id=sender_id,
+                task_id=task.id if sender_kind == "team-developer" else None,
+            )
+        loaded_sender = SessionManager(temp_db).get(sender_id)
+        assert loaded_sender is not None
+        sender = loaded_sender
+    extra = (
+        ("manage_task_claims",)
+        if manager
+        else (("coordinate_tasks",) if sender_kind == "root-coordinator" else ("implementation",))
+    )
+    _seat(
+        temp_db,
+        sender,
+        f"synthetic-{sender_kind}",
+        granted=sender_kind != "team-developer",
+        selectors=GATED_RULES,
+        extra_capabilities=extra,
+        team_manager=manager,
+    )
+    reviewer_id = case.session("merge-intake-reviewer", parent=runbook.id)
+    LocalAgentRunManager(temp_db).create(
+        parent_session_id=runbook.id,
+        provider="claude",
+        prompt="Review candidate.",
+        agent_name="synthetic-reviewer",
+        child_session_id=reviewer_id,
+        task_id=task.id,
+    )
+
+    case.direct({"shared.txt": "integration edit\n"})
+    _commit(worktree, "shared.txt", "task edit\n", "task edit")
+    _conflict_base_merge(worktree, "trunk")
+    (worktree / "shared.txt").write_text("resolved\n")
+    _git(worktree, "add", "shared.txt")
+    await handler._evaluate_rules(_bash_event(sender, worktree, "git commit --no-edit"))
+    output = _git(worktree, "commit", "--no-edit")
+    completed = _bash_event(sender, worktree, "git commit --no-edit", HookEventType.AFTER_TOOL)
+    completed.data["tool_output"] = output
+    await handler._evaluate_rules(completed)
+    sha = _git(worktree, "rev-parse", "HEAD")
+    if linked:
+        tasks.link_commit(task.id, sha)
+    message = InterSessionMessageManager(temp_db).create_message(
+        from_session=sender.id,
+        to_session=reviewer_id,
+        content=(
+            f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN={binding.team_id} "
+            f"WT={worktree} COMMIT={sha} NOTE=authored base merge"
+        ),
+    )
+    event = candidate_event(temp_db, message)
+    assert event is not None
+    error = _candidate_rejection(temp_db, {}, event, reviewer_id)
+    allowed = linked and sender_kind in {"team-manager", "root-coordinator"}
+    assert (error is None) == allowed, error
+    expected_holder = case.claimant if claim_state == "claimed" else None
+    assert tasks.get_task(task.id).claimed_by_session_id == expected_holder
+    assert sender.id != expected_holder
