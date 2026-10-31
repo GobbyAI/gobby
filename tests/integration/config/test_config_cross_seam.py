@@ -180,31 +180,31 @@ async def world(temp_db: HubDatabase, tmp_path: Path) -> AsyncIterator[_World]:
 async def test_task_external_alias_round_trips_all_config_surfaces(world: _World) -> None:
     schema = await world.values.schema()
     properties = cast(dict[str, object], schema["properties"])
-    assert "gobby-tasks.validation.max_iterations" in properties
-    assert "gobby_tasks.validation.max_iterations" not in properties
+    assert "gobby-tasks.validation.confirmation_timeout_seconds" in properties
+    assert "gobby_tasks.validation.confirmation_timeout_seconds" not in properties
     assert "gobby-tasks.expansion.pattern_criteria.patterns.{pattern}" in properties
 
     changed = await world.values.patch(
         expected_revision=world.runtime.snapshot.revision,
         values={
             "gobby-tasks": {
-                "validation": {"max_iterations": 7},
+                "validation": {"confirmation_timeout_seconds": 7.5},
                 "expansion": {"pattern_criteria": {"patterns": {"audit": ["Verified"]}}},
             }
         },
     )
     assert changed["committed"] is True
-    assert world.runtime.snapshot.active.gobby_tasks.validation.max_iterations == 7
+    assert world.runtime.snapshot.active.gobby_tasks.validation.confirmation_timeout_seconds == 7.5
     assert world.runtime.snapshot.active.gobby_tasks.expansion.pattern_criteria.patterns[
         "audit"
     ] == ["Verified"]
     stored = world.repository.read().overrides
-    assert stored["gobby-tasks.validation.max_iterations"] == 7
-    assert "gobby_tasks.validation.max_iterations" not in stored
+    assert stored["gobby-tasks.validation.confirmation_timeout_seconds"] == 7.5
+    assert "gobby_tasks.validation.confirmation_timeout_seconds" not in stored
 
     public = await world.values.values()
     desired = cast(dict[str, dict[str, dict[str, object]]], public["desired"])
-    assert desired["gobby-tasks"]["validation"]["max_iterations"] == 7
+    assert desired["gobby-tasks"]["validation"]["confirmation_timeout_seconds"] == 7.5
     exported = await world.documents.export_yaml()
     content = cast(str, exported["content"])
     assert "gobby-tasks:" in content
@@ -217,9 +217,12 @@ async def test_task_external_alias_round_trips_all_config_surfaces(world: _World
     await world.values.patch(
         expected_revision=world.runtime.snapshot.revision,
         values={},
-        unset=("gobby-tasks.validation.max_iterations",),
+        unset=("gobby-tasks.validation.confirmation_timeout_seconds",),
     )
-    assert "gobby-tasks.validation.max_iterations" not in world.repository.read().overrides
+    assert (
+        "gobby-tasks.validation.confirmation_timeout_seconds"
+        not in world.repository.read().overrides
+    )
 
 
 async def test_reference_secret_is_masked_across_values_yaml_and_events(world: _World) -> None:

@@ -80,6 +80,7 @@ Targets:
         entry=plan.manifest_entries[0],
         section=plan.sections[0],
         phase_id="phase-p1",
+        agent_definitions=[],
     )
 
     assert "Run `uv run pytest tests/auth/test_cli.py -q`." in leaf["validation"]
