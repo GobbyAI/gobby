@@ -3,20 +3,30 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import yaml
 
+from gobby.events.completion_registry import CompletionEventRegistry
+from gobby.events.coordination_waits import CoordinationWaitService
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.datetime import utc_now
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-from tests.events.test_coordination_waits import CoordinationHarness
+from tests.events.test_coordination_waits import CoordinationHarness, connection_for
 from tests.events.test_coordination_waits import harness as coordination_fixture
+from tests.terminals.fakes import make_memory_terminal
 
 pytestmark = pytest.mark.integration
 
@@ -80,15 +90,52 @@ async def test_reporter_cadence_wait_wakes_next_tick_and_rearms(
 ) -> None:
     timeout = _cadence_wait_timeout()
     assert timeout == CADENCE_SECONDS
+    harness.db.execute(
+        "UPDATE sessions SET source = 'codex', status = 'paused' WHERE id = %s",
+        (harness.waiter,),
+    )
+    LocalAgentRunManager(harness.db).create(
+        parent_session_id=harness.owner,
+        child_session_id=harness.waiter,
+        provider="codex",
+        agent_name="reporter",
+        prompt="Report on each policy cadence",
+        resume_metadata_json={"execution_mode": "interactive", "provider_cli_mode": "terminal"},
+    )
+    terminal = replace(make_memory_terminal(backend="native"), session_id=harness.waiter)
+    terminals = MagicMock()
+    terminals.resolve_live_for_session.return_value = terminal
+    sender = AsyncMock(return_value=utc_now())
+    dispatcher = WakeDispatcher(
+        session_manager=SessionManager(harness.db),
+        ism_manager=harness.messages,
+        terminal_manager=terminals,
+        tmux_sender=sender,
+    )
+    service = CoordinationWaitService(
+        harness.manager,
+        CompletionEventRegistry(wake_callback=dispatcher.wake),
+        require_machine_id(),
+        lambda: connection_for(harness),
+    )
 
     tick = harness.wait(reply=True, timeout=timeout)
     assert tick["outcome"] == "waiting"
     assert (tick["expires_at"] - datetime.now(UTC)).total_seconds() > CADENCE_SECONDS - 60
 
     _expire(harness, tick["id"])
-    woke = harness.wait(reply=True, timeout=timeout)
+    await service.process(tick["id"])
+    woke = harness.row(tick["id"])
     assert woke["id"] == tick["id"]
     assert woke["outcome"] == "timeout"
+    assert woke["delivered_at"] is not None
+    sender.assert_awaited_once_with(
+        terminal.id,
+        CONTINUE_WAKE_MESSAGE,
+        submit=True,
+        clear_before_submit=True,
+        cli_source="codex",
+    )
 
     next_tick = harness.wait(reply=True, timeout=timeout)
     assert next_tick["id"] != tick["id"]
