@@ -29,7 +29,7 @@ import yaml
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.runner import AgentRunner
-from gobby.agents.team_lifecycle import TeamBinding
+from gobby.agents.team_admission_records import TeamBinding
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -2150,6 +2150,7 @@ async def reviewer_authorities(
             "name": "dev-manager",
             "version": "1.0",
             "prompts": {"agent": "Manage the team."},
+            # A bound manager's run must declare team_manager, or it is not the task's manager.
             "workflows": {
                 "rule_selectors": {"include": []},
                 "variables": {"team_manager": True},

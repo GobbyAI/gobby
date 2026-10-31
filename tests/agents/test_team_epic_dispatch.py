@@ -10,7 +10,8 @@ from typing import Any, cast
 import pytest
 
 from gobby.agents.runbook_seats import check_runbook_seats
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding, managed_task_team
+from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_lifecycle import managed_task_team
 from gobby.mcp_proxy.tools.runbook_seat_tools import runbook_seat_stores
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.storage.agents import LocalAgentRunManager

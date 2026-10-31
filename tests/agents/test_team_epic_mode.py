@@ -9,7 +9,8 @@ from typing import Any, cast
 import pytest
 
 from gobby.agents.isolation_models import SpawnConfig, generate_branch_name
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding, seat_team
+from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_lifecycle import seat_team
 from gobby.agents.team_teardown import reconcile_team_teardowns
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.agents import AgentRun

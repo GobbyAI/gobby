@@ -2,7 +2,8 @@
 
 from typing import Any
 
-from gobby.agents.team_lifecycle import TeamBinding, seat_team
+from gobby.agents.team_admission_records import TeamBinding
+from gobby.agents.team_lifecycle import seat_team
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_claim import record_claimant_state
@@ -36,7 +37,7 @@ def _can_release(ctx: RegistryContext, caller: Session, holder: Session, task_id
     if is_operator_coordinator(ctx.task_manager, caller, capability="manage_task_claims"):
         return True
     team = _managed_team(ctx, caller, task_id)
-    return team is not None and _is_team_seat(ctx.task_manager.db, holder.id, team.team_id)
+    return team is not None and _is_team_seat(ctx.task_manager.db, holder.id, team)
 
 
 def _may_release_own_claim(ctx: RegistryContext, caller: Session, holder: Session) -> bool:
@@ -47,12 +48,12 @@ def _may_release_own_claim(ctx: RegistryContext, caller: Session, holder: Sessio
     return definition is not None and "release_own_claim" in definition[0].capabilities
 
 
-def _is_team_seat(db: HubDatabase, session_id: str, team_id: str) -> bool:
-    """Whether the session is a seat of the team. Team identity decides membership: a seat's
-    admission snapshot can lag the live team after a replacement join or a later seat bind, so
-    the whole binding need not compare equal."""
+def _is_team_seat(db: HubDatabase, session_id: str, team: TeamBinding) -> bool:
+    """Whether the session is a seat of ``team``'s task. A relaunch and a fallback launch admit
+    their own team record for the same task, so the task identifies the team, not the record;
+    a seat's admission snapshot can also lag the live team, so the whole binding need not match."""
     held = seat_team(db, session_id)
-    return held is not None and held.team_id == team_id
+    return held is not None and held.task_id == team.task_id
 
 
 def _uncommitted_refusal(
@@ -254,8 +255,8 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
             if (
                 holder is None
                 or recipient is None
-                or not _is_team_seat(db, holder.id, team.team_id)
-                or not _is_team_seat(db, recipient.id, team.team_id)
+                or not _is_team_seat(db, holder.id, team)
+                or not _is_team_seat(db, recipient.id, team)
             ):
                 return {
                     "error": "The holder and the recipient must be seats of the task's team",
