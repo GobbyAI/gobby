@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-from gobby.agents.team_lifecycle import SeatTarget, TeamAdmissionRefused, check_team_spawn
+from gobby.agents.team_admission_records import SeatTarget, TeamAdmissionRefused
+from gobby.agents.team_lifecycle import check_team_spawn
 from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.mcp_proxy.tools.tasks import create_task_registry

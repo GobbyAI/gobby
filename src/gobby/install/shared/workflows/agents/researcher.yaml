@@ -1,5 +1,5 @@
 name: researcher
-capabilities: [accept_resume_retype]
+capabilities: [accept_resume_retype, message_assistant]
 description: |
   Researcher seat. Researches the questions the Orchestrator routes to it and
   writes research reports and proposals; never implements or lands code.

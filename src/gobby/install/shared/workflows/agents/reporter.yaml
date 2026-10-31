@@ -1,5 +1,5 @@
 name: reporter
-capabilities: [accept_resume_retype]
+capabilities: [accept_resume_retype, message_assistant]
 description: |
   Standing reporter seat. Delivers scheduled delta and full queue status as
   markdown directly to the configured operator destination, with live Assistant

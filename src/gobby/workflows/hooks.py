@@ -594,6 +594,35 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 else:
                     eval_context["foreign_staged_commit_conflict"] = ""
 
+                # A base merge the definition's merge capability admits is a step the
+                # task and review gates do not cover. Only the capability reaches here.
+                from gobby.workflows.base_merge_commits import (
+                    NOT_ADMITTED,
+                    base_merge_admission,
+                )
+
+                base_merge = NOT_ADMITTED
+                if (
+                    event.event_type == HookEventType.BEFORE_TOOL
+                    and session_id
+                    and event.project_id
+                    and project_path
+                ):
+                    from gobby.workflows.observer_utils import _extract_shell_command
+
+                    base_merge = await base_merge_admission(
+                        self.rule_engine.db,
+                        session_id=session_id,
+                        project_id=event.project_id,
+                        project_path=project_path,
+                        cwd=event.cwd if isinstance(event.cwd, str) else None,
+                        command=_extract_shell_command(event),
+                        tool_kind=event.data.get("canonical_tool_kind"),
+                        tool_input=event.data.get("tool_input"),
+                    )
+                eval_context["base_merge_git_step"] = base_merge.git_step
+                eval_context["base_merge_write"] = base_merge.write
+
                 # The code-review gates skip a commit that records nothing OCR
                 # would review. Needs no session, because the gates block a
                 # session-less commit too.
@@ -603,7 +632,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     from gobby.workflows.code_review_scope import inspect_commit_review_scope
 
                     review_scope = await inspect_commit_review_scope(
-                        event, project_path, variables, db=self.rule_engine.db
+                        event,
+                        project_path,
+                        variables,
+                        db=self.rule_engine.db,
+                        base_merge_git_step=base_merge.git_step,
                     )
                     eval_context["commit_has_reviewable_paths"] = review_scope.has_reviewable_paths
                     eval_context["commit_records_only_plan_paths"] = (

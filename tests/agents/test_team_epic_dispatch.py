@@ -10,7 +10,8 @@ from typing import Any, cast
 import pytest
 
 from gobby.agents.runbook_seats import check_runbook_seats
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding, managed_task_team
+from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_lifecycle import managed_task_team
 from gobby.mcp_proxy.tools.runbook_seat_tools import runbook_seat_stores
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.storage.agents import LocalAgentRunManager
@@ -708,7 +709,8 @@ async def test_resumed_primary_refused_beside_a_live_primary(
 @pytest.mark.asyncio
 async def test_single_team_manager_spawns_no_fresh_seat(world: TeamWorld) -> None:
     """A single-task team runs the redesign flow: its runbook starts the seats, and its manager
-    only resumes them. A fresh spawn from its manager is refused, never launched."""
+    only resumes them. A fresh spawn of a seat type the team never ran is refused, never launched;
+    relaunching a lost seat is covered by test_pod_manager_relaunches_a_lost_seat_into_the_pod_tab."""
     db = world.case.db
     task = new_task(world, "Single task")
     runbook = world.child(task)
