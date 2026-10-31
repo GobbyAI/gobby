@@ -81,6 +81,7 @@ step_workflow:
     candidate_task: null
     candidate_sha: null
     candidate_disposition: null
+    assigned_task_id: null
 
   steps:
     - name: load_skills
@@ -179,13 +180,20 @@ step_workflow:
           variable: fixing
           value: true
           when: "(tool_output.get('result') or tool_output).get('already_claimed')"
+        # The claim binds the leaf, so a close that releases it rewinds fix to this step.
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: assigned_task_id
+          value: "(tool_output.get('result') or tool_output).get('task_id')"
       transitions:
         - to: fix
           when: "vars.fixing"
+        # A candidate whose leaf closed is not routed for a verdict or review.
         - to: verdict
-          when: "vars.candidate_received and vars.verdict_ready"
+          when: "vars.candidate_received and vars.verdict_ready and not task_state_in(vars.candidate_task, 'closed')"
         - to: review
-          when: "vars.candidate_received"
+          when: "vars.candidate_received and not task_state_in(vars.candidate_task, 'closed')"
 
     - name: review
       mcp_error_policy: stay
@@ -259,10 +267,11 @@ step_workflow:
           tool: record_review_step
           action: advance_seat
       transitions:
+        # A review whose candidate leaf closed returns to candidate wait.
         - to: await
-          when: "not vars.candidate_received"
+          when: "not vars.candidate_received or task_state_in(vars.candidate_task, 'closed')"
         - to: verdict
-          when: "vars.verdict_ready"
+          when: "vars.verdict_ready and not task_state_in(vars.candidate_task, 'closed')"
 
     - name: verdict
       mcp_error_policy: stay
@@ -318,10 +327,11 @@ step_workflow:
           tool: record_review_step
           action: advance_seat
       transitions:
+        # A verdict whose candidate leaf closed returns to candidate wait.
+        - to: await
+          when: "not vars.candidate_received or task_state_in(vars.candidate_task, 'closed')"
         - to: review
           when: "vars.candidate_received and not vars.verdict_ready"
-        - to: await
-          when: "not vars.candidate_received"
 
     # Entered only after the Dev Manager hands this seat the claim; the seat
     # stays the task's fixer until the task closes.
