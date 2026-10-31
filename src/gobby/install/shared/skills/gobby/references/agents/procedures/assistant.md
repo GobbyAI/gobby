@@ -58,11 +58,16 @@ Rules for every report:
    `gobby-communications:resolve_operator_conversation(channel="gobby-telegram")`, unless project
    policy names another channel. If it is missing or ambiguous, report the delivery gap to the
    Orchestrator and stop. Never guess a destination.
-2. Check `gobby-communications:list_conversation_attachments`. If the operator channel is attached
-   to this pane, do not type the report there. Automatic mirroring carries it.
-3. Send the whole markdown report once:
-   `gobby-communications:send_operator_message(channel=<channel>, content=<report>)`. Inspect
-   success and keep the message_id.
-4. On a failed send, retry once after 30 to 60 seconds. If the retry fails too, send the exact
-   error to the Orchestrator.
-5. Never resend a confirmed delivery.
+2. Check `gobby-communications:list_conversation_attachments` and branch on whether the operator
+   channel is attached to this pane, meaning this session holds the attachment. Each tick takes
+   exactly one of these paths:
+   - Attached: type the whole markdown report once as your reply in this pane. Automatic mirroring
+     carries it to the operator channel. Do not call `send_operator_message` for this tick, and
+     do not announce a send.
+   - Not attached: send the whole markdown report once with
+     `gobby-communications:send_operator_message(channel=<channel>, content=<report>)`. Inspect
+     success and keep the message_id. Type nothing in this pane for this tick.
+3. On the send path, if the send fails, retry once after 30 to 60 seconds. If the retry fails too,
+   send the exact error to the Orchestrator. On the pane path the report is typed once, and no
+   retry applies.
+4. On the send path, never resend a confirmed delivery.
