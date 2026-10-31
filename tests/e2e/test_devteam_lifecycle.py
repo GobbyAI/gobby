@@ -127,12 +127,12 @@ async def test_complete_single_task_team(world: TeamWorld, monkeypatch: pytest.M
     sha = commit(db, task_id, tree, "docs/ship.md")
     approve(db, developer, task_id, "implementation", sha)
 
-    # Review is independent: the claimant is refused, and neither it nor the reviewer lands.
-    with pytest.raises(StepRecordError, match="claimant cannot review its own task"):
+    # Review is independent: the implementer is refused, and neither it nor the reviewer lands.
+    with pytest.raises(StepRecordError, match="cannot review its own task"):
         approve(db, developer, task_id, "review", sha)
     approve(db, reviewer, task_id, "review", sha)
     for lander, blocker in (
-        (developer, "caller_is_claimant"),
+        (developer, "caller_is_maker"),
         (reviewer, "caller_not_task_manager"),
     ):
         refused = await case.land(tasks.get_task(task_id), sha, caller=lander)
