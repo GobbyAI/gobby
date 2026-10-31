@@ -100,9 +100,20 @@ def test_env_split_option_tail_copies_grow_linearly(
     split_string = _shell_execution_words._env_split_string
 
     def counted_split(
-        option: str, words: list[str], value_options: Collection[str], *, start: int = 0
+        option: str,
+        words: list[str],
+        value_options: Collection[str],
+        *,
+        start: int = 0,
+        environment_changes: list[tuple[str | None, str | None]] | None = None,
     ) -> list[str] | None:
-        result = split_string(option, words, value_options, start=start)
+        result = split_string(
+            option,
+            words,
+            value_options,
+            start=start,
+            environment_changes=environment_changes,
+        )
         if result is not None:
             copies.count += len(result)
         return result

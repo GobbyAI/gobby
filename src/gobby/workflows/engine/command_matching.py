@@ -35,6 +35,7 @@ from __future__ import annotations
 import functools
 import re
 import shlex
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -75,6 +76,7 @@ from .command_matching_heredoc import (
     heredoc_free_text,
 )
 from .command_matching_uv import _after_options, _language_stage, _uv_run_argvs
+from .command_matching_variables import assignment_prefix, expand_stage, initial_names
 
 _SUBSTITUTION_OPENING = re.compile(r"\$(?:\\\n)*\(|`|[<>](?:\\\n)*\(")
 # A newline right after one of these continues the same command list.
@@ -146,18 +148,26 @@ _SSH_VALUE_OPTIONS = frozenset(
 )
 
 
-def _decoded_stages(subject: str) -> list[list[str]]:
+def _decoded_stages(
+    subject: str, names: dict[str, str] | None = None
+) -> tuple[list[list[str]], dict[str, str]]:
     """Return each pipeline stage's words as bash and as zsh would run them.
 
     The shells decode some ``$'...'`` escapes differently, so a word can name a
-    command under one and not the other; both readings are kept.
+    command under one and not the other; both readings are kept. Variable references
+    the command line resolves (``x=ps; $x``, the pinned shim) are expanded before the
+    words are matched. ``names`` holds the assignments the earlier subjects of the line
+    set. The second value is the names this subject leaves set, for the subjects after it
+    and the scripts it runs.
     """
     stages: list[list[str]] = []
+    carried = initial_names() if names is None else dict(names)
     for dialect in SHELL_DIALECTS:
         try:
             scan = scan_shell_command(subject, dialect=dialect)
         except ValueError:
             continue
+        dialect_names = initial_names() if names is None else dict(names)
         for stage in _pipeline_stages(scan.tokens):
             words = _stage_words(stage)
             # A subshell runs its body: `(time cmd)` scans as `(time`, `cmd)`.
@@ -166,9 +176,11 @@ def _decoded_stages(subject: str) -> list[list[str]]:
                 words = [head, *words[1:]] if head else words[1:]
                 tail = words[-1].rstrip(")") if words else ""
                 words = [*words[:-1], tail] if tail else words[:-1]
+            words = expand_stage(words, dialect_names)
             if words and words not in stages:
                 stages.append(words)
-    return stages
+        carried.update(dialect_names)
+    return stages, carried
 
 
 def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) -> list[str]:
@@ -326,33 +338,56 @@ def _selector_subjects(
     exemption_text = "\n".join(subjects)
     mask_one = mask_quoted_spans if mask_quoted else _mask_quoted_command_boundaries
     pattern_subjects: list[str] = []
-    pending: list[tuple[str, int]] = [(subject, 0) for subject in subjects]
-    while pending:
-        text, depth = pending.pop()
+    if not _collect_subjects(
+        subjects, initial_names(), 0, pattern_subjects, mask_one, resolve_uv_run
+    ):
+        return None
+    return tuple(pattern_subjects), exemption_text
+
+
+def _collect_subjects(
+    subjects: list[str],
+    names: dict[str, str],
+    depth: int,
+    out: list[str],
+    mask_one: Callable[[str], str],
+    resolve_uv_run: bool,
+) -> bool:
+    """Append the match texts of ``subjects`` to ``out``, in command order.
+
+    Each subject runs after the ones before it, so the assignments they make reach
+    later subjects: ``x=ps; $x aux`` matches as ``ps aux``. Returns False when a
+    subject cannot be read safely or a wrapper nests past the bound.
+    """
+    for text in subjects:
         if "`" in text:
             try:
                 scan_shell_command(text)
             except ValueError:
                 # An unresolved backquote body cannot safely exclude a selector.
-                return None
-        pattern_subjects.append(mask_one(text))
+                return False
+        out.append(mask_one(text))
         # Quotes and backslashes inside a word vanish before it runs, so a
         # quoted or escaped command name still runs that command. Match each
         # stage's decoded words too, re-quoted so a word holding spaces stays data.
-        stages = _decoded_stages(text)
-        pattern_subjects.extend(mask_one(shlex.join(words)) for words in stages)
+        stages, names = _decoded_stages(text, names)
+        out.extend(mask_one(shlex.join(words)) for words in stages)
         # A literal execution wrapper (``bash -c``, ``eval``, ``xargs``,
         # ``timeout``, ``watch``, ``ssh``) runs a further command string that the
         # scanner reads as one segment's words. Resolve it through these same
         # rules, to a bounded depth, so a nested wrapped invocation such as
-        # ``bash -c "bash -c '…'"`` still matches (#23134).
+        # ``bash -c "bash -c '…'"`` still matches (#23134). The assignments made
+        # so far travel with each script, so ``export x=ps; bash -c '$x aux'``
+        # still resolves ``$x``.
         scripts = _wrapper_scripts(stages, resolve_uv_run=resolve_uv_run)
         scripts.extend(_shell_input_scripts(text))
         if scripts and depth >= _WRAPPER_DEPTH:
-            return None
+            return False
         for script in scripts:
-            pending.extend((inner, depth + 1) for inner in executable_command_subjects(script))
-    return tuple(pattern_subjects), exemption_text
+            inner = executable_command_subjects(assignment_prefix(names) + script)
+            if not _collect_subjects(inner, names, depth + 1, out, mask_one, resolve_uv_run):
+                return False
+    return True
 
 
 def _mask_quoted_command_boundaries(command: str) -> str:

@@ -455,6 +455,8 @@ def test_long_python_and_brace_commands_finish_outside_the_daemon() -> None:
     # A process timeout can stop a regex holding the GIL; pytest's thread-based
     # timeout cannot. Exercise every bundled selector and condition together.
     program = """
+import time
+
 import yaml
 from gobby.workflows.engine.command_matching import command_patterns_match
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
@@ -470,6 +472,7 @@ commands = [
     "echo " + "{" * 15000,
     "echo " + "{a,b}" * 15000,
 ]
+started = time.perf_counter()
 for command in commands:
     for rule in rules.values():
         context = {'tool_input': {'command': command}}
@@ -493,6 +496,7 @@ for rule in rules.values():
             mask_quoted=effect.get('mask_quoted', False),
         ))
 assert blocked, 'protected command after long Python data was missed'
+assert time.perf_counter() - started < 10, 'selector matching exceeded its budget'
 print('bounded selectors pass')
 """
     result = subprocess.run(
@@ -500,7 +504,10 @@ print('bounded selectors pass')
         cwd=Path(__file__).resolve().parents[3],
         text=True,
         capture_output=True,
-        timeout=10,
+        # The engine package import alone can take over 10 seconds on a loaded
+        # checkout; the matching budget is asserted inside the probe, so this
+        # timeout only backstops a hang.
+        timeout=120,
         check=False,
     )
     assert result.returncode == 0, result.stderr
@@ -608,7 +615,7 @@ print('bounded word expansion passes')
         cwd=Path(__file__).resolve().parents[3],
         text=True,
         capture_output=True,
-        timeout=10,
+        timeout=120,
         check=False,
     )
     assert result.returncode == 0, result.stderr

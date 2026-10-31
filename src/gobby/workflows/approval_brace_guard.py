@@ -823,12 +823,12 @@ def _approval_subjects(command: str) -> tuple[list[tuple[str, ShellScan]], bool]
         if depth > _MAX_DEPTH:
             raise _AmbiguousSyntax("Shell nesting limit")
         scan = scan_shell_command(text)
-        strict |= _shell_setup(text, scan, _decoded_stages(text))
+        strict |= _shell_setup(text, scan, _decoded_stages(text)[0])
         # A known language heredoc is source, not shell words. Its braces are code, so
         # only the shell-expanded substitutions inside it stay subjects.
         for subject in executable_command_subjects(text, language_bodies=language_bodies):
             scan = scan_shell_command(subject)
-            stages = _decoded_stages(subject)
+            stages = _decoded_stages(subject)[0]
             strict |= _shell_setup(subject, scan, stages)
             scripts = _wrapper_scripts(stages)
             scripts.extend(git_shell_scripts(stages))
