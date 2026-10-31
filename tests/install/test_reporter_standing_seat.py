@@ -38,7 +38,7 @@ def test_reporter_prompt_waits_on_policy_cadence_between_ticks() -> None:
     prompt = _render(report_cadence_seconds=1800)
 
     assert "gobby-agents:wait_for_coordination(reply=true, timeout=1800)" in prompt
-    assert "wake" in prompt
+    assert "Its timeout expiry wakes you for the next tick" in prompt
     assert "End with `gobby-agents:end_agent_run`" not in prompt
     assert "one-shot" not in prompt
 
