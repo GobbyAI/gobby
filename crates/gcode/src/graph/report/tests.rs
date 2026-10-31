@@ -603,9 +603,9 @@ fn report_marks_stale_labels() {
 
 const ADMISSION_TOKENS: [&str; 4] = [
     "$admitted_paths",
-    "$admitted_pairs",
-    "$admitted_map",
-    "$endpoint_map",
+    "= v.h",
+    "$admitted_map[",
+    "$endpoint_map[",
 ];
 
 fn report_query_cases() -> Vec<(&'static str, String)> {
@@ -641,7 +641,7 @@ fn last_aggregate(branch: &str) -> Option<usize> {
 
 fn first_admission(branch: &str) -> Option<usize> {
     // Admission is a version-map lookup inside an edge or endpoint filter. A bare
-    // `WITH am, em` import filters nothing, so it does not count.
+    // bind or import (`WITH $admitted_map AS am`) filters nothing, so it does not count.
     ADMISSION_TOKENS
         .iter()
         .copied()
