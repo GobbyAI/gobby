@@ -95,6 +95,20 @@ impl Workspace<LiveDaemon> {
         self.pending_placements.insert(terminal_id.to_string());
     }
 
+    /// Record a placement whose op has replied with `pane_id`. The daemon can
+    /// publish the placing event before that reply, so a pane the model
+    /// already holds is placed now; otherwise its event is still expected.
+    pub(super) fn expect_replied_placement(&mut self, terminal_id: &str, pane_id: &str) {
+        let placed = self
+            .workspace_model()
+            .and_then(|model| model.pane(pane_id))
+            .map(|pane| (pane.tab_id.clone(), pane.id.clone()));
+        match placed {
+            Some(placement) => self.placed_panes.push(placement),
+            None => self.expect_placement(terminal_id),
+        }
+    }
+
     /// Forget a placement the daemon refused, so the event that later
     /// names the terminal is another window's placement, not this one's.
     pub(super) fn forget_placement(&mut self, terminal_id: &str) {

@@ -153,6 +153,9 @@ class FakeVectorStore:
         return list(self.collections)
 
     async def create_alias(self, collection_name: str, alias_name: str) -> None:
+        # Qdrant refuses an alias named like an existing collection.
+        if alias_name in self.collections:
+            raise RuntimeError(f"Collection {alias_name} already exists")
         self.operations.append(("alias", collection_name, alias_name))
         self.aliases[alias_name] = collection_name
 
@@ -253,16 +256,39 @@ async def test_legacy_bare_collection_flip_deletes_old_bare_collection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = FakeConfigStore()
-    vector_store = FakeVectorStore()
+    vector_store = FakeVectorStore(collections=["memories", "tool_embeddings"])
     runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
     monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
 
     _result, journal = await runner.flip(_journal(PHASE_FLIPPING))
 
     assert journal.old_physical_names["memories"] == "memories"
-    assert vector_store.operations.index(("alias", "memories@4096-run", "memories")) < (
-        vector_store.operations.index(("delete", "memories", None))
+    assert vector_store.operations.index(("delete", "memories", None)) < (
+        vector_store.operations.index(("alias", "memories@4096-run", "memories"))
     )
+    assert vector_store.aliases["memories"] == "memories@4096-run"
+    assert "memories" not in vector_store.collections
+
+
+@pytest.mark.asyncio
+async def test_resumed_bare_collection_flip_keeps_the_new_alias_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeConfigStore()
+    vector_store = FakeVectorStore(
+        aliases={"memories": "memories@4096-run"},
+        collections=["memories@4096-run", "tool_embeddings"],
+    )
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
+    monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
+    journal = _journal(PHASE_FLIPPING)
+    journal.old_physical_names = {"memories": "memories", "tool_embeddings": "tool_embeddings"}
+
+    _result, journal = await runner.flip(journal)
+
+    assert ("delete", "memories", None) not in vector_store.operations
+    assert vector_store.aliases["memories"] == "memories@4096-run"
+    assert "memories@4096-run" in vector_store.collections
 
 
 @pytest.mark.asyncio
@@ -740,6 +766,45 @@ async def test_gc_deletes_retired_github_issue_collections(
     }
     assert "gobby_github_issues" not in vector_store.aliases
     assert "gobby_github_issues@old" not in vector_store.collections
+
+
+@pytest.mark.asyncio
+async def test_gc_skips_a_bare_legacy_name_that_is_now_the_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.ai.embedding_switch import CompletedSwitchRecord
+
+    store = FakeConfigStore()
+    vector_store = FakeVectorStore(
+        aliases={"memories": "memories@4096-run"},
+        collections=["memories@4096-run"],
+    )
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
+    monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
+
+    class ReadyGenerationState:
+        def can_collect(self, generation: str, revision: int) -> bool:
+            return True
+
+    cast(Any, runner).generation_state = ReadyGenerationState()
+    runner._completed_record = CompletedSwitchRecord(
+        run_id="4096-run",
+        committed_revision=5,
+        physical_names={"memories": "memories@4096-run"},
+        old_physical_names={"memories": "memories"},
+        caught_up_watermark=3,
+        catalog_key="qwen3-8b-q8",
+        target_dim=4096,
+        target_model="qwen3-embedding:8b-q8_0",
+        target_query_prefix="query:",
+        target_api_base=None,
+    )
+
+    result = await runner.gc(_journal(PHASE_GC))
+
+    assert result.count == 0
+    assert not any(operation == "delete" for operation, _name, _alias in vector_store.operations)
+    assert vector_store.aliases["memories"] == "memories@4096-run"
 
 
 @pytest.mark.asyncio

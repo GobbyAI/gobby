@@ -11488,16 +11488,19 @@ async fn worktree_flows_round_trip_the_daemon() {
         "{:?}",
         chrome.dialog
     );
+    let (outcomes, mut outcome_rx) = mpsc::unbounded_channel();
     create_worktree(
         &mut workspace,
         &mut chrome,
-        &mpsc::unbounded_channel().0,
+        &outcomes,
         "project-1",
         "feature",
         Some("0.5.0"),
     )
     .await
     .expect("create worktree");
+    // The shell spawn runs as a job; wait for it to finish its tab.create.
+    outcome_rx.recv().await.expect("the shell job reports");
     // The daemon's tab.created event places the shell: apply it and project
     // the row the way the loop does between actions.
     workspace

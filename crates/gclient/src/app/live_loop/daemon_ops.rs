@@ -33,7 +33,7 @@ fn idempotent(op: &WorkspaceOp) -> bool {
     )
 }
 
-async fn run_op(daemon: &LiveDaemon, op: WorkspaceOp) -> Result<(), DaemonError> {
+pub(super) async fn run_op(daemon: &LiveDaemon, op: WorkspaceOp) -> Result<(), DaemonError> {
     let done = idempotent(&op);
     match daemon.workspace_op(op).await {
         Ok(_) => Ok(()),
@@ -46,7 +46,7 @@ async fn run_op(daemon: &LiveDaemon, op: WorkspaceOp) -> Result<(), DaemonError>
     }
 }
 
-fn op_tag(daemon: &LiveDaemon) -> JobTag {
+pub(super) fn op_tag(daemon: &LiveDaemon) -> JobTag {
     JobTag {
         id: 0,
         generation: daemon.generation(),

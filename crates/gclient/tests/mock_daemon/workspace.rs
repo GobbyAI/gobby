@@ -24,6 +24,8 @@ pub struct WorkspaceSim {
     seq: u64,
     next_id: u64,
     owned_terminal_ids: VecDeque<String>,
+    /// Terminals of the shells this workspace's ops created.
+    created_shells: HashSet<String>,
     /// Every event an op published, in order, whichever connection sent it.
     published: Vec<Value>,
 }
@@ -64,6 +66,7 @@ impl WorkspaceSim {
             seq: fixture["snapshot"]["seq"].as_u64().unwrap_or(0),
             next_id: 1,
             owned_terminal_ids: VecDeque::new(),
+            created_shells: HashSet::new(),
             published: Vec::new(),
         }
     }
@@ -89,6 +92,18 @@ impl WorkspaceSim {
             })
         };
         find(&self.panes).or_else(|| self.parked.iter().find_map(|(_, _, panes)| find(panes)))
+    }
+
+    /// The terminal row the daemon serves for a shell this workspace created,
+    /// once a placed pane owns it. Adopted and seeded terminals are read from
+    /// the roster instead.
+    pub fn owned_terminal_row(&self, terminal_id: &str) -> Option<Value> {
+        (self.created_shells.contains(terminal_id)
+            && self.panes.iter().any(|pane| {
+                pane["terminal_id"].as_str() == Some(terminal_id)
+                    && pane["owns_terminal"] == json!(true)
+            }))
+        .then(|| json!({"terminal_id": terminal_id, "backend": "native", "state": "live"}))
     }
 
     /// Replace every tab with `project`'s: one tab per entry, its terminals
@@ -396,6 +411,9 @@ impl WorkspaceSim {
                         .pop_front()
                         .unwrap_or_else(|| self.mint("mock-terminal"))
                 });
+                if adopted.is_none() {
+                    self.created_shells.insert(terminal_id.clone());
+                }
                 let pane = pane_row(&pane_id, &tab_id, &terminal_id, 1, adopted.is_none());
                 self.panes.push(pane.clone());
                 let tab = json!({
@@ -438,6 +456,9 @@ impl WorkspaceSim {
                         .pop_front()
                         .unwrap_or_else(|| self.mint("mock-terminal"))
                 });
+                if adopted.is_none() {
+                    self.created_shells.insert(terminal_id.clone());
+                }
                 let pane = pane_row(&new_id, &tab_id, &terminal_id, reference, adopted.is_none());
                 self.panes.push(pane.clone());
                 let axis = field("axis").unwrap_or_else(|| "horizontal".into());

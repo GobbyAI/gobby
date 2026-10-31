@@ -56,6 +56,7 @@ from gobby.storage.projects import PERSONAL_PROJECT_ID
 class FakeJournal:
     run_id: str
     phase: str = "staging"
+    error: str | None = None
 
 
 class FakeRunner:
@@ -614,6 +615,53 @@ async def test_background_failure_is_observed_with_run_context(
     ]
     assert len(records) == 1
     assert getattr(records[0], "run_id", None) == "run-1"
+
+
+@pytest.mark.asyncio
+async def test_returned_run_error_is_logged_with_run_context(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class ErrorReport:
+        error = "alias memories collides with a collection"
+
+    class ReportingRunner:
+        async def run(self, _journal: FakeJournal) -> ErrorReport:
+            return ErrorReport()
+
+    coordinator = EmbeddingSwitchCoordinator(
+        config_store=None,
+        db=None,
+        fence=None,
+        runner_factory=lambda *_args: ReportingRunner(),
+        start_journal=lambda *_args, **_kwargs: FakeJournal("run-2"),
+    )
+    callback_observed = asyncio.Event()
+
+    def mark_callback_observed(_task: asyncio.Task[Any]) -> None:
+        callback_observed.set()
+
+    with caplog.at_level(logging.ERROR, logger="gobby.ai.embedding_switch_service"):
+        await coordinator.start("catalog", "provider")
+        coordinator.task.add_done_callback(mark_callback_observed)
+        await asyncio.wait_for(callback_observed.wait(), timeout=1.0)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == [
+        "Embedding switch run-2 stopped with an error: alias memories collides with a collection"
+    ]
+    assert getattr(caplog.records[0], "run_id", None) == "run-2"
+
+
+def test_idle_status_shows_the_journal_error() -> None:
+    coordinator, _runners, _events = _fake_coordinator(
+        load_journal=FakeJournal("run-3", phase="flipping", error="alias refused")
+    )
+
+    status = coordinator.status()
+
+    assert status.run_id == "run-3"
+    assert status.status == "flipping"
+    assert status.message == "Embedding switch is persisted and idle; last error: alias refused"
 
 
 def test_managed_projection_survives_post_switch_mutation(temp_db: HubDatabase) -> None:

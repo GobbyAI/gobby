@@ -313,10 +313,12 @@ class EmbeddingSwitchRunner:
 
         for kind, alias_name in active_aliases.items():
             target_name = physical_names[kind]
+            # Qdrant refuses an alias named like an existing collection, so a
+            # bare legacy collection goes first. Once the alias exists (a
+            # resumed flip), the name no longer refers to that collection.
+            if journal.old_physical_names.get(kind) == alias_name and alias_name not in aliases:
+                await _delete_collection_if_present(vector_store, alias_name)
             await vector_store.create_alias(target_name, alias_name)
-            old_name = journal.old_physical_names.get(kind)
-            if old_name == alias_name:
-                await _delete_collection_if_present(vector_store, old_name)
 
         self._completed_record = complete_switch(self.config_store, journal)
         if self.config_runtime is not None and self._completed_record.committed_revision:
@@ -366,7 +368,8 @@ class EmbeddingSwitchRunner:
         deleted = 0
 
         for collection_name in set(record.old_physical_names.values()):
-            if not collection_name:
+            # A bare legacy collection was deleted at flip; its name is now the alias.
+            if not collection_name or collection_name in aliases:
                 continue
             if collection_name in current_targets:
                 raise EmbeddingSwitchRunError(
