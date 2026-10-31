@@ -3,9 +3,11 @@ use std::collections::HashMap;
 use gobby_core::degradation::ServiceState;
 
 use crate::config::Context;
+use crate::visibility::graph_versions::{admitted_namespaces, has_pending_pinned_graph_projection};
 
 #[cfg(test)]
 use super::RELATES_TO_CODE;
+use super::hotspot_snapshot::{SNAPSHOT_FORMAT_VERSION, admitted_digest, read_stored_hotspots};
 use super::loading::{CODE_COMMUNITIES_INPUT, load_report_communities, load_report_snapshot};
 use super::render::{RenderMarkdownInput, render_markdown};
 use super::summary::{
@@ -39,17 +41,27 @@ pub fn generate_report_with_options(
         Some(&connection_config),
         &config.graph_name,
         ReportGraphSnapshot::default(),
-        |client| load_report_snapshot(client, &ctx.project_id, options.top_n),
+        |client| {
+            // The admitted set and digest are captured once, before any query runs.
+            let namespaces = admitted_namespaces(ctx)?;
+            let pending = has_pending_pinned_graph_projection(ctx)?;
+            let digest = admitted_digest(&namespaces, pending, SNAPSHOT_FORMAT_VERSION);
+            let stored = read_stored_hotspots(client, &ctx.project_id, &digest, options.top_n);
+            load_report_snapshot(client, &namespaces, options.top_n, stored)
+        },
     );
 
     match result {
-        Ok((snapshot, ServiceState::Available)) => Ok(generate_report_from_snapshot_with_options(
-            &ctx.project_id,
-            now_iso8601(),
-            snapshot,
-            communities,
-            options,
-        )),
+        Ok((snapshot, ServiceState::Available)) => {
+            let report = generate_report_from_snapshot_with_options(
+                &ctx.project_id,
+                now_iso8601(),
+                snapshot,
+                communities,
+                options,
+            );
+            Ok(report)
+        }
         Ok((_, ServiceState::NotConfigured)) => {
             Err(ProjectGraphReportError::GraphServiceNotConfigured)
         }

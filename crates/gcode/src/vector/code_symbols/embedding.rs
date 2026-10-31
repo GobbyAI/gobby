@@ -4,7 +4,6 @@ use std::sync::{Mutex, OnceLock};
 use crate::config::{Context, EmbeddingConfig};
 #[cfg(feature = "ai")]
 use crate::db;
-use crate::models::Symbol;
 #[cfg(feature = "ai")]
 use gobby_core::ai::{
     daemon,
@@ -396,39 +395,6 @@ pub fn embed_query_with_source(source: &EmbeddingSource, text: &str) -> Option<V
             None
         }
     }
-}
-
-pub fn vector_text_for_symbol(symbol: &Symbol) -> String {
-    let mut lines = vec![
-        format!("name: {}", symbol.name),
-        format!("qualified_name: {}", symbol.qualified_name),
-        format!("kind: {}", symbol.kind),
-        format!("language: {}", symbol.language),
-        format!("file_path: {}", symbol.file_path),
-        format!("range: {}-{}", symbol.line_start, symbol.line_end),
-    ];
-    if let Some(signature) = symbol
-        .signature
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        lines.push(format!("signature: {signature}"));
-    }
-    if let Some(docstring) = symbol
-        .docstring
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        lines.push(format!("docstring: {docstring}"));
-    }
-    if let Some(summary) = symbol
-        .summary
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        lines.push(format!("summary: {summary}"));
-    }
-    lines.join("\n")
 }
 
 #[cfg(test)]

@@ -156,6 +156,25 @@ mod tests {
     }
 
     #[test]
+    fn alternation_uses_unescaped_pipe_while_escaped_and_fixed_pipes_are_literal() {
+        // gcode grep uses Rust regex syntax: `alpha|beta` is alternation;
+        // basic-grep-style `alpha\|beta` and -F both search for a literal pipe.
+        let line = "alpha beta alpha|beta";
+        for (pattern, fixed, expected) in [
+            ("alpha|beta", false, vec!["alpha", "beta", "alpha", "beta"]),
+            (r"alpha\|beta", false, vec!["alpha|beta"]),
+            ("alpha|beta", true, vec!["alpha|beta"]),
+        ] {
+            let matcher = GrepMatcher::new(pattern, fixed, false, false).expect("valid pattern");
+            assert_eq!(
+                matched_texts(&matcher, line),
+                expected,
+                "{pattern}, fixed={fixed}"
+            );
+        }
+    }
+
+    #[test]
     fn empty_pattern_reports_plain_pattern_error() {
         let error = GrepMatcher::new("", false, false, false).expect_err("empty pattern");
 

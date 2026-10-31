@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -23,12 +25,67 @@ from gobby.code_index.models import (
 )
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.code_index.summary_safety import SUMMARY_MAX_CHARS
+from gobby.code_index.sync_worker import _sync_file
+from gobby.config.code_index import CodeIndexConfig
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.machine_id import require_machine_id
 from tests.code_index.conftest import FILE_CONTENT_HASH, MISSING_ID, PROJECT_ID, PROJECT_ID_2
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed_field", [None, "language", "content_hash"])
+async def test_no_graph_shortcut_mark_rejects_changed_snapshot(
+    code_storage: CodeIndexStorage, tmp_path: Path, changed_field: str | None
+) -> None:
+    """Exercise the real shortcut writer after its file snapshot becomes stale."""
+    source = tmp_path / "README.md"
+    source.write_text("Project notes\n")
+    snapshot = IndexedFile(
+        id=IndexedFile.make_id(PROJECT_ID, "README.md", "notes-hash"),
+        project_id=PROJECT_ID,
+        file_path="README.md",
+        language="markdown",
+        content_hash="notes-hash",
+        vectors_synced=True,
+    )
+    code_storage.upsert_file(snapshot, root_path=str(tmp_path), mode=IndexWriteMode.OVERLAY)
+
+    async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if func.__name__ == "mark_graph_synced" and changed_field is not None:
+            with code_storage.db.transaction() as conn:
+                if changed_field == "language":
+                    conn.execute(
+                        "UPDATE code_indexed_files SET language = %s WHERE id = %s",
+                        ("python", snapshot.id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE code_indexed_files SET content_hash = %s WHERE id = %s",
+                        ("changed-hash", snapshot.id),
+                    )
+        return func(*args, **kwargs)
+
+    await _sync_file(
+        storage=code_storage,
+        gcode_gateway=MagicMock(),
+        config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+        project_id=PROJECT_ID,
+        root=tmp_path,
+        file=snapshot,
+        run_db=run_db,
+    )
+
+    row = code_storage.db.fetchone(
+        "SELECT graph_synced, graph_sync_attempted_at FROM code_indexed_files WHERE id = %s",
+        (snapshot.id,),
+    )
+    assert row is not None
+    assert row["graph_synced"] is (changed_field is None)
+    assert (row["graph_sync_attempted_at"] is not None) is (changed_field is None)
+
 
 CALLER_SYMBOL_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "gobby://tests/code-index/caller-symbol"))
 

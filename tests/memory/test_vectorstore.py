@@ -745,7 +745,9 @@ async def test_ensure_collection_dimension_mismatch_fails_without_recreate() -> 
     message = str(exc_info.value)
     assert "expected_dim=4, observed_dim=3" in message
     assert "Rebuild or migrate the collection" in message
-    assert "Local/default nomic embeddings are usually 768 dimensions" in message
+    assert (
+        "Local/default qwen3-embedding:0.6b-q8_0 embeddings are usually 1024 dimensions" in message
+    )
     assert "text-embedding-3-small" in message
     assert "embedding_dim=1536" in message
     client.delete_collection.assert_not_called()

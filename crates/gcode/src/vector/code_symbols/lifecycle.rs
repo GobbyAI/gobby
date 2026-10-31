@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -8,9 +9,7 @@ use crate::models::Symbol;
 use gobby_core::degradation::ServiceState;
 use gobby_core::qdrant::UpsertRequest;
 
-use super::embedding::{
-    EmbeddingBackend, EmbeddingSource, dimension_probe_text, vector_text_for_symbol,
-};
+use super::embedding::{EmbeddingBackend, EmbeddingSource, dimension_probe_text};
 use super::qdrant::{
     VECTOR_DISTANCE_COSINE, collection_name, collection_path, delete_project_collection,
     delete_vectors_for_filter, parse_collection_schema, qdrant_http_error,
@@ -20,6 +19,7 @@ use super::types::{
     CodeSymbolVectorLifecycleAction, CodeSymbolVectorLifecycleOutput, CodeSymbolVectorPayload,
     ExistingVectorCollectionSchema, VectorCollectionSchema, VectorLifecycleError,
 };
+use super::vector_text::vector_text_for_symbol_in;
 
 const QDRANT_LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(10);
 const VECTOR_SYNC_BATCH_SIZE: usize = gobby_core::qdrant::DEFAULT_UPSERT_BATCH_SIZE;
@@ -31,6 +31,8 @@ pub struct CodeSymbolVectorLifecycle {
     qdrant: QdrantConfig,
     embedding: EmbeddingBackend,
     settings: CodeVectorSettings,
+    /// Symbol paths resolve against this root when embedding source bodies.
+    project_root: PathBuf,
     probed_vector_size: Option<usize>,
     client: reqwest::blocking::Client,
 }
@@ -57,9 +59,16 @@ impl CodeSymbolVectorLifecycle {
             qdrant,
             embedding,
             settings,
+            project_root: PathBuf::new(),
             probed_vector_size: None,
             client,
         })
+    }
+
+    /// Resolve symbol file paths under `project_root` when embedding bodies.
+    pub fn with_project_root(mut self, project_root: PathBuf) -> Self {
+        self.project_root = project_root;
+        self
     }
 
     pub fn ensure_collection(&mut self) -> Result<VectorCollectionSchema, VectorLifecycleError> {
@@ -329,7 +338,17 @@ impl CodeSymbolVectorLifecycle {
 
         let mut points = Vec::with_capacity(symbols.len());
         for batch in symbols.chunks(VECTOR_SYNC_BATCH_SIZE) {
-            let texts = batch.iter().map(vector_text_for_symbol).collect::<Vec<_>>();
+            let texts = batch
+                .iter()
+                .map(|symbol| {
+                    vector_text_for_symbol_in(&self.project_root, symbol).map_err(|err| {
+                        VectorLifecycleError::EmbeddingInput(format!(
+                            "symbol {}: {err:#}",
+                            symbol.id
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             let vectors = self.embedding.embed_text_batch(&texts)?;
             if vectors.len() != batch.len() {
                 return Err(VectorLifecycleError::EmbeddingResponse(format!(

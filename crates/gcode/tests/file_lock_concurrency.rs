@@ -5,6 +5,7 @@ mod serial_db {
     use sha2::{Digest, Sha256};
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
+    use std::time::{Duration, Instant};
 
     use gobby_code::test_env;
 
@@ -237,6 +238,440 @@ mod serial_db {
             stderr.contains("outside") && stderr.contains("project scope"),
             "stderr={stderr}"
         );
+    }
+
+    struct LinkedReadFixture {
+        parent: TestProject,
+        checkout: tempfile::TempDir,
+        overlay_id: String,
+    }
+
+    impl LinkedReadFixture {
+        fn new(label: &str) -> Self {
+            let parent = TestProject::new(label);
+            std::fs::write(
+                parent.root.path().join("src/free.rs"),
+                "pub fn free() {}\n// held|free\n",
+            )
+            .expect("write indexed literal pipe control");
+            let indexed = parent.run_index("json", true, &[]);
+            assert!(indexed.status.success(), "parent index: {indexed:?}");
+            for args in [
+                vec!["add", "src", ".gobby/project.json"],
+                vec![
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "commit",
+                    "--quiet",
+                    "-m",
+                    "fixture",
+                ],
+            ] {
+                let output = Command::new("git")
+                    .current_dir(parent.root.path())
+                    .args(args)
+                    .output()
+                    .expect("prepare linked checkout");
+                assert!(output.status.success(), "git fixture: {output:?}");
+            }
+            let checkout = tempfile::tempdir().expect("linked checkout directory");
+            let output = Command::new("git")
+                .current_dir(parent.root.path())
+                .args(["worktree", "add", "--quiet", "--detach"])
+                .arg(checkout.path())
+                .output()
+                .expect("git worktree add");
+            assert!(output.status.success(), "linked checkout: {output:?}");
+            assert!(checkout.path().join(".git").is_file());
+            std::fs::write(
+                checkout.path().join(".gobby/isolation.json"),
+                serde_json::json!({
+                    "parent_project_id": parent.project_id,
+                    "parent_project_path": parent.root.path(),
+                })
+                .to_string(),
+            )
+            .expect("write overlay identity");
+            let overlay_id = gobby_core::project::code_index_id_for_root(checkout.path());
+            let mut conn = Client::connect(&parent.database_url, NoTls).expect("overlay setup");
+            test_env::seed_test_checkout(&mut conn, &overlay_id, checkout.path())
+                .expect("register linked overlay checkout");
+            conn.execute(
+                "UPDATE gobby_agent_auth.principal_bindings SET code_overlay_project_id = $1
+                 WHERE project_id = $2",
+                &[
+                    &uuid::Uuid::parse_str(&overlay_id).expect("overlay uuid"),
+                    &uuid::Uuid::parse_str(&parent.project_id).expect("parent uuid"),
+                ],
+            )
+            .expect("freeze the fixture principal's admitted overlay");
+            let fixture = Self {
+                parent,
+                checkout,
+                overlay_id,
+            };
+            let indexed = fixture
+                .command(&["index", "--quiet", "--skip-if-locked"])
+                .output()
+                .expect("index overlay");
+            assert!(indexed.status.success(), "overlay index: {indexed:?}");
+            // Force project freshness to try the held refresh lock on each read.
+            std::fs::write(
+                fixture.checkout.path().join("src/free.rs"),
+                "pub fn free() {}\n// held|free\npub fn refresh_pending() {}\n",
+            )
+            .expect("change linked checkout");
+            fixture
+        }
+
+        fn command(&self, args: &[&str]) -> Command {
+            self.command_in(self.checkout.path(), args)
+        }
+
+        /// The overlay principal's command, run from `cwd`. The parent checkout lies
+        /// outside that principal's write scope, so reads of it are read-only.
+        fn command_in(&self, cwd: &Path, args: &[&str]) -> Command {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
+            command
+                .current_dir(cwd)
+                .args(["--format", "json"])
+                .args(args);
+            let machine = std::fs::read_to_string(self.parent.home.join("machine_id"))
+                .expect("fixture machine");
+            let mut grant = gobby_core::grant::managed_direct_grant(
+                &self.parent.project_id,
+                machine.trim(),
+                &gobby_core::grant::DirectConnections::postgres(&self.parent.database_url),
+            );
+            grant.principal.code_overlay_project_id = Some(self.overlay_id.clone());
+            let path = gobby_core::grant::write_managed_bootstrap(
+                &self.parent.home.join("grants"),
+                &grant.with_checksum(),
+            )
+            .expect("overlay managed grant");
+            command
+                .env("GOBBY_HOME", &self.parent.home)
+                .env("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", path)
+                .env_remove("GOBBY_AGENT_RUN_ID")
+                .env_remove("GOBBY_MANAGED_EXECUTION_ID");
+            command
+        }
+
+        fn write_unindexed_files(&self, count: usize) {
+            write_unindexed_files_in(self.checkout.path(), count);
+        }
+
+        fn read_while_refresh_locked(&self, args: &[&str]) -> Output {
+            let mut holder =
+                Client::connect(&self.parent.database_url, NoTls).expect("refresh lock connection");
+            holder
+                .batch_execute("SET application_name = 'gobby-agent-idle-refresh-fixture'")
+                .expect("name idle holder");
+            holder
+                .query_one(
+                    "SELECT pg_advisory_lock($1)",
+                    &[&project_lock_key(&self.overlay_id)],
+                )
+                .expect("hold overlay refresh lock");
+            let pid: i32 = holder
+                .query_one("SELECT pg_backend_pid()", &[])
+                .expect("holder pid")
+                .get(0);
+            let mut observer = Client::connect(&self.parent.database_url, NoTls)
+                .expect("observe idle holder from another connection");
+            let idle = observer
+                .query_one(
+                    "SELECT state, xact_start IS NULL, application_name FROM pg_stat_activity
+                 WHERE pid = $1",
+                    &[&pid],
+                )
+                .expect("idle-holder observation");
+            assert_eq!(idle.get::<_, String>(0), "idle");
+            assert!(
+                idle.get::<_, bool>(1),
+                "session lock holder has no open transaction"
+            );
+            assert_eq!(idle.get::<_, String>(2), "gobby-agent-idle-refresh-fixture");
+            let started = Instant::now();
+            let mut child = self
+                .command(args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("spawn read command");
+            let completed = loop {
+                if child.try_wait().expect("poll read command").is_some() {
+                    break true;
+                }
+                if started.elapsed() >= Duration::from_secs(20) {
+                    child.kill().expect("reap stalled read command");
+                    break false;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            let output = child.wait_with_output().expect("collect read command");
+            eprintln!(
+                "read={args:?} holder_pid={pid} state=idle transaction=none elapsed={:?} status={} stderr={}",
+                started.elapsed(),
+                output.status,
+                String::from_utf8_lossy(&output.stderr),
+            );
+            let idle = observer
+                .query_one("SELECT state FROM pg_stat_activity WHERE pid = $1", &[&pid])
+                .expect("holder remains alive until after read");
+            assert_eq!(idle.get::<_, String>(0), "idle");
+            drop(holder);
+            assert!(
+                completed,
+                "read must finish while refresh remains locked: {args:?}: {output:?}"
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("refresh already running"),
+                "a read that finds the refresh lock held must report it busy: {output:?}"
+            );
+            if output.status.code() == Some(2) {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let error = stderr
+                    .lines()
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .find(|value| value["error"].is_string())
+                    .expect("typed error JSON after any freshness warning");
+                assert!(error["message"].is_string(), "typed error message: {error}");
+            }
+            output
+        }
+
+        /// Runs a read with no refresh holder, killing it once `bound` has passed.
+        fn read_within(&self, mut command: Command, bound: Duration) -> (Output, bool) {
+            let started = Instant::now();
+            let mut child = command
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("spawn read command");
+            let completed = loop {
+                if child.try_wait().expect("poll read command").is_some() {
+                    break true;
+                }
+                if started.elapsed() >= bound {
+                    child.kill().expect("reap stalled read command");
+                    break false;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            let output = child.wait_with_output().expect("collect read command");
+            (output, completed)
+        }
+    }
+
+    impl Drop for LinkedReadFixture {
+        fn drop(&mut self) {
+            let mut conn = Client::connect(&self.parent.database_url, NoTls)
+                .expect("overlay cleanup connection");
+            conn.execute(
+                "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1",
+                &[&uuid::Uuid::parse_str(&self.overlay_id).expect("overlay uuid")],
+            )
+            .expect("clear overlay pins");
+            cleanup_project(&mut conn, &self.overlay_id).expect("clear linked overlay");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn linked_worktree_search_symbol_returns_while_refresh_lock_is_held() {
+        let fixture = LinkedReadFixture::new("search-symbol-refresh-lock");
+        let output = fixture.read_while_refresh_locked(&["search-symbol", "free"]);
+        assert!(
+            output.status.success() || output.status.code() == Some(2),
+            "{output:?}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn linked_worktree_literal_grep_returns_while_refresh_lock_is_held() {
+        let fixture = LinkedReadFixture::new("literal-grep-refresh-lock");
+        let output = fixture.read_while_refresh_locked(&["grep", "-F", "pub fn", "-m", "50"]);
+        assert!(
+            output.status.success() || output.status.code() == Some(2),
+            "{output:?}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn linked_worktree_search_symbol_returns_within_bound_without_refresh_holder() {
+        let fixture = LinkedReadFixture::new("search-symbol-no-holder");
+        fixture.write_unindexed_files(400);
+        let (output, completed) = fixture.read_within(
+            fixture.command(&["search-symbol", "free"]),
+            Duration::from_secs(20),
+        );
+        assert!(
+            completed,
+            "read must return within 20s with no refresh holder: {output:?}"
+        );
+        assert!(
+            output.status.success() || output.status.code() == Some(2),
+            "{output:?}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn linked_worktree_grep_returns_within_bound_with_many_stale_files() {
+        let fixture = LinkedReadFixture::new("grep-stale-budget");
+        fixture.write_unindexed_files(400);
+        let (output, completed) = fixture.read_within(
+            fixture.command(&["grep", "-F", "pub fn", "-m", "50"]),
+            Duration::from_secs(10),
+        );
+        assert!(
+            completed,
+            "grep must return within 10s over 400 stale files: {output:?}"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("behind the worktree"),
+            "a read past the foreground budget must report its backlog: {stderr}"
+        );
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn linked_worktree_status_and_graph_reads_return_within_bound_with_many_stale_files() {
+        let fixture = LinkedReadFixture::new("status-graph-stale-budget");
+        fixture.write_unindexed_files(400);
+        for args in [
+            &["status"][..],
+            &["graph", "overview"][..],
+            &["graph", "report"][..],
+        ] {
+            let (output, completed) =
+                fixture.read_within(fixture.command(args), Duration::from_secs(20));
+            assert!(
+                completed,
+                "{args:?} must return within 20s over 400 stale files: {output:?}"
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("behind the worktree"),
+                "{args:?} past the foreground budget must report its backlog: {stderr}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn linked_parent_grep_reads_read_only_and_leaves_out_stale_files_past_budget() {
+        let fixture = LinkedReadFixture::new("parent-grep-stale-budget");
+        write_unindexed_files_in(fixture.parent.root.path(), 400);
+        let (output, completed) = fixture.read_within(
+            fixture.command_in(
+                fixture.parent.root.path(),
+                &["grep", "-F", "pub fn", "-m", "50"],
+            ),
+            Duration::from_secs(10),
+        );
+        assert!(
+            completed,
+            "a read-only grep over 400 stale files must return within 10s: {output:?}"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("cannot refresh"),
+            "a read-only checkout must report its stale paths: {stderr}"
+        );
+        assert!(
+            stderr.contains("left out of grep"),
+            "grep past the foreground budget must name the stale paths it left out: {stderr}"
+        );
+        // No live read past the budget: the 400 unindexed files have no rows, so a
+        // read that reached them would print their matches. Visibility holds for the
+        // read-only principal, which serves only the rows it can see.
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains("unindexed_"),
+            "a read-only grep past the budget must not read or serve stale files: {stdout}"
+        );
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn linked_worktree_cli_grep_alternation_and_literal_pipes_agree_with_regex_syntax() {
+        let fixture = LinkedReadFixture::new("grep-alternation-refresh-lock");
+        for (pattern, fixed, expected) in [
+            (
+                "held|free",
+                false,
+                vec!["// held|free", "pub fn free() {}", "pub fn held() {}"],
+            ),
+            (r"held\|free", false, vec!["// held|free"]),
+            ("held|free", true, vec!["// held|free"]),
+        ] {
+            let mut args = vec!["grep", "-n", pattern, "src", "-m", "50"];
+            if fixed {
+                args.push("-F");
+            }
+            let output = fixture.read_while_refresh_locked(&args);
+            assert!(
+                output.status.success(),
+                "grep {pattern}, fixed={fixed}: {output:?}"
+            );
+            let payload: Value = serde_json::from_slice(&output.stdout).expect("grep JSON");
+            let mut lines: Vec<_> = payload["matches"]
+                .as_array()
+                .expect("grep matches")
+                .iter()
+                .map(|row| row["text"].as_str().expect("match text"))
+                .collect();
+            lines.sort_unstable();
+            assert_eq!(lines, expected, "CLI pattern={pattern}, fixed={fixed}");
+        }
+    }
+
+    /// Adds files `root` has not indexed, so every read sees stale paths.
+    fn write_unindexed_files_in(root: &Path, count: usize) {
+        for index in 0..count {
+            std::fs::write(
+                root.join(format!("src/unindexed_{index}.rs")),
+                format!("pub fn unindexed_{index}() -> usize {{ {index} }}\n"),
+            )
+            .expect("write unindexed file");
+        }
     }
 
     fn isolated_gobby_home(root: &Path) -> PathBuf {

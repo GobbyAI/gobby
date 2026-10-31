@@ -248,6 +248,19 @@ def normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
     return _normalized(copy.deepcopy(dict(case)), case["mask"])
 
 
+# Build-derived identity: the gdaemon that answers decides these values, so replay masks
+# them and the test suite pins them to the source tree instead.
+REPLAY_BUILD_MASKS: dict[str, tuple[str, ...]] = {
+    "runtime_handshake": ("/response/body/grant/schema_identity",),
+}
+
+
+def replay_view(case: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the committed case with build-derived fields masked for replay comparison only."""
+    extra = REPLAY_BUILD_MASKS.get(str(case.get("family")), ())
+    return {**dict(case), "mask": [*case["mask"], *extra]}
+
+
 def recorded_case(case: Mapping[str, Any], response: httpx.Response) -> dict[str, Any]:
     """Capture Python responses while retaining waiver and native contract provenance."""
     recorded = copy.deepcopy(dict(case))
@@ -297,8 +310,9 @@ def replay_case(
 ) -> tuple[ReplayResult, dict[str, Any]]:
     """Send a committed case and classify its normalized response; return both."""
     response = send_case(client, case, operator=operator, grant=grant)
-    actual = normalize_response(case, response)
-    return classify_replay(case, actual, waivers), actual
+    view = replay_view(case)
+    actual = normalize_response(view, response)
+    return classify_replay(view, actual, waivers), actual
 
 
 @dataclass(frozen=True)

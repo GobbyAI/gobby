@@ -388,8 +388,8 @@ class VectorStoreClient:
                         f"Qdrant collection '{collection_name}' dimension mismatch "
                         f"(expected_dim={dim}, observed_dim={existing_dim}). "
                         "Rebuild or migrate the collection to the configured embedding "
-                        "dimension. Local/default nomic embeddings are usually 768 "
-                        "dimensions; when intentionally using OpenAI "
+                        "dimension. Local/default qwen3-embedding:0.6b-q8_0 embeddings "
+                        "are usually 1024 dimensions; when intentionally using OpenAI "
                         "text-embedding-3-small, configure or pass embedding_dim=1536."
                     )
                 await self.call(

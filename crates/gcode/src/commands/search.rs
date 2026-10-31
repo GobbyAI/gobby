@@ -97,7 +97,26 @@ fn semantic_lane(ctx: &Context, query: &str, fetch_limit: usize) -> SemanticLane
     {
         return semantic_lane_from_grant_outage();
     }
+    // A moved pin's vectors are not projected yet; embedding now would only rank the
+    // rows that happen to be projected, so the lane degrades before any embedding call.
+    match code_symbols::has_pending_pinned_projection(ctx) {
+        Ok(true) => {
+            return SemanticLane::Degraded(SearchWarning {
+                lane: SearchWarningLane::Semantic,
+                cause: SearchWarningCause::ProjectionPending,
+                message: "semantic search degraded: pinned projection pending recovery; lexical and graph results only"
+                    .to_string(),
+            });
+        }
+        Ok(false) => {}
+        Err(error) => log::warn!("pinned projection state unavailable: {error}"),
+    }
     SemanticLane::Hits(code_symbols::semantic_search(ctx, query, fetch_limit))
+}
+
+#[cfg(test)]
+pub(crate) fn semantic_lane_for_test(ctx: &Context, query: &str, limit: usize) -> SemanticLane {
+    semantic_lane(ctx, query, limit)
 }
 
 pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow::Result<()> {

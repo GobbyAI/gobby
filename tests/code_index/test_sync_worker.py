@@ -262,6 +262,109 @@ def _write_source(root: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("store", ["vector", "graph"])
+@pytest.mark.parametrize("superseded", [False, True], ids=["success", "superseded"])
+async def test_native_projection_result_keeps_completion_owned_by_gcode(
+    tmp_path: Path, store: str, superseded: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Native CAS, including a lost race, must remain authoritative for completion."""
+    _write_source(tmp_path)
+    pending = _indexed_file(vectors_synced=store != "vector", graph_synced=store != "graph")
+    storage = MagicMock()
+    storage.get_file.return_value = pending
+    result: dict[str, Any] = {"success": True, "status": "completed"}
+    if superseded:
+        result = {"success": True, "status": "skipped", "reason": "sync_superseded"}
+    gateway = RecordingGcodeGateway(result=result, vector_result=result)
+
+    with caplog.at_level(logging.ERROR):
+        did_work = await _sync_file(
+            storage=storage,
+            gcode_gateway=gateway,
+            config=CodeIndexConfig(
+                embedding_enabled=store == "vector", graph_enabled=store == "graph"
+            ),
+            project_id=PROJECT_ID,
+            root=tmp_path,
+            file=pending,
+            run_db=RecordingRunDb(),
+        )
+
+    assert did_work is True
+    assert caplog.records == []
+    calls = gateway.vector_synced_files if store == "vector" else gateway.synced_files
+    assert calls == [(tmp_path, pending.file_path)]
+    attempted = (
+        storage.mark_vector_sync_attempted
+        if store == "vector"
+        else storage.mark_graph_sync_attempted
+    )
+    attempted.assert_called_once_with(pending.id)
+    storage.mark_vectors_synced.assert_not_called()
+    storage.mark_graph_synced.assert_not_called()
+    storage.requeue_vector_sync.assert_not_called()
+    storage.requeue_graph_sync.assert_not_called()
+    assert pending.vectors_synced is (store != "vector")
+    assert pending.graph_synced is (store != "graph")
+
+
+def test_vector_completion_has_no_python_storage_writer() -> None:
+    assert not hasattr(CodeIndexStorage, "mark_vectors_synced")
+
+
+@pytest.mark.asyncio
+async def test_import_only_init_file_delegates_graph_sync_to_native(tmp_path: Path) -> None:
+    pending = _indexed_file(vectors_synced=True, symbol_count=0)
+    pending.file_path = "pkg/__init__.py"
+    pending.id = IndexedFile.make_id(PROJECT_ID, pending.file_path, pending.content_hash)
+    source = tmp_path / pending.file_path
+    source.parent.mkdir()
+    source.write_text("from .service import Service\n")
+    storage = MagicMock()
+    storage.get_file.return_value = pending
+    gateway = RecordingGcodeGateway()
+
+    did_work = await _sync_file(
+        storage=storage,
+        gcode_gateway=gateway,
+        config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+        project_id=PROJECT_ID,
+        root=tmp_path,
+        file=pending,
+        run_db=RecordingRunDb(),
+    )
+
+    assert did_work is True
+    assert gateway.synced_files == [(tmp_path, "pkg/__init__.py")]
+    storage.mark_graph_sync_attempted.assert_called_once_with(pending.id)
+    storage.mark_graph_synced.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_non_graph_shortcut_marks_the_exact_snapshot(tmp_path: Path) -> None:
+    _write_source(tmp_path)
+    pending = _indexed_file(vectors_synced=True, language="markdown", symbol_count=0)
+    storage = MagicMock()
+    storage.get_file.return_value = pending
+    gateway = RecordingGcodeGateway()
+
+    did_work = await _sync_file(
+        storage=storage,
+        gcode_gateway=gateway,
+        config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+        project_id=PROJECT_ID,
+        root=tmp_path,
+        file=pending,
+        run_db=RecordingRunDb(),
+    )
+
+    assert did_work is True
+    assert gateway.synced_files == []
+    storage.mark_graph_synced.assert_called_once_with(pending)
+    storage.mark_graph_sync_attempted.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_sync_worker_waits_for_daemon_readiness_before_vector_sync(
     tmp_path: Path,
 ) -> None:
@@ -1423,7 +1526,11 @@ async def test_sync_pass_polls_projects_and_files_through_run_db(tmp_path: Path)
         run_db=run_db,
     )
 
-    assert run_db.calls == ["list_indexed_projects", "get_pending_sync_files"]
+    assert run_db.calls == [
+        "list_indexed_projects",
+        "get_pending_sync_files",
+        "get_pending_pinned_files",
+    ]
 
 
 @pytest.mark.asyncio

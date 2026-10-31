@@ -6,6 +6,17 @@ use crate::vector::code_symbols::{
 };
 use serde_json::json;
 
+/// Indexed bytes of `src/lib.rs`. The test symbols cover bytes `10..40`.
+const SOURCE: &str = "// fixture module header\nfn run() { work(); }\n";
+
+/// Writes `SOURCE` to `src/lib.rs` under a fresh project root.
+fn source_root() -> tempfile::TempDir {
+    let root = tempfile::tempdir().expect("source root");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    std::fs::write(root.path().join("src/lib.rs"), SOURCE).expect("source file");
+    root
+}
+
 fn symbol(id: &str, file_path: &str, summary: Option<&str>) -> Symbol {
     Symbol {
         id: id.to_string(),
@@ -22,7 +33,7 @@ fn symbol(id: &str, file_path: &str, summary: Option<&str>) -> Symbol {
         signature: Some("fn run()".to_string()),
         docstring: None,
         parent_symbol_id: None,
-        file_content_hash: "hash".to_string(),
+        file_content_hash: gobby_core::indexing::content_hash(SOURCE.as_bytes()),
         content_hash: "hash".to_string(),
         summary: summary.map(str::to_string),
         created_at: String::new(),
@@ -32,6 +43,7 @@ fn symbol(id: &str, file_path: &str, summary: Option<&str>) -> Symbol {
 
 #[test]
 fn ensure_creates_missing_and_reuses_compatible() {
+    let root = source_root();
     let (embedding_url, embedding_handle) = spawn_http_responses(vec![
         (200, json!({"data": [{"embedding": [0.1, 0.2, 0.3]}]})),
         (200, json!({"data": [{"embedding": [0.4, 0.5, 0.6]}]})),
@@ -67,7 +79,8 @@ fn ensure_creates_missing_and_reuses_compatible() {
         },
         CodeVectorSettings::with_vector_dim(Some(3)),
     )
-    .expect("lifecycle");
+    .expect("lifecycle")
+    .with_project_root(root.path().to_path_buf());
 
     let first = lifecycle
         .sync_file_symbols("src/lib.rs", &[symbol("sym-1", "src/lib.rs", None)])
@@ -116,6 +129,7 @@ fn ensure_creates_missing_and_reuses_compatible() {
 
 #[test]
 fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
+    let root = source_root();
     let (embedding_url, embedding_handle) = spawn_http_responses(vec![(
         200,
         json!({"data": [{"embedding": [0.7, 0.8, 0.9]}]}),
@@ -151,7 +165,8 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
         },
         CodeVectorSettings::with_vector_dim(Some(3)),
     )
-    .expect("lifecycle");
+    .expect("lifecycle")
+    .with_project_root(root.path().to_path_buf());
 
     let cleared = lifecycle.clear_project_vectors().expect("clear");
     let rebuilt = lifecycle

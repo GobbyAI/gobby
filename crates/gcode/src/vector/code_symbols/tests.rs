@@ -19,6 +19,22 @@ mod payload;
 #[cfg(feature = "ai")]
 mod sync;
 
+/// Indexed bytes of `src/lib.rs`. `test_symbol` covers bytes `10..40`.
+/// The trailer keeps `test_symbol_with_index` ranges (up to byte 129) inside the file.
+const FIXTURE_SOURCE: &str = concat!(
+    "// fixture module header\n",
+    "fn run() { work(); }\n",
+    "// trailer: padding keeps the per-index symbol ranges used by the batch tests inside this file\n",
+);
+
+/// Writes `FIXTURE_SOURCE` to `src/lib.rs` under a fresh project root.
+pub(crate) fn fixture_source_root() -> tempfile::TempDir {
+    let root = tempfile::tempdir().expect("fixture source root");
+    std::fs::create_dir(root.path().join("src")).expect("fixture source directory");
+    std::fs::write(root.path().join("src/lib.rs"), FIXTURE_SOURCE).expect("fixture source");
+    root
+}
+
 fn test_symbol(summary: Option<String>) -> Symbol {
     Symbol {
         id: "symbol-1".to_string(),
@@ -35,7 +51,7 @@ fn test_symbol(summary: Option<String>) -> Symbol {
         signature: None,
         docstring: None,
         parent_symbol_id: None,
-        file_content_hash: "hash".to_string(),
+        file_content_hash: gobby_core::indexing::content_hash(FIXTURE_SOURCE.as_bytes()),
         content_hash: "hash".to_string(),
         summary,
         created_at: String::new(),

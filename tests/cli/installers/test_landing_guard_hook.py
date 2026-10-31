@@ -76,6 +76,8 @@ class _Repo:
         # (macOS) leaves `git init` without the hooks/ and info/ directories it would copy.
         (self.root / ".git" / "info").mkdir(parents=True, exist_ok=True)
         hook = self.root / ".git" / "hooks" / "reference-transaction"
+        # git init copies hooks/ from its template dir, which this fixture's
+        # restricted PATH may not resolve; create it so the hook write never depends on it.
         hook.parent.mkdir(parents=True, exist_ok=True)
         hook.write_text(f"#!/bin/sh\n{HOOK_TEMPLATES['reference-transaction']}", encoding="utf-8")
         hook.chmod(0o755)
@@ -392,6 +394,7 @@ def test_refused_fast_forward_preserves_staged_and_ignored_paths(
         checkout = tmp_path / "main-view"
         lock_args = ["--lock"] if checkout_kind == "locked-main" else []
         repo.ok(repo.root, "worktree", "add", "-q", "--force", *lock_args, str(checkout), "main")
+    (repo.root / ".git/info").mkdir(parents=True, exist_ok=True)
     (repo.root / ".git/info/exclude").write_text("ignored.py\n", encoding="utf-8")
     (checkout / "ignored.py").write_text("local ignored content\n", encoding="utf-8")
     # Git permits staged changes matching the incoming commit. A reverse diff

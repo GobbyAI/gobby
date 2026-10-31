@@ -559,8 +559,8 @@ def test_daemon_registry_reports_embedding_configured_state() -> None:
 
     assert binding.provider == "local"
     assert binding.adapter_style == AIAdapterStyle.OPENAI_COMPATIBLE
-    assert binding.models == ("nomic-embed-text",)
-    assert binding.metadata["dim"] == 768
+    assert binding.models == ("qwen3-embedding:0.6b-q8_0",)
+    assert binding.metadata["dim"] == 1024
 
 
 def test_decide_binding_reports_configuration() -> None:

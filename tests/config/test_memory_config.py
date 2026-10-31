@@ -220,12 +220,12 @@ def test_falkordb_password_secret_name_is_unique() -> None:
 
 
 def test_embedding_model_default() -> None:
-    """EmbeddingsConfig.model should default to nomic-embed-text."""
+    """EmbeddingsConfig.model should default to qwen3-embedding:0.6b-q8_0."""
     config = EmbeddingsConfig()
-    assert config.model == "nomic-embed-text"
+    assert config.model == "qwen3-embedding:0.6b-q8_0"
 
 
 def test_embedding_dim_default() -> None:
-    """EmbeddingsConfig.dim should default to 768."""
+    """EmbeddingsConfig.dim should default to 1024."""
     config = EmbeddingsConfig()
-    assert config.dim == 768
+    assert config.dim == 1024

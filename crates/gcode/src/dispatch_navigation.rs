@@ -25,7 +25,7 @@ pub(super) fn dispatch(
             token_budget: _,
         } => {
             let paths = resolve_filters(ctx, cwd, paths)?;
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::search::search(
                 ctx,
                 query,
@@ -53,7 +53,7 @@ pub(super) fn dispatch(
             token_budget: _,
         } => {
             let paths = resolve_filters(ctx, cwd, paths)?;
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::search::search_symbol(
                 ctx,
                 query,
@@ -79,7 +79,7 @@ pub(super) fn dispatch(
             token_budget: _,
         } => {
             let paths = resolve_filters(ctx, cwd, paths)?;
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::search::search_text(
                 ctx,
                 query,
@@ -103,7 +103,7 @@ pub(super) fn dispatch(
             token_budget: _,
         } => {
             let paths = resolve_filters(ctx, cwd, paths)?;
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::search::search_content(
                 ctx,
                 query,
@@ -140,14 +140,11 @@ pub(super) fn dispatch(
             let paths = resolve_filters(ctx, cwd, paths)?;
             let globs = resolve_globs(ctx, cwd, glob)?;
             let freshness_timings = crate::index::indexer::IndexTimings::new("grep.freshness");
-            match grep_freshness_scope(&ctx.project_root, &paths) {
-                freshness::FreshnessScope::Files(files) => {
-                    super::ensure_files_fresh(ctx, allow_stale, files)?
-                }
-                freshness::FreshnessScope::Project => {
-                    super::ensure_project_fresh(ctx, allow_stale)?
-                }
-            }
+            let known_stale = super::ensure_scope_fresh(
+                ctx,
+                allow_stale,
+                grep_freshness_scope(&ctx.project_root, &paths),
+            )?;
             drop(freshness_timings);
             commands::grep::run(
                 ctx,
@@ -167,6 +164,7 @@ pub(super) fn dispatch(
                     files_with_matches: *files_with_matches,
                     format,
                 },
+                known_stale,
             )?;
         }
         Command::Outline {
@@ -195,7 +193,7 @@ pub(super) fn dispatch(
             offset,
             token_budget: _,
         } => {
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::symbols::symbols(ctx, ids, *limit, *offset, token_budget, format)?;
         }
         Command::Kinds {
@@ -203,7 +201,7 @@ pub(super) fn dispatch(
             offset,
             token_budget: _,
         } => {
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::symbols::kinds(ctx, *limit, *offset, token_budget, format)?;
         }
         Command::Tree {
@@ -213,7 +211,7 @@ pub(super) fn dispatch(
             token_budget: _,
         } => {
             let paths = resolve_filters(ctx, cwd, paths)?;
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::symbols::tree(ctx, &paths, *limit, *offset, token_budget, format)?;
         }
         Command::Callers {
@@ -222,7 +220,7 @@ pub(super) fn dispatch(
             offset,
             token_budget: _,
         } => {
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::graph::callers(ctx, symbol_name, *limit, *offset, token_budget, format)?;
         }
         Command::Callees {
@@ -231,7 +229,7 @@ pub(super) fn dispatch(
             offset,
             token_budget: _,
         } => {
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::graph::callees(ctx, symbol_name, *limit, *offset, token_budget, format)?;
         }
         Command::Usages {
@@ -240,7 +238,7 @@ pub(super) fn dispatch(
             offset,
             token_budget: _,
         } => {
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::graph::usages(ctx, symbol_name, *limit, *offset, token_budget, format)?;
         }
         Command::Imports {
@@ -250,7 +248,7 @@ pub(super) fn dispatch(
             token_budget: _,
         } => {
             let file = super::resolve_exact_file(ctx, cwd, file)?;
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::graph::imports(ctx, &file, *limit, *offset, token_budget, format)?;
         }
         Command::Path {
@@ -258,7 +256,7 @@ pub(super) fn dispatch(
             symbol_b,
             max_depth,
         } => {
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::graph::path(ctx, symbol_a, symbol_b, *max_depth, format)?;
         }
         Command::BlastRadius {
@@ -268,7 +266,7 @@ pub(super) fn dispatch(
             offset,
             token_budget: _,
         } => {
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::graph::blast_radius(
                 ctx,
                 target,
@@ -284,7 +282,7 @@ pub(super) fn dispatch(
             offset,
             token_budget: _,
         } => {
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            super::ensure_project_read_fresh(ctx, allow_stale)?;
             commands::status::repo_outline(ctx, *limit, *offset, token_budget, format)?;
         }
         _ => return Ok(false),
@@ -318,7 +316,7 @@ pub(super) fn grep_freshness_scope(
     paths: &[String],
 ) -> freshness::FreshnessScope {
     if paths.is_empty() || paths.iter().any(|path| !project_root.join(path).is_file()) {
-        return freshness::FreshnessScope::Project;
+        return freshness::FreshnessScope::ProjectRead;
     }
     freshness::FreshnessScope::Files(paths.iter().map(PathBuf::from).collect())
 }

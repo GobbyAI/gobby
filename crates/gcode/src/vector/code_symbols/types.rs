@@ -139,6 +139,7 @@ pub enum VectorLifecycleError {
         body: String,
     },
     EmbeddingResponse(String),
+    EmbeddingInput(String),
     QdrantHttp {
         operation: &'static str,
         status: u16,
@@ -171,6 +172,9 @@ impl fmt::Display for VectorLifecycleError {
             }
             Self::EmbeddingResponse(reason) => {
                 write!(f, "embedding response was invalid: {reason}")
+            }
+            Self::EmbeddingInput(reason) => {
+                write!(f, "embedding input could not be built: {reason}")
             }
             Self::QdrantHttp {
                 operation,

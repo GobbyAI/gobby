@@ -38,15 +38,15 @@ class TestProviderConfig:
 
     def test_lmstudio_config(self) -> None:
         cfg = _PROVIDER_CONFIG["lmstudio"]
-        assert cfg["model"] == "text-embedding-nomic-embed-text-v1.5@f16"
+        assert cfg["model"] == "qwen/qwen3-embedding-0.6b@q8_0"
         assert cfg["api_base"] == "http://localhost:1234/v1"
-        assert cfg["dim"] == 768
+        assert cfg["dim"] == 1024
 
     def test_ollama_config(self) -> None:
         cfg = _PROVIDER_CONFIG["ollama"]
-        assert cfg["model"] == "nomic-embed-text"
+        assert cfg["model"] == "qwen3-embedding:0.6b-q8_0"
         assert cfg["api_base"] == "http://localhost:11434/v1"
-        assert cfg["dim"] == 768
+        assert cfg["dim"] == 1024
 
     def test_openai_config(self) -> None:
         cfg = _PROVIDER_CONFIG["openai"]
@@ -56,9 +56,9 @@ class TestProviderConfig:
 
     def test_openai_compatible_config(self) -> None:
         cfg = _PROVIDER_CONFIG["openai-compatible"]
-        assert cfg["model"] == "nomic-embed-text"
+        assert cfg["model"] == "qwen3-embedding:0.6b-q8_0"
         assert cfg["api_base"] is None
-        assert cfg["dim"] == 768
+        assert cfg["dim"] == 1024
 
     def test_none_config_exists(self) -> None:
         assert "none" in _PROVIDER_CONFIG
@@ -108,8 +108,8 @@ class TestInstallEmbedding:
         result = install_embedding(provider="lmstudio")
         assert result["success"] is True
         assert result["provider"] == "lmstudio"
-        assert result["model"] == "text-embedding-nomic-embed-text-v1.5@f16"
-        assert result["dim"] == 768
+        assert result["model"] == "qwen/qwen3-embedding-0.6b@q8_0"
+        assert result["dim"] == 1024
         assert result["health_check"] is True
         mock_setup.assert_called_once()
         mock_persist.assert_called_once()
@@ -184,7 +184,7 @@ class TestInstallEmbeddingOverrides:
 
     @patch("gobby.cli.installers.embedding._persist_embedding_config")
     @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
-    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=768)
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=1024)
     @patch("gobby.cli.installers.embedding._setup_lmstudio")
     def test_api_base_override_skips_setup_and_uses_default_model(
         self,
@@ -199,12 +199,12 @@ class TestInstallEmbeddingOverrides:
         )
 
         assert result["success"] is True
-        assert result["model"] == "text-embedding-nomic-embed-text-v1.5@f16"
+        assert result["model"] == "qwen/qwen3-embedding-0.6b@q8_0"
         assert result["api_base"] == "http://192.168.1.10:1234/v1"
         mock_setup.assert_not_called()
         mock_probe.assert_called_once()
         persisted = mock_persist.call_args.kwargs
-        assert persisted["model"] == "text-embedding-nomic-embed-text-v1.5@f16"
+        assert persisted["model"] == "qwen/qwen3-embedding-0.6b@q8_0"
         assert persisted["api_base"] == "http://192.168.1.10:1234/v1"
 
     @patch("gobby.cli.installers.embedding._persist_embedding_config")
@@ -361,15 +361,15 @@ class TestInstallEmbeddingOverrides:
         )
 
         assert result["success"] is True
-        assert result["dim"] == 768
+        assert result["dim"] == 1024
         mock_setup.assert_not_called()
         mock_probe.assert_called_once()
-        assert mock_health.call_args.kwargs["expected_dim"] == 768
-        assert mock_persist.call_args.kwargs["dim"] == 768
+        assert mock_health.call_args.kwargs["expected_dim"] == 1024
+        assert mock_persist.call_args.kwargs["dim"] == 1024
 
     @patch("gobby.cli.installers.embedding._persist_embedding_config")
     @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
-    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=768)
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=1024)
     def test_openai_compatible_custom_url_uses_probe(
         self,
         mock_probe: MagicMock,
@@ -383,8 +383,8 @@ class TestInstallEmbeddingOverrides:
 
         assert result["success"] is True
         assert result["provider"] == "openai-compatible"
-        assert result["model"] == "nomic-embed-text"
-        assert result["dim"] == 768
+        assert result["model"] == "qwen3-embedding:0.6b-q8_0"
+        assert result["dim"] == 1024
         mock_probe.assert_called_once()
         assert mock_health.call_args.kwargs["api_base"] == "https://embeddings.example.test/v1"
         assert mock_persist.call_args.kwargs["provider"] == "openai-compatible"
@@ -414,7 +414,7 @@ class TestInstallEmbeddingOverrides:
     @patch("gobby.cli.installers.embedding._persist_embedding_config")
     @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
     @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=None)
-    def test_openai_compatible_probe_failure_falls_back_to_768(
+    def test_openai_compatible_probe_failure_falls_back_to_1024(
         self,
         mock_probe: MagicMock,
         mock_health: MagicMock,
@@ -426,11 +426,11 @@ class TestInstallEmbeddingOverrides:
         )
 
         assert result["success"] is True
-        assert result["model"] == "nomic-embed-text"
-        assert result["dim"] == 768
+        assert result["model"] == "qwen3-embedding:0.6b-q8_0"
+        assert result["dim"] == 1024
         mock_probe.assert_called_once()
-        assert mock_health.call_args.kwargs["expected_dim"] == 768
-        assert mock_persist.call_args.kwargs["dim"] == 768
+        assert mock_health.call_args.kwargs["expected_dim"] == 1024
+        assert mock_persist.call_args.kwargs["dim"] == 1024
 
     @patch("gobby.cli.installers.embedding._persist_embedding_config")
     @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
@@ -445,9 +445,9 @@ class TestInstallEmbeddingOverrides:
     ) -> None:
         result = install_embedding(provider="lmstudio")
         assert result["success"] is True
-        assert result["model"] == "text-embedding-nomic-embed-text-v1.5@f16"
+        assert result["model"] == "qwen/qwen3-embedding-0.6b@q8_0"
         assert result["api_base"] == "http://localhost:1234/v1"
-        assert result["dim"] == 768
+        assert result["dim"] == 1024
         # No probe call when defaults apply.
         mock_probe.assert_not_called()
         # Setup IS called when running on the bundled defaults.
@@ -557,7 +557,7 @@ class TestSetupLMStudio:
     def test_already_loaded_short_circuits(
         self, mock_which: MagicMock, mock_run: MagicMock
     ) -> None:
-        # server status -> running, ps -> includes nomic
+        # server status -> running, ps -> includes the default catalog model
         mock_run.side_effect = [
             MagicMock(returncode=0, stderr="", stdout="The server is running on port 1234."),
             MagicMock(
@@ -565,8 +565,7 @@ class TestSetupLMStudio:
                 stderr="",
                 stdout=(
                     "IDENTIFIER  MODEL\n"
-                    "text-embedding-nomic-embed-text-v1.5@f16  "
-                    "text-embedding-nomic-embed-text-v1.5@f16"
+                    "qwen/qwen3-embedding-0.6b@q8_0  qwen/qwen3-embedding-0.6b@q8_0"
                 ),
             ),
         ]
@@ -580,11 +579,13 @@ class TestSetupLMStudio:
     def test_loads_from_disk_when_not_loaded(
         self, mock_which: MagicMock, mock_run: MagicMock
     ) -> None:
-        # status -> running, ps -> no nomic, ls -> has nomic, load -> ok
+        # status -> running, ps -> not loaded, ls -> has the default catalog GGUF, load -> ok
         mock_run.side_effect = [
             MagicMock(returncode=0, stderr="", stdout="running"),  # server status
             MagicMock(returncode=0, stderr="", stdout="(empty)"),  # ps
-            MagicMock(returncode=0, stderr="", stdout="nomic-embed-text-v1.5  Local"),  # ls
+            MagicMock(
+                returncode=0, stderr="", stdout="Qwen3-Embedding-0.6B-Q8_0.gguf  Local"
+            ),  # ls
             MagicMock(returncode=0, stderr="", stdout="Loaded"),  # load
         ]
         result = _setup_lmstudio()
@@ -605,6 +606,14 @@ class TestSetupLMStudio:
         result = _setup_lmstudio()
         assert result["success"] is True
         assert mock_run.call_count == 5
+        assert mock_run.call_args_list[3].args[0] == [
+            "lms",
+            "get",
+            "Qwen/Qwen3-Embedding-0.6B-GGUF",
+            "--gguf",
+            "Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "-y",
+        ]
 
     @patch("gobby.cli.installers.embedding.spawn.run")
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/lms")
@@ -646,7 +655,7 @@ class TestSetupLMStudio:
         mock_run.side_effect = [
             MagicMock(returncode=0, stderr="", stdout="stopped"),
             MagicMock(returncode=0, stderr="", stdout="started"),
-            MagicMock(returncode=0, stderr="", stdout="text-embedding-nomic-embed-text-v1.5@f16"),
+            MagicMock(returncode=0, stderr="", stdout="qwen/qwen3-embedding-0.6b@q8_0"),
         ]
         result = _setup_lmstudio()
         assert result["success"] is True
@@ -690,7 +699,9 @@ class TestSetupOllama:
     @patch("gobby.cli.installers.embedding.spawn.run")
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/ollama")
     def test_already_pulled(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
-        mock_run.return_value = MagicMock(returncode=0, stdout="NAME\nnomic-embed-text  274 MB\n")
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="NAME\nqwen3-embedding:0.6b-q8_0  639 MB\n"
+        )
         result = _setup_ollama()
         assert result["success"] is True
         assert result["action"] == "already_pulled"
@@ -700,7 +711,7 @@ class TestSetupOllama:
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/ollama")
     def test_pulls_if_missing(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
         mock_run.side_effect = [
-            MagicMock(returncode=0, stderr="", stdout="other-model  1 GB"),  # list, no nomic
+            MagicMock(returncode=0, stderr="", stdout="other-model  1 GB"),  # list, default absent
             MagicMock(returncode=0, stderr="", stdout="pulling...done"),  # pull
         ]
         result = _setup_ollama()

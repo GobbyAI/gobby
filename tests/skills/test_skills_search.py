@@ -151,17 +151,21 @@ class TestSkillSearch:
         assert not search._indexed
         assert search.search("query") == []
 
+    @pytest.mark.parametrize(
+        "model,dim",
+        [("text-embedding-nomic-embed-text-v1.5@f16", 768), ("qwen3-embedding:0.6b-q8_0", 1024)],
+    )
     def test_preserves_daemon_embedding_config(
-        self, db: HubDatabase, sample_skills: list[Skill]
+        self, db: HubDatabase, sample_skills: list[Skill], model: str, dim: int
     ) -> None:
         """SkillSearch forwards configured endpoint and dim to embedding generation."""
         search = SkillSearch(
             db=db,
             config=SearchConfig(mode="auto"),
-            embedding_model="text-embedding-nomic-embed-text-v1.5@f16",
+            embedding_model=model,
             embedding_api_base="http://localhost:1234/v1",
             embedding_api_key="local-key",
-            embedding_dim=768,
+            embedding_dim=dim,
         )
 
         calls: list[dict[str, Any]] = []
@@ -170,7 +174,7 @@ class TestSkillSearch:
             service: Any, texts: list[str], **kwargs: Any
         ) -> list[list[float]]:
             calls.append({"service": service, "texts": texts, **kwargs})
-            return [[0.0] * 768 for _skill in sample_skills]
+            return [[0.0] * dim for _skill in sample_skills]
 
         with (
             patch(
@@ -188,10 +192,10 @@ class TestSkillSearch:
         assert search.get_active_backend() == "embedding"
         assert len(calls) == 1
         service = calls[0]["service"]
-        assert service.model == "text-embedding-nomic-embed-text-v1.5@f16"
+        assert service.model == model
         assert service.api_base == "http://localhost:1234/v1"
         assert service.api_key == "local-key"
-        assert service.dim == 768
+        assert service.dim == dim
         assert len(calls[0]["texts"]) == len(sample_skills)
 
     def test_index_skills(

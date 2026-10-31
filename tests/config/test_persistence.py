@@ -397,7 +397,7 @@ class TestEmbeddingsConfigFields:
         from gobby.config.persistence import EmbeddingsConfig
 
         config = EmbeddingsConfig()
-        assert config.model == "nomic-embed-text"
+        assert config.model == "qwen3-embedding:0.6b-q8_0"
 
     def test_embedding_model_custom(self) -> None:
         """Test setting a custom embedding model."""
@@ -435,11 +435,11 @@ class TestEmbeddingsConfigFields:
         assert config.api_key == "sk-custom-key"
 
     def test_embedding_dim_default(self) -> None:
-        """Test default dim is 768 (nomic-embed-text-v1.5)."""
+        """Test default dim is 1024 (qwen3-embedding:0.6b-q8_0)."""
         from gobby.config.persistence import EmbeddingsConfig
 
         config = EmbeddingsConfig()
-        assert config.dim == 768
+        assert config.dim == 1024
 
     def test_embedding_dim_custom(self) -> None:
         """Test setting custom dim for cloud models."""

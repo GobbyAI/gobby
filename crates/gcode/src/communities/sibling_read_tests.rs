@@ -183,7 +183,7 @@ fn managed_main_checkout_reads_sibling_commands_without_refresh_writes() {
                     .matched_lines,
                 1
             );
-            crate::commands::grep::run(&ctx, options).unwrap();
+            crate::commands::grep::run(&ctx, options, None).unwrap();
             crate::commands::symbols::tree(&ctx, &[], None, 0, None, Format::Json).unwrap();
             crate::commands::symbols::outline(&ctx, rel, None, 0, None, Format::Json, false)
                 .unwrap();

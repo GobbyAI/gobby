@@ -11,6 +11,7 @@ use serde_json::Value;
 use std::collections::{BTreeSet, HashSet};
 
 use super::connection::with_required_core_graph;
+use crate::graph::report::hotspot_snapshot::{invalidate_after_write, invalidate_snapshots};
 
 mod deletion;
 mod inheritance;
@@ -407,9 +408,13 @@ pub fn with_code_graph<T>(
     f: impl FnOnce(&mut CodeGraph<'_>) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     with_required_core_graph(ctx, |client| {
-        let mut graph = CodeGraph::new(&ctx.project_id, client);
-        graph.ensure_project_indexes()?;
-        f(&mut graph)
+        let result = {
+            let mut graph = CodeGraph::new(&ctx.project_id, client);
+            graph.ensure_project_indexes().and_then(|()| f(&mut graph))
+        };
+        invalidate_after_write(&ctx.project_id, result, |project| {
+            invalidate_snapshots(client, project)
+        })
     })
 }
 
@@ -419,7 +424,11 @@ pub(crate) fn delete_content_version(
     content_hash: &str,
 ) -> anyhow::Result<()> {
     with_required_core_graph(ctx, |client| {
-        CodeGraph::new(&ctx.project_id, client).delete_content_version(file_path, content_hash)
+        let result =
+            CodeGraph::new(&ctx.project_id, client).delete_content_version(file_path, content_hash);
+        invalidate_after_write(&ctx.project_id, result, |project| {
+            invalidate_snapshots(client, project)
+        })
     })
 }
 
@@ -436,7 +445,10 @@ pub fn cleanup_deleted_files(
 
 pub fn clear_project(ctx: &Context) -> anyhow::Result<()> {
     with_required_core_graph(ctx, |client| {
-        CodeGraph::new(&ctx.project_id, client).clear_project()
+        let result = CodeGraph::new(&ctx.project_id, client).clear_project();
+        invalidate_after_write(&ctx.project_id, result, |project| {
+            invalidate_snapshots(client, project)
+        })
     })
 }
 

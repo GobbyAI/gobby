@@ -44,14 +44,16 @@ fn stderr_log_level(quiet: bool, rust_log: Option<&str>) -> log::LevelFilter {
 }
 
 pub(super) fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
-    warn_if_freshness_skipped(ctx, disabled);
-    if !disabled {
-        warn_if_busy(
-            ctx,
-            freshness::ensure_fresh(ctx, freshness::FreshnessScope::Project)?,
-        );
-    }
-    Ok(())
+    ensure_scope_fresh(ctx, disabled, freshness::FreshnessScope::Project).map(drop)
+}
+
+/// Whole-project freshness for a read-only navigation lane, which answers from
+/// the indexed rows past the foreground budget rather than reconciling inline.
+pub(super) fn ensure_project_read_fresh(
+    ctx: &config::Context,
+    disabled: bool,
+) -> anyhow::Result<()> {
+    ensure_scope_fresh(ctx, disabled, freshness::FreshnessScope::ProjectRead).map(drop)
 }
 
 fn ensure_files_fresh(
@@ -59,14 +61,25 @@ fn ensure_files_fresh(
     disabled: bool,
     files: Vec<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
+    ensure_scope_fresh(ctx, disabled, freshness::FreshnessScope::Files(files)).map(drop)
+}
+
+/// Checks freshness for `scope`. Returns the whole-project stale paths the check
+/// computed, so grep reads them rather than walking the checkout again; `None` when
+/// the check did not compute them. A busy refresh lock returns an empty set, so the
+/// read serves the existing index as it stands.
+pub(super) fn ensure_scope_fresh(
+    ctx: &config::Context,
+    disabled: bool,
+    scope: freshness::FreshnessScope,
+) -> anyhow::Result<Option<Vec<String>>> {
     warn_if_freshness_skipped(ctx, disabled);
-    if !disabled {
-        warn_if_busy(
-            ctx,
-            freshness::ensure_fresh(ctx, freshness::FreshnessScope::Files(files))?,
-        );
+    if disabled {
+        return Ok(None);
     }
-    Ok(())
+    let freshness::ReadFreshness { status, stale } = freshness::ensure_read_fresh(ctx, scope)?;
+    warn_if_busy(ctx, status);
+    Ok(stale)
 }
 
 pub(super) fn ensure_file_fresh(
@@ -114,6 +127,7 @@ fn freshness_warning(quiet: bool, status: &freshness::FreshnessStatus) -> Option
     match status {
         freshness::FreshnessStatus::SkippedBusy(_) => status.busy_warning(),
         freshness::FreshnessStatus::Stale(_) => status.stale_warning(),
+        freshness::FreshnessStatus::Deferred(_) => status.deferred_warning(),
         freshness::FreshnessStatus::Degraded(error) => Some(format!(
             "warning: index refresh failed ({error}); serving existing index \
              (pass --allow-stale to skip this check)"
@@ -446,7 +460,7 @@ fn run() -> anyhow::Result<()> {
         Command::Repair => commands::repair::run(&ctx, format),
         Command::Pin => commands::pin::run(&ctx, format),
         Command::Status => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
+            ensure_project_read_fresh(&ctx, cli.allow_stale)?;
             commands::status::run(&ctx, format)
         }
         Command::Invalidate {
@@ -478,6 +492,8 @@ fn run() -> anyhow::Result<()> {
         Command::Graph {
             command: GraphCommand::Rebuild,
         } => {
+            // A rebuild writes the graph from the whole index, so it keeps the unbudgeted
+            // Project reconcile rather than a deferred read of rows the checkout moved past.
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::rebuild(&ctx, format)
         }
@@ -487,7 +503,7 @@ fn run() -> anyhow::Result<()> {
         Command::Graph {
             command: GraphCommand::Report { top_n },
         } => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
+            ensure_project_read_fresh(&ctx, cli.allow_stale)?;
             commands::graph::report(&ctx, top_n, format)
         }
         Command::Vector {
@@ -520,12 +536,16 @@ fn run() -> anyhow::Result<()> {
         Command::Vector {
             command: VectorCommand::Rebuild,
         } => {
+            // A vector rebuild embeds the whole index, so it keeps the unbudgeted Project
+            // reconcile rather than a deferred read of rows the checkout moved past.
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::vector::rebuild(&ctx, format)
         }
         Command::Vector {
             command: VectorCommand::CleanupOrphans,
         } => {
+            // Orphan cleanup deletes vectors by comparing them with the whole index, so it
+            // keeps the unbudgeted Project reconcile rather than a deferred read.
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::vector::cleanup_orphans(&ctx, format)
         }
@@ -535,7 +555,7 @@ fn run() -> anyhow::Result<()> {
         Command::Graph {
             command: GraphCommand::Overview { limit },
         } => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
+            ensure_project_read_fresh(&ctx, cli.allow_stale)?;
             commands::graph::overview(&ctx, limit, format)
         }
         Command::Graph {
@@ -564,7 +584,7 @@ fn run() -> anyhow::Result<()> {
                 .as_deref()
                 .map(|file| resolve_exact_file(&ctx, &cwd, file))
                 .transpose()?;
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
+            ensure_project_read_fresh(&ctx, cli.allow_stale)?;
             commands::graph::graph_blast_radius(
                 &ctx,
                 symbol_id.as_deref(),
@@ -580,7 +600,7 @@ fn run() -> anyhow::Result<()> {
             if let Some(GraphViewSeed::File(file)) = &mut args.seed {
                 *file = resolve_exact_file(&ctx, &cwd, file)?;
             }
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
+            ensure_project_read_fresh(&ctx, cli.allow_stale)?;
             commands::graph::view(&ctx, &args, format)
         }
 

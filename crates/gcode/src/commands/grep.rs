@@ -116,10 +116,18 @@ pub(crate) struct GrepResult {
     pub(crate) coverage_gap: Option<String>,
 }
 
-pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
+/// Runs a grep for the CLI. `known_stale` is the whole-project stale set the
+/// freshness pass already computed; `None` computes it here. An empty set serves
+/// the indexed rows as they stand, which the freshness pass returns when another run
+/// holds the project's refresh lock, so no stale worktree file is read under it.
+pub fn run(
+    ctx: &Context,
+    options: GrepOptions<'_>,
+    known_stale: Option<Vec<String>>,
+) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let filters = GrepFilters::new(options.paths, options.globs)?;
-    let loaded = load_chunks_for_read(&mut conn, ctx, &filters, &options)?;
+    let loaded = load_chunks_for_read(&mut conn, ctx, &filters, &options, known_stale)?;
     let scan_options = GrepOptions {
         max_count: None,
         offset: 0,
@@ -260,7 +268,7 @@ pub(crate) fn grep_repo(
     options: &GrepOptions<'_>,
 ) -> anyhow::Result<GrepResult> {
     let filters = GrepFilters::new(options.paths, options.globs)?;
-    let loaded = load_chunks_for_read(conn, ctx, &filters, options)?;
+    let loaded = load_chunks_for_read(conn, ctx, &filters, options, None)?;
     let mut result = grep_chunks_with_filters(&loaded.chunks, options, &filters)?;
     result.truncated |= loaded.truncated;
     attach_coverage_gap(conn, ctx, &filters, options, &loaded, &mut result)?;
@@ -275,6 +283,7 @@ fn load_chunks_for_read(
     ctx: &Context,
     filters: &GrepFilters,
     options: &GrepOptions<'_>,
+    known_stale: Option<Vec<String>>,
 ) -> anyhow::Result<LoadedIndexedChunks> {
     let mut loaded = load_indexed_chunks(
         conn,
@@ -282,7 +291,10 @@ fn load_chunks_for_read(
         filters,
         content_prefilter::content_literal(options),
     )?;
-    let stale = freshness::stale_served_paths(conn, ctx, None)?;
+    let stale = match known_stale {
+        Some(stale) => stale,
+        None => freshness::stale_served_paths(conn, ctx, None)?,
+    };
     if stale.is_empty() {
         return Ok(loaded);
     }
@@ -290,7 +302,18 @@ fn load_chunks_for_read(
     loaded
         .chunks
         .retain(|chunk| !stale_set.contains(chunk.file_path.as_str()));
-    loaded.chunks.extend(live_chunks(ctx, filters, &stale));
+    // Past the foreground budget the in-scope stale paths get no live read, so the
+    // read does not stall on the reads a large checkout change queued. Their rows
+    // are left out, and the warning names the omission.
+    let live_reads = stale
+        .iter()
+        .filter(|path| filters.matches(path.as_str()))
+        .count();
+    if live_reads <= freshness::FOREGROUND_STALE_BUDGET {
+        loaded.chunks.extend(live_chunks(ctx, filters, &stale));
+    } else {
+        log::warn!("warning: {live_reads} stale path(s) left out of grep; run gcode index");
+    }
     loaded.chunks.sort_by(|a, b| {
         a.file_path
             .cmp(&b.file_path)

@@ -2,6 +2,8 @@ use super::*;
 use std::path::PathBuf;
 use std::time::Instant;
 
+mod source_integrity_serial_db;
+
 #[derive(Default)]
 struct CollectingProgress {
     events: Vec<String>,
@@ -338,7 +340,7 @@ fn sync_state_empty_files_does_not_start_progress() {
     assert!(progress.events.is_empty());
 }
 
-mod serial_db {
+pub(crate) mod serial_db {
     use super::*;
     use crate::config::{CodeVectorSettings, EmbeddingConfig, QdrantConfig};
     use crate::index::api;
@@ -349,7 +351,318 @@ mod serial_db {
     use std::net::{TcpListener, TcpStream};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    const FILE: &str = "src/lib.rs";
+    pub(crate) const FILE: &str = "src/lib.rs";
+
+    /// Indexed bytes of version `label`. A seeded version's hash is the hash of these bytes.
+    pub(crate) fn version_source(label: &str) -> String {
+        format!("fn run() {{ {label}(); }}\n")
+    }
+
+    pub(crate) fn version_hash(label: &str) -> String {
+        gobby_core::indexing::content_hash(version_source(label).as_bytes())
+    }
+
+    /// Project root whose `FILE` holds the indexed bytes of version `label`.
+    pub(crate) fn version_root(label: &str) -> tempfile::TempDir {
+        let root = tempfile::tempdir().expect("version root");
+        std::fs::create_dir(root.path().join("src")).expect("version source directory");
+        std::fs::write(root.path().join(FILE), version_source(label)).expect("version source");
+        root
+    }
+
+    pub(crate) fn pinned_fixture(
+        conn: &mut postgres::Client,
+        database_url: &str,
+    ) -> (
+        Context,
+        String,
+        ProjectCleanup,
+        ProjectCleanup,
+        tempfile::TempDir,
+    ) {
+        let source = unique_project_id();
+        let overlay = unique_project_id();
+        let hash_h = version_hash("h");
+        let hash_k = version_hash("k");
+        let root = version_root("h");
+        let source_cleanup = ProjectCleanup::new(conn, database_url, &source);
+        let overlay_cleanup = ProjectCleanup::new(conn, database_url, &overlay);
+        seed_version(conn, &source, &hash_h, true);
+        seed_version(conn, &source, &hash_k, false);
+        conn.execute(
+            "INSERT INTO code_overlay_pins
+             (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+             VALUES ($1, $2, $3, $4, $5)",
+            &[
+                &db::id_param(&gobby_core::machine::read_local_machine_id().expect("machine"))
+                    .expect("machine UUID"),
+                &db::id_param(&overlay).expect("overlay UUID"),
+                &FILE,
+                &db::id_param(&source).expect("source UUID"),
+                &hash_h,
+            ],
+        )
+        .expect("pin retained version");
+        let ctx = Context {
+            database_url: database_url.to_string(),
+            project_id: overlay.clone(),
+            project_root: root.path().to_path_buf(),
+            index_scope: crate::config::ProjectIndexScope::Overlay {
+                overlay_project_id: overlay.clone(),
+                overlay_root: PathBuf::from(format!("/tmp/{overlay}")),
+                parent_project_id: source.clone(),
+                parent_root: PathBuf::from(format!("/tmp/{source}")),
+            },
+            ..test_context()
+        };
+        (ctx, source, source_cleanup, overlay_cleanup, root)
+    }
+
+    /// Direct-route lifecycle over the fixture's mock Qdrant and embedding service.
+    fn direct_vector_lifecycle(ctx: &Context) -> CodeSymbolVectorLifecycle {
+        CodeSymbolVectorLifecycle::new(
+            ctx.project_id.clone(),
+            ctx.qdrant.clone().expect("qdrant config"),
+            ctx.embedding.clone().expect("embedding config"),
+            ctx.code_vectors.clone(),
+        )
+        .expect("vector lifecycle")
+        .with_project_root(ctx.project_root.clone())
+    }
+
+    fn pinned_vector_service(
+        ctx: &mut Context,
+        on_upsert: impl FnOnce() + Send + 'static,
+    ) -> thread::JoinHandle<Vec<String>> {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind pinned vector service");
+        listener.set_nonblocking(true).expect("nonblocking service");
+        let url = format!("http://{}", listener.local_addr().expect("service address"));
+        ctx.qdrant = Some(QdrantConfig {
+            url: Some(url.clone()),
+            api_key: None,
+        });
+        ctx.embedding = Some(EmbeddingConfig {
+            api_base: format!("{url}/v1"),
+            model: "embed-small".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        });
+        ctx.code_vectors = CodeVectorSettings::with_vector_dim(Some(3));
+        thread::spawn(move || {
+            let mut hook = Some(on_upsert);
+            let mut requests = Vec::new();
+            while let Some(on_upsert) = hook.take() {
+                let mut stream = accept_with_timeout(&listener, Duration::from_secs(5))
+                    .expect("pinned projection request");
+                let request = read_http_request(&mut stream);
+                let line = request.lines().next().unwrap_or_default();
+                let response = if line.starts_with("GET ") {
+                    hook = Some(on_upsert);
+                    json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}})
+                } else if line.starts_with("PUT ") && line.contains("/points") {
+                    on_upsert();
+                    json!({"result": {"operation_id": 1, "status": "completed"}, "status": "ok"})
+                } else if line.starts_with("POST ") && !line.contains("/collections") {
+                    hook = Some(on_upsert);
+                    json!({"data": [{"index": 0, "embedding": [0.1, 0.2, 0.3]}]})
+                } else {
+                    panic!("unexpected pinned projection request: {line}");
+                };
+                requests.push(request);
+                respond(&mut stream, response);
+            }
+            requests
+        })
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn reproject_only_moved_pinned_paths() {
+        let database_url = crate::test_env::postgres_test_database_url("pinned vector recovery");
+        let hash_h = version_hash("h");
+        let hash_k = version_hash("k");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let (mut ctx, source, _source_cleanup, _overlay_cleanup, _root) =
+            pinned_fixture(&mut conn, &database_url);
+        let server = pinned_vector_service(&mut ctx, || {});
+        let lifecycle = direct_vector_lifecycle(&ctx);
+        let mut state = VectorProjectionState {
+            ctx: &ctx,
+            conn,
+            lifecycle,
+        };
+
+        let mut check = db::connect_readwrite(&database_url).expect("check connection");
+        let baseline = [
+            vector_flags(&mut check, &source, hash_h.as_str()),
+            vector_flags(&mut check, &source, hash_k.as_str()),
+        ];
+        assert_eq!(
+            baseline,
+            [(false, true); 2],
+            "fixture source attempts unstamped"
+        );
+
+        let outcome = state.sync_file(FILE).expect("sync pinned path");
+
+        assert_eq!(outcome, ProjectionFileSyncOutcome::Synced { symbols: 1 });
+        let requests = server.join().expect("pinned service");
+        let upsert = requests
+            .iter()
+            .find(|request| request.starts_with("PUT "))
+            .expect("pinned symbols were upserted");
+        let collection = code_symbols::collection_name(
+            crate::config::CODE_SYMBOL_COLLECTION_PREFIX,
+            &ctx.project_id,
+        )
+        .expect("child collection name");
+        assert!(
+            upsert
+                .lines()
+                .next()
+                .expect("request line")
+                .contains(&collection)
+        );
+        let body: Value = serde_json::from_str(upsert.split_once("\r\n\r\n").expect("HTTP body").1)
+            .expect("upsert JSON");
+        assert_eq!(
+            body["points"][0]["id"],
+            Symbol::make_id(&source, FILE, hash_h.as_str(), "run", "function", 0)
+        );
+        assert_eq!(body["points"][0]["payload"]["file_path"], FILE);
+        let projected: bool = check
+            .query_one(
+                "SELECT vector_projected FROM code_overlay_pins
+             WHERE overlay_project_id = $1 AND file_path = $2",
+                &[&db::id_param(&ctx.project_id).expect("overlay UUID"), &FILE],
+            )
+            .expect("pin flag")
+            .get(0);
+        assert!(projected);
+        assert_eq!(
+            [
+                vector_flags(&mut check, &source, hash_h.as_str()),
+                vector_flags(&mut check, &source, hash_k.as_str()),
+            ],
+            baseline,
+            "pinned recovery must leave source flags unchanged"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn stale_pinned_completion_is_discarded() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        for change in ["repin", "owned", "tombstone", "purge"] {
+            let hash_h = version_hash("h");
+            let hash_k = version_hash("k");
+            let database_url =
+                crate::test_env::postgres_test_database_url("pinned completion fence");
+            let mut conn = db::connect_readwrite(&database_url).expect("connect");
+            let (mut ctx, source, _source_cleanup, _overlay_cleanup, _root) =
+                pinned_fixture(&mut conn, &database_url);
+            let reached = Arc::new(AtomicBool::new(false));
+            let server =
+                {
+                    let reached = Arc::clone(&reached);
+                    let database_url = database_url.clone();
+                    let overlay = ctx.project_id.clone();
+                    let hash_k = hash_k.clone();
+                    pinned_vector_service(&mut ctx, move || {
+                        reached.store(true, Ordering::SeqCst);
+                        let mut writer = db::connect_readwrite(&database_url).expect("writer");
+                        let overlay_uuid = db::id_param(&overlay).expect("overlay UUID");
+                        match change {
+                            "repin" => {
+                                writer
+                                    .execute(
+                                        "UPDATE code_overlay_pins SET content_hash = $2,
+                             vector_projected = false, vector_attempted_at = NULL
+                             WHERE overlay_project_id = $1",
+                                        &[&overlay_uuid, &hash_k],
+                                    )
+                                    .expect("repin");
+                            }
+                            "purge" => {
+                                writer.execute(
+                            "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1",
+                            &[&overlay_uuid],
+                        ).expect("purge pin");
+                            }
+                            _ => {
+                                seed_version(&mut writer, &overlay, "child-version", false);
+                                if change == "tombstone" {
+                                    writer.execute(
+                                    "UPDATE code_indexed_files SET language = '__gcode_deleted__'
+                                     WHERE project_id = $1", &[&overlay_uuid],
+                                ).expect("tombstone shadow");
+                                }
+                            }
+                        }
+                    })
+                };
+            let lifecycle = direct_vector_lifecycle(&ctx);
+            let mut state = VectorProjectionState {
+                ctx: &ctx,
+                conn,
+                lifecycle,
+            };
+
+            let mut check = db::connect_readwrite(&database_url).expect("check connection");
+            let baseline = [
+                vector_flags(&mut check, &source, hash_h.as_str()),
+                vector_flags(&mut check, &source, hash_k.as_str()),
+            ];
+            assert_eq!(
+                baseline,
+                [(false, true); 2],
+                "fixture source attempts unstamped"
+            );
+            let outcome = state.sync_file(FILE).expect("sync races with pin change");
+
+            assert!(
+                reached.load(Ordering::SeqCst),
+                "{change}: upsert must precede the fence"
+            );
+            server.join().expect("pinned service");
+            assert_eq!(
+                outcome,
+                ProjectionFileSyncOutcome::SkippedMissingIndexedFile,
+                "{change}"
+            );
+            let pin = check
+                .query_opt(
+                    "SELECT vector_projected FROM code_overlay_pins
+                 WHERE overlay_project_id = $1 AND file_path = $2",
+                    &[&db::id_param(&ctx.project_id).expect("overlay UUID"), &FILE],
+                )
+                .expect("read current pin");
+            assert!(
+                !pin.is_some_and(|row| row.get::<_, bool>(0)),
+                "{change}: late completion"
+            );
+            assert_eq!(
+                [
+                    vector_flags(&mut check, &source, hash_h.as_str()),
+                    vector_flags(&mut check, &source, hash_k.as_str()),
+                ],
+                baseline,
+                "{change}"
+            );
+        }
+    }
 
     #[test]
     #[serial_test::serial(serial_db)]
@@ -359,10 +672,13 @@ mod serial_db {
     )]
     fn vector_sync_file_skips_when_state_moves_during_upsert() {
         let database_url = crate::test_env::postgres_test_database_url("projection sync tests");
+        let hash_h = version_hash("h");
+        let hash_k = version_hash("k");
+        let root = version_root("h");
         let mut conn = db::connect_readwrite(&database_url).expect("connect");
         let project_id = unique_project_id();
         let _cleanup = ProjectCleanup::new(&mut conn, &database_url, &project_id);
-        seed_version(&mut conn, &project_id, "hash-h", true);
+        seed_version(&mut conn, &project_id, hash_h.as_str(), true);
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
         listener
@@ -372,10 +688,11 @@ mod serial_db {
         let server = {
             let database_url = database_url.clone();
             let project_id = project_id.clone();
+            let hash_k = hash_k.clone();
             thread::spawn(move || {
                 serve_until_upsert(&listener, || {
                     let mut writer = db::connect_readwrite(&database_url).expect("writer");
-                    seed_version(&mut writer, &project_id, "hash-k", false);
+                    seed_version(&mut writer, &project_id, hash_k.as_str(), false);
                 })
             })
         };
@@ -383,6 +700,7 @@ mod serial_db {
         let ctx = Context {
             database_url: database_url.clone(),
             project_id: project_id.clone(),
+            project_root: root.path().to_path_buf(),
             ..test_context()
         };
         let lifecycle = CodeSymbolVectorLifecycle::new(
@@ -400,7 +718,8 @@ mod serial_db {
             },
             CodeVectorSettings::with_vector_dim(Some(3)),
         )
-        .expect("lifecycle");
+        .expect("lifecycle")
+        .with_project_root(root.path().to_path_buf());
         let mut state = VectorProjectionState {
             ctx: &ctx,
             conn,
@@ -420,12 +739,12 @@ mod serial_db {
         );
         let mut check = db::connect_readwrite(&database_url).expect("connect");
         assert_eq!(
-            vector_flags(&mut check, &project_id, "hash-k"),
+            vector_flags(&mut check, &project_id, hash_k.as_str()),
             (false, true),
             "the new current version stays pending with no attempt"
         );
         assert!(
-            !vector_flags(&mut check, &project_id, "hash-h").0,
+            !vector_flags(&mut check, &project_id, hash_h.as_str()).0,
             "the superseded version is not marked synced"
         );
     }
@@ -466,7 +785,7 @@ mod serial_db {
         lines
     }
 
-    fn respond(stream: &mut TcpStream, body: Value) {
+    pub(crate) fn respond(stream: &mut TcpStream, body: Value) {
         let body = body.to_string();
         write!(
             stream,
@@ -477,7 +796,12 @@ mod serial_db {
     }
 
     /// Writes version `hash` of `FILE` and points this machine's state at it.
-    fn seed_version(conn: &mut postgres::Client, project_id: &str, hash: &str, with_symbol: bool) {
+    pub(crate) fn seed_version(
+        conn: &mut postgres::Client,
+        project_id: &str,
+        hash: &str,
+        with_symbol: bool,
+    ) {
         let machine_id = gobby_core::machine::read_local_machine_id().expect("machine");
         let file = IndexedFile {
             id: IndexedFile::make_id(project_id, FILE, hash),
@@ -525,7 +849,11 @@ mod serial_db {
     }
 
     /// Returns `(vectors_synced, attempt_is_null)` for version `hash` of `FILE`.
-    fn vector_flags(conn: &mut postgres::Client, project_id: &str, hash: &str) -> (bool, bool) {
+    pub(super) fn vector_flags(
+        conn: &mut postgres::Client,
+        project_id: &str,
+        hash: &str,
+    ) -> (bool, bool) {
         let project_uuid = db::id_param(project_id).expect("uuid");
         let row = conn
             .query_one(
@@ -538,7 +866,7 @@ mod serial_db {
         (row.get(0), row.get(1))
     }
 
-    fn unique_project_id() -> String {
+    pub(super) fn unique_project_id() -> String {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("epoch")
@@ -550,7 +878,7 @@ mod serial_db {
         .to_string()
     }
 
-    struct ProjectCleanup {
+    pub(crate) struct ProjectCleanup {
         database_url: String,
         project_id: String,
     }
@@ -558,7 +886,11 @@ mod serial_db {
     impl ProjectCleanup {
         /// Clears leftovers, seeds this machine's project state, and removes
         /// the project's rows on drop.
-        fn new(conn: &mut postgres::Client, database_url: &str, project_id: &str) -> Self {
+        pub(super) fn new(
+            conn: &mut postgres::Client,
+            database_url: &str,
+            project_id: &str,
+        ) -> Self {
             cleanup(conn, project_id).expect("pre-clean test project rows");
             let machine_id = gobby_core::machine::read_local_machine_id().expect("machine");
             api::upsert_project_stats(
@@ -596,6 +928,7 @@ mod serial_db {
     fn cleanup(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
         let project_uuid = db::id_param(project_id)?;
         for statement in [
+            "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1 OR source_project_id = $1",
             "DELETE FROM code_indexed_file_states WHERE project_id = $1",
             "DELETE FROM code_indexed_project_states WHERE project_id = $1",
             "DELETE FROM code_symbols WHERE project_id = $1",

@@ -1,3 +1,6 @@
+#[path = "common/pin_collaborator.rs"]
+mod pin_collaborator;
+
 #[cfg(test)]
 mod serial_db {
     use postgres::{Client, NoTls};
@@ -11,6 +14,8 @@ mod serial_db {
     // the hub stores project ids as native uuid.
     const PROJECT_ID: &str = "4424ae52-9ce0-52ae-af19-8c3a093c351f";
     const FILE_PATH: &str = "src/lib.rs";
+    /// Bytes of the seeded symbol's file version; byte range 0..19 covers all of it.
+    const PINNED_SOURCE: &str = "pub fn indexed() {}";
     const CODE_INDEX_UUID_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
         0xc0, 0xde, 0x1d, 0xe0, 0x00, 0x00, 0x40, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00,
@@ -169,8 +174,8 @@ mod serial_db {
 
     fn seed_indexed_file(conn: &mut Client, project_id: &str, file_path: &str) {
         seed_project_with_root(conn, project_id, "/tmp/projection-stale");
-        seed_indexed_file_without_project(conn, project_id, file_path);
-        seed_file_state(conn, project_id, file_path);
+        seed_indexed_file_without_project(conn, project_id, file_path, "hash-1");
+        seed_file_state(conn, project_id, file_path, "hash-1");
     }
 
     fn seed_project_with_root(conn: &mut Client, project_id: &str, root_path: impl AsRef<str>) {
@@ -191,14 +196,24 @@ mod serial_db {
         .expect("insert indexed project state");
     }
 
-    fn seed_indexed_file_without_project(conn: &mut Client, project_id: &str, file_path: &str) {
+    fn seed_indexed_file_without_project(
+        conn: &mut Client,
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+    ) {
         let project_uuid = uuid_param(project_id);
         conn.execute(
             "INSERT INTO code_indexed_files
                 (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
                  graph_synced, vectors_synced, graph_sync_attempted_at, indexed_at)
-             VALUES ($1, $2, $3, 'rust', 'hash-1', 1, 19, false, true, NULL, NOW())",
-            &[&row_uuid(project_id, "file"), &project_uuid, &file_path],
+             VALUES ($1, $2, $3, 'rust', $4, 1, 19, false, true, NULL, NOW())",
+            &[
+                &row_uuid(project_id, "file"),
+                &project_uuid,
+                &file_path,
+                &content_hash,
+            ],
         )
         .expect("insert indexed file");
         conn.execute(
@@ -207,25 +222,39 @@ mod serial_db {
                  byte_end, line_start, line_end, signature, docstring, parent_symbol_id,
                  file_content_hash, content_hash, summary, created_at, updated_at)
              VALUES ($1, $2, $3, 'indexed', 'crate::indexed', 'function', 'rust', 0, 19,
-                 1, 1, 'pub fn indexed()', NULL, NULL, 'hash-1', 'hash-1', NULL, NOW(), NOW())",
-            &[&row_uuid(project_id, "symbol"), &project_uuid, &file_path],
+                 1, 1, 'pub fn indexed()', NULL, NULL, $4, $4, NULL, NOW(), NOW())",
+            &[
+                &row_uuid(project_id, "symbol"),
+                &project_uuid,
+                &file_path,
+                &content_hash,
+            ],
         )
         .expect("insert symbol");
     }
 
-    fn seed_file_state(conn: &mut Client, project_id: &str, file_path: &str) {
+    fn seed_file_state(conn: &mut Client, project_id: &str, file_path: &str, content_hash: &str) {
         let machine_id = local_machine_uuid();
         conn.execute(
             "INSERT INTO code_indexed_file_states
                 (machine_id, project_id, file_path, content_hash)
-             VALUES ($1, $2, $3, 'hash-1')",
-            &[&machine_id, &uuid_param(project_id), &file_path],
+             VALUES ($1, $2, $3, $4)",
+            &[
+                &machine_id,
+                &uuid_param(project_id),
+                &file_path,
+                &content_hash,
+            ],
         )
         .expect("insert indexed file state");
     }
 
     fn cleanup_project(conn: &mut Client, project_id: &str) -> anyhow::Result<()> {
         let project_id = uuid_param(project_id);
+        conn.execute(
+            "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1 OR source_project_id = $1",
+            &[&project_id],
+        )?;
         conn.execute(
             "DELETE FROM gobby_agent_auth.principal_bindings WHERE project_id = $1",
             &[&project_id],
@@ -266,5 +295,215 @@ mod serial_db {
             &[&project_id],
         )?;
         Ok(())
+    }
+
+    struct PinnedCli {
+        root: tempfile::TempDir,
+        home: PathBuf,
+        overlay: String,
+        service: super::pin_collaborator::Collaborator,
+        _overlay_cleanup: ProjectCleanup,
+        _source_cleanup: ProjectCleanup,
+    }
+
+    impl PinnedCli {
+        fn new(conn: &mut Client, database_url: &str) -> Self {
+            use gobby_core::grant::{
+                AiCapability, DirectConnections, PrincipalKind, managed_direct_grant,
+            };
+            let root = tempfile::tempdir().expect("isolated child checkout");
+            let parent = root.path().join("parent");
+            std::fs::create_dir_all(&parent).expect("parent root");
+            std::fs::create_dir_all(root.path().join(".gobby")).expect("child metadata");
+            let source = uuid::Uuid::new_v5(
+                &CODE_INDEX_UUID_NAMESPACE,
+                format!("pin-source:{}", root.path().display()).as_bytes(),
+            )
+            .to_string();
+            let overlay = gobby_core::project::code_index_id_for_root(root.path());
+            let source_cleanup = ProjectCleanup {
+                database_url: database_url.into(),
+                project_id: source.clone(),
+            };
+            let overlay_cleanup = ProjectCleanup {
+                database_url: database_url.into(),
+                project_id: overlay.clone(),
+            };
+            for checkout in [root.path(), parent.as_path()] {
+                std::fs::create_dir_all(checkout.join(".gobby")).expect("checkout metadata");
+                std::fs::write(
+                    checkout.join(".gobby/project.json"),
+                    serde_json::json!({"id":source,"name":"pinned-cli"}).to_string(),
+                )
+                .expect("registered parent identity");
+            }
+            std::fs::write(
+                root.path().join(".gobby/isolation.json"),
+                serde_json::json!({
+                    "parent_project_id":source, "parent_project_path":parent,
+                })
+                .to_string(),
+            )
+            .expect("overlay identity");
+            // The child checkout still holds the pinned version; the parent has moved on.
+            let pinned_hash = gobby_core::indexing::content_hash(PINNED_SOURCE.as_bytes());
+            for (checkout, bytes) in [
+                (root.path(), PINNED_SOURCE),
+                (parent.as_path(), "pub fn indexed() { moved() }\n"),
+            ] {
+                std::fs::create_dir_all(checkout.join("src")).expect("checkout source dir");
+                std::fs::write(checkout.join(FILE_PATH), bytes).expect("checkout source");
+            }
+            seed_project_with_root(conn, &source, parent.to_str().expect("parent path"));
+            seed_indexed_file_without_project(conn, &source, FILE_PATH, &pinned_hash);
+            seed_file_state(conn, &source, FILE_PATH, &pinned_hash);
+            seed_project_with_root(conn, &overlay, root.path().to_str().expect("child path"));
+            conn.execute("INSERT INTO code_indexed_files (id,project_id,file_path,language,content_hash,symbol_count,byte_size,indexed_at)
+                VALUES ($1,$2,$3,'rust','hash-2',0,0,NOW())", &[&row_uuid(&source,"new-file"),&uuid_param(&source),&FILE_PATH]).expect("new source content");
+            conn.execute(
+                "UPDATE code_indexed_file_states SET content_hash='hash-2' WHERE project_id=$1",
+                &[&uuid_param(&source)],
+            )
+            .expect("source selector moves");
+            conn.execute("INSERT INTO code_overlay_pins (machine_id,overlay_project_id,file_path,source_project_id,content_hash)
+                VALUES ($1,$2,$3,$4,$5)", &[&local_machine_uuid(),&uuid_param(&overlay),&FILE_PATH,&uuid_param(&source),&pinned_hash]).expect("pin old source");
+            let home = isolated_gobby_home(root.path());
+            std::fs::write(
+                home.join("bootstrap.yaml"),
+                format!("api_key: {}\n", super::pin_collaborator::TOKEN),
+            )
+            .expect("test API key");
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind collaborator");
+            let url = format!("http://{}", listener.local_addr().expect("service address"));
+            let mut grant = managed_direct_grant(
+                &source,
+                &local_machine_uuid().to_string(),
+                &DirectConnections::postgres(database_url).with_qdrant(&url, None),
+            );
+            grant.principal.kind = PrincipalKind::Interactive;
+            grant.principal.execution_id = None;
+            grant.principal.session_id = None;
+            grant.principal.code_overlay_project_id = Some(overlay.clone());
+            grant.capabilities.embed = AiCapability::Daemon {};
+            grant.deployment.token = gobby_core::grant::deployment_token(&home);
+            let service = super::pin_collaborator::Collaborator::start(
+                listener,
+                grant.with_checksum(),
+                row_uuid(&source, "symbol").to_string(),
+            );
+            Self {
+                root,
+                home,
+                overlay: overlay.clone(),
+                service,
+                _overlay_cleanup: overlay_cleanup,
+                _source_cleanup: source_cleanup,
+            }
+        }
+
+        fn run(&self, args: &[&str]) -> std::process::Output {
+            Command::new(env!("CARGO_BIN_EXE_gcode"))
+                .current_dir(self.root.path())
+                .args(["--allow-stale", "--format", "json"])
+                .args(args)
+                .env("GOBBY_HOME", &self.home)
+                .env("GOBBY_DAEMON_URL", &self.service.url)
+                .env_remove("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
+                .env_remove("GOBBY_SESSION_ID")
+                .env_remove("GOBBY_PARENT_SESSION_ID")
+                .env_remove("GOBBY_AGENT_RUN_ID")
+                .env_remove("GOBBY_MANAGED_EXECUTION_ID")
+                .env_remove("GOBBY_AGENT_API_TOKEN")
+                .output()
+                .expect("run isolated gcode")
+        }
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn pinned_sync_file_routes_through_cli() {
+        let database_url = test_env::postgres_test_database_url("pinned CLI routes");
+        let mut conn = Client::connect(&database_url, NoTls).expect("test PostgreSQL");
+        let fixture = PinnedCli::new(&mut conn, &database_url);
+        let before: String = conn.query_one("SELECT jsonb_agg(to_jsonb(f) ORDER BY id)::text FROM code_indexed_files f WHERE project_id=$1", &[&uuid_param(&fixture._source_cleanup.project_id)]).expect("source snapshot").get(0);
+        let vector = fixture.run(&[
+            "vector",
+            "sync-file",
+            "--file",
+            FILE_PATH,
+            "--allow-missing-indexed-file",
+        ]);
+        let graph = fixture.run(&[
+            "graph",
+            "sync-file",
+            "--file",
+            FILE_PATH,
+            "--allow-missing-indexed-file",
+        ]);
+        let missing = fixture.run(&[
+            "vector",
+            "sync-file",
+            "--file",
+            "untracked.rs",
+            "--allow-missing-indexed-file",
+        ]);
+        let pin = conn.query_one("SELECT vector_projected,graph_projected,graph_attempted_at IS NOT NULL FROM code_overlay_pins WHERE overlay_project_id=$1", &[&uuid_param(&fixture.overlay)]).expect("pin recovery state");
+        let after: String = conn.query_one("SELECT jsonb_agg(to_jsonb(f) ORDER BY id)::text FROM code_indexed_files f WHERE project_id=$1", &[&uuid_param(&fixture._source_cleanup.project_id)]).expect("source after recovery").get(0);
+        assert!(
+            vector.status.success(),
+            "vector: {}",
+            String::from_utf8_lossy(&vector.stderr)
+        );
+        let output: Value = serde_json::from_slice(&vector.stdout).expect("vector JSON");
+        assert_ne!(
+            output["status"], "skipped",
+            "pinned path must recover: {output}"
+        );
+        assert!(
+            pin.get::<_, bool>(0),
+            "vector flag marks completed pinned recovery"
+        );
+        assert!(
+            pin.get::<_, bool>(2),
+            "graph helper records attempt, stderr={}",
+            String::from_utf8_lossy(&graph.stderr)
+        );
+        assert!(
+            !pin.get::<_, bool>(1),
+            "graph backend is unavailable in this isolated fixture"
+        );
+        assert_eq!(
+            before, after,
+            "source flags and attempt timestamps stay untouched"
+        );
+        assert!(
+            missing.status.success(),
+            "missing path stderr={}",
+            String::from_utf8_lossy(&missing.stderr)
+        );
+        let skipped: Value = serde_json::from_slice(&missing.stdout).expect("missing JSON");
+        assert_eq!(skipped["reason"], "indexed_file_not_found");
+        assert_eq!(skipped["skipped_files"], 1);
+        let requests = fixture.service.requests.lock().expect("request log");
+        let child_collection = gobby_code::test_env::code_symbol_collection(&fixture.overlay);
+        assert!(
+            requests.iter().any(|request| request.starts_with("PUT ")
+                && request.contains(&child_collection)
+                && request.contains(
+                    &row_uuid(&fixture._source_cleanup.project_id, "symbol").to_string()
+                )),
+            "pinned source symbol must be written into child namespace"
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.contains("/embeddings")
+                    && request.contains(&format!("source:\\n{PINNED_SOURCE}"))),
+            "embed input carries the child checkout's pinned bytes"
+        );
     }
 }

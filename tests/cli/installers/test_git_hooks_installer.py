@@ -1420,7 +1420,8 @@ def test_gobby_sections_chain_to_foreign_hook_content(tmp_path: Path) -> None:
     git.ok(tmp_path, "init", "-q", "-b", "main", str(repo))
     git.ok(tmp_path, "init", "-q", "--bare", str(tmp_path / "remote.git"))
     hooks_dir = repo / ".git" / "hooks"
-    # The PATH symlink to git (macOS) leaves init without a hooks/ directory.
+    # git init copies hooks/ from its template dir, which this fixture's
+    # restricted PATH may not resolve; create it so the hook writes never depend on it.
     hooks_dir.mkdir(parents=True, exist_ok=True)
     chained = ("reference-transaction", "pre-push", "pre-merge-commit", "post-rewrite")
     for name in chained:

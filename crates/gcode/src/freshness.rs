@@ -11,8 +11,17 @@ use crate::visibility;
 
 const INFLIGHT_ENV: &str = "GCODE_FRESHNESS_INFLIGHT";
 
+/// Stale paths a whole-project read reconciles inline. Past this many, a
+/// `ProjectRead` answers from the indexed rows and reports the backlog as
+/// `Deferred`, so one read cannot stall on the work a large checkout change queued.
+pub(crate) const FOREGROUND_STALE_BUDGET: usize = 50;
+
 pub enum FreshnessScope {
     Project,
+    /// Whole-project freshness for a read-only navigation lane. A refresh that
+    /// would reconcile more than `FOREGROUND_STALE_BUDGET` paths is deferred when
+    /// the project already has indexed rows to serve.
+    ProjectRead,
     Files(Vec<PathBuf>),
 }
 
@@ -27,9 +36,24 @@ pub enum FreshnessStatus {
     /// visible rows serve bytes the worktree no longer has, or the worktree holds
     /// indexable files no row serves.
     Stale(Vec<String>),
+    /// A read deferred its refresh: this many paths are stale, more than the
+    /// foreground budget. The read served the indexed rows; `gcode index` catches
+    /// the index up.
+    Deferred(usize),
 }
 
 impl FreshnessStatus {
+    /// Warning for a read that deferred its refresh past the foreground budget.
+    pub fn deferred_warning(&self) -> Option<String> {
+        let Self::Deferred(behind) = self else {
+            return None;
+        };
+        Some(format!(
+            "warning: gcode index is {behind} path(s) behind the worktree, more than a read \
+             refreshes inline; serving existing index (run gcode index to catch up)"
+        ))
+    }
+
     /// Warning text for a refresh skipped by a busy index lock, naming the
     /// holder when one was identified.
     ///
@@ -72,9 +96,27 @@ impl FreshnessStatus {
     }
 }
 
+/// The whole-project stale paths a `ProjectRead` pass computed, handed to grep so it
+/// does not walk the checkout again. `stale` is `None` when the pass did not compute
+/// that set; grep then computes it itself.
+pub(crate) struct ReadFreshness {
+    pub(crate) status: FreshnessStatus,
+    pub(crate) stale: Option<Vec<String>>,
+}
+
 pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<FreshnessStatus> {
+    Ok(ensure_read_fresh(ctx, scope)?.status)
+}
+
+pub(crate) fn ensure_read_fresh(
+    ctx: &Context,
+    scope: FreshnessScope,
+) -> anyhow::Result<ReadFreshness> {
     if std::env::var_os(INFLIGHT_ENV).is_some() {
-        return Ok(FreshnessStatus::Checked);
+        return Ok(ReadFreshness {
+            status: FreshnessStatus::Checked,
+            stale: None,
+        });
     }
 
     // Read-only parent and sibling scopes must never attempt index writes, and
@@ -82,62 +124,109 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
     if !ctx.can_refresh_index()? {
         let mut conn = db::connect_readonly(&ctx.database_url)?;
         let files = match &scope {
-            FreshnessScope::Project => None,
+            FreshnessScope::Project | FreshnessScope::ProjectRead => None,
             FreshnessScope::Files(paths) => Some(paths.as_slice()),
         };
         let stale = stale_served_paths(&mut conn, ctx, files)?;
-        return Ok(if stale.is_empty() {
+        let known = matches!(scope, FreshnessScope::ProjectRead).then(|| stale.clone());
+        let status = if stale.is_empty() {
             FreshnessStatus::Checked
         } else {
             FreshnessStatus::Stale(stale)
+        };
+        return Ok(ReadFreshness {
+            status,
+            stale: known,
         });
     }
 
-    // Lock-free pre-gate for whole-project reads: if nothing on disk is newer
-    // than the recorded index and nothing was deleted, skip the advisory lock
-    // and the full re-hash entirely (no "refresh already running" warning).
-    // `FreshnessScope::Files` is already cheap (explicit-files path) and is left
-    // untouched.
-    if matches!(scope, FreshnessScope::Project) && !project_needs_refresh(ctx)? {
+    let status = match scope {
+        FreshnessScope::ProjectRead => return project_read_freshness(ctx),
+        FreshnessScope::Project => project_freshness(ctx)?,
+        FreshnessScope::Files(paths) => files_freshness(ctx, &paths)?,
+    };
+    // A busy refresh lock serves the index as it stands, so grep reads no stale path.
+    let stale = matches!(status, FreshnessStatus::SkippedBusy(_)).then(Vec::new);
+    Ok(ReadFreshness { status, stale })
+}
+
+/// Whole-project freshness for a read lane. One walk of the checkout decides the
+/// pre-gate, the budget, and the stale set grep reads, so a read never walks the
+/// checkout more than once for freshness.
+fn project_read_freshness(ctx: &Context) -> anyhow::Result<ReadFreshness> {
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let (served_rows, stale) = scan_served(&mut conn, ctx, None)?;
+    drop(conn);
+    if stale.is_empty() {
+        return Ok(ReadFreshness {
+            status: FreshnessStatus::Checked,
+            stale: Some(Vec::new()),
+        });
+    }
+    // A read past the foreground budget answers from the rows it already serves,
+    // without the lock or the reconcile. A checkout with no served rows has nothing
+    // to answer from, so its first build always runs.
+    if served_rows > 0 && stale.len() > FOREGROUND_STALE_BUDGET {
+        return Ok(ReadFreshness {
+            status: FreshnessStatus::Deferred(stale.len()),
+            stale: Some(stale),
+        });
+    }
+    let status = refresh_project(ctx)?;
+    // A completed refresh leaves nothing for grep to read live. A degraded refresh
+    // changed no rows, so the stale set stands.
+    let stale = match status {
+        FreshnessStatus::Degraded(_) => stale,
+        _ => Vec::new(),
+    };
+    Ok(ReadFreshness {
+        status,
+        stale: Some(stale),
+    })
+}
+
+/// Whole-project freshness for `Project` scope: the lock-free pre-gate, then the
+/// locked reconcile.
+fn project_freshness(ctx: &Context) -> anyhow::Result<FreshnessStatus> {
+    // Lock-free pre-gate: if nothing on disk is newer than the recorded index and
+    // nothing was deleted, skip the advisory lock and the full re-hash entirely (no
+    // "refresh already running" warning).
+    if !project_needs_refresh(ctx)? {
         return Ok(FreshnessStatus::Checked);
     }
+    refresh_project(ctx)
+}
 
-    // Overlay explicit-file reads skip the refresh when every requested file
-    // matches the version the overlay serves for it.
-    if let FreshnessScope::Files(paths) = &scope
-        && matches!(ctx.index_scope, ProjectIndexScope::Overlay { .. })
+fn refresh_project(ctx: &Context) -> anyhow::Result<FreshnessStatus> {
+    let _guard = FreshnessGuard::enter();
+    let result =
+        index_lock::with_project_lock(ctx, IndexLockPolicy::brief_freshness_try(), || {
+            Ok(refresh_files(ctx, Vec::new()).map_err(|error| degraded_detail(&error)))
+        })?;
+    Ok(freshness_from_lock(result))
+}
+
+/// Explicit-file freshness. Overlay reads skip the refresh when every requested
+/// file matches the version the overlay serves for it, so no other file's refresh
+/// can certify it.
+fn files_freshness(ctx: &Context, paths: &[PathBuf]) -> anyhow::Result<FreshnessStatus> {
+    if matches!(ctx.index_scope, ProjectIndexScope::Overlay { .. })
         && !overlay_files_need_refresh(ctx, paths)?
     {
         return Ok(FreshnessStatus::Checked);
     }
-
+    if paths.is_empty() {
+        return Ok(FreshnessStatus::Checked);
+    }
     let _guard = FreshnessGuard::enter();
-    match scope {
-        FreshnessScope::Project => {
-            let result =
-                index_lock::with_project_lock(ctx, IndexLockPolicy::brief_freshness_try(), || {
-                    Ok(refresh_files(ctx, Vec::new()).map_err(|error| degraded_detail(&error)))
-                })?;
-            Ok(freshness_from_lock(result))
-        }
-        FreshnessScope::Files(paths) => {
-            if paths.is_empty() {
-                return Ok(FreshnessStatus::Checked);
-            }
-            let locks = index_lock::lock_project_files(
-                ctx,
-                &paths,
-                IndexLockPolicy::brief_freshness_try(),
-            )?;
-            if locks.acquired_files.is_empty() {
-                return Ok(FreshnessStatus::SkippedBusy(None));
-            }
-            match refresh_files(ctx, locks.acquired_files.clone()) {
-                Ok(()) if locks.busy_files.is_empty() => Ok(FreshnessStatus::Checked),
-                Ok(()) => Ok(FreshnessStatus::SkippedBusy(None)),
-                Err(error) => Ok(FreshnessStatus::Degraded(degraded_detail(&error))),
-            }
-        }
+    let locks = index_lock::lock_project_files(ctx, paths, IndexLockPolicy::brief_freshness_try())?;
+    if locks.acquired_files.is_empty() {
+        return Ok(FreshnessStatus::SkippedBusy(None));
+    }
+    match refresh_files(ctx, locks.acquired_files.clone()) {
+        Ok(()) if locks.busy_files.is_empty() => Ok(FreshnessStatus::Checked),
+        Ok(()) => Ok(FreshnessStatus::SkippedBusy(None)),
+        Err(error) => Ok(FreshnessStatus::Degraded(degraded_detail(&error))),
     }
 }
 
@@ -152,10 +241,20 @@ pub(crate) fn stale_served_paths(
     ctx: &Context,
     files: Option<&[PathBuf]>,
 ) -> anyhow::Result<Vec<String>> {
+    Ok(scan_served(conn, ctx, files)?.1)
+}
+
+/// The number of rows the checkout serves, and the stale paths against them.
+fn scan_served(
+    conn: &mut postgres::Client,
+    ctx: &Context,
+    files: Option<&[PathBuf]>,
+) -> anyhow::Result<(usize, Vec<String>)> {
     let served: HashMap<String, String> = visibility::visible_tree(conn, ctx)?
         .into_iter()
         .map(|file| (file.file_path, file.content_hash))
         .collect();
+    let served_rows = served.len();
     let excludes = &ctx.indexing.extra_excludes;
     let mut stale = match files {
         None => {
@@ -187,7 +286,7 @@ pub(crate) fn stale_served_paths(
     };
     stale.sort();
     stale.dedup();
-    Ok(stale)
+    Ok((served_rows, stale))
 }
 
 /// Degraded detail for a failed refresh. A hub failure's `postgres::Error`

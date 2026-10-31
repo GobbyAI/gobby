@@ -122,6 +122,8 @@ pub fn ensure_project_fresh(
         return Ok(FreshnessStatus::Checked);
     }
     let facts = CodewikiFacts::open(project_root)?;
+    // Admission hands out whole-project facts, so it keeps the unbudgeted Project
+    // reconcile rather than a deferred read that would serve a partial checkout.
     crate::freshness::ensure_fresh(facts.context(), crate::freshness::FreshnessScope::Project)
 }
 

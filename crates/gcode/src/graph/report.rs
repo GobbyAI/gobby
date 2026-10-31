@@ -1,4 +1,5 @@
 mod generation;
+pub(crate) mod hotspot_snapshot;
 mod loading;
 mod queries;
 mod render;

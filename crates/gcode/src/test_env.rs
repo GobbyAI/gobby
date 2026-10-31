@@ -297,6 +297,15 @@ pub fn seed_test_principal_binding(
     Ok(())
 }
 
+/// Collection the production code-symbol lifecycle writes for `project_id`.
+pub fn code_symbol_collection(project_id: &str) -> String {
+    crate::vector::code_symbols::collection_name(
+        crate::config::CODE_SYMBOL_COLLECTION_PREFIX,
+        project_id,
+    )
+    .expect("code symbol collection name")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
