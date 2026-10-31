@@ -12,8 +12,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from gobby.agents.team_admission_records import SeatTarget, TeamAdmissionRefused
 from gobby.agents.team_dispatch import dispatch_for_caller, record_dispatch
-from gobby.agents.team_lifecycle import SeatTarget, TeamAdmissionRefused
 
 # A module reference: remote_spawn imports this package, so its names may not exist yet.
 from gobby.hub import remote_spawn

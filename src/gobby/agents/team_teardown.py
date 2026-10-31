@@ -12,12 +12,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from gobby.agents.agent_workspaces import release_epic_workspace, schedule_workspace_commit
-from gobby.agents.team_lifecycle import (
+from gobby.agents.team_admission_records import (
     TeamBinding,
-    _admission_step,
-    _binding,
-    _merge,
-    _recorded,
+    admission_step,
+    binding_from_record,
+    merge_step_output,
+    recorded_team,
 )
 from gobby.sessions.handoff_records import build_handoff_payload, stage_agent_end_handoff
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgentRunManager
@@ -243,7 +243,11 @@ ORDER BY se.id
 """,
         (ADMISSION_STEP, cutoff, require_machine_id()),
     )
-    due = [b for b in (_binding(_recorded(StepExecution.from_row(row))) for row in rows) if b]
+    due = [
+        b
+        for b in (binding_from_record(recorded_team(StepExecution.from_row(row))) for row in rows)
+        if b
+    ]
     return _with_members(db, due)
 
 
@@ -293,7 +297,9 @@ ORDER BY w.id
         "AND se.output_json #>> '{team,task_id}' = ANY(%s)",
         (ADMISSION_STEP, sorted({task for tasks in ancestors.values() for task in tasks})),
     )
-    bindings = [_binding(_recorded(StepExecution.from_row(row))) for row in admissions]
+    bindings = [
+        binding_from_record(recorded_team(StepExecution.from_row(row))) for row in admissions
+    ]
     teams = _with_members(db, [b for b in bindings if b])
     due: list[_DueLeaf] = []
     for row in rows:
@@ -548,12 +554,13 @@ def _dispatched_runs(
 
 
 def _occupied(db: HubDatabase, runs: list[AgentRun]) -> bool:
-    """Whether any of these runs' sessions still works in a tree while its run is active."""
+    """Whether any of these runs is active and, if attached, its session is live."""
     if not runs:
         return False
     rows = db.fetchall(
-        "SELECT 1 FROM agent_runs r JOIN sessions s ON s.id = r.child_session_id "
-        "WHERE r.id = ANY(%s) AND r.status = ANY(%s) AND s.status = ANY(%s) LIMIT 1",
+        "SELECT 1 FROM agent_runs r LEFT JOIN sessions s ON s.id = r.child_session_id "
+        "WHERE r.id = ANY(%s) AND r.status = ANY(%s) AND (s.id IS NULL OR s.status = ANY(%s)) "
+        "LIMIT 1",
         (
             [run.id for run in runs],
             list(ACTIVE_AGENT_RUN_STATUSES),
@@ -561,6 +568,13 @@ def _occupied(db: HubDatabase, runs: list[AgentRun]) -> bool:
         ),
     )
     return bool(rows)
+
+
+def team_seats_live(db: HubDatabase, binding: TeamBinding) -> bool:
+    """Whether a team's seats, or the seats they dispatched, still work in its tree."""
+    (team,) = _with_members(db, [binding])
+    seats = _team_seats(db, team)
+    return _occupied(db, [*seats, *_dispatched_runs(db, seats, binding.worktree_path, None)])
 
 
 def _expire_seats(db: HubDatabase, team: _DueTeam) -> None:
@@ -658,7 +672,7 @@ def _refuse_runbook(db: HubDatabase, runbook: _DueRunbook, result: WorktreeDelet
         tasks.escalate_task(finding.id, f"Runbook {runbook.execution_id} teardown refused: {code}")
     # The first launch/guard step is already complete before any seat can close the task.
     # Merge into its durable output without adding a step absent from the saved definition.
-    _merge(
+    merge_step_output(
         executions,
         steps[0],
         teardown={"outcome": "refused", "code": code, "finding": finding.id},
@@ -706,6 +720,6 @@ def _refuse(
 
 def _record(db: HubDatabase, binding: TeamBinding, outcome: dict[str, Any]) -> None:
     executions = LocalPipelineExecutionManager(db, binding.project_id)
-    step = _admission_step(executions, binding.team_id)
+    step = admission_step(executions, binding.team_id)
     if step is not None:
-        _merge(executions, step, **{TEARDOWN_KEY: outcome})
+        merge_step_output(executions, step, **{TEARDOWN_KEY: outcome})

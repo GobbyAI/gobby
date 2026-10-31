@@ -41,6 +41,7 @@ def _reviewer(*, await_tools: list[str] | str, review_tools: list[str] | str) ->
     """
     return {
         "name": "code-reviewer",
+        "task_step_writes": ["review"],
         "prompts": {"agent": "Synthetic reviewer seat."},
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         "step_workflow": {

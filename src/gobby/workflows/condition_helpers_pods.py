@@ -29,7 +29,8 @@ def dev_pod_launch_allowed(
     ``parent_team_id`` and no ``team_id``; a relaunch passes ``team_id``, optionally with the
     matching ``parent_team_id``, and may be a fresh reviewer.
     """
-    from gobby.agents.team_lifecycle import TeamAdmissionRefused, pod_parent, pod_relaunch
+    from gobby.agents.team_admission_records import TeamAdmissionRefused
+    from gobby.agents.team_lifecycle import pod_parent, pod_relaunch
 
     if sessions is None or not isinstance(pod_pipelines, list):
         return False

@@ -6,7 +6,8 @@ from dataclasses import asdict
 from typing import Any
 
 from gobby.agents.runbook_seats import RunbookSeatRefusal, RunbookSeatStores, check_runbook_seats
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, admit_team
+from gobby.agents.team_admission_records import TeamAdmissionRefused
+from gobby.agents.team_lifecycle import admit_team
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.agents import LocalAgentRunManager

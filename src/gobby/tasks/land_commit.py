@@ -147,7 +147,8 @@ async def main_checkout_target(db: HubDatabase, project_id: str) -> tuple[Path, 
 
 async def task_landing_target(db: HubDatabase, task: Task) -> tuple[Path, str] | None:
     """Leaves land in their epic's tree; top-level tasks land in the main checkout."""
-    from gobby.agents.team_lifecycle import task_team, team_binding
+    from gobby.agents.team_admission_records import team_binding
+    from gobby.agents.team_lifecycle import task_team
     from gobby.storage.team_records import EPIC_MODE
 
     team = await asyncio.to_thread(task_team, db, task.id)

@@ -218,7 +218,7 @@ def _admit(
         live = {}
     tab_task = task
     if team_id is not None:
-        from gobby.agents.team_lifecycle import team_binding
+        from gobby.agents.team_admission_records import team_binding
 
         binding = team_binding(stores.tasks.db, team_id)
         if binding is not None:

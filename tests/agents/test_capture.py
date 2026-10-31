@@ -17,7 +17,7 @@ from gobby.agents.capture import (
     capture_then_kill_async,
     capture_then_kill_sync,
 )
-from gobby.storage.agents import AgentRun, AgentRunStatus
+from gobby.storage.agents import AgentRun, AgentRunStatus, TerminalAction
 
 
 def _run(run_id: str, *, result: str | None = None) -> AgentRun:
@@ -70,7 +70,7 @@ class FakeCaptureStorage:
         self,
         run_id: str,
         *,
-        action: str,
+        action: TerminalAction,
         reason: str | None = None,
         result_prefix: str | None = None,
     ) -> AgentRun | None:

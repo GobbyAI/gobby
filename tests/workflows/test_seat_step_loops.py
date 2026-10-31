@@ -25,10 +25,11 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import yaml
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.runner import AgentRunner
-from gobby.agents.team_lifecycle import TeamBinding
+from gobby.agents.team_admission_records import TeamBinding
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -1496,11 +1497,17 @@ async def _claimed_developer(
     repo = Path(checkout.root_path)
     _git(repo, "init", "-q", "-b", "main")
     _commit_files(repo, "unlinked base", {"README.md": "base\n"})
-    _git(repo, "checkout", "-q", "-b", "seat-work")
+    # The developer works in its own worktree, so the main checkout stays on the integration
+    # branch and holds none of the candidates.
+    work = tmp_path / "work"
+    _git(repo, "worktree", "add", "-q", "-b", "seat-work", str(work), "main")
     definition = _commit_kind_seat()
     run = SeatRun(temp_db, "developer", project_id=checkout.project.id, definition=definition)
     await run.load(*run.vars["required_skills"])
     task = run.task(owner=SESSION_ID)
+    LocalWorktreeManager(temp_db).create(
+        checkout.project.id, "seat-work", str(work), task_id=task.id
+    )
     await run.call(
         "gobby-tasks",
         "claim_task",
@@ -1509,7 +1516,7 @@ async def _claimed_developer(
     )
     await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
     assert run.step == "implement"
-    return run, task, repo
+    return run, task, work
 
 
 def _registry(run: SeatRun, temp_db: HubDatabase) -> InternalToolRegistry:
@@ -1562,6 +1569,17 @@ async def test_developer_linked_test_only_red_commit_stays_in_implement(
     assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
 
 
+async def test_developer_candidate_on_test_phase_approved_red_commit_stays_in_implement(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, f"[gobby-#{task.seq_num}] test: red", _TEST_ONLY_RED)
+    await _link(run, temp_db, task, repo, sha)
+    approve_review(temp_db, task_id=task.id, reviewer_session_id=COORDINATOR_ID, commit_sha=sha)
+    await _link(run, temp_db, task, repo, sha, candidate=True)
+    assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
+
+
 async def test_developer_linked_production_commit_moves_to_submit(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1578,8 +1596,6 @@ async def test_developer_unlinking_the_submitting_commit_returns_to_implement(
     sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
     await _link(run, temp_db, task, repo, sha)
     assert run.step == "submit"
-    # The main checkout's branch is the integration branch; the candidate must not be on it.
-    _git(repo, "checkout", "-q", "main")
     await _unlink(run, temp_db, task.id, repo, sha)
     assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
 
@@ -1593,8 +1609,6 @@ async def test_developer_unlinking_the_candidate_beside_red_returns_to_implement
     sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
     await _link(run, temp_db, task, repo, sha)
     assert run.step == "submit"
-    # The main checkout's branch is the integration branch; the candidate must not be on it.
-    _git(repo, "checkout", "-q", "main")
     await _unlink(run, temp_db, task.id, repo, sha)
     assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
 
@@ -1623,8 +1637,6 @@ async def test_developer_declared_candidate_survives_an_ordinary_red_unlink(
     repair = _commit_files(repo, f"[gobby-#{task.seq_num}] test: repair", _TEST_ONLY_REPAIR)
     await _link(run, temp_db, task, repo, repair, candidate=True)
     assert run.step == "submit"
-    # The main checkout's branch is the integration branch; the candidate must not be on it.
-    _git(repo, "checkout", "-q", "main")
     await _unlink(run, temp_db, task.id, repo, red)
     assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
     await _unlink(run, temp_db, task.id, repo, repair)
@@ -1640,8 +1652,6 @@ async def test_developer_declared_candidate_survives_a_production_unlink(
     assert run.step == "submit"
     sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
     await _link(run, temp_db, task, repo, sha)
-    # The main checkout's branch is the integration branch; the candidate must not be on it.
-    _git(repo, "checkout", "-q", "main")
     await _unlink(run, temp_db, task.id, repo, sha)
     assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
     await _unlink(run, temp_db, task.id, repo, repair)
@@ -1834,6 +1844,86 @@ async def test_developer_submit_returns_to_implement_on_reviewer_request(
     assert run.vars["implementation_complete"] is False
 
 
+async def test_lost_bounce_transition_keeps_its_message_readable(
+    linked_developer: tuple[SeatRun, Task, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run, task, sha, _ = linked_developer
+    lost: list[str] = []
+    save = AgentStepInstanceManager.save
+
+    def lose_first_bounce_write(
+        self: AgentStepInstanceManager,
+        instance: AgentStepInstance,
+        *,
+        if_match: tuple[str, datetime] | None = None,
+    ) -> None:
+        at_implement = instance.current_step == "implement"
+        if at_implement and instance.variables.get("bounced") is True and not lost:
+            lost.append(instance.id)
+            raise StaleStepInstanceWriteError("a concurrent write won the step instance")
+        save(self, instance, if_match=if_match)
+
+    monkeypatch.setattr(AgentStepInstanceManager, "save", lose_first_bounce_write)
+    message_id = await run.incoming(
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=BOUNCE", PEER_ID
+    )
+    assert lost, "the bounce transition never reached the step instance write"
+    assert run.step == "submit"
+    message = InterSessionMessageManager(run.db).get_message(message_id)
+    assert message is not None
+    await run.call(
+        "gobby-agents",
+        "get_inter_session_message",
+        {"message_id": message_id},
+        {"success": True, "message": message.to_dict()},
+    )
+    assert (run.step, run.vars["bounced"]) == ("implement", True)
+
+
+_BUNDLED_CODE_REVIEWER = (
+    Path(__file__).resolve().parents[2]
+    / "src/gobby/install/shared/workflows/agents/code-reviewer.yaml"
+)
+
+
+def _bundled_code_reviewer() -> dict[str, Any]:
+    return cast(dict[str, Any], yaml.safe_load(_BUNDLED_CODE_REVIEWER.read_text(encoding="utf-8")))
+
+
+@pytest.mark.parametrize("shape", ["plain", "wrapped", "already_claimed"])
+async def test_reviewer_first_claim_after_release_enters_fix(
+    temp_db: HubDatabase, shape: str
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer", definition=_bundled_code_reviewer())
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    assert run.step == "await"
+    claimed: dict[str, Any] = {"task_id": task.id, "ref": f"#{task.seq_num}", "title": task.title}
+    if shape == "wrapped":
+        # The live proxy wraps the claim and drops the inner success flag.
+        output: dict[str, Any] = {"success": True, "result": claimed}
+    else:
+        output = {"success": True, **claimed}
+        if shape == "already_claimed":
+            output["already_claimed"] = True
+    await run.call("gobby-tasks", "claim_task", {"task_id": task.id}, output)
+    assert (run.step, run.vars["fixing"]) == ("fix", True)
+
+
+async def test_reviewer_failed_claim_keeps_await(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "code-reviewer", definition=_bundled_code_reviewer())
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"success": False, "error": "task is claimed by another session"},
+    )
+    assert (run.step, run.vars["fixing"]) == ("await", False)
+
+
 async def test_developer_without_a_commit_stays_in_implement_on_no_work_bounce(
     temp_db: HubDatabase,
 ) -> None:
@@ -1984,8 +2074,12 @@ async def test_developer_proof_request_matches_linked_candidate_off_the_loop(
         assert loop is not caller
 
 
-def _team_runbook(db: HubDatabase, task: Task, label: str) -> str:
-    """A runbook session whose admission step made a live team for ``task``."""
+def _team_runbook(db: HubDatabase, task: Task) -> str:
+    """A runbook session whose admission step admits a live team for ``task``.
+
+    A live team is keyed by its admission execution and holds an active worktree, the
+    shape ``live_team_rows_sql`` reads.
+    """
     runbook = PipelineDefinition(
         name="team-runbook", steps=[PipelineStep(id=ADMISSION_STEP, exec="true")]
     )
@@ -1997,12 +2091,11 @@ def _team_runbook(db: HubDatabase, task: Task, label: str) -> str:
         project_id=PROJECT_ID,
     )
     step = executions.create_step_execution(execution.id, ADMISSION_STEP)
-    # A team is live only when its admission names its own execution and its tree is active.
-    tree = LocalWorktreeManager(db).create(
-        PROJECT_ID, f"{label}-branch", f"{label}-worktree_path", task_id=task.id
+    worktree = LocalWorktreeManager(db).create(
+        PROJECT_ID, f"team-{execution.id}", f"/worktrees/{execution.id}", task_id=task.id
     )
     team: dict[str, Any] = {
-        item.name: f"{label}-{item.name}"
+        item.name: f"{execution.id}-{item.name}"
         for item in fields(TeamBinding)
         if item.name not in {"reviewers", "mode"}
     }
@@ -2010,7 +2103,7 @@ def _team_runbook(db: HubDatabase, task: Task, label: str) -> str:
         team_id=execution.id,
         task_id=task.id,
         project_id=PROJECT_ID,
-        worktree_id=tree.id,
+        worktree_id=worktree.id,
         reviewers={},
         mode="single",
     )
@@ -2033,7 +2126,7 @@ async def reviewer_authorities(
     await run.load(*run.vars["required_skills"])
     task = run.task()
     other_task = run.task()
-    # The binding test reads the closing grant from the installed definition.
+    # The binding test reads the closing grant and team-manager flag from the installed definition.
     AgentDefinitionManager(temp_db).create(
         "dev-manager",
         {
@@ -2051,8 +2144,8 @@ async def reviewer_authorities(
         project_id=PROJECT_ID,
     )
     teams = {
-        "own": _team_runbook(temp_db, task, "team-own"),
-        "other": _team_runbook(temp_db, other_task, "team-other"),
+        "own": _team_runbook(temp_db, task),
+        "other": _team_runbook(temp_db, other_task),
     }
     actors = {
         "author": OWNER_ID,

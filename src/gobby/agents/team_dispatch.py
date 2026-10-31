@@ -17,14 +17,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.agents.isolation_models import title_slug
-from gobby.agents.team_lifecycle import (
-    TeamAdmissionRefused,
-    TeamBinding,
-    bind_primary_run,
-    bind_reviewer_run,
-    seat_team,
-    team_binding,
-)
+from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding, team_binding
+from gobby.agents.team_lifecycle import bind_primary_run, bind_reviewer_run, seat_team
 from gobby.agents.team_review import sync_epic_review
 from gobby.agents.team_scope import open_leaf_below
 from gobby.storage.agents import LocalAgentRunManager

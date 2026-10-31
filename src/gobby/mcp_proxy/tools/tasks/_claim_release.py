@@ -2,7 +2,8 @@
 
 from typing import Any
 
-from gobby.agents.team_lifecycle import TeamBinding, seat_team
+from gobby.agents.team_admission_records import TeamBinding
+from gobby.agents.team_lifecycle import seat_team
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_claim import record_claimant_state

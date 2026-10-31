@@ -11,14 +11,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding
 from gobby.agents.team_dispatch import dispatch_for_caller
-from gobby.agents.team_lifecycle import (
-    TeamAdmissionRefused,
-    TeamBinding,
-    bind_reviewer_run,
-    managed_task_team,
-    seat_team,
-)
+from gobby.agents.team_lifecycle import bind_reviewer_run, managed_task_team, seat_team
 from gobby.agents.team_review import seat_team_held, sync_epic_review
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent import _factory

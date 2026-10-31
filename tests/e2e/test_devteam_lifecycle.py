@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-from gobby.agents.team_lifecycle import SeatTarget, TeamAdmissionRefused, check_team_spawn
+from gobby.agents.team_admission_records import SeatTarget, TeamAdmissionRefused
+from gobby.agents.team_lifecycle import check_team_spawn
 from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.mcp_proxy.tools.tasks import create_task_registry
@@ -101,6 +102,7 @@ async def test_complete_single_task_team(world: TeamWorld, monkeypatch: pytest.M
     manager, writer, developer, reviewer = team.seats
     task_id = team.task.id
     tasks.update_task(task_id, category="code")
+    assert team.binding.worktree_path is not None
     tree = Path(team.binding.worktree_path)
     grant_step_writes(db, writer, project_id, "fixture-test-writer", ("test",))
     # A developer whose definition could also write reviews still cannot review its own task.
@@ -171,6 +173,7 @@ async def test_complete_single_task_team(world: TeamWorld, monkeypatch: pytest.M
     assert {session_status(db, session) for session in team.seats} == {"expired"}
     assert teardown(world, team) == {"outcome": "cleaned"}
     assert not tree.exists()
+    assert team.binding.worktree_id is not None
     assert LocalWorktreeManager(db).get(team.binding.worktree_id) is None
     assert not branch_exists(world, team.binding.branch)
     after = tasks.get_task(task_id)
