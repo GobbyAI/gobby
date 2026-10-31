@@ -271,3 +271,66 @@ async fn checkout_registration_retries_and_skips_workspaces() -> Result<()> {
     hub.shutdown().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn concurrent_unregistered_hooks_register_once() -> Result<()> {
+    let hub = FakeHub::start().await?;
+    let node = NodeHome::new(&hub)?;
+    let tree = tempfile::tempdir()?;
+    let root = project_root(&tree.path().join("checkout"), PROJECT)?;
+    let cwd = root.join("src");
+    fs::create_dir_all(&cwd)?;
+    hub.script(HOOK, vec![(StatusCode::OK, json!({"decision":"allow"})); 2]);
+    hub.script(
+        CHECKOUTS,
+        vec![(StatusCode::CREATED, json!({"root_path":root, "created":true})); 2],
+    );
+    let (entered, release) = hub.pause_next(CHECKOUTS);
+    assert_eq!(hook(&node, &root, "concurrent-first").await?.0, StatusCode::OK);
+    let attempted = tokio::time::timeout(Duration::from_secs(3), entered).await;
+    assert!(attempted.is_ok(), "first registration never reached the hub");
+    attempted
+        .unwrap()
+        .expect("registration barrier was reached");
+    // The first registration is still held. A second hook from the same root must not POST again.
+    assert_eq!(hook(&node, &cwd, "concurrent-second").await?.0, StatusCode::OK);
+    assert_registration_count(&hub, 1).await;
+    release.send(()).expect("release registration response");
+    wait_until_registered(&node, &root).await;
+    assert_registration_count(&hub, 1).await;
+    hub.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn authenticated_pass_through_hook_registers_checkout() -> Result<()> {
+    let hub = FakeHub::start().await?;
+    let node = NodeHome::new(&hub)?;
+    let tree = tempfile::tempdir()?;
+    let root = project_root(&tree.path().join("checkout"), PROJECT)?;
+    hub.script(HOOK, vec![(StatusCode::OK, json!({"decision":"allow"}))]);
+    hub.script(
+        CHECKOUTS,
+        vec![(StatusCode::CREATED, json!({"root_path":root, "created":true}))],
+    );
+    // No hook-response capability and no envelope ID: the hook takes the pass-through branch.
+    let payload = json!({
+        "hook_type":"pre_tool_use",
+        "input_data":{"cwd":root, "tool_name":"Read", "tool_input":{"file_path":"README.md"}},
+    });
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(HOOK)
+        .header("authorization", format!("Bearer {NODE_KEY}"))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&payload)?))?;
+    let response = FrontDoor::node(node.node.clone(), false)
+        .handle(request, "127.0.0.1:12345".parse()?, false)
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = wait_for_registrations(&hub, 1).await;
+    assert_registration(&requests[0], &root, PROJECT);
+    wait_until_registered(&node, &root).await;
+    hub.shutdown().await;
+    Ok(())
+}
