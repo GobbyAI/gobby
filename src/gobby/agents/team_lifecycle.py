@@ -35,6 +35,7 @@ from gobby.agents.team_scope import (
     open_leaf_below,
     tree_is_live,
 )
+from gobby.agents.team_tree_adoption import adoption_refusal
 from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
@@ -45,7 +46,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
 from gobby.storage.team_records import ADMISSION_STEP, EPIC_MODE
-from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.tasks.land_commit import LandingGitError, main_checkout_target
 from gobby.tasks.state_semantics import is_task_actionable, is_task_blocked
 from gobby.tasks.step_records import list_task_step_records
@@ -564,7 +565,7 @@ async def _create(
     """Record a new team for ``task``, then create its task-titled branch and tree."""
     trees = LocalWorktreeManager(db)
     existing = await asyncio.to_thread(trees.get_by_task, task.id)
-    if existing is not None and tree_is_live(existing):
+    if parent is None and existing is not None and tree_is_live(existing):
         raise TeamAdmissionRefused(
             "team_exists", f"task {task.id} already has team tree {existing.worktree_path}"
         )
@@ -601,6 +602,11 @@ async def _create(
         worktree_dir_name=epic_directory,
     )
     branch = generate_branch_name(config)
+    if parent is not None and existing is not None and tree_is_live(existing):
+        # A pod adopts its leaf's tree when no team still holds it; otherwise it is refused.
+        return await _adopt_leaf_tree(
+            db, caller, task, existing, parent, branch, main, reviewer_agent, tab_title
+        )
     taken = await asyncio.to_thread(trees.get_by_branch, caller.project_id, branch)
     if taken is not None and tree_is_live(taken):
         raise TeamAdmissionRefused("team_branch_taken", f"branch {branch} already has a tree")
@@ -629,12 +635,90 @@ async def _create(
         )
     binding = TeamBinding(**intent, worktree_id=made.worktree_id, worktree_path=made.cwd)
     await asyncio.to_thread(_record, caller, asdict(binding))
+    await _pin_team_tree(made.cwd)
+    return binding
+
+
+async def _adopt_leaf_tree(
+    db: HubDatabase,
+    caller: _Caller,
+    task: Task,
+    tree: Worktree,
+    parent: TeamBinding,
+    leaf_branch: str,
+    main: Path,
+    reviewer_agent: str | None,
+    tab_title: str | None,
+) -> TeamBinding:
+    """Bind a pod to its leaf's live tree when the tree is clean and no team still holds it."""
+    refusal = await adoption_refusal(
+        tree, base_branch=parent.branch, leaf_branch=leaf_branch, main=main
+    )
+    if refusal is None and await _held_by_prior_team(db, tree):
+        refusal = "a team admitted on it still holds it"
+    if refusal is not None:
+        raise TeamAdmissionRefused(
+            "team_exists", f"task {task.id} already has team tree {tree.worktree_path}: {refusal}"
+        )
+    binding = TeamBinding(
+        team_id=caller.execution_id,
+        task_id=task.id,
+        project_id=caller.project_id,
+        branch=leaf_branch,
+        base_branch=parent.branch,
+        worktree_id=tree.id,
+        worktree_path=tree.worktree_path,
+        reviewers={reviewer_agent: None} if reviewer_agent is not None else {},
+        mode=SINGLE_MODE,
+        tab_title=tab_title,
+        parent_team_id=parent.team_id,
+    )
+    await _verify_tree(db, binding)
+    await asyncio.to_thread(_record, caller, asdict(binding))
+    await _pin_team_tree(tree.worktree_path)
+    return binding
+
+
+async def _held_by_prior_team(db: HubDatabase, tree: Worktree) -> bool:
+    """Whether a team admitted on ``tree`` still holds it.
+
+    A team holds the tree while its execution is in progress, or while a seat of it still works
+    in the tree. An ended execution with no live seat leaves the tree free to adopt.
+    """
+    from gobby.agents.team_teardown import team_seats_live
+
+    executions = LocalPipelineExecutionManager(db, tree.project_id)
+    for team_id in await asyncio.to_thread(_prior_team_ids, db, tree.id):
+        execution = await asyncio.to_thread(executions.get_execution, team_id)
+        if execution is None or execution.status not in _ENDED_EXECUTIONS:
+            return True
+        prior = await asyncio.to_thread(team_binding, db, team_id)
+        if prior is None or await asyncio.to_thread(team_seats_live, db, prior):
+            return True
+    return False
+
+
+def _prior_team_ids(db: HubDatabase, worktree_id: str) -> list[str]:
+    """The ids of the teams admitted on a tree, oldest first."""
+    rows = db.fetchall(
+        """
+SELECT execution_id::text AS team_id FROM step_executions
+WHERE step_id = %s
+AND output_json #>> '{team,team_id}' = execution_id::text
+AND output_json #>> '{team,worktree_id}' = %s
+ORDER BY id
+""",
+        (ADMISSION_STEP, worktree_id),
+    )
+    return [str(row["team_id"]) for row in rows]
+
+
+async def _pin_team_tree(path: str) -> None:
     # Seats join this tree without the isolation preflight that normally pins it.
     try:
-        await GcodeGateway().pin_project(Path(made.cwd))
+        await GcodeGateway().pin_project(Path(path))
     except (GcodeGatewayError, OSError) as exc:
-        logger.warning("Failed to pin team code index for %s: %s", made.cwd, exc)
-    return binding
+        logger.warning("Failed to pin team code index for %s: %s", path, exc)
 
 
 async def _create_treeless(

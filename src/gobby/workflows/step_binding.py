@@ -121,11 +121,12 @@ def recover_rejected_submission(db: HubDatabase, instance: AgentStepInstance) ->
     notification. Require evidence from this submission; a previous round must not
     reopen a freshly resubmitted candidate.
     """
+    # In-memory checks first: a seat outside submit pays no capability query.
     if (
-        not session_has_capability(db, instance.session_id, "recover_rejected_submission")
-        or instance.current_step != "submit"
+        instance.current_step != "submit"
         or instance.workflow.get_step("implement") is None
         or instance.step_entered_at is None
+        or not session_has_capability(db, instance.session_id, "recover_rejected_submission")
     ):
         return instance
     task_id = instance.variables.get(BOUND_TASK_VARIABLE)
