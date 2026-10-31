@@ -21,6 +21,7 @@ use std::{
     io::{ErrorKind, Write},
     os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::task::JoinHandle;
@@ -73,7 +74,7 @@ const WATCH_RETRY: Duration = Duration::from_secs(1);
 /// Prepares, spawns and commits one run's provider terminal and records it as launched. A
 /// failure leaves the run in `runs`; the caller settles it as the run's exit.
 pub async fn launch_with(
-    agents: &NodeAgents,
+    agents: &Arc<NodeAgents>,
     context: &LaunchContext,
     run_id: &str,
     payload: &SpawnPayload,
@@ -86,7 +87,7 @@ pub async fn launch_with(
 }
 
 async fn launch_steps(
-    agents: &NodeAgents,
+    agents: &Arc<NodeAgents>,
     context: &LaunchContext,
     run_id: &str,
     payload: &SpawnPayload,
@@ -129,10 +130,11 @@ pub(super) fn spawn_plan(
     })
 }
 
-/// Starts the planned child and records it as launched. A cancel committed before this point stops
-/// the launch, so a cancelled run starts no child.
+/// Starts the planned child and records it as launched. A cancel committed before the run is
+/// recorded as launched stops the launch: a prepared child is aborted and the run settles
+/// unlaunched.
 pub(super) async fn start_planned(
-    agents: &NodeAgents,
+    agents: &Arc<NodeAgents>,
     payload: &SpawnPayload,
     run_id: &str,
     cwd: &Path,
@@ -143,20 +145,33 @@ pub(super) async fn start_planned(
         return Err(cancelled_failure());
     }
     let host_terminal_id = start_child(agents, payload, run_id, cwd, argv, env).await?;
-    if let Err(error) = record_launched(agents, run_id, &host_terminal_id).await {
-        // The child is live but unrecorded, so it is killed rather than left unowned.
-        let abort = abort_child(agents, &host_terminal_id).await;
-        return Err(LaunchFailure::new(
-            ExitReason::LaunchFailed,
-            format!("record launch: {error}{abort}"),
-        ));
+    match record_launched(agents, run_id, &host_terminal_id).await {
+        Ok(true) => Ok(()),
+        // A cancel committed while the commit was in flight; the committed child must not run.
+        Ok(false) => Err(abort_cancelled(agents, &host_terminal_id).await),
+        Err(error) => {
+            // The child is live but unrecorded, so it is killed rather than left unowned.
+            let abort = abort_child(agents, &host_terminal_id).await;
+            Err(LaunchFailure::new(
+                ExitReason::LaunchFailed,
+                format!("record launch: {error}{abort}"),
+            ))
+        }
     }
-    Ok(())
 }
 
 /// The failure for a run cancelled before its child started.
 pub(super) fn cancelled_failure() -> LaunchFailure {
     LaunchFailure::new(ExitReason::Cancelled, "preparation cancelled")
+}
+
+/// Aborts the child of a run a cancel stopped before launch, and reports the run cancelled.
+async fn abort_cancelled(agents: &NodeAgents, host_terminal_id: &str) -> LaunchFailure {
+    let abort = abort_child(agents, host_terminal_id).await;
+    LaunchFailure::new(
+        ExitReason::Cancelled,
+        format!("preparation cancelled{abort}"),
+    )
 }
 
 /// The blocking half of a launch: the agy gate, trust, the prompt file, the chokepoint, and the
@@ -272,7 +287,7 @@ fn wrap_with_prefix(sandbox: &SandboxLaunch, prefix: &[String], command: &[Strin
 /// Spawns the child and commits it, returning its host terminal id. A refused commit aborts the
 /// prepared child.
 async fn start_child(
-    agents: &NodeAgents,
+    agents: &Arc<NodeAgents>,
     payload: &SpawnPayload,
     run_id: &str,
     cwd: &Path,
@@ -313,16 +328,24 @@ async fn start_child(
     let committed = agents
         .host
         .call(|client| {
+            let agents = Arc::clone(agents);
             let (terminal_id, spawn_key) = (terminal_id.clone(), spawn_key.clone());
             Box::pin(async move {
+                // Read with the host client held, so a cancel committed while the launch waited
+                // for the host stops the commit before the host acts.
+                if agents.state.lock().await.cancelled.contains_key(&spawn_key) {
+                    return Ok(false);
+                }
                 client
                     .spawn_commit(&terminal_id, &spawn_key, Some(COMMIT_DEADLINE_MS))
                     .await
+                    .map(|()| true)
             })
         })
         .await;
     match committed {
-        Ok(()) => Ok(host_terminal_id),
+        Ok(true) => Ok(host_terminal_id),
+        Ok(false) => Err(abort_cancelled(agents, &host_terminal_id).await),
         Err(error) => {
             let abort = abort_child(agents, &host_terminal_id).await;
             Err(LaunchFailure::new(
@@ -370,12 +393,17 @@ async fn record_host(
 }
 
 /// Marks the run launched with its host terminal id, durably, before the in-memory state moves.
+/// Answers `false` and records nothing when a cancel was committed meanwhile, so the run settles
+/// unlaunched.
 async fn record_launched(
     agents: &NodeAgents,
     run_id: &str,
     host_terminal_id: &str,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let mut state = agents.state.lock().await;
+    if state.cancelled.contains_key(run_id) {
+        return Ok(false);
+    }
     let mut next = state.clone();
     let run = next
         .runs
@@ -391,7 +419,7 @@ async fn record_launched(
     next.commit(&agents.home, &agents.changed)
         .map_err(|error| format!("{error:#}"))?;
     *state = next;
-    Ok(())
+    Ok(true)
 }
 
 /// Records a failed launch as the run's exit, so a launch that returned never leaves its run

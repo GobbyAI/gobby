@@ -443,8 +443,8 @@ pub async fn serve_channel<S>(
         tokio::time::interval_at(Instant::now() + timing.ping_interval, timing.ping_interval);
     pings.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     use crate::nodes::agents::commands;
-    // Command replies leave through this loop, the socket's only writer. A reply is dropped once
-    // it is sent, which releases its run's next turn and any preparation it started.
+    // Command replies leave through this loop, the socket's only writer. A sent reply releases its
+    // run's next turn and any preparation it started; an unsent one cancels a run it accepted.
     let (replies_tx, mut replies) = tokio::sync::mpsc::unbounded_channel::<commands::Dispatched>();
     loop {
         tokio::select! {
@@ -470,11 +470,10 @@ pub async fn serve_channel<S>(
             Some(dispatched) = replies.recv() => {
                 let sent = tokio::time::timeout_at(idle,
                     socket.send(PeerMessage::Text(dispatched.reply.to_string().into()))).await;
-                // Dropped once sent, so the run's next turn and any preparation go after the reply.
-                drop(dispatched);
                 if !matches!(sent, Ok(Ok(()))) {
                     break;
                 }
+                dispatched.delivered();
             },
             _ = pings.tick() => {
                 if !matches!(tokio::time::timeout_at(idle,

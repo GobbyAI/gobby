@@ -1,8 +1,8 @@
 //! Node command dispatch: spawn, cancel and terminal write, answered over the node channel.
 //!
-//! Admission runs in arrival order and commits each command's state effects. A cancel or write
-//! then waits for its run's earlier turns. A spawn starts its preparation only after its reply
-//! has been sent.
+//! Admission runs in arrival order and commits each command's state effects. Every reply that
+//! names a run then waits for that run's earlier turns. A spawn starts its preparation only once
+//! its acceptance is delivered; an undelivered acceptance cancels the run.
 use super::{
     NodeAgents, Preparing,
     lanes::Turn,
@@ -41,8 +41,8 @@ const SEED_TIMEOUT: Duration = Duration::from_secs(180);
 /// Providers a spawn may name. Each maps to a command in `provider_command`.
 const PROVIDERS: [&str; 5] = ["claude", "codex", "grok", "droid", "agy"];
 
-/// One admitted command. A refusal is answered at once; a cancel or write waits for its run's
-/// earlier turns before it acts.
+/// One admitted command. A reply decided at admission still waits for its run's earlier turns
+/// when it names a run; a cancel or write waits for them before it acts.
 pub enum Admitted {
     Answered(Dispatched),
     Cancel {
@@ -65,7 +65,12 @@ impl Admitted {
     /// Waits for this command's turn, then runs it.
     pub async fn run(self) -> Dispatched {
         match self {
-            Self::Answered(dispatched) => dispatched,
+            Self::Answered(dispatched) => {
+                if let Some(turn) = &dispatched.turn {
+                    turn.wait().await;
+                }
+                dispatched
+            }
             Self::Cancel {
                 agents,
                 request_id,
@@ -92,46 +97,70 @@ impl Admitted {
     }
 }
 
-/// A command's reply. It holds the run's turn and starts any preparation when dropped. The
-/// channel drops it after the reply is sent, so a later command on the run and a spawn's
-/// preparation both wait for the reply to leave.
+/// A command's reply. It holds the run's turn until the reply is delivered or dropped, so a
+/// later command on the run waits for the reply to leave. A spawn's preparation starts only
+/// when [`Dispatched::delivered`] reports the acceptance sent.
 pub struct Dispatched {
     pub reply: Value,
-    _turn: Option<Turn>,
-    _release: Release,
+    turn: Option<Turn>,
+    release: Release,
 }
 
 impl Dispatched {
     fn answer(reply: Value) -> Self {
         Self {
             reply,
-            _turn: None,
-            _release: Release::default(),
+            turn: None,
+            release: Release::default(),
         }
     }
 
     fn held(reply: Value, turn: Turn) -> Self {
         Self {
             reply,
-            _turn: Some(turn),
-            _release: Release::default(),
+            turn: Some(turn),
+            release: Release::default(),
         }
     }
 
-    /// Takes the reply for a caller that sends nothing. The turn and any preparation end here.
+    /// Records the reply as delivered: starts any preparation, then ends the turn. Dropping
+    /// the reply without this call cancels a run it accepted.
+    pub fn delivered(self) {
+        let Self { turn, release, .. } = self;
+        release.start();
+        drop(turn);
+    }
+
+    /// Takes the reply for a caller that sends nothing, which counts as delivered.
     pub fn into_reply(self) -> Value {
-        self.reply
+        let Self {
+            reply,
+            turn,
+            release,
+        } = self;
+        release.start();
+        drop(turn);
+        reply
     }
 }
 
-/// Starts a spawned run's preparation when dropped.
+/// A spawned run's preparation, held until its acceptance is delivered. Dropped before then, it
+/// cancels the run.
 #[derive(Default)]
 pub struct Release(Option<Box<Prepare>>);
+
+impl Release {
+    fn start(mut self) {
+        if let Some(prepare) = self.0.take() {
+            tokio::spawn(prepare.run());
+        }
+    }
+}
 
 impl Drop for Release {
     fn drop(&mut self) {
         if let Some(prepare) = self.0.take() {
-            tokio::spawn(prepare.run());
+            tokio::spawn(prepare.abandon());
         }
     }
 }
@@ -159,14 +188,44 @@ impl Prepare {
         if let Err(failure) = prelaunch(&agents, &context, &payload, cancelled).await {
             record_failure(&agents, &run_id, failure).await;
         }
-        agents
-            .preparing
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&run_id);
-        // Last, so a cancel that waits on the lock reads the settled phase.
-        drop(busy);
+        finish(&agents, &run_id, busy);
     }
+
+    /// Cancels a run whose acceptance never reached the hub: commits its cancel record, so a
+    /// retried spawn answers `cancelled`, and settles it unlaunched without preparing anything.
+    async fn abandon(self) {
+        let Self {
+            agents,
+            payload,
+            busy,
+            ..
+        } = self;
+        let run_id = payload.run_id;
+        {
+            let mut state = agents.state.lock().await;
+            let mut next = state.clone();
+            next.cancelled.entry(run_id.clone()).or_insert_with(now_ms);
+            match next.commit(&agents.home, &agents.changed) {
+                Ok(()) => *state = next,
+                Err(error) => {
+                    eprintln!("gdaemon node: record cancel of undelivered run {run_id}: {error:#}");
+                }
+            }
+        }
+        record_failure(&agents, &run_id, cancelled_failure()).await;
+        finish(&agents, &run_id, busy);
+    }
+}
+
+/// Clears a settled run's preparation entry, then releases its `busy` lock.
+fn finish(agents: &NodeAgents, run_id: &str, busy: OwnedMutexGuard<()>) {
+    agents
+        .preparing
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(run_id);
+    // Last, so a cancel that waits on the lock reads the settled phase.
+    drop(busy);
 }
 
 /// Admits one command frame in arrival order.
@@ -222,7 +281,7 @@ fn answered(reply: Value) -> Admitted {
     Admitted::Answered(Dispatched::answer(reply))
 }
 
-/// Accepts a spawn and commits the acceptance. Preparation starts when the reply is dropped.
+/// Accepts a spawn and commits the acceptance. Preparation starts when the reply is delivered.
 async fn spawn(
     agents: &Arc<NodeAgents>,
     context: &Arc<LaunchContext>,
@@ -266,25 +325,23 @@ async fn spawn(
     }
     let run_id = payload.run_id.clone();
     let mut state = agents.state.lock().await;
+    // Taken under the state lock, so the run's turns follow the order its admissions commit.
+    let turn = agents.lanes.enter(&run_id);
     if state.cancelled.contains_key(&run_id) {
-        return Dispatched::answer(reply_err(
-            request_id,
-            "cancelled",
-            "run was cancelled",
-            Stage::None,
-        ));
+        return Dispatched::held(
+            reply_err(request_id, "cancelled", "run was cancelled", Stage::None),
+            turn,
+        );
     }
     if state.runs.contains_key(&run_id) {
-        return Dispatched::answer(reply_ok(request_id, json!({"accepted": true})));
+        return Dispatched::held(reply_ok(request_id, json!({"accepted": true})), turn);
     }
     if state.live_and_accepted() >= LIVE_LIMIT {
         let message = format!("node holds {LIVE_LIMIT} live or accepted runs");
-        return Dispatched::answer(reply_err(
-            request_id,
-            "command_failed",
-            message,
-            Stage::None,
-        ));
+        return Dispatched::held(
+            reply_err(request_id, "command_failed", message, Stage::None),
+            turn,
+        );
     }
     let mut next = state.clone();
     next.runs.insert(
@@ -299,12 +356,10 @@ async fn spawn(
     );
     if let Err(error) = next.commit(&agents.home, &agents.changed) {
         let message = format!("record accepted run: {error:#}");
-        return Dispatched::answer(reply_err(
-            request_id,
-            "command_failed",
-            message,
-            Stage::None,
-        ));
+        return Dispatched::held(
+            reply_err(request_id, "command_failed", message, Stage::None),
+            turn,
+        );
     }
     *state = next;
     let (cancel, cancelled) = watch::channel(false);
@@ -321,8 +376,8 @@ async fn spawn(
     drop(state);
     Dispatched {
         reply: reply_ok(request_id, json!({"accepted": true})),
-        _turn: None,
-        _release: Release(Some(Box::new(Prepare {
+        turn: Some(turn),
+        release: Release(Some(Box::new(Prepare {
             agents: Arc::clone(agents),
             context: Arc::clone(context),
             payload,
@@ -446,32 +501,30 @@ async fn cancel(agents: &Arc<NodeAgents>, request_id: String, payload: CancelPay
         CancelSignal::Term => KillSignal::Term,
         CancelSignal::Kill => KillSignal::Kill,
     };
-    let known = {
+    let (known, turn) = {
         let mut state = agents.state.lock().await;
+        // Taken under the state lock, so the run's turns follow the order its admissions commit.
+        let turn = agents.lanes.enter(&run_id);
         let known = state.runs.contains_key(&run_id);
         let mut next = state.clone();
         next.cancelled.insert(run_id.clone(), now_ms());
         if let Err(error) = next.commit(&agents.home, &agents.changed) {
             let message = format!("record cancel: {error:#}");
-            return answered(reply_err(
-                &request_id,
-                "command_failed",
-                message,
-                Stage::None,
-            ));
+            let reply = reply_err(&request_id, "command_failed", message, Stage::None);
+            return Admitted::Answered(Dispatched::held(reply, turn));
         }
         *state = next;
-        known
+        (known, turn)
     };
     if !known {
-        return answered(reply_err(
+        let reply = reply_err(
             &request_id,
             "not_found",
             "no run has this run_id",
             Stage::None,
-        ));
+        );
+        return Admitted::Answered(Dispatched::held(reply, turn));
     }
-    let turn = agents.lanes.enter(&run_id);
     Admitted::Cancel {
         agents: Arc::clone(agents),
         request_id,

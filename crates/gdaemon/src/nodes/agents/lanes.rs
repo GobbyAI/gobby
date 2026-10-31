@@ -1,4 +1,4 @@
-//! Arrival-ordered turns for one run's cancel and write commands. A command takes its ticket
+//! Arrival-ordered turns for the commands that name one run. A command takes its ticket
 //! when the channel admits it, and runs once every earlier command for the same run finishes.
 use std::{
     collections::HashMap,

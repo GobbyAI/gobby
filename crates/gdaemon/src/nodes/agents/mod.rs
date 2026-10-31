@@ -29,7 +29,7 @@ pub struct NodeAgents {
     pub home: PathBuf,
     pub state: Mutex<AgentState>,
     pub changed: Notify,
-    /// Arrival-ordered turns for each run's cancel and write commands.
+    /// Arrival-ordered turns for the commands that name each run.
     lanes: Arc<lanes::Lanes>,
     /// Runs whose preparation task is still live.
     preparing: std::sync::Mutex<HashMap<String, Preparing>>,
