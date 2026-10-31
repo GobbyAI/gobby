@@ -216,9 +216,17 @@ def create_commit_registry(
             declared = candidate and not (
                 test_only and _approved_review_of(task_manager, current_task, normalized)
             )
-            # Landed history is never a new candidate: a relink after landing declares nothing.
-            if declared and await landed_on_integration(task_manager.db, current_task, normalized):
-                declared = False
+            # Landed history is never a new candidate, and an unproven landing status refuses the
+            # candidate before anything persists.
+            if declared:
+                landed = await landed_on_integration(task_manager.db, current_task, normalized)
+                if landed is None:
+                    return {
+                        "error": f"Cannot determine whether {normalized} is on the integration "
+                        "branch; refusing to declare it a candidate."
+                    }
+                if landed:
+                    declared = False
             task = (
                 await asyncio.to_thread(
                     link_candidate, task_manager, resolved_task_id, normalized, repo_path

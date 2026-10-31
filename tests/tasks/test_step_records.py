@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,6 +31,7 @@ from gobby.tasks.step_records import (
     record_task_step,
     task_step_requirements,
 )
+from gobby.utils.daemon_git import GitFailed, GitResult, GitTimeout, daemon_git
 from gobby.utils.git import normalize_commit_sha
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
@@ -631,6 +633,47 @@ async def test_relinking_a_landed_commit_declares_no_candidate(
     assert "error" not in relink, relink
     assert relink["declared_candidate"] is None
     assert manager.get_task(task.id).commits == [landed]
+
+
+@pytest.mark.parametrize("unprovable", ["git_failed", "timeout", "detached_target"])
+async def test_unprovable_landing_status_refuses_the_candidate(
+    temp_db: HubDatabase,
+    task: Task,
+    team: dict[str, str],
+    candidate_history: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unprovable: str,
+) -> None:
+    """A candidate whose landing status is unproven is refused before anything persists."""
+    manager = LocalTaskManager(temp_db)
+    manager.unlink_commit(task.id, _TIP[:10])
+    target = None if unprovable == "detached_target" else (tmp_path, "main")
+    monkeypatch.setattr(
+        "gobby.tasks.land_commit.main_checkout_target",
+        AsyncMock(return_value=target),
+    )
+    failure: GitResult = (
+        GitTimeout("timeout", ("git", "merge-base"), 10.0)
+        if unprovable == "timeout"
+        else GitFailed("failed", ("git", "merge-base"), 128, "", "fatal: bad object")
+    )
+    real_run = daemon_git.run
+
+    async def run(args: Sequence[str], **kwargs: Any) -> GitResult:
+        return failure if args[0] == "merge-base" else await real_run(args, **kwargs)
+
+    monkeypatch.setattr(daemon_git, "run", run)
+    before = manager.get_task(task.id).commits
+    registry = create_commit_registry(manager)
+    candidate = candidate_history[-1]
+    with session_context_for_test(team["developer"]):
+        relink = await registry.call(
+            "link_commit", {"task_id": task.id, "commit_sha": candidate, "candidate": True}
+        )
+    assert "integration branch" in relink.get("error", ""), relink
+    assert "declared_candidate" not in relink
+    assert manager.get_task(task.id).commits == before
 
 
 async def test_declared_candidate_cannot_demote_a_newer_link(
