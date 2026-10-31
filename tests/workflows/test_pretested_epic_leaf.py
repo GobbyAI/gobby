@@ -20,6 +20,7 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.fixtures.landing_case import bind_task_manager
 from tests.fixtures.review_approvals import grant_step_writes
+from tests.workflows.test_developer_test_gate_reset import _offloaded_task_card
 from tests.workflows.test_seat_step_loops import (
     AUTHORITY_MACHINE_ID,
     COORDINATOR_ID,
@@ -91,7 +92,7 @@ def _leaf(run: SeatRun) -> Task:
     )
 
 
-async def _claim_and_route(run: SeatRun, leaf: Task) -> None:
+async def _claim_and_route(run: SeatRun, leaf: Task, *, offloaded: bool = False) -> None:
     await run.load(*run.vars["required_skills"])
     assert run.step == "claim"
     tasks = LocalTaskManager(run.db)
@@ -103,16 +104,29 @@ async def _claim_and_route(run: SeatRun, leaf: Task) -> None:
         {"task_id": leaf.id},
         {"result": {"task_id": leaf.id, "ref": f"#{leaf.seq_num}"}},
     )
-    await _refresh(run, leaf)
+    if offloaded:
+        envelope = await _offloaded_task_card(run, leaf)
+        assert "step_records" not in envelope
+        await run.call(
+            "gobby-tasks",
+            "get_task",
+            {"task_id": leaf.id, "brief": False},
+            {"success": True, "result": envelope},
+        )
+    else:
+        await _refresh(run, leaf)
     if run.step == "load_additional_skills":
         await run.load(*run.vars["additional_skills"])
 
 
-async def test_claim_of_pretested_epic_leaf_reaches_implementation(epic_developer: SeatRun) -> None:
+@pytest.mark.parametrize("offloaded", [False, True], ids=["inline", "offloaded"])
+async def test_claim_of_pretested_epic_leaf_reaches_implementation(
+    epic_developer: SeatRun, offloaded: bool
+) -> None:
     leaf = _leaf(epic_developer)
     _test_record(epic_developer, leaf, committed=True)
 
-    await _claim_and_route(epic_developer, leaf)
+    await _claim_and_route(epic_developer, leaf, offloaded=offloaded)
 
     assert epic_developer.vars["assigned_task_id"] == leaf.id
     assert epic_developer.step == "implement"
