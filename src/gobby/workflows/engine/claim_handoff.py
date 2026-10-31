@@ -15,8 +15,13 @@ import logging
 from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict
 
-from gobby.agents.team_lifecycle import TeamBinding, seat_team
-from gobby.mcp_proxy.tools.tasks._claim_release import ClaimTransferRefused, transfer_task_claim
+from gobby.agents.team_admission_records import TeamBinding
+from gobby.agents.team_lifecycle import seat_team
+from gobby.mcp_proxy.tools.tasks._claim_release import (
+    ClaimTransferRefused,
+    _is_team_seat,
+    transfer_task_claim,
+)
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_claim import record_claimant_state
 from gobby.storage.agents import LocalAgentRunManager
@@ -111,21 +116,16 @@ def _takes(db: HubDatabase, seat: Session, step: str | None, maker: str | None) 
     return definition is not None and step in definition[0].task_step_writes
 
 
-def _on_team(db: HubDatabase, session_id: str, team_id: str) -> bool:
-    team = seat_team(db, session_id)
-    return team is not None and team.team_id == team_id
-
-
 def _team_seats(db: HubDatabase, team: TeamBinding) -> list[Session]:
-    """Every session the team's runbook launched, the Dev Manager included, in launch order."""
+    """Seats from every admission for the task, including relaunches, in launch order."""
     executions = LocalPipelineExecutionManager(db, team.project_id)
     runs = LocalAgentRunManager(db)
     sessions = SessionManager(db)
     seats: list[Session] = []
     rows = db.fetchall(
         "SELECT execution_id FROM step_executions WHERE step_id = %s "
-        "AND output_json #>> '{team,team_id}' = %s ORDER BY id",
-        (ADMISSION_STEP, team.team_id),
+        "AND output_json #>> '{team,task_id}' = %s ORDER BY id",
+        (ADMISSION_STEP, team.task_id),
     )
     for row in rows:
         execution = executions.get_execution(str(row["execution_id"]))
@@ -139,11 +139,15 @@ def _team_seats(db: HubDatabase, team: TeamBinding) -> list[Session]:
 
 
 def _team_manager(db: HubDatabase, team: TeamBinding, seats: list[Session]) -> Session | None:
-    """The team's bound Dev Manager, found among its seats by its declared authority."""
+    """A live bound Dev Manager across the task's admissions, by declared authority."""
     from gobby.agents.team_dispatch import _is_bound_dev_manager
 
     return next(
-        (seat for seat in seats if _is_bound_dev_manager(db, seat.id, team.task_id)),
+        (
+            seat
+            for seat in seats
+            if _live(seat) and _is_bound_dev_manager(db, seat.id, team.task_id)
+        ),
         None,
     )
 
@@ -152,7 +156,7 @@ def _addressed_seats(
     db: HubDatabase,
     recipients: list[str],
     sender_id: str,
-    team_id: str,
+    team: TeamBinding,
     step: str | None,
     maker: str | None,
 ) -> list[Session]:
@@ -163,7 +167,7 @@ def _addressed_seats(
         session = sessions.get(recipient)
         if session is None or recipient == sender_id:
             continue
-        if _takes(db, session, step, maker) and _on_team(db, recipient, team_id):
+        if _takes(db, session, step, maker) and _is_team_seat(db, recipient, team):
             seats.append(session)
     return seats
 
@@ -283,7 +287,7 @@ def hand_off_claim(
     # A seat that made the work never takes review, and never closes the task it made.
     excluded = maker_sessions(records) if step in ("review", "closing") else set()
     addressed_seats = _addressed_seats(
-        db, [to for _, to in addressed], session_id, team.team_id, step, maker
+        db, [to for _, to in addressed], session_id, team, step, maker
     )
     ready = [seat for seat in addressed_seats if seat.id not in excluded and _live(seat)]
     copied_message_ids: list[str] = []

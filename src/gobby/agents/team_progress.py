@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from gobby.agents.team_lifecycle import TeamBinding, team_binding
+from gobby.agents.team_admission_records import TeamBinding, team_binding
 from gobby.agents.team_scope import EPIC_TASK_TYPE
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session

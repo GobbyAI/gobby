@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.agents.team_lifecycle import seat_team, team_binding
+from gobby.agents.team_admission_records import team_binding
+from gobby.agents.team_lifecycle import seat_team
 from gobby.agents.team_progress import TaskProgress, TeamProgress, team_progress
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext

@@ -7,6 +7,7 @@ hands a claim to a session that authored the work under review.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -30,7 +31,7 @@ from gobby.workflows.step_instances import AgentStepInstance
 from tests.fixtures.landing_case import LandingCase, make_landing_case
 from tests.fixtures.review_approvals import grant_review_writes, grant_step_writes
 from tests.fixtures.team_case import TeamWorld, make_team_world
-from tests.fixtures.team_teardown_case import Team, admitted_team
+from tests.fixtures.team_teardown_case import Team, admitted_team, seated_team
 
 pytestmark = pytest.mark.unit
 
@@ -370,6 +371,78 @@ async def test_no_live_reviewer_staffs_the_seat_through_the_dev_manager(world: T
     assert f"TASK=#{chain.task.seq_num}" in requests[0]
     assert "STEP=review" in requests[0]
     assert chain.manager in InterSessionMessageManager(chain.db).get_undelivered_wake_recipients()
+
+
+async def _fallback_team(world: TeamWorld, chain: Chain) -> Team:
+    """A new admission for the same task after the first launch's tree disappeared."""
+    assert chain.team.binding.worktree_path is not None
+    shutil.rmtree(chain.team.binding.worktree_path)
+    fallback = await seated_team(world, chain.task, world.child(chain.task))
+    grant_review_writes(chain.db, fallback.seats[-1], chain.case.project_id)
+    grant_step_writes(
+        chain.db, fallback.seats[0], chain.case.project_id, "fixture-dev-manager", ("closing",)
+    )
+    assert fallback.binding.team_id != chain.team.binding.team_id
+    assert fallback.binding.task_id == chain.task.id
+    return fallback
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("address_reviewer", [True, False])
+async def test_candidate_hands_claim_to_fallback_team_reviewer(
+    world: TeamWorld, address_reviewer: bool
+) -> None:
+    chain = await _chain(world, "Fallback reviewer receives candidate claim")
+    chain.db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (chain.reviewer,))
+    fallback = await _fallback_team(world, chain)
+    reviewer = fallback.seats[-1]
+    recipient = reviewer if address_reviewer else chain.manager
+    ids = _send(chain, chain.writer, _candidate(chain, chain.tests_sha), recipient)
+
+    result = _hand(chain, chain.writer, "review", ids)
+
+    assert result["handed_to"] == reviewer
+    assert _owner(chain) == reviewer
+    inbox = InterSessionMessageManager(chain.db).list_messages(reviewer, direction="inbox")
+    assert any(message.content == _candidate(chain, chain.tests_sha) for message in inbox)
+
+
+@pytest.mark.asyncio
+async def test_fallback_team_live_manager_receives_handoff_pending(world: TeamWorld) -> None:
+    chain = await _chain(world, "Fallback manager receives staffing request")
+    fallback = await _fallback_team(world, chain)
+    manager, *_, reviewer = fallback.seats
+    for seat in (chain.manager, chain.reviewer, reviewer):
+        chain.db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (seat,))
+    ids = _send(chain, chain.writer, _candidate(chain, chain.tests_sha), chain.reviewer)
+
+    result = _hand(chain, chain.writer, "review", ids)
+
+    assert result["handed_to"] is None
+    assert _owner(chain) == chain.writer
+    inbox = InterSessionMessageManager(chain.db).list_messages(manager, direction="inbox")
+    requests = [message.content for message in inbox if "EVENT=HANDOFF_PENDING" in message.content]
+    assert len(requests) == 1
+    assert f"TASK=#{chain.task.seq_num}" in requests[0]
+    assert "STEP=review" in requests[0]
+    assert manager in InterSessionMessageManager(chain.db).get_undelivered_wake_recipients()
+
+
+@pytest.mark.asyncio
+async def test_candidate_refuses_reviewer_of_another_task(world: TeamWorld) -> None:
+    chain = await _chain(world, "Another task reviewer cannot take claim")
+    chain.db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (chain.reviewer,))
+    other = await admitted_team(world, "Unrelated task team")
+    outsider = other.seats[-1]
+    grant_review_writes(chain.db, outsider, chain.case.project_id)
+    ids = _send(chain, chain.writer, _candidate(chain, chain.tests_sha), outsider)
+
+    result = _hand(chain, chain.writer, "review", ids)
+
+    assert result["handed_to"] is None
+    assert _owner(chain) == chain.writer
+    inbox = InterSessionMessageManager(chain.db).list_messages(chain.manager, direction="inbox")
+    assert any("EVENT=HANDOFF_PENDING" in message.content for message in inbox)
 
 
 async def test_no_live_reviewer_or_dev_manager_escalates_the_task(world: TeamWorld) -> None:
