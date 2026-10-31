@@ -1,6 +1,6 @@
 name: log-monitor
 monitor_report_recipients: [triage]
-capabilities: [accept_resume_retype]
+capabilities: [accept_resume_retype, message_assistant]
 description: |
   Log Monitor seat. Monitor-only: every ten minutes it checks daemon health,
   status and the log window, reports Systems nominal or EVENT=ALARM to
