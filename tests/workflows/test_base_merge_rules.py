@@ -21,16 +21,22 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.agents.agent_workspaces import grant_seat_workspace_paths
+from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
+from gobby.agents.srt_settings import render_srt_settings
 from gobby.config.shell_lexing import ParsedShellCommand
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.workflows.base_merge_commits import base_merge_admission
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.engine.seat_messages import candidate_event
+from gobby.workflows.engine.seat_transitions import _candidate_rejection
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
@@ -730,3 +736,175 @@ async def test_merge_commit_with_literal_substitution_outside_safe_charset_is_re
     )
 
     assert response.decision == "block"
+
+
+@pytest.mark.parametrize("tool", ["Edit", "Write"])
+@pytest.mark.parametrize(
+    "condition,allowed",
+    [
+        ("unmerged", True),
+        ("ordinary-path", False),
+        ("merge-aborted", False),
+        ("unregistered", False),
+        ("ungranted", False),
+        ("unadmitted-base", False),
+    ],
+)
+async def test_conflict_write_overrides_native_block_only_with_scoped_grant(
+    seat: tuple[WorkflowHookHandler, Session, Path],
+    temp_db: HubDatabase,
+    tool: str,
+    condition: str,
+    allowed: bool,
+) -> None:
+    """A blocked-tool seat gets only an admitted merge's currently unmerged file."""
+    handler, session, worktree = seat
+    _seat(temp_db, session, "custom-seat", granted=condition != "ungranted", selectors=GATED_RULES)
+    SessionVariableManager(temp_db).set_variable(
+        session.id, "_agent_blocked_tools", ["Edit", "Write"]
+    )
+    if condition == "unadmitted-base":
+        _git(worktree, "branch", "untrusted", "feature")
+        _git(worktree, "checkout", "untrusted")
+        _commit(worktree, "shared.txt", "untrusted\n", "untrusted change")
+        _git(worktree, "checkout", "task-25385")
+        _conflict_base_merge(worktree, "untrusted")
+    else:
+        _conflict_base_merge(worktree)
+    if condition == "merge-aborted":
+        _git(worktree, "merge", "--abort")
+    if condition == "unregistered":
+        temp_db.execute("DELETE FROM worktrees WHERE worktree_path = %s", (str(worktree),))
+    path = worktree / ("task.txt" if condition == "ordinary-path" else "shared.txt")
+    response = await handler._evaluate_rules(
+        _tool_event(
+            session,
+            worktree,
+            tool,
+            {
+                "file_path": str(path),
+                "old_string": "<<<<<<< HEAD",
+                "new_string": "resolved",
+                "content": "resolved\n",
+            },
+        )
+    )
+    assert response.decision == ("allow" if allowed else "block"), response.reason
+    assert not SessionVariableManager(temp_db).get_variables(session.id).get("task_claimed")
+
+
+@pytest.mark.parametrize(
+    "condition,allowed",
+    [
+        ("authored-base-merge", True),
+        ("non-merge", False),
+        ("not-latest", False),
+        ("unadmitted-parent", False),
+        ("ungranted", False),
+        ("other-author", False),
+        ("unregistered", False),
+    ],
+)
+async def test_claim_free_base_merge_candidate_binding(
+    seat: tuple[WorkflowHookHandler, Session, Path],
+    temp_db: HubDatabase,
+    condition: str,
+    allowed: bool,
+) -> None:
+    """Reviewer intake admits only the latest linked base merge authored by the granted sender."""
+    handler, session, worktree = seat
+    _seat(temp_db, session, "custom-seat", granted=condition != "ungranted", selectors=GATED_RULES)
+    record = LocalWorktreeManager(temp_db).get_by_path(str(worktree))
+    assert record is not None and record.task_id is not None
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.get_task(record.task_id)
+    assert task.claimed_by_session_id is None
+    if condition == "unadmitted-parent":
+        _git(worktree, "branch", "untrusted", "feature")
+        _git(worktree, "checkout", "untrusted")
+        _commit(worktree, "shared.txt", "untrusted\n", "untrusted change")
+        _git(worktree, "checkout", "task-25385")
+        _conflict_base_merge(worktree, "untrusted")
+        (worktree / "shared.txt").write_text("resolved\n")
+        _git(worktree, "add", "shared.txt")
+    elif condition != "non-merge":
+        _start_conflicting_base_merge(worktree)
+    if condition != "non-merge":
+        # Deliver the real before/after commit events: authorship must come from
+        # the admitted operation, never just the sender's capability or NOTE.
+        author = session
+        if condition == "other-author":
+            author = SessionManager(temp_db).register(
+                external_id="other-merge-author",
+                machine_id=LOCAL_MACHINE_ID,
+                source="claude",
+                project_id=session.project_id,
+            )
+            _seat(temp_db, author, "other-capable-seat", granted=True, selectors=GATED_RULES)
+        await handler._evaluate_rules(_bash_event(author, worktree, "git commit --no-edit"))
+        output = _git(worktree, "commit", "--no-edit")
+        completed = _bash_event(author, worktree, "git commit --no-edit", HookEventType.AFTER_TOOL)
+        completed.data["tool_output"] = output
+        await handler._evaluate_rules(completed)
+    sha = _git(worktree, "rev-parse", "HEAD")
+    tasks.link_commit(task.id, sha)
+    if condition == "not-latest":
+        _commit(worktree, "later.txt", "later\n", "later linked work")
+        tasks.link_commit(task.id, _git(worktree, "rev-parse", "HEAD"))
+    if condition == "unregistered":
+        temp_db.execute("DELETE FROM worktrees WHERE id = %s", (record.id,))
+    reviewer = SessionManager(temp_db).register(
+        external_id="merge-reviewer",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=session.project_id,
+    )
+    message = InterSessionMessageManager(temp_db).create_message(
+        from_session=session.id,
+        to_session=reviewer.id,
+        content=(
+            f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=base-merge WT={worktree} "
+            f"COMMIT={sha} NOTE=base merge"
+        ),
+    )
+    event = candidate_event(temp_db, message)
+    assert event is not None
+    error = _candidate_rejection(temp_db, {}, event, reviewer.id)
+    assert (error is None) == allowed, error
+    assert tasks.get_task(task.id).claimed_by_session_id is None
+
+
+@pytest.mark.parametrize(
+    "condition,allowed",
+    [("unmerged", True), ("merge-aborted", False), ("unregistered", False), ("ungranted", False)],
+)
+async def test_conflict_write_scope_reaches_srt_policy(
+    seat: tuple[WorkflowHookHandler, Session, Path],
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    condition: str,
+    allowed: bool,
+) -> None:
+    """Launch/resume policy grants the conflict file, never its tree or ordinary files."""
+    _, session, worktree = seat
+    _seat(temp_db, session, "custom-seat", granted=condition != "ungranted", selectors=GATED_RULES)
+    _conflict_base_merge(worktree)
+    if condition == "merge-aborted":
+        _git(worktree, "merge", "--abort")
+    if condition == "unregistered":
+        temp_db.execute("DELETE FROM worktrees WHERE worktree_path = %s", (str(worktree),))
+    private = tmp_path / "agent_workspaces"
+    with patch("gobby.agents.agent_workspaces.workspaces_root", return_value=private):
+        scoped = grant_seat_workspace_paths(
+            SandboxConfig(backend="srt"), temp_db, session.id, "custom-seat"
+        )
+        # The manager launches inside its own granted folder, while the task
+        # checkout belongs to a different seat.
+        paths = await compute_sandbox_paths(scoped, scoped.extra_write_paths[0])
+        filesystem = render_srt_settings(paths)["filesystem"]
+    writes = filesystem["allowWrite"]
+    # Exact file grants are required: a tree grant would let the coordinator
+    # edit every developer-owned path during this merge.
+    assert (str(worktree / "shared.txt") in writes) == allowed
+    assert str(worktree) not in writes
+    assert str(worktree / "task.txt") not in writes
