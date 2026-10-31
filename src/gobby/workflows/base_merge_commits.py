@@ -10,7 +10,9 @@ the capability covers, and reads nothing else from the definition:
 - while such a merge is in progress (`MERGE_HEAD` is an admitted tip), the
   `git commit` or `git merge --continue` that completes it, when every staged
   path is one the merge brings in, and `git merge --abort` or `--quit` to unwind;
-- a structured write to a path that the same in-progress merge left conflicted.
+- a `git add` of paths that the same in-progress merge left conflicted;
+- a structured write to one of those paths. A shell command never earns a path
+  grant, because its output and its side effects are not named.
 
 Admitted tips are the integration branch of the project's main checkout and the
 landing branch of the worktree's task (an epic's branch for a leaf). A merge is not
@@ -30,7 +32,7 @@ from typing import Any
 import psycopg
 from psycopg_pool import PoolTimeout
 
-from gobby.config.shell_lexing import shell_command_segments
+from gobby.config.shell_lexing import parse_shell_command
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
@@ -68,6 +70,7 @@ async def base_merge_admission(
     project_path: str,
     cwd: str | None,
     command: str | None,
+    tool_kind: str | None,
     tool_input: Any,
 ) -> BaseMergeAdmission:
     """Admit this tool call's base-merge steps, or admit nothing.
@@ -97,8 +100,16 @@ async def base_merge_admission(
     if merge_head is not None:
         if merge_head not in tips:
             return NOT_ADMITTED
-        git_step = tokens is not None and await _completes_admitted_merge(root, merge_head, tokens)
-        write = await _writes_conflicted_paths(root, get_touched_file_paths(tool_input))
+        git_step = tokens is not None and (
+            await _completes_admitted_merge(root, merge_head, tokens)
+            or await _stages_conflicted_paths(root, tokens, cwd)
+        )
+        # Only a structured write earns a path grant. A shell command's output is unnamed.
+        write = (
+            not command
+            and tool_kind == "write"
+            and await _writes_conflicted_paths(root, get_touched_file_paths(tool_input))
+        )
         return BaseMergeAdmission(git_step=git_step, write=write)
     git_step = tokens is not None and await _starts_admitted_merge(root, tokens, tips)
     return BaseMergeAdmission(git_step=git_step)
@@ -126,14 +137,15 @@ def _lone_git_command(command: str | None) -> list[str] | None:
     """The one git invocation a command runs, or None for anything else.
 
     A second segment, a `cd`, or a global `-C`/`--git-dir` option could point the
-    step at another repository or widen it, so each of those refuses.
+    step at another repository or widen it, and a redirection writes a file the
+    admission never names, so each of those refuses.
     """
     if not isinstance(command, str) or not command.strip():
         return None
-    segments = shell_command_segments(command)
-    if len(segments) != 1:
+    parsed = parse_shell_command(command)
+    if parsed.redirected or len(parsed.segments) != 1:
         return None
-    tokens = segments[0]
+    tokens = list(parsed.segments[0])
     if len(tokens) < 2 or tokens[0] != "git" or tokens[1].startswith("-"):
         return None
     return tokens
@@ -198,6 +210,21 @@ async def _completes_admitted_merge(root: str, merge_head: str, tokens: list[str
     incoming = await _paths(root, base, merge_head)
     staged = await _paths(root, "--cached")
     return incoming is not None and staged is not None and staged <= incoming
+
+
+async def _stages_conflicted_paths(root: str, tokens: list[str], cwd: str | None = None) -> bool:
+    """Whether `git add` names only paths the in-progress merge left conflicted.
+
+    Operands resolve against the directory the command runs in, so `git add shared.txt`
+    from a subdirectory names that subdirectory's file, not the conflicted one.
+    """
+    if tokens[1] != "add":
+        return False
+    operands = tokens[2:]
+    if any(token.startswith("-") for token in operands):
+        return False
+    base = cwd or root
+    return await _writes_conflicted_paths(root, [str(Path(base) / token) for token in operands])
 
 
 async def _writes_conflicted_paths(root: str, touched: Sequence[str]) -> bool:

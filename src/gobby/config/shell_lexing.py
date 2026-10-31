@@ -22,6 +22,7 @@ class ParsedShellCommand:
 
     segments: tuple[tuple[str, ...], ...]
     operators: tuple[str, ...]
+    redirected: bool = False
 
 
 def shell_command_segments(command: str) -> list[list[str]]:
@@ -51,6 +52,7 @@ def parse_shell_command(command: str) -> ParsedShellCommand:
     operators: list[str] = []
     current: list[str] = []
     skip_redirection_target = False
+    redirected = False
     for token in tokens:
         if skip_redirection_target:
             skip_redirection_target = False
@@ -65,11 +67,12 @@ def parse_shell_command(command: str) -> ParsedShellCommand:
             if current and current[-1].isdigit():
                 current.pop()
             skip_redirection_target = True
+            redirected = True
             continue
         current.append(token)
     if current:
         segments.append(tuple(current))
-    return ParsedShellCommand(tuple(segments), tuple(operators))
+    return ParsedShellCommand(tuple(segments), tuple(operators), redirected)
 
 
 def _strip_heredoc_bodies(command: str) -> str:

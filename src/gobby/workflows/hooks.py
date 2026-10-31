@@ -617,6 +617,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         project_path=project_path,
                         cwd=event.cwd if isinstance(event.cwd, str) else None,
                         command=_extract_shell_command(event),
+                        tool_kind=event.data.get("canonical_tool_kind"),
                         tool_input=event.data.get("tool_input"),
                     )
                 eval_context["base_merge_git_step"] = base_merge.git_step

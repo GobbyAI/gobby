@@ -16,6 +16,7 @@ import pytest
 from gobby.workflows.base_merge_commits import (
     _completes_admitted_merge,
     _lone_git_command,
+    _stages_conflicted_paths,
     _starts_admitted_merge,
     _writes_conflicted_paths,
 )
@@ -130,6 +131,22 @@ def test_compound_cd_and_global_options_do_not_parse_as_one_git_step(
 
 def test_quoted_operators_inside_a_commit_message_stay_one_git_step() -> None:
     assert _lone_git_command('git commit -m "a && b"') == ["git", "commit", "-m", "a && b"]
+    assert _lone_git_command('git commit -m "a > b"') == ["git", "commit", "-m", "a > b"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git merge integration > task.txt",
+        "git merge integration >> task.txt",
+        "git merge integration 2>&1",
+        "git merge integration &> task.txt",
+        "git commit -m wip > log.txt",
+    ],
+)
+def test_redirected_git_command_is_not_one_git_step(command: str) -> None:
+    """A redirection writes a file the admission never names, so it is never a lone git step."""
+    assert _lone_git_command(command) is None
 
 
 async def test_conflicted_merge_admits_the_resolving_commit_only(repo: Path) -> None:
@@ -143,6 +160,18 @@ async def test_conflicted_merge_admits_the_resolving_commit_only(repo: Path) -> 
         str(repo), merge_head, ["git", "commit", "-m", "land base"]
     )
     assert await _completes_admitted_merge(str(repo), merge_head, ["git", "merge", "--continue"])
+
+
+async def test_conflicted_paths_are_staged_only_by_name(repo: Path) -> None:
+    _start_conflicting_base_merge(repo)
+    assert await _stages_conflicted_paths(str(repo), ["git", "add", "shared.txt"])
+    assert not await _stages_conflicted_paths(str(repo), ["git", "add", "task.txt"])
+    assert not await _stages_conflicted_paths(str(repo), ["git", "add", "shared.txt", "task.txt"])
+    assert not await _stages_conflicted_paths(str(repo), ["git", "add", "."])
+    assert not await _stages_conflicted_paths(str(repo), ["git", "add", "-A", "shared.txt"])
+    assert not await _stages_conflicted_paths(str(repo), ["git", "add", "--", "shared.txt"])
+    assert not await _stages_conflicted_paths(str(repo), ["git", "add"])
+    assert not await _stages_conflicted_paths(str(repo), ["git", "commit", "shared.txt"])
 
 
 async def test_commit_that_stages_a_path_outside_the_merge_is_refused(repo: Path) -> None:
