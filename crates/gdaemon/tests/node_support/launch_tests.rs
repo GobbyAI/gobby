@@ -11,6 +11,9 @@ use gobby_daemon::nodes::agents::{
 };
 use std::sync::Arc;
 
+#[path = "command_tests.rs"]
+mod command_tests;
+
 fn corpus() -> Result<Value> {
     Ok(serde_json::from_str(include_str!(
         "../fixtures/node_launch/corpus.json"

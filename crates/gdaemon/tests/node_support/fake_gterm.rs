@@ -21,6 +21,7 @@ pub const TOKEN: &str = "node-host-fixture-token";
 pub const EPOCH: &str = "node-host-fixture-epoch";
 
 pub struct FakeGterm {
+    writes: Arc<WriteGate>,
     process: Child,
     task: JoinHandle<()>,
     requests: Arc<Mutex<Vec<Value>>>,
@@ -33,6 +34,14 @@ pub struct FakeGterm {
     pause_list: Arc<AtomicBool>,
     list_snapshot: Arc<Notify>,
     resume_list: Arc<Notify>,
+}
+
+#[derive(Default)]
+struct WriteGate {
+    pause: AtomicBool,
+    disconnect: AtomicBool,
+    received: Notify,
+    release: Notify,
 }
 
 impl FakeGterm {
@@ -68,6 +77,7 @@ impl FakeGterm {
             }
         };
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let writes = Arc::new(WriteGate::default());
         let drop_next_list = Arc::new(AtomicBool::new(false));
         let reject_next_commit = Arc::new(AtomicBool::new(false));
         let (events, _) = broadcast::channel(16);
@@ -83,6 +93,7 @@ impl FakeGterm {
             seq: 0,
         }));
         let task = tokio::spawn({
+            let writes = writes.clone();
             let requests = requests.clone();
             let drop_next_list = drop_next_list.clone();
             let reject_next_commit = reject_next_commit.clone();
@@ -101,6 +112,7 @@ impl FakeGterm {
                         accepted = listener.accept() => {
                             let Ok((stream, _)) = accepted else { return };
                             let requests = requests.clone();
+                            let writes = writes.clone();
                             let drop_next_list = drop_next_list.clone();
                             let reject_next_commit = reject_next_commit.clone();
                             let emit_events = events.clone();
@@ -137,6 +149,15 @@ impl FakeGterm {
                                     };
                                     requests.lock().expect("fixture requests").push(request.clone());
                                     let method = request["method"].as_str().unwrap_or("");
+                                    if method == "write" {
+                                        if writes.pause.swap(false, Ordering::SeqCst) {
+                                            writes.received.notify_one();
+                                            writes.release.notified().await;
+                                        }
+                                        if writes.disconnect.swap(false, Ordering::SeqCst) {
+                                            return;
+                                        }
+                                    }
                                     if method == "list" && drop_next_list.swap(false, Ordering::SeqCst) { return }
                                     let mut reply = if method == "hello" {
                                         authenticated = request["control_token"] == TOKEN;
@@ -194,6 +215,7 @@ impl FakeGterm {
             }
         });
         Ok(Self {
+            writes,
             process,
             task,
             requests,
@@ -223,6 +245,22 @@ impl FakeGterm {
 
     pub fn requests(&self) -> Vec<Value> {
         self.requests.lock().expect("fixture requests").clone()
+    }
+
+    pub fn pause_next_write(&self) {
+        self.writes.pause.store(true, Ordering::SeqCst);
+    }
+
+    pub async fn wait_for_write(&self) {
+        self.writes.received.notified().await;
+    }
+
+    pub fn release_write(&self) {
+        self.writes.release.notify_one();
+    }
+
+    pub fn disconnect_next_write(&self) {
+        self.writes.disconnect.store(true, Ordering::SeqCst);
     }
 
     pub fn drop_next_list(&self) {
