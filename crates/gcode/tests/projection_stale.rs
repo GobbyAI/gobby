@@ -14,6 +14,8 @@ mod serial_db {
     // the hub stores project ids as native uuid.
     const PROJECT_ID: &str = "4424ae52-9ce0-52ae-af19-8c3a093c351f";
     const FILE_PATH: &str = "src/lib.rs";
+    /// Bytes of the seeded symbol's file version; byte range 0..19 covers all of it.
+    const PINNED_SOURCE: &str = "pub fn indexed() {}";
     const CODE_INDEX_UUID_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
         0xc0, 0xde, 0x1d, 0xe0, 0x00, 0x00, 0x40, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00,
@@ -172,8 +174,8 @@ mod serial_db {
 
     fn seed_indexed_file(conn: &mut Client, project_id: &str, file_path: &str) {
         seed_project_with_root(conn, project_id, "/tmp/projection-stale");
-        seed_indexed_file_without_project(conn, project_id, file_path);
-        seed_file_state(conn, project_id, file_path);
+        seed_indexed_file_without_project(conn, project_id, file_path, "hash-1");
+        seed_file_state(conn, project_id, file_path, "hash-1");
     }
 
     fn seed_project_with_root(conn: &mut Client, project_id: &str, root_path: impl AsRef<str>) {
@@ -194,14 +196,24 @@ mod serial_db {
         .expect("insert indexed project state");
     }
 
-    fn seed_indexed_file_without_project(conn: &mut Client, project_id: &str, file_path: &str) {
+    fn seed_indexed_file_without_project(
+        conn: &mut Client,
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+    ) {
         let project_uuid = uuid_param(project_id);
         conn.execute(
             "INSERT INTO code_indexed_files
                 (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
                  graph_synced, vectors_synced, graph_sync_attempted_at, indexed_at)
-             VALUES ($1, $2, $3, 'rust', 'hash-1', 1, 19, false, true, NULL, NOW())",
-            &[&row_uuid(project_id, "file"), &project_uuid, &file_path],
+             VALUES ($1, $2, $3, 'rust', $4, 1, 19, false, true, NULL, NOW())",
+            &[
+                &row_uuid(project_id, "file"),
+                &project_uuid,
+                &file_path,
+                &content_hash,
+            ],
         )
         .expect("insert indexed file");
         conn.execute(
@@ -210,19 +222,29 @@ mod serial_db {
                  byte_end, line_start, line_end, signature, docstring, parent_symbol_id,
                  file_content_hash, content_hash, summary, created_at, updated_at)
              VALUES ($1, $2, $3, 'indexed', 'crate::indexed', 'function', 'rust', 0, 19,
-                 1, 1, 'pub fn indexed()', NULL, NULL, 'hash-1', 'hash-1', NULL, NOW(), NOW())",
-            &[&row_uuid(project_id, "symbol"), &project_uuid, &file_path],
+                 1, 1, 'pub fn indexed()', NULL, NULL, $4, $4, NULL, NOW(), NOW())",
+            &[
+                &row_uuid(project_id, "symbol"),
+                &project_uuid,
+                &file_path,
+                &content_hash,
+            ],
         )
         .expect("insert symbol");
     }
 
-    fn seed_file_state(conn: &mut Client, project_id: &str, file_path: &str) {
+    fn seed_file_state(conn: &mut Client, project_id: &str, file_path: &str, content_hash: &str) {
         let machine_id = local_machine_uuid();
         conn.execute(
             "INSERT INTO code_indexed_file_states
                 (machine_id, project_id, file_path, content_hash)
-             VALUES ($1, $2, $3, 'hash-1')",
-            &[&machine_id, &uuid_param(project_id), &file_path],
+             VALUES ($1, $2, $3, $4)",
+            &[
+                &machine_id,
+                &uuid_param(project_id),
+                &file_path,
+                &content_hash,
+            ],
         )
         .expect("insert indexed file state");
     }
@@ -323,9 +345,18 @@ mod serial_db {
                 .to_string(),
             )
             .expect("overlay identity");
+            // The child checkout still holds the pinned version; the parent has moved on.
+            let pinned_hash = gobby_core::indexing::content_hash(PINNED_SOURCE.as_bytes());
+            for (checkout, bytes) in [
+                (root.path(), PINNED_SOURCE),
+                (parent.as_path(), "pub fn indexed() { moved() }\n"),
+            ] {
+                std::fs::create_dir_all(checkout.join("src")).expect("checkout source dir");
+                std::fs::write(checkout.join(FILE_PATH), bytes).expect("checkout source");
+            }
             seed_project_with_root(conn, &source, parent.to_str().expect("parent path"));
-            seed_indexed_file_without_project(conn, &source, FILE_PATH);
-            seed_file_state(conn, &source, FILE_PATH);
+            seed_indexed_file_without_project(conn, &source, FILE_PATH, &pinned_hash);
+            seed_file_state(conn, &source, FILE_PATH, &pinned_hash);
             seed_project_with_root(conn, &overlay, root.path().to_str().expect("child path"));
             conn.execute("INSERT INTO code_indexed_files (id,project_id,file_path,language,content_hash,symbol_count,byte_size,indexed_at)
                 VALUES ($1,$2,$3,'rust','hash-2',0,0,NOW())", &[&row_uuid(&source,"new-file"),&uuid_param(&source),&FILE_PATH]).expect("new source content");
@@ -335,7 +366,7 @@ mod serial_db {
             )
             .expect("source selector moves");
             conn.execute("INSERT INTO code_overlay_pins (machine_id,overlay_project_id,file_path,source_project_id,content_hash)
-                VALUES ($1,$2,$3,$4,'hash-1')", &[&local_machine_uuid(),&uuid_param(&overlay),&FILE_PATH,&uuid_param(&source)]).expect("pin old source");
+                VALUES ($1,$2,$3,$4,$5)", &[&local_machine_uuid(),&uuid_param(&overlay),&FILE_PATH,&uuid_param(&source),&pinned_hash]).expect("pin old source");
             let home = isolated_gobby_home(root.path());
             std::fs::write(
                 home.join("bootstrap.yaml"),
@@ -466,6 +497,13 @@ mod serial_db {
                     &row_uuid(&fixture._source_cleanup.project_id, "symbol").to_string()
                 )),
             "pinned source symbol must be written into child namespace"
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.contains("/embeddings")
+                    && request.contains(&format!("source:\\n{PINNED_SOURCE}"))),
+            "embed input carries the child checkout's pinned bytes"
         );
     }
 }
