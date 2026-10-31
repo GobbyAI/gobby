@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.agents.team_lifecycle import TeamBinding
+from gobby.agents.team_admission_records import TeamBinding
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.mcp_proxy.tools.tasks import create_task_registry

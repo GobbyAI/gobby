@@ -98,7 +98,7 @@ export function buildAgentDefinitionBody(
 
 // Stored-definition keys the create API refuses: response-only is_local plus the
 // body fields the server keeps immutable (endpoint credentials, sync-owned
-// network, run lifetime, spawn/message authority).
+// network, run lifetime, spawn/message authority, permissions, task scopes, routing).
 const CREATE_REFUSED_KEYS = new Set([
   "is_local",
   "api_base",
@@ -116,12 +116,14 @@ const CREATE_REFUSED_KEYS = new Set([
   "capabilities",
   "cold_start_commands",
   "cold_start_counterpart",
+  "implementation_domains",
   "message_sender_capabilities",
   "monitor_report_recipients",
   "required_review_capabilities",
   "respect_task_protections",
   "resumable_team_agents",
   "supplemental_review",
+  "task_categories",
   "task_close_reasons",
   "task_close_scope",
   "task_step_scope",

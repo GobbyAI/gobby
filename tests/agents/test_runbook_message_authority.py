@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 import pytest
 
+from gobby.agents.sync import sync_bundled_agents
 from gobby.sessions.mailbox import MailboxSendResult, MailboxService
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager, AgentDefinitionRow
@@ -468,3 +469,47 @@ async def test_definition_can_follow_a_relaunched_custom_seat(
     )
     assert result.recipient_session_ids == [current]
     assert _metadata(temp_db, result)["redirected_from"] == previous
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sender", "recipient", "admitted"),
+    [
+        ("triage", "assistant", True),
+        ("triage", "archivist", True),
+        ("orchestrator", "archivist", True),
+        ("log-monitor", "assistant", True),
+        ("researcher", "assistant", True),
+        ("reporter", "assistant", True),
+        ("consolidator", "assistant", True),
+        ("developer", "assistant", False),
+        ("developer", "archivist", False),
+    ],
+)
+async def test_bundled_definitions_admit_triage_relays_and_refuse_other_seats(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    sender: str,
+    recipient: str,
+    admitted: bool,
+) -> None:
+    sync_bundled_agents(temp_db)
+    project = sample_project["id"]
+    sender_id = _seat(session_manager, project, f"{sender}-seat", sender)
+    recipient_id = _seat(session_manager, project, f"{recipient}-seat", recipient)
+    mailbox = _mailbox(temp_db, session_manager, _Wakes())
+
+    result = await mailbox.send(
+        from_session_id=sender_id,
+        target="session",
+        target_id=recipient_id,
+        content="relay",
+        wake=None,
+    )
+
+    if admitted:
+        assert result.recipient_session_ids == [recipient_id]
+    else:
+        assert result.error_code == REFUSED
+        assert result.messages == []

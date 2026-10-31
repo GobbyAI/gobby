@@ -21,6 +21,7 @@ from gobby.workflows.git_commit_parsing import (
     parse_git_commit_invocations,
     resolve_commit_inspect_cwd,
 )
+from gobby.workflows.reserved_variables import SRT_RUN_SOCKET_ROOT_VARIABLE
 
 
 def _resolved_write_paths(event_data: Mapping[str, Any] | None, tool_input: Any) -> list[Path]:
@@ -99,6 +100,16 @@ def agent_workspace_write_dirs(variables: Mapping[str, Any]) -> list[str]:
     from gobby.agents.agent_workspaces import agent_workspace_write_dirs as write_dirs
 
     return write_dirs(variables)
+
+
+def temp_write_admitted_dirs(variables: Mapping[str, Any]) -> list[str]:
+    """Directories whose writes block-temp-scratchpad-writes admits: the seat's workspace
+    folders and the Unix-socket root its SRT run was granted."""
+    dirs = agent_workspace_write_dirs(variables)
+    root = variables.get(SRT_RUN_SOCKET_ROOT_VARIABLE)
+    if isinstance(root, str) and root:
+        dirs.append(root)
+    return dirs
 
 
 def workspace_contains(path: Path, directory: Path) -> bool | None:
@@ -321,4 +332,5 @@ PATH_CONDITION_HELPERS: dict[str, Callable[..., Any]] = {
     "agent_workspace_write_dirs": agent_workspace_write_dirs,
     "agent_workspace_write_violation": agent_workspace_write_violation,
     "temp_scratchpad_write": temp_scratchpad_write,
+    "temp_write_admitted_dirs": temp_write_admitted_dirs,
 }

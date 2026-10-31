@@ -385,3 +385,65 @@ def test_turn_settled_observer_covers_claude_codex_and_grok(tmp_path: Path) -> N
     assert grok() is True
     events.unlink()
     assert grok() is None
+
+
+def _timestamped_claude_row(content: str, timestamp: str, *, meta: bool = False) -> bytes:
+    record: dict[str, object] = {
+        "type": "user",
+        "timestamp": timestamp,
+        "message": {"role": "user", "content": content},
+    }
+    if meta:
+        record["isMeta"] = True
+    return _claude_row(record)
+
+
+def _local_command_rows(timestamp: str) -> bytes:
+    return (
+        _timestamped_claude_row(
+            "<local-command-caveat>Caveat</local-command-caveat>", timestamp, meta=True
+        )
+        + _timestamped_claude_row("<command-name>/goal</command-name>", timestamp)
+        + _timestamped_claude_row(
+            "<local-command-stdout>Goal set</local-command-stdout>", timestamp
+        )
+    )
+
+
+def test_claude_cursor_reports_when_the_latest_local_command_ran(tmp_path: Path) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_bytes(
+        _timestamped_claude_row("earlier prompt", "2026-10-30T21:00:00.000Z")
+        + _local_command_rows("2026-10-30T22:00:01.000Z")
+    )
+
+    cursor = ClaudeTranscriptCursor.at_eof(transcript)
+
+    assert cursor.latest_local_command_at() == datetime(2026, 10, 30, 22, 0, 1, tzinfo=UTC)
+
+
+def test_claude_cursor_ignores_a_meta_caveat_without_a_command(tmp_path: Path) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_bytes(
+        _timestamped_claude_row(
+            "<local-command-caveat>Caveat</local-command-caveat>",
+            "2026-10-30T22:00:01.000Z",
+            meta=True,
+        )
+    )
+
+    cursor = ClaudeTranscriptCursor.at_eof(transcript)
+
+    assert cursor.latest_local_command_at() is None
+
+
+def test_claude_cursor_stops_at_a_prompt_typed_after_the_local_command(tmp_path: Path) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_bytes(
+        _local_command_rows("2026-10-30T22:00:01.000Z")
+        + _timestamped_claude_row("typed after", "2026-10-30T22:00:05.000Z")
+    )
+
+    cursor = ClaudeTranscriptCursor.at_eof(transcript)
+
+    assert cursor.latest_local_command_at() is None
