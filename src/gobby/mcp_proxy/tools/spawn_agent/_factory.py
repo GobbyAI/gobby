@@ -21,6 +21,7 @@ from gobby.hub.machine_routing import RoutedMachine
 from gobby.hub.node_client import NodeCommandError
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.project_context import get_project_context
+from gobby.utils.uuid_validation import parse_uuid_reference
 from gobby.workflows.agent_resolver import AgentResolutionError
 from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -59,6 +60,8 @@ _PROJECT_CONTEXT_ERRORS: tuple[type[Exception], ...] = (
     ValueError,
 )
 _UNRESOLVED_PARENT_PROJECT = "_unresolved_parent_project"
+# Keys a launch may carry in seat_context. team_id is only checked against the caller's scope.
+SEAT_CONTEXT_KEYS = frozenset({"worktree", "first_job", "team_id"})
 
 
 def _project_id_from_context(ctx: dict[str, Any] | None) -> str | None:
@@ -395,8 +398,10 @@ def create_spawn_agent_registry(
             machine: Machine that runs the agent. Defaults to the caller's machine; another
                 machine routes the run to its node. Refused with ``machine_not_owned`` unless
                 the caller owns that machine.
-            seat_context: Prompt-only launch assignments: worktree and first_job.
-                Cannot set workflow controls or runtime identity.
+            seat_context: Prompt-only launch assignments: worktree and first_job. team_id names
+                the team the seat joins; it must be the caller's own dispatch scope, and the
+                caller's binding still decides that scope. Cannot set workflow controls or
+                runtime identity.
             title: Automatic session and pane title when no task is claimed. Returns
                 after task close or clear; existing manual titles take precedence.
 
@@ -404,7 +409,7 @@ def create_spawn_agent_registry(
             Dict with success status, run_id, child_session_id, isolation metadata
         """
         if seat_context is not None:
-            if set(seat_context) - {"worktree", "first_job"}:
+            if set(seat_context) - SEAT_CONTEXT_KEYS:
                 return {"success": False, "error": "Unknown seat_context assignment key"}
 
         # Resolve parent_session_id to UUID (accepts #N, N, UUID, or prefix)
@@ -512,6 +517,15 @@ def create_spawn_agent_registry(
                 )
             except TeamAdmissionRefused as exc:
                 return {"success": False, "error": str(exc), "error_code": exc.code}
+        if seat_context is not None and "team_id" in seat_context:
+            # The named team must be the scope the caller's binding resolved to; it never sets it.
+            named_team = parse_uuid_reference(seat_context["team_id"])
+            if dispatch is None or named_team is None or str(named_team) != dispatch.team_id:
+                return {
+                    "success": False,
+                    "error": "seat_context team_id must name the caller's own team",
+                    "error_code": "team_scope",
+                }
         if dispatch is not None:
             resolved_parent_session_id = dispatch.parent_session_id
             branch_name, base_branch = dispatch.branch_name, dispatch.base_branch

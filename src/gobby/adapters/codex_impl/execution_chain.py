@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
+from gobby.adapters.codex_impl.cell_shell_reach import may_reach_shell, static_code
 from gobby.config.validation_detection import classify_validation_segments
 from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
 from gobby.hooks.normalization import normalize_tool_display_fields
@@ -70,9 +71,10 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
         return command if isinstance(command, str) and command else None
     if not isinstance(arguments, str):
         return None
-    if len(_EXEC_COMMAND_CALL_RE.findall(arguments)) != 1:
+    call = _single_exec_command_argument(arguments)
+    if call is None:
         return None
-    matches = _EXEC_COMMAND_LITERAL_RE.findall(arguments)
+    matches = _EXEC_COMMAND_LITERAL_RE.findall(call)
     if len(matches) != 1:
         return None
     scaffold = arguments.replace(matches[0], '""', 1)
@@ -83,6 +85,18 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
     except (TypeError, ValueError):
         return None
     return command if isinstance(command, str) and command else None
+
+
+def _single_exec_command_argument(arguments: str) -> str | None:
+    """Return the argument text of the one exec_command call that is code, not string text."""
+    code = static_code(arguments)
+    if code is None:
+        return None
+    calls = list(_EXEC_COMMAND_CALL_RE.finditer(code))
+    if len(calls) != 1:
+        return None
+    opened = _call_argument(arguments, calls[0].end() - 1)
+    return opened[0] if opened is not None else None
 
 
 def _call_argument(source: str, open_paren: int) -> tuple[str, int] | None:
@@ -152,7 +166,9 @@ def validate_functions_exec_wrapper(arguments: Any) -> str | None:
         return validate_functions_exec_wrapper(arguments["arguments"])
     if not isinstance(arguments, str):
         return None
-    call_count = len(_EXEC_COMMAND_CALL_RE.findall(arguments))
+    code = static_code(arguments)
+    # Ambiguous syntax counts every raw occurrence, so a hidden call still refuses.
+    call_count = len(_EXEC_COMMAND_CALL_RE.findall(arguments if code is None else code))
     if call_count == 0:
         return None
     if call_count > 1:
@@ -645,7 +661,9 @@ class ExecutionChainCorrelator:
                 typed = extract_functions_write_stdin_command(arguments)
                 if execution is not None and typed:
                     execution = replace(execution, literal_command=typed)
-            elif allow_unattributed:
+            # Only a cell that can start a shell blocks cwd proof. An MCP-only cell that
+            # merely mentions exec_command in its text stays out of the chain.
+            elif allow_unattributed and may_reach_shell(arguments):
                 execution = PendingExecution(call_id)
         elif name in WRITE_STDIN_NAMES:
             session_id = extract_direct_write_stdin_session_id(arguments)
@@ -840,6 +858,14 @@ class ExecutionChainCorrelator:
         data["_tool_outcome_locked"] = True
         normalize_tool_display_fields(data)
         return data
+
+    def abandon_unresolved_calls(self) -> None:
+        """Drop calls whose output a compaction boundary discarded.
+
+        Cells and sessions keep their state: a yielded cell or running process still
+        has its own output or session id and resolves later.
+        """
+        self._calls.clear()
 
     def snapshot_state(self) -> dict[str, Any]:
         return {
