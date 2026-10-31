@@ -1924,6 +1924,23 @@ async def test_reviewer_failed_claim_keeps_await(temp_db: HubDatabase) -> None:
     assert (run.step, run.vars["fixing"]) == ("await", False)
 
 
+async def test_reviewer_in_await_releases_its_own_claim_without_fixing(
+    temp_db: HubDatabase,
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer", definition=_bundled_code_reviewer())
+    await run.load(*run.vars["required_skills"])
+    task = run.task(owner=SESSION_ID)
+    release = {
+        "task_id": task.id,
+        "holder_session_ref": SESSION_ID,
+        "reason": "Withdrawn before review",
+    }
+    assert run.step == "await"
+    assert await run.admits("gobby-tasks", "release_task_claim", release)
+    await run.call("gobby-tasks", "release_task_claim", release, {"success": True})
+    assert (run.step, run.vars["fixing"]) == ("await", False)
+
+
 async def test_developer_without_a_commit_stays_in_implement_on_no_work_bounce(
     temp_db: HubDatabase,
 ) -> None:
