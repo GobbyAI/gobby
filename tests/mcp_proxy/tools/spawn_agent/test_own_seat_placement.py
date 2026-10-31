@@ -98,16 +98,20 @@ def _restore_real_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def _manager_spawns_developer(
-    manager: str, h: spawn_placement._Harness, leaf: Task, placement: dict[str, Any]
+    manager: str,
+    h: spawn_placement._Harness,
+    leaf: Task,
+    placement: dict[str, Any],
+    team_id: str,
 ) -> dict[str, Any]:
+    # The procedure's own-team route: a primary seat joins the team tree, never a pod checkout.
     arguments: dict[str, Any] = {
         "agent": "developer",
         "task_id": leaf.id,
         "prompt": "Work the leaf",
         "provider": "claude",
         "model": "claude-sonnet-5",
-        # A team seat joins its team's tree; "worktree" asks for a Dev Pod instead.
-        "checkout_mode": "none",
+        "seat_context": {"team_id": team_id},
         "placement": placement,
         "project_path": h.project_path,
     }
@@ -186,7 +190,9 @@ async def test_epic_manager_fresh_seat_stays_refused_outside_its_team(
             "axis": "right",
             "title": "developer",
         }
-        result = await _manager_spawns_developer(team.manager, h, leaf, {"split": split})
+        result = await _manager_spawns_developer(
+            team.manager, h, leaf, {"split": split}, team.binding.team_id
+        )
         assert result["success"] is False, (title, result)
         assert result["placement_error"] == "forbidden", (title, result)
     assert h.launches == []
@@ -224,7 +230,9 @@ async def test_epic_manager_spawn_seats_its_developer_in_its_own_team_tab(
         "title": "developer",
     }
 
-    reply = await _manager_spawns_developer(team.manager, h, leaf, {"split": split})
+    reply = await _manager_spawns_developer(
+        team.manager, h, leaf, {"split": split}, team.binding.team_id
+    )
 
     assert reply["success"] is True, reply
     tab_panes = [
