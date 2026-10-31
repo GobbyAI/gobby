@@ -1081,3 +1081,179 @@ fn live_hotspot_queries_return_exact_fixture_rows() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+mod hotspot_snapshot_contract {
+    use crate::index::indexer::IndexDegradation;
+    use crate::visibility::graph_versions::{AdmittedGraphVersions, AdmittedNamespace};
+
+    use super::super::hotspot_snapshot::{
+        SNAPSHOT_FORMAT_VERSION, StoredSnapshot, admitted_digest, decode_payload, encode_payload,
+        invalidate_after_write, invalidate_snapshots_query, refresh_failure_degradation,
+        stored_hotspots_for,
+    };
+    use super::super::types::{GraphHotspot, GraphReportHotspots};
+
+    /// One namespace whose paths come from its keys; `endpoints` is the shared set.
+    fn namespace(project: &str, keys: &[&str], endpoints: &[&str]) -> AdmittedNamespace {
+        AdmittedNamespace {
+            project_id: project.to_string(),
+            versions: AdmittedGraphVersions {
+                keys: keys.iter().map(|key| key.to_string()).collect(),
+                paths: keys
+                    .iter()
+                    .map(|key| key.split('|').next().unwrap().to_string())
+                    .collect(),
+                endpoints: endpoints.iter().map(|key| key.to_string()).collect(),
+            },
+        }
+    }
+
+    fn hotspot(id: &str, degree: usize) -> GraphHotspot {
+        GraphHotspot {
+            id: id.to_string(),
+            name: id.to_string(),
+            node_type: "symbol".to_string(),
+            degree,
+            incoming: degree / 2,
+            outgoing: degree - degree / 2,
+            file_path: Some("src/a.py".to_string()),
+        }
+    }
+
+    #[test]
+    fn snapshot_digest_moves_when_a_key_moves_between_namespaces() {
+        let key = "src/a.py|h1";
+        let overlay_holds = [
+            namespace("overlay", &[key], &[key]),
+            namespace("source", &[], &[key]),
+        ];
+        let source_holds = [
+            namespace("overlay", &[], &[key]),
+            namespace("source", &[key], &[key]),
+        ];
+
+        let before = admitted_digest(&overlay_holds, false, SNAPSHOT_FORMAT_VERSION);
+        let after = admitted_digest(&source_holds, false, SNAPSHOT_FORMAT_VERSION);
+
+        assert_ne!(
+            before, after,
+            "a key that moves between namespaces must change the digest"
+        );
+        assert_eq!(
+            before,
+            admitted_digest(&overlay_holds, false, SNAPSHOT_FORMAT_VERSION),
+            "equal admitted sets must give an equal digest"
+        );
+    }
+
+    #[test]
+    fn snapshot_digest_changes_with_format_version() {
+        let namespaces = [namespace("overlay", &["src/a.py|h1"], &["src/a.py|h1"])];
+
+        let v1 = admitted_digest(&namespaces, false, 1);
+        let v2 = admitted_digest(&namespaces, false, 2);
+
+        assert_ne!(v1, v2, "a format bump must invalidate every stored digest");
+    }
+
+    #[test]
+    fn snapshot_digest_changes_with_pending_projection() {
+        let namespaces = [namespace("overlay", &["src/a.py|h1"], &["src/a.py|h1"])];
+
+        assert_ne!(
+            admitted_digest(&namespaces, false, SNAPSHOT_FORMAT_VERSION),
+            admitted_digest(&namespaces, true, SNAPSHOT_FORMAT_VERSION),
+            "a pending pinned projection must change the digest"
+        );
+    }
+
+    #[test]
+    fn stored_hotspots_serve_only_a_matching_digest_format_and_top_n() {
+        let hotspots = GraphReportHotspots {
+            high_degree_symbols: vec![hotspot("sym:parse", 9), hotspot("sym:lex", 4)],
+            ..GraphReportHotspots::default()
+        };
+        let stored = StoredSnapshot {
+            format: SNAPSHOT_FORMAT_VERSION,
+            top_n: 10,
+            digest: "digest-a".to_string(),
+            payload: encode_payload(&hotspots),
+        };
+
+        assert_eq!(
+            stored_hotspots_for(Some(&stored), "digest-a", 10),
+            Some(hotspots),
+            "a matching digest, format and top-n serves the stored hotspots"
+        );
+        assert_eq!(stored_hotspots_for(Some(&stored), "digest-b", 10), None);
+        assert_eq!(stored_hotspots_for(Some(&stored), "digest-a", 20), None);
+        assert_eq!(stored_hotspots_for(None, "digest-a", 10), None);
+    }
+
+    #[test]
+    fn stored_payload_round_trips_hotspots() {
+        let hotspots = GraphReportHotspots {
+            high_degree_files: vec![hotspot("file:src/a.py", 3)],
+            high_degree_symbols: vec![hotspot("sym:parse", 9)],
+            high_degree_modules: vec![hotspot("mod:api", 12)],
+            incoming_call_hotspots: vec![hotspot("sym:parse", 5)],
+        };
+
+        assert_eq!(decode_payload(&encode_payload(&hotspots)), Some(hotspots));
+        assert_eq!(decode_payload("not json"), None);
+    }
+
+    #[test]
+    fn invalidation_deletes_every_snapshot_naming_the_written_project() {
+        let (query, params) = invalidate_snapshots_query("source-1");
+
+        assert!(query.contains("DELETE s"), "{query}");
+        assert!(query.contains("$project IN s.namespaces"), "{query}");
+        assert_eq!(params.get("project").map(String::as_str), Some("source-1"));
+    }
+
+    #[test]
+    fn invalidation_runs_after_a_failed_write_and_keeps_the_writer_error() {
+        let mut invalidated = Vec::new();
+
+        let result: anyhow::Result<()> = invalidate_after_write(
+            "overlay-1",
+            Err(anyhow::anyhow!("write failed mid-batch")),
+            |project| {
+                invalidated.push(project.to_string());
+                Ok(())
+            },
+        );
+
+        assert_eq!(invalidated, vec!["overlay-1".to_string()]);
+        let message = format!("{:#}", result.expect_err("writer error must surface"));
+        assert!(message.contains("write failed mid-batch"), "{message}");
+    }
+
+    #[test]
+    fn invalidation_error_surfaces_after_a_successful_write() {
+        let result = invalidate_after_write("overlay-1", Ok(7usize), |_| {
+            Err(anyhow::anyhow!("invalidation refused"))
+        });
+
+        let message = format!("{:#}", result.expect_err("invalidation error must surface"));
+        assert!(message.contains("invalidation refused"), "{message}");
+    }
+
+    #[test]
+    fn snapshot_write_failure_leaves_index_successful_with_visible_note() {
+        assert_eq!(refresh_failure_degradation(Ok(())), None);
+
+        let degradation =
+            refresh_failure_degradation(Err(anyhow::anyhow!("snapshot write refused")));
+
+        assert!(
+            matches!(
+                &degradation,
+                Some(IndexDegradation::HotspotSnapshotFailed { message })
+                    if message.contains("snapshot write refused")
+            ),
+            "{degradation:?}"
+        );
+    }
+}
