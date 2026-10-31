@@ -1,22 +1,32 @@
 mod mock_daemon;
 
+#[path = "mock_daemon/draw.rs"]
+mod draw;
+
+use draw::DrawRecorder;
 use gobby_client::app::{
-    apply_live_menu_action, build_menu, plan_arrange, sync_live_chrome, ArrangeLayout,
-    ArrangeTarget, ContextMenuKind, MenuAction, ModalOutcome, Submenu,
+    apply_live_menu_action, build_menu, plan_arrange, run_live_loop, sync_live_chrome,
+    ArrangeLayout, ArrangeTarget, ContextMenuKind, MenuAction, ModalOutcome, Submenu,
 };
 use gobby_client::daemon::{LayoutAxis, LayoutNode, LiveDaemon, WorkspaceOp};
+use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::dialogs::{render_dialog, Dialog};
 use gobby_client::ui::menu_bar::MenuBarMenu;
 use gobby_client::ui::status::ToastKind;
 use gobby_client::ui::{Chrome, Mode, WorkspaceView};
 use gobby_client::Workspace;
+use gobby_terminal::input::TerminalKey;
+use gobby_terminal::raw_input::RawInputEvent;
 use mock_daemon::MockDaemon;
 use ratatui::backend::TestBackend;
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 use serde_json::json;
+use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel;
+use tokio::time::timeout;
 
 const WINDOW: ContextMenuKind = ContextMenuKind::MenuBar(MenuBarMenu::Window);
 
@@ -79,6 +89,12 @@ async fn move_to_tab_menu_filters_destinations_and_moves_the_clicked_pane() {
     )
     .await
     .expect("move selected pane");
+    wait_within(Duration::from_secs(5), "the pane move", || {
+        mock.workspace_requests()
+            .iter()
+            .any(|op| op["op"] == "pane.move")
+    })
+    .await;
     let moves: Vec<_> = mock
         .workspace_requests()
         .into_iter()
@@ -129,6 +145,18 @@ fn layout_requests(mock: &MockDaemon) -> Vec<serde_json::Value> {
         .into_iter()
         .filter(|request| matches!(request["op"].as_str(), Some("pane.move" | "pane.resize")))
         .collect()
+}
+
+/// Yields until `done` holds. The chained job that issues the ops runs on this
+/// runtime, so each yield lets it run; past `deadline` the test fails.
+async fn wait_within(deadline: Duration, what: &str, mut done: impl FnMut() -> bool) {
+    timeout(deadline, async {
+        while !done() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {what}"));
 }
 
 fn panes(count: usize) -> Vec<String> {
@@ -339,6 +367,10 @@ async fn tab_and_pane_menus_arrange_their_own_tab() {
         )
         .await;
         assert_eq!(chrome.active_index(), 1, "{opener}: the arranged tab shows");
+        wait_within(Duration::from_secs(5), "the layout ops", || {
+            !layout_requests(&mock).is_empty()
+        })
+        .await;
         let ops = layout_requests(&mock);
         assert!(!ops.is_empty(), "{opener}: the layout went out");
         for op in ops.iter().filter(|op| op["op"] == "pane.move") {
@@ -481,10 +513,38 @@ fn cell_sizes(node: &LayoutNode, width: f64, height: f64, out: &mut Vec<(f64, f6
     }
 }
 
+/// Owned shells the 2×3 grid's six splits receive, in creation order.
+const GRID_SHELLS: [&str; 6] = [
+    "10000000-0000-4000-8000-000000000001",
+    "10000000-0000-4000-8000-000000000002",
+    "10000000-0000-4000-8000-000000000003",
+    "10000000-0000-4000-8000-000000000004",
+    "10000000-0000-4000-8000-000000000005",
+    "10000000-0000-4000-8000-000000000006",
+];
+
+/// How long the grid chain may take to land on the local mock.
+const GRID_DEADLINE: Duration = Duration::from_secs(10);
+
+/// Whether the loop has sent a viewport for `terminal_id` over the websocket.
+fn viewport_sent(mock: &MockDaemon, terminal_id: &str) -> bool {
+    mock.requests()
+        .into_iter()
+        .filter(|request| request.method == "WS")
+        .filter_map(|request| request.body)
+        .any(|body| {
+            body.get("type") == Some(&json!("terminal_set_viewport"))
+                && body["terminal_id"] == terminal_id
+        })
+}
+
 #[tokio::test]
 async fn create_grid_spawns_rows_times_cols_shells_and_evens_them() {
     let mock = MockDaemon::start("local-token").await;
     mock.seed_workspace("project-1", &[(&["existing"], "existing")]);
+    for id in GRID_SHELLS {
+        mock.queue_owned_terminal_id(id);
+    }
     let page = json!({
         "items": [{"terminal_id": "existing", "backend": "native", "state": "live"}],
         "next_cursor": null,
@@ -512,16 +572,50 @@ async fn create_grid_spawns_rows_times_cols_shells_and_evens_them() {
         .clone();
     let mut chrome = Chrome::dark();
     sync_live_chrome(&mut workspace, &mut chrome);
+    chrome.mode = Mode::ProjectDialog;
+    chrome.dialog = Some(Dialog::NewGrid { rows: 2, cols: 3 });
 
-    apply_live_menu_action(
-        &mut workspace,
-        &mut chrome,
-        &unbounded_channel().0,
-        ContextMenuKind::MenuBar(MenuBarMenu::Window),
-        MenuAction::NewGrid { rows: 2, cols: 3 },
-    )
-    .await
-    .expect("create owned grid");
+    let (backend, _draws, _frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let driver = async {
+        input_tx
+            .send(RawInputEvent::Key(TerminalKey::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            )))
+            .await
+            .expect("live loop input");
+        wait_within(GRID_DEADLINE, "six grid creates", || {
+            mock.workspace_requests()
+                .iter()
+                .filter(|op| matches!(op["op"].as_str(), Some("tab.create" | "pane.split")))
+                .count()
+                == 6
+        })
+        .await;
+        // Only the landed grid outcome makes its tab active, so a viewport for
+        // each shell proves the loop applied it.
+        for id in GRID_SHELLS {
+            wait_within(GRID_DEADLINE, "grid shell viewport", || {
+                viewport_sent(&mock, id)
+            })
+            .await;
+        }
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("create owned grid");
 
     let operations = mock.workspace_requests();
     let creates: Vec<_> = operations
@@ -535,8 +629,10 @@ async fn create_grid_spawns_rows_times_cols_shells_and_evens_them() {
     assert_eq!(creates[2]["axis"], "horizontal");
     assert!(creates[3..].iter().all(|op| op["axis"] == "vertical"));
 
-    let snapshot = workspace
-        .daemon()
+    // The loop shut its daemon down on exit, so the mock is read through a fresh client.
+    let snapshot = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect for the grid snapshot")
         .workspace_snapshot(None, &workspace_id)
         .await
         .expect("mock grid snapshot");
@@ -545,10 +641,7 @@ async fn create_grid_spawns_rows_times_cols_shells_and_evens_them() {
         .iter()
         .find(|tab| tab.title.as_deref() == Some("new grid"))
         .expect("new grid tab");
-    workspace
-        .drain_live_events()
-        .await
-        .expect("apply grid creation events");
+    // The loop applied the grid's events while it ran; its daemon is shut down now.
     sync_live_chrome(&mut workspace, &mut chrome);
     assert_eq!(
         chrome.active_tab().expect("active tab after grid").id,

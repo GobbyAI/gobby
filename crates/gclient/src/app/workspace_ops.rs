@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use super::tab_sort::title_cmp;
 use super::Workspace;
 use crate::daemon::{
-    Daemon, PaneRow, Snapshot, TabRow, WorkspaceEvent, WorkspaceEventKind, WorkspaceRow,
-    WorkspaceSnapshot,
+    Daemon, Generation, PaneRow, Snapshot, TabRow, WorkspaceEvent, WorkspaceEventKind,
+    WorkspaceRow, WorkspaceSnapshot,
 };
 
 /// The attached workspace's rows, keyed by daemon id.
@@ -22,11 +22,17 @@ pub struct WorkspaceModel {
     pub watermark: Snapshot,
     /// Bumped by every change, so a viewer knows when to re-project.
     generation: u64,
+    /// Snapshot installs, independent of the daemon's mutation watermark.
+    pub(crate) install: u64,
+    /// Connection whose snapshot established this model's authority.
+    pub(crate) installed_generation: Generation,
 }
 
 impl WorkspaceModel {
     pub fn from_snapshot(snapshot: WorkspaceSnapshot) -> Self {
         Self {
+            install: 1,
+            installed_generation: Generation(0),
             workspace: snapshot.workspace,
             tabs: snapshot
                 .tabs
@@ -96,6 +102,7 @@ impl WorkspaceModel {
     /// Continue `previous`'s generation count, so a viewer that projected
     /// the old model sees this one as newer.
     pub fn succeed(&mut self, previous: &WorkspaceModel) {
+        self.install = previous.install.wrapping_add(1);
         self.generation = previous.generation + 1;
     }
 
@@ -172,8 +179,24 @@ impl<D: Daemon> Workspace<D> {
     }
 
     /// Replace the workspace model with a fresh `workspace_attach` snapshot.
+    ///
+    /// A snapshot older than the installed model of the same workspace, daemon
+    /// epoch and connection is dropped: the model already holds every event up
+    /// to its newer watermark, so installing the older rows would lose them.
+    /// An equal watermark still reinstalls.
     pub fn apply_workspace_snapshot(&mut self, snapshot: WorkspaceSnapshot) {
+        let generation = self.daemon.subscribe().0.generation;
+        let older = self.workspace_model.as_ref().is_some_and(|previous| {
+            previous.installed_generation == generation
+                && previous.workspace.id == snapshot.workspace.id
+                && previous.watermark.daemon_epoch == snapshot.snapshot.daemon_epoch
+                && snapshot.snapshot.seq < previous.watermark.seq
+        });
+        if older {
+            return;
+        }
         let mut model = WorkspaceModel::from_snapshot(snapshot);
+        model.installed_generation = generation;
         if let Some(previous) = &self.workspace_model {
             model.succeed(previous);
         }

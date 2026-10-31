@@ -1,41 +1,27 @@
 //! Client-side layout plans for daemon workspace tabs.
 
+use serde_json::Value;
+use tokio::sync::mpsc::UnboundedSender;
+
 use crate::app::{ArrangeLayout, ArrangeTarget, PaneId};
-use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceErrorCode, WorkspaceOp};
+use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
 use crate::Workspace;
 
 use super::actions::activate_live_tab;
-use super::control::focus_live_pane;
+use super::daemon_ops::{op_tag, run_op};
+use super::jobs::{spawn_job, JobOutcome, JobResult};
 use super::workspace_actions::daemon_pane_id;
 
-/// Send `op` and wait for it; `true` when the daemon accepted it. A refusal
-/// lands on the status line; a close refused `not_found` is done. Awaited
-/// inline until A4b (#23232) moves arrange and the grid off the loop.
-async fn send_op(
-    workspace: &Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    op: WorkspaceOp,
-) -> Result<bool, FrameError> {
-    let closing = matches!(
-        op,
-        WorkspaceOp::PaneClose { .. } | WorkspaceOp::TabClose { .. }
-    );
-    match workspace.daemon().workspace_op(op).await {
-        Ok(_) => Ok(true),
-        Err(DaemonError::Workspace(error))
-            if closing && error.code == WorkspaceErrorCode::NotFound =>
-        {
-            Ok(true)
-        }
-        Err(DaemonError::Workspace(error)) => {
-            chrome.notify(Toast::warning(error.reason));
-            Ok(false)
-        }
-        Err(error) => Err(error.into()),
+/// Run `ops` in order on `daemon`. The first refusal ends the chain and is
+/// its result; a close refused `not_found` is done, as in `run_op`.
+async fn send_ops(daemon: &LiveDaemon, ops: Vec<WorkspaceOp>) -> Result<(), DaemonError> {
+    for op in ops {
+        run_op(daemon, op).await?;
     }
+    Ok(())
 }
 
 fn push_move(ops: &mut Vec<WorkspaceOp>, tab_id: &str, pane: &str, beside: &str, axis: LayoutAxis) {
@@ -180,6 +166,7 @@ fn arrange_panes(chrome: &Chrome, target: &ArrangeTarget) -> Result<(usize, Vec<
 pub(super) async fn apply_arrange(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     layout: ArrangeLayout,
     target: &ArrangeTarget,
 ) -> Result<(), FrameError> {
@@ -200,28 +187,28 @@ pub(super) async fn apply_arrange(
             return Ok(());
         }
     };
-    let focused = chrome.focused_pane();
-    for op in plan_arrange(layout, &target.tab, &panes) {
-        if !send_op(workspace, chrome, op).await? {
-            return Ok(());
+    let focus = chrome.focused_pane();
+    let ops = plan_arrange(layout, &target.tab, &panes);
+    let daemon = workspace.daemon().clone();
+    spawn_job(outcomes, op_tag(&daemon), async move {
+        JobResult::Arranged {
+            focus,
+            result: send_ops(&daemon, ops).await,
         }
-    }
-    if let Some(pane) = focused {
-        chrome.focus_pane(pane);
-        focus_live_pane(workspace, pane);
-    }
+    });
     Ok(())
 }
 
 /// Move `pane` to the end of `tab`, which the move menu named when it was
 /// built; the window stays on its current tab. A refusal, such as a tab of
 /// another project, lands on the status line.
-pub(super) async fn move_pane_to_tab(
-    workspace: &mut Workspace<LiveDaemon>,
+pub(super) fn move_pane_to_tab(
+    workspace: &Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     pane: PaneId,
     tab: &str,
-) -> Result<(), FrameError> {
+) {
     let slot = chrome
         .tabs()
         .tabs
@@ -229,7 +216,7 @@ pub(super) async fn move_pane_to_tab(
         .find_map(|candidate| candidate.slot_for(pane));
     let Some(daemon_pane) = slot.and_then(|slot| daemon_pane_id(chrome, slot)) else {
         chrome.notify(Toast::warning("Cannot move: that pane has closed"));
-        return Ok(());
+        return;
     };
     if !chrome
         .tabs()
@@ -238,7 +225,7 @@ pub(super) async fn move_pane_to_tab(
         .any(|candidate| candidate.id == tab)
     {
         chrome.notify(Toast::warning("Cannot move: that tab has closed"));
-        return Ok(());
+        return;
     }
     let op = WorkspaceOp::PaneMove {
         pane: daemon_pane,
@@ -247,164 +234,125 @@ pub(super) async fn move_pane_to_tab(
         axis: None,
         node: None,
     };
-    send_op(workspace, chrome, op).await?;
-    Ok(())
+    let daemon = workspace.daemon().clone();
+    spawn_job(outcomes, op_tag(&daemon), async move {
+        JobResult::Ops {
+            unplaced: None,
+            result: run_op(&daemon, op).await,
+        }
+    });
 }
 
 /// Build a grid with workspace-owned shells, so closing its panes also stops
-/// their terminals. The daemon returns each new pane ID for the next split.
-pub(super) async fn create_grid(
-    workspace: &mut Workspace<LiveDaemon>,
+/// their terminals. The chain runs as one job: each split starts from the pane
+/// ID the previous reply returned.
+pub(super) fn create_grid(
+    workspace: &Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     rows: u8,
     cols: u8,
-) -> Result<(), FrameError> {
+) {
     let Some(model) = workspace.workspace_model() else {
         chrome.notify(Toast::warning("Cannot create grid: workspace unavailable"));
-        return Ok(());
+        return;
     };
     let workspace_id = model.workspace.id.clone();
     let Some(project_id) = workspace.project_id().map(str::to_owned) else {
         chrome.notify(Toast::warning("Cannot create grid: no project selected"));
-        return Ok(());
+        return;
     };
     let rows = rows.clamp(1, 4) as usize;
     let cols = cols.clamp(1, 4) as usize;
-    let Some(mut head) = create_owned_pane(
-        workspace,
-        chrome,
-        WorkspaceOp::TabCreate {
-            workspace: workspace_id,
-            project_id,
-            worktree_id: None,
-            title: Some("new grid".to_owned()),
-            terminal_id: None,
-            cwd: None,
-            node: None,
-        },
-        true,
-    )
-    .await?
-    else {
-        return Ok(());
+    let create = WorkspaceOp::TabCreate {
+        workspace: workspace_id,
+        project_id: project_id.clone(),
+        worktree_id: None,
+        title: Some("new grid".to_owned()),
+        terminal_id: None,
+        cwd: None,
+        node: None,
     };
+    let daemon = workspace.daemon().clone();
+    spawn_job(outcomes, op_tag(&daemon), async move {
+        let mut tab = None;
+        let result = grid_chain(&daemon, create, rows, cols, &mut tab).await;
+        JobResult::Grid {
+            project: project_id,
+            tab,
+            result,
+        }
+    });
+}
+
+/// One grid's chain: the tab, its splits, then their sizes. `tab` takes the
+/// new tab as soon as its reply names it, so a later refusal still focuses it.
+async fn grid_chain(
+    daemon: &LiveDaemon,
+    create: WorkspaceOp,
+    rows: usize,
+    cols: usize,
+    tab: &mut Option<String>,
+) -> Result<(), DaemonError> {
+    let reply = daemon.workspace_op(create).await?;
+    let mut head = reply_id(&reply.result, "panes", "Grid creation returned no pane")?;
+    *tab = Some(reply_id(
+        &reply.result,
+        "tabs",
+        "Grid creation returned no tab",
+    )?);
     let mut columns = vec![head.clone()];
     for _ in 1..cols {
-        let Some(created) = create_owned_pane(
-            workspace,
-            chrome,
-            WorkspaceOp::PaneSplit {
-                pane: head,
-                axis: LayoutAxis::Horizontal,
-                terminal_id: None,
-                cwd: None,
-                node: None,
-            },
-            false,
-        )
-        .await?
-        else {
-            return Ok(());
-        };
-        head = created.clone();
-        columns.push(created);
+        head = split_pane(daemon, &head, LayoutAxis::Horizontal).await?;
+        columns.push(head.clone());
     }
     // Once vertical splits are added, a head's nearest split is vertical.
     // Size the columns first, while their nearest split is horizontal.
+    let mut sizes = Vec::new();
     for (index, pane) in columns.iter().take(cols - 1).enumerate() {
-        if !send_op(
-            workspace,
-            chrome,
-            WorkspaceOp::PaneResize {
-                pane: pane.clone(),
-                ratio: 1.0 / (cols - index) as f64,
-                node: None,
-            },
-        )
-        .await?
-        {
-            return Ok(());
-        }
+        push_resize(&mut sizes, pane, 1.0 / (cols - index) as f64);
     }
+    send_ops(daemon, sizes).await?;
     for column in columns {
         let mut current = column.clone();
         let mut panes = vec![column];
         for _ in 1..rows {
-            let Some(created) = create_owned_pane(
-                workspace,
-                chrome,
-                WorkspaceOp::PaneSplit {
-                    pane: current,
-                    axis: LayoutAxis::Vertical,
-                    terminal_id: None,
-                    cwd: None,
-                    node: None,
-                },
-                false,
-            )
-            .await?
-            else {
-                return Ok(());
-            };
-            current = created.clone();
-            panes.push(created);
+            current = split_pane(daemon, &current, LayoutAxis::Vertical).await?;
+            panes.push(current.clone());
         }
+        let mut sizes = Vec::new();
         for (index, pane) in panes.iter().take(rows - 1).enumerate() {
-            if !send_op(
-                workspace,
-                chrome,
-                WorkspaceOp::PaneResize {
-                    pane: pane.clone(),
-                    ratio: 1.0 / (rows - index) as f64,
-                    node: None,
-                },
-            )
-            .await?
-            {
-                return Ok(());
-            }
+            push_resize(&mut sizes, pane, 1.0 / (rows - index) as f64);
         }
+        send_ops(daemon, sizes).await?;
     }
     Ok(())
 }
 
-async fn create_owned_pane(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    op: WorkspaceOp,
-    focus: bool,
-) -> Result<Option<String>, FrameError> {
-    match workspace.daemon().workspace_op(op).await {
-        Ok(reply) => {
-            let pane = reply.result["panes"]
-                .as_array()
-                .and_then(|panes| panes.first());
-            let pane_id = pane.and_then(|pane| pane["id"].as_str());
-            let Some(pane_id) = pane_id else {
-                chrome.notify(Toast::warning("Grid creation returned no pane"));
-                return Ok(None);
-            };
-            if focus {
-                let tab_id = reply.result["tabs"]
-                    .as_array()
-                    .and_then(|tabs| tabs.first())
-                    .and_then(|tab| tab["id"].as_str());
-                let (Some(project_id), Some(tab_id)) = (workspace.project_id(), tab_id) else {
-                    chrome.notify(Toast::warning("Grid creation returned no tab"));
-                    return Ok(None);
-                };
-                // Projection runs after this menu action, when the tab event arrives.
-                chrome
-                    .viewer
-                    .active_tab
-                    .insert(project_id.to_owned(), tab_id.to_owned());
-            }
-            Ok(Some(pane_id.to_owned()))
-        }
-        Err(DaemonError::Workspace(error)) => {
-            chrome.notify(Toast::warning(error.reason));
-            Ok(None)
-        }
-        Err(error) => Err(error.into()),
-    }
+/// Split `pane` along `axis`; the reply names the new pane.
+async fn split_pane(
+    daemon: &LiveDaemon,
+    pane: &str,
+    axis: LayoutAxis,
+) -> Result<String, DaemonError> {
+    let reply = daemon
+        .workspace_op(WorkspaceOp::PaneSplit {
+            pane: pane.to_owned(),
+            axis,
+            terminal_id: None,
+            cwd: None,
+            node: None,
+        })
+        .await?;
+    reply_id(&reply.result, "panes", "Grid creation returned no pane")
+}
+
+/// The `id` of the first `key` entry in a workspace reply.
+fn reply_id(result: &Value, key: &str, missing: &str) -> Result<String, DaemonError> {
+    result[key][0]["id"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| DaemonError::Protocol {
+            detail: missing.to_owned(),
+        })
 }

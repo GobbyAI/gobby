@@ -18,7 +18,10 @@ use ratatui::Terminal;
 use serde_json::{json, Value};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-use crate::daemon::{Daemon, DaemonError, Generation, LiveDaemon, TerminalRow, WorkspaceOp};
+use crate::daemon::{
+    Daemon, DaemonError, Generation, LiveDaemon, SpawnOutcome, TerminalRow, WorkspaceOp,
+    WorkspaceSnapshot,
+};
 use crate::frame_source::{FrameError, FrameSource, PaneFrameSource};
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
@@ -27,7 +30,9 @@ use super::super::attention::{PendingAttention, ResponseSubmission};
 use super::super::live::relist::Relist;
 use super::super::live::RosterSnapshot;
 use super::super::{PaneId, Workspace};
+use super::chain_apply;
 use super::focus_hints::{self, FocusMemo, ShownFocus};
+use super::mouse::Placement;
 use super::outage_grant::{self, GrantOutcome};
 
 #[cfg(test)]
@@ -130,6 +135,19 @@ pub enum JobResult {
         unplaced: Option<String>,
         result: Result<(), DaemonError>,
     },
+    /// An arrange's op chain. `focus` is the pane focused when it was issued,
+    /// refocused once the chain's answer lands, whether or not an op refused.
+    Arranged {
+        focus: Option<PaneId>,
+        result: Result<(), DaemonError>,
+    },
+    /// A new grid's chain. `tab` is the tab it created, focused once the
+    /// chain's answer lands, whether or not a later step refused.
+    Grid {
+        project: String,
+        tab: Option<String>,
+        result: Result<(), DaemonError>,
+    },
     /// The read that opens a placed terminal no pane shows. `elapsed` spans
     /// the read, for the WARN when it fails.
     Opened {
@@ -151,6 +169,114 @@ pub enum JobResult {
         elapsed: Duration,
         result: Result<RosterSnapshot, DaemonError>,
     },
+    /// A legacy spawn's `terminal_create` reply. `project` is the project it
+    /// was asked of, so a reply that lands after a switch is an orphan.
+    Spawned {
+        then: PaneAction,
+        project: Option<String>,
+        result: Result<SpawnOutcome, DaemonError>,
+        roster: Option<Result<Relist, DaemonError>>,
+    },
+    /// An owned shell's create chain: its create, the draft it replaced and
+    /// its tab order, as one action's reply.
+    Shell {
+        project: Option<String>,
+        result: Result<OwnedShell, DaemonError>,
+    },
+    /// A local tab adoption chain. `new_tab` is the tab the chain committed,
+    /// present even when a later step failed and the chain then rolled back.
+    Adopted {
+        project: Option<String>,
+        old_tab: String,
+        adopted: AdoptedShell,
+    },
+    /// A disposal of a committed orphan, keyed by what it names.
+    Disposed {
+        orphan: Orphan,
+        outcome: DisposalOutcome,
+    },
+}
+
+/// What an owned shell's create chain committed.
+#[derive(Debug)]
+pub struct OwnedShell {
+    pub terminal_id: String,
+    /// The pane the daemon placed the shell in.
+    pub pane_id: String,
+    /// The draft tab the new shell replaced, and the tab the daemon made for it.
+    pub draft: Option<(String, String)>,
+    /// The daemon's workspace after a draft replacement, installed on the loop.
+    pub snapshot: Option<WorkspaceSnapshot>,
+    /// A tab-order save the daemon refused, named for a toast.
+    pub tab_order_warning: Option<String>,
+    /// The project roster read after the create, applied while it is current.
+    pub roster: Option<Result<Relist, DaemonError>>,
+}
+
+/// What an adoption chain committed. `new_tab` is `None` when the daemon
+/// refused the create, and `rolled_back` is false when its rollback failed.
+#[derive(Debug)]
+pub struct AdoptedShell {
+    pub new_tab: Option<String>,
+    pub rolled_back: bool,
+    pub terminal_id: Result<String, DaemonError>,
+    pub snapshot: Option<WorkspaceSnapshot>,
+    pub tab_order_warning: Option<String>,
+    pub roster: Option<Result<Relist, DaemonError>>,
+}
+
+/// A committed mutation the loop must dispose of once its target is gone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Orphan {
+    Terminal(String),
+    Tab(String),
+}
+
+/// How a disposal settled.
+#[derive(Debug)]
+pub enum DisposalOutcome {
+    /// Closed, or already gone.
+    Done,
+    /// Refused by the daemon, with its reason.
+    Refused(String),
+    /// Lost or failed before an answer.
+    Failed(DaemonError),
+}
+
+/// A committed orphan awaiting disposal. A settled disposal waits for the
+/// model to move past `settled.watermark` before it is tried again.
+#[derive(Debug, Clone)]
+pub struct CommittedOrphan {
+    pub orphan: Orphan,
+    pub in_flight: bool,
+    pub settled: Option<Settled>,
+}
+
+/// How the last disposal of an orphan settled, against which model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settled {
+    pub model_install: Option<(Generation, u64)>,
+    /// The daemon never answered, so the target may already be gone.
+    pub lost: bool,
+}
+
+/// A committed terminal whose pane the loop acts on once the roster shows it.
+#[derive(Debug)]
+pub struct AwaitingPane {
+    pub terminal_id: String,
+    pub then: PaneAction,
+}
+
+/// What lands on a committed terminal's pane.
+#[derive(Debug, Clone)]
+pub enum PaneAction {
+    Place {
+        placement: Placement,
+        worktree_id: Option<String>,
+    },
+    Focus,
+    /// Only attaches the pane; settling any pane already marks it due.
+    Attach,
 }
 
 /// Run `fut` beside the loop and post its outcome under `tag`. Jobs are
@@ -218,6 +344,10 @@ pub struct JobLedger<T> {
     next_id: u64,
     in_flight: HashMap<JobKey, (u64, Generation)>,
     coalesced: Coalescer<JobKey, T>,
+    /// Committed mutations the loop must dispose of; see `live_loop::chain_apply`.
+    pub committed_orphans: Vec<CommittedOrphan>,
+    /// Committed terminals whose pane has not reached the roster yet.
+    pub awaiting_panes: Vec<AwaitingPane>,
 }
 
 impl<T> Default for JobLedger<T> {
@@ -226,6 +356,8 @@ impl<T> Default for JobLedger<T> {
             next_id: 0,
             in_flight: HashMap::new(),
             coalesced: Coalescer::default(),
+            committed_orphans: Vec::new(),
+            awaiting_panes: Vec::new(),
         }
     }
 }
@@ -355,6 +487,8 @@ impl LoopJobs {
         workspace: &mut Workspace<LiveDaemon>,
         chrome: &mut Chrome,
     ) {
+        chain_apply::settle_panes(self, workspace, chrome);
+        chain_apply::evaluate(self, workspace);
         let pending = std::mem::take(&mut workspace.pending_refetch);
         for project in pending.rosters {
             self.offer(

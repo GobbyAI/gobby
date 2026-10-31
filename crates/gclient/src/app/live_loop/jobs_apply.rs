@@ -10,11 +10,17 @@ use crate::ui::Chrome;
 
 use super::super::attention::apply_response;
 use super::super::{PaneId, Workspace};
+use super::chain_apply;
 use super::control::{
     apply_outage_grant, apply_write_abandoned, apply_write_result, apply_write_unconfirmed,
+    focus_live_pane,
 };
 use super::daemon_ops::{apply_kills, apply_ops};
 use super::jobs::{JobOutcome, JobResult, LoopJobs, OpIntent};
+
+#[cfg(test)]
+#[path = "jobs_apply_tests.rs"]
+mod tests;
 
 pub(super) fn apply_job_outcome(
     workspace: &mut Workspace<LiveDaemon>,
@@ -47,6 +53,12 @@ pub(super) fn apply_job_outcome(
         } => return apply_kills(workspace, chrome, killed, kept, result),
         // A host grant is real whichever generation asked for it, so it lands.
         result @ JobResult::HostGrant { .. } => result,
+        // A chain's committed answer lands or is orphaned whichever generation
+        // issued it; the arms below decide which.
+        result @ (JobResult::Spawned { .. }
+        | JobResult::Shell { .. }
+        | JobResult::Adopted { .. }
+        | JobResult::Disposed { .. }) => result,
         JobResult::Opened {
             terminal_id,
             elapsed,
@@ -107,10 +119,52 @@ pub(super) fn apply_job_outcome(
             grant,
             revoked,
         } => apply_outage_grant(workspace, chrome, jobs, pane, &attachment, grant, revoked),
+        JobResult::Spawned {
+            then,
+            project,
+            result,
+            roster,
+        } => {
+            let current = current && project.as_deref() == workspace.project_id();
+            chain_apply::apply_spawned(workspace, chrome, jobs, current, then, result, roster);
+        }
+        JobResult::Shell { project, result } => {
+            let current = current && project.as_deref() == workspace.project_id();
+            chain_apply::apply_shell(workspace, chrome, jobs, current, result);
+        }
+        JobResult::Adopted {
+            project,
+            old_tab,
+            adopted,
+        } => {
+            let current = current && project.as_deref() == workspace.project_id();
+            chain_apply::apply_adopted(workspace, chrome, jobs, current, old_tab, adopted);
+        }
+        JobResult::Disposed { orphan, outcome } => {
+            chain_apply::apply_disposed(workspace, chrome, jobs, orphan, outcome);
+        }
         JobResult::Responded { pending, result } => {
             apply_response(workspace, chrome, pending, result);
         }
         JobResult::Ops { unplaced, result } => apply_ops(workspace, chrome, unplaced, result),
+        JobResult::Arranged { focus, result } => {
+            apply_ops(workspace, chrome, None, result);
+            // The pane may have closed while the chain ran; focusing it then would find nothing.
+            if let Some(pane) = focus.filter(|pane| workspace.panes.contains_key(pane)) {
+                chrome.focus_pane(pane);
+                focus_live_pane(workspace, pane);
+            }
+        }
+        JobResult::Grid {
+            project,
+            tab,
+            result,
+        } => {
+            if let Some(tab) = tab.filter(|_| workspace.project_id() == Some(project.as_str())) {
+                chrome.viewer.active_tab.insert(project, tab);
+            }
+            apply_ops(workspace, chrome, None, result);
+        }
         JobResult::Opened {
             terminal_id,
             elapsed,

@@ -95,7 +95,13 @@ fn project_live_workspace(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Ch
         .unresolved
         .iter()
         .any(|terminal_id| workspace.pane_for_terminal(terminal_id).is_some());
-    if chrome.viewer.applied.as_ref() == Some(&stamp) && !resolved {
+    // A placement recorded after its event was projected still needs its
+    // focus; one held for another project's bar waits for that bar.
+    let placed_here = workspace
+        .placed_panes
+        .iter()
+        .any(|(tab_id, _)| chrome.tabs().tabs.iter().any(|tab| tab.id == *tab_id));
+    if chrome.viewer.applied.as_ref() == Some(&stamp) && !resolved && !placed_here {
         return;
     }
     chrome.viewer.unresolved = chrome.project_workspace(workspace, &project);

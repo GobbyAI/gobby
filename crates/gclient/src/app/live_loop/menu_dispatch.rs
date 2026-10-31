@@ -38,17 +38,17 @@ pub async fn apply_live_menu_action(
 ) -> Result<bool, FrameError> {
     match action {
         MenuAction::NewGrid { rows, cols } => {
-            super::arrange::create_grid(workspace, chrome, rows, cols).await?;
+            super::arrange::create_grid(workspace, chrome, outcomes, rows, cols);
         }
         MenuAction::OpenNewGrid => {
             chrome.dialog = Some(Dialog::NewGrid { rows: 2, cols: 2 });
             chrome.mode = Mode::ProjectDialog;
         }
         MenuAction::Arrange { layout, target } => {
-            super::arrange::apply_arrange(workspace, chrome, layout, &target).await?;
+            super::arrange::apply_arrange(workspace, chrome, outcomes, layout, &target).await?;
         }
         MenuAction::MovePane { pane, tab } => {
-            super::arrange::move_pane_to_tab(workspace, chrome, pane, &tab).await?;
+            super::arrange::move_pane_to_tab(workspace, chrome, outcomes, pane, &tab);
         }
         MenuAction::Act(action) => {
             focus_menu_target(workspace, chrome, outcomes, &kind).await?;

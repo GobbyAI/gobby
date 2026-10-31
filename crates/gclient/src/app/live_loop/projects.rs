@@ -651,13 +651,15 @@ pub fn project_dialog_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
             KeyCode::Up => *rows = rows.saturating_sub(1).max(1),
             KeyCode::Down => *rows = (*rows + 1).min(4),
             KeyCode::Enter => {
+                let action = MenuAction::NewGrid {
+                    rows: *rows,
+                    cols: *cols,
+                };
+                close_modal(chrome);
                 return ModalOutcome::Menu {
                     kind: ContextMenuKind::Global,
-                    action: MenuAction::NewGrid {
-                        rows: *rows,
-                        cols: *cols,
-                    },
-                }
+                    action,
+                };
             }
             KeyCode::Esc => return close_modal(chrome),
             _ => {}
