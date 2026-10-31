@@ -33,9 +33,14 @@ pub(super) fn report_node_counts_query(project_id: &str) -> (String, HashMap<Str
             "MATCH (n {{project: $project}}) \
              WHERE (n:CodeFile AND n.path IN $admitted_paths) \
                OR (n:CodeSymbol AND n.file_path + '|' + n.file_content_hash IN $admitted_versions) \
-               OR n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol \
-             RETURN {} AS name, count(n) AS count",
-            report_node_type_case("n")
+             RETURN {case} AS name, count(n) AS count \
+             UNION ALL \
+             MATCH (n {{project: $project}})-[r]-(other {{project: $project}}) \
+             WHERE (n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol) \
+               AND coalesce(r.file, startNode(r).path) + '|' + r.content_hash IN $admitted_versions \
+             WITH DISTINCT n \
+             RETURN {case} AS name, count(n) AS count",
+            case = report_node_type_case("n")
         ),
         typed_query::string_params(&[("project", project_id)]),
     )
@@ -200,6 +205,31 @@ mod tests {
                     "{surface}: path alone is insufficient"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn report_node_counts_admit_module_and_external_nodes_only_through_admitted_edges() {
+        let (query, _) = report_node_counts_query("child");
+        for branch in query.split("UNION ALL") {
+            let head = branch.split("RETURN").next().unwrap_or(branch);
+            let retained_only_label = ["CodeModule", "UnresolvedCallee", "ExternalSymbol"]
+                .iter()
+                .any(|label| head.contains(label));
+            if !retained_only_label {
+                continue;
+            }
+            let edge = head
+                .find("-[r")
+                .unwrap_or_else(|| panic!("module and external nodes need an edge: {branch}"));
+            let filter = head.find("$admitted_versions").unwrap_or_else(|| {
+                panic!("module and external nodes need an admitted edge: {branch}")
+            });
+            let aggregate = branch.find("count(").expect("aggregate");
+            assert!(
+                edge < filter && filter < aggregate,
+                "admitted edge must precede aggregation: {branch}"
+            );
         }
     }
 

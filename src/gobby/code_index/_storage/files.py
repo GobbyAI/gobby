@@ -227,10 +227,11 @@ class CodeIndexFileStorageMixin:
         graph: bool = True,
         failure_cooloff_seconds: int = SYNC_FAILURE_COOLOFF_SECONDS,
     ) -> list[PinnedFileSync]:
-        """Get moved overlay pins whose graph or vector projection is due.
+        """Get overlay pins whose graph or vector projection is due.
 
-        A pin is due when its source selector has moved off the pinned hash and no
-        overlay-owned file state shadows the path. Source rows are never written here.
+        A pin is due when its source selector no longer names the pinned hash (moved or
+        missing) and no overlay-owned file state shadows the path. Source rows are never
+        written here.
         """
         if not (vectors or graph):
             return []
@@ -246,12 +247,12 @@ class CodeIndexFileStorageMixin:
                             AS graph_due
                    FROM code_overlay_pins p
                    WHERE p.machine_id = %s AND p.overlay_project_id = %s
-                     AND EXISTS (
+                     AND NOT EXISTS (
                          SELECT 1 FROM code_indexed_file_states src
                          WHERE src.machine_id = p.machine_id
                            AND src.project_id = p.source_project_id
                            AND src.file_path = p.file_path
-                           AND src.content_hash <> p.content_hash)
+                           AND src.content_hash = p.content_hash)
                      AND NOT EXISTS (
                          SELECT 1 FROM code_indexed_file_states own
                          WHERE own.machine_id = p.machine_id
