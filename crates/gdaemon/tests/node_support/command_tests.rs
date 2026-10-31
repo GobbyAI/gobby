@@ -232,9 +232,17 @@ async fn serve_duplex(
     fixture: &CommandsFixture,
     capacity: usize,
 ) -> WebSocketStream<tokio::io::DuplexStream> {
+    serve_duplex_for(fixture, capacity, WAIT).await
+}
+
+async fn serve_duplex_for(
+    fixture: &CommandsFixture,
+    capacity: usize,
+    idle_timeout: Duration,
+) -> WebSocketStream<tokio::io::DuplexStream> {
     let (peer, server) = tokio::io::duplex(capacity);
     let timing = ChannelTiming {
-        idle_timeout: WAIT,
+        idle_timeout,
         ping_interval: Duration::from_secs(3600),
         ..ChannelTiming::default()
     };
@@ -268,6 +276,19 @@ fn host_methods(fixture: &CommandsFixture) -> Vec<String> {
         .iter()
         .filter(|r| r["method"] == "write" || r["method"] == "kill")
         .map(|r| r["method"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
+/// The launch lifecycle requests the fake host received, in order.
+fn launch_methods(fixture: &CommandsFixture) -> Vec<String> {
+    fixture
+        .launch
+        .host
+        .requests()
+        .iter()
+        .filter_map(|r| r["method"].as_str())
+        .filter(|method| matches!(*method, "spawn" | "spawn_commit" | "kill"))
+        .map(str::to_owned)
         .collect()
 }
 
@@ -1045,5 +1066,207 @@ async fn spawn_refuses_unmanaged_sandbox() -> Result<()> {
         assert!(!fixture.ready.exists());
         assert!(fixture.launch.host.requests().is_empty());
     }
+    Ok(())
+}
+
+/// 2.7.8: a spawn waits for its run's earlier commands like any other command, while another
+/// run's spawn is answered at once.
+#[tokio::test]
+async fn channel_orders_spawns_with_same_run_commands() -> Result<()> {
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let fixture = CommandsFixture::new(true).await?;
+    fixture.known("run-a", "a").await?;
+    let same_run = |request: &str| {
+        let mut frame = fixture.spawn(request);
+        frame["payload"]["run_id"] = json!("run-a");
+        frame
+    };
+    fixture.launch.host.pause_next_write();
+    let mut socket = serve_duplex(&fixture, 64 * 1024).await;
+    socket
+        .send(Message::Text(
+            write("first", "a", "first").to_string().into(),
+        ))
+        .await?;
+    tokio::time::timeout(WAIT, fixture.launch.host.wait_for_write()).await?;
+    for frame in [
+        same_run("duplicate"),
+        fixture.cancel("kill", "run-a", "KILL"),
+        same_run("late"),
+        fixture.spawn("other"),
+    ] {
+        socket.send(Message::Text(frame.to_string().into())).await?;
+    }
+    ok(
+        &next_reply(&mut socket).await?,
+        "other",
+        json!({"accepted": true}),
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), next_reply(&mut socket))
+            .await
+            .is_err(),
+        "no run-a reply may pass the held write"
+    );
+    fixture.launch.host.release_write();
+    ok(&next_reply(&mut socket).await?, "first", json!({}));
+    ok(
+        &next_reply(&mut socket).await?,
+        "duplicate",
+        json!({"accepted": true}),
+    );
+    ok(
+        &next_reply(&mut socket).await?,
+        "kill",
+        json!({"stopped": true}),
+    );
+    error(&next_reply(&mut socket).await?, "late", "cancelled", "none");
+    assert_eq!(host_methods(&fixture), ["write", "kill"]);
+    Ok(())
+}
+
+/// 2.7.4: a cancel committed while the host's spawn reply is in flight aborts the prepared
+/// child. The run never reaches `spawn_commit` and settles unlaunched.
+#[tokio::test]
+async fn cancel_during_host_spawn_never_commits() -> Result<()> {
+    let fixture = CommandsFixture::new(false).await?;
+    let id = fixture.launch.payload.run_id.clone();
+    fixture.launch.host.hold_next_reply("spawn");
+    ok(
+        &fixture.call(fixture.spawn("spawn")).await,
+        "spawn",
+        json!({"accepted": true}),
+    );
+    tokio::time::timeout(WAIT, fixture.launch.host.wait_for_held_reply("spawn")).await?;
+    let workspace = workspace_path(&fixture, &id)?;
+    let mut cancel = fixture.spawn_dispatch(fixture.cancel("cancel", &id, "TERM"));
+    fixture
+        .wait_state(|state| state.cancelled.contains_key(&id))
+        .await;
+    fixture.launch.host.release_held_reply("spawn");
+    ok(
+        &tokio::time::timeout(WAIT, &mut cancel.0).await??,
+        "cancel",
+        json!({"stopped": true}),
+    );
+    assert_eq!(
+        launch_methods(&fixture),
+        ["spawn", "kill"],
+        "the prepared child is aborted, never committed"
+    );
+    fixture.exit(ExitReason::Cancelled, false).await?;
+    assert!(!workspace.exists());
+    Ok(())
+}
+
+/// 2.7.4: a cancel committed while the host's commit reply is in flight still settles the run
+/// unlaunched. The child is aborted and the run is never recorded as launched.
+#[tokio::test]
+async fn cancel_during_host_commit_settles_unlaunched() -> Result<()> {
+    let fixture = CommandsFixture::new(false).await?;
+    let id = fixture.launch.payload.run_id.clone();
+    fixture.launch.host.hold_next_reply("spawn_commit");
+    ok(
+        &fixture.call(fixture.spawn("spawn")).await,
+        "spawn",
+        json!({"accepted": true}),
+    );
+    tokio::time::timeout(
+        WAIT,
+        fixture.launch.host.wait_for_held_reply("spawn_commit"),
+    )
+    .await?;
+    let workspace = workspace_path(&fixture, &id)?;
+    let mut cancel = fixture.spawn_dispatch(fixture.cancel("cancel", &id, "TERM"));
+    fixture
+        .wait_state(|state| state.cancelled.contains_key(&id))
+        .await;
+    fixture.launch.host.release_held_reply("spawn_commit");
+    ok(
+        &tokio::time::timeout(WAIT, &mut cancel.0).await??,
+        "cancel",
+        json!({"stopped": true}),
+    );
+    assert!(
+        !persisted_state(&fixture.launch.agents.home)?
+            .runs
+            .contains_key(&id),
+        "a run cancelled before its launch record must not be recorded as launched"
+    );
+    fixture.exit(ExitReason::Cancelled, false).await?;
+    assert!(!workspace.exists());
+    assert_eq!(launch_methods(&fixture), ["spawn", "spawn_commit", "kill"]);
+    Ok(())
+}
+
+/// 2.7.2: an acceptance the hub never receives starts no preparation. The run is cancelled
+/// and settles unlaunched, so a later spawn for it is refused.
+#[tokio::test]
+async fn undelivered_acceptance_cancels_the_run() -> Result<()> {
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let fixture = CommandsFixture::new(true).await?;
+    let id = fixture.launch.payload.run_id.clone();
+    // A 16-byte channel holds the acceptance until this peer reads it, and it never does.
+    let mut socket = serve_duplex(&fixture, 16).await;
+    socket
+        .send(Message::Text(fixture.spawn("spawn").to_string().into()))
+        .await?;
+    fixture
+        .wait_state(|state| state.runs.contains_key(&id))
+        .await;
+    drop(socket);
+    assert_unprepared_cancel(&fixture).await?;
+    error(
+        &fixture.call(fixture.spawn("retry")).await,
+        "retry",
+        "cancelled",
+        "none",
+    );
+    Ok(())
+}
+
+/// 2.7.2: an acceptance still unread when the channel's idle bound expires is undelivered.
+#[tokio::test]
+async fn unread_acceptance_times_out_and_cancels_the_run() -> Result<()> {
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let fixture = CommandsFixture::new(true).await?;
+    let mut socket = serve_duplex_for(&fixture, 16, Duration::from_secs(1)).await;
+    socket
+        .send(Message::Text(fixture.spawn("spawn").to_string().into()))
+        .await?;
+    // The peer stays connected but never reads, so the send outlives the idle bound.
+    assert_unprepared_cancel(&fixture).await?;
+    drop(socket);
+    Ok(())
+}
+
+/// Waits until the run either settles or starts preparing, then requires the settled outcome:
+/// a durable cancel, an unlaunched `cancelled` exit, and no preparation or host request.
+async fn assert_unprepared_cancel(fixture: &CommandsFixture) -> Result<()> {
+    let id = &fixture.launch.payload.run_id;
+    fixture
+        .wait_state(|state| {
+            state.exits.iter().any(|entry| &entry.exit.run_id == id)
+                || state
+                    .runs
+                    .get(id)
+                    .is_some_and(|run| run.workspace.is_some())
+        })
+        .await;
+    let state = persisted_state(&fixture.launch.agents.home)?;
+    assert!(
+        !state.runs.contains_key(id),
+        "an undelivered acceptance must not leave the run preparing"
+    );
+    assert!(state.cancelled.contains_key(id));
+    fixture.exit(ExitReason::Cancelled, false).await?;
+    assert!(!fixture.ready.exists());
+    assert!(fixture.launch.host.requests().is_empty());
     Ok(())
 }

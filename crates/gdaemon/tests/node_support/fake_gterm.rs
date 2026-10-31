@@ -34,6 +34,8 @@ pub struct FakeGterm {
     pause_list: Arc<AtomicBool>,
     list_snapshot: Arc<Notify>,
     resume_list: Arc<Notify>,
+    spawn_reply: Arc<ReplyGate>,
+    commit_reply: Arc<ReplyGate>,
 }
 
 #[derive(Default)]
@@ -41,6 +43,14 @@ struct WriteGate {
     pause: AtomicBool,
     disconnect: AtomicBool,
     received: Notify,
+    release: Notify,
+}
+
+/// Holds one reply after the host has acted on its request.
+#[derive(Default)]
+struct ReplyGate {
+    pause: AtomicBool,
+    held: Notify,
     release: Notify,
 }
 
@@ -87,6 +97,8 @@ impl FakeGterm {
         let pause_list = Arc::new(AtomicBool::new(false));
         let list_snapshot = Arc::new(Notify::new());
         let resume_list = Arc::new(Notify::new());
+        let spawn_reply = Arc::new(ReplyGate::default());
+        let commit_reply = Arc::new(ReplyGate::default());
         let script = Arc::new(Mutex::new(HostScript {
             inventory,
             pending: BTreeMap::new(),
@@ -104,6 +116,8 @@ impl FakeGterm {
             let pause_list = pause_list.clone();
             let list_snapshot = list_snapshot.clone();
             let resume_list = resume_list.clone();
+            let spawn_reply = spawn_reply.clone();
+            let commit_reply = commit_reply.clone();
             let pid = process.id();
             async move {
                 let mut connections = JoinSet::new();
@@ -123,6 +137,8 @@ impl FakeGterm {
                             let pause_list = pause_list.clone();
                             let list_snapshot = list_snapshot.clone();
                             let resume_list = resume_list.clone();
+                            let spawn_reply = spawn_reply.clone();
+                            let commit_reply = commit_reply.clone();
                             let script = script.clone();
                             connections.spawn(async move {
                                 let (reader, mut writer) = stream.into_split();
@@ -204,6 +220,17 @@ impl FakeGterm {
                                         let _ = emit_events.send(event);
                                         resume_commit.notified().await;
                                     }
+                                    let gate = match method {
+                                        "spawn" => Some(&spawn_reply),
+                                        "spawn_commit" => Some(&commit_reply),
+                                        _ => None,
+                                    };
+                                    if let Some(gate) = gate
+                                        && gate.pause.swap(false, Ordering::SeqCst)
+                                    {
+                                        gate.held.notify_one();
+                                        gate.release.notified().await;
+                                    }
                                     reply["id"] = request["id"].clone();
                                     if send(&mut writer, &reply).await.is_err() { return }
                                 }
@@ -228,7 +255,30 @@ impl FakeGterm {
             pause_list,
             list_snapshot,
             resume_list,
+            spawn_reply,
+            commit_reply,
         })
+    }
+
+    /// Holds the next `spawn` or `spawn_commit` reply after the host has acted on it.
+    pub fn hold_next_reply(&self, method: &str) {
+        self.reply_gate(method).pause.store(true, Ordering::SeqCst);
+    }
+
+    pub async fn wait_for_held_reply(&self, method: &str) {
+        self.reply_gate(method).held.notified().await;
+    }
+
+    pub fn release_held_reply(&self, method: &str) {
+        self.reply_gate(method).release.notify_one();
+    }
+
+    fn reply_gate(&self, method: &str) -> &ReplyGate {
+        match method {
+            "spawn" => &self.spawn_reply,
+            "spawn_commit" => &self.commit_reply,
+            other => panic!("the fixture host holds no `{other}` reply"),
+        }
     }
 
     pub fn pause_next_list_reply(&self) {
