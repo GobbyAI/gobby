@@ -867,3 +867,59 @@ async def test_pod_refuses_a_leaf_tree_a_prior_seat_still_works_in(world: TeamWo
 
     assert refused.value.code == "team_exists"
     assert sorted(world.tree_ids()) == trees
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("started", [False, True], ids=["pending", "running"])
+async def test_pod_refuses_a_leaf_tree_an_unattached_seat_still_holds(
+    world: TeamWorld, started: bool
+) -> None:
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    prior = world.child(leaf, parent=team.manager)
+    await world.admit(prior, leaf, parent_team_id=team.binding.team_id)
+    runs = LocalAgentRunManager(world.case.db)
+    seat = runs.create(
+        parent_session_id=prior.id,
+        provider="claude",
+        prompt="Implement the leaf.",
+        agent_name="developer",
+    )
+    if started:
+        assert runs.start(seat.id) is not None
+    world.finish(prior)
+    trees = sorted(world.tree_ids())
+
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(
+            world.child(leaf, parent=team.manager), leaf, parent_team_id=team.binding.team_id
+        )
+
+    assert refused.value.code == "team_exists"
+    assert sorted(world.tree_ids()) == trees
+
+
+@pytest.mark.asyncio
+async def test_pod_adopts_its_leaf_tree_once_an_unattached_seat_has_ended(world: TeamWorld) -> None:
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    prior = world.child(leaf, parent=team.manager)
+    first = await world.admit(prior, leaf, parent_team_id=team.binding.team_id)
+    runs = LocalAgentRunManager(world.case.db)
+    seat = runs.create(
+        parent_session_id=prior.id,
+        provider="claude",
+        prompt="Implement the leaf.",
+        agent_name="developer",
+    )
+    runs.complete(seat.id)
+    world.finish(prior)
+
+    pod = await world.admit(
+        world.child(leaf, parent=team.manager), leaf, parent_team_id=team.binding.team_id
+    )
+
+    assert pod.worktree_id == first.worktree_id
+    assert tree_of(pod) == tree_of(first)

@@ -548,12 +548,13 @@ def _dispatched_runs(
 
 
 def _occupied(db: HubDatabase, runs: list[AgentRun]) -> bool:
-    """Whether any of these runs' sessions still works in a tree while its run is active."""
+    """Whether any of these runs is active and, if attached, its session is live."""
     if not runs:
         return False
     rows = db.fetchall(
-        "SELECT 1 FROM agent_runs r JOIN sessions s ON s.id = r.child_session_id "
-        "WHERE r.id = ANY(%s) AND r.status = ANY(%s) AND s.status = ANY(%s) LIMIT 1",
+        "SELECT 1 FROM agent_runs r LEFT JOIN sessions s ON s.id = r.child_session_id "
+        "WHERE r.id = ANY(%s) AND r.status = ANY(%s) AND (s.id IS NULL OR s.status = ANY(%s)) "
+        "LIMIT 1",
         (
             [run.id for run in runs],
             list(ACTIVE_AGENT_RUN_STATUSES),
