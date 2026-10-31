@@ -274,7 +274,31 @@ def _validate_source_manifest(root: Path, name: str, pin: str, record: dict[str,
     paths = [item["path"] for item in manifest["files"]]
     assert len(paths) == len(set(paths)), "duplicate source path"
     for item in manifest["files"]:
-        verify_file_record(root, {**item, "path": str(source_root / item["path"])})
+        path = source_root / item["path"]
+        if item.get("type") == "symlink":
+            _validate_source_symlink(source_root, path, item)
+        else:
+            verify_file_record(root, {**item, "path": str(path)})
+
+
+def _validate_source_symlink(source_root: Path, path: Path, item: dict[str, Any]) -> None:
+    # The manifest records a symlink by its target text, so the link is checked as a link:
+    # never followed as a regular file, and its target must resolve inside the source tree.
+    current = source_root
+    for part in path.relative_to(source_root).parts[:-1]:
+        current /= part
+        assert not current.is_symlink(), f"symlink in evidence path: {current}"
+    assert path.is_symlink(), f"source symlink changed: {path}"
+    assert path.lstat().st_uid == os.getuid(), f"foreign-owned source symlink: {path}"
+    payload = os.readlink(path).encode("utf-8")
+    assert item["bytes"] == len(payload) and item["sha256"] == hashlib.sha256(payload).hexdigest(), (
+        f"source symlink changed: {path}"
+    )
+    resolved = (path.parent / os.readlink(path)).resolve()
+    assert resolved.is_relative_to(source_root.resolve()), (
+        f"source symlink escapes source root: {path}"
+    )
+    assert resolved.is_file(), f"source symlink target is not a regular file: {path}"
 
 
 def _validate_installation_checks(root: Path, checks: list[dict[str, Any]]) -> None:

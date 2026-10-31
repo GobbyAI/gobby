@@ -13,8 +13,11 @@ from runtime_boundary import file_record, write_once
 from validate_environment import (
     _validate_grant_binding,
     _validate_installation_checks,
+    _validate_source_manifest,
     validate_external_changes,
 )
+
+SOURCE_PIN = "9b148b644c63a8ac2a28f341ecac585210ecd3fe"
 
 
 @pytest.fixture
@@ -185,3 +188,73 @@ def test_isolation_rejects_unrelated_config_edit_despite_matching_capture_hash(
     after["stable_global_files"][0]["sha256"] = hashlib.sha256(capture.read_bytes()).hexdigest()
     with pytest.raises(AssertionError, match="exceeds the attributed"):
         validate_external_changes(tmp_path, before, after)
+
+
+def _write_source_manifest(root: Path, files: list[dict[str, Any]]) -> dict[str, Any]:
+    manifest_path = root / "manifests/gobby-source.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "source_commit": SOURCE_PIN,
+        "root": str(root / "sources/gobby"),
+        "file_count": len(files),
+        "files": files,
+    }
+    manifest_path.write_text(json.dumps(manifest))
+    return file_record(root, manifest_path)
+
+
+def _file_item(root: Path, path: str) -> dict[str, Any]:
+    record = file_record(root, root / "sources/gobby" / path)
+    return {"path": path, "type": "file", "mode": "0644", **record}
+
+
+def _symlink_item(path: str, target: str) -> dict[str, Any]:
+    payload = target.encode("utf-8")
+    return {
+        "path": path,
+        "type": "symlink",
+        "mode": "0777",
+        "bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
+def test_source_manifest_accepts_symlink_contained_in_source(tmp_path: Path) -> None:
+    vendor = tmp_path / "sources/gobby/crates/vendor"
+    vendor.mkdir(parents=True)
+    (vendor / "AGENTS.md").write_text("rules\n")
+    (vendor / "CLAUDE.md").symlink_to("AGENTS.md")
+    record = _write_source_manifest(
+        tmp_path,
+        [
+            _file_item(tmp_path, "crates/vendor/AGENTS.md"),
+            _symlink_item("crates/vendor/CLAUDE.md", "AGENTS.md"),
+        ],
+    )
+    _validate_source_manifest(tmp_path, "gobby", SOURCE_PIN, record)
+
+
+def test_source_manifest_rejects_symlink_escaping_source(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n")
+    source = tmp_path / "sources/gobby"
+    source.mkdir(parents=True)
+    (source / "leak.txt").symlink_to(outside)
+    record = _write_source_manifest(tmp_path, [_symlink_item("leak.txt", str(outside))])
+    with pytest.raises(AssertionError, match="escapes source root"):
+        _validate_source_manifest(tmp_path, "gobby", SOURCE_PIN, record)
+
+
+def test_source_manifest_rejects_retargeted_symlink(tmp_path: Path) -> None:
+    source = tmp_path / "sources/gobby"
+    source.mkdir(parents=True)
+    (source / "AGENTS.md").write_text("rules\n")
+    (source / "OTHER.md").write_text("other\n")
+    (source / "CLAUDE.md").symlink_to("AGENTS.md")
+    record = _write_source_manifest(
+        tmp_path, [_symlink_item("CLAUDE.md", "AGENTS.md")]
+    )
+    (source / "CLAUDE.md").unlink()
+    (source / "CLAUDE.md").symlink_to("OTHER.md")
+    with pytest.raises(AssertionError, match="source symlink changed"):
+        _validate_source_manifest(tmp_path, "gobby", SOURCE_PIN, record)
