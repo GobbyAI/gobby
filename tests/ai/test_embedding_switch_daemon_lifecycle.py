@@ -925,8 +925,8 @@ async def test_abort_cleans_up_an_idle_staging_journal(monkeypatch: pytest.Monke
 
 def _lmstudio_models_transport(rows: list[dict[str, Any]]) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/v0/models"
-        return httpx.Response(200, json={"data": rows})
+        assert request.url.path == "/api/v1/models"
+        return httpx.Response(200, json={"models": rows})
 
     return httpx.MockTransport(handler)
 
@@ -935,10 +935,14 @@ def _lmstudio_models_transport(rows: list[dict[str, Any]]) -> httpx.MockTranspor
 async def test_start_lmstudio_uses_the_loaded_embedding_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    rows = [
-        {"id": "chat-model", "type": "llm", "state": "loaded"},
-        {"id": "text-embedding-other", "type": "embeddings", "state": "not-loaded"},
-        {"id": "text-embedding-qwen3-embedding-0.6b", "type": "embeddings", "state": "loaded"},
+    rows: list[dict[str, Any]] = [
+        {"key": "chat-model", "type": "llm", "loaded_instances": [{"id": "chat-model"}]},
+        {"key": "text-embedding-other", "type": "embedding", "loaded_instances": []},
+        {
+            "key": "text-embedding-qwen3-embedding-0.6b",
+            "type": "embedding",
+            "loaded_instances": [{"id": "text-embedding-qwen3-embedding-0.6b"}],
+        },
     ]
     real_client = httpx.AsyncClient
     monkeypatch.setattr(
@@ -968,7 +972,7 @@ async def test_start_lmstudio_uses_the_loaded_embedding_model(
 async def test_start_lmstudio_refuses_without_exactly_one_loaded_embedding_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    rows = [{"id": "text-embedding-other", "type": "embeddings", "state": "not-loaded"}]
+    rows = [{"key": "text-embedding-other", "type": "embedding", "loaded_instances": []}]
     real_client = httpx.AsyncClient
     monkeypatch.setattr(
         httpx,

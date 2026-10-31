@@ -360,7 +360,7 @@ async def _lmstudio_loaded_embedding_model(api_base: str, *, timeout: float = 10
     import httpx
 
     root = api_base.rstrip("/").removesuffix("/v1")
-    url = f"{root}/api/v0/models"
+    url = f"{root}/api/v1/models"
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, timeout=timeout)
@@ -368,14 +368,13 @@ async def _lmstudio_loaded_embedding_model(api_base: str, *, timeout: float = 10
             payload: Any = response.json()
     except (httpx.HTTPError, ValueError) as exc:
         raise ValueError(f"Cannot list LM Studio models at {url}: {exc}") from exc
-    rows = payload.get("data") if isinstance(payload, dict) else None
+    models = payload.get("models") if isinstance(payload, dict) else None
     loaded = [
-        str(row["id"])
-        for row in rows or []
-        if isinstance(row, dict)
-        and row.get("type") == "embeddings"
-        and row.get("state") == "loaded"
-        and isinstance(row.get("id"), str)
+        str(instance["id"])
+        for model in (models if isinstance(models, list) else [])
+        if isinstance(model, dict) and model.get("type") == "embedding"
+        for instance in model.get("loaded_instances") or []
+        if isinstance(instance, dict) and isinstance(instance.get("id"), str)
     ]
     if len(loaded) != 1:
         raise ValueError(
