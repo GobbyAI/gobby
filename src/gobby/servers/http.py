@@ -24,15 +24,12 @@ from gobby.ai import build_daemon_tool_chat_service
 from gobby.config._loading import bootstrap_overlaid_config
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.config.persistence import DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL
 from gobby.config.runtime import ConfigSnapshot, RuntimeActiveBundle
 from gobby.config.runtime_models import UnavailableService
 from gobby.hooks.broadcaster import HookEventBroadcaster
 from gobby.mcp_proxy.registries import setup_internal_registries
-from gobby.mcp_proxy.semantic_search import (
-    DEFAULT_EMBEDDING_DIM,
-    DEFAULT_EMBEDDING_MODEL,
-    SemanticToolSearch,
-)
+from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
 from gobby.servers.auth_service import AuthService
 from gobby.telemetry.instruments import inc_counter
