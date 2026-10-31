@@ -52,6 +52,11 @@ def doctor(ctx: click.Context) -> None:
     default=None,
     help="Embedding server URL (required for --provider vllm unless already configured).",
 )
+@click.option(
+    "--model",
+    default=None,
+    help="Served model name to use with --provider vllm (default: the endpoint's only model).",
+)
 @click.pass_context
 def switch(
     ctx: click.Context,
@@ -61,6 +66,7 @@ def switch(
     abort: bool,
     provider: str | None,
     api_base: str | None,
+    model: str | None,
 ) -> None:
     """Switch the active embedding model (staged, two-phase, resumable).
 
@@ -95,6 +101,7 @@ def switch(
                     "catalog_key": catalog_key,
                     "provider": provider,
                     "api_base": api_base,
+                    "model": model,
                 },
             )
         try:

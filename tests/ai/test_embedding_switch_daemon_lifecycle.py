@@ -774,6 +774,46 @@ async def test_start_vllm_resolves_served_model_before_opening_journal(
 
 
 @pytest.mark.asyncio
+async def test_start_vllm_uses_the_named_model_among_several_served(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_journal_calls: list[dict[str, Any]] = []
+    coordinator = _vllm_switch_coordinator(start_journal_calls)
+
+    async def many_models(_api_base: str, _api_key: str | None, **_kwargs: Any) -> list[str]:
+        return ["text-embedding-nomic-embed-text-v1.5@f16", "text-embedding-qwen3-embedding-0.6b"]
+
+    monkeypatch.setattr("gobby.agents.local_model.vllm_served_model_ids", many_models)
+    monkeypatch.setattr(
+        "gobby.ai.embeddings.EmbeddingService.generate_embedding",
+        AsyncMock(return_value=[0.0] * 1024),
+    )
+
+    with pytest.raises(ValueError, match="does not serve model 'missing'"):
+        await coordinator.start(
+            "qwen3-0.6b-q8", "vllm", api_base="http://localhost:1234/v1", model="missing"
+        )
+
+    status = await coordinator.start(
+        "qwen3-0.6b-q8",
+        "vllm",
+        api_base="http://localhost:1234/v1",
+        model="text-embedding-qwen3-embedding-0.6b",
+    )
+
+    assert status.status == "started"
+    assert start_journal_calls == [
+        {
+            "catalog_key": "qwen3-0.6b-q8",
+            "provider": "vllm",
+            "target_model": "text-embedding-qwen3-embedding-0.6b",
+            "target_api_base": "http://localhost:1234/v1",
+        }
+    ]
+    await coordinator.task
+
+
+@pytest.mark.asyncio
 async def test_start_vllm_rejects_dim_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

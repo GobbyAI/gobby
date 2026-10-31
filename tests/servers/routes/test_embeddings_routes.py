@@ -275,7 +275,7 @@ def test_embeddings_doctor_returns_endpoint_model_and_dim() -> None:
 
 
 def test_embedding_switch_routes_delegate_to_daemon_coordinator() -> None:
-    calls: list[tuple[str, object, object]] = []
+    calls: list[tuple[str, object, object, object]] = []
 
     class Coordinator:
         def status(self) -> SwitchOperationStatus:
@@ -286,8 +286,9 @@ def test_embedding_switch_routes_delegate_to_daemon_coordinator() -> None:
             catalog_key: str,
             provider: str | None,
             api_base: str | None = None,
+            model: str | None = None,
         ) -> SwitchOperationStatus:
-            calls.append((catalog_key, provider, api_base))
+            calls.append((catalog_key, provider, api_base, model))
             return SwitchOperationStatus("run-1", "started", "started")
 
         async def resume(self) -> SwitchOperationStatus:
@@ -315,11 +316,11 @@ def test_embedding_switch_routes_delegate_to_daemon_coordinator() -> None:
     assert status.json()["status"] == "running"
     assert resume.json()["status"] == "resumed"
     assert abort.json()["status"] == "aborted"
-    assert calls == [("qwen3-8b-q8", "ollama", None)]
+    assert calls == [("qwen3-8b-q8", "ollama", None, None)]
 
 
 def test_embedding_switch_start_forwards_api_base_for_vllm() -> None:
-    calls: list[tuple[str, object, object]] = []
+    calls: list[tuple[str, object, object, object]] = []
 
     class Coordinator:
         async def start(
@@ -327,8 +328,9 @@ def test_embedding_switch_start_forwards_api_base_for_vllm() -> None:
             catalog_key: str,
             provider: str | None,
             api_base: str | None = None,
+            model: str | None = None,
         ) -> SwitchOperationStatus:
-            calls.append((catalog_key, provider, api_base))
+            calls.append((catalog_key, provider, api_base, model))
             return SwitchOperationStatus("run-1", "started", "started")
 
     server = MagicMock()
@@ -343,11 +345,19 @@ def test_embedding_switch_start_forwards_api_base_for_vllm() -> None:
             "catalog_key": "qwen3-0.6b-q8",
             "provider": "vllm",
             "api_base": "http://localhost:8323/v1",
+            "model": "text-embedding-qwen3-embedding-0.6b",
         },
     )
 
     assert response.status_code == 200
-    assert calls == [("qwen3-0.6b-q8", "vllm", "http://localhost:8323/v1")]
+    assert calls == [
+        (
+            "qwen3-0.6b-q8",
+            "vllm",
+            "http://localhost:8323/v1",
+            "text-embedding-qwen3-embedding-0.6b",
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -402,6 +412,7 @@ def test_embedding_switch_mutation_contention_returns_conflict(
             _catalog_key: str,
             _provider: str | None,
             _api_base: str | None = None,
+            _model: str | None = None,
         ) -> SwitchOperationStatus:
             raise EmbeddingConfigMutationBlocked("switch journal is locked")
 

@@ -63,6 +63,7 @@ class EmbeddingSwitchPayload(BaseModel):
     catalog_key: str
     provider: str | None = None
     api_base: str | None = None
+    model: str | None = None
 
 
 def create_embeddings_router(server: HTTPServer) -> APIRouter:
@@ -130,7 +131,7 @@ def create_embeddings_router(server: HTTPServer) -> APIRouter:
         coordinator = _embedding_switch_coordinator(server)
         try:
             result = await coordinator.start(
-                payload.catalog_key, payload.provider, payload.api_base
+                payload.catalog_key, payload.provider, payload.api_base, payload.model
             )
         except (
             EmbeddingSwitchTaskActive,

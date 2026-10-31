@@ -100,6 +100,7 @@ class EmbeddingSwitchCoordinator:
         catalog_key: str,
         provider: str | None,
         api_base: str | None = None,
+        model: str | None = None,
     ) -> SwitchOperationStatus:
         async with self._lock:
             self._raise_if_active()
@@ -109,7 +110,7 @@ class EmbeddingSwitchCoordinator:
             target_api_base: str | None = None
             if provider_name == "vllm":
                 target_model, target_api_base = await self._resolve_vllm_target(
-                    catalog_key, config, api_base
+                    catalog_key, config, api_base, model
                 )
             journal = self._start_journal(
                 self.config_store,
@@ -127,6 +128,7 @@ class EmbeddingSwitchCoordinator:
         catalog_key: str,
         config: Any,
         api_base: str | None,
+        model: str | None = None,
     ) -> tuple[str, str]:
         """Resolve the served model and pre-flight the dim before any staging."""
         from gobby.agents.local_model import (
@@ -152,7 +154,9 @@ class EmbeddingSwitchCoordinator:
         api_key = config.embeddings.api_key
         try:
             served = await vllm_served_model_ids(resolved_api_base, api_key)
-            target_model = select_vllm_served_model("auto", served, api_base=resolved_api_base)
+            target_model = select_vllm_served_model(
+                model or "auto", served, api_base=resolved_api_base
+            )
         except LocalModelError as exc:
             raise ValueError(str(exc)) from exc
         preflight = EmbeddingService(
