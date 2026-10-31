@@ -397,6 +397,10 @@ class CodexTranscriptParser(BaseTranscriptParser):
         list[ParsedToolEvent],
     ]:
         line_type = data.get("type")
+        if line_type == "compacted":
+            # The compact boundary discards open calls' output, so none of them resolves later.
+            self._execution_chain.abandon_unresolved_calls()
+            return None, [], []
         payload = data.get("payload")
         if not isinstance(payload, dict):
             return None, [], []
