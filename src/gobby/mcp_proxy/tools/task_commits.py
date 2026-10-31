@@ -23,7 +23,7 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
 )
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.storage.workspace_machine_scope import require_local_machine_id
-from gobby.tasks.commit_order import link_candidate
+from gobby.tasks.commit_order import link_candidate, link_keeping_tip
 from gobby.tasks.commit_ownership import assert_task_commit_paths_available_async
 from gobby.tasks.commit_unlink import landed_on_integration, unlink_commit_audited
 from gobby.tasks.diff_paging import (
@@ -232,7 +232,9 @@ def create_commit_registry(
                     link_candidate, task_manager, resolved_task_id, normalized, repo_path
                 )
                 if declared
-                else task_manager.link_commit(resolved_task_id, normalized)
+                else await asyncio.to_thread(
+                    link_keeping_tip, task_manager, resolved_task_id, normalized, repo_path
+                )
             )
             return {
                 "task_id": task.id,
