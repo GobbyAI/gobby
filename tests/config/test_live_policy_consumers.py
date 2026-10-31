@@ -93,6 +93,8 @@ async def test_rules_use_runtime_snapshot(temp_db: HubDatabase) -> None:
             event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason="live policy blocked")],
         ).model_dump_json(),
+        # With no agent definition resolved, only default-tagged rules apply.
+        tags=["default"],
     )
     runtime = CountingRuntime(
         _snapshot(

@@ -72,7 +72,6 @@ following established suites remain part of the compatibility gate:
 | Interactive tmux creation, pane PID capture, resize, detach/reattach, and process-group cleanup | `tests/agents/test_tmux.py`, `tests/agents/test_tmux_integration.py` |
 | Capture-before-kill and terminalization ordering | `tests/agents/test_capture.py`, `tests/agents/test_capture_consumers.py`, `tests/agents/test_agent_cleanup.py` |
 | Daemon lifecycle reconciliation and descendant cleanup | `tests/agents/test_lifecycle_monitor.py` |
-| Process-tree and aggregate memory accounting | `tests/agents/test_memory_watchdog.py` |
 | Wrapper signal forwarding and inherited stdio | `src/gobby/agents/srt_runner.mjs`, validated by the SRT runner checks and host integration run |
 
 The runner forwards `SIGINT`, `SIGTERM`, `SIGHUP`, and `SIGWINCH`; it resets SRT

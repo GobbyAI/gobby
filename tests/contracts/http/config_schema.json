@@ -4540,26 +4540,6 @@
           "default": false,
           "description": "Run daemon in test mode (enables test endpoints)"
         },
-        "tmux.agent_memory_limit_gb": {
-          "type": "number",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 16.0,
-          "description": "Max resident memory (GB) for a single agent's pane process tree."
-        },
-        "tmux.agent_memory_total_limit_gb": {
-          "type": "number",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 0.0,
-          "description": "Aggregate resident-memory budget (GB) across all agent trees. 0 = auto (50% of physical RAM)."
-        },
         "tmux.attach_history_lines": {
           "type": "integer",
           "namespace": "tmux",
@@ -4650,46 +4630,6 @@
           "default": 3,
           "description": "Maximum reprompt attempts before failing an idle agent."
         },
-        "tmux.memory_watchdog_action": {
-          "type": "string",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": "kill",
-          "description": "On confirmed breach: kill the agent session, or warn-only."
-        },
-        "tmux.memory_watchdog_consecutive_breaches": {
-          "type": "integer",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 2,
-          "description": "Consecutive over-limit checks required before enforcement."
-        },
-        "tmux.memory_watchdog_enabled": {
-          "type": "boolean",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": true,
-          "description": "Enable memory enforcement for agent tmux process trees."
-        },
-        "tmux.memory_watchdog_grace_seconds": {
-          "type": "number",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 120.0,
-          "description": "Age below which a run is never killed for memory (spawn spikes)."
-        },
         "tmux.reasoning_watchdog_interrupt_enabled": {
           "type": "boolean",
           "namespace": "tmux",
@@ -4709,26 +4649,6 @@
           "machineExport": false,
           "default": 0.2,
           "description": "Seconds to wait after Ctrl-C before sending the watchdog continuation prompt."
-        },
-        "tmux.system_memory_critical_available_percent": {
-          "type": "number",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 4.0,
-          "description": "Kill the largest agent tree when available memory drops below this %. Must be at or below the warn threshold."
-        },
-        "tmux.system_memory_warn_available_percent": {
-          "type": "number",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 8.0,
-          "description": "Warn with system-wide top consumers when available memory drops below this %."
         },
         "tool_approval.default_policy": {
           "type": "string",

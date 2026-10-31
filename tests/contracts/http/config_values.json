@@ -897,8 +897,6 @@
           "spawn_in_doubt_seconds": 150.0
         },
         "tmux": {
-          "agent_memory_limit_gb": 16.0,
-          "agent_memory_total_limit_gb": 0.0,
           "attach_history_lines": 500,
           "auto_enter_agent_interval_seconds": 30,
           "auto_enter_agent_terminals": true,
@@ -908,14 +906,8 @@
           "idle_timeout_seconds": 60,
           "init_timeout_seconds": 120,
           "max_reprompt_attempts": 3,
-          "memory_watchdog_action": "kill",
-          "memory_watchdog_consecutive_breaches": 2,
-          "memory_watchdog_enabled": true,
-          "memory_watchdog_grace_seconds": 120.0,
           "reasoning_watchdog_interrupt_enabled": true,
-          "reasoning_watchdog_settle_seconds": 0.2,
-          "system_memory_critical_available_percent": 4.0,
-          "system_memory_warn_available_percent": 8.0
+          "reasoning_watchdog_settle_seconds": 0.2
         },
         "tool_approval": {
           "default_policy": "auto",
@@ -1993,8 +1985,6 @@
           "spawn_in_doubt_seconds": 150.0
         },
         "tmux": {
-          "agent_memory_limit_gb": 16.0,
-          "agent_memory_total_limit_gb": 0.0,
           "attach_history_lines": 500,
           "auto_enter_agent_interval_seconds": 30,
           "auto_enter_agent_terminals": true,
@@ -2004,14 +1994,8 @@
           "idle_timeout_seconds": 60,
           "init_timeout_seconds": 120,
           "max_reprompt_attempts": 3,
-          "memory_watchdog_action": "kill",
-          "memory_watchdog_consecutive_breaches": 2,
-          "memory_watchdog_enabled": true,
-          "memory_watchdog_grace_seconds": 120.0,
           "reasoning_watchdog_interrupt_enabled": true,
-          "reasoning_watchdog_settle_seconds": 0.2,
-          "system_memory_critical_available_percent": 4.0,
-          "system_memory_warn_available_percent": 8.0
+          "reasoning_watchdog_settle_seconds": 0.2
         },
         "tool_approval": {
           "default_policy": "auto",

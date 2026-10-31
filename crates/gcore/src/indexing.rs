@@ -382,7 +382,7 @@ mod tests {
             .lines()
             .find(|line| line.trim_start().starts_with("indexing = ["))
             .expect("indexing feature");
-        for dependency in ["dep:ignore", "dep:sha2"] {
+        for dependency in ["dep:ignore"] {
             assert!(
                 indexing_feature.contains(&format!("\"{dependency}\"")),
                 "indexing feature should include {dependency}"

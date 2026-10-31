@@ -25,7 +25,6 @@ from gobby.agents.kill import kill_agent as kill_agent  # Re-imported for tests
 from gobby.agents.lifecycle_monitor_terminals import build_terminal_services
 from gobby.agents.lifecycle_reconciliation import LifecycleReconciliation
 from gobby.agents.loop_tracker import LoopTracker
-from gobby.agents.memory_watchdog import MemoryWatchdogHandler
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier
 from gobby.agents.task_recovery import TaskRecoveryHandler
@@ -195,14 +194,6 @@ class AgentLifecycleMonitor:
             terminal_services=self._terminal_services,
             get_session_coordinator=lambda: self._session_coordinator,
             terminal_config=self._terminal_config,
-        )
-        self._memory_watchdog = MemoryWatchdogHandler(
-            agent_run_manager=agent_run_manager,
-            db=db,
-            cleanup_handler=self._cleanup_handler,
-            tmux_config=self._tmux_config,
-            run_db=run_db,
-            terminal_services=self._terminal_services,
         )
         self._idle_check_handler = IdleCheckHandler(
             agent_run_manager=agent_run_manager,
@@ -405,7 +396,6 @@ class AgentLifecycleMonitor:
                 await self.check_periodic_enters()
                 await self.check_attention_agents(reuse_for_idle=True)
                 await self.check_unhealthy_agents()
-                await self.check_agent_memory()
                 await self.reap_daemon_stop_orphans()
                 await self.expire_terminal_run_sessions()
                 await self.check_initialization_timeout()
@@ -573,9 +563,6 @@ class AgentLifecycleMonitor:
     async def check_unhealthy_agents(self) -> int:
         """Detect and clean up dead or expired agents."""
         return await self._health_monitor.check_unhealthy_agents()
-
-    async def check_agent_memory(self) -> int:
-        return await self._memory_watchdog.check_agent_memory()
 
     async def check_idle_agents(self) -> int:
         """Check for idle agents and reprompt or fail them."""
