@@ -8,10 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.utils.git import run_git_command
-from gobby.workflows.git_commit_parsing import (
-    parse_git_commit_invocations,
-    resolve_commit_inspect_cwd,
-)
+from gobby.workflows.git_commit_parsing import parse_git_commit_invocations
 from gobby.workflows.git_lone_command import lone_git_command
 from gobby.workflows.observer_utils import (
     _extract_shell_command,
@@ -116,35 +113,32 @@ def _record_authored_merge(repo: Path, variables: dict[str, Any]) -> None:
 
 
 def _record_commit_merges(event: HookEvent, command: str, variables: dict[str, Any]) -> None:
-    """Record HEAD of each repository a commit in this command landed in.
+    """Credit only the repository named by a single successful commit command.
 
-    ``git -C <path>`` and ``cd`` name the repository a commit landed in, so a commit made
-    elsewhere is not credited to the event's working directory. A commit whose directory
-    git cannot verify is not credited at all.
+    The broader telemetry parser finds potential invocations, including skipped shell
+    branches. Only the closed grammar proves which invocation the success output belongs to.
     """
     cwd = event.cwd
-    if not cwd:
+    call = lone_git_command(command)
+    if not cwd or call is None or call.tokens[1:2] != ["commit"]:
         return
-    for invocation in parse_git_commit_invocations(command):
-        if invocation.cwd_unverified:
-            continue
-        repo = resolve_commit_inspect_cwd(invocation, event_cwd=cwd, project_path=cwd)
-        _record_authored_merge(Path(repo), variables)
+    _record_authored_merge(Path(cwd) / (call.target or "."), variables)
 
 
 def _record_clean_merge(
     event: HookEvent, command: str, output: str, variables: dict[str, Any]
 ) -> None:
-    """Record the merge a plain ``git merge`` committed cleanly, in the repository it named.
+    """Credit a clean merge or conflict-resolved continuation in its named repository.
 
-    git prints ``Merge made by`` only when it creates a merge commit, so a merge that is
-    already up to date is never credited.
+    Continuation prints a commit line instead of ``Merge made by``. Both require positive
+    commit output, so an already up-to-date merge or an abort is never credited.
     """
     cwd = event.cwd
     call = lone_git_command(command)
     if not cwd or call is None or call.tokens[1:2] != ["merge"]:
         return
-    if _MERGE_MADE_RE.search(output):
+    continued = call.tokens[2:] == ["--continue"] and _GIT_COMMIT_RE.search(output)
+    if _MERGE_MADE_RE.search(output) or continued:
         _record_authored_merge(Path(cwd) / (call.target or "."), variables)
 
 

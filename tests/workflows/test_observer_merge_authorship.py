@@ -201,9 +201,7 @@ def test_compound_command_cannot_credit_an_unexecuted_foreign_commit(
     assert result.returncode == 0, result.stderr
     variables: dict[str, Any] = {}
 
-    detect_bash_commit(
-        _shell_event(command, result.stdout, cwd=str(target)), variables, SESSION_ID
-    )
+    detect_bash_commit(_shell_event(command, result.stdout, cwd=str(target)), variables, SESSION_ID)
 
     assert _head(foreign) not in variables.get(LEDGER, [])
     assert variables["task_has_commits"] is True
