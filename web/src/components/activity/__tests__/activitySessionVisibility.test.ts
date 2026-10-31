@@ -34,6 +34,17 @@ function makeSession(overrides: Partial<GobbySession> = {}): GobbySession {
 }
 
 describe("getVisibleActivitySessions", () => {
+  it.each(["idle", "waiting"])(
+    "keeps %s seats in the live-only roster",
+    (status) => {
+      const session = makeSession({ status });
+
+      expect(getVisibleActivitySessions([session], { liveOnly: true })).toEqual(
+        [session],
+      );
+    },
+  );
+
   it("sorts without mutating the caller-owned session array", () => {
     const first = makeSession({ id: "old", ref: "#1", seq_num: 1 });
     const second = makeSession({ id: "new", ref: "#2", seq_num: 2 });

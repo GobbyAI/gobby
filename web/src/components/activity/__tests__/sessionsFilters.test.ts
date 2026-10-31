@@ -41,6 +41,23 @@ afterEach(() => {
 });
 
 describe("defaultSessionsFilters", () => {
+  it.each(["idle", "waiting"])("keeps %s sessions in Live", (status) => {
+    expect(
+      matchesSessionsFilters(
+        makeSession({ status }),
+        defaultSessionsFilters(),
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it.each(["idle", "waiting"])("restores the %s status filter", (status) => {
+    const restored = deserializeFromStorage(
+      JSON.stringify({ statuses: [status] }),
+    );
+    expect([...restored.statuses]).toEqual([status]);
+  });
+
   it("starts with all filter sets empty", () => {
     const f = defaultSessionsFilters();
     expect(f.modes.size).toBe(0);
@@ -86,8 +103,10 @@ describe("serializeSessionsFilters", () => {
       "awaiting_approval",
       "awaiting_handoff",
       "awaiting_input",
+      "idle",
       "interrupted",
       "paused",
+      "waiting",
     ]);
     // No other filter params for the default state.
     const nonStatus = [...params.entries()].filter(([k]) => k !== "status_in");
