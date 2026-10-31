@@ -424,6 +424,37 @@ mod tests {
     }
 
     #[test]
+    fn codex_lock_timeout_names_the_codex_config() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join(".codex/config.toml");
+        fs::create_dir_all(path.parent().context("Codex config parent")?)?;
+        fs::create_dir(path.with_file_name("config.toml.lock"))?;
+        let timing = Timing {
+            timeout: Duration::from_millis(20),
+            retry: Duration::from_millis(1),
+            ..PYTHON_TIMING
+        };
+        let error = super::update_text_with(&path, timing, |_| {
+            anyhow::bail!("occupied Codex lock must prevent config mutation")
+        })
+        .expect_err("Codex lock remains occupied");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("timed out"),
+            "unexpected lock failure: {message}"
+        );
+        assert!(
+            message.contains(path.to_str().context("Codex config path")?),
+            "lock diagnostic omits its Codex config: {message}"
+        );
+        assert!(
+            !message.contains("Claude"),
+            "Codex lock diagnostic names the wrong provider: {message}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn rewritten_config_keeps_its_private_mode() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let existing = dir.path().join("claude.json");

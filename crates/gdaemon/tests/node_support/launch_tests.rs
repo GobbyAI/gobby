@@ -649,6 +649,66 @@ async fn launch_seeds_provider_trust() -> Result<()> {
 }
 
 #[test]
+fn codex_symlink_seed_is_refused_with_a_warning() -> Result<()> {
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .args([
+            "--exact",
+            "launch_tests::codex_symlink_warning_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .output()?;
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(
+        output.status.success(),
+        "Codex warning child failed: {stderr}"
+    );
+    let warning = stderr
+        .lines()
+        .find(|line| line.starts_with("warning: codex trust seed failed:"))
+        .context("Codex symlink refusal did not warn")?;
+    assert!(
+        warning.contains("config.toml"),
+        "warning omits Codex config: {warning}"
+    );
+    assert!(
+        warning.contains("must not be a symlink"),
+        "warning omits refusal reason: {warning}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "subprocess helper for capturing the launch trust warning"]
+async fn codex_symlink_warning_child() -> Result<()> {
+    let mut fixture = LaunchFixture::new().await?;
+    fixture.payload.provider = "codex".into();
+    fixture.payload.provider_args.clear();
+    let codex_home = fixture.context.home.join(".codex");
+    fs::create_dir_all(&codex_home)?;
+    let target = fixture.context.home.join("preserved-config.toml");
+    let original = "model = \"preserved-model\"\n";
+    fs::write(&target, original)?;
+    let config = codex_home.join("config.toml");
+    std::os::unix::fs::symlink(&target, &config)?;
+    let refusal = seed_trust(
+        "codex",
+        &fixture.context.home,
+        &fixture.tree.path("workspace"),
+    )
+    .expect_err("Codex symlink must be refused");
+    assert!(format!("{refusal:#}").contains("must not be a symlink"));
+    fixture.launch().await?;
+    assert!(fs::symlink_metadata(&config)?.file_type().is_symlink());
+    assert_eq!(fs::read_to_string(&target)?, original);
+    assert_eq!(
+        persisted_state(&fixture.agents.home)?.runs[&fixture.payload.run_id].phase,
+        RunPhase::Launched
+    );
+    Ok(())
+}
+
+#[test]
 fn agy_gate_reprobes_binary_changed_during_probe() -> Result<()> {
     let root = tempfile::tempdir()?;
     let binary = root.path().join("agy");

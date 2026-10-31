@@ -187,6 +187,23 @@ mod tests {
             );
             let argv = serde_json::to_string(&["uv", "run", "python", "-c", &script])?;
             let config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+            let runtime = config
+                .environment
+                .get(std::ffi::OsStr::new("UV_PROJECT_ENVIRONMENT"))
+                .map(std::path::PathBuf::from);
+            assert!(
+                runtime
+                    .as_ref()
+                    .is_some_and(|path| path.starts_with(home.path())),
+                "cold uv environment must be isolated beneath the fresh temp home before launch: {runtime:?}"
+            );
+            assert!(
+                runtime
+                    .context("isolated uv runtime")?
+                    .join("bin/python")
+                    .is_file(),
+                "cold uv startup must finish inside the temp home before the supervisor deadline"
+            );
             let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
                 .context("test claim")?;
             let mut supervisor = BackendSupervisor::with_lease(None, claim, config);
