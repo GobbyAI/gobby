@@ -3,10 +3,11 @@ use std::collections::HashMap;
 use gobby_core::degradation::ServiceState;
 
 use crate::config::Context;
-use crate::visibility::graph_versions::admitted_namespaces;
+use crate::visibility::graph_versions::{admitted_namespaces, has_pending_pinned_graph_projection};
 
 #[cfg(test)]
 use super::RELATES_TO_CODE;
+use super::hotspot_snapshot::{SNAPSHOT_FORMAT_VERSION, admitted_digest, read_stored_hotspots};
 use super::loading::{CODE_COMMUNITIES_INPUT, load_report_communities, load_report_snapshot};
 use super::render::{RenderMarkdownInput, render_markdown};
 use super::summary::{
@@ -41,8 +42,12 @@ pub fn generate_report_with_options(
         &config.graph_name,
         ReportGraphSnapshot::default(),
         |client| {
+            // The admitted set and digest are captured once, before any query runs.
             let namespaces = admitted_namespaces(ctx)?;
-            load_report_snapshot(client, &namespaces, options.top_n)
+            let pending = has_pending_pinned_graph_projection(ctx)?;
+            let digest = admitted_digest(&namespaces, pending, SNAPSHOT_FORMAT_VERSION);
+            let stored = read_stored_hotspots(client, &ctx.project_id, &digest, options.top_n);
+            load_report_snapshot(client, &namespaces, options.top_n, stored)
         },
     );
 

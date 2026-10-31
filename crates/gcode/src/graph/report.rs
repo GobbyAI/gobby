@@ -1,7 +1,5 @@
 mod generation;
-// RED stub: cfg(test) until GREEN wires the snapshot into the index and report paths.
-#[cfg(test)]
-mod hotspot_snapshot;
+pub(crate) mod hotspot_snapshot;
 mod loading;
 mod queries;
 mod render;

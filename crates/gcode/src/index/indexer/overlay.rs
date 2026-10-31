@@ -10,6 +10,7 @@ use wait_timeout::ChildExt;
 use crate::cli_error::CliError;
 use crate::config::{Context, ProjectIndexScope, parent_code_index_exists};
 use crate::db;
+use crate::graph::report::hotspot_snapshot;
 use crate::index::api;
 use crate::index::{parser, walker};
 use crate::models::IndexedFile;
@@ -140,6 +141,7 @@ pub(super) fn index_overlay_files(
             primary::index_with_connection(conn, &parent_request, &parent_ctx, options)?;
         if request.sync_projections {
             parent_degraded.extend(sync_parent_projections(&parent_ctx, &parent_outcome));
+            parent_degraded.extend(hotspot_snapshot::refresh_after_index(&parent_ctx));
         }
         parent_degraded.extend(parent_outcome.degraded);
     }

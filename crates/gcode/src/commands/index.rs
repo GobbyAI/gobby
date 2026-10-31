@@ -1,4 +1,5 @@
 use crate::config::Context;
+use crate::graph::report::hotspot_snapshot;
 use crate::index::api::{
     self, IndexDegradation, IndexOutcome, IndexProgressSink, IndexRequest, UnsupportedFileType,
 };
@@ -207,7 +208,7 @@ pub(crate) fn run_index_locked(
 ) -> anyhow::Result<RunIndexLockedOutput> {
     let sync_projections = request.sync_projections;
     let mut index_progress = StderrIndexProgress::new(ctx.quiet);
-    let outcome = api::index_files(
+    let mut outcome = api::index_files(
         request,
         ctx,
         api::IndexOptions::with_progress(&mut index_progress),
@@ -226,6 +227,11 @@ pub(crate) fn run_index_locked(
         sync::DEFAULT_PROJECTION_SYNC_STALL_TIMEOUT,
         &mut projection_progress,
     );
+    // Refresh the stored hotspot snapshot once the graph is in sync. A failed refresh
+    // is a visible degradation; the index itself still succeeds.
+    outcome
+        .degraded
+        .extend(hotspot_snapshot::refresh_after_index(ctx));
     Ok(RunIndexLockedOutput::Projections(sync_projections_payload(
         &outcome,
         projections,

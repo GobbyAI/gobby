@@ -36,7 +36,7 @@ pub(crate) fn pending_projection_warnings(ctx: &Context) -> Vec<SearchWarning> {
     }
 }
 
-fn has_pending_pinned_graph_projection(ctx: &Context) -> anyhow::Result<bool> {
+pub(crate) fn has_pending_pinned_graph_projection(ctx: &Context) -> anyhow::Result<bool> {
     let (Some(machine), Some(project)) = (
         machine_uuid_or_invisible(&ctx.machine_id),
         project_uuid_or_invisible(scope_project_id(ctx)),
