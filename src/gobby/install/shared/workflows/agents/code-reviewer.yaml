@@ -197,8 +197,9 @@ step_workflow:
           tool: claim_task
           action: advance_seat
       transitions:
+        # A stale fixing flag alone does not open fix once its leaf closed; the bound task does.
         - to: fix
-          when: "vars.fixing"
+          when: "vars.fixing and vars.assigned_task_id"
         # A candidate whose leaf closed is not routed for a verdict or review.
         - to: verdict
           when: "vars.candidate_received and vars.verdict_ready and not task_state_in(vars.candidate_task, 'closed')"
@@ -405,5 +406,7 @@ step_workflow:
           tool: send_message
           action: advance_seat
       transitions:
+        # A seat that entered fix without binding its task has no binding to rewind it, so
+        # no bound task and no live claim also returns it to candidate wait.
         - to: await
-          when: "not vars.fixing"
+          when: "not vars.fixing or (not vars.assigned_task_id and not vars.get('claimed_tasks'))"
