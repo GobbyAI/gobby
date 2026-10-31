@@ -276,6 +276,41 @@ def _is_team_manager(db: HubDatabase, caller_session_id: str) -> bool:
     return definition is not None and definition[0].workflows.variables.get("team_manager") is True
 
 
+def missing_team_seat(db: HubDatabase, binding: TeamBinding, agent: str) -> bool:
+    """Whether a seat of ``agent`` ran in the team and none of them is still live.
+
+    A team that never ran a seat of that type has none to replace, so only a lost seat relaunches.
+    """
+    rows = db.fetchall(
+        "SELECT r.child_session_id, r.status FROM agent_runs r "
+        "JOIN sessions parent ON parent.id = r.parent_session_id "
+        "WHERE parent.project_id = %s AND r.agent_name = %s AND r.child_session_id IS NOT NULL",
+        (binding.project_id, agent),
+    )
+    recorded = False
+    for row in rows:
+        seat = seat_team(db, row["child_session_id"])
+        if seat is None or seat.team_id != binding.team_id:
+            continue
+        if row["status"] in _LIVE:
+            return False
+        recorded = True
+    return recorded
+
+
+def _may_relaunch(
+    db: HubDatabase, caller_session_id: str, binding: TeamBinding, agent: str
+) -> bool:
+    """A single-task team's manager relaunches a lost seat its definition may spawn."""
+    caller = SessionManager(db).get(caller_session_id)
+    definition = session_agent_definition(db, caller) if caller is not None else None
+    return (
+        definition is not None
+        and definition[0].may_spawn(agent)
+        and missing_team_seat(db, binding, agent)
+    )
+
+
 def dispatch_for_caller(
     db: HubDatabase,
     caller_session_id: str,
@@ -305,10 +340,21 @@ def dispatch_for_caller(
         or not _is_bound_dev_manager(db, caller_session_id, binding.task_id)
     ):
         if not resumed and _is_team_manager(db, caller_session_id):
+            if (
+                binding is not None
+                and binding.mode != EPIC_MODE
+                and _may_relaunch(db, caller_session_id, binding, agent)
+            ):
+                return DispatchScope(
+                    team_id=binding.team_id,
+                    project_id=binding.project_id,
+                    parent_session_id=caller_session_id,
+                    worktree_id=binding.worktree_id,
+                )
             raise TeamAdmissionRefused(
                 "team_manager_scope",
-                "a team manager spawns only inside its epic team; a single-task team's runbook "
-                "starts its seats",
+                "a team manager spawns only inside its epic team; a single-task team's manager "
+                "relaunches only a lost seat its definition may spawn",
             )
         return None
     epic = LocalTaskManager(db).get_task(binding.task_id)
