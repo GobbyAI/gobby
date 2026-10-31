@@ -22,6 +22,8 @@ from gobby.config.url_validation import validate_optional_endpoint_url
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DEFAULT_EMBEDDING_DIM",
+    "DEFAULT_EMBEDDING_MODEL",
     "DatabasesConfig",
     "EmbeddingsConfig",
     "MemoryKnowledgeGraphConfig",
@@ -183,6 +185,10 @@ def is_falkordb_enabled(databases: DatabasesConfig) -> bool:
 # Embeddings config (shared by memory, tools, code index)
 # ---------------------------------------------------------------------------
 
+# Canonical embedding default: every fallback resolves from these two values.
+DEFAULT_EMBEDDING_MODEL = "qwen3-embedding:0.6b-q8_0"
+DEFAULT_EMBEDDING_DIM = 1024
+
 
 class EmbeddingsConfig(BaseModel):
     """Embedding model configuration — single source of truth for all subsystems.
@@ -196,14 +202,15 @@ class EmbeddingsConfig(BaseModel):
     model_config = {"extra": "ignore"}
 
     model: str = Field(
-        default="nomic-embed-text",
+        default=DEFAULT_EMBEDDING_MODEL,
         description="Embedding model for semantic search",
     )
     dim: int = Field(
-        default=768,
+        default=DEFAULT_EMBEDDING_DIM,
         description=(
             "Dimensionality of embedding vectors. Must match the model's output: "
-            "768 for nomic-embed-text (default), 1536 for text-embedding-3-small, 1024 for BGE-M3."
+            "1024 for qwen3-embedding:0.6b-q8_0 (default), 768 for nomic-embed-text, "
+            "1536 for text-embedding-3-small."
         ),
     )
     api_base: str | None = Field(

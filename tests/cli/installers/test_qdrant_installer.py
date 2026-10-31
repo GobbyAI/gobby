@@ -308,8 +308,8 @@ class TestConfigModels:
         from gobby.config.persistence import EmbeddingsConfig
 
         config = EmbeddingsConfig()
-        assert config.model == "nomic-embed-text"
-        assert config.dim == 768
+        assert config.model == "qwen3-embedding:0.6b-q8_0"
+        assert config.dim == 1024
 
     def test_qdrant_config_requires_explicit_url(self) -> None:
         """QdrantConfig leaves its required managed URL unset until install."""
@@ -326,7 +326,7 @@ class TestConfigModels:
         assert hasattr(config, "databases")
         assert hasattr(config, "embeddings")
         assert config.databases.qdrant.port == 6333
-        assert config.embeddings.dim == 768
+        assert config.embeddings.dim == 1024
 
     def test_memory_config_has_no_database_fields(self) -> None:
         """MemoryConfig no longer contains database or embedding fields."""

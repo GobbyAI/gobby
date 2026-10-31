@@ -753,7 +753,9 @@ mod pin_recovery {
     use crate::config::{CodeVectorSettings, EmbeddingConfig, QdrantConfig};
     use crate::db;
     use crate::models::{SearchWarningCause, SearchWarningLane, Symbol};
-    use crate::projection::sync::tests::serial_db::{FILE, pinned_fixture, respond, seed_version};
+    use crate::projection::sync::tests::serial_db::{
+        FILE, pinned_fixture, respond, seed_version, version_hash,
+    };
     use crate::vector::code_symbols::{self, tests::read_http_request};
     use serde_json::json;
     use std::net::{TcpListener, TcpStream};
@@ -768,9 +770,9 @@ mod pin_recovery {
     fn text_search_survives_projection_recovery() {
         let database_url = crate::test_env::postgres_test_database_url("pinned text recovery");
         let mut conn = db::connect_readwrite(&database_url).expect("connect");
-        let (mut ctx, source, _source_cleanup, _overlay_cleanup) =
+        let (mut ctx, source, _source_cleanup, _overlay_cleanup, _root) =
             pinned_fixture(&mut conn, &database_url);
-        let symbol_id = Symbol::make_id(&source, FILE, "hash-h", "run", "function", 0);
+        let symbol_id = Symbol::make_id(&source, FILE, &version_hash("h"), "run", "function", 0);
         let facts = crate::codewiki_facts::CodewikiFacts::from_context(ctx.clone());
         let text = facts.search("run", 10).expect("pinned PostgreSQL search");
         assert_eq!(
@@ -835,9 +837,9 @@ mod pin_recovery {
         };
         let database_url = crate::test_env::postgres_test_database_url("pin projection reads");
         let mut conn = db::connect_readwrite(&database_url).expect("connect");
-        let (mut ctx, source, _source_cleanup, _overlay_cleanup) =
+        let (mut ctx, source, _source_cleanup, _overlay_cleanup, _root) =
             pinned_fixture(&mut conn, &database_url);
-        let symbol_id = Symbol::make_id(&source, FILE, "hash-h", "run", "function", 0);
+        let symbol_id = Symbol::make_id(&source, FILE, &version_hash("h"), "run", "function", 0);
         // The PostgreSQL/BM25 lane remains available before projection recovery.
         let facts = crate::codewiki_facts::CodewikiFacts::from_context(ctx.clone());
         let text = facts.search("run", 10).expect("read pinned text facts");
@@ -894,16 +896,18 @@ mod pin_recovery {
                 }
             })
         };
+        let hash_h = version_hash("h");
+        let hash_k = version_hash("k");
         let mut observed = Vec::new();
         for (hash, projected, backend, expected) in [
-            ("hash-h", false, 0, true),  // live source namespace
-            ("hash-h", false, 1, false), // stray child rows are not recovered rows
-            ("hash-k", true, 1, true),   // completed child projection
-            ("hash-k", true, 0, false),  // source moved; old source projection is excluded
-            ("hash-k", false, 0, false),
-            ("hash-k", false, 1, false), // late/discarded upsert remains unadmitted
+            (hash_h.as_str(), false, 0, true),  // live source namespace
+            (hash_h.as_str(), false, 1, false), // stray child rows are not recovered rows
+            (hash_k.as_str(), true, 1, true),   // completed child projection
+            (hash_k.as_str(), true, 0, false),  // source moved; old source projection is excluded
+            (hash_k.as_str(), false, 0, false),
+            (hash_k.as_str(), false, 1, false), // late/discarded upsert remains unadmitted
         ] {
-            seed_version(&mut conn, &source, hash, hash == "hash-h");
+            seed_version(&mut conn, &source, hash, hash == hash_h.as_str());
             conn.execute(
                 "UPDATE code_overlay_pins SET vector_projected = $2 WHERE overlay_project_id = $1",
                 &[
@@ -925,10 +929,10 @@ mod pin_recovery {
                 &[&overlay_uuid],
             )
             .expect("clear child shadow");
-            conn.execute("UPDATE code_overlay_pins SET content_hash = 'hash-h', vector_projected = false WHERE overlay_project_id = $1", &[&overlay_uuid]).expect("restore pin");
+            conn.execute("UPDATE code_overlay_pins SET content_hash = $2, vector_projected = false WHERE overlay_project_id = $1", &[&overlay_uuid, &hash_h]).expect("restore pin");
             match change {
                 "repin" => {
-                    conn.execute("UPDATE code_overlay_pins SET content_hash = 'hash-k' WHERE overlay_project_id = $1", &[&overlay_uuid]).expect("repin");
+                    conn.execute("UPDATE code_overlay_pins SET content_hash = $2 WHERE overlay_project_id = $1", &[&overlay_uuid, &hash_k]).expect("repin");
                 }
                 "purge" => {
                     conn.execute(
@@ -976,7 +980,7 @@ mod pin_recovery {
     fn graph_reads_report_pending_pin_projection() {
         let database_url = crate::test_env::postgres_test_database_url("pinned graph pending");
         let mut conn = db::connect_readwrite(&database_url).expect("connect");
-        let (ctx, _source, _source_cleanup, _overlay_cleanup) =
+        let (ctx, _source, _source_cleanup, _overlay_cleanup, _root) =
             pinned_fixture(&mut conn, &database_url);
         let overlay_uuid = db::id_param(&ctx.project_id).expect("child UUID");
 
@@ -1016,12 +1020,13 @@ mod pin_recovery {
     fn fresh_pin_graph_reads_admit_source_namespace() {
         let database_url = crate::test_env::postgres_test_database_url("fresh pin graph source");
         let mut conn = db::connect_readwrite(&database_url).expect("connect");
-        let (ctx, source, _source_cleanup, _overlay_cleanup) =
+        let (ctx, source, _source_cleanup, _overlay_cleanup, _root) =
             pinned_fixture(&mut conn, &database_url);
         // Point the source selector back at the pinned hash: the pin is fresh, its
         // graph projection has not landed, and the source still serves that version.
-        seed_version(&mut conn, &source, "hash-h", true);
-        let pinned_key = format!("{FILE}|hash-h");
+        let pinned_hash = version_hash("h");
+        seed_version(&mut conn, &source, &pinned_hash, true);
+        let pinned_key = format!("{FILE}|{pinned_hash}");
 
         let namespaces =
             crate::visibility::graph_versions::admitted_namespaces(&ctx).expect("admit");
@@ -1056,7 +1061,7 @@ mod pin_recovery {
     fn projected_pin_keeps_pinned_version_after_source_moves() {
         let database_url = crate::test_env::postgres_test_database_url("projected pin graph");
         let mut conn = db::connect_readwrite(&database_url).expect("connect");
-        let (ctx, _source, _source_cleanup, _overlay_cleanup) =
+        let (ctx, _source, _source_cleanup, _overlay_cleanup, _root) =
             pinned_fixture(&mut conn, &database_url);
         let overlay_uuid = db::id_param(&ctx.project_id).expect("child UUID");
         conn.execute(
@@ -1065,8 +1070,10 @@ mod pin_recovery {
         )
         .expect("record graph projection");
 
-        // The fixture's source selector already moved to hash-k. The projected pin is
+        // The fixture's source selector already moved to the "k" version. The projected pin is
         // served from the child namespace at its pinned hash, never at the new one.
+        let pinned_hash = version_hash("h");
+        let moved_hash = version_hash("k");
         let namespaces =
             crate::visibility::graph_versions::admitted_namespaces(&ctx).expect("admit");
         let child = namespaces
@@ -1074,11 +1081,17 @@ mod pin_recovery {
             .find(|namespace| namespace.project_id == ctx.project_id)
             .expect("child namespace");
         assert!(
-            child.versions.keys.contains(&format!("{FILE}|hash-h")),
+            child
+                .versions
+                .keys
+                .contains(&format!("{FILE}|{pinned_hash}")),
             "a projected pin keeps serving its pinned version: {child:?}"
         );
         assert!(
-            !child.versions.keys.contains(&format!("{FILE}|hash-k")),
+            !child
+                .versions
+                .keys
+                .contains(&format!("{FILE}|{moved_hash}")),
             "the moved source version stays out of the child namespace: {child:?}"
         );
     }

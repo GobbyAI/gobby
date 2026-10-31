@@ -2,7 +2,7 @@ use super::*;
 use anyhow::Context as _;
 
 pub(crate) const FALKORDB_DEFAULT_PORT: u16 = 16379;
-pub(crate) const EMBEDDING_DEFAULT_MODEL: &str = "nomic-embed-text";
+pub(crate) const EMBEDDING_DEFAULT_MODEL: &str = "qwen3-embedding:0.6b-q8_0";
 pub(crate) const EMBEDDING_DEFAULT_TIMEOUT_SECONDS: u64 = 10;
 const AI_DEFAULT_MAX_CONCURRENCY: u8 = 1;
 pub const INDEXING_EXTRA_EXCLUDES_KEY: &str = "indexing.extra_excludes";

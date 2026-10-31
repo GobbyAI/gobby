@@ -333,13 +333,13 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
 }
 
 #[derive(Debug)]
-pub(super) struct ReadSymbolSource {
-    pub(super) text: String,
+pub(crate) struct ReadSymbolSource {
+    pub(crate) text: String,
     pub(super) file_bytes: usize,
     pub(super) symbol_bytes: usize,
 }
 
-pub(super) fn read_symbol_source(
+pub(crate) fn read_symbol_source(
     root: &Path,
     symbol: &Symbol,
 ) -> anyhow::Result<Option<ReadSymbolSource>> {

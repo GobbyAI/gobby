@@ -451,6 +451,34 @@ fn vector_dim_setting_reads_ai_config_no_env() {
 
 #[test]
 #[serial_test::serial]
+fn qwen_switch_resolves_code_model_and_dimension_from_shared_config() {
+    with_service_env(&[], || {
+        for (model, dim) in [
+            ("nomic-embed-text", "768"),
+            ("qwen3-embedding:0.6b-q8_0", "1024"),
+        ] {
+            let values = std::collections::HashMap::from([
+                (embedding_keys::AI_API_BASE, "http://127.0.0.1:1234/v1"),
+                (embedding_keys::AI_MODEL, model),
+                (embedding_keys::AI_DIM, dim),
+            ]);
+            let embedding =
+                resolve_embedding_config_from_values(config_value_for(&values), |value| {
+                    Ok(value.to_string())
+                })
+                .expect("shared embedding config");
+            let settings = resolve_code_vector_settings_from_values(config_value_for(&values))
+                .expect("shared dimension config");
+
+            assert_eq!(embedding.model, model);
+            assert_eq!(embedding.api_base, "http://127.0.0.1:1234/v1");
+            assert_eq!(settings.vector_dim, Some(dim.parse().expect("dimension")));
+        }
+    });
+}
+
+#[test]
+#[serial_test::serial]
 fn phase7_config_resolution_returns_gcode_falkor_config_with_core_fields_and_graph_name() {
     with_service_env(&[], || {
         let values = std::collections::HashMap::from([

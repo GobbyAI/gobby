@@ -721,6 +721,7 @@ fn vector_lifecycle_from_context(
         embedding,
         ctx.code_vectors.clone(),
     )
+    .map(|lifecycle| lifecycle.with_project_root(ctx.project_root.clone()))
 }
 
 fn typed_projection_error(error: &anyhow::Error) -> ProjectionSyncError {
@@ -750,6 +751,7 @@ fn vector_error_kind(error: &VectorLifecycleError) -> &'static str {
         #[cfg(feature = "ai")]
         VectorLifecycleError::EmbeddingHttp { .. } => "embedding_http",
         VectorLifecycleError::EmbeddingResponse(_) => "embedding_response",
+        VectorLifecycleError::EmbeddingInput(_) => "embedding_input",
         VectorLifecycleError::QdrantHttp { .. } => "qdrant_http",
         VectorLifecycleError::QdrantOperation(_) => "qdrant_operation",
         VectorLifecycleError::InvalidCollectionName(_) => "invalid_collection_name",

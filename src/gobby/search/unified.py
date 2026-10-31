@@ -9,7 +9,7 @@ Example usage:
     from gobby.search.models import SearchConfig
 
     config = SearchConfig(mode="auto")
-    searcher = UnifiedSearcher(config, embedding_model="nomic-embed-text")
+    searcher = UnifiedSearcher(config, embedding_model="qwen3-embedding:0.6b-q8_0")
 
     await searcher.fit_async([
         ("id1", "hello world"),
@@ -27,6 +27,7 @@ from collections.abc import Callable
 from typing import Any
 
 from gobby.ai.embeddings import EmbeddingService
+from gobby.config.persistence import DEFAULT_EMBEDDING_MODEL
 from gobby.search.backends import AsyncSearchBackend, EmbeddingBackend
 from gobby.search.keyword import KeywordAsyncSearchBackend, keyword_table_for_fts_table
 from gobby.search.models import FallbackEvent, SearchConfig, SearchMode
@@ -83,7 +84,7 @@ class UnifiedSearcher:
         fts_content_table: str | None = None,
         fts_id_column: str = "id",
         fts_weights: tuple[float, ...] | None = None,
-        embedding_model: str = "nomic-embed-text",
+        embedding_model: str = DEFAULT_EMBEDDING_MODEL,
         embedding_api_base: str | None = None,
         embedding_api_key: str | None = None,
         embedding_dim: int | None = None,

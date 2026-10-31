@@ -359,8 +359,8 @@ async def test_fresh_runtime_start_surfaces_journal_projection_targets(
 async def test_remote_catchup_after_journal_gc(temp_db: HubDatabase) -> None:
     store = ConfigStore(temp_db)
     journal = _managed_journal()
-    journal.target_model = "nomic-embed-text"
-    journal.target_dim = 768
+    journal.target_model = "qwen3-embedding:0.6b-q8_0"
+    journal.target_dim = 1024
     store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, journal.to_dict())
     complete_switch(store, journal)
     completed_snapshot = store.read_snapshot()

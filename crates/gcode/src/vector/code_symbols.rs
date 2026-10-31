@@ -4,6 +4,7 @@ mod qdrant;
 mod repository;
 mod search;
 mod types;
+mod vector_text;
 
 pub use embedding::{EmbeddingSource, embedding_source_from_context, probe_embedding_dim};
 pub use lifecycle::CodeSymbolVectorLifecycle;
@@ -28,7 +29,6 @@ pub use types::{
     CodeSymbolVectorSearchHit, CodeSymbolVectorSearchRequest, VectorLifecycleError,
 };
 
-pub(crate) use embedding::vector_text_for_symbol;
 #[cfg(all(test, feature = "ai"))]
 use embedding::{embed_text, embed_text_batch, embedding_client};
 #[cfg(all(test, feature = "ai"))]
@@ -37,6 +37,9 @@ pub(crate) use qdrant::VECTOR_DISTANCE_COSINE;
 use qdrant::delete_file_vectors;
 #[cfg(test)]
 use search::{SearchError, search_code_symbols};
+pub(crate) use vector_text::vector_input_fingerprint;
+#[cfg(test)]
+pub(crate) use vector_text::vector_text_for_symbol;
 
 #[cfg(test)]
 pub(crate) mod tests;

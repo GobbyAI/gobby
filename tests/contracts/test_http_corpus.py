@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -168,6 +169,36 @@ def test_mask_vector_matches_expected() -> None:
     for entry in vector:
         document = http_corpus.redact_secrets(entry["input"])
         assert http_corpus.apply_masks(document, entry["mask"]) == entry["expected"], entry
+
+
+def _source_literal(source: str, pattern: str) -> str:
+    match = re.search(pattern, source)
+    assert match, f"source literal not found: {pattern}"
+    return match[1]
+
+
+@pytest.mark.unit
+def test_runtime_handshake_identity_pins_source_assets() -> None:
+    # Replay masks schema_identity because the answering gdaemon's build decides it.
+    # The committed values are pinned to this tree's gcore migration assets instead.
+    source = (Path(__file__).resolve().parents[2] / "crates/gcore/src/schema/assets.rs").read_text()
+    migrations = source[source.index("pub(crate) const MIGRATIONS") :]
+    migrations = migrations[: migrations.index("\n];")]
+    latest_version, latest_checksum = re.findall(
+        r'version: (\d+),\s*filename: "[^"]+",\s*checksum: "([0-9a-f]{64})"', migrations
+    )[-1]
+    pinned = {
+        "runner_protocol": int(_source_literal(source, r"RUNNER_PROTOCOL_VERSION: u32 = (\d+)")),
+        "baseline_version": int(_source_literal(source, r"BASELINE_VERSION: i32 = (\d+)")),
+        "baseline_checksum": _source_literal(
+            source, r'BASELINE_CHECKSUM: &str =\s*"([0-9a-f]{64})"'
+        ),
+        "latest_version": int(latest_version),
+        "latest_checksum": latest_checksum,
+    }
+    case = json.loads((http_corpus.CORPUS_DIR / "runtime_handshake.json").read_text())
+    identity = case["response"]["body"]["grant"]["schema_identity"]
+    assert {key: identity[key] for key in pinned} == pinned
 
 
 @pytest.mark.unit

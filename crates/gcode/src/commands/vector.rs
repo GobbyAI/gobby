@@ -38,6 +38,7 @@ fn lifecycle_from_resolved_embedding_source(
         embedding,
         ctx.code_vectors.clone(),
     )
+    .map(|lifecycle| lifecycle.with_project_root(ctx.project_root.clone()))
 }
 
 pub fn sync_file(

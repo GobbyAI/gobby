@@ -498,11 +498,11 @@ async def try_autoload_embedding_model(model: str, api_base: str | None) -> bool
 
     # LM Studio: try `lms load`
     if _is_lm_studio_endpoint(api_base) and shutil.which("lms"):
-        from gobby.cli.installers.embedding import _LMSTUDIO_MODEL_KEY
+        from gobby.cli.installers.embedding import _LMSTUDIO_MODEL_ID
 
         load_identifier = _lm_studio_load_identifier(
             model,
-            fallback_model_key=_LMSTUDIO_MODEL_KEY,
+            fallback_model_key=_LMSTUDIO_MODEL_ID,
         )
         try:
             ps_result = await _run_cli_command(["lms", "ps"], timeout=_LM_STUDIO_STATUS_TIMEOUT)
