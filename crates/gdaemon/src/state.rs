@@ -111,7 +111,10 @@ impl NodeServices {
             launch: Arc::new(launch),
         });
         // Agent background work reaches the relay through this weak back-reference.
-        let _ = node.agents.services.set(Arc::downgrade(&node));
+        node.agents
+            .services
+            .set(Arc::downgrade(&node))
+            .map_err(|_| anyhow::anyhow!("node agents already have services"))?;
         Ok(Some((node, claim)))
     }
 }

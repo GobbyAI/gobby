@@ -95,11 +95,14 @@ pub fn schedule(agents: &NodeAgents, payload: &SpawnPayload) {
     let Some(node) = agents.services.get().and_then(Weak::upgrade) else {
         return;
     };
-    tokio::spawn(deliver(
-        node,
-        payload.run_id.clone(),
-        payload.prompt.clone(),
-    ));
+    let run_id = payload.run_id.clone();
+    let delivery = tokio::spawn(deliver(node, run_id.clone(), payload.prompt.clone()));
+    // Watches the delivery task so a panic or runtime abort is logged rather than dropped.
+    tokio::spawn(async move {
+        if let Err(error) = delivery.await {
+            eprintln!("node codex prompt {run_id}: delivery ended abnormally: {error}");
+        }
+    });
 }
 
 async fn type_prompt(
