@@ -77,10 +77,8 @@ from gobby.sessions.transcript_cursor import (
     build_turn_settled_observer,
 )
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.terminals.pane_io import PaneIO, context_runtime_pane, live_runtime_pane
-from gobby.workflows.session_feedback_survey import survey_is_active
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
@@ -270,7 +268,6 @@ def register_terminal_tools(
     terminal_runtime_registry: Any | None = None,
     write_coordinator: Any | None = None,
     task_manager: LocalTaskManager | None = None,
-    config_resolver: Callable[[], Any | None] | None = None,
 ) -> None:
     """Register terminal control and structured handoff tools."""
 
@@ -425,30 +422,6 @@ def register_terminal_tools(
         assert resolved_session_id is not None
         assert session is not None
 
-        variable_manager = SessionVariableManager(db)
-        submitted = (
-            variable_manager.get_variable_subset(
-                resolved_session_id, ("_gobby_feedback_epoch_submitted",)
-            ).get("_gobby_feedback_epoch_submitted")
-            is True
-        )
-        project_id = getattr(session, "project_id", None)
-        project = LocalProjectManager(db).get(project_id) if isinstance(project_id, str) else None
-        config = config_resolver() if config_resolver is not None else None
-        feedback_config = getattr(config, "session_feedback", None)
-        scope = getattr(feedback_config, "survey", "gobby")
-        survey_active = survey_is_active(scope, project.name if project is not None else "")
-
-        if survey_active and not submitted:
-            return {
-                "success": False,
-                "error_code": "feedback_required",
-                "error": (
-                    "This project requires the bounded Gobby-experience survey before handoff. "
-                    "Call gobby-sessions:feedback with at most 3 observations, or "
-                    "observations=[] when there is nothing to report. Then call set_handoff last."
-                ),
-            }
         if clear_session and LocalTaskManager(db).list_tasks(
             claimed_by_session_id=resolved_session_id, closed=False, limit=1
         ):
@@ -460,7 +433,7 @@ def register_terminal_tools(
                     "clear_session=true is allowed only between tasks after task closure."
                 ),
             }
-        return {"feedback_submitted": submitted}
+        return {}
 
     async def _compact_with_handoff(
         handoff: HandoffPayload,
