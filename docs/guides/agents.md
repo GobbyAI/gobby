@@ -179,7 +179,7 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `capabilities` | Explicit permissions and workflow opt-ins; a definition's name grants no authority. Rule applicability and exemptions belong in `workflows.rule_selectors`. |
 | `blocked_tools` / `blocked_mcp_tools` | Definition-level restrictions |
 | `spawnable_agents` | What a spawned run of this definition may spawn: `["*"]` any agent, named agents, or empty (the default) none. See [Spawn Scope](#spawn-scope) |
-| `resumable_team_agents` | Existing agent definitions a running team manager may resume within its own admitted team, retaining the seat's stored type. Empty by default; fresh spawns still use `spawnable_agents`. |
+| `resumable_team_agents` | Existing agent definitions a running team manager may resume within its own admitted team, retaining the seat's stored type. Empty by default; fresh spawns still use `spawnable_agents`, and a single-task team's manager relaunches only a seat type its team recorded and no longer runs. |
 | `send_message_targets` | `send_message` target modes a spawned agent may use (default `["parent"]`), enforced by the `scope-spawned-agent-send-message` rule |
 | `step_workflow` | Optional nested object with `steps`, `variables`, and `exit_condition` |
 | `enabled` | Whether the definition is active |

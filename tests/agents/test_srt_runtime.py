@@ -802,6 +802,10 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         assert (expected_parent / "tmp-path").read_text() == str(temp_path)
     else:
         assert temp_path == expected_parent / "tmp"
+    # The run's own socket root is exposed only where SRT granted it Unix sockets; the
+    # rule engine admits writes under exactly this directory and nothing else (#25365).
+    granted_root = allow_run_sockets and platform_name == "darwin"
+    assert launch.run_socket_root == (str(temp_path) if granted_root else None)
     # Children the provider spawns (the uv-launched MCP bridge) read TMPDIR, so
     # every provider gets it pointed at the same writable run temp directory.
     assert Path(launch.provider_env["TMPDIR"]) == temp_path

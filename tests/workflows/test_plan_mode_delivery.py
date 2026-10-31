@@ -15,6 +15,7 @@ from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.grok import GrokAdapter
+from gobby.agents.sync import sync_bundled_agents
 from gobby.hooks import grok_pending_context
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.grok_pending_context import PendingContextHandler
@@ -61,6 +62,9 @@ async def test_native_prompt_delivery_periods(
 ) -> None:
     """Normalize real envelopes, serialize final output, and commit only on ack."""
     _sync_bundled(temp_db)
+    # The shipped default definition selects the plan directive policy; without its row the
+    # resolver falls back to a bare `tag:default` selector that no longer carries the directive.
+    sync_bundled_agents(temp_db)
     _create_session(temp_db)
     variables = SessionVariableManager(temp_db)
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "state"))

@@ -296,6 +296,10 @@ class SessionVariableTransfer:
     PRIORITY: ClassVar[int] = 950
     session_ids: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        # Equal transfers compare equal, so a nested request for the same rows is a no-op.
+        object.__setattr__(self, "session_ids", tuple(sorted(set(self.session_ids))))
+
 
 @dataclass(frozen=True)
 class ChatAttachmentMutation:

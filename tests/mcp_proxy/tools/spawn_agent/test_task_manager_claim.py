@@ -8,6 +8,7 @@ import pytest
 from gobby.agents.isolation import IsolationContext
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
@@ -36,6 +37,7 @@ def _seat_definition(seat: str) -> AgentDefinitionBody:
             name=seat,
             prompts={"agent": "Synthetic team manager."},
             model="claude-sonnet-5",
+            capabilities=["manage_task_claims", "land_tasks", "accept_resume_retype"],
             task_step_writes=["closing"],
             workflows=make_agent_workflows(variables={"team_manager": True}),
         )
@@ -49,6 +51,10 @@ def _seat_definition(seat: str) -> AgentDefinitionBody:
 
 async def _spawn_task_seat(case: LandingCase, task: Task, mock_runner: MagicMock, seat: str) -> str:
     body = _seat_definition(seat)
+    # The spawned session's authority is read from the installed row, not the patched body.
+    AgentDefinitionManager(case.db).create(
+        name=seat, source="custom", definition_json=body.model_dump(mode="json", exclude_none=True)
+    )
     runs = LocalAgentRunManager(case.db)
     mock_runner.run_storage = runs
     registry = create_spawn_agent_registry(
@@ -128,12 +134,18 @@ async def test_spawned_manager_can_land_independently_approved_candidate(
     tasks.claim_task(task.id, case.claimant, force=True)
     case.link(task, sha)
     case.approve(task, sha)
-    grant_step_writes(case.db, manager, case.project_id, "dev-manager", ("closing",))
+    grant_step_writes(
+        case.db,
+        manager,
+        case.project_id,
+        "dev-manager",
+        ("closing",),
+        capabilities=("land_tasks",),
+    )
 
     landed = await case.land(tasks.get_task(task.id), sha, caller=manager)
 
-    assert "caller_was_claimant" not in landed.get("blockers", [])
-    assert "caller_is_claimant" not in landed.get("blockers", [])
+    assert "caller_is_maker" not in landed.get("blockers", [])
     assert landed["landed"] is True, landed
     assert case.git("rev-parse", "trunk") == sha
 
@@ -169,6 +181,5 @@ async def test_manager_that_explicitly_claimed_is_still_refused(
     refused = await case.land(LocalTaskManager(case.db).get_task(task.id), sha, caller=manager)
 
     assert refused["landed"] is False
-    expected = "caller_was_claimant" if release_claim else "caller_is_claimant"
-    assert expected in refused["blockers"]
+    assert "caller_is_maker" in refused["blockers"]
     assert case.git("rev-parse", "trunk") == case.base

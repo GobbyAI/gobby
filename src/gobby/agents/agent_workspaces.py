@@ -36,7 +36,7 @@ from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
 from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git, parse_porcelain_v1_z
 
 if TYPE_CHECKING:
-    from gobby.agents.team_lifecycle import TeamBinding
+    from gobby.agents.team_admission_records import TeamBinding
 
 logger = logging.getLogger(__name__)
 
@@ -686,7 +686,8 @@ def _epic_folder(db: HubDatabase, binding: TeamBinding) -> Path | None:
 
 def _seat_epic_folder(db: HubDatabase, session_id: str) -> Path | None:
     """The epic folder of a seat run of a live epic team; None outside one."""
-    from gobby.agents.team_lifecycle import seat_team, team_binding
+    from gobby.agents.team_admission_records import team_binding
+    from gobby.agents.team_lifecycle import seat_team
     from gobby.agents.team_scope import live_teams
     from gobby.storage.team_records import EPIC_MODE
 

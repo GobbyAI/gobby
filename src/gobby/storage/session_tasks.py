@@ -29,6 +29,23 @@ def record_claim(
         """,
         (session_id, task_id, new_claim),
     )
+    # Claimant rows describe the latest tenure and are reset on a returning
+    # claim. Preserve the task's first boundary in the append-only audit log.
+    # Callers serialize claim changes under the task row lock.
+    conn.execute(
+        """
+        INSERT INTO task_lifecycle_events (task_id, to_state, reason, by_actor, created_at)
+        SELECT task_id, 'claim:started', 'First task claim', session_id::text, created_at
+        FROM session_tasks
+        WHERE task_id = %s AND action = 'claimed'
+          AND NOT EXISTS (
+            SELECT 1 FROM task_lifecycle_events
+            WHERE task_id = %s AND to_state = 'claim:started'
+          )
+        ORDER BY created_at, session_id LIMIT 1
+        """,
+        (task_id, task_id),
+    )
 
 
 def claimant_sessions(conn: Transaction, task_id: str) -> set[str]:

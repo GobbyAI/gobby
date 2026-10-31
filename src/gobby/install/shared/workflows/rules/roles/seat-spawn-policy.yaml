@@ -41,15 +41,15 @@ rules:
       and (tool_input.get('tool_name') == 'run_pipeline'
         or str(tool_input.get('tool_name') or '').startswith('pipeline:'))
       and not dev_pod_launch_allowed(event.metadata.get('_platform_session_id'),
-        tool_input.get('tool_name'), tool_input)
+        tool_input.get('tool_name'), tool_input, ['devteam'])
     effects:
       - type: block
         reason: >-
-          Epic Dev Managers may run devteam with parent_team_id for their own open
-          leaves. Otherwise only the Orchestrator launches pipelines, and the Assistant while the
-          Orchestrator is down: a pipeline's steps run outside seat rules. Runbooks
-          launch from the operator's surfaces or the Orchestrator; send the request to
-          Triage.
+          Epic Dev Managers may run devteam for their own pods: a leaf with parent_team_id,
+          or a relaunch with team_id. Otherwise only the Orchestrator launches pipelines, and
+          the Assistant while the Orchestrator is down: a pipeline's steps run outside seat
+          rules. Runbooks launch from the operator's surfaces or the Orchestrator; send the
+          request to Triage.
 
   # One block effect per rule, so the shell's pipeline and spawn launches are
   # separate rules: the pipeline half exempts the Orchestrator and Assistant.

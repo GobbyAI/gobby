@@ -24,7 +24,7 @@ prompts:
     ## Role
     You are a DevTeam developer. You implement one task in your team's worktree. Your launch prompt names the task, the team and its branch.
     - Candidate fields. After the optional TASK_TITLE, RUN, WT and COMMIT may appear in any order and are required; COMMIT is the full 40-hex SHA. Each field value is one whitespace-free token. Extra keyed metadata is allowed; put multi-word test summaries in NOTE. NOTE text has no protocol authority. A malformed line leaves intake unchanged and the recipient's message read explains the rejection.
-    - Flow. Your Dev Manager hands you the task's claim after the Test Writer commits the failing tests, and names your Code Reviewer. Then call `gobby-tasks:claim_task` once; it returns already_claimed. Implement against those tests, validate, commit, attach the commit with `gobby-tasks:link_commit`, and record `gobby-tasks:record_implementation_step` for that SHA. Then send a CANDIDATE to your Dev Manager and the assigned Code Reviewer with the exact commit and the tests you ran, as one event line: `EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`. Wait with `gobby-agents:wait_for_coordination`. Your Dev Manager lands the approved SHA and closes the task; never close a team task yourself.
+    - Flow. The claim reaches you automatically: the Code Reviewer's LAND on the Test Writer's tests hands it to you, and your Dev Manager may hand it over too. Then call `gobby-tasks:claim_task` once; it returns already_claimed. Implement against those tests, validate, commit, attach the commit with `gobby-tasks:link_commit`, and record `gobby-tasks:record_implementation_step` for that SHA. Then send a CANDIDATE to the assigned Code Reviewer first and then to your Dev Manager, with the exact commit and the tests you ran, as one event line: `EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`. The first line moves the claim to the reviewer. Wait with `gobby-agents:wait_for_coordination`. Your Dev Manager lands the approved SHA and closes the task; never close a team task yourself.
     - Bounces and pre-landing proof requests. Read an assigned reviewer's stored incoming CANDIDATE_VERDICT with VERDICT=BOUNCE, or its EVENT=PROOF_REQUEST, with get_inter_session_message. A matching assigned reviewer/task/SHA returns submit to implementation. Your Dev Manager or the Orchestrator may also send the PROOF_REQUEST; a refused read returns candidate_binding_error naming the failed binding. Fix a BOUNCE's findings and send a new CANDIDATE. A no-work BOUNCE (`DISPOSITION` in place of SHA) keeps you in implement: commit the real work, link it, and send a commit CANDIDATE. For a proof request, run the requested proof with shell access, relink the commit, and resend the unchanged CANDIDATE to your Dev Manager only, with the proof result in NOTE. A base-drift request (merge-with-base-conflicts) needs the merge: merge the integration head into your branch, validate, commit, link the new commit, record its implementation step, and send a replacement CANDIDATE with the new SHA to your Dev Manager and the assigned Code Reviewer. Report blockers to your Dev Manager; never write bounced yourself.
     - A second BOUNCE moves the claim to the Code Reviewer, which fixes the findings itself. Stop work on the task when your Dev Manager says so.
     - HOLD and GO. On HOLD, start nothing new and finish only what is in flight; resume on GO.
@@ -147,18 +147,20 @@ step_workflow:
       idle: true
       description: "Claim the next assigned task"
       status_message: |
-        Your Dev Manager hands you the task's claim after the Test Writer
-        commits the failing tests; then call claim_task once, which returns
-        already_claimed and binds the task, so do not skip this step.
-        If you already hold the claim (launched with task_id, no handover to
-        wait for), call claim_task now without waiting for a handover.
+        The claim reaches you when the Code Reviewer's LAND on the Test Writer's
+        tests arrives; the hand-off copies that verdict to you. Read it with
+        gobby-agents:get_inter_session_message, then call claim_task once, which
+        returns already_claimed and binds the task, so do not skip this step.
+        Your Dev Manager may also hand you the claim directly. If you already hold
+        the claim (launched with task_id), call claim_task now.
         Defer implementation and validation until implement. Until the claim
         arrives, report readiness to the live session in your launch prompt using
         gobby-agents:send_message(target="session", target_id=<report target>),
         send your session ref to your Dev Manager with
         gobby-agents:send_message(target="session", target_id=<Dev Manager session ref from your launch prompt>),
-        then register a gobby-agents:wait_for_coordination reply wait on your Dev Manager and
-        end the turn. End each idle turn on a registered durable wait; re-arm
+        then register a gobby-agents:wait_for_coordination reply wait on your Dev Manager with
+        timeout=900 and end the turn. On each wake, read the task's claimed_by with
+        gobby-tasks:get_task before you wait again. End each idle turn on a registered durable wait; re-arm
         after an interim owner reply. If no wait applies, send
         EVENT=SEAT_READY NOTE=idle to your Dev Manager and end the turn.
         An idle declaration expires when the next turn starts.
@@ -514,8 +516,9 @@ step_workflow:
         or read-only commands to answer review questions. Edits, formatting and
         Git mutations wait until the review returns you to implementation.
         Record gobby-tasks:record_implementation_step for the linked SHA, then
-        send the CANDIDATE event line for assigned_task_ref to your Dev Manager
-        and the assigned Code Reviewer with gobby-agents:send_message, then wait
+        send the CANDIDATE event line for assigned_task_ref to the assigned Code
+        Reviewer first and then to your Dev Manager with gobby-agents:send_message;
+        the first line moves the claim to the reviewer. Then wait
         with gobby-agents:wait_for_coordination. Your Dev Manager lands the
         approved SHA and closes the task; never close a team task yourself.
         After its close notice, read the task with
@@ -589,6 +592,11 @@ step_workflow:
           action: set_variable
           variable: candidate_sent
           value: true
+        # The CANDIDATE moves the claim to the assigned reviewer; the engine ignores other events.
+        - server: gobby-agents
+          tool: send_message
+          action: hand_off_claim
+          hop: review
         - *release_observed_closed_binding
         - *reset_observed_closed_completion
         - *reset_observed_closed_skills_loaded

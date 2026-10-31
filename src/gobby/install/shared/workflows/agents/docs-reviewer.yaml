@@ -241,10 +241,12 @@ step_workflow:
       description: "Send the verdict"
       status_message: |
         Send the CANDIDATE_VERDICT line. For a LAND, record the approved review
-        step first, then send the LAND verdict to your Dev Manager and the
-        author; your Dev Manager lands it. A message that starts with the
-        BOUNCE verdict line, or with the LAND verdict line after your approved
-        review step record, for candidate_task returns you to await.
+        step first, then send the LAND verdict to your Dev Manager, then the
+        author; your Dev Manager lands it. For a BOUNCE, send the author first,
+        then your Dev Manager. The verdict moves the claim automatically. A
+        message that starts with the BOUNCE verdict line, or with the LAND
+        verdict line after your approved review step record, for candidate_task
+        returns you to await.
         On withdrawal or reassignment, read the Orchestrator's or the task's
         Dev Manager's stored incoming EVENT=CANDIDATE_WITHDRAWN with the exact
         task and full SHA, or send that exact event to your Dev Manager for your
@@ -283,6 +285,16 @@ step_workflow:
         - server: gobby-tasks
           tool: record_review_step
           action: advance_seat
+        # A BOUNCE returns the claim to its maker, and a LAND moves it to the next open step.
+        # Each hop reads the sent line and ignores the other verdict.
+        - server: gobby-agents
+          tool: send_message
+          action: hand_off_claim
+          hop: maker
+        - server: gobby-agents
+          tool: send_message
+          action: hand_off_claim
+          hop: next_open
       transitions:
         - to: review
           when: "vars.candidate_received and not vars.verdict_ready"

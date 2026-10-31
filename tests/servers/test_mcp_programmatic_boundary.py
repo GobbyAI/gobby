@@ -129,8 +129,10 @@ def boundary(
     sessions.update_terminal_pickup_metadata(session.id, agent_run_id=run.id)
     variables = SessionVariableManager(temp_db)
     rules = RuleDefinitionManager(temp_db)
+    # The unmarked session resolves the default agent, which selects rules by tag:default.
     rules.create(
         name="boundary-schema-gate",
+        tags=["default"],
         definition_json={
             "event": "before_tool",
             "group": "progressive-discovery",
@@ -141,6 +143,7 @@ def boundary(
     )
     rules.create(
         name="boundary-message-gate",
+        tags=["default"],
         definition_json={
             "event": "before_tool",
             "when": "tool_input.get('server_name') == 'gobby-agents' and tool_input.get('tool_name') == 'send_message'",
@@ -151,6 +154,7 @@ def boundary(
     for event in ("before_tool", "after_tool"):
         rules.create(
             name=f"boundary-{event}",
+            tags=["default"],
             definition_json={
                 "event": event,
                 "effects": [{"type": "set_variable", "variable": f"saw_{event}", "value": True}],
@@ -615,6 +619,7 @@ def test_programmatic_calls_still_reject_bad_auth_and_identity(
 async def test_shell_rule_can_deny_agent_cli_access(boundary: Boundary) -> None:
     RuleDefinitionManager(boundary.variables.db).create(
         name="deny-gobby-cli",
+        tags=["default"],
         definition_json={
             "event": "before_tool",
             "when": "event.data.get('tool_name') == 'Bash' and 'gobby mcp-proxy' in tool_input.get('command', '')",

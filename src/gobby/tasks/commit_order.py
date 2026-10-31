@@ -42,6 +42,28 @@ def link_candidate(
         return task
 
 
+def link_keeping_tip(
+    task_manager: LocalTaskManager, task_id: str, commit_sha: str, repo_path: str
+) -> Task:
+    """Link a plain commit without displacing the tip when the tip descends from it.
+
+    An ancestor of the declared candidate is history; appending it would make it the tip the
+    review gate reads. Concurrent links wait on the task row, as ``link_candidate`` does.
+    """
+    with task_manager.db.transaction() as conn:
+        conn.execute("SELECT id FROM tasks WHERE id = %s FOR UPDATE", (task_id,))
+        prior = task_manager.get_task(task_id).commits or []
+        tip = prior[-1] if prior else None
+        task = task_manager.link_commit(task_id, commit_sha)
+        if (
+            tip is not None
+            and not same_commit(tip, commit_sha)
+            and descends_from_all(tip, [commit_sha], repo_path)
+        ):
+            task = task_manager.move_commit_to_tip(task_id, tip)
+        return task
+
+
 def link_by_history(
     task_manager: LocalTaskManager,
     task_id: str,

@@ -22,7 +22,7 @@ prompts:
     You write one DevTeam task's failing tests before implementation. Your launch prompt names the task, the team and its branch, and you work in the team's worktree. The Developer implements against your tests afterwards.
     - Start. Send your session ref to your Dev Manager with `gobby-agents:send_message(target="session", target_id=<Dev Manager session ref from your launch prompt>)`. Then read the task with `gobby-tasks:get_task` and load `test-driven-development` plus the skills its paths need. Claim a single task with `gobby-tasks:claim_task` before you edit. An epic (`task_type` `epic`) has no acceptance criteria and is never claimed by a seat: wait with `gobby-agents:wait_for_coordination` on your Dev Manager until it names a leaf, then claim only that leaf.
     - Tests. Write the smallest tests that pin the task's acceptance criteria and run them. Keep each expected assertion failure as the RED evidence; fix collection, environment or compile failures before treating a run as RED. Write no production code beyond a behavior-free stub a test needs to compile.
-    - Commit and record. Commit the tests, link the commit with `gobby-tasks:link_commit`, and record the test step with `gobby-tasks:record_test_step(task_id, status="approved", epoch=<review_epoch>, round_number=1, commit_sha=<test commit>, feedback=<tests and their RED results>)`. When the task has nothing to test, record `disposition="moot"` instead of a commit and say why in the feedback. Send the test SHA to your Dev Manager as `EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT=<40-hex test SHA> NOTE=<RED evidence>`. The Code Reviewer reviews the tests before your Dev Manager hands the claim to the Developer. Keep the claim until that handoff; fix rejected tests under the same review rounds used for implementation.
+    - Commit and record. Commit the tests, link the commit with `gobby-tasks:link_commit`, and record the test step with `gobby-tasks:record_test_step(task_id, status="approved", epoch=<review_epoch>, round_number=1, commit_sha=<test commit>, feedback=<tests and their RED results>)`. When the task has nothing to test, record `disposition="moot"` instead of a commit and say why in the feedback. Send the test SHA to your Dev Manager as `EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT=<40-hex test SHA> NOTE=<RED evidence>`. The claim moves to the Code Reviewer with that line, and your Dev Manager's copy reaches the reviewer. A LAND on the tests hands the claim to the Developer automatically; a BOUNCE returns it to you, and you fix the rejected tests under the same review rounds used for implementation.
     - Backstop. If the task's record shows an out-of-order implementation link (an `out_of_order_link` incident recorded before its test step was approved), map the existing tests at the candidate SHA to the task's validation criteria, add tests only for the gaps, commit them, link the commit, record the test step with that map in its feedback, and send the combined SHA to your Dev Manager as `EVENT=CANDIDATE`. The tests-first path above is unchanged.
     - Epic mode. Primary seats work serial leaves in dependency order in the epic worktree. A Dev Pod's Test Writer works only its assigned leaf in the pod worktree. Each leaf follows the same test review and claim handoff as a single task; its pod ends after the leaf lands in epic main and closes, while primary seats persist.
     - **Never run the full test suite**: it takes 30+ minutes and starves the machine. Run the test files you wrote.
@@ -49,3 +49,243 @@ workflows:
       - "tag:worker-safety"
       - "name:no-send-keys"
   variables: {}
+
+step_workflow:
+  variables:
+    task_claimed: false
+    assigned_task_id: null
+    assigned_task_ref: null
+    required_skills:
+      - gobby:references/development/obligations.md
+      - restraint
+      - gobby:references/tasks/overview.md
+      - test-driven-development
+    required_skills_loaded: false
+    candidate_sent: false
+    bounced: false
+
+  steps:
+    - name: load_skills
+      mcp_error_policy: stay
+      description: "Load the test writer's discipline skills"
+      status_message: |
+        Load these before claiming a task. Execute loads through mcp__gobby__call_tool:
+        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": <reference path>}) for
+        references/development/obligations.md and references/tasks/overview.md, and
+        call_tool("gobby-skills", "get_skill", {"name": <plain name>}) for restraint and
+        test-driven-development. Fetch get_tool_schema for a skill tool first in its own result.
+        Follow each page.next_cursor with only cursor until null.
+      allowed_tools:
+        - Bash
+        - Read
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
+        - "gobby-sessions:set_title"
+        - "gobby-agents:send_message"
+        - "gobby-agents:wait_for_coordination"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill_loaded(skill) for skill in vars.required_skills)
+        - server: gobby-skills
+          tool: get_skill_file
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill_loaded(skill) for skill in vars.required_skills)
+      transitions:
+        - to: claim
+          when: "all(skill_loaded(skill) for skill in vars.required_skills)"
+
+    - name: claim
+      mcp_error_policy: stay
+      idle: true
+      description: "Claim the leaf your Dev Manager names before any edit"
+      status_message: |
+        Read the task your Dev Manager named with gobby-tasks:get_task, then call
+        gobby-tasks:claim_task once. A seat claims a single task before it edits; an
+        epic is never claimed by a seat. Until a leaf is named, report readiness to
+        your Dev Manager with gobby-agents:send_message(target="session", target_id=<Dev
+        Manager session ref from your launch prompt>), then register a
+        gobby-agents:wait_for_coordination reply wait on your Dev Manager and end the turn.
+        End each idle turn on a registered durable wait; re-arm after an interim owner reply.
+        If no wait applies, send EVENT=SEAT_READY NOTE=idle to your Dev Manager and end the turn.
+        An idle declaration expires when the next turn starts.
+      allowed_tools:
+        - Bash
+        - Read
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:get_task"
+        - "gobby-agents:send_message"
+        - "gobby-agents:wait_for_coordination"
+        - "gobby-sessions:set_title"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: candidate_sent
+          value: false
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: bounced
+          value: false
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: assigned_task_ref
+          value: "(tool_output.get('result') or tool_output).get('ref')"
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: assigned_task_id
+          value: "(tool_output.get('result') or tool_output).get('task_id')"
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: task_claimed
+          value: true
+      transitions:
+        - to: write
+          when: "vars.task_claimed and vars.assigned_task_id"
+
+    - name: write
+      mcp_error_policy: stay
+      description: "Write the failing tests, commit them and send the test CANDIDATE"
+      status_message: |
+        Write the smallest tests that pin the claimed task's acceptance criteria and run
+        them. Keep each expected assertion failure as the RED evidence. Commit the tests,
+        attach the commit with gobby-tasks:link_commit(task_id=assigned_task_id,
+        commit_sha=<sha>), and record the test step with gobby-tasks:record_test_step(
+        task_id=assigned_task_id, status="approved", epoch=<review_epoch>, round_number=1,
+        commit_sha=<test commit>, feedback=<tests and their RED results>). A task with
+        nothing to test records disposition="moot" with the reason in feedback instead.
+        Then send your Dev Manager the test CANDIDATE as one event line:
+        EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT=<40-hex test SHA> NOTE=<RED evidence>.
+        Your Dev Manager's copy reaches the assigned Code Reviewer, and the claim moves to the
+        Code Reviewer with that line. Never run the full test suite; run the test files you wrote.
+      allowed_tools: "all"
+      blocked_mcp_tools:
+        - "gobby-tasks:reopen_task"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:kill_agent"
+      allowed_mcp_tools:
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:link_commit"
+        - "gobby-tasks:unlink_commit"
+        - "gobby-tasks:record_test_step"
+        - "gobby-tasks:escalate_task"
+        - "gobby-agents:send_message"
+        - "gobby-agents:wait_for_coordination"
+        - "gobby-agents:get_inter_session_message"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: send_message
+          action: hand_off_claim
+          hop: review
+        - server: gobby-agents
+          tool: send_message
+          when: >-
+            'EVENT=CANDIDATE' in str(tool_input.get('content'))
+            and str(vars.get('assigned_task_ref')) in str(tool_input.get('content'))
+          action: set_variable
+          variable: bounced
+          value: false
+        - server: gobby-agents
+          tool: send_message
+          when: >-
+            'EVENT=CANDIDATE' in str(tool_input.get('content'))
+            and str(vars.get('assigned_task_ref')) in str(tool_input.get('content'))
+          action: set_variable
+          variable: candidate_sent
+          value: true
+      transitions:
+        - to: await
+          when: "vars.candidate_sent"
+        - to: claim
+          when: "not vars.task_claimed"
+
+    - name: await
+      mcp_error_policy: stay
+      idle: true
+      description: "Wait for the Code Reviewer's verdict on the tests"
+      status_message: |
+        The claim is with the Code Reviewer until its verdict. Read the verdict with
+        gobby-agents:get_inter_session_message. A BOUNCE returns the claim to you: fix the
+        tests in write, commit, relink, record the test step and send the new CANDIDATE. A
+        LAND hands the claim to the Developer; then wait for your Dev Manager's close
+        notice. End each idle turn on a registered gobby-agents:wait_for_coordination reply
+        wait on your Dev Manager with a timeout, and re-arm after an interim owner reply.
+        After a close notice read the task with gobby-tasks:get_task(task_id=assigned_task_id);
+        a closed task returns you to claim.
+        An idle declaration expires when the next turn starts.
+      allowed_tools:
+        - Bash
+        - Read
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:get_inter_session_message"
+        - "gobby-agents:wait_for_coordination"
+        - "gobby-agents:send_message"
+        - "gobby-tasks:get_task"
+        - "gobby-sessions:set_title"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: get_inter_session_message
+          when: >-
+            'EVENT=CANDIDATE_VERDICT' in str(tool_output) and 'VERDICT=BOUNCE' in str(tool_output)
+          action: set_variable
+          variable: bounced
+          value: true
+        - server: gobby-agents
+          tool: get_inter_session_message
+          when: >-
+            'EVENT=CANDIDATE_VERDICT' in str(tool_output) and 'VERDICT=BOUNCE' in str(tool_output)
+          action: set_variable
+          variable: candidate_sent
+          value: false
+        - server: gobby-tasks
+          tool: get_task
+          when: >-
+            (tool_output.get('result') or tool_output).get('id') == vars.get('assigned_task_id')
+            and ((tool_output.get('result') or tool_output).get('state') or {}).get('is_closed') is True
+          action: set_variable
+          variable: task_claimed
+          value: false
+        - server: gobby-tasks
+          tool: get_task
+          when: >-
+            (tool_output.get('result') or tool_output).get('id') == vars.get('assigned_task_id')
+            and ((tool_output.get('result') or tool_output).get('state') or {}).get('is_closed') is True
+          action: set_variable
+          variable: assigned_task_id
+          value: null
+        - server: gobby-tasks
+          tool: get_task
+          when: >-
+            (tool_output.get('result') or tool_output).get('id') == vars.get('assigned_task_id')
+            and ((tool_output.get('result') or tool_output).get('state') or {}).get('is_closed') is True
+          action: set_variable
+          variable: assigned_task_ref
+          value: null
+      transitions:
+        - to: write
+          when: "vars.bounced"
+        - to: claim
+          when: "not vars.task_claimed"

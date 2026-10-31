@@ -14,7 +14,8 @@ from typing import Any, cast
 import pytest
 import yaml
 
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding, bind_reviewer_run
+from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_lifecycle import bind_reviewer_run
 from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -493,16 +494,18 @@ async def test_hand_off_keeps_the_closer_and_the_reviewer_eligible(world: TeamWo
         ("closing",),
         capabilities=("land_tasks",),
     )
-    # A former claimant never lands, so the seats that close the task never take its claim.
-    refused = await hand_off(tools, team.manager, team.task, team.developer, team.manager)
-    assert refused.get("error_code") == "closer_claim_forbidden", refused
-    refused = await hand_off(tools, team.manager, team.task, team.developer, closer)
-    assert refused.get("error_code") == "closer_claim_forbidden", refused
-    # A former claimant never reviews, so the epoch's reviewer takes the claim only at the
-    # second rejection and stays free to review the fix after the first.
+    # The Dev Manager recovers a stalled claim onto the closer and the reviewer; the hop chain,
+    # not this tool, keeps the makers of the work out of review and closing.
+    moved = await hand_off(tools, team.manager, team.task, team.developer, closer)
+    assert moved.get("success") is True, moved
+    assert tasks.get_task(task_id).claimed_by_session_id == closer
+    moved = await hand_off(tools, team.manager, team.task, closer, team.developer)
+    assert moved.get("success") is True, moved
     submit(db, team.sol, task_id, "review", "rejected", 1, team.candidate)
-    refused = await hand_off(tools, team.manager, team.task, team.developer, team.sol)
-    assert refused.get("error_code") == "reviewer_claim_early", refused
+    moved = await hand_off(tools, team.manager, team.task, team.developer, team.sol)
+    assert moved.get("success") is True, moved
+    moved = await hand_off(tools, team.manager, team.task, team.sol, team.developer)
+    assert moved.get("success") is True, moved
     fix = commit(db, team.binding, "scroll_fix.py")
     submit(db, team.developer, task_id, "implementation", "approved", 2, fix)
     submit(db, team.sol, task_id, "review", "rejected", 2, fix)
@@ -782,7 +785,7 @@ async def test_review_escalation_sequence(world: TeamWorld) -> None:
     # Rejection two made the Sol reviewer the fixer, which never reviews its own fix.
     second_fix = commit(db, team.binding, "scroll_fix_2.py")
     submit(db, team.sol, task_id, "implementation", "approved", 3, second_fix)
-    with pytest.raises(StepRecordError, match="claimant"):
+    with pytest.raises(StepRecordError, match="cannot review its own task"):
         submit(db, team.sol, task_id, "review", "rejected", 3, second_fix)
 
     # The team launched its seats with the Sol reviewer and opened the branch's tab; the

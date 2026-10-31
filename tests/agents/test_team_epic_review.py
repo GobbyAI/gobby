@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -10,14 +11,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.agents.team_dispatch import dispatch_for_caller
-from gobby.agents.team_lifecycle import (
-    TeamAdmissionRefused,
-    TeamBinding,
-    bind_reviewer_run,
-    managed_task_team,
-    seat_team,
-)
+from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_dispatch import dispatch_for_caller, missing_team_seat
+from gobby.agents.team_lifecycle import bind_reviewer_run, managed_task_team, seat_team
 from gobby.agents.team_review import seat_team_held, sync_epic_review
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent import _factory
@@ -32,6 +28,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workspaces import WorkspaceManager
+from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.tasks.land_commit import land_candidate, task_landing_target
 from gobby.tasks.step_records import (
     NoWorkDisposition,
@@ -45,11 +42,8 @@ from gobby.tasks.step_records import (
 )
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
-from gobby.workflows.condition_helpers_sessions import (
-    dev_pod_launch_allowed,
-    own_seat_resume,
-    own_team_tab,
-)
+from gobby.workflows.condition_helpers_pods import dev_pod_launch_allowed
+from gobby.workflows.condition_helpers_sessions import own_seat_resume, own_team_tab
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.landing_case import make_landing_case
@@ -67,6 +61,9 @@ pytestmark = pytest.mark.unit
 
 # make_team_world stubs the definition loader; the held-spawn checks need installed definitions.
 _REAL_AGENT_BODY = _factory._load_agent_body
+# The pipelines seat-spawn-policy.yaml lets an epic manager launch as pods.
+POD_PIPELINES = ["devteam"]
+UNKNOWN_TEAM = "00000000-0000-4000-8000-000000000000"
 
 
 def tree_of(binding: TeamBinding) -> Path:
@@ -245,6 +242,79 @@ async def hand_off(
 
 
 @pytest.mark.asyncio
+async def test_hand_off_crosses_a_fallback_launch_but_refuses_another_teams_seat(
+    world: TeamWorld,
+) -> None:
+    """A claim passes from a leaf's first pod seat to its fallback pod seat, not to a sibling's."""
+    epic = new_task(world, "Fallback hand-off epic", epic=True)
+    leaf = new_task(world, "Fallback hand-off leaf", parent=epic)
+    sibling = new_task(world, "Fallback hand-off sibling", parent=epic)
+    team = await epic_team(world, epic)
+    first_run = world.child(leaf, parent=team.manager)
+    first = await world.admit(first_run, leaf, parent_team_id=team.binding.team_id)
+    writer = running_seat(world, first_run, "test-writer")
+    world.finish(first_run)
+    # The first pod's tree is gone from disk, so the fallback launch admits the leaf's second team.
+    shutil.rmtree(tree_of(first))
+    fallback_run = world.child(leaf, parent=team.manager)
+    fallback = await world.admit(fallback_run, leaf, parent_team_id=team.binding.team_id)
+    tools = create_task_registry(LocalTaskManager(team.db))
+    LocalTaskManager(team.db).claim_task(leaf.id, writer.id, force=True)
+
+    developer = running_seat(world, fallback_run, "developer")
+    held = seat_team(team.db, developer.id)
+    assert held is not None and held.team_id == fallback.team_id
+    moved = await hand_off(tools, team, leaf, writer.id, developer.id)
+    assert moved.get("success") is True, moved
+
+    sibling_run = world.child(sibling, parent=team.manager)
+    await world.admit(sibling_run, sibling, parent_team_id=team.binding.team_id)
+    outsider = running_seat(world, sibling_run, "developer")
+    refused = await hand_off(tools, team, leaf, developer.id, outsider.id)
+    assert refused.get("error_code") == "team_seat_required", refused
+
+
+@pytest.mark.asyncio
+async def test_pod_adopts_the_leafs_unteamed_child_tree(world: TeamWorld) -> None:
+    """An epic Dev Manager staffs a leaf in its pre-pod child tree, keeping the tree's commits."""
+    epic = new_task(world, "Adoption epic", epic=True)
+    leaf = new_task(world, "Adoption leaf", parent=epic)
+    other = new_task(world, "Adoption other", parent=epic)
+    team = await epic_team(world, epic)
+    trees = LocalWorktreeManager(team.db)
+    epic_tree = tree_of(team.binding)
+    child = epic_tree.parent / f"adopted-{leaf.seq_num}"
+    git_in(epic_tree, "worktree", "add", "-b", f"epic/{epic.seq_num}/{leaf.seq_num}", str(child))
+    (child / "pre_pod.txt").write_text("unmerged work\n")
+    git_in(child, "add", "pre_pod.txt")
+    git_in(child, "commit", "-m", f"[gobby-#{leaf.seq_num}] feat: pre-pod work")
+    head = git_in(child, "rev-parse", "HEAD")
+    tree = trees.create(
+        world.case.project_id,
+        f"epic/{epic.seq_num}/{leaf.seq_num}",
+        str(child),
+        team.binding.branch,
+        leaf.id,
+    )
+
+    run = world.child(leaf, parent=team.manager)
+    pod = await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+    assert pod.worktree_id == tree.id
+    assert pod.branch == tree.branch_name
+    assert pod.worktree_path == str(child)
+    assert git_in(child, "rev-parse", "HEAD") == head
+
+    # A tree based on another branch is not the epic's pre-pod tree, so its leaf stays refused.
+    scratch = epic_tree.parent / f"scratch-{other.seq_num}"
+    git_in(epic_tree, "worktree", "add", "-b", f"scratch/{other.seq_num}", str(scratch), "trunk")
+    trees.create(world.case.project_id, f"scratch/{other.seq_num}", str(scratch), "trunk", other.id)
+    stray = world.child(other, parent=team.manager)
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(stray, other, parent_team_id=team.binding.team_id)
+    assert refused.value.code == "team_exists"
+
+
+@pytest.mark.asyncio
 async def test_epic_leaf_uses_single_task_fixer_and_fresh_reviewer(world: TeamWorld) -> None:
     tasks = LocalTaskManager(world.case.db)
     tools = create_task_registry(tasks)
@@ -260,7 +330,7 @@ async def test_epic_leaf_uses_single_task_fixer_and_fresh_reviewer(world: TeamWo
     assert moved.get("success") is True, moved
     assert tasks.get_task(leaf.id).claimed_by_session_id == reviewer
     submit(team.db, reviewer, leaf, "implementation", "approved", 3, sha)
-    with pytest.raises(StepRecordError, match="claimant"):
+    with pytest.raises(StepRecordError, match="cannot review its own task"):
         submit(team.db, reviewer, leaf, "review", "approved", 3, sha)
 
     fresh = world.child(leaf)
@@ -350,14 +420,16 @@ async def test_pod_waits_for_unresolved_dependency(world: TeamWorld, external: b
     inputs = {"parent_team_id": team.binding.team_id, "task": leaf.id}
     sessions = SessionManager(team.db)
 
-    assert not dev_pod_launch_allowed(sessions, team.manager, "pipeline:devteam", inputs)
+    assert not dev_pod_launch_allowed(
+        sessions, team.manager, "pipeline:devteam", inputs, POD_PIPELINES
+    )
     with pytest.raises(TeamAdmissionRefused) as refused:
         await world.admit(run, leaf, parent_team_id=team.binding.team_id)
     assert refused.value.code == "pod_leaf_blocked"
     assert managed_task_team(team.db, team.manager, leaf.id) == team.binding
 
     LocalTaskManager(team.db).close_task(prerequisite.id, reason="moot")
-    assert dev_pod_launch_allowed(sessions, team.manager, "pipeline:devteam", inputs)
+    assert dev_pod_launch_allowed(sessions, team.manager, "pipeline:devteam", inputs, POD_PIPELINES)
     pod = await world.admit(run, leaf, parent_team_id=team.binding.team_id)
     assert pod.parent_team_id == team.binding.team_id
     assert pod.worktree_id != team.binding.worktree_id
@@ -767,26 +839,36 @@ async def test_only_epic_manager_can_launch_pods(world: TeamWorld) -> None:
     inputs = {"parent_team_id": team.binding.team_id, "task": leaf.id}
     sessions = SessionManager(team.db)
     assert dev_pod_launch_allowed(
-        sessions, team.manager, "run_pipeline", {"name": "devteam", "inputs": inputs}
+        sessions,
+        team.manager,
+        "run_pipeline",
+        {"name": "devteam", "inputs": inputs},
+        POD_PIPELINES,
     )
-    assert dev_pod_launch_allowed(sessions, team.manager, "pipeline:devteam", inputs)
+    assert dev_pod_launch_allowed(sessions, team.manager, "pipeline:devteam", inputs, POD_PIPELINES)
     assert not dev_pod_launch_allowed(
-        sessions, team.manager, "run_pipeline", {"name": "other", "inputs": inputs}
+        sessions, team.manager, "run_pipeline", {"name": "other", "inputs": inputs}, POD_PIPELINES
     )
     assert not dev_pod_launch_allowed(
-        sessions, team.manager, "pipeline:devteam", {**inputs, "task": epic.id}
+        sessions, team.manager, "pipeline:devteam", {**inputs, "task": epic.id}, POD_PIPELINES
+    )
+    assert not dev_pod_launch_allowed(
+        sessions, team.manager, "pipeline:devteam", {**inputs, "task": "999999"}, POD_PIPELINES
     )
     outsider = world.child(leaf)
     with pytest.raises(TeamAdmissionRefused) as refused:
         await world.admit(outsider, leaf, parent_team_id=team.binding.team_id)
     assert refused.value.code == "pod_parent_invalid"
+    assert "team_id alone" not in str(refused.value)
     single = new_task(world, "Single task")
     single_team = await epic_team(world, single)
     single_run = world.child(leaf, parent=single_team.manager)
     with pytest.raises(TeamAdmissionRefused) as refused:
         await world.admit(single_run, leaf, parent_team_id=single_team.binding.team_id)
     assert refused.value.code == "pod_parent_invalid"
-    assert not dev_pod_launch_allowed(sessions, single_team.manager, "pipeline:devteam", inputs)
+    assert not dev_pod_launch_allowed(
+        sessions, single_team.manager, "pipeline:devteam", inputs, POD_PIPELINES
+    )
 
     # Exercise the bundled rule through real proxy normalization and caller identity.
     from gobby.hooks.events import HookEventType
@@ -802,6 +884,98 @@ async def test_only_epic_manager_can_launch_pods(world: TeamWorld) -> None:
         ("pipeline:other", inputs, False),
         ("run_pipeline", {"name": "devteam", "inputs": {"task": leaf.id}}, False),
         ("pipeline:devteam", {**inputs, "task": epic.id}, False),
+    ):
+        event = _event(HookEventType.BEFORE_TOOL, _proxy_call("gobby-workflows", tool, arguments))
+        event.metadata["_platform_session_id"] = team.manager
+        response = await engine.evaluate(
+            event, session_id=team.manager, variables={"_agent_type": "dev-manager"}
+        )
+        assert (response.decision != "block") is allowed, response
+
+
+@pytest.mark.asyncio
+async def test_pod_relaunch_joins_with_matching_parent_and_refuses_mismatch(
+    world: TeamWorld,
+) -> None:
+    epic = new_task(world, "Pod relaunch epic", epic=True)
+    leaf = new_task(world, "Pod relaunch leaf", parent=epic)
+    team = await epic_team(world, epic)
+    pod = await world.admit(
+        world.child(leaf, parent=team.manager), leaf, parent_team_id=team.binding.team_id
+    )
+
+    relaunch = await world.admit(
+        world.child(leaf, parent=team.manager),
+        leaf,
+        pod.team_id,
+        parent_team_id=team.binding.team_id,
+    )
+    assert relaunch == pod
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(
+            world.child(leaf, parent=team.manager), leaf, pod.team_id, parent_team_id=UNKNOWN_TEAM
+        )
+    assert refused.value.code == "pod_parent_mismatch"
+    with pytest.raises(TeamAdmissionRefused, match="pass team_id alone") as refused:
+        await world.admit(world.child(leaf), leaf, pod.team_id, parent_team_id=team.binding.team_id)
+    assert refused.value.code == "pod_parent_invalid"
+    assert await world.admit(world.child(leaf), leaf, pod.team_id) == pod
+
+
+@pytest.mark.asyncio
+async def test_epic_manager_relaunches_only_its_own_pod_seats(world: TeamWorld) -> None:
+    epic = new_task(world, "Relaunch rule epic", epic=True)
+    leaf = new_task(world, "Relaunch rule leaf", parent=epic)
+    team = await epic_team(world, epic)
+    run = world.child(leaf, parent=team.manager)
+    pod = await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+    developer = running_seat(world, run, "developer")
+    sessions = SessionManager(team.db)
+    relaunch = {"task": leaf.id, "team_id": pod.team_id}
+    with_parent = {**relaunch, "parent_team_id": team.binding.team_id}
+    assert dev_pod_launch_allowed(
+        sessions,
+        team.manager,
+        "run_pipeline",
+        {"name": "devteam", "inputs": relaunch},
+        POD_PIPELINES,
+    )
+    assert dev_pod_launch_allowed(
+        sessions, team.manager, "pipeline:devteam", with_parent, POD_PIPELINES
+    )
+    assert dev_pod_launch_allowed(
+        sessions,
+        team.manager,
+        "pipeline:devteam",
+        {**with_parent, "fresh_reviewer": True},
+        POD_PIPELINES,
+    )
+    assert not dev_pod_launch_allowed(
+        sessions,
+        team.manager,
+        "pipeline:devteam",
+        {**relaunch, "parent_team_id": UNKNOWN_TEAM},
+        POD_PIPELINES,
+    )
+    assert not dev_pod_launch_allowed(
+        sessions, team.manager, "pipeline:devteam", {**relaunch, "task": epic.id}, POD_PIPELINES
+    )
+    assert not dev_pod_launch_allowed(
+        sessions, developer.id, "pipeline:devteam", relaunch, POD_PIPELINES
+    )
+
+    # The bundled rule decides through the same helper, with the same caller identity.
+    from gobby.hooks.events import HookEventType
+    from gobby.workflows.engine.core import RuleEngine
+    from tests.workflows.test_seat_rules import _event, _load_roles, _proxy_call
+
+    _load_roles(team.db)
+    engine = RuleEngine(team.db)
+    for tool, arguments, allowed in (
+        ("run_pipeline", {"name": "devteam", "inputs": relaunch}, True),
+        ("pipeline:devteam", with_parent, True),
+        ("run_pipeline", {"name": "other", "inputs": relaunch}, False),
+        ("pipeline:devteam", {**relaunch, "parent_team_id": UNKNOWN_TEAM}, False),
     ):
         event = _event(HookEventType.BEFORE_TOOL, _proxy_call("gobby-workflows", tool, arguments))
         event.metadata["_platform_session_id"] = team.manager
@@ -1068,3 +1242,106 @@ async def test_epic_tip_rejection_repairs_through_leaf(world: TeamWorld) -> None
     landed = tasks.get_task(epic.id)
     assert approved(team.db, epic, "review")
     assert (landed.review_fail_count, landed.escalated_at) == (1, None)
+
+
+@pytest.mark.asyncio
+async def test_pod_claim_holder_outside_the_chain_reclaims_its_leaf(world: TeamWorld) -> None:
+    epic = new_task(world, "Pod reclaim", epic=True)
+    leaf = new_task(world, "Pod reclaim leaf", parent=epic)
+    team = await epic_team(world, epic)
+    run = world.child(leaf, parent=team.manager)
+    await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+    tasks = LocalTaskManager(team.db)
+    tools = create_task_registry(tasks)
+
+    async def claim(session_id: str) -> dict[str, Any]:
+        with session_context_for_test(session_id):
+            return cast(dict[str, Any], await tools.call("claim_task", {"task_id": leaf.id}))
+
+    # A seat outside the pod's chain holds the claim, as a seat spawned outside the team does.
+    outside = world.child(leaf)
+    holder = running_seat(world, outside, "developer")
+    tasks.claim_task(leaf.id, holder.id, force=True)
+    reclaimed = await claim(holder.id)
+    assert reclaimed.get("success") is True, reclaimed
+    assert tasks.get_task(leaf.id).claimed_by_session_id == holder.id
+
+    # A session outside the team's chain that does not hold the claim stays refused.
+    stranger = running_seat(world, outside, "developer")
+    refused = await claim(stranger.id)
+    assert refused.get("error_code") == "TASK_CLAIM_CONFLICT", refused
+    assert tasks.get_task(leaf.id).claimed_by_session_id == holder.id
+
+
+@pytest.mark.asyncio
+async def test_pod_manager_relaunches_a_lost_seat_into_the_pod_tab(world: TeamWorld) -> None:
+    epic = new_task(world, "Pod relaunch", epic=True)
+    leaf = new_task(world, "Pod relaunch leaf", parent=epic)
+    team = await epic_team(world, epic)
+    run = world.child(leaf, parent=team.manager)
+    pod_tab = f"Dev Pod - #{leaf.seq_num}"
+    pod = await world.admit(run, leaf, parent_team_id=team.binding.team_id, tab_title=pod_tab)
+    manager = running_seat(world, run, "dev-manager")
+    lost = running_seat(world, run, "developer")
+    runs = LocalAgentRunManager(team.db)
+    assert lost.agent_run_id is not None
+    assert runs.fail(lost.agent_run_id, "pane lost") is not None
+    runs.expire_sessions_for_terminal_runs()
+    sessions = SessionManager(team.db)
+
+    # The lost developer resumes as itself, and the pod's tab admits its placement.
+    assert own_seat_resume(sessions, manager.id, "developer", lost.id)
+    assert own_team_tab(sessions, manager.id, "developer") == pod_tab
+
+    # A fresh developer relaunches the missing seat on the pod's tree and joins the pod's chain.
+    scope = dispatch_for_caller(
+        team.db,
+        manager.id,
+        agent_body=None,
+        agent="developer",
+        task_id=None,
+        checkout_mode=None,
+        branch_name=None,
+        base_branch=None,
+        worktree_id=None,
+    )
+    assert scope is not None and scope.team_id == pod.team_id
+    assert scope.worktree_id == pod.worktree_id
+    launches = len(world.launches)
+    relaunch = await world.direct_spawn(manager.id, agent="developer", task_id=leaf.id)
+    assert relaunch.get("success") is True, relaunch
+    assert len(world.launches) == launches + 1
+
+    # The real launch reserves a pending run under the manager before pickup, with no child yet.
+    # The stub records none, so model that row: the relaunch in flight holds the seat.
+    pending = runs.create(
+        parent_session_id=manager.id, provider="claude", prompt="relaunch", agent_name="developer"
+    )
+    assert pending.child_session_id is None
+    assert missing_team_seat(team.db, pod, "developer") is False
+    assert own_team_tab(sessions, manager.id, "developer") is None
+    early = await world.direct_spawn(manager.id, agent="developer", task_id=leaf.id)
+    assert early.get("error_code") == "team_manager_scope", early
+    assert len(world.launches) == launches + 1
+
+    # A taskless reviewer relaunch in flight holds its lost reviewer seat the same way.
+    reviewer = running_seat(world, manager, "code-reviewer")
+    assert reviewer.agent_run_id is not None
+    assert runs.fail(reviewer.agent_run_id, "pane lost") is not None
+    runs.expire_sessions_for_terminal_runs()
+    assert missing_team_seat(team.db, pod, "code-reviewer") is True
+    runs.create(
+        parent_session_id=manager.id, provider="claude", prompt="review", agent_name="code-reviewer"
+    )
+    assert missing_team_seat(team.db, pod, "code-reviewer") is False
+
+    replacement = running_seat(world, manager, "developer")
+    assert seat_team(team.db, replacement.id) == pod
+    tools = create_task_registry(LocalTaskManager(team.db))
+    with session_context_for_test(replacement.id):
+        claimed = await tools.call("claim_task", {"task_id": leaf.id})
+    assert claimed.get("success") is True, claimed
+
+    # While the relaunched seat lives, the manager cannot add a second developer.
+    again = await world.direct_spawn(manager.id, agent="developer", task_id=leaf.id)
+    assert again.get("error_code") == "team_manager_scope", again

@@ -8,11 +8,12 @@ from typing import Any
 
 import pytest
 
-from gobby.agents.team_lifecycle import SeatTarget, TeamAdmissionRefused, check_team_spawn
+from gobby.agents.team_admission_records import SeatTarget, TeamAdmissionRefused
+from gobby.agents.team_lifecycle import check_team_spawn
 from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.mcp_proxy.tools import agent_cancellation
-from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.tasks import LocalTaskManager, TaskStepRecordsMissingError
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.tasks.step_records import (
@@ -22,7 +23,7 @@ from gobby.tasks.step_records import (
     list_task_step_records,
     record_task_step,
 )
-from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.engine.claim_handoff import hand_off_claim
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.review_approvals import grant_review_writes, grant_step_writes
 from tests.fixtures.team_case import TeamWorld, git_in, make_team_world
@@ -101,6 +102,7 @@ async def test_complete_single_task_team(world: TeamWorld, monkeypatch: pytest.M
     manager, writer, developer, reviewer = team.seats
     task_id = team.task.id
     tasks.update_task(task_id, category="code")
+    assert team.binding.worktree_path is not None and team.binding.worktree_id is not None
     tree = Path(team.binding.worktree_path)
     grant_step_writes(db, writer, project_id, "fixture-test-writer", ("test",))
     # A developer whose definition could also write reviews still cannot review its own task.
@@ -112,27 +114,32 @@ async def test_complete_single_task_team(world: TeamWorld, monkeypatch: pytest.M
     tests_sha = commit(db, task_id, tree, "tests/test_ship.py")
     approve(db, writer, task_id, "test", tests_sha)
 
-    # The Dev Manager hands the claim to the Developer, who records the implementation.
-    with session_context_for_test(manager):
-        handed = await create_task_registry(tasks).call(
-            "hand_off_task_claim",
-            {
-                "task_id": task_id,
-                "holder_session_ref": writer,
-                "recipient_session_ref": developer,
-                "reason": "Tests are committed; implementation starts",
-            },
-        )
-    assert handed.get("success") is True, handed
+    # The Test Writer's candidate moves the claim to the reviewer, and the reviewer's LAND on the
+    # tests moves it to the Developer. Each seat sends its message; no seat calls a hand-off tool.
+    send = ("gobby-agents", "send_message")
+    messages = InterSessionMessageManager(db)
+    seq = team.task.seq_num
+    candidate_line = f"EVENT=CANDIDATE TASK=#{seq} RUN=run WT=tree COMMIT={tests_sha} NOTE=red"
+    candidate = messages.create_message(writer, reviewer, candidate_line)
+    to_reviewer = hand_off_claim(db, writer, "review", send, {"message_ids": [candidate.id]})
+    assert to_reviewer["handed_to"] == reviewer, to_reviewer
+    approve(db, reviewer, task_id, "review", tests_sha)
+    verdict = f"EVENT=CANDIDATE_VERDICT TASK=#{seq} SHA={tests_sha} VERDICT=LAND NOTE=ok"
+    verdict_ids = [
+        messages.create_message(reviewer, seat, verdict).id for seat in (developer, manager)
+    ]
+    to_developer = hand_off_claim(db, reviewer, "next_open", send, {"message_ids": verdict_ids})
+    assert to_developer["handed_to"] == developer, to_developer
+    assert tasks.get_task(task_id).claimed_by_session_id == developer
     sha = commit(db, task_id, tree, "docs/ship.md")
     approve(db, developer, task_id, "implementation", sha)
 
-    # Review is independent: the claimant is refused, and neither it nor the reviewer lands.
-    with pytest.raises(StepRecordError, match="claimant cannot review its own task"):
+    # Review is independent: the implementer is refused, and neither it nor the reviewer lands.
+    with pytest.raises(StepRecordError, match="cannot review its own task"):
         approve(db, developer, task_id, "review", sha)
     approve(db, reviewer, task_id, "review", sha)
     for lander, blocker in (
-        (developer, "caller_is_claimant"),
+        (developer, "caller_is_maker"),
         (reviewer, "caller_not_task_manager"),
     ):
         refused = await case.land(tasks.get_task(task_id), sha, caller=lander)
@@ -154,8 +161,10 @@ async def test_complete_single_task_team(world: TeamWorld, monkeypatch: pytest.M
     tasks.close_task(task_id, reason="done", closed_in_session_id=manager, closed_commit_sha=sha)
     closed = tasks.get_task(task_id)
     records = list_task_step_records(db, task_id)
+    # The reviewer reviews the test SHA before implementation, then the implementation SHA.
     assert [(record.step, record.session_id) for record in records] == [
         ("test", writer),
+        ("review", reviewer),
         ("implementation", developer),
         ("review", reviewer),
         ("closing", manager),
@@ -171,6 +180,7 @@ async def test_complete_single_task_team(world: TeamWorld, monkeypatch: pytest.M
     assert {session_status(db, session) for session in team.seats} == {"expired"}
     assert teardown(world, team) == {"outcome": "cleaned"}
     assert not tree.exists()
+    assert team.binding.worktree_id is not None
     assert LocalWorktreeManager(db).get(team.binding.worktree_id) is None
     assert not branch_exists(world, team.binding.branch)
     after = tasks.get_task(task_id)
