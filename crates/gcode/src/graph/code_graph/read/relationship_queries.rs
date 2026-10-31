@@ -8,7 +8,12 @@ use super::support::{
 };
 
 /// CALLS edges are admitted per content version of the file they were projected from.
-const CALL_EDGE_VERSION_FILTER: &str = "r.file + '|' + r.content_hash IN $admitted_versions";
+fn call_edge_version_filter() -> String {
+    format!(
+        "r.file + '|' + r.content_hash IN $admitted_versions AND {}",
+        crate::graph::admitted_code_nodes("[startNode(r), endNode(r)]")
+    )
+}
 
 pub(crate) fn find_callers_query(
     project_id: &str,
@@ -30,7 +35,8 @@ pub(crate) fn find_callers_query(
                     caller.file_path AS file, caller.line_start AS line, \
                     confidence_label AS confidence_label \
              ORDER BY caller.id \
-             SKIP {offset} LIMIT {limit}"
+             SKIP {offset} LIMIT {limit}",
+            CALL_EDGE_VERSION_FILTER = call_edge_version_filter()
         ),
         typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
     )
@@ -59,7 +65,8 @@ pub(crate) fn find_callees_query(
                     file AS file, line AS line, confidence_label AS confidence_label, \
                     node_kind AS node_kind \
              ORDER BY target.id \
-             SKIP {offset} LIMIT {limit}"
+             SKIP {offset} LIMIT {limit}",
+            CALL_EDGE_VERSION_FILTER = call_edge_version_filter()
         ),
         typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
     )
@@ -83,7 +90,8 @@ pub(crate) fn find_usages_query(
                     'CALLS' AS rel_type, r.file AS file, r.line AS line, \
                     {LINK_METADATA_RETURN} \
              ORDER BY source.id, r.line, r.file, id(r) \
-             SKIP {offset} LIMIT {limit}"
+             SKIP {offset} LIMIT {limit}",
+            CALL_EDGE_VERSION_FILTER = call_edge_version_filter()
         ),
         typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
     )
@@ -103,7 +111,8 @@ pub(super) fn find_caller_ids_query(
              WHERE {CALL_EDGE_VERSION_FILTER} \
              RETURN DISTINCT caller.id AS id \
              ORDER BY caller.id \
-             LIMIT {limit}"
+             LIMIT {limit}",
+            CALL_EDGE_VERSION_FILTER = call_edge_version_filter()
         ),
         typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
     )
@@ -123,7 +132,8 @@ pub(super) fn find_usage_ids_query(
              WHERE {CALL_EDGE_VERSION_FILTER} \
              RETURN DISTINCT source.id AS id \
              ORDER BY source.id \
-             LIMIT {limit}"
+             LIMIT {limit}",
+            CALL_EDGE_VERSION_FILTER = call_edge_version_filter()
         ),
         typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
     )
@@ -150,7 +160,8 @@ pub(crate) fn find_callers_batch_query(
              RETURN caller.id AS caller_id, caller.name AS caller_name, \
                     file AS file, line AS line, confidence_label AS confidence_label \
              ORDER BY caller.id \
-             LIMIT {limit}"
+             LIMIT {limit}",
+            CALL_EDGE_VERSION_FILTER = call_edge_version_filter()
         ),
         typed_query::string_params(&[("project", project_id)]),
     )
@@ -172,7 +183,8 @@ pub(super) fn find_caller_ids_batch_query(
              WHERE {CALL_EDGE_VERSION_FILTER} \
              RETURN DISTINCT caller.id AS id \
              ORDER BY caller.id \
-             LIMIT {limit}"
+             LIMIT {limit}",
+            CALL_EDGE_VERSION_FILTER = call_edge_version_filter()
         ),
         typed_query::string_params(&[("project", project_id)]),
     )
@@ -196,7 +208,8 @@ pub(crate) fn find_callees_batch_query(
              RETURN target.id AS callee_id, target.name AS callee_name, \
                     file AS file, line AS line, confidence_label AS confidence_label \
              ORDER BY target.id \
-             LIMIT {limit}"
+             LIMIT {limit}",
+            CALL_EDGE_VERSION_FILTER = call_edge_version_filter()
         ),
         typed_query::string_params(&[("project", project_id)]),
     )
@@ -215,7 +228,8 @@ pub(super) fn find_callee_ids_batch_query(
              WHERE src.id IN [{ids}] AND ({CALL_TARGET_PREDICATE}) AND {CALL_EDGE_VERSION_FILTER} \
              RETURN DISTINCT target.id AS id \
              ORDER BY target.id \
-             LIMIT {limit}"
+             LIMIT {limit}",
+            CALL_EDGE_VERSION_FILTER = call_edge_version_filter()
         ),
         typed_query::string_params(&[("project", project_id)]),
     )
@@ -231,7 +245,8 @@ pub(crate) fn symbol_callee_edges_query(
             "MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target:CodeSymbol {{project: $project}}) \
              WHERE source.id IN [{ids}] AND {CALL_EDGE_VERSION_FILTER} \
              RETURN DISTINCT source.id AS source_id, target.id AS target_id \
-             ORDER BY source.id, target.id"
+             ORDER BY source.id, target.id",
+            CALL_EDGE_VERSION_FILTER = call_edge_version_filter()
         ),
         typed_query::string_params(&[("project", project_id)]),
     )
@@ -242,10 +257,12 @@ pub(crate) fn symbol_path_steps_query(
     symbol_ids: &[String],
 ) -> (String, HashMap<String, String>) {
     let ids = typed_query::id_list_literal(symbol_ids);
+    let symbols = crate::graph::admitted_code_nodes("[symbol]");
     (
         format!(
             "MATCH (symbol:CodeSymbol {{project: $project}}) \
              WHERE symbol.id IN [{ids}] \
+             AND {symbols} \
              RETURN symbol.id AS symbol_id, \
                     coalesce(symbol.name, symbol.id) AS symbol_name, \
                     coalesce(symbol.file_path, '') AS file_path, \
@@ -301,10 +318,12 @@ pub(crate) fn blast_radius_query(depth: usize, limit: usize) -> String {
     let depth = depth.clamp(1, 5);
     let limit = clamp_limit(limit);
     let anchor = anchored_call_node("target", "$id");
+    let path_nodes = crate::graph::admitted_code_nodes("nodes(path)");
     format!(
         "{anchor} \
          MATCH path = (affected:CodeSymbol {{project: $project}})-[:CALLS*1..{depth}]->(target) \
          WHERE all(rel IN relationships(path) WHERE rel.file + '|' + rel.content_hash IN $admitted_versions) \
+         AND {path_nodes} \
          WITH affected, min(length(path)) AS distance \
          OPTIONAL MATCH (file:CodeFile {{project: $project}})-[d:DEFINES]->(affected) \
          WHERE file.path + '|' + d.content_hash IN $admitted_versions \

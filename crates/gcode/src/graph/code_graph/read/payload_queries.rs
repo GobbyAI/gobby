@@ -77,11 +77,13 @@ pub(super) fn project_overview_calls_query(
 ) -> (String, HashMap<String, String>) {
     let limit = clamp_limit(limit);
     let file_paths = typed_query::id_list_literal(file_paths);
+    let endpoints = crate::graph::admitted_code_nodes("[startNode(r), endNode(r)]");
     (
         format!(
             "MATCH (f:CodeFile {{project: $project}})-[:DEFINES]->(s:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
              WHERE f.path IN [{file_paths}] AND ({CALL_TARGET_PREDICATE}) \
              AND r.file + '|' + r.content_hash IN $admitted_versions \
+             AND {endpoints} \
              RETURN s.id AS source, target.id AS target, 'CALLS' AS type, \
                     target.name AS target_name, {TARGET_TYPE_CASE} AS target_type, \
                     target.kind AS target_kind, target.file_path AS target_file_path, \
@@ -114,6 +116,7 @@ pub(in crate::graph::code_graph) fn file_calls_query(
     project_id: &str,
     file_path: &str,
 ) -> (String, HashMap<String, String>) {
+    let endpoints = crate::graph::admitted_code_nodes("[startNode(r), endNode(r)]");
     let columns = format!(
         "RETURN source.id AS source_id, source.name AS source_name, \
                 coalesce(source.kind, 'function') AS source_type, \
@@ -137,6 +140,7 @@ pub(in crate::graph::code_graph) fn file_calls_query(
             "MATCH (source:CodeSymbol {{project: $project, file_path: $path}})-[r:CALLS]->(target {{project: $project}}) \
              WHERE ({CALL_TARGET_PREDICATE}) \
              AND r.file + '|' + r.content_hash IN $admitted_versions \
+             AND {endpoints} \
              {columns} \
              UNION ALL \
              MATCH (target:CodeSymbol {{project: $project, file_path: $path}}) \
@@ -145,6 +149,7 @@ pub(in crate::graph::code_graph) fn file_calls_query(
              WHERE source.file_path IS NULL OR source.file_path <> $path \
              WITH source, r, target \
              WHERE r.file + '|' + r.content_hash IN $admitted_versions \
+             AND {endpoints} \
              {columns}"
         ),
         typed_query::string_params(&[("project", project_id), ("path", file_path)]),
@@ -158,11 +163,13 @@ pub(super) fn symbol_neighbors_query(
 ) -> (String, HashMap<String, String>) {
     let limit = clamp_limit(limit);
     let anchor = anchored_call_node("center", "$id");
+    let endpoints = crate::graph::admitted_code_nodes("[startNode(r), endNode(r)]");
     (
         format!(
             "{anchor} \
              MATCH (center)-[r:CALLS]-(neighbor {{project: $project}}) \
              WHERE ({NEIGHBOR_PREDICATE}) AND r.file + '|' + r.content_hash IN $admitted_versions \
+             AND {endpoints} \
              RETURN neighbor.id AS id, neighbor.name AS name, {NEIGHBOR_TYPE_CASE} AS type, \
                     neighbor.kind AS kind, neighbor.file_path AS file_path, \
                     neighbor.line_start AS line_start, neighbor.signature AS signature, \
@@ -198,12 +205,14 @@ pub(super) fn blast_radius_file_call_query(
 ) -> (String, HashMap<String, String>) {
     let depth = depth.clamp(1, 5);
     let limit = clamp_limit(limit);
+    let path_nodes = crate::graph::admitted_code_nodes("nodes(path)");
     (
         format!(
             "MATCH (tf:CodeFile {{path: $path, project: $project}})-[td:DEFINES]->(target_sym:CodeSymbol {{project: $project}}) \
              WHERE $path + '|' + td.content_hash IN $admitted_versions \
              MATCH path = (affected:CodeSymbol {{project: $project}})-[:CALLS*1..{depth}]->(target_sym) \
              WHERE all(rel IN relationships(path) WHERE rel.file + '|' + rel.content_hash IN $admitted_versions) \
+             AND {path_nodes} \
              WITH affected, min(length(path)) AS distance \
              OPTIONAL MATCH (file:CodeFile {{project: $project}})-[d:DEFINES]->(affected) \
              WHERE file.path + '|' + d.content_hash IN $admitted_versions \
