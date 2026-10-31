@@ -343,16 +343,22 @@ def _build_memory_services(
         collection_name=_managed_embedding_collection(managed, "tool_embeddings"),
     )
     bundle = MemoryServiceBundle(vector_store, memory_manager, backup, semantic_search)
+    replaces_live_bundle = isinstance(
+        runner.config_runtime.capture().services.get("memory_services"), MemoryServiceBundle
+    )
 
     def dispose() -> None:
         lease_handle.dispose()
         _dispose_async(loop, memory_manager.close)
 
-    return PreparedService(
-        bundle,
-        dispose,
-        lease_handle.activate,
-    )
+    def activate() -> None:
+        lease_handle.activate()
+        # A replaced bundle (an embedding switch, for one) leaves graph vectors
+        # from the old model; startup is covered by the memory-reconcile loop.
+        if replaces_live_bundle:
+            _request_memory_projection_repair(runner, loop, bundle)
+
+    return PreparedService(bundle, dispose, activate)
 
 
 def _serving_lease_identity(
@@ -392,15 +398,16 @@ _background_runtime_tasks: set[asyncio.Task[None]] = set()
 def _request_memory_projection_repair(
     runner: GobbyRunner,
     loop: asyncio.AbstractEventLoop,
+    target: MemoryServiceBundle | None = None,
 ) -> None:
-    """Schedule store reconcile against the live memory bundle after serving resumes."""
+    """Schedule store reconcile against ``target``, or the live memory bundle."""
     if runner.bootstrap_config.run_mode() == "node":
         logger.info("skipping hub-only memory projection repair in node mode")
         return
 
     async def _repair() -> None:
         try:
-            bundle = runner.config_runtime.capture().services.get("memory_services")
+            bundle = target or runner.config_runtime.capture().services.get("memory_services")
             if not isinstance(bundle, MemoryServiceBundle):
                 return
             await bundle.memory_manager.reconcile_stores(dry_run=False)

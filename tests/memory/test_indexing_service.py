@@ -300,6 +300,23 @@ async def test_reconcile_backfills_missing_vectors_and_deletes_orphans() -> None
     ]
 
 
+@pytest.mark.parametrize(("dry_run", "expected_awaits"), [(False, 1), (True, 0)])
+async def test_reconcile_reembeds_stale_graph_entity_vectors_unless_dry_run(
+    dry_run: bool, expected_awaits: int
+) -> None:
+    """An embedding switch's leftover entity vectors are repaired by reconcile."""
+    service = _service(_MemoryStorage([]), _VectorStore())
+    kg_service = AsyncMock()
+    kg_service.get_all_memory_node_ids.return_value = set()
+    kg_service.reembed_stale_entity_vectors.return_value = 3
+    service.kg_service = kg_service
+
+    report = await service.reconcile_stores(dry_run=dry_run)
+
+    assert kg_service.reembed_stale_entity_vectors.await_count == expected_awaits
+    assert report["falkordb"].get("entity_vectors_reembedded") == (3 if not dry_run else None)
+
+
 async def test_reconcile_holds_global_write_admission_only_while_deleting_orphans() -> None:
     events: list[str] = []
 

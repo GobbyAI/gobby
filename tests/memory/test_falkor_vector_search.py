@@ -106,6 +106,20 @@ class TestEnsureVectorIndex:
 class TestVectorSearch:
     """Tests for vector_search."""
 
+    async def test_vector_search_skips_vectors_of_another_dimension(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A half-migrated graph returns partial results instead of a dimension error."""
+        client = _client(monkeypatch)
+        client.query.return_value = []
+
+        await client.vector_search(query_embedding=[0.1, 0.2, 0.3, 0.4], project_id="proj-1")
+
+        cypher, params = client.query.call_args.args
+        assert "node.embedding_dim = $dim" in cypher
+        assert cypher.index("node.embedding_dim = $dim") < cypher.index("vec.cosineDistance")
+        assert params["dim"] == 4
+
     async def test_vector_search_filters_project_before_exact_cosine_ranking(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

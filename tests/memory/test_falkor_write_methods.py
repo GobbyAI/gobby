@@ -223,6 +223,45 @@ class TestSetNodeVector:
         assert params["entity_key"] == "josh"
         assert params["embedding"] == embedding
 
+    async def test_set_node_vector_records_the_vector_dimension(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The dim marker lets a later embedding switch find vectors to re-embed."""
+        client = _client(monkeypatch)
+        client.query = AsyncMock(return_value=[])
+
+        await client.set_node_vector(entity_key="josh", embedding=[0.1, 0.2, 0.3])
+
+        cypher, params = client.query.call_args.args
+        assert "n.embedding_dim = $dim" in cypher
+        assert params["dim"] == 3
+
+    async def test_stale_vector_listing_matches_missing_or_other_dimension_markers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _client(monkeypatch)
+        client.query = AsyncMock(return_value=[{"entity_key": "josh", "name": "Josh"}])
+
+        rows = await client.list_entities_with_stale_vectors(1024)
+
+        cypher, params = client.query.call_args.args
+        assert "n.embedding_dim IS NULL OR n.embedding_dim <> $dim" in cypher
+        assert params == {"dim": 1024}
+        assert rows == [{"entity_key": "josh", "name": "Josh"}]
+
+    async def test_drop_vector_index_tolerates_a_missing_index(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _client(monkeypatch)
+        from gobby.memory.falkor_client import FalkorQueryError
+
+        client.query = AsyncMock(side_effect=FalkorQueryError(message="no such index"))
+
+        await client.drop_vector_index()
+
+        cypher = client.query.call_args.args[0]
+        assert cypher == "DROP VECTOR INDEX FOR (n:_Entity) ON (n.embedding)"
+
     async def test_set_node_vector_with_custom_property(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

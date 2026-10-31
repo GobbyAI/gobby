@@ -1029,3 +1029,47 @@ async def test_node_mode_skips_projection_repair(
     else:
         memory_manager.reconcile_stores.assert_not_awaited()
         assert caplog.messages.count(skip) == 2
+
+
+@pytest.mark.asyncio
+async def test_projection_repair_reconciles_the_given_bundle_over_the_published_one() -> None:
+    """A swapped-in bundle repairs itself before the runtime publishes it."""
+
+    reconciled: list[tuple[str, bool]] = []
+
+    class Manager:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def start_projection_scope_repair(self) -> None:
+            return None
+
+        async def reconcile_stores(self, dry_run: bool = False) -> dict[str, object]:
+            reconciled.append((self.name, dry_run))
+            return {}
+
+    def bundle_with(manager: Manager) -> services.MemoryServiceBundle:
+        return services.MemoryServiceBundle(
+            vector_store=MagicMock(),
+            _memory_manager=cast(Any, manager),
+            memory_backup_manager=None,
+            semantic_search=MagicMock(),
+        )
+
+    published = Manager("published")
+    replacement = Manager("replacement")
+
+    class Runtime:
+        def capture(self) -> object:
+            return SimpleNamespace(services={"memory_services": bundle_with(published)})
+
+    runner = cast(
+        Any, SimpleNamespace(bootstrap_config=BootstrapConfig(hub=True), config_runtime=Runtime())
+    )
+
+    services._request_memory_projection_repair(
+        runner, asyncio.get_running_loop(), bundle_with(replacement)
+    )
+    await _settle_background_runtime_tasks()
+
+    assert reconciled == [("replacement", False)]

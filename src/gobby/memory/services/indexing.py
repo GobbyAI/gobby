@@ -367,6 +367,14 @@ class IndexingService:
             except Exception as e:
                 logger.error("FalkorDB reconciliation failed: %s", e)
                 report["falkordb"]["error"] = str(e)
+            if not dry_run:
+                try:
+                    report["falkordb"][
+                        "entity_vectors_reembedded"
+                    ] = await self._kg_service.reembed_stale_entity_vectors()
+                except Exception as e:
+                    logger.error("FalkorDB entity vector re-embed failed: %s", e)
+                    report["falkordb"]["error"] = str(e)
 
         return report
 

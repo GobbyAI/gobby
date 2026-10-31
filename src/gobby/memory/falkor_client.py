@@ -691,14 +691,33 @@ class FalkorClient:
         embedding: list[float],
         property_name: str = "embedding",
     ) -> list[dict[str, Any]]:
-        """Set a vector property on a node using FalkorDB's vecf32 value."""
+        """Set a vector property, and its ``<property>_dim`` marker, on an entity node."""
         _validate_cypher_identifier(property_name, "property name")
         cypher = (
             "MATCH (n:_Entity {entity_key: $entity_key}) "
-            f"SET n.{property_name} = vecf32($embedding) "
+            f"SET n.{property_name} = vecf32($embedding), n.{property_name}_dim = $dim "
             "RETURN n.entity_key AS entity_key"
         )
-        return await self.query(cypher, {"entity_key": entity_key, "embedding": embedding})
+        return await self.query(
+            cypher,
+            {"entity_key": entity_key, "embedding": embedding, "dim": len(embedding)},
+        )
+
+    async def list_entities_with_stale_vectors(self, dimension: int) -> list[dict[str, Any]]:
+        """Return entities whose stored embedding was not written at ``dimension``."""
+        return await self.query(
+            "MATCH (n:_Entity) WHERE n.embedding IS NOT NULL AND n.name IS NOT NULL "
+            "AND (n.embedding_dim IS NULL OR n.embedding_dim <> $dim) "
+            "RETURN n.entity_key AS entity_key, n.name AS name",
+            {"dim": int(dimension)},
+        )
+
+    async def drop_vector_index(self) -> None:
+        """Drop the entity vector index; a missing index is not an error."""
+        try:
+            await self.query("DROP VECTOR INDEX FOR (n:_Entity) ON (n.embedding)")
+        except FalkorQueryError as exc:
+            logger.debug("FalkorDB entity vector index not dropped: %s", exc)
 
     async def ensure_vector_index(
         self,
@@ -742,7 +761,7 @@ class FalkorClient:
             "MATCH (node:_Entity) "
             "WHERE ((node.project_id = $project_id AND node.is_global = false) "
             "OR ($include_global AND node.is_global = true)) "
-            "AND node.embedding IS NOT NULL "
+            "AND node.embedding IS NOT NULL AND node.embedding_dim = $dim "
             "WITH node, vec.cosineDistance(node.embedding, vecf32($embedding)) AS distance "
             "WHERE (1.0 - distance) >= $min_score "
             "RETURN node.entity_key AS entity_key, node.name AS name, "
@@ -755,6 +774,7 @@ class FalkorClient:
             cypher,
             {
                 "embedding": query_embedding,
+                "dim": len(query_embedding),
                 "project_id": project_id,
                 "include_global": include_global,
                 "min_score": min_score,

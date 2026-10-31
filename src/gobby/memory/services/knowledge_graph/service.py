@@ -718,6 +718,25 @@ class KnowledgeGraphService:
         """Lazily ensure the entity vector index exists."""
         await self._reader.ensure_vector_index()
 
+    async def reembed_stale_entity_vectors(self) -> int:
+        """Re-embed entities whose vectors were not written at the current dimension.
+
+        An embedding switch changes the dimension and the old index refuses the
+        new vectors, so drop it first and recreate it at the current dimension.
+        """
+        if self._embed_fn is None:
+            return 0
+        stale = await self._falkor.list_entities_with_stale_vectors(self._embedding_dim)
+        if not stale:
+            return 0
+        await self._falkor.drop_vector_index()
+        self._vector_index_ensured = False
+        for row in stale:
+            embedding = await self._embed_fn(row["name"])
+            await self._writer.set_entity_vector(entity_key=row["entity_key"], embedding=embedding)
+        await self._ensure_vector_index()
+        return len(stale)
+
     async def search_entities_by_vector(
         self,
         query_embedding: list[float],

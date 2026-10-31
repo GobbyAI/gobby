@@ -1720,3 +1720,45 @@ class TestEntityGraphActiveFiltering:
         )
 
         assert await reader.get_entity_graph(limit=100) == graph
+
+
+class TestReembedStaleEntityVectors:
+    """An embedding switch leaves entity vectors at the old dimension."""
+
+    async def test_drops_index_reembeds_then_recreates_at_current_dim(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+        mock_embed_fn: AsyncMock,
+    ) -> None:
+        calls: list[str] = []
+        mock_falkor.list_entities_with_stale_vectors = AsyncMock(
+            return_value=[{"entity_key": "josh", "name": "Josh"}]
+        )
+        mock_falkor.drop_vector_index = AsyncMock(side_effect=lambda: calls.append("drop"))
+        mock_falkor.set_node_vector = AsyncMock(
+            side_effect=lambda **kwargs: calls.append(f"set:{kwargs['entity_key']}")
+        )
+        mock_falkor.ensure_vector_index = AsyncMock(
+            side_effect=lambda **kwargs: calls.append(f"ensure:{kwargs['dimension']}")
+        )
+
+        reembedded = await service.reembed_stale_entity_vectors()
+
+        assert reembedded == 1
+        mock_falkor.list_entities_with_stale_vectors.assert_awaited_once_with(768)
+        mock_embed_fn.assert_awaited_once_with("Josh")
+        assert calls == ["drop", "set:josh", "ensure:768"]
+
+    async def test_leaves_the_index_alone_when_no_vector_is_stale(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+        mock_embed_fn: AsyncMock,
+    ) -> None:
+        mock_falkor.list_entities_with_stale_vectors = AsyncMock(return_value=[])
+        mock_falkor.drop_vector_index = AsyncMock()
+
+        assert await service.reembed_stale_entity_vectors() == 0
+        mock_falkor.drop_vector_index.assert_not_awaited()
+        mock_embed_fn.assert_not_awaited()
