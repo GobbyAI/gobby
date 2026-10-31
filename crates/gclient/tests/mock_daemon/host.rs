@@ -13,9 +13,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use gobby_client::daemon::LiveDaemon;
-use gobby_client::frame_source::Transport;
-use gobby_client::Workspace;
+use super::client::daemon::LiveDaemon;
+use super::client::frame_source::Transport;
+use super::client::Workspace;
 use gobby_terminal::protocol::{
     read_message_async, write_message_async, ClientMessage, ServerMessage, MAX_FRAME_SIZE,
 };

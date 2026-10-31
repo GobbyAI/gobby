@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use gobby_client as client;
 pub mod host;
 mod transport;
 
