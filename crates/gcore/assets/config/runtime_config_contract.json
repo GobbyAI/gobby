@@ -4011,7 +4011,7 @@
     {
       "activation": "live",
       "default": 30,
-      "description": "Minutes of inactivity before active sessions are marked paused",
+      "description": "Minutes of inactivity before active sessions are marked idle",
       "key": "session_lifecycle.active_session_pause_minutes",
       "machineExport": false,
       "namespace": "session_lifecycle",
@@ -4629,28 +4629,6 @@
     },
     {
       "activation": "live",
-      "default": 16.0,
-      "description": "Max resident memory (GB) for a single agent's pane process tree.",
-      "key": "tmux.agent_memory_limit_gb",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "number",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 0.0,
-      "description": "Aggregate resident-memory budget (GB) across all agent trees. 0 = auto (50% of physical RAM).",
-      "key": "tmux.agent_memory_total_limit_gb",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "number",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": 500,
       "description": "Scrollback lines restored to the web terminal on attach; 0 disables the restore. Render cost is linear in lines on the primary VT core (~0.26 ms/line on a desktop, ~0.9 ms/line at the pinned 4x mobile throttle), and the built-in fallback core retains at most 1000 rows, so the ceiling is where a larger window stops being deliverable.",
       "key": "tmux.attach_history_lines",
@@ -4750,50 +4728,6 @@
     },
     {
       "activation": "live",
-      "default": "kill",
-      "description": "On confirmed breach: kill the agent session, or warn-only.",
-      "key": "tmux.memory_watchdog_action",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "string",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 2,
-      "description": "Consecutive over-limit checks required before enforcement.",
-      "key": "tmux.memory_watchdog_consecutive_breaches",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "integer",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": true,
-      "description": "Enable memory enforcement for agent tmux process trees.",
-      "key": "tmux.memory_watchdog_enabled",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 120.0,
-      "description": "Age below which a run is never killed for memory (spawn spikes).",
-      "key": "tmux.memory_watchdog_grace_seconds",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "number",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": true,
       "description": "Interrupt Codex reasoning turns that exceed the idle timeout without workflow progress.",
       "key": "tmux.reasoning_watchdog_interrupt_enabled",
@@ -4808,28 +4742,6 @@
       "default": 0.2,
       "description": "Seconds to wait after Ctrl-C before sending the watchdog continuation prompt.",
       "key": "tmux.reasoning_watchdog_settle_seconds",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "number",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 4.0,
-      "description": "Kill the largest agent tree when available memory drops below this %. Must be at or below the warn threshold.",
-      "key": "tmux.system_memory_critical_available_percent",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "number",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 8.0,
-      "description": "Warn with system-wide top consumers when available memory drops below this %.",
-      "key": "tmux.system_memory_warn_available_percent",
       "machineExport": false,
       "namespace": "tmux",
       "secrecy": "none",

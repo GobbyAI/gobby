@@ -36,7 +36,6 @@ async def test_lifecycle_callbacks_fail_independently(
         "check_periodic_enters",
         "check_attention_agents",
         "check_unhealthy_agents",
-        "check_agent_memory",
         "reap_daemon_stop_orphans",
         "expire_terminal_run_sessions",
         "check_initialization_timeout",

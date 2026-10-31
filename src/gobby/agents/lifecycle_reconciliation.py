@@ -197,8 +197,8 @@ class LifecycleReconciliation:
                 # end_agent_run goes terminal between the candidate listing and
                 # this call, so warning here fires on the healthy path and teaches
                 # operators to ignore the logger that reports the retryable codes
-                # (#20860). The other two callers of this result already skip it
-                # the same way -- memory_watchdog and session_coordinator.
+                # (#20860). The other caller of this result, session_coordinator,
+                # already skips it the same way.
                 logger.info(
                     "Termination reconciliation skipped for run %s: %s",
                     run.id,
