@@ -46,6 +46,10 @@ UNKNOWN_CELLS = {
         "const { exec_command: run } = tools;"
         ' text(await run({cmd:"uv run --no-sync pytest", workdir:"/elsewhere"}));'
     ),
+    # A regex literal's quote makes the rest of the line look like a string to a lexer
+    # that does not read regex syntax, so the shell call would be blanked as text.
+    "regex_quote": 'const r = /"/; tools.exec_command({cmd: command, workdir: cwd}); // "',
+    "regex_after_keyword": 'void /\'/; tools.exec_command({cmd: command, workdir: cwd}); // \'',
 }
 
 

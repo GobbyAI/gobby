@@ -17,22 +17,31 @@ _PRIMITIVE_RE = re.compile(
 )
 _TOOLS_RE = re.compile(r"\btools\b")
 _STATIC_TOOL_CALL_RE = re.compile(r"\btools(?:\.[$A-Za-z_][$\w]*)+\s*\(")
+# Left in code after blanking, a slash, quote or backslash is lexical syntax this module
+# does not read: a regex literal, division, an unmatched quote, or an escape.
+_AMBIGUOUS_RE = re.compile(r"[/\\\"'`]")
 
 
-def static_code(source: str) -> str:
-    """Return ``source`` with inert text blanked to spaces, keeping every offset."""
-    return _INERT_RE.sub(lambda match: re.sub(r"[^\n]", " ", match.group(0)), source)
+def static_code(source: str) -> str | None:
+    """Return ``source`` with inert text blanked to spaces, keeping every offset.
+
+    Returns None when the blanking may have mis-lexed: a regex literal's quote would end
+    a string early, hiding the code after it. Callers fail closed on None.
+    """
+    code = _INERT_RE.sub(lambda match: re.sub(r"[^\n]", " ", match.group(0)), source)
+    return None if _AMBIGUOUS_RE.search(code) else code
 
 
 def may_reach_shell(arguments: Any) -> bool:
     """Return whether a cell could start a shell whose command this hook cannot read.
 
     Fails closed on anything it cannot read statically: computed or aliased tool access,
-    eval-like primitives, template substitutions, and non-text arguments.
+    eval-like primitives, template substitutions, ambiguous lexical syntax, and non-text
+    arguments.
     """
     if not isinstance(arguments, str) or "${" in arguments:
         return True
     code = static_code(arguments)
-    if _PRIMITIVE_RE.search(code):
+    if code is None or _PRIMITIVE_RE.search(code):
         return True
     return len(_TOOLS_RE.findall(code)) != len(_STATIC_TOOL_CALL_RE.findall(code))

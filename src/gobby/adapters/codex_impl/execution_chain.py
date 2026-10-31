@@ -89,7 +89,10 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
 
 def _single_exec_command_argument(arguments: str) -> str | None:
     """Return the argument text of the one exec_command call that is code, not string text."""
-    calls = list(_EXEC_COMMAND_CALL_RE.finditer(static_code(arguments)))
+    code = static_code(arguments)
+    if code is None:
+        return None
+    calls = list(_EXEC_COMMAND_CALL_RE.finditer(code))
     if len(calls) != 1:
         return None
     opened = _call_argument(arguments, calls[0].end() - 1)
@@ -163,7 +166,9 @@ def validate_functions_exec_wrapper(arguments: Any) -> str | None:
         return validate_functions_exec_wrapper(arguments["arguments"])
     if not isinstance(arguments, str):
         return None
-    call_count = len(_EXEC_COMMAND_CALL_RE.findall(static_code(arguments)))
+    code = static_code(arguments)
+    # Ambiguous syntax counts every raw occurrence, so a hidden call still refuses.
+    call_count = len(_EXEC_COMMAND_CALL_RE.findall(arguments if code is None else code))
     if call_count == 0:
         return None
     if call_count > 1:
