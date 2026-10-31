@@ -124,7 +124,6 @@ def _feedback_registry(
     temp_db: HubDatabase,
     manager: SessionManager,
     *,
-    survey: str = "gobby",
     web_chat_session_registry: Any | None = None,
 ) -> _TestRegistry:
     from gobby.mcp_proxy.tools.sessions._handoff import register_handoff_tools
@@ -136,7 +135,6 @@ def _feedback_registry(
         manager,
         temp_db,
         web_chat_session_registry=web_chat_session_registry,
-        config_resolver=lambda: SimpleNamespace(session_feedback=SimpleNamespace(survey=survey)),
     )
     return registry
 
@@ -919,24 +917,6 @@ class TestSetHandoffFeedback:
         assert "5,000 encoded characters" in prompt
         assert "call set_handoff last" in prompt
 
-    @pytest.mark.parametrize("clear_session", [False, True])
-    def test_feedback_required_returns_without_staging(
-        self, temp_db: HubDatabase, tmp_path: Path, clear_session: bool
-    ) -> None:
-        manager, session_id = _persistent_session(temp_db, tmp_path)
-        set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
-        assert set_handoff is not None
-        with session_context_for_test(session_id):
-            result = asyncio.run(
-                set_handoff(
-                    current_state="Ready", next_steps=["Continue"], clear_session=clear_session
-                )
-            )
-        assert result["error_code"] == "feedback_required"
-        assert "gobby-sessions:feedback" in result["error"]
-        assert _handoff_row_count(temp_db, session_id) == 0
-        assert _feedback_row_count(temp_db, session_id) == 0
-
     @pytest.mark.parametrize("empty", [False, True])
     def test_separate_submission_allows_handoff_without_repeating_feedback(
         self, temp_db: HubDatabase, tmp_path: Path, empty: bool
@@ -964,7 +944,6 @@ class TestSetHandoffFeedback:
             assert _handoff_row_count(temp_db, session_id) == 0
             result = asyncio.run(set_handoff(current_state="Ready", next_steps=["Continue"]))
         assert result["handoff_staged"] is True
-        assert result["feedback_submitted"] is True
         assert _feedback_row_count(temp_db, session_id) == (0 if empty else 1)
         variables = SessionVariableManager(temp_db).get_variables(session_id)
         assert variables["_gobby_feedback_epoch_submitted"] is True
@@ -996,18 +975,15 @@ class TestSetHandoffFeedback:
             .get("_gobby_feedback_epoch_submitted")
         )
 
-    def test_invalid_feedback_does_not_satisfy_handoff_gate(
+    def test_invalid_feedback_does_not_mark_epoch_submitted(
         self, temp_db: HubDatabase, tmp_path: Path
     ) -> None:
         manager, session_id = _persistent_session(temp_db, tmp_path)
-        registry = _feedback_registry(temp_db, manager)
-        feedback, set_handoff = registry.get_tool("feedback"), registry.get_tool("set_handoff")
-        assert feedback is not None and set_handoff is not None
+        feedback = _feedback_registry(temp_db, manager).get_tool("feedback")
+        assert feedback is not None
         with session_context_for_test(session_id):
             invalid = feedback(observations=[_feedback_observation(source="close_task")])
-            result = asyncio.run(set_handoff(current_state="Ready", next_steps=["Continue"]))
         assert invalid["error_code"] == "invalid_feedback"
-        assert result["error_code"] == "feedback_required"
         assert (
             not SessionVariableManager(temp_db)
             .get_variables(session_id)
@@ -1026,13 +1002,6 @@ class TestSetHandoffFeedback:
         feedback = registry.get_tool("feedback")
         assert set_handoff is not None and feedback is not None
         with session_context_for_test(session_id):
-            blocked = asyncio.run(
-                set_handoff(
-                    current_state="x" * 10_001, next_steps=["Continue"], clear_session=clear_session
-                )
-            )
-            assert blocked["error_code"] == "feedback_required"
-            assert _handoff_row_count(temp_db, session_id) == 0
             assert feedback(observations=[])["success"] is True
         before = SessionVariableManager(temp_db).get_variables(session_id)
         with session_context_for_test(session_id):
@@ -1047,12 +1016,12 @@ class TestSetHandoffFeedback:
         assert _feedback_row_count(temp_db, session_id) == 0
         assert SessionVariableManager(temp_db).get_variables(session_id) == before
 
-    @pytest.mark.parametrize(("project_name", "survey"), [("gobby", "off"), ("other", "gobby")])
-    def test_inactive_survey_allows_handoff(
-        self, temp_db: HubDatabase, tmp_path: Path, project_name: str, survey: str
+    def test_unsubmitted_feedback_leaves_gate_to_rule(
+        self, temp_db: HubDatabase, tmp_path: Path
     ) -> None:
-        manager, session_id = _persistent_session(temp_db, tmp_path, project_name=project_name)
-        set_handoff = _feedback_registry(temp_db, manager, survey=survey).get_tool("set_handoff")
+        """The survey gate is declared by rule YAML; set_handoff never demands feedback."""
+        manager, session_id = _persistent_session(temp_db, tmp_path)
+        set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
         assert set_handoff is not None
         pane = MagicMock(backend="tmux", target="%12")
         pane.snapshot = AsyncMock(return_value="ready")
@@ -1069,7 +1038,8 @@ class TestSetHandoffFeedback:
         ):
             result = asyncio.run(set_handoff(current_state="Ready", next_steps=["Continue"]))
         assert result["handoff_staged"] is True
-        assert result["feedback_submitted"] is False
+        assert "feedback_submitted" not in result
+        assert _feedback_row_count(temp_db, session_id) == 0
 
 
 def _set_handoff_completion(session_id: str, result: dict[str, Any]) -> HookEvent:
@@ -1177,9 +1147,7 @@ async def test_web_chat_failed_compact_restores_precompact_status(
     chat_registry = WebChatSessionRegistry()
     chat_registry.bind_clear_lifecycle(MagicMock(), db=temp_db)
     chat_registry.register("conversation", MagicMock(db_session_id=session_id))
-    registry = _feedback_registry(
-        temp_db, manager, survey="off", web_chat_session_registry=chat_registry
-    )
+    registry = _feedback_registry(temp_db, manager, web_chat_session_registry=chat_registry)
     variables = SessionVariableManager(temp_db)
     handlers = EventHandlers(session_manager=cast(HookSessionManager, manager))
     release_turn = asyncio.Event()
@@ -1269,7 +1237,7 @@ async def test_compact_timeout_restores_precompact_status_and_releases_wake(
     """An undelivered compact releases the seat without losing its authored handoff."""
     manager, session_id = _persistent_session(temp_db, tmp_path)
     manager.update_session_status(session_id, prior_status)
-    registry = _feedback_registry(temp_db, manager, survey="off")
+    registry = _feedback_registry(temp_db, manager)
     set_handoff = registry.get_tool("set_handoff")
     assert set_handoff is not None
     pane = MagicMock(backend="native", target="test-pane")
@@ -1388,7 +1356,7 @@ def test_set_handoff_retry_reuses_the_in_flight_compact_attempt(
     while the continuation prompt said not to call set_handoff again.
     """
     manager, session_id = _persistent_session(temp_db, tmp_path)
-    set_handoff = _feedback_registry(temp_db, manager, survey="off").get_tool("set_handoff")
+    set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
     assert set_handoff is not None
     pane = MagicMock(backend="tmux", target="%12")
     pane.snapshot = AsyncMock(return_value="ready")
@@ -1493,7 +1461,7 @@ def _failed_compact_attempt(
 ) -> tuple[WorkflowHookHandler, str, dict[str, Any]]:
     """Stage, claim and fail one compact attempt; return its engine, session and gate."""
     manager, session_id = _persistent_session(temp_db, tmp_path)
-    set_handoff = _feedback_registry(temp_db, manager, survey="off").get_tool("set_handoff")
+    set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
     assert set_handoff is not None
     pane = MagicMock(backend="tmux", target="%12")
     pane.snapshot = AsyncMock(return_value="ready")
@@ -1610,9 +1578,7 @@ def test_settled_unconfirmed_compact_admits_work_and_one_fresh_set_handoff(
     """Once the reconcile window closes, the seat works again and may stage one new attempt."""
     engine, session_id, gate = _failed_compact_attempt(temp_db, tmp_path, "compact_unconfirmed")
     old_attempt = str(gate["attempt_id"])
-    set_handoff = _feedback_registry(temp_db, SessionManager(temp_db), survey="off").get_tool(
-        "set_handoff"
-    )
+    set_handoff = _feedback_registry(temp_db, SessionManager(temp_db)).get_tool("set_handoff")
     assert set_handoff is not None
     pane = MagicMock(backend="tmux", target="%12")
     pane.snapshot = AsyncMock(return_value="ready")
