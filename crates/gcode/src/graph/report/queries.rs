@@ -203,7 +203,7 @@ pub(super) fn report_hotspots_query(
              WITH node, outgoing, incoming, outgoing + incoming AS degree \
              WHERE degree > 0 \
              RETURN {} AS id, {} AS name, {} AS node_type, degree, incoming, outgoing, coalesce(node.file_path, node.path) AS file_path \
-             ORDER BY degree DESC, name ASC, id ASC{limit_clause}",
+             ORDER BY degree DESC, name ASC, id ASC, node_type ASC, file_path ASC, incoming ASC, outgoing ASC{limit_clause}",
             report_node_id_expr("node"),
             report_node_name_expr("node"),
             report_node_type_case("node")
@@ -279,7 +279,8 @@ pub(super) fn report_bridge_edges_query(project_id: &str) -> (String, HashMap<St
                 r.source_file_path AS source_file_path, \
                 r.source_line AS source_line, \
                 r.source_symbol_id AS source_symbol_id, \
-                r.matching_method AS matching_method"
+                r.matching_method AS matching_method \
+         ORDER BY source_id, target_symbol_id, relation, provenance, confidence, source_system, source_file_path, source_line, source_symbol_id, matching_method"
             .to_string(),
         typed_query::string_params(&[("project", project_id)]),
     )

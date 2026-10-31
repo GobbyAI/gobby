@@ -158,10 +158,16 @@ fn load_namespace_rows(
         load_target_frequencies(client, project_id, admitted, "external", top_n)?;
     eprintln!("SPIKE targets external {:?}", started.elapsed()); // SPIKE-TIMING
 
-    let (query, params) = with_admitted_versions(super::queries::report_bridge_edges_query(project_id), admitted);
-    let rows = client
-        .query(&query, Some(params))
-        .context("load graph report bridge edges")?;
+    let (base, base_params) = super::queries::report_bridge_edges_query(project_id);
+    let rows = read_to_completion(|skip, page| {
+        let (query, params) = with_admitted_versions(
+            (window_query(&base, skip, page), base_params.clone()),
+            admitted,
+        );
+        client
+            .query(&query, Some(params))
+            .context("load graph report bridge edges")
+    })?;
     let bridge_edges = collect_report_rows(&rows, "bridge edges", row_to_bridge_edge_hypothesis);
 
     Ok(NamespaceRows {
@@ -326,13 +332,21 @@ fn load_hotspots(
     node_class: &str,
     limit: Option<usize>,
 ) -> anyhow::Result<Vec<GraphHotspot>> {
-    let (query, params) = with_admitted_versions(
-        (if spike_head() { super::head_queries::report_hotspots_query(project_id, node_class, limit) } else { super::queries::report_hotspots_query(project_id, node_class, limit) }),
-        admitted,
-    );
-    let rows = client
-        .query(&query, Some(params))
-        .with_context(|| format!("load graph report {node_class} hotspots"))?;
+    let mut run = |built| {
+        let (query, params) = with_admitted_versions(built, admitted);
+        client
+            .query(&query, Some(params))
+            .with_context(|| format!("load graph report {node_class} hotspots"))
+    };
+    let rows = match limit {
+        Some(top_n) => run(super::queries::report_hotspots_query(project_id, node_class, Some(top_n)))?,
+        None => {
+            let (base, params) = super::queries::report_hotspots_query(project_id, node_class, None);
+            read_to_completion(|skip, page| {
+                run((window_query(&base, skip, page), params.clone()))
+            })?
+        }
+    };
     Ok(collect_report_rows(
         &rows,
         &format!("{node_class} hotspots"),
@@ -402,11 +416,26 @@ fn collect_report_rows<T>(rows: &[Row], label: &str, mapper: impl Fn(&Row) -> Op
 /// Engine result cap (RESULTSET_SIZE). A read past it truncates silently.
 pub(super) const ENGINE_RESULT_CAP: usize = 10_000;
 
-/// Reads one page. Stub: the first page only, which is the pre-change behavior.
+/// Reads windows until one comes back short. `page(skip, limit)` returns the rows
+/// after `skip`, at most `limit`; a window that fills the cap may have more behind it.
 pub(super) fn read_to_completion<T>(
     mut page: impl FnMut(usize, usize) -> anyhow::Result<Vec<T>>,
 ) -> anyhow::Result<Vec<T>> {
-    page(0, ENGINE_RESULT_CAP)
+    let mut rows = Vec::new();
+    loop {
+        let batch = page(rows.len(), ENGINE_RESULT_CAP)?;
+        let full = batch.len() == ENGINE_RESULT_CAP;
+        rows.extend(batch);
+        if !full {
+            return Ok(rows);
+        }
+    }
+}
+
+/// Appends one window to a builder's ordered query. Builders with a total ORDER BY
+/// and no LIMIT of their own page cleanly; the window is appended after the sort.
+fn window_query(query: &str, skip: usize, limit: usize) -> String {
+    format!("{query} SKIP {skip} LIMIT {limit}")
 }
 
 // SPIKE-PARITY
