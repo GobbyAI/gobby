@@ -5,14 +5,20 @@ Drives a synthetic developer-shaped workflow through two successive tasks on one
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
+from gobby.config.features import ToolResultOffloadConfig
+from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tool_results import ToolResultStore
 from gobby.tasks.step_records import StepSubmission, record_task_step
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
@@ -46,7 +52,12 @@ def _set(tool: str, variable: str, value: Any, when: str | None = None) -> dict[
 
 def _test_gate_workflow() -> dict[str, Any]:
     """Claim resets the test gate, an approved test record opens it, and close releases it."""
-    test_record = f"{RESULT}.get('step_records', {{}}).get('test', {{}})"
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "src/gobby/install/shared/workflows/agents/developer.yaml"
+    )
+    bundled = yaml.safe_load(path.read_text())["step_workflow"]
+    await_tests = next(step for step in bundled["steps"] if step["name"] == "await_tests")
     return {
         "name": "inline-test-gate",
         "prompts": {"agent": "Exercise the task test gate."},
@@ -73,15 +84,7 @@ def _test_gate_workflow() -> dict[str, Any]:
                     "name": "await_tests",
                     "allowed_tools": ["mcp__gobby__call_tool"],
                     "allowed_mcp_tools": ["gobby-tasks:get_task"],
-                    "on_mcp_success": [
-                        _set(
-                            "get_task",
-                            "tests_ready",
-                            f"{test_record}.get('status') == 'approved' and "
-                            f"{test_record}.get('epoch') == {RESULT}.get('review_epoch')",
-                            when=f"{RESULT}.get('id') == vars.assigned_task_id",
-                        )
-                    ],
+                    "on_mcp_success": await_tests["on_mcp_success"],
                     "transitions": [{"to": "implement", "when": "vars.tests_ready"}],
                 },
                 {
@@ -239,3 +242,132 @@ async def test_documented_get_task_call_opens_the_gate(seat: SeatRun) -> None:
     assert seat.step == "await_tests"
     await _get_task_as_documented(seat, task, brief=False)
     assert seat.step == "implement"
+
+
+async def _offloaded_task_card(run: SeatRun, task: Task) -> dict[str, Any]:
+    """Return the model-facing result of a real oversized get_task call."""
+    LocalTaskManager(run.db).update_task(task.id, description="Long task evidence. " * 1_000)
+    with session_context_for_test(SESSION_ID):
+        output = await create_task_registry(LocalTaskManager(run.db)).call(
+            "get_task", {"task_id": task.id, "brief": False}
+        )
+    config = ToolResultOffloadConfig()
+    assert len(json.dumps(output, ensure_ascii=False, default=str)) > config.threshold_chars
+    offloader = ToolResultOffloader(
+        ToolResultStore(run.db, config), run.db, config, lambda: PROJECT_ID
+    )
+    envelope = await offloader.maybe_offload(
+        server_name="gobby-tasks",
+        tool_name="get_task",
+        result=output,
+        session_id=SESSION_ID,
+        project_id=PROJECT_ID,
+        intent=None,
+    )
+    assert isinstance(envelope, dict)
+    assert envelope["offloaded"] is True
+    assert envelope["retrieval_available"] is True
+    assert len(json.dumps(envelope, ensure_ascii=False, default=str)) <= config.max_envelope_chars
+    return envelope
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("approval", ["current", "stale", "missing"])
+async def test_oversized_get_task_preserves_test_gate(seat: SeatRun, approval: str) -> None:
+    task = seat.task(owner=SESSION_ID)
+    await _claim(seat, task)
+    if approval != "missing":
+        _approve_committed_tests(seat, task)
+    if approval == "stale":
+        seat.db.execute(
+            "UPDATE tasks SET review_epoch = review_epoch + 1 WHERE id = %s", (task.id,)
+        )
+
+    envelope = await _offloaded_task_card(seat, task)
+    await seat.call(
+        "gobby-tasks",
+        "get_task",
+        {"task_id": task.id, "brief": False},
+        {"success": True, "result": envelope},
+    )
+
+    assert seat.step == ("implement" if approval == "current" else "await_tests")
+    assert seat.vars["tests_ready"] is (approval == "current")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "agent,source,target",
+    [
+        ("developer", "route_skills", "load_additional_skills"),
+        ("developer", "implement", "claim"),
+        ("developer", "submit", "claim"),
+        ("epic-reviewer", "claim", "load_skill"),
+        ("tech-writer", "implement", "terminate"),
+    ],
+)
+@pytest.mark.parametrize("oversized", [False, True], ids=["inline", "offloaded"])
+async def test_get_task_field_transitions_survive_offload(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    agent: str,
+    source: str,
+    target: str,
+    oversized: bool,
+) -> None:
+    """Exercise bundled identity/closed-card consumers using their real YAML handlers."""
+    patch_local_machine_id(monkeypatch, AUTHORITY_MACHINE_ID)
+    path = (
+        Path(__file__).resolve().parents[2]
+        / f"src/gobby/install/shared/workflows/agents/{agent}.yaml"
+    )
+    bundled = yaml.safe_load(path.read_text())["step_workflow"]
+    source_step = next(step for step in bundled["steps"] if step["name"] == source)
+    handlers = [
+        handler
+        for handler in source_step["on_mcp_success"]
+        if handler.get("server") == "gobby-tasks" and handler.get("tool") == "get_task"
+    ]
+    assert handlers
+    workflow = _test_gate_workflow()
+    workflow["step_workflow"] = {
+        "variables": {**bundled["variables"], "task_claimed": agent == "developer"},
+        "steps": [
+            {
+                "name": source,
+                "allowed_tools": "all",
+                "on_mcp_success": handlers,
+                "transitions": [t for t in source_step["transitions"] if t["to"] == target],
+            },
+            {"name": target, "allowed_tools": "all"},
+        ],
+    }
+    run = SeatRun(temp_db, "inline-test-gate", definition=workflow)
+    task = run.task(owner=SESSION_ID)
+    instance = run.instances.get_for_session(SESSION_ID)
+    assert instance is not None
+    instance.variables.update(assigned_task_id=task.id, assigned_task_uuid=task.id)
+    run.instances.save(instance)
+    if source != "route_skills":
+        # Seed the observed state; testing close gates requires an unrelated checkout.
+        temp_db.execute(
+            "UPDATE tasks SET closed_at = CURRENT_TIMESTAMP, closed_reason = 'done', "
+            "claimed_by_session_id = NULL WHERE id = %s",
+            (task.id,),
+        )
+    if oversized:
+        output = await _offloaded_task_card(run, task)
+    else:
+        with session_context_for_test(SESSION_ID):
+            output = await create_task_registry(LocalTaskManager(temp_db)).call(
+                "get_task", {"task_id": task.id, "brief": False}
+            )
+
+    await run.call(
+        "gobby-tasks",
+        "get_task",
+        {"task_id": task.id, "brief": False},
+        {"success": True, "result": output},
+    )
+
+    assert run.step == target

@@ -14,12 +14,14 @@ from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.skills.formatting import skill_fetch_directive
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tool_results import ToolResultStore
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.integration
 
@@ -32,6 +34,13 @@ def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     database = temp_db
     sync_bundled_rules(database, get_bundled_rules_path())
     database.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
+    # The tasks-skill gate is selected through the default agent definition, as bundled.
+    if AgentDefinitionManager(database).get_by_name("default") is None:
+        seed_seat(
+            database,
+            "default",
+            include=["tag:default", "name:require-tasks-skill-for-mutations"],
+        )
     yield database
 
 

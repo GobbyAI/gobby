@@ -255,7 +255,7 @@ def links(builder: SeatRun, unit: Task, monkeypatch: pytest.MonkeyPatch) -> Inte
     return create_commit_registry(LocalTaskManager(builder.db), session_manager=builder.sessions)
 
 
-def _team(run: SeatRun, task: Task) -> None:
+def _team(run: SeatRun, task: Task, *, mode: str = "single") -> None:
     executions = LocalPipelineExecutionManager(run.db, PROJECT_ID)
     definition = PipelineDefinition(
         name="inline-team", steps=[PipelineStep(id="admit", exec="true")]
@@ -275,6 +275,7 @@ def _team(run: SeatRun, task: Task) -> None:
         base_branch="integration",
         worktree_id=None,
         worktree_path=None,
+        mode=mode,
     )
     executions.update_step_execution(step.id, output_json=json.dumps({"team": asdict(binding)}))
     session = run.sessions.register(

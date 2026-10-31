@@ -1300,8 +1300,8 @@ async def test_inline_readiness_rule_declares_idle_only_for_a_ready_report(
         priority=6,
     )
     run.session_vars.update({"current_step_idle": True, "task_claimed": False})
-    # The engine fills the caller identity from the session, so the identity failure is a
-    # report this seat did not send: the coordinator's message names the seat as recipient.
+    # The engine takes the caller's platform identity from the session it evaluates, so an
+    # identity mismatch is a readiness send that another session made.
     sender, recipient = (
         (COORDINATOR_ID, SESSION_ID) if failure == "identity" else (SESSION_ID, COORDINATOR_ID)
     )

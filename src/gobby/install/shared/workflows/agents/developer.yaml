@@ -247,7 +247,7 @@ step_workflow:
       mcp_error_policy: stay
       description: "Route the claimed task's skills"
       status_message: |
-        Read the claimed task with get_task(task_id=assigned_task_id). The
+        Read the claimed task with get_task(task_id=assigned_task_id, brief=false). The
         completion routes stored additional_skills and TDD automatically.
         Read offloaded cards in full with get_tool_result and load path-specific
         skills before edits.
@@ -273,9 +273,22 @@ step_workflow:
           action: set_variable
           variable: assigned_task_ref
           value: "(tool_output.get('result') or tool_output).get('ref')"
+        # A leaf whose approved test step already exists opens implementation at claim intake.
+        - server: gobby-tasks
+          tool: get_task
+          when: "(tool_output.get('result') or tool_output).get('id') == vars.assigned_task_id"
+          action: set_variable
+          variable: tests_ready
+          value: >-
+            (tool_output.get('result') or tool_output).get('step_records', {}).get('test', {}).get('status') == 'approved'
+            and (tool_output.get('result') or tool_output).get('step_records', {}).get('test', {}).get('epoch') == (tool_output.get('result') or tool_output).get('review_epoch')
       transitions:
         - to: claim
           when: "not vars.task_claimed"
+        - to: implement
+          when: >-
+            vars.skills_routed and vars.assigned_task_ref and vars.tests_ready
+            and not vars.additional_skills
         - to: load_additional_skills
           when: "vars.skills_routed and vars.assigned_task_ref"
 
@@ -322,6 +335,10 @@ step_workflow:
       transitions:
         - to: claim
           when: "not vars.task_claimed"
+        - to: implement
+          when: >-
+            vars.tests_ready
+            and (not vars.additional_skills or all(skill_loaded(skill) for skill in vars.additional_skills))
         - to: await_tests
           when: >-
             not vars.additional_skills
@@ -350,6 +367,8 @@ step_workflow:
         - "gobby-tasks:get_task"
         - "gobby-agents:wait_for_coordination"
         - "gobby-agents:get_inter_session_message"
+        # A blocked seat reports to its Dev Manager; the send_message_targets rule bounds the rest.
+        - "gobby-agents:send_message"
       on_mcp_success:
         - server: gobby-tasks
           tool: get_task
