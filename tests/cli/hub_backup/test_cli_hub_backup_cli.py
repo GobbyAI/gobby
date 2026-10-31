@@ -1111,6 +1111,8 @@ def _run_real_start_preflight(monkeypatch: pytest.MonkeyPatch, integrity: Integr
     )
     monkeypatch.setattr(daemon_preflight, "open_preflight_hub", lambda _runtime: None)
     monkeypatch.setattr(daemon_preflight, "plan_schema", lambda *_a, **_k: "")
+    # DATABASE_URL is the live hub's coordinates; the guard refuses any real dial to them.
+    monkeypatch.setattr(daemon_preflight, "preflight_schema", lambda *_a, **_k: "")
     monkeypatch.setattr(schema_divergence, "binary_set_apply_refusal", lambda *_a, **_k: None)
     monkeypatch.setattr(schema_divergence, "schema_apply_refusal", lambda _database: None)
     monkeypatch.setattr(
