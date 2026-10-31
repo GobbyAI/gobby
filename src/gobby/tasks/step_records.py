@@ -296,7 +296,7 @@ def _rejected_reviews(records: list[TaskStepRecord], epoch: int) -> list[TaskSte
 
 
 def fixer_round(records: list[TaskStepRecord], epoch: int) -> bool:
-    """The epoch stands at its second rejection, when a rejecting reviewer fixes the work."""
+    """The epoch stands at its second rejection, when the claimant fixes the work."""
     rejected = {record.round_number for record in _rejected_reviews(records, epoch)}
     return len(rejected) == REVIEW_REJECTION_LIMIT - 1
 
@@ -304,11 +304,11 @@ def fixer_round(records: list[TaskStepRecord], epoch: int) -> bool:
 def _review_fixer(
     task: Task, session_id: str, step: TaskStep, records: list[TaskStepRecord]
 ) -> bool:
-    """The claimant that rejected a review this epoch fixes the work after the second rejection."""
-    if step != "implementation" or task.claimed_by_session_id != session_id:
-        return False
-    return fixer_round(records, task.review_epoch) and any(
-        record.session_id == session_id for record in _rejected_reviews(records, task.review_epoch)
+    """The claimant holding the task after the second rejection fixes the work."""
+    return (
+        step == "implementation"
+        and task.claimed_by_session_id == session_id
+        and fixer_round(records, task.review_epoch)
     )
 
 
