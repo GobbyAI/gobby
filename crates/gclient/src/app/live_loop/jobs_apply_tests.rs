@@ -179,13 +179,6 @@ async fn a_held_terminal_create_keeps_direct_loop_frames_input_and_ticks_live_th
     let (mut workspace, _home) =
         host::live_workspace_on_direct_host_terminals(&mock, &host, &["existing"]).await;
     workspace.fetch_roster().await.expect("initial roster");
-    mock.enqueue("GET", "/api/terminals?", 200, json!({
-        "items": [
-            {"terminal_id": "existing", "backend": "native", "state": "live", "attach": host.roster_attach("existing")},
-            {"terminal_id": CREATED, "backend": "native", "state": "live"},
-        ],
-        "next_cursor": null, "snapshot": {"daemon_epoch": "epoch-1", "seq": 2},
-    }));
     let mut chrome = Chrome::dark();
     chrome.focus_project("project-1");
     let existing = workspace.pane_for_terminal("existing").expect("existing");
@@ -250,6 +243,13 @@ async fn a_held_terminal_create_keeps_direct_loop_frames_input_and_ticks_live_th
             .any(|message| matches!(message, ClientMessage::Input { data } if data == b"v"));
         let tick_draws = draws.load(Ordering::SeqCst) - before;
         release.notify_one();
+        mock.enqueue("GET", "/api/terminals?", 200, json!({
+            "items": [
+                {"terminal_id": "existing", "backend": "native", "state": "live", "attach": host.roster_attach("existing")},
+                {"terminal_id": CREATED, "backend": "native", "state": "live"},
+            ],
+            "next_cursor": null, "snapshot": {"daemon_epoch": "epoch-1", "seq": 2},
+        }));
         assert!(
             rendered,
             "held terminal_create must keep direct frame rendering live"
@@ -614,8 +614,7 @@ async fn a_stale_committed_adoption_step_rolls_back_its_captured_tab() {
             let retry = mock
                 .workspace_requests()
                 .into_iter()
-                .filter(|op| op["op"] == "tab.close")
-                .last()
+                .rfind(|op| op["op"] == "tab.close")
                 .expect("retry");
             assert_eq!(
                 retry["tab"], adopted,

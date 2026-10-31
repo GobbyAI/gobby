@@ -13,10 +13,9 @@ use super::super::viewer_state::EMPTY_LOCAL_TAB_PREFIX;
 use super::super::{PaneId, Workspace};
 use super::control::{close_barrier, release_live_control};
 use super::daemon_ops::{
-    close_daemon_pane, close_daemon_tab, kill_live_panes, pane_close_op, place_live_terminal,
-    tab_close_op,
+    close_daemon_pane, close_daemon_tab, kill_live_panes, op_tag, pane_close_op, tab_close_op,
 };
-use super::jobs::JobOutcome;
+use super::jobs::{spawn_job, JobOutcome, JobResult, PaneAction};
 use super::mouse::Placement;
 use super::projection::close_slot;
 use super::sync_live_chrome;
@@ -196,7 +195,14 @@ pub(super) async fn spawn_live_shell(
             == Some(gobby_core::project::PERSONAL_PROJECT_ID))
         .then_some(cwd.clone())
         .flatten();
-        if !spawn_owned_live_shell(workspace, chrome, placement, worktree_id, personal_cwd).await? {
+        if !spawn_owned_live_shell(
+            workspace,
+            chrome,
+            outcomes,
+            placement,
+            worktree_id,
+            personal_cwd,
+        ) {
             chrome.notify(Toast::warning("Select a project before opening a shell"));
         }
         return Ok(());
@@ -213,46 +219,27 @@ pub(super) async fn spawn_live_shell(
         cwd,
         ..SpawnRequest::default()
     };
-    let outcome = workspace.daemon().spawn(request).await?;
-    finish_live_shell_spawn(
-        workspace,
-        chrome,
-        outcomes,
-        placement,
-        worktree_id,
-        None,
-        outcome,
-    )
-    .await
-}
-
-pub(super) async fn finish_live_shell_spawn(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    outcomes: &UnboundedSender<JobOutcome>,
-    placement: Placement,
-    worktree_id: Option<String>,
-    project_override: Option<&str>,
-    outcome: SpawnOutcome,
-) -> Result<(), FrameError> {
-    match outcome {
-        SpawnOutcome::Created { terminal_id, .. } => {
-            workspace.pending_spawns.insert(terminal_id.clone());
-            workspace.fetch_roster().await?;
-            workspace.attach_ready_panes().await?;
-            place_live_terminal(
-                workspace,
-                chrome,
-                outcomes,
+    // One chained job: the create, then the roster that shows its pane. The
+    // loop places the pane when that answer lands.
+    let project = workspace.project_id().map(str::to_owned);
+    let roster = workspace.issue_roster_fetch(project.clone().unwrap_or_default());
+    let daemon = workspace.daemon().clone();
+    spawn_job(outcomes, op_tag(&daemon), async move {
+        let result = daemon.spawn(request).await;
+        let roster = match &result {
+            Ok(SpawnOutcome::Created { .. }) => Some(roster.await),
+            _ => None,
+        };
+        JobResult::Spawned {
+            then: PaneAction::Place {
                 placement,
-                &terminal_id,
                 worktree_id,
-                project_override,
-            );
-            sync_live_chrome(workspace, chrome);
+            },
+            project,
+            result,
+            roster,
         }
-        SpawnOutcome::Refused { reason } => chrome.notify(Toast::warning(reason)),
-    }
+    });
     Ok(())
 }
 

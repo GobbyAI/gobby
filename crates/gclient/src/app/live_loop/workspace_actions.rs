@@ -5,15 +5,17 @@
 //! paths, which the callers fall back to when these return `false`.
 
 use gobby_terminal::layout;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::ui::chrome::Tab;
-use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
 use super::super::viewer_state::EMPTY_LOCAL_TAB_PREFIX;
 use super::super::Workspace;
+use super::daemon_ops::op_tag;
+use super::jobs::{spawn_job, JobOutcome, JobResult, OwnedShell};
 use super::local_adoption::spawn_in_adopted_local_tab;
 use super::mouse::Placement;
 
@@ -76,20 +78,23 @@ pub(super) fn placement_op(
     })
 }
 
-/// Create a shell as part of its daemon pane, then attach the returned terminal.
-pub(super) async fn spawn_owned_live_shell(
+/// Create a shell as part of its daemon pane. The create and its tab-order
+/// and snapshot steps run as one chained job; the loop installs the answer.
+/// Returns `false` when no daemon placement applies.
+pub(super) fn spawn_owned_live_shell(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
     placement: Placement,
     worktree_id: Option<String>,
     cwd: Option<String>,
-) -> Result<bool, FrameError> {
+) -> bool {
     if !matches!(placement, Placement::Tab)
         && chrome
             .active_tab()
             .is_some_and(|tab| tab.is_local() && !tab.slots.is_empty())
     {
-        return spawn_in_adopted_local_tab(workspace, chrome, placement, cwd).await;
+        return spawn_in_adopted_local_tab(workspace, chrome, outcomes, placement, cwd);
     }
     let replacing_draft = chrome
         .active_tab()
@@ -108,82 +113,78 @@ pub(super) async fn spawn_owned_live_shell(
         None
     };
     let Some(op) = placement_op(workspace, chrome, placement, None, worktree_id, cwd, None) else {
-        return Ok(false);
+        return false;
     };
-    let reply = match workspace.daemon().workspace_op(op).await {
-        Ok(reply) => reply,
-        Err(DaemonError::Workspace(error)) => {
-            chrome.notify(Toast::warning(error.reason));
-            return Ok(true);
-        }
-        Err(error) => return Err(error.into()),
-    };
-    let terminal_id = reply.result["panes"][0]["terminal_id"]
-        .as_str()
-        .ok_or_else(|| FrameError::Protocol("workspace shell op omitted terminal_id".into()))?
-        .to_owned();
-    let created_tab = if replacing_draft.is_some() {
-        Some(
-            reply.result["tabs"][0]["id"]
+    let project = workspace.project_id().map(str::to_owned);
+    let workspace_id = workspace
+        .workspace_model()
+        .map(|model| model.workspace.id.clone());
+    let node = workspace.attach_target().node.clone();
+    let roster = workspace.issue_roster_fetch(project.clone().unwrap_or_default());
+    let daemon = workspace.daemon().clone();
+    spawn_job(outcomes, op_tag(&daemon), async move {
+        let result = async move {
+            let reply = daemon.workspace_op(op).await?;
+            let terminal_id = reply.result["panes"][0]["terminal_id"]
                 .as_str()
-                .ok_or_else(|| FrameError::Protocol("tab.create omitted the new tab id".into()))?
-                .to_owned(),
-        )
-    } else {
-        None
-    };
-    let replaced_draft = replacing_draft.is_some();
-    if let (Some(draft_id), Some(created_tab)) = (replacing_draft, created_tab.as_deref()) {
-        let tab = chrome
-            .active_tab_mut()
-            .ok_or_else(|| FrameError::Protocol("empty draft disappeared during spawn".into()))?;
-        tab.id = created_tab.to_owned();
-        chrome.viewer.focus.remove(&draft_id);
-        chrome
-            .viewer
-            .active_tab
-            .insert(chrome.project_tabs.key().to_owned(), created_tab.to_owned());
-    }
-    if let (Some(position), Some(tab)) = (next_tab_position, created_tab.as_deref()) {
-        let tab_move = WorkspaceOp::TabMove {
-            tab: tab.to_owned(),
-            position,
-            workspace: None,
-            node: None,
-        };
-        // Awaited inline until A4b (#23232) moves this spawn off the loop.
-        match workspace.daemon().workspace_op(tab_move).await {
-            Ok(_) => {}
-            Err(DaemonError::Workspace(error)) => chrome.notify(Toast::warning(error.reason)),
-            Err(error) => chrome.notify(Toast::warning(format!(
-                "Shell opened, but tab order could not be saved: {}",
-                FrameError::from(error)
-            ))),
+                .ok_or_else(|| DaemonError::Protocol {
+                    detail: "workspace shell op omitted terminal_id".into(),
+                })?
+                .to_owned();
+            let draft = match replacing_draft {
+                Some(draft_id) => {
+                    let created = reply.result["tabs"][0]["id"]
+                        .as_str()
+                        .ok_or_else(|| DaemonError::Protocol {
+                            detail: "tab.create omitted the new tab id".into(),
+                        })?
+                        .to_owned();
+                    Some((draft_id, created))
+                }
+                None => None,
+            };
+            let mut tab_order_warning = None;
+            if let (Some(position), Some((_, created))) = (next_tab_position, draft.as_ref()) {
+                let tab_move = WorkspaceOp::TabMove {
+                    tab: created.clone(),
+                    position,
+                    workspace: None,
+                    node: None,
+                };
+                match daemon.workspace_op(tab_move).await {
+                    Ok(_) => {}
+                    Err(DaemonError::Workspace(error)) => tab_order_warning = Some(error.reason),
+                    Err(error) => {
+                        tab_order_warning = Some(format!(
+                            "Shell opened, but tab order could not be saved: {}",
+                            FrameError::from(error)
+                        ));
+                    }
+                }
+            }
+            let snapshot = match (&draft, workspace_id) {
+                (Some(_), Some(workspace_id)) => Some(
+                    daemon
+                        .workspace_snapshot(node.as_deref(), &workspace_id)
+                        .await?,
+                ),
+                (Some(_), None) => {
+                    return Err(DaemonError::Protocol {
+                        detail: "workspace vanished during shell spawn".into(),
+                    });
+                }
+                (None, _) => None,
+            };
+            Ok(OwnedShell {
+                terminal_id,
+                draft,
+                snapshot,
+                tab_order_warning,
+                roster: Some(roster.await),
+            })
         }
-    }
-    if replaced_draft {
-        let workspace_id = workspace
-            .workspace_model()
-            .map(|model| model.workspace.id.clone())
-            .ok_or_else(|| FrameError::Protocol("workspace vanished during shell spawn".into()))?;
-        let node = workspace.attach_target().node.clone();
-        let snapshot = workspace
-            .daemon()
-            .workspace_snapshot(node.as_deref(), &workspace_id)
-            .await?;
-        workspace.apply_workspace_snapshot(snapshot);
-    } else {
-        workspace.expect_placement(&terminal_id);
-    }
-    workspace.pending_spawns.insert(terminal_id.clone());
-    workspace.fetch_roster().await?;
-    workspace.attach_ready_panes().await?;
-    super::sync_live_chrome(workspace, chrome);
-    if replaced_draft {
-        if let Some(pane) = workspace.pane_for_terminal(&terminal_id) {
-            chrome.focus_pane(pane);
-            super::control::focus_live_pane(workspace, pane);
-        }
-    }
-    Ok(true)
+        .await;
+        JobResult::Shell { project, result }
+    });
+    true
 }

@@ -1012,9 +1012,9 @@ async fn assert_lagged_warning(
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
-        let mut probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
-        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
-        wait_for_replies(&mock, "terminal_take_control", 1).await;
+        let mut probe = LivenessProbe::new(mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(mock, "terminal_set_viewport", 2).await;
+        wait_for_replies(mock, "terminal_take_control", 1).await;
         probe.key_reaches("terminal-b", 'x').await;
         probe.frames_render("terminal-a").await;
         probe.key_reaches("terminal-b", 'z').await;
@@ -1026,7 +1026,7 @@ async fn assert_lagged_warning(
         driver
     );
     result.expect("live loop recovers from lag");
-    let lagged: Vec<_> = records(&logs, "WARN")
+    let lagged: Vec<_> = records(logs, "WARN")
         .into_iter()
         .filter(|line| line.contains("source=") && line.contains("lag"))
         .collect();

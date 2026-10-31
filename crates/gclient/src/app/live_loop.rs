@@ -36,6 +36,7 @@ use host_recovery::HostRecoveries;
 
 mod actions;
 pub(super) mod arrange;
+mod chain_apply;
 mod control;
 mod daemon_ops;
 mod focus_hints;

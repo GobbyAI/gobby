@@ -776,7 +776,7 @@ async fn serve_connection(
         write_response(&mut stream, 401, json!({"detail": "unauthorized"}), None).await?;
         return Ok(());
     }
-    let response = {
+    let (response, owned_row) = {
         let mut state = state.lock().expect("mock state");
         state.requests.push(RequestRecord {
             method: method.clone(),
@@ -788,9 +788,22 @@ async fn serve_connection(
         let position = state.responses.iter().position(|response| {
             response.method == method && target.starts_with(&response.path_prefix)
         });
-        position.and_then(|position| state.responses.remove(position))
+        let response = position.and_then(|position| state.responses.remove(position));
+        // An unqueued read of a shell this workspace created gets its row, as
+        // the daemon serves one that the workspace placed.
+        let owned_row = target
+            .strip_prefix("/api/terminals/")
+            .filter(|_| method == "GET")
+            .and_then(|terminal_id| state.workspace.owned_terminal_row(terminal_id));
+        (response, owned_row)
     };
-    let response = response.unwrap_or_else(|| default_response(&method, &target));
+    let response = response.unwrap_or_else(|| match owned_row {
+        Some(row) => QueuedResponse {
+            body: row,
+            ..default_response(&method, &target)
+        },
+        None => default_response(&method, &target),
+    });
     for event in response.events_before_response {
         let delivered = response.wait_for_events.then(|| Arc::new(Notify::new()));
         let _ = events.send(MockEvent {
@@ -1046,6 +1059,15 @@ fn websocket_reply(
         .suppressed_ws
         .contains(kind)
     {
+        if kind == "workspace_op" {
+            // A lost acknowledgement still commits the op: the daemon applied it
+            // and only its reply went missing.
+            let mut guard = state.lock().expect("mock state");
+            if guard.workspace.knows(request) {
+                let events = guard.workspace.apply(request);
+                guard.pending_workspace_events.extend(events);
+            }
+        }
         return None;
     }
     match kind {
