@@ -107,7 +107,9 @@ async def _spawn(
     active: tuple[Any, ...],
 ) -> tuple[dict[str, Any], AsyncMock]:
     """Run spawn_agent through the registry as ``caller``; return the reply and the launch."""
-    _define_agent(h.db, "dev-manager", None, variables={"team_manager": True})
+    _define_agent(
+        h.db, "dev-manager", None, variables={"team_manager": True}, resumable=(SEAT_TYPE,)
+    )
     if resume_session_id is not None:
         _expire_seat(h)
     runner = MagicMock()
