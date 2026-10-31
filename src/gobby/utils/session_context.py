@@ -64,6 +64,11 @@ type PrincipalResolver = Callable[[], Awaitable[RequestPrincipal]]
 _request_principal: contextvars.ContextVar[PrincipalResolver] = contextvars.ContextVar(
     "request_principal"
 )
+# True only while the daemon itself runs an action (pipeline MCP step, cron action). Agent
+# requests and tool arguments never set it, so it is the one daemon origin admission trusts.
+_daemon_execution: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "daemon_execution", default=False
+)
 
 
 def set_session_context(ctx: SessionContext | None) -> contextvars.Token[SessionContext | None]:
@@ -119,6 +124,21 @@ async def get_request_principal() -> RequestPrincipal:
 def reset_request_principal(token: contextvars.Token[PrincipalResolver]) -> None:
     """Reset the request-scoped principal."""
     _request_principal.reset(token)
+
+
+def set_daemon_execution() -> contextvars.Token[bool]:
+    """Mark the current task as daemon-owned execution for its duration."""
+    return _daemon_execution.set(True)
+
+
+def is_daemon_execution() -> bool:
+    """True only inside a daemon-owned execution scope."""
+    return _daemon_execution.get()
+
+
+def reset_daemon_execution(token: contextvars.Token[bool]) -> None:
+    """End the daemon-owned execution scope."""
+    _daemon_execution.reset(token)
 
 
 def resolve_session_ref(
@@ -184,6 +204,7 @@ class SeededContextTokens:
     agent_run_token: contextvars.Token[str | None] | None = None
     project_token: contextvars.Token[dict[str, Any] | None] | None = field(default=None)
     principal_token: contextvars.Token[PrincipalResolver] | None = None
+    daemon_execution_token: contextvars.Token[bool] | None = None
     resolved_session_id: str | None = None
     resolved_project_id: str | None = None
 
@@ -517,3 +538,8 @@ def reset_seeded_contexts(tokens: SeededContextTokens) -> None:
             reset_request_principal(tokens.principal_token)
         except (RuntimeError, TypeError, ValueError) as exc:
             logger.debug("reset_request_principal failed: %s", exc)
+    if tokens.daemon_execution_token is not None:
+        try:
+            reset_daemon_execution(tokens.daemon_execution_token)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("reset_daemon_execution failed: %s", exc)
