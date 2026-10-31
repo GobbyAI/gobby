@@ -563,6 +563,13 @@ def _occupied(db: HubDatabase, runs: list[AgentRun]) -> bool:
     return bool(rows)
 
 
+def team_seats_live(db: HubDatabase, binding: TeamBinding) -> bool:
+    """Whether a team's seats, or the seats they dispatched, still work in its tree."""
+    (team,) = _with_members(db, [binding])
+    seats = _team_seats(db, team)
+    return _occupied(db, [*seats, *_dispatched_runs(db, seats, binding.worktree_path, None)])
+
+
 def _expire_seats(db: HubDatabase, team: _DueTeam) -> None:
     _expire_runs(db, _eligible_seats(db, _team_seats(db, team), team.binding.task_id))
 
