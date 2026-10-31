@@ -892,6 +892,51 @@ async def test_claim_free_base_merge_candidate_binding(
     assert tasks.get_task(task.id).claimed_by_session_id is None
 
 
+async def test_clean_base_merge_candidate_binds_after_its_authored_merge(
+    seat: tuple[WorkflowHookHandler, Session, Path],
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """A clean admitted merge that creates a commit binds at reviewer intake."""
+    handler, session, worktree = seat
+    _seat(temp_db, session, "custom-seat", granted=True, selectors=GATED_RULES)
+    # `feature` shares the base but not the task's conflicting shared.txt edit, so the
+    # integration merge below creates a commit with no conflict.
+    _git(worktree, "checkout", "-q", "-b", "clean-task", "feature")
+    _commit(worktree, "task2.txt", "clean task\n", "clean task file")
+    _commit(tmp_path / "main", "clean.txt", "clean\n", "integration clean file")
+    record = LocalWorktreeManager(temp_db).get_by_path(str(worktree))
+    assert record is not None and record.task_id is not None
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.get_task(record.task_id)
+    command = "git merge --no-ff --no-edit integration"
+    await handler._evaluate_rules(_bash_event(session, worktree, command))
+    output = _git(worktree, "merge", "--no-ff", "--no-edit", "integration")
+    completed = _bash_event(session, worktree, command, HookEventType.AFTER_TOOL)
+    completed.data["tool_output"] = output
+    await handler._evaluate_rules(completed)
+    sha = _git(worktree, "rev-parse", "HEAD")
+    tasks.link_commit(task.id, sha)
+    reviewer = SessionManager(temp_db).register(
+        external_id="merge-reviewer",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=session.project_id,
+    )
+    message = InterSessionMessageManager(temp_db).create_message(
+        from_session=session.id,
+        to_session=reviewer.id,
+        content=(
+            f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=base-merge WT={worktree} "
+            f"COMMIT={sha} NOTE=clean base merge"
+        ),
+    )
+    event = candidate_event(temp_db, message)
+    assert event is not None
+    error = _candidate_rejection(temp_db, {}, event, reviewer.id)
+    assert error is None, error
+
+
 @pytest.mark.parametrize("granted", [True, False], ids=["merge-capability", "no-capability"])
 async def test_team_worktree_scope_is_static_in_srt_launch_policy(
     landing: tuple[LandingCase, WorkflowHookHandler, Session, Path, Task],
