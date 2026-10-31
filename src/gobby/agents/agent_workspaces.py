@@ -282,6 +282,8 @@ def _sync_exclusions(project_id: str, skipped: Sequence[str] = ()) -> int:
 
     Git status hides each recorded untracked path, so a skipped path is listed and logged
     once instead of on every backup cycle. A recorded path is dropped once it stops being skipped.
+    Only printable names are recorded: a line break or other control character cannot be written
+    as one exact ignore line, so such a path stays skipped but unhidden.
     """
     anchor = workspace_anchor(project_id)
     exclude = workspace_git_dir(project_id) / "info" / "exclude"
@@ -290,9 +292,13 @@ def _sync_exclusions(project_id: str, skipped: Sequence[str] = ()) -> int:
     prefix, found, remainder = text.partition(begin)
     block, _, suffix = remainder.partition(end) if found else ("", "", "")
     previous = {
-        re.sub(r"\\(.)", r"\1", line[1:]) for line in block.splitlines() if line.startswith("/")
+        re.sub(r"\\(.)", r"\1", line[1:]) for line in block.split("\n") if line.startswith("/")
     }
-    recorded = {path for path in (*previous, *skipped) if _still_skipped(anchor / path)}
+    recorded = {
+        path
+        for path in (*previous, *skipped)
+        if path.isprintable() and _still_skipped(anchor / path)
+    }
     patterns = [
         *sorted(_SECRET_NAMES),
         *(f"{name}/" for name in _GENERATED_DIRECTORIES),

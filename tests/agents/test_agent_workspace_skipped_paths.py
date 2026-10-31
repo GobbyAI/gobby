@@ -80,3 +80,26 @@ async def test_skipped_paths_are_not_rediscovered_but_new_notes_are_backed_up(
     assert (anchor / "developer/session-1/links/link-0").is_symlink()
     assert (anchor / "developer/session-1/huge.bin").is_file()
     assert status.stdout == f"?? {new_note}\0"
+
+
+async def test_newline_skipped_path_stays_out_and_unrelated_notes_back_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    project_id = "33333333-3333-4333-8333-333333333333"
+    anchor = agent_workspaces.ensure_workspace(project_id)
+    folder = anchor / "developer/session-1"
+    folder.mkdir(parents=True)
+    (folder / "notes.md").write_text("keep this evidence\n")
+    (folder / "odd\nnotes.md").symlink_to(folder / "notes.md")
+    assert await agent_workspaces.commit_workspace(project_id, "timer")
+    for cycle in range(2):
+        note = folder / f"plan-{cycle}" / "notes.md"
+        note.parent.mkdir()
+        note.write_text(f"unrelated notes {cycle}\n")
+        assert await agent_workspaces.commit_workspace(project_id, "timer")
+        tracked = await agent_workspaces._git(project_id, "ls-files", "-z")
+        names = set(tracked.stdout.split("\0")) - {""}
+        assert f"developer/session-1/plan-{cycle}/notes.md" in names
+        assert "developer/session-1/odd\nnotes.md" not in names
+    assert (folder / "odd\nnotes.md").is_symlink()
