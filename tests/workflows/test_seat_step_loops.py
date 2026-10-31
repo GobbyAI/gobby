@@ -1300,9 +1300,12 @@ async def test_inline_readiness_rule_declares_idle_only_for_a_ready_report(
         priority=6,
     )
     run.session_vars.update({"current_step_idle": True, "task_claimed": False})
-    message = InterSessionMessageManager(temp_db).create_message(
-        SESSION_ID, COORDINATOR_ID, content
+    # The engine takes the caller's platform identity from the session it evaluates, so an
+    # identity mismatch is a readiness send that another session made.
+    sender, recipient = (
+        (COORDINATOR_ID, SESSION_ID) if failure == "identity" else (SESSION_ID, COORDINATOR_ID)
     )
+    message = InterSessionMessageManager(temp_db).create_message(sender, recipient, content)
     output: dict[str, Any] = {
         "success": failure not in {"direct", "content", "structured"},
         "message_ids": [message.id],
@@ -1325,8 +1328,6 @@ async def test_inline_readiness_rule_declares_idle_only_for_a_ready_report(
     )
     if failure == "transport":
         event.metadata["is_failure"] = True
-    if failure != "identity":
-        event.metadata["_platform_session_id"] = SESSION_ID
     await run._evaluate(event)
     assert bool(run.session_vars.get("seat_idle")) == (
         content == "EVENT=SEAT_READY NOTE=idle" and not failure
