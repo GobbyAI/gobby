@@ -143,7 +143,7 @@ def _lone_git_command(command: str | None) -> list[str] | None:
     if not isinstance(command, str) or not command.strip():
         return None
     parsed = parse_shell_command(command)
-    if parsed.redirected or len(parsed.segments) != 1:
+    if parsed.redirected or parsed.expanded or parsed.commented or len(parsed.segments) != 1:
         return None
     tokens = list(parsed.segments[0])
     if len(tokens) < 2 or tokens[0] != "git" or tokens[1].startswith("-"):

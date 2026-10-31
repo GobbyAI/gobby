@@ -37,3 +37,37 @@ def test_safe_split_caches_tokens_and_returns_fresh_lists(
     assert safe_split(command) == ["uv", "run", "pytest", "tests/one.py", "-q"]
     assert calls == [command]
     assert safe_split("echo 'unbalanced") == ["echo", "'unbalanced"]
+
+
+@pytest.mark.parametrize(
+    ("message", "expanded"),
+    [
+        ('"$(touch unrelated.txt)"', True),
+        ('"`touch unrelated.txt`"', True),
+        ('"$\\\n(touch unrelated.txt)"', True),
+        ('"$((1 + $(printf 0)))"', True),
+        ('"${MESSAGE:-$(touch unrelated.txt)}"', True),
+        ('"$MESSAGE"', True),
+        ("'$(literal)'", False),
+        ("'`literal`'", False),
+        (r'"\$(literal)"', False),
+        (r'"\`literal\`"', False),
+        (r'"\\$(printf 0)"', True),
+        ("'quoted'\"$(printf 0)\"", True),
+    ],
+)
+def test_shell_expansion_metadata_preserves_quote_context(message: str, expanded: bool) -> None:
+    parsed = shell_lexing.parse_shell_command(f"git commit -m {message}")
+
+    assert parsed.expanded is expanded
+    assert len(parsed.segments) == 1
+
+
+@pytest.mark.parametrize(
+    ("message", "commented"),
+    [("#'\ntouch unrelated.txt\n'", True), ("'#literal'", False), (r"\#literal", False)],
+)
+def test_shell_comment_metadata_preserves_quote_context(message: str, commented: bool) -> None:
+    parsed = shell_lexing.parse_shell_command(f"git commit -m {message}")
+
+    assert parsed.commented is commented

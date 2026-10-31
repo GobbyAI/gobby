@@ -468,3 +468,48 @@ async def test_base_merge_lands_through_land_commit_without_a_claim(
     assert case.git("rev-parse", "trunk") == merge
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == case.claimant
     assert not SessionVariableManager(temp_db).get_variables(session.id).get("task_claimed")
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        '"$(touch unrelated.txt)"',
+        '"`touch unrelated.txt`"',
+        '"prefix $(touch unrelated.txt) suffix"',
+        "\"$(printf %s 'literal'; touch unrelated.txt)\"",
+        '"$\\\n(touch unrelated.txt)"',
+        '"$((1 + $(touch unrelated.txt; printf 0)))"',
+        "#'\ntouch unrelated.txt\n'",
+    ],
+)
+@pytest.mark.parametrize("selectors", SELECTIONS, ids=SELECTION_IDS)
+async def test_merge_commit_with_shell_expansion_is_refused(
+    seat: tuple[WorkflowHookHandler, Session, Path],
+    temp_db: HubDatabase,
+    message: str,
+    selectors: list[str],
+) -> None:
+    handler, session, worktree = seat
+    _start_conflicting_base_merge(worktree)
+    _seat(temp_db, session, "merge-seat", granted=True, selectors=selectors)
+
+    response = await handler._evaluate_rules(
+        _bash_event(session, worktree, f"git commit -m {message}")
+    )
+
+    assert response.decision == "block"
+
+
+@pytest.mark.parametrize("message", ["'$(literal)'", "'`literal`'", r'"\$(literal)"'])
+async def test_merge_commit_with_literal_substitution_text_is_admitted(
+    seat: tuple[WorkflowHookHandler, Session, Path], temp_db: HubDatabase, message: str
+) -> None:
+    handler, session, worktree = seat
+    _start_conflicting_base_merge(worktree)
+    _seat(temp_db, session, "merge-seat", granted=True, selectors=GATED_RULES)
+
+    response = await handler._evaluate_rules(
+        _bash_event(session, worktree, f"git commit -m {message}")
+    )
+
+    assert response.decision == "allow"

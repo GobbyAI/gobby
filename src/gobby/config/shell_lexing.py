@@ -23,6 +23,8 @@ class ParsedShellCommand:
     segments: tuple[tuple[str, ...], ...]
     operators: tuple[str, ...]
     redirected: bool = False
+    expanded: bool = False
+    commented: bool = False
 
 
 def shell_command_segments(command: str) -> list[list[str]]:
@@ -72,7 +74,61 @@ def parse_shell_command(command: str) -> ParsedShellCommand:
         current.append(token)
     if current:
         segments.append(tuple(current))
-    return ParsedShellCommand(tuple(segments), tuple(operators), redirected)
+    return ParsedShellCommand(
+        tuple(segments),
+        tuple(operators),
+        redirected,
+        has_shell_expansion(command),
+        _has_shell_comment(command),
+    )
+
+
+def has_shell_expansion(command: str) -> bool:
+    """Detect dynamic shell words before tokenization erases quote provenance.
+
+    Parameter and arithmetic expansion are conservative too: their contents can
+    execute substitutions, and their runtime values are unavailable to callers.
+    Single-quoted and backslash-escaped expansion markers remain literal.
+    """
+    quote: str | None = None
+    cursor = 0
+    while cursor < len(command):
+        char = command[cursor]
+        if char == "\\" and quote != "'":
+            cursor += 2
+            continue
+        if char == quote:
+            quote = None
+        elif char in {"'", '"'} and quote is None:
+            quote = char
+        elif char in {"$", "`"} and quote != "'":
+            return True
+        cursor += 1
+    return False
+
+
+def _has_shell_comment(command: str) -> bool:
+    """Retain comment syntax that shlex's literal-comment mode cannot interpret.
+
+    A quote inside a comment can otherwise hide a later executable line inside
+    an apparent argument. Static single-command grants must refuse that syntax.
+    """
+    quote: str | None = None
+    cursor = 0
+    while cursor < len(command):
+        char = command[cursor]
+        if char == "\\" and quote != "'":
+            cursor += 2
+            continue
+        if char == quote:
+            quote = None
+        elif char in {"'", '"'} and quote is None:
+            quote = char
+        elif char == "#" and quote is None:
+            if cursor == 0 or command[cursor - 1] in " \t\r\n;&|()":
+                return True
+        cursor += 1
+    return False
 
 
 def _strip_heredoc_bodies(command: str) -> str:
