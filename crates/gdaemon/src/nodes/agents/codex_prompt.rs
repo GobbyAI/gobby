@@ -14,7 +14,7 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
-use tokio::time::{Instant, sleep, sleep_until, timeout};
+use tokio::time::{Instant, sleep, sleep_until, timeout, timeout_at};
 
 const COMPOSER: &str = "›";
 const POLL: Duration = Duration::from_secs(1);
@@ -153,10 +153,11 @@ async fn wait_for_composer(
                 detail,
             });
         }
-        match snapshot(node, host_terminal_id).await {
+        match snapshot(node, host_terminal_id, probe_limit(deadline)).await {
             Ok(text) => {
                 probe.captures += 1;
-                let ready = text.contains(COMPOSER);
+                // A marker that arrives after the budget is not accepted.
+                let ready = text.contains(COMPOSER) && Instant::now() < deadline;
                 if !text.is_empty() {
                     probe.pane = text;
                 }
@@ -166,7 +167,7 @@ async fn wait_for_composer(
             }
             Err(_) => probe.snapshot_errors += 1,
         }
-        match inventory(node).await {
+        match inventory(node, probe_limit(deadline)).await {
             Ok(inventory) if !is_live(&inventory, terminal_id) => {
                 return Err(Stop::Failed {
                     code: "codex_terminal_exited_before_composer",
@@ -181,7 +182,7 @@ async fn wait_for_composer(
         if slot <= now {
             slot = now + POLL;
         }
-        sleep_until(slot).await;
+        sleep_until(slot.min(deadline)).await;
     }
 }
 
@@ -203,9 +204,14 @@ async fn write(node: &NodeServices, run_id: &str, request: &WriteRequest) -> Res
     }
 }
 
-async fn inventory(node: &NodeServices) -> Result<Inventory, ControlError> {
-    timeout(
-        PROBE_DEADLINE,
+/// The latest instant one probe may run: its own timeout, never past the composer budget.
+fn probe_limit(deadline: Instant) -> Instant {
+    deadline.min(Instant::now() + PROBE_DEADLINE)
+}
+
+async fn inventory(node: &NodeServices, until: Instant) -> Result<Inventory, ControlError> {
+    timeout_at(
+        until,
         node.agents
             .host
             .call(|client| Box::pin(async move { client.list().await })),
@@ -214,10 +220,14 @@ async fn inventory(node: &NodeServices) -> Result<Inventory, ControlError> {
     .unwrap_or_else(|_| Err(io::Error::from(io::ErrorKind::TimedOut).into()))
 }
 
-async fn snapshot(node: &NodeServices, host_terminal_id: &str) -> Result<String, ControlError> {
+async fn snapshot(
+    node: &NodeServices,
+    host_terminal_id: &str,
+    until: Instant,
+) -> Result<String, ControlError> {
     let host_terminal_id = host_terminal_id.to_owned();
-    timeout(
-        PROBE_DEADLINE,
+    timeout_at(
+        until,
         node.agents.host.call(move |client| {
             let host_terminal_id = host_terminal_id.clone();
             Box::pin(async move {

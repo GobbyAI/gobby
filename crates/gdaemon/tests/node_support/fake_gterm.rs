@@ -36,6 +36,8 @@ pub struct FakeGterm {
     list_snapshot: Arc<Notify>,
     subscription: Arc<Notify>,
     resume_list: Arc<Notify>,
+    pause_snapshot: Arc<AtomicBool>,
+    resume_snapshot: Arc<Notify>,
     spawn_reply: Arc<ReplyGate>,
     commit_reply: Arc<ReplyGate>,
 }
@@ -100,6 +102,8 @@ impl FakeGterm {
         let list_snapshot = Arc::new(Notify::new());
         let subscription = Arc::new(Notify::new());
         let resume_list = Arc::new(Notify::new());
+        let pause_snapshot = Arc::new(AtomicBool::new(false));
+        let resume_snapshot = Arc::new(Notify::new());
         let spawn_reply = Arc::new(ReplyGate::default());
         let commit_reply = Arc::new(ReplyGate::default());
         let script = Arc::new(Mutex::new(HostScript {
@@ -123,6 +127,8 @@ impl FakeGterm {
             let list_snapshot = list_snapshot.clone();
             let subscription = subscription.clone();
             let resume_list = resume_list.clone();
+            let pause_snapshot = pause_snapshot.clone();
+            let resume_snapshot = resume_snapshot.clone();
             let spawn_reply = spawn_reply.clone();
             let commit_reply = commit_reply.clone();
             let pid = process.id();
@@ -145,6 +151,8 @@ impl FakeGterm {
                             let list_snapshot = list_snapshot.clone();
                             let subscription = subscription.clone();
                             let resume_list = resume_list.clone();
+                            let pause_snapshot = pause_snapshot.clone();
+                            let resume_snapshot = resume_snapshot.clone();
                             let spawn_reply = spawn_reply.clone();
                             let commit_reply = commit_reply.clone();
                             let script = script.clone();
@@ -203,6 +211,9 @@ impl FakeGterm {
                                     if method == "list" && pause_list.swap(false, Ordering::SeqCst) {
                                         list_snapshot.notify_one();
                                         resume_list.notified().await;
+                                    }
+                                    if method == "snapshot" && pause_snapshot.swap(false, Ordering::SeqCst) {
+                                        resume_snapshot.notified().await;
                                     }
                                     // Keep the event cursor contiguous with this fixture's
                                     // spawn/commit sequence increments before emitting the exit.
@@ -268,6 +279,8 @@ impl FakeGterm {
             list_snapshot,
             subscription,
             resume_list,
+            pause_snapshot,
+            resume_snapshot,
             spawn_reply,
             commit_reply,
         })
@@ -309,6 +322,15 @@ impl FakeGterm {
 
     pub fn release_list_reply(&self) {
         self.resume_list.notify_one();
+    }
+
+    /// Holds the next `snapshot` reply after the host has built it, so a test sets the pane first.
+    pub fn pause_next_snapshot_reply(&self) {
+        self.pause_snapshot.store(true, Ordering::SeqCst);
+    }
+
+    pub fn release_snapshot_reply(&self) {
+        self.resume_snapshot.notify_one();
     }
 
     pub fn requests(&self) -> Vec<Value> {
