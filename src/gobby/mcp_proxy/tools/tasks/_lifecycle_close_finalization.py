@@ -67,6 +67,8 @@ async def commit_close(
                 expected_updated_at=task.updated_at,
                 closed_ancestors=ancestors,
                 closing_note=closing_note,
+                closer_definition=fresh.closer_definition,
+                commit_paths=fresh.commit_paths,
             )
         else:
             await asyncio.to_thread(
@@ -78,6 +80,8 @@ async def commit_close(
                 expected_updated_at=task.updated_at,
                 closed_ancestors=ancestors,
                 closing_note=closing_note,
+                closer_definition=fresh.closer_definition,
+                commit_paths=fresh.commit_paths,
             )
     except (TaskStaleStateError, TaskHasOpenChildrenError) as exc:
         return fresh.refuse("close_state_changed", str(exc)).response(preview=False)

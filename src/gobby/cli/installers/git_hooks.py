@@ -21,8 +21,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from gobby.tasks.landing_policy import DIRECT_COMMIT_ANY_FILE_DIRS, DIRECT_COMMIT_MARKDOWN_DIRS
-
 logger = logging.getLogger(__name__)
 
 # Markers for identifying Gobby hook sections
@@ -79,17 +77,13 @@ exec 0</dev/null
 
 
 def _landing_guard_hook() -> str:
-    """Render the reference-transaction guard from the landing policy's path allowance."""
-    allowed = "|".join(
-        [f'"{prefix}"*' for prefix in DIRECT_COMMIT_ANY_FILE_DIRS]
-        + [f'"{prefix}"*.md' for prefix in DIRECT_COMMIT_MARKDOWN_DIRS]
-    )
+    """Render the reference-transaction guard that asks ghook for the update's verdict."""
     return (
         r"""
 # Gobby protected-branch guard. The branch checked out in the main worktree
 # takes code through gobby-tasks-ops:land_commit unless its committed project
-# marker enables allow_direct_integration_commits.
-# Otherwise direct updates are limited to the listed Markdown/coverage paths.
+# marker enables allow_direct_integration_commits. Otherwise the update needs the
+# committing session's grant: ghook asks the daemon, and only an allow verdict lands.
 # POSIX sh; JSON parsing uses the interpreter that installed this hook.
 GOBBY_REF_LINES=$(cat)
 gobby_refuse() {
@@ -193,16 +187,52 @@ sys.exit(0 if policy else 1)
         gobby_paths=$(git --no-replace-objects -c core.quotePath=false diff --name-only --no-renames \
             "$gobby_old" "$gobby_new") ||
             gobby_refuse "cannot list the paths changed by $gobby_old..$gobby_new"
-        printf '%s\n' "$gobby_paths" | while IFS= read -r gobby_path; do
-            case $gobby_path in
-            ""|"""
-        + allowed
-        + r""") ;;
-            \"*|*/*) gobby_refuse "$gobby_path is not a direct-commit path" ;;
-            *.md) ;;
-            *) gobby_refuse "$gobby_path is not a direct-commit path" ;;
-            esac
-        done || exit 1
+        # An update that changes no path carries no content for the verdict to judge.
+        [ -n "$gobby_paths" ] || continue
+        gobby_branch=${gobby_ref#refs/heads/}
+        # ghook asks the daemon for the committing session's verdict. Only an allow lands.
+        # A missing session or ghook, a failed run, or an unreadable verdict refuses.
+        # The interpreter gets its own stdin, so the ref-line loop keeps its input.
+        """
+        + shlex.quote(sys.executable)
+        + r""" -I -S -c '
+import json, os, subprocess, sys
+branch, joined = sys.argv[1], sys.argv[2]
+session = os.environ.get("GOBBY_SESSION_ID", "")
+ghook = os.path.join(os.environ.get("HOME", ""), ".gobby", "bin", "ghook")
+if not session or not os.access(ghook, os.X_OK):
+    print("the committing session or ghook is unavailable", file=sys.stderr)
+    sys.exit(2)
+payload = {
+    "session_id": session,
+    "cwd": os.getcwd(),
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {"command": "git commit"},
+    "staged_paths": [path for path in joined.split("\n") if path],
+    "integration_branch": branch,
+}
+try:
+    verdict = subprocess.run(
+        [ghook, "--gobby-owned", "--cli=git", "--type=PreToolUse"],
+        input=json.dumps(payload).encode(),
+        capture_output=True,
+        timeout=60,
+    )
+except (OSError, subprocess.SubprocessError) as error:
+    print(f"ghook returned no verdict: {error}", file=sys.stderr)
+    sys.exit(2)
+body = verdict.stdout.decode(errors="replace").strip()
+granted = verdict.returncode == 0
+if body:
+    try:
+        granted = granted and json.loads(body).get("decision") == "allow"
+    except (ValueError, AttributeError):
+        granted = False
+sys.stderr.write(verdict.stderr.decode(errors="replace"))
+sys.exit(0 if granted else 1)
+' "$gobby_branch" "$gobby_paths" ||
+            gobby_refuse "the committing session's grant does not cover this update"
     done || exit 1
 fi
 """

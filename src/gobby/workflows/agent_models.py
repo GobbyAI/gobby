@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from pathlib import PurePosixPath
 from typing import Any, Literal, cast
 
 from jinja2 import TemplateError
@@ -23,6 +25,8 @@ from gobby.workflows.definitions import WorkflowStep
 
 # The spawnable_agents value that lets a spawned agent spawn any agent.
 SPAWN_ANY_AGENT = "*"
+# The capability that lets a definition commit declared paths straight to the integration branch.
+DIRECT_INTEGRATION_COMMIT = "direct_integration_commit"
 
 SendMessageTarget = Literal["global", "project", "parent", "session", "agent"]
 
@@ -200,6 +204,22 @@ class AgentDefinitionBody(BaseModel):
         default_factory=list,
         description="Permissions granted to this definition, independent of its name.",
     )
+    direct_integration_commit_paths: list[StrictStr] = Field(
+        default_factory=list,
+        description=(
+            "Path globs this definition may commit directly to the integration branch when it "
+            "holds the direct_integration_commit capability. Empty grants nothing."
+        ),
+    )
+    direct_integration_commit_steps: list[
+        Literal["test", "implementation", "review", "closing"]
+    ] = Field(
+        default_factory=list,
+        description=(
+            "Step records that replace the policy's required steps for a task whose linked "
+            "commits all touch only direct_integration_commit_paths."
+        ),
+    )
     task_categories: list[StrictStr] = Field(
         default_factory=list,
         description="Expansion categories this definition accepts for automatic assignment.",
@@ -340,6 +360,18 @@ class AgentDefinitionBody(BaseModel):
     def may_spawn(self, agent: str) -> bool:
         """Whether a spawned run of this definition may spawn ``agent``."""
         return self.spawnable_agents == [SPAWN_ANY_AGENT] or agent in self.spawnable_agents
+
+    def covers_direct_integration_paths(self, paths: Sequence[str]) -> bool:
+        """Whether this definition's direct-commit grant covers every path.
+
+        The grant needs the capability, a nonempty glob list, and at least one path. Each path
+        must match a glob. ``*`` stops at ``/`` (PurePosixPath.full_match), so a grant names
+        exactly the directories it means.
+        """
+        globs = self.direct_integration_commit_paths
+        if DIRECT_INTEGRATION_COMMIT not in self.capabilities or not globs or not paths:
+            return False
+        return all(any(PurePosixPath(path).full_match(glob) for glob in globs) for path in paths)
 
     @field_validator("task_categories", "implementation_domains")
     @classmethod

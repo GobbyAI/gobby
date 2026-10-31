@@ -33,6 +33,7 @@ from gobby.workflows.engine.skill_load_guidance import (
 )
 from gobby.workflows.engine.step_tool_input import inner_tool_input, step_tool_input
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
+from gobby.workflows.step_binding import reconcile_active_binding
 from gobby.workflows.step_instances import (
     AgentStepInstance,
     AgentStepInstanceManager,
@@ -566,6 +567,7 @@ class EnforcementCheckMixin:
         lock = AgentStepInstanceMutation(session_id=session_id)
         if db is not None:
             with db.transaction_immediate(lock):
+                reconcile_active_binding(db, session_id, variables)
                 return self._check_step_tool_enforcement_locked(event, session_id, variables)
         return self._check_step_tool_enforcement_locked(event, session_id, variables)
 

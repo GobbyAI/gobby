@@ -8,6 +8,7 @@ from typing import Any, Literal
 from gobby.storage.tasks import Task
 from gobby.tasks.close_checklist import CloseChecklist
 from gobby.tasks.close_invariants import CLOSE_GATE_ORDER as CLOSE_GATE_ORDER
+from gobby.workflows.agent_models import AgentDefinitionBody
 
 
 @dataclass
@@ -22,6 +23,8 @@ class CloseEvaluation:
     candidate_commit_sha: str | None = None
     is_epic: bool = False
     already_closed: bool = False
+    closer_definition: AgentDefinitionBody | None = None
+    commit_paths: tuple[str, ...] = ()
     checklist: CloseChecklist = field(default_factory=lambda: CloseChecklist(()))
     error: str | None = None
     message: str | None = None

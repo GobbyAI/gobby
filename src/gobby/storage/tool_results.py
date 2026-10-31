@@ -10,6 +10,8 @@ from typing import Literal, TypedDict
 from gobby.config.features import ToolResultOffloadConfig
 from gobby.storage.hub.protocol import HubDatabase
 
+_TEXT_PAGE_CHARS = 262_144
+
 
 class ToolResultSlice(TypedDict):
     """A bounded page from stored tool-result content."""
@@ -163,6 +165,19 @@ class ToolResultStore:
             "total_chars": int(row["total_chars"]),
             "stored_chars": stored_chars,
         }
+
+    def get_text(self, result_id: str, project_id: str) -> str | None:
+        """Return the full stored content, or None when not visible or unexpired."""
+        chunks: list[str] = []
+        offset = 0
+        while True:
+            page = self.get_slice(result_id, project_id, offset, _TEXT_PAGE_CHARS)
+            if page is None or not page["content"]:
+                return None
+            chunks.append(page["content"])
+            if page["next_offset"] is None:
+                return "".join(chunks)
+            offset = page["next_offset"]
 
     def get_meta(self, result_id: str, project_id: str) -> ToolResultMeta | None:
         """Return metadata when the result is visible and unexpired."""

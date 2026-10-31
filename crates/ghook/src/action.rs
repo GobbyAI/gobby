@@ -74,6 +74,9 @@ pub(crate) struct EmittedAction {
 }
 
 pub(crate) fn continue_action(source: &str, hook_type: &str) -> HookAction {
+    if crate::git_verdict::is_git_source(source) {
+        return crate::git_verdict::fail_closed("no verdict from the daemon");
+    }
     if is_claude_worktree_create(source, hook_type) {
         return worktree_create_failure("daemon unavailable; no worktree was created");
     }
@@ -168,6 +171,9 @@ pub(crate) fn action_from_success_response(
 ) -> Result<HookAction, String> {
     let (stripped, _) = extract_delivery_receipt(response_body);
     let trimmed = stripped.trim();
+    if crate::git_verdict::is_git_source(canonical_source) {
+        return Ok(crate::git_verdict::verdict_from_body(trimmed));
+    }
     if trimmed.is_empty() {
         if is_claude_worktree_create(canonical_source, hook_type) {
             return Ok(worktree_create_failure(
@@ -311,6 +317,9 @@ pub(crate) fn action_from_failure(
     failure_kind: transport::DeliveryFailureKind,
     detail: &str,
 ) -> HookAction {
+    if crate::git_verdict::is_git_source(cfg.source) {
+        return crate::git_verdict::fail_closed(detail);
+    }
     if let Some(action) = crate::daemon_down::action(hook_type, cfg, failure_kind) {
         return action;
     }

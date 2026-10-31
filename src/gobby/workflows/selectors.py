@@ -80,6 +80,8 @@ def rule_matches_agent(
     rule_definition_json = (
         _rule_definition_json(rule) if definition_json is None else definition_json
     )
+    if _is_mandatory(rule_definition_json):
+        return True
 
     if excluded is None:
         excluded = _rule_excluded_by_agent(
@@ -111,6 +113,8 @@ def _rule_excluded_by_agent(
     rule_definition_json = (
         _rule_definition_json(rule) if definition_json is None else definition_json
     )
+    if _is_mandatory(rule_definition_json):
+        return False
     for exc in selectors.exclude:
         dim, val = parse_selector(exc)
         if _match_rule(dim, val, rule, rule_definition_json):
@@ -129,6 +133,11 @@ def _rule_definition_json(rule: RuleDefinitionRow) -> dict[str, Any]:
     except (json.JSONDecodeError, TypeError):
         return {}
     return definition_json if isinstance(definition_json, dict) else {}
+
+
+def _is_mandatory(definition_json: dict[str, Any]) -> bool:
+    """A mandatory rule is active for every definition; no selector or exclusion removes it."""
+    return definition_json.get("mandatory") is True
 
 
 def _match_skill(dim: str, val: str, skill: Skill) -> bool:

@@ -22,6 +22,7 @@ from gobby.workflows.agent_resolver import (
     is_operator_session,
     resolve_agent,
     resolve_agent_with_row,
+    session_declared_paths_cover,
     session_has_capability,
     session_has_capability_or_operator,
 )
@@ -922,6 +923,14 @@ def session_condition_helpers(
             and is_session_uuid(caller_id)
             and isinstance(capability, str)
             and session_has_capability(session_manager.db, caller_id, capability)
+        ),
+        "session_declared_paths_cover": lambda caller_id, paths: (
+            session_manager is not None
+            and isinstance(caller_id, str)
+            and is_session_uuid(caller_id)
+            and isinstance(paths, list)
+            and all(isinstance(path, str) for path in paths)
+            and session_declared_paths_cover(session_manager.db, caller_id, paths)
         ),
         "dev_pod_launch_allowed": lambda caller_id, tool_name, arguments, pod_pipelines: (
             dev_pod_launch_allowed(session_manager, caller_id, tool_name, arguments, pod_pipelines)

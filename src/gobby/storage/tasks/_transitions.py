@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import (
@@ -30,6 +31,9 @@ from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._updates import update_task
 from gobby.tasks.state_semantics import is_task_closed
 from gobby.utils.datetime import parse_stored_datetime, utc_now
+
+if TYPE_CHECKING:
+    from gobby.workflows.agent_models import AgentDefinitionBody
 
 _MAX_ANCESTOR_DEPTH = 100
 
@@ -144,8 +148,12 @@ def claim_task(
     expected_owner: str | None = None,
     guard_selection: bool = False,
     select_claim: bool = True,
+    handed: bool = False,
 ) -> Task:
-    """Claim a task for a session with an atomic ownership guard."""
+    """Claim a task for a session with an atomic ownership guard.
+
+    `handed` marks a candidate hand-off, the only claim origin a reviewer may hold.
+    """
     if force and expected_owner is not None:
         raise ValueError("force and expected_owner are mutually exclusive")
     if guard_selection and not select_claim:
@@ -188,8 +196,9 @@ def claim_task(
         cursor = conn.execute(sql, params)
         prior_owner = prior["claimed_by_session_id"] if prior is not None else None
         if cursor.rowcount == 1:
-            from gobby.storage.session_tasks import record_claim
+            from gobby.storage.session_tasks import record_claim, record_claim_origin
 
+            record_claim_origin(conn, session_id, task_id, handed=handed)
             record_claim(
                 conn,
                 session_id,
@@ -240,6 +249,7 @@ def claim_task_for_agent(
     *,
     force: bool = False,
     expected_owner: str | None = None,
+    handed: bool = False,
 ) -> Task:
     """Serialize agent claims while preserving the atomic ownership guard."""
     with db.transaction_immediate(AgentTaskClaimMutation(session_id)):
@@ -250,6 +260,7 @@ def claim_task_for_agent(
             force=force,
             expected_owner=expected_owner,
             guard_selection=True,
+            handed=handed,
         )
 
 
@@ -506,6 +517,8 @@ def close_task(
     closed_ancestors: list[str] | None = None,
     expected_updated_at: datetime | None = None,
     closing_note: str | None = None,
+    closer_definition: AgentDefinitionBody | None = None,
+    commit_paths: Sequence[str] = (),
 ) -> Task:
     """Close a task and clear active ownership metadata."""
     collected: list[str] = []
@@ -521,6 +534,8 @@ def close_task(
             closed_ancestors=collected,
             expected_updated_at=expected_updated_at,
             closing_note=closing_note,
+            closer_definition=closer_definition,
+            commit_paths=commit_paths,
         )
     if closed_ancestors is not None:
         closed_ancestors.extend(collected)

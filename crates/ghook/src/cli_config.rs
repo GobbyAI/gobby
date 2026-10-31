@@ -67,6 +67,14 @@ impl CliConfig {
                     .collect(),
                 json_error_exit_code: 1,
             }),
+            // The reference-transaction guard: only an allow exits 0, so every
+            // malformed or unavailable input exits 2 (see git_verdict).
+            "git" => Some(Self {
+                source: "git",
+                spawned_agent: false,
+                critical_hooks: ["PreToolUse"].into_iter().collect(),
+                json_error_exit_code: 2,
+            }),
             _ => None,
         }
     }
@@ -191,5 +199,14 @@ mod tests {
             let config = CliConfig::for_cli(cli).expect("installer CLI must be recognized");
             assert_eq!(config.source, cli, "{cli} must preserve its source");
         }
+    }
+
+    #[test]
+    fn git_guard_is_critical_pretooluse_and_malformed_exits_two() {
+        let config = CliConfig::for_cli("git").expect("git guard must be recognized");
+        assert_eq!(config.source, "git");
+        assert!(config.is_critical_hook("PreToolUse"));
+        assert!(!config.is_critical_hook("PostToolUse"));
+        assert_eq!(config.malformed_input_exit_code("PreToolUse"), 2);
     }
 }

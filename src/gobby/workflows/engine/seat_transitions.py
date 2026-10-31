@@ -15,7 +15,13 @@ from gobby.storage.inter_session_messages import InterSessionMessage
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
+from gobby.storage.tasks import (
+    LocalTaskManager,
+    Task,
+    TaskAlreadyClaimedError,
+    TaskClosedError,
+    TaskNotFoundError,
+)
 from gobby.tasks.lifecycle_access import session_grants
 from gobby.tasks.step_records import (
     approved_task_step,
@@ -35,7 +41,9 @@ from gobby.workflows.engine.seat_messages import (
     is_task_reviewer,
 )
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.step_binding import BOUND_REVIEW_EPOCH_VARIABLE
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
+from gobby.workflows.task_claim_state import task_edited_file_set
 
 # Owned by the step instance. The engine must not mirror it into session variables: a
 # mirror outlives a lost instance write and refuses the same BOUNCE on its next read.
@@ -214,7 +222,11 @@ def _candidate_rejection(
 ) -> str | None:
     if event.message.id in (variables.get(SEAT_CONSUMED_KEY) or []):
         return "message already consumed"
-    relayed = event.message.from_session != _claimant_at(db, event)
+    # A teammate's candidate that moved the claim to this reader is its own unit, not a relay.
+    handed = event.task.claimed_by_session_id == reviewer_session_id and _same_team(
+        db, event.message.from_session, reviewer_session_id
+    )
+    relayed = event.message.from_session != _claimant_at(db, event) and not handed
     # A relay binds only from the bound Dev Manager, for a SHA the claimant linked.
     if relayed and not is_relaying_dev_manager(db, event, reviewer_session_id):
         return "sender does not claim task"
@@ -224,6 +236,8 @@ def _candidate_rejection(
             return "DISPOSITION needs a task with no linked commits"
     elif relayed and not _commit_linked_to_claimant(db, event):
         return "COMMIT is not linked to the claimant's task"
+    elif handed and event.sha not in (event.task.commits or []):
+        return "COMMIT is not linked to the task"
     same_task = _same_task(db, variables.get("candidate_task"), event)
     if variables.get("candidate_received") and not same_task:
         return "another candidate task is active"
@@ -267,6 +281,95 @@ def candidate_binding_error(
     return f"CANDIDATE not bound: {reason}" if reason else None
 
 
+def _same_team(db: HubDatabase, session_id: str, other_id: str) -> bool:
+    """Whether both seats are seats of one team's runbook execution."""
+    from gobby.agents.team_lifecycle import seat_team
+    from gobby.mcp_proxy.tools.tasks._claim_release import _is_team_seat
+
+    team = seat_team(db, session_id)
+    return team is not None and _is_team_seat(db, other_id, team)
+
+
+def _move_claim(
+    db: HubDatabase,
+    task_id: str,
+    holder_id: str,
+    recipient_id: str,
+    variables: dict[str, Any],
+    *,
+    handed: bool,
+) -> bool:
+    """Move a claim from its holder; uncommitted attributed edits keep it where it is."""
+    if task_edited_file_set(variables, task_id):
+        return False
+    try:
+        LocalTaskManager(db).claim_task_for_agent(
+            task_id, session_id=recipient_id, expected_owner=holder_id, handed=handed
+        )
+    except (TaskAlreadyClaimedError, TaskClosedError):
+        return False
+    return True
+
+
+def _claim_to_reviewer(
+    db: HubDatabase, session_id: str, event: CandidateEvent, variables: dict[str, Any]
+) -> dict[str, Any]:
+    """A claimant's CANDIDATE to a reviewer on its team hands the claim to that reviewer."""
+    recipient = event.message.to_session
+    if not recipient or not _same_team(db, session_id, recipient):
+        return {}
+    session = SessionManager(db).get(recipient)
+    definition = session_agent_definition(db, session) if session is not None else None
+    if definition is None or "review" not in definition[0].task_step_writes:
+        return {}
+    if not _move_claim(db, event.task.id, session_id, recipient, variables, handed=True):
+        return {}
+    return {"fixing": False}
+
+
+def _relay_hands_claim(db: HubDatabase, reviewer_id: str, event: CandidateEvent) -> bool:
+    """A reviewer reading the bound Dev Manager's relay of a fixer's CANDIDATE takes the claim.
+
+    _candidate_rejection has already authenticated the relay: the bound Dev Manager sent it, and
+    the SHA is linked to the claimant. The claimant's edit ledger guards the move, because its
+    live edits belong to the claimant's session, not the reviewer's.
+    """
+    holder_id = event.task.claimed_by_session_id
+    # A no-work unit has no commit to land, so its holder keeps the claim to record the verdict.
+    if event.sha is None or holder_id is None:
+        return True
+    if holder_id in (reviewer_id, event.message.from_session):
+        return True
+    if not _same_team(db, holder_id, reviewer_id):
+        return False
+    holder = SessionManager(db).get(holder_id)
+    definition = session_agent_definition(db, holder) if holder is not None else None
+    # Only a fixer (a review-writing holder) hands its claim on; a Developer keeps it to its BOUNCE.
+    if definition is None or "review" not in definition[0].task_step_writes:
+        return True
+    holder_variables = SessionVariableManager(db).get_variables(holder_id)
+    return _move_claim(db, event.task.id, holder_id, reviewer_id, holder_variables, handed=True)
+
+
+def _claim_to_closer(
+    db: HubDatabase, session_id: str, event: CandidateEvent, variables: dict[str, Any]
+) -> None:
+    """A reviewer's LAND hands the claim to the Dev Manager that closes the unit."""
+    from gobby.mcp_proxy.tools.tasks._claim_release import _can_release
+    from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+
+    sessions = SessionManager(db)
+    recipient = event.message.to_session
+    caller = sessions.get(recipient) if recipient else None
+    holder = sessions.get(session_id)
+    if caller is None or holder is None:
+        return
+    if _can_release(
+        RegistryContext(task_manager=LocalTaskManager(db)), caller, holder, event.task.id
+    ):
+        _move_claim(db, event.task.id, session_id, caller.id, variables, handed=False)
+
+
 def _reviewer_message(
     db: HubDatabase,
     session_id: str,
@@ -303,6 +406,8 @@ def _reviewer_message(
         received_at = event.message.sent_at.isoformat()
         if same_unit:
             return {"candidate_received_at": received_at}
+        if not _relay_hands_claim(db, session_id, event):
+            return {}
         return {
             "candidate_received": True,
             "verdict_ready": False,
@@ -312,6 +417,8 @@ def _reviewer_message(
             "candidate_owner": event.message.from_session,
             "candidate_received_at": received_at,
         }
+    if not incoming and kind == "CANDIDATE" and event.task.claimed_by_session_id == session_id:
+        return _claim_to_reviewer(db, session_id, event, variables)
     if kind == "CANDIDATE_WITHDRAWN" and is_task_coordinator(db, event, session_id):
         return _clear_candidate() if same_unit or stale_session_unit else {}
     if not same_unit:
@@ -331,6 +438,8 @@ def _reviewer_message(
         and event.sha is not None
         and _approved(db, session_id, event.task, event.sha)
     ):
+        if event.task.claimed_by_session_id == session_id:
+            _claim_to_closer(db, session_id, event, variables)
         return _clear_candidate()
     return {}
 
@@ -372,6 +481,14 @@ def advance_seat(
             return {}
         skills = build_claimed_task_extra_skill_state({"claimed_tasks": {task.id: {}}}, tasks)
         return {"additional_skills": skills["claimed_task_extra_skills"], "skills_routed": True}
+    if mcp_tool == ("gobby-tasks", "claim_task") and "review" in body.task_step_writes:
+        # The claimed task's review epoch, so a reset returns this seat to its await step.
+        result = (tool_output.get("result") or tool_output) if isinstance(tool_output, dict) else {}
+        task_id = result.get("task_id") if isinstance(result, dict) else None
+        claimed = _requested_task(tasks, task_id, task_id)
+        if claimed is None or claimed.claimed_by_session_id != session_id:
+            return {}
+        return {BOUND_REVIEW_EPOCH_VARIABLE: claimed.review_epoch}
     if mcp_tool in {("gobby-tasks", "get_task"), ("gobby-tasks", "record_review_step")} and (
         "review" in body.task_step_writes
     ):

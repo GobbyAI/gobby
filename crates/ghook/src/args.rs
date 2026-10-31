@@ -22,7 +22,8 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) version: bool,
 
-    /// Host CLI name (claude, codex, droid, grok, agy).
+    /// Host CLI name (claude, codex, droid, grok, agy), or `git` for the
+    /// synchronous reference-transaction guard (exit 0 only on an allow verdict).
     #[arg(long)]
     pub(crate) cli: Option<String>,
 

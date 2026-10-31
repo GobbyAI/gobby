@@ -60,6 +60,44 @@ def claimant_sessions(conn: Transaction, task_id: str) -> set[str]:
     return {row["session_id"] for row in rows}
 
 
+def record_claim_origin(conn: Transaction, session_id: str, task_id: str, *, handed: bool) -> None:
+    """Mark a session whose only claims on the task arrived by candidate hand-off.
+
+    Run before `record_claim`, so the direct-claim check sees the prior history. A direct
+    claim clears the marker for good; a hand-off after a direct claim never sets it.
+    """
+    if not handed:
+        conn.execute(
+            "DELETE FROM session_tasks WHERE session_id = %s AND task_id = %s "
+            "AND action = 'claim_handed'",
+            (session_id, task_id),
+        )
+        return
+    prior = conn.execute(
+        "SELECT 1 FROM session_tasks WHERE session_id = %s AND task_id = %s AND action = 'claimed'",
+        (session_id, task_id),
+    ).fetchone()
+    if prior is None:
+        conn.execute(
+            """
+            INSERT INTO session_tasks (session_id, task_id, action)
+            VALUES (%s, %s, 'claim_handed')
+            ON CONFLICT (session_id, task_id, action) DO NOTHING
+            """,
+            (session_id, task_id),
+        )
+
+
+def claim_arrived_by_handoff_only(conn: Transaction, task_id: str, session_id: str) -> bool:
+    """Whether every claim the session has held on the task arrived by candidate hand-off."""
+    row = conn.execute(
+        "SELECT 1 FROM session_tasks WHERE session_id = %s AND task_id = %s "
+        "AND action = 'claim_handed'",
+        (session_id, task_id),
+    ).fetchone()
+    return row is not None
+
+
 SessionTaskAction = Literal[
     "worked_on",
     "discovered",
@@ -74,6 +112,7 @@ SessionTaskAction = Literal[
     "de_escalated",
     "review_rejected",
     "plan_enhanced",
+    "claim_handed",
 ]
 
 

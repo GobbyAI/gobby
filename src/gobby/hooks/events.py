@@ -94,6 +94,7 @@ class SessionSource(str, Enum):
     AGY = "agy"
     CLAUDE = "claude"
     DROID = "droid"
+    GIT = "git"
     GROK = "grok"
     CODEX = "codex"
     PIPELINE = "pipeline"

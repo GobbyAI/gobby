@@ -29,6 +29,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
+from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
@@ -1125,6 +1126,122 @@ async def test_bound_dev_manager_relayed_candidate_opens_review(
     assert instance.variables["candidate_received"] is True
     assert instance.variables["candidate_task"] == team.task.id
     assert instance.variables["candidate_sha"] == team.candidate
+
+
+def developer_at_submit(db: HubDatabase, session_id: str, task_id: str) -> None:
+    """Run ``session_id`` as a developer step instance waiting at submit for a verdict."""
+    workflow: dict[str, Any] = {
+        "variables": {
+            "assigned_task_id": task_id,
+            "bounced": False,
+            "implementation_complete": True,
+        },
+        "steps": [
+            {
+                "name": "submit",
+                "mcp_error_policy": "stay",
+                "on_mcp_success": [
+                    {"server": "gobby-agents", "tool": "get_inter_session_message", **_SEAT_ADVANCE}
+                ],
+                "transitions": [{"to": "implement", "when": "vars.bounced"}],
+            },
+            {"name": "implement", "mcp_error_policy": "stay"},
+        ],
+    }
+    AgentStepInstanceManager(db).save(
+        AgentStepInstance(
+            id=str(uuid.uuid4()),
+            session_id=session_id,
+            agent_name="developer",
+            snapshot=AgentStepWorkflowBody.model_validate(workflow),
+            enabled=True,
+            current_step="submit",
+            step_entered_at=datetime.now(UTC),
+            variables=dict(workflow["variables"]),
+        )
+    )
+
+
+async def fixer_with_fresh_reviewer(world: TeamWorld) -> tuple[ReviewTeam, str, str]:
+    """The code reviewer holds the claim with a fix commit; a fresh reviewer awaits its relay."""
+    team = await team_in_review(world)
+    db = world.case.db
+    fresh = seat(world, team.runbook, "code-reviewer")
+    reviewer_at_await(db, fresh)
+    LocalTaskManager(db).claim_task(team.task.id, team.sol, force=True)
+    return team, fresh, commit(db, team.binding, "fix.py")
+
+
+@pytest.mark.asyncio
+async def test_relayed_fixer_candidate_hands_the_claim_through_land(world: TeamWorld) -> None:
+    """A fixer's relayed CANDIDATE hands its claim to the fresh reviewer; that LAND moves it on."""
+    team, fresh, fix = await fixer_with_fresh_reviewer(world)
+    db, task_id = world.case.db, team.task.id
+
+    _, relayed = await read_candidate(db, fresh, team.manager, team.task, fix)
+
+    assert relayed.current_step == "review"
+    assert LocalTaskManager(db).get_task(task_id).claimed_by_session_id == fresh
+    submit(db, fresh, task_id, "review", "approved", 1, fix)
+    messages = InternalToolRegistry(name="gobby-agents", description="Reviewer LAND")
+    add_messaging_tools(messages, InterSessionMessageManager(db), SessionManager(db), db)
+    sent, completed = await complete_seat_tool(
+        db,
+        fresh,
+        messages,
+        "send_message",
+        {
+            "target": "session",
+            "target_id": team.manager,
+            "content": (
+                f"EVENT=CANDIDATE_VERDICT TASK=#{team.task.seq_num} "
+                f"SHA={fix} VERDICT=LAND NOTE=Approved."
+            ),
+        },
+    )
+
+    assert sent["success"] is True
+    assert_candidate_cleared(completed)
+    assert LocalTaskManager(db).get_task(task_id).claimed_by_session_id == team.manager
+
+
+@pytest.mark.asyncio
+async def test_relayed_fixer_waits_while_it_has_live_edits(world: TeamWorld) -> None:
+    team, fresh, fix = await fixer_with_fresh_reviewer(world)
+    db, task_id = world.case.db, team.task.id
+    SessionVariableManager(db).merge_variables(
+        team.sol, {"task_edited_files": {task_id: ["scroll_live.py"]}}
+    )
+
+    _, instance = await read_candidate(db, fresh, team.manager, team.task, fix)
+
+    assert instance.variables.get("candidate_received") is not True
+    assert LocalTaskManager(db).get_task(task_id).claimed_by_session_id == team.sol
+
+
+@pytest.mark.asyncio
+async def test_relayed_developer_keeps_the_claim_through_its_bounce(world: TeamWorld) -> None:
+    """A Developer keeps its claim through a relayed first review; its BOUNCE returns it."""
+    team = await team_in_review(world)
+    db, task_id = world.case.db, team.task.id
+    reviewer_at_await(db, team.sol)
+    developer_at_submit(db, team.developer, task_id)
+
+    _, relayed = await read_candidate(db, team.sol, team.manager, team.task, team.candidate)
+
+    assert relayed.variables.get("candidate_received") is True
+    assert LocalTaskManager(db).get_task(task_id).claimed_by_session_id == team.developer
+    SessionTaskManager(db).link_task(team.sol, task_id, "reviewing")
+    bounce = (
+        f"EVENT=CANDIDATE_VERDICT TASK=#{team.task.seq_num} "
+        f"SHA={team.candidate} VERDICT=BOUNCE NOTE=Fix the scroll."
+    )
+
+    _, returned = await deliver_message(db, team.developer, team.sol, bounce)
+
+    assert returned.current_step == "implement"
+    assert returned.variables.get("bounced") is True
+    assert LocalTaskManager(db).get_task(task_id).claimed_by_session_id == team.developer
 
 
 @pytest.mark.asyncio

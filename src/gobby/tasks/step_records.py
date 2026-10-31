@@ -19,6 +19,7 @@ from gobby.config.tasks import TaskClosePolicyConfig, load_project_task_close_po
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.project_checkouts import require_root
 from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
+from gobby.storage.session_tasks import claim_arrived_by_handoff_only, claimant_sessions
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.storage.tasks._de_escalation import REVIEW_EXHAUSTED, REVIEW_REJECTION_LIMIT
@@ -251,14 +252,29 @@ def _project_close_policy(db: HubDatabase, project_id: str) -> TaskClosePolicyCo
 
 
 def task_step_requirements(
-    db: HubDatabase, task: Task, *, closer_definition: AgentDefinitionBody | None = None
+    db: HubDatabase,
+    task: Task,
+    *,
+    closer_definition: AgentDefinitionBody | None = None,
+    commit_paths: Sequence[str] = (),
 ) -> StepRequirements:
-    """Evaluate project and definition policy at the task's present commits."""
+    """Evaluate project and definition policy at the task's present commits.
+
+    A closer whose direct-commit grant covers every path the linked commits change
+    replaces the policy's steps with the steps that grant declares.
+    """
     required = required_task_steps(
         _project_close_policy(db, task.project_id),
         task_type=task.task_type,
         category=task.category,
     )
+    declared = closer_definition.direct_integration_commit_steps if closer_definition else []
+    if (
+        declared
+        and closer_definition is not None
+        and closer_definition.covers_direct_integration_paths(commit_paths)
+    ):
+        required = tuple(step for step in TASK_STEPS if step in declared)
     review_capabilities = (
         closer_definition.required_review_capabilities if closer_definition else []
     )
@@ -370,10 +386,17 @@ def maker_sessions_in(conn: Transaction, task_id: str) -> set[str]:
 
 def _require_independent_reviewer(
     db: HubDatabase,
+    conn: Transaction,
     task: Task,
     session_id: str,
     records: list[TaskStepRecord],
 ) -> None:
+    claimant = task.claimed_by_session_id == session_id or session_id in claimant_sessions(
+        conn, task.id
+    )
+    # A claim handed over by a candidate is the reviewer's own; a claim_task claim is not.
+    if claimant and not claim_arrived_by_handoff_only(conn, task.id, session_id):
+        raise StepRecordError("a current or former claimant cannot review its own task")
     if session_id in maker_sessions(records):
         raise StepRecordError(
             "an author of this task's tests or implementation cannot review its own task"
@@ -532,7 +555,7 @@ def record_task_step(
                 raise StepRecordError(
                     "review round must follow the current epoch's rejection count"
                 )
-            _require_independent_reviewer(db, task, session_id, records)
+            _require_independent_reviewer(db, conn, task, session_id, records)
         now = utc_now()
         record = TaskStepRecord(
             **submission.model_dump(),

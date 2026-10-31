@@ -28,7 +28,7 @@ prompts:
     On launch, report readiness to the live session named in the launch prompt with target="session". Send your session ref to your Dev Manager with `gobby-agents:send_message(target="session", target_id=<Dev Manager session ref from your launch prompt>)`.
     ## Rejections
     - First BOUNCE: the author fixes the blocking findings and sends a new CANDIDATE. A new commit SHA does not reset the count.
-    - Second BOUNCE: your Dev Manager moves the task's claim to you and you become its fixer. Call `gobby-tasks:claim_task(task_id)` once; its successful result opens your fix step, the only step where you may edit. Fix the blocking findings tests first, commit, attach the commit with `gobby-tasks:link_commit`, record `gobby-tasks:record_implementation_step`, and send the CANDIDATE to your Dev Manager. A fresh reviewer reviews your fix.
+    - Second BOUNCE: your Dev Manager moves the task's claim to you and you become its fixer. Call `gobby-tasks:claim_task(task_id)` once; its successful result opens your fix step, the only step where you may edit. Fix the blocking findings tests first, commit, attach the commit with `gobby-tasks:link_commit`, record `gobby-tasks:record_implementation_step`, and send the CANDIDATE directly to the fresh reviewer your Dev Manager names. That send hands the task's claim to that reviewer, and its LAND hands the claim back to your Dev Manager.
     - Third BOUNCE: the rejected review step record escalates the task to Triage.
     - Every writer's commit needs review by someone other than its writer. Keep every remaining blocker tracked in the task until it is fixed; the rejection limit does not bypass validation or close gates.
 
@@ -81,6 +81,10 @@ step_workflow:
     candidate_task: null
     candidate_sha: null
     candidate_disposition: null
+    # The claimed task and its review epoch, bound by the await step's claim handlers.
+    # A rewind to await restores these defaults, so the binding ends with the unit.
+    assigned_task_id: null
+    bound_review_epoch: null
 
   steps:
     - name: load_skills
@@ -182,6 +186,16 @@ step_workflow:
           action: set_variable
           variable: fixing
           value: true
+        # Bind the claimed task and capture its review epoch, so a closed, released or reset
+        # unit rewinds this seat here through the step binding.
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: assigned_task_id
+          value: "(tool_output.get('result') or tool_output).get('task_id')"
+        - server: gobby-tasks
+          tool: claim_task
+          action: advance_seat
       transitions:
         - to: fix
           when: "vars.fixing"
@@ -350,9 +364,10 @@ step_workflow:
         loading the language skills the touched paths need, and validate.
         Commit, attach the commit with gobby-tasks:link_commit(task_id,
         commit_sha=<sha>), and record gobby-tasks:record_implementation_step
-        for that SHA. Then send the CANDIDATE line to your Dev Manager, which
-        routes it to a fresh reviewer. Never review or approve your own fix.
-        Wait for its reply with gobby-agents:wait_for_coordination.
+        for that SHA. Then send the CANDIDATE line to the fresh reviewer your
+        Dev Manager names; that send hands the task's claim to the reviewer.
+        Never review or approve your own fix. Wait for its reply with
+        gobby-agents:wait_for_coordination.
       allowed_tools:
         - Bash
         - Read
@@ -381,3 +396,11 @@ step_workflow:
         - "gobby-agents:send_message"
         - "gobby-agents:get_inter_session_message"
         - "gobby-agents:wait_for_coordination"
+      on_mcp_success:
+        # A CANDIDATE to a team reviewer moves the claim with the unit, which ends this step.
+        - server: gobby-agents
+          tool: send_message
+          action: advance_seat
+      transitions:
+        - to: await
+          when: "not vars.fixing"

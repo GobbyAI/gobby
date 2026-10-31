@@ -248,7 +248,7 @@ def transfer_task_claim(
         if refusal is not None:
             raise ClaimTransferRefused(refusal)
         handed = ctx.task_manager.claim_task_for_agent(
-            task_id, session_id=recipient.id, expected_owner=holder.id
+            task_id, session_id=recipient.id, expected_owner=holder.id, handed=True
         )
         event = TaskLifecycleEventManager(db).record_lifecycle_event(
             task_id,

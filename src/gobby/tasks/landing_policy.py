@@ -28,10 +28,6 @@ _RESTART_FILES = frozenset({"pyproject.toml", "uv.lock"})
 # The daemon serves web/dist from disk, so `gobby ui build` activates it.
 _UI_BUILD_PREFIXES = ("web/",)
 
-# Paths the protected-branch guard lets a direct commit change.
-DIRECT_COMMIT_MARKDOWN_DIRS = (".gobby/plans/", "docs/")
-DIRECT_COMMIT_ANY_FILE_DIRS = (".gobby/plans/coverage/",)
-
 FREEZE_FILE_NAME = "landing-freeze.json"
 UNREADABLE_FREEZE_REASON = "unreadable landing freeze file"
 
@@ -93,20 +89,6 @@ def missing_schema_carriers(paths: Iterable[str]) -> list[str]:
         return []
     identity_pin = "src/gobby/storage/schema_expected_identity.json"
     return [] if identity_pin in changed else [identity_pin]
-
-
-def is_direct_commit_path(path: str) -> bool:
-    """Return whether a direct commit to the protected branch may change ``path``.
-
-    Any file under a ``DIRECT_COMMIT_ANY_FILE_DIRS`` prefix qualifies. Otherwise
-    the path must be Markdown either at the repository root (no ``/``) or under
-    a ``DIRECT_COMMIT_MARKDOWN_DIRS`` prefix.
-    """
-    if path.startswith(DIRECT_COMMIT_ANY_FILE_DIRS):
-        return True
-    if not path.endswith(".md"):
-        return False
-    return "/" not in path or path.startswith(DIRECT_COMMIT_MARKDOWN_DIRS)
 
 
 @dataclass(frozen=True)

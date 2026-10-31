@@ -19,6 +19,7 @@ from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.engine._offload import offload
+from gobby.workflows.engine.offloaded_output import restore_offloaded_output
 from gobby.workflows.step_binding import pending_claim_handlers, release_lost_binding
 from gobby.workflows.step_instances import (
     AgentStepInstanceManager,
@@ -503,7 +504,15 @@ class EnforcementCompletionMixin:
         if outcome.succeeded is None:
             await offload(normalize_tool_fields, event.data)
             outcome = tool_outcome_from_data(event.data)
-        tool_output = event.data.get("tool_output")
+        # An oversized result reaches this hook as its bounded envelope; step handlers
+        # need the stored result behind it, while the model keeps the envelope.
+        tool_output = await offload(
+            restore_offloaded_output,
+            self.db,
+            event.data.get("tool_output"),
+            session_id,
+            event.project_id,
+        )
         tool_failed = bool(event.metadata.get("is_failure", False)) or outcome.succeeded is False
         # PostToolUse proves transport completion, but an MCP payload may still
         # report failure. Success handlers require both layers to succeed.
