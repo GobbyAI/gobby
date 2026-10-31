@@ -159,3 +159,51 @@ def test_commit_behind_an_unverified_cd_is_not_credited_to_the_event_cwd(tmp_pat
 
 def test_authored_merge_ledger_is_a_runtime_reserved_variable() -> None:
     assert is_reserved_workflow_variable(LEDGER)
+
+
+@pytest.mark.parametrize("use_git_c", [False, True])
+def test_conflicted_merge_continuation_is_credited(tmp_path: Path, use_git_c: bool) -> None:
+    repo = _repo_with_feature(tmp_path / "target")
+    _commit(repo, "b.txt", "conflicting main edit\n", "conflict")
+    with pytest.raises(subprocess.CalledProcessError):
+        _git(repo, "merge", "--no-ff", "--no-edit", "feat")
+    (repo / "b.txt").write_text("resolved\n")
+    _git(repo, "add", "b.txt")
+    _git(repo, "config", "core.editor", "true")
+    output = _git(repo, "merge", "--continue")
+    cwd = tmp_path if use_git_c else repo
+    command = f"git -C {repo} merge --continue" if use_git_c else "git merge --continue"
+    variables: dict[str, Any] = {}
+
+    detect_bash_commit(_shell_event(command, output, cwd=str(cwd)), variables, SESSION_ID)
+
+    assert variables.get(LEDGER) == [_head(repo)]
+
+
+@pytest.mark.parametrize("foreign_action", ["skipped", "failed", "echoed"])
+def test_compound_command_cannot_credit_an_unexecuted_foreign_commit(
+    tmp_path: Path, foreign_action: str
+) -> None:
+    foreign = _repo_with_feature(tmp_path / "foreign")
+    _git(foreign, "merge", "--no-ff", "--no-edit", "feat")
+    target = _repo_with_feature(tmp_path / "target")
+    _git(target, "merge", "--no-commit", "--no-ff", "feat")
+    _git(target, "config", "user.name", "t")
+    _git(target, "config", "user.email", "t@example.com")
+    foreign_command = f"git -C {foreign} commit --no-edit"
+    prefixes = {
+        "skipped": f"false && {foreign_command}",
+        "failed": foreign_command,
+        "echoed": f"printf '%s\\n' '{foreign_command}'",
+    }
+    command = f"{prefixes[foreign_action]}; git -C {target} commit --no-edit"
+    result = subprocess.run(command, shell=True, cwd=target, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    variables: dict[str, Any] = {}
+
+    detect_bash_commit(
+        _shell_event(command, result.stdout, cwd=str(target)), variables, SESSION_ID
+    )
+
+    assert _head(foreign) not in variables.get(LEDGER, [])
+    assert variables["task_has_commits"] is True

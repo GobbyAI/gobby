@@ -892,12 +892,14 @@ async def test_claim_free_base_merge_candidate_binding(
     assert tasks.get_task(task.id).claimed_by_session_id is None
 
 
+@pytest.mark.parametrize("completion", ["clean", "continue", "continue-c"])
 async def test_clean_base_merge_candidate_binds_after_its_authored_merge(
     seat: tuple[WorkflowHookHandler, Session, Path],
     temp_db: HubDatabase,
     tmp_path: Path,
+    completion: str,
 ) -> None:
-    """A clean admitted merge that creates a commit binds at reviewer intake."""
+    """Clean and conflict-resolved admitted merges bind at reviewer intake."""
     handler, session, worktree = seat
     _seat(temp_db, session, "custom-seat", granted=True, selectors=GATED_RULES)
     # `feature` shares the base but not the task's conflicting shared.txt edit, so the
@@ -909,10 +911,23 @@ async def test_clean_base_merge_candidate_binds_after_its_authored_merge(
     assert record is not None and record.task_id is not None
     tasks = LocalTaskManager(temp_db)
     task = tasks.get_task(record.task_id)
-    command = "git merge --no-ff --no-edit integration"
-    await handler._evaluate_rules(_bash_event(session, worktree, command))
-    output = _git(worktree, "merge", "--no-ff", "--no-edit", "integration")
-    completed = _bash_event(session, worktree, command, HookEventType.AFTER_TOOL)
+    if completion != "clean":
+        _git(worktree, "checkout", "-q", "task-25385")
+        _start_conflicting_base_merge(worktree)
+        _git(worktree, "config", "core.editor", "true")
+    args = (
+        ["merge", "--no-ff", "--no-edit", "integration"]
+        if completion == "clean"
+        else ["merge", "--continue"]
+    )
+    command = "git " + " ".join(args)
+    event_cwd = worktree
+    if completion == "continue-c":
+        command = f"git -C {worktree} " + " ".join(args)
+        event_cwd = tmp_path / "main"
+    await handler._evaluate_rules(_bash_event(session, event_cwd, command))
+    output = _git(worktree, *args)
+    completed = _bash_event(session, event_cwd, command, HookEventType.AFTER_TOOL)
     completed.data["tool_output"] = output
     await handler._evaluate_rules(completed)
     sha = _git(worktree, "rev-parse", "HEAD")
