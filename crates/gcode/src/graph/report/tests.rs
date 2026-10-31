@@ -854,6 +854,26 @@ fn unlimited_reads_page_past_engine_result_cap() {
     assert_eq!(read, rows);
 }
 
+#[test]
+fn paged_report_queries_sort_every_column_before_windowing() {
+    // A window takes a fixed slice per call. The order must be total over the
+    // returned columns, or rows can repeat or vanish between pages.
+    let (hotspots, _) = report_hotspots_query("child", "module", None);
+    assert!(
+        hotspots.contains(
+            "ORDER BY degree DESC, name ASC, id ASC, node_type ASC, file_path ASC, incoming ASC, outgoing ASC"
+        ),
+        "module hotspots must order every returned column: {hotspots}"
+    );
+    let (bridges, _) = report_bridge_edges_query("child");
+    assert!(
+        bridges.contains(
+            "ORDER BY source_id, target_symbol_id, relation, provenance, confidence, source_system, source_file_path, source_line, source_symbol_id, matching_method"
+        ),
+        "bridge edges must order every returned column: {bridges}"
+    );
+}
+
 /// Fixture nodes for the live hotspot test. `a.hub.old` replaces `a.hub` and
 /// `c.dead` is tombstoned; neither may reach any count.
 const LIVE_NODES: &[&str] = &[
