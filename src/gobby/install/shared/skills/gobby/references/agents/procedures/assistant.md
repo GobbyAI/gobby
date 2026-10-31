@@ -24,8 +24,8 @@ Fetch its schema first when unleased, and follow every page.next_cursor using on
 null. For a full report, load `references/agents/procedures/reporter-full-report.md` the same way
 for the workspace roster and the full sections.
 
-Those files supply queries and budgets only. You deliver the report. No Reporter seat runs. You run
-the two in-flight queries with `query_readonly`; no Reporter seat can.
+Those files supply queries and budgets only. You deliver the report. No Reporter seat runs.
+You run the two in-flight queries with `query_readonly`; no Reporter seat can.
 Honor the gathering budget. When it expires, deliver what you have with each gap labelled and the
 report marked incomplete.
 
@@ -39,9 +39,11 @@ Open with one line: `Status, <full|delta>, <start>-<end> CT`.
   escalated items, operator decisions, stalled or idle seats, worktrees against developers,
   the workspace roster, the last Consolidator review, roadmap progress with its critical path, and
   landed, activated, closed and escalated changes since the last report.
-- Delta: changes since the last report (landed, activated and closed listed separately), in-flight
-  stage moves with claim-to-close for closures, stuck items with durations, alarms with sources, decisions needed, current holds, and cap breaches.
-  Name the affected roots. Do not repeat the full root table.
+- Delta: changes since the last report (landed, activated and closed listed separately), the complete
+  current in-flight list every tick (every task with its stage and time in stage, unchanged stages
+  included, with stage moves and closures flagged with claim-to-close), stuck items with durations,
+  alarms with sources, decisions needed, current holds, and cap breaches. Name the affected roots.
+  Do not repeat the full root table.
 
 Rules for every report:
 

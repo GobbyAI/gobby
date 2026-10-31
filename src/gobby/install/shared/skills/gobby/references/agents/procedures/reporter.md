@@ -28,13 +28,15 @@ Who runs each query. `query_readonly` is Assistant- and Orchestrator-only (`quer
 
 Sources until #25377 lands. Claim intervals are `task_claim_intervals` (`claimed_at`, `released_at`), written by a trigger on `tasks.claimed_by_session_id` and released when the task closes; claims made before that tracking have no interval. Step evidence is `task_comments` rows with `author_type = 'task_step'`: the JSON `body` carries `step` (test, implementation, review, closing), `status` (pending, in_progress, approved, rejected) and `sequence`, and the row's `created_at` is the record time. Test Writers hold no claim today, so the test-writing start comes from a step record, not a claim, and the section labels it that way.
 
-Query 1, stage. Params: the root path regex, `^(<root path>|<root path>)\.`, where each root path is its epic's `path_cache` (for example `24818`).
+Query 1, stage. Params, in order: the project id, the root path regex `^(<root path>|<root path>)\.`, where each root path is its epic's `path_cache` (for example `24818`), and the keyset cursor (`0` on the first call).
 ```sql
 WITH in_flight AS (
-  SELECT t.id, t.seq_num, t.title
+  SELECT t.id, t.seq_num, t.title, t.review_epoch, t.commits ->> -1 AS tip
   FROM tasks t
-  WHERE t.closed_at IS NULL
+  WHERE t.project_id = %s
+    AND t.closed_at IS NULL
     AND t.path_cache ~ %s
+    AND t.seq_num > %s
     AND (
       t.claimed_by_session_id IS NOT NULL
       OR EXISTS (SELECT 1 FROM task_comments c
@@ -42,16 +44,24 @@ WITH in_flight AS (
     )
 ),
 steps AS (
-  SELECT c.task_id, c.created_at,
-         c.body::jsonb ->> 'step' AS step,
-         c.body::jsonb ->> 'status' AS status,
-         (c.body::jsonb ->> 'sequence')::int AS seq
-  FROM task_comments c
-  JOIN in_flight f ON f.id = c.task_id
-  WHERE c.author_type = 'task_step'
+  SELECT s.task_id, s.created_at, s.step, s.status, s.commit_sha, s.seq
+  FROM (
+    SELECT f.id AS task_id, f.review_epoch, c.created_at,
+           c.body::jsonb ->> 'step' AS step,
+           c.body::jsonb ->> 'status' AS status,
+           c.body::jsonb ->> 'commit_sha' AS commit_sha,
+           (c.body::jsonb ->> 'sequence')::int AS seq,
+           (c.body::jsonb ->> 'epoch')::int AS epoch,
+           c.body::jsonb ->> 'supplemental_review' AS supplemental
+    FROM in_flight f
+    JOIN task_comments c ON c.task_id = f.id
+    WHERE c.author_type = 'task_step'
+  ) s
+  WHERE s.epoch = s.review_epoch
+    AND (s.step <> 'review' OR s.supplemental = 'false')
 ),
 decisive AS (
-  SELECT DISTINCT ON (task_id) task_id, step, status, created_at
+  SELECT DISTINCT ON (task_id) task_id, step, status, commit_sha, created_at
   FROM steps
   WHERE status IN ('approved', 'rejected')
   ORDER BY task_id, seq DESC
@@ -62,17 +72,32 @@ first_step AS (
   ORDER BY task_id, seq ASC
 ),
 claims AS (
-  SELECT ci.task_id,
-         min(ci.claimed_at) AS first_claimed_at,
-         max(ci.claimed_at) FILTER (WHERE ci.released_at IS NULL) AS holder_since
+  SELECT ci.task_id, min(ci.claimed_at) AS first_claimed_at
   FROM task_claim_intervals ci
   JOIN in_flight f ON f.id = ci.task_id
   GROUP BY ci.task_id
 )
 SELECT f.seq_num, f.title,
-       d.step AS decisive_step, d.status AS decisive_status, d.created_at AS decisive_at,
-       fs.step AS first_step, fs.created_at AS first_step_at,
-       cl.first_claimed_at, cl.holder_since
+       CASE
+         WHEN d.step = 'test' AND d.status = 'rejected' THEN 'test-writing'
+         WHEN d.step = 'test' AND d.status = 'approved' THEN 'development'
+         WHEN d.step = 'implementation' AND d.status = 'approved' THEN 'review'
+         WHEN d.step = 'implementation' AND d.status = 'rejected' THEN 'development'
+         WHEN d.step = 'review' AND d.status = 'rejected' THEN 'development'
+         WHEN d.step IN ('review', 'closing') AND d.status = 'approved'
+              AND starts_with(d.commit_sha, f.tip) THEN 'waiting to land'
+         WHEN d.step IS NULL AND fs.step = 'test' THEN 'test-writing'
+         WHEN d.step IS NULL AND fs.step = 'implementation' THEN 'development'
+         WHEN d.step IS NULL AND fs.step = 'review' THEN 'review'
+         WHEN d.step IS NULL AND fs.step IS NULL THEN 'development'
+         ELSE 'unknown'
+       END AS stage,
+       CASE WHEN d.task_id IS NOT NULL THEN 'decisive step record'
+            WHEN fs.task_id IS NOT NULL THEN 'first step record'
+            ELSE 'claim time' END AS stage_basis,
+       COALESCE(d.created_at, fs.created_at, cl.first_claimed_at) AS stage_since,
+       cl.first_claimed_at,
+       count(*) OVER () AS total
 FROM in_flight f
 LEFT JOIN decisive d ON d.task_id = f.id
 LEFT JOIN first_step fs ON fs.task_id = f.id
@@ -80,18 +105,29 @@ LEFT JOIN claims cl ON cl.task_id = f.id
 ORDER BY f.seq_num
 ```
 
-Query 2, claim-to-close. Params: the window start as an ISO timestamp (now minus the report window), then the root path regex.
+Query 2, claim-to-close. Params, in order: the project id, the window start as an ISO timestamp (now minus the report window), the root path regex, and the keyset cursor (`0` on the first call).
 ```sql
-SELECT t.seq_num, t.title, t.closed_at, min(ci.claimed_at) AS first_claimed_at
-FROM tasks t
-LEFT JOIN task_claim_intervals ci ON ci.task_id = t.id
-WHERE t.closed_at >= %s
-  AND t.path_cache ~ %s
-GROUP BY t.id, t.seq_num, t.title, t.closed_at
-ORDER BY t.closed_at
+WITH closed AS (
+  SELECT t.id, t.seq_num, t.title, t.closed_at
+  FROM tasks t
+  WHERE t.project_id = %s
+    AND t.closed_at >= %s
+    AND t.path_cache ~ %s
+    AND t.seq_num > %s
+)
+SELECT c.seq_num, c.title, c.closed_at,
+       min(ci.claimed_at) AS first_claimed_at,
+       c.closed_at - min(ci.claimed_at) AS claim_to_close,
+       count(*) OVER () AS total
+FROM closed c
+LEFT JOIN task_claim_intervals ci ON ci.task_id = c.id
+GROUP BY c.id, c.seq_num, c.title, c.closed_at
+ORDER BY c.seq_num
 ```
 
-Stage. The stage follows the decisive record: the latest approved or rejected step row by `seq`. Its start is that row's `decisive_at`.
+Both queries run with `limit=2000`, the `query_readonly` maximum. Each row carries `total`, the count of matching rows after the cursor, computed in the same snapshot before the limit applies. The first page's `total` is the full count, so it is the authoritative total. Accumulate rows across pages, and call again with the cursor set to the last row's `seq_num` while accumulated rows are below that total. A zero-row first page means nothing is in flight or closed. Write "N of total read" for a section whose accumulated rows fall short of its total.
+
+Stage. Only step rows of the task's current `review_epoch` count, and a review row counts only when its `supplemental_review` is `false`. The stage follows the decisive record: the latest approved or rejected step row by `seq`. Its start is that row's record time. A review or closing approval counts only on the task's latest linked commit (the last entry of `tasks.commits`); on any other commit it is `unknown`. The query's `stage` column applies this table.
 
 | Decisive record | Stage | Stage start |
 | --- | --- | --- |
@@ -99,7 +135,8 @@ Stage. The stage follows the decisive record: the latest approved or rejected st
 | test approved | development | decisive_at |
 | implementation approved | review | decisive_at |
 | implementation rejected, or review rejected | development | decisive_at |
-| review approved, or closing approved | waiting to land | decisive_at |
+| review approved, or closing approved, on the latest linked commit | waiting to land | decisive_at |
+| review approved, or closing approved, on any other commit | unknown | decisive_at |
 
 With no decisive record, the stage is the first step's stage (`test` is test-writing, `implementation` is development, `review` is review), starting at `first_step_at`. With no step row, the stage is development, starting at `first_claimed_at`, labelled "from claim time, no step record". A task with neither a claim nor a step row is not in flight.
 
@@ -117,7 +154,7 @@ When #25377 lands, its timestamped claim hand-offs replace the step-record start
 For a full report, or a launch that requests a roster, load `gobby:references/agents/procedures/reporter-full-report.md` completely through `gobby-skills:get_skill_file(name="gobby", path="references/agents/procedures/reporter-full-report.md")` before gathering. Follow every page.next_cursor using only cursor until null. It carries the workspace seat roster and full report sections; a delta report does not need it.
 
 ## Delta report
-Keep it short: Last 30 minutes changes (landed/activated/closed separately), in-flight stage moves and closures with claim-to-close, stuck items and durations, alarms with sources, and decisions needed. Name affected roots and include idle/stalled changes. Carry current holds and cap breaches; do not repeat the full root table.
+Keep it short: Last 30 minutes changes (landed/activated/closed separately), the complete current in-flight list every tick (every task with its stage and time in stage, unchanged stages included, with stage moves and closures flagged with claim-to-close), stuck items and durations, alarms with sources, and decisions needed. Name affected roots and include idle/stalled changes. Carry current holds and cap breaches; do not repeat the full root table.
 Every #NNNNN carries its title or a short task phrase. Say "Systems nominal" only when the evidence establishes that nothing is stuck, alarming, or breaching. List unknowns when evidence is incomplete.
 
 ## Delivery
