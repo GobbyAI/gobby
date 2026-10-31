@@ -113,7 +113,7 @@ def _render_message_line(
         "" if _is_self_origin(message) else resolve_sender(getattr(message, "from_session", None))
     )
     if len(content) <= inline_limit:
-        suffix = _message_context_suffix(message, message_type)
+        suffix = _message_context_suffix(message, message_type, message_id)
         return f"- {priority_label}{sender}{content}{suffix}"
 
     reference = (
@@ -131,9 +131,9 @@ def _priority_label(priority: str) -> str:
     return f"[PRIORITY: {priority.upper()}] "
 
 
-def _message_context_suffix(message: Any, message_type: str) -> str:
+def _message_context_suffix(message: Any, message_type: str, message_id: str) -> str:
     metadata = message_metadata(message)
-    bits: list[str] = [f"type={message_type}"]
+    bits: list[str] = [f"message_id={message_id}", f"type={message_type}"]
     from_session = getattr(message, "from_session", None)
     if from_session and not _is_self_origin(message):
         bits.append(f"from_session={from_session}")

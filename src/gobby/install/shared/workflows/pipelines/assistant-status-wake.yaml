@@ -88,4 +88,4 @@ steps:
         target_id: "${{ [s for r in [steps.resolve_active.output, steps.resolve_paused.output, steps.resolve_interrupted.output, steps.resolve_awaiting_input.output, steps.resolve_awaiting_approval.output, steps.resolve_awaiting_handoff.output] for s in r.sessions][0].id }}"
         wake: true
         message_type: message
-        content: "Status tick. Deliver the scheduled status now: load gobby:references/agents/procedures/assistant.md completely and follow it. Deliver through the configured operator channel only."
+        content: "Status tick. Deliver the scheduled status now: load gobby:references/agents/procedures/assistant.md completely and follow it. Deliver it on the single path its Deliver section chooses, never both."
