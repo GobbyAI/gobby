@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 import yaml
 
-from gobby.agents.sync import get_bundled_agents_path
+from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
@@ -28,7 +28,7 @@ from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.observers import reconcile_claimed_tasks
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.step_context import get_active_step_workflow_context
+from gobby.workflows.step_context import StepWorkflowContext, get_active_step_workflow_context
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
 pytestmark = pytest.mark.unit
@@ -107,11 +107,15 @@ def _engine(reviewer: _Reviewer) -> RuleEngine:
     return RuleEngine(reviewer.db, task_manager=LocalTaskManager(reviewer.db))
 
 
-def _current_step(reviewer: _Reviewer) -> str:
+def _step_context(reviewer: _Reviewer) -> StepWorkflowContext:
     variables = SessionVariableManager(reviewer.db).get_variables(reviewer.session_id)
     context = get_active_step_workflow_context(reviewer.db, reviewer.session_id, variables)
     assert context is not None
-    return context.current_step
+    return context
+
+
+def _current_step(reviewer: _Reviewer) -> str:
+    return _step_context(reviewer).current_step
 
 
 def _instance_variables(reviewer: _Reviewer) -> dict[str, Any]:
@@ -258,3 +262,91 @@ async def test_next_candidate_after_return_reaches_review_with_reviewing_link(
     steps = {step.name: step for step in body.step_workflow.steps}
     assert "gobby-tasks:link_task_to_session" in steps["review"].allowed_mcp_tools
     assert "gobby-tasks:link_task_to_session" not in steps["fix"].allowed_mcp_tools
+
+
+def _stuck_fix_body() -> AgentDefinitionBody:
+    """The definition before this change: fix had no exit, so a seat there stayed stuck."""
+    body = _reviewer_body()
+    assert body.step_workflow is not None
+    next(step for step in body.step_workflow.steps if step.name == "fix").transitions = []
+    return body
+
+
+def _before_tool_event(
+    session_id: str, server: str, tool: str, arguments: dict[str, Any]
+) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=session_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {"server_name": server, "tool_name": tool, "arguments": arguments},
+        },
+        metadata={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_stuck_fix_seat_recovers_after_definition_refresh(reviewer: _Reviewer) -> None:
+    """A seat stuck on fix under the old definition returns to await once the new one is installed.
+
+    The seat's instance keeps the old snapshot and no bound task, as persisted before this
+    change. After the refresh, the next candidate reaches review, which admits the reviewing link.
+    """
+    SessionVariableManager(reviewer.db).merge_variables(
+        reviewer.session_id, {"_agent_type": "code-reviewer"}
+    )
+    body = _stuck_fix_body()
+    assert body.step_workflow is not None
+    AgentStepInstanceManager(reviewer.db).save(
+        build_step_instance(
+            body,
+            session_id=reviewer.session_id,
+            step_workflow_id=None,
+            variables={**body.step_workflow.variables, "fixing": True},
+            current_step="fix",
+        )
+    )
+    claim_task(reviewer.db, reviewer.task_id, reviewer.session_id)
+    _close_and_prune(reviewer)
+    assert sync_bundled_agents(reviewer.db)["errors"] == []
+    engine = _engine(reviewer)
+
+    await engine._process_step_after_tool(
+        _tool_event(reviewer.session_id, "gobby-agents", "get_inter_session_message", {}, {}),
+        reviewer.session_id,
+        SessionVariableManager(reviewer.db).get_variables(reviewer.session_id),
+    )
+
+    assert _current_step(reviewer) == "await"
+    assert CLAIM_STATUS_TEXT not in (_step_context(reviewer).status_message or "")
+
+    next_leaf = LocalTaskManager(reviewer.db).create_task(
+        reviewer.project_id,
+        title="Next leaf",
+        validation_criteria="The next leaf is reviewed.",
+    )
+    AgentStepInstanceManager(reviewer.db).merge_variables(
+        reviewer.session_id,
+        {"candidate_received": True, "candidate_task": next_leaf.id, "candidate_sha": "b" * 40},
+    )
+    await engine._process_step_after_tool(
+        _tool_event(reviewer.session_id, "gobby-agents", "get_inter_session_message", {}, {}),
+        reviewer.session_id,
+        SessionVariableManager(reviewer.db).get_variables(reviewer.session_id),
+    )
+
+    assert _current_step(reviewer) == "review"
+    decision = await engine.evaluate(
+        _before_tool_event(
+            reviewer.session_id,
+            "gobby-tasks",
+            "link_task_to_session",
+            {"task_id": next_leaf.id, "action": "reviewing"},
+        ),
+        session_id=reviewer.session_id,
+        variables=SessionVariableManager(reviewer.db).get_variables(reviewer.session_id),
+    )
+    assert decision.decision != "block", decision
