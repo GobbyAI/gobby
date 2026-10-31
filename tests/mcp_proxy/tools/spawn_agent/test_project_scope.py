@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -78,6 +79,20 @@ async def test_no_isolation_preserves_requested_worktree_for_sandbox(
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("stub_srt_verifier")]
+
+
+@pytest.fixture(autouse=True)
+def isolated_darwin_cache_locations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Darwin's per-user temp root must not hold the session's Gobby home (see tests/agents)."""
+    original = os.confstr
+    roots = {65537: str(tmp_path / "darwin-temp"), 65538: str(tmp_path / "darwin-cache")}
+
+    def confstr(name: str | int) -> str | None:
+        if isinstance(name, int) and name in roots:
+            return roots[name]
+        return original(name)
+
+    monkeypatch.setattr(os, "confstr", confstr)
 
 
 async def _drain_spawn_background_tasks() -> None:

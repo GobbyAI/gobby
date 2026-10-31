@@ -19,6 +19,7 @@ from gobby.config.app import DaemonConfig
 from gobby.hooks.event_handlers._session_end import SessionEndMixin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.inbox import drain_hook_inbox_once
+from gobby.hooks.session_types import HookSessionManager
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.servers.routes.mcp.endpoints.request_context import _set_context_for_request
 from gobby.servers.routes.mcp.hooks import create_hooks_router
@@ -38,6 +39,16 @@ if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def no_workspace_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Session end schedules an agent-workspace commit; these tests never run one."""
+    monkeypatch.setattr(
+        "gobby.hooks.event_handlers._session_end.schedule_workspace_commit",
+        lambda *_a, **_k: None,
+    )
+
 
 _PLAN_ADVERSARY_TERMINATE_WORKFLOW = {
     "name": "plan-adversary-steps",
@@ -110,7 +121,8 @@ class _SessionEndHandler(SessionEndMixin):
         machine_id: str,
     ) -> None:
         self.logger = MagicMock()
-        self._session_manager = session_manager
+        self._event_loop = None
+        self._session_manager = cast(HookSessionManager, session_manager)
         self._workflow_handler = workflow_handler
         self._session_storage = session_manager
         self._session_coordinator = None
