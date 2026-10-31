@@ -160,7 +160,8 @@ impl Lock {
         let held = lock_state(&self.held);
         if let Some(reason) = &held.lost {
             bail!(
-                "Claude config lock was compromised: {}: {reason}",
+                "{} lock was compromised: {}: {reason}",
+                config_label(&self.path),
                 self.path.display()
             );
         }
@@ -168,7 +169,8 @@ impl Lock {
             identity(&self.path).with_context(|| format!("stat {}", self.path.display()))?;
         ensure!(
             current == held.identity,
-            "Claude config lock ownership changed: {}",
+            "{} lock ownership changed: {}",
+            config_label(&self.path),
             self.path.display()
         );
         Ok(())
@@ -216,7 +218,8 @@ fn refresh(path: &Path, expected: Identity) -> Result<Identity> {
     let current = identity(path).with_context(|| format!("stat {}", path.display()))?;
     ensure!(
         current == expected,
-        "Claude config lock ownership changed: {}",
+        "{} lock ownership changed: {}",
+        config_label(path),
         path.display()
     );
     fs::File::open(path)?.set_modified(SystemTime::now())?;
@@ -232,6 +235,15 @@ fn identity(path: &Path) -> io::Result<Identity> {
     })
 }
 
+/// Names the config a lock guards, so a Codex lock error does not read as a Claude one.
+fn config_label(lock: &Path) -> &'static str {
+    if lock.ends_with(".codex/config.toml.lock") {
+        "Codex config"
+    } else {
+        "Claude config"
+    }
+}
+
 fn acquire(path: &Path, timing: Timing) -> Result<Lock> {
     let file_name = path
         .file_name()
@@ -242,7 +254,8 @@ fn acquire(path: &Path, timing: Timing) -> Result<Lock> {
     loop {
         ensure!(
             Instant::now() < deadline,
-            "timed out waiting for Claude config lock {}",
+            "timed out waiting for {} lock {}",
+            config_label(&lock),
             lock.display()
         );
         match DirBuilder::new().mode(0o700).create(&lock) {
@@ -266,7 +279,8 @@ fn clear_stale(lock: &Path, stale: Duration) -> Result<bool> {
     };
     ensure!(
         metadata.is_dir(),
-        "Claude config lock is not a directory: {}",
+        "{} lock is not a directory: {}",
+        config_label(lock),
         lock.display()
     );
     let aged = SystemTime::now()
@@ -278,8 +292,13 @@ fn clear_stale(lock: &Path, stale: Duration) -> Result<bool> {
     match fs::remove_dir(lock) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(true),
-        Err(error) => Err(error)
-            .with_context(|| format!("remove stale Claude config lock {}", lock.display())),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "remove stale {} lock {}",
+                config_label(lock),
+                lock.display()
+            )
+        }),
     }
 }
 
