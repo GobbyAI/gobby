@@ -399,7 +399,6 @@ fn command_frame(text: &str) -> Option<serde_json::Value> {
 
 #[cfg(unix)]
 pub async fn run_client(node: Arc<crate::state::NodeServices>, timing: ChannelTiming) {
-    use tokio_tungstenite::tungstenite::Message as PeerMessage;
     let mut backoff = timing.backoff_start;
     let mut failure_reported = false;
     loop {
@@ -407,56 +406,16 @@ pub async fn run_client(node: Arc<crate::state::NodeServices>, timing: ChannelTi
             .await
             .map_err(anyhow::Error::from)
             .and_then(std::convert::identity);
-        if let Ok(mut socket) = attempt {
+        if let Ok(socket) = attempt {
             failure_reported = false;
             backoff = timing.backoff_start;
-            let mut idle = Instant::now() + timing.idle_timeout;
-            let mut pings = tokio::time::interval_at(
-                Instant::now() + timing.ping_interval,
-                timing.ping_interval,
-            );
-            pings.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            // Command replies leave through this loop, the socket's only writer.
-            let (replies_tx, mut replies) = tokio::sync::mpsc::unbounded_channel::<String>();
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = tokio::time::sleep_until(idle) => break,
-                    frame = socket.next() => {
-                        match frame {
-                            Some(Ok(PeerMessage::Close(_))) | Some(Err(_)) | None => break,
-                            Some(Ok(PeerMessage::Text(text))) => {
-                                idle = Instant::now() + timing.idle_timeout;
-                                if let Some(command) = command_frame(text.as_str()) {
-                                    let reply_tx = replies_tx.clone();
-                                    let agents = Arc::clone(&node.agents);
-                                    let launch = Arc::clone(&node.launch);
-                                    tokio::spawn(async move {
-                                        let reply = crate::nodes::agents::commands::dispatch(
-                                            agents, launch, command,
-                                        )
-                                        .await;
-                                        let _ = reply_tx.send(reply.to_string());
-                                    });
-                                }
-                            }
-                            Some(Ok(_)) => idle = Instant::now() + timing.idle_timeout,
-                        }
-                    },
-                    Some(reply) = replies.recv() => {
-                        if !matches!(tokio::time::timeout_at(idle,
-                            socket.send(PeerMessage::Text(reply.into()))).await, Ok(Ok(()))) {
-                            break;
-                        }
-                    },
-                    _ = pings.tick() => {
-                        if !matches!(tokio::time::timeout_at(idle,
-                            socket.send(PeerMessage::Ping(Vec::new().into()))).await, Ok(Ok(()))) {
-                            break;
-                        }
-                    },
-                }
-            }
+            serve_channel(
+                socket,
+                Arc::clone(&node.agents),
+                Arc::clone(&node.launch),
+                timing,
+            )
+            .await;
         } else if let Err(error) = attempt
             && !failure_reported
         {
@@ -465,5 +424,63 @@ pub async fn run_client(node: Arc<crate::state::NodeServices>, timing: ChannelTi
         }
         tokio::time::sleep(backoff).await;
         backoff = backoff.saturating_mul(2).min(timing.backoff_max);
+    }
+}
+
+/// Serves one connected channel until it closes: command frames, the replies they earn, and pings.
+#[cfg(unix)]
+pub async fn serve_channel<S>(
+    mut socket: tokio_tungstenite::WebSocketStream<S>,
+    agents: Arc<crate::nodes::agents::NodeAgents>,
+    launch: Arc<crate::nodes::agents::launch::LaunchContext>,
+    timing: ChannelTiming,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+{
+    use tokio_tungstenite::tungstenite::Message as PeerMessage;
+    let mut idle = Instant::now() + timing.idle_timeout;
+    let mut pings =
+        tokio::time::interval_at(Instant::now() + timing.ping_interval, timing.ping_interval);
+    pings.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Command replies leave through this loop, the socket's only writer.
+    let (replies_tx, mut replies) = tokio::sync::mpsc::unbounded_channel::<String>();
+    loop {
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(idle) => break,
+            frame = socket.next() => {
+                match frame {
+                    Some(Ok(PeerMessage::Close(_))) | Some(Err(_)) | None => break,
+                    Some(Ok(PeerMessage::Text(text))) => {
+                        idle = Instant::now() + timing.idle_timeout;
+                        if let Some(command) = command_frame(text.as_str()) {
+                            let reply_tx = replies_tx.clone();
+                            let agents = Arc::clone(&agents);
+                            let launch = Arc::clone(&launch);
+                            tokio::spawn(async move {
+                                let reply = crate::nodes::agents::commands::dispatch(
+                                    agents, launch, command,
+                                )
+                                .await;
+                                let _ = reply_tx.send(reply.to_string());
+                            });
+                        }
+                    }
+                    Some(Ok(_)) => idle = Instant::now() + timing.idle_timeout,
+                }
+            },
+            Some(reply) = replies.recv() => {
+                if !matches!(tokio::time::timeout_at(idle,
+                    socket.send(PeerMessage::Text(reply.into()))).await, Ok(Ok(()))) {
+                    break;
+                }
+            },
+            _ = pings.tick() => {
+                if !matches!(tokio::time::timeout_at(idle,
+                    socket.send(PeerMessage::Ping(Vec::new().into()))).await, Ok(Ok(()))) {
+                    break;
+                }
+            },
+        }
     }
 }

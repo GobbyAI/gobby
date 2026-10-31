@@ -356,6 +356,8 @@ struct LaunchFixture {
     payload: SpawnPayload,
     agents: Arc<NodeAgents>,
     host: fake_gterm::FakeGterm,
+    /// The policy compile's entry marker and release file, when the compile is held.
+    policy: Option<(PathBuf, PathBuf)>,
     _monitor: StopMonitor,
     // Keep the pidfile alive until StopMonitor has stopped the isolated monitor.
     _root: tempfile::TempDir,
@@ -363,6 +365,11 @@ struct LaunchFixture {
 
 impl LaunchFixture {
     async fn new() -> Result<Self> {
+        Self::build(false).await
+    }
+
+    /// `block_policy` holds the sandbox policy compile at its entry until a test releases it.
+    async fn build(block_policy: bool) -> Result<Self> {
         let root = tempfile::tempdir()?;
         let (mut tree, inputs) = chokepoint_fixture(&root.path().join("case"), "claude", |_| {})?;
         // The nextest TMPDIR is already long on macOS; keep the control socket <104 bytes.
@@ -378,6 +385,12 @@ impl LaunchFixture {
                 .display()
                 .to_string(),
         );
+        let policy = block_policy.then(|| {
+            (
+                root.path().join("policy-entered"),
+                root.path().join("policy-release"),
+            )
+        });
         let snapshot = tree.path("gobby_home").join("prompt-modes");
         // Observe the original prompt while prepare_launch runs its preflight.
         let stat_args = if cfg!(target_os = "macos") {
@@ -385,7 +398,7 @@ impl LaunchFixture {
         } else {
             "-c '%a'"
         };
-        let body = format!(
+        let observed = format!(
             "/usr/bin/stat {stat_args} '{}' '{}' > '{}'\nexit 0\n",
             tree.path("gobby_home").join("node/prompts").display(),
             tree.path("gobby_home")
@@ -393,6 +406,14 @@ impl LaunchFixture {
                 .display(),
             snapshot.display()
         );
+        let body = match &policy {
+            Some((entered, release)) => format!(
+                ": > '{}'\nwhile [ ! -f '{}' ]; do /bin/sleep 0.01; done\nexit 0\n",
+                entered.display(),
+                release.display()
+            ),
+            None => observed,
+        };
         let node = monitor_node(&tree, &body)?;
         let installation = srt_installation(&tree, node);
         let mut payload = CommandCase::new("claude-fresh")?.payload;
@@ -433,6 +454,7 @@ impl LaunchFixture {
             payload,
             agents,
             host,
+            policy,
             _monitor: monitor,
         })
     }

@@ -2,8 +2,12 @@
 use super::*;
 use gobby_daemon::{
     node_commands::{CONTRACT_VERSION, SandboxBackend},
-    nodes::agents::commands::dispatch,
+    nodes::{
+        agents::commands::dispatch,
+        channel::{ChannelTiming, serve_channel},
+    },
 };
+use tokio_tungstenite::{WebSocketStream, tungstenite::protocol::Role};
 
 const WAIT: Duration = Duration::from_secs(30);
 
@@ -15,7 +19,16 @@ struct CommandsFixture {
 
 impl CommandsFixture {
     async fn new(block_preparation: bool) -> Result<Self> {
-        let mut launch = LaunchFixture::new().await?;
+        Self::build(block_preparation, false).await
+    }
+
+    /// Holds the sandbox policy compile, not the workspace seed, until the test releases it.
+    async fn blocking_policy() -> Result<Self> {
+        Self::build(false, true).await
+    }
+
+    async fn build(block_preparation: bool, block_policy: bool) -> Result<Self> {
+        let mut launch = LaunchFixture::build(block_policy).await?;
         let source = source_repo(launch._root.path())?;
         // A real, tiny repository exercises workspace creation/removal. Only the
         // uv seed is scripted; it never invokes Python or the user's daemon.
@@ -94,6 +107,40 @@ impl CommandsFixture {
 
     fn release(&self) -> Result<()> {
         fs::write(&self.release, "release")?;
+        Ok(())
+    }
+
+    /// Runs the dispatcher on a task so a test can observe it while it waits.
+    fn spawn_dispatch(&self, frame: Value) -> AbortTask<Value> {
+        AbortTask(tokio::spawn(dispatch(
+            self.launch.agents.clone(),
+            Arc::new(self.launch.context.clone()),
+            frame,
+        )))
+    }
+
+    async fn policy_entered(&self) {
+        let (entered, _) = self
+            .launch
+            .policy
+            .as_ref()
+            .expect("blocking policy fixture");
+        tokio::time::timeout(WAIT, async {
+            while !entered.is_file() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("policy compile must reach its barrier");
+    }
+
+    fn release_policy(&self) -> Result<()> {
+        let (_, release) = self
+            .launch
+            .policy
+            .as_ref()
+            .context("blocking policy fixture")?;
+        fs::write(release, "release")?;
         Ok(())
     }
 
@@ -178,6 +225,60 @@ fn written_text(request: &Value) -> String {
     let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data)
         .expect("write data is base64");
     String::from_utf8(bytes).expect("write data is utf-8")
+}
+
+/// Serves the node channel over an in-memory socket of `capacity` bytes; returns the peer end.
+async fn serve_duplex(
+    fixture: &CommandsFixture,
+    capacity: usize,
+) -> WebSocketStream<tokio::io::DuplexStream> {
+    let (peer, server) = tokio::io::duplex(capacity);
+    let timing = ChannelTiming {
+        idle_timeout: WAIT,
+        ping_interval: Duration::from_secs(3600),
+        ..ChannelTiming::default()
+    };
+    let socket = WebSocketStream::from_raw_socket(server, Role::Server, None).await;
+    tokio::spawn(serve_channel(
+        socket,
+        Arc::clone(&fixture.launch.agents),
+        Arc::new(fixture.launch.context.clone()),
+        timing,
+    ));
+    WebSocketStream::from_raw_socket(peer, Role::Client, None).await
+}
+
+async fn next_reply<S>(socket: &mut WebSocketStream<S>) -> Result<Value>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    use futures_util::StreamExt;
+    let frame = tokio::time::timeout(WAIT, socket.next())
+        .await?
+        .context("channel closed")??;
+    Ok(serde_json::from_str(frame.to_text()?)?)
+}
+
+/// The write and kill methods the host received, in arrival order.
+fn host_methods(fixture: &CommandsFixture) -> Vec<String> {
+    fixture
+        .launch
+        .host
+        .requests()
+        .iter()
+        .filter(|r| r["method"] == "write" || r["method"] == "kill")
+        .map(|r| r["method"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
+fn workspace_path(fixture: &CommandsFixture, run_id: &str) -> Result<PathBuf> {
+    let state = persisted_state(&fixture.launch.agents.home)?;
+    Ok(state.runs[run_id]
+        .workspace
+        .as_ref()
+        .context("prepared workspace")?
+        .path
+        .clone())
 }
 
 #[tokio::test]
@@ -730,6 +831,184 @@ async fn same_run_commands_serialize() -> Result<()> {
         .map(|r| written_text(&r))
         .collect();
     assert_eq!(writes, vec!["first", "other", "second"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn same_run_cancel_waits_for_write() -> Result<()> {
+    let fixture = CommandsFixture::new(false).await?;
+    fixture.known("run-a", "a").await?;
+    fixture.launch.host.pause_next_write();
+    let mut first = fixture.spawn_dispatch(write("first", "a", "first"));
+    tokio::time::timeout(WAIT, fixture.launch.host.wait_for_write()).await?;
+    let mut kill = fixture.spawn_dispatch(fixture.cancel("kill", "run-a", "KILL"));
+    tokio::select! {
+        outcome = &mut kill.0 => panic!("cancel returned before the same-run write: {outcome:?}"),
+        () = tokio::time::sleep(Duration::from_millis(500)) => {}
+    }
+    assert!(
+        !fixture
+            .launch
+            .host
+            .requests()
+            .iter()
+            .any(|r| r["method"] == "kill"),
+        "kill must wait for the held write"
+    );
+    fixture.launch.host.release_write();
+    ok(
+        &tokio::time::timeout(WAIT, &mut first.0).await??,
+        "first",
+        json!({}),
+    );
+    ok(
+        &tokio::time::timeout(WAIT, &mut kill.0).await??,
+        "kill",
+        json!({"stopped": true}),
+    );
+    assert_eq!(host_methods(&fixture), ["write", "kill"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn channel_orders_same_run_commands() -> Result<()> {
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let fixture = CommandsFixture::new(false).await?;
+    fixture.known("run-a", "a").await?;
+    fixture.launch.host.pause_next_write();
+    let mut socket = serve_duplex(&fixture, 64 * 1024).await;
+    socket
+        .send(Message::Text(
+            write("first", "a", "first").to_string().into(),
+        ))
+        .await?;
+    tokio::time::timeout(WAIT, fixture.launch.host.wait_for_write()).await?;
+    socket
+        .send(Message::Text(
+            fixture.cancel("kill", "run-a", "KILL").to_string().into(),
+        ))
+        .await?;
+    // Neither a reply nor a kill may leave while the earlier write is held.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), next_reply(&mut socket))
+            .await
+            .is_err(),
+        "no reply may pass the held write"
+    );
+    assert!(
+        !host_methods(&fixture).iter().any(|method| method == "kill"),
+        "kill must not pass the held write"
+    );
+    fixture.launch.host.release_write();
+    ok(&next_reply(&mut socket).await?, "first", json!({}));
+    ok(
+        &next_reply(&mut socket).await?,
+        "kill",
+        json!({"stopped": true}),
+    );
+    assert_eq!(host_methods(&fixture), ["write", "kill"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn preparation_waits_for_acceptance_send() -> Result<()> {
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let fixture = CommandsFixture::new(true).await?;
+    let id = fixture.launch.payload.run_id.clone();
+    // A 16-byte channel holds the acceptance reply until this peer reads it.
+    let mut socket = serve_duplex(&fixture, 16).await;
+    socket
+        .send(Message::Text(fixture.spawn("spawn").to_string().into()))
+        .await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(
+        !fixture.ready.exists(),
+        "preparation must not start before the acceptance is sent"
+    );
+    ok(
+        &next_reply(&mut socket).await?,
+        "spawn",
+        json!({"accepted": true}),
+    );
+    fixture.seed_entered().await;
+    fixture.release()?;
+    fixture
+        .wait_state(|state| {
+            state
+                .runs
+                .get(&id)
+                .is_some_and(|r| r.phase == RunPhase::Launched)
+        })
+        .await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocked_policy_cancel_never_launches() -> Result<()> {
+    let fixture = CommandsFixture::blocking_policy().await?;
+    let id = fixture.launch.payload.run_id.clone();
+    ok(
+        &fixture.call(fixture.spawn("spawn")).await,
+        "spawn",
+        json!({"accepted": true}),
+    );
+    fixture.policy_entered().await;
+    let workspace = workspace_path(&fixture, &id)?;
+    let mut cancel = fixture.spawn_dispatch(fixture.cancel("cancel", &id, "TERM"));
+    fixture
+        .wait_state(|state| state.cancelled.contains_key(&id))
+        .await;
+    fixture.release_policy()?;
+    ok(
+        &tokio::time::timeout(WAIT, &mut cancel.0).await??,
+        "cancel",
+        json!({"stopped": true}),
+    );
+    fixture.exit(ExitReason::Cancelled, false).await?;
+    assert!(!workspace.exists());
+    assert!(
+        !fixture
+            .launch
+            .host
+            .requests()
+            .iter()
+            .any(|r| r["method"] == "spawn"),
+        "a run cancelled during policy compile must never reach the host"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn policy_stage_is_bounded_by_the_deadline() -> Result<()> {
+    let fixture = CommandsFixture::blocking_policy().await?;
+    let id = fixture.launch.payload.run_id.clone();
+    ok(
+        &fixture.call(fixture.spawn("spawn")).await,
+        "spawn",
+        json!({"accepted": true}),
+    );
+    fixture.policy_entered().await;
+    let workspace = workspace_path(&fixture, &id)?;
+    // The policy compile is still held when the 300 s preparation deadline passes.
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(301)).await;
+    tokio::time::resume();
+    fixture.release_policy()?;
+    fixture.exit(ExitReason::PrepareTimeout, false).await?;
+    assert!(!workspace.exists());
+    assert!(
+        !fixture
+            .launch
+            .host
+            .requests()
+            .iter()
+            .any(|r| r["method"] == "spawn"),
+        "a timed-out run must never reach the host"
+    );
     Ok(())
 }
 
