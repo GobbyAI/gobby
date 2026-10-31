@@ -427,6 +427,7 @@ pub(crate) mod serial_db {
             ctx.code_vectors.clone(),
         )
         .expect("vector lifecycle")
+        .with_project_root(ctx.project_root.clone())
     }
 
     fn pinned_vector_service(

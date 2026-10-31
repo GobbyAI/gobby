@@ -138,7 +138,21 @@ fn embedding_inputs(requests: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn exercise_source_sync(disk_body: Option<&str>, reindex: bool) {
+/// Observations from one `exercise_source_sync` run. Each test asserts on them.
+struct SourceSyncRun {
+    inputs: Vec<String>,
+    upserted: bool,
+    first: anyhow::Result<ProjectionFileSyncOutcome>,
+    first_flags: (bool, bool),
+    second: Option<SecondSync>,
+}
+
+struct SecondSync {
+    outcome: anyhow::Result<ProjectionFileSyncOutcome>,
+    flags: (bool, bool),
+}
+
+fn exercise_source_sync(disk_body: Option<&str>, reindex: bool) -> SourceSyncRun {
     let database_url =
         crate::test_env::postgres_test_database_url("source integrity projection tests");
     let mut conn = db::connect_readwrite(&database_url).expect("test database");
@@ -168,41 +182,21 @@ fn exercise_source_sync(disk_body: Option<&str>, reindex: bool) {
         std::fs::write(root.path().join(FILE), source(REVISED_BODY)).expect("body-only edit");
         let revised_hash = index_source(&mut state.conn, &ctx, REVISED_BODY);
         assert!(!vector_flags(&mut state.conn, &ctx.project_id, &revised_hash).0);
-        Some((state.sync_file(FILE), revised_hash))
+        let outcome = state.sync_file(FILE);
+        let flags = vector_flags(&mut state.conn, &ctx.project_id, &revised_hash);
+        Some(SecondSync { outcome, flags })
     } else {
         None
     };
     stop.send(()).expect("stop test service");
     let requests = server.join().expect("test service requests");
-    let inputs = embedding_inputs(&requests);
-    if disk_body != Some(BODY) {
-        let upserted = requests.iter().any(|request| request.starts_with("PUT "));
-        assert_eq!(
-            (inputs.len(), upserted, first_flags.0, first.is_err()),
-            (0, false, false, true),
-            "invalid source must be rejected without embedding, upsert or synced flag; inputs={inputs:?}, outcome={first:?}"
-        );
-    } else {
-        assert_eq!(
-            first.expect("valid source sync"),
-            ProjectionFileSyncOutcome::Synced { symbols: 1 }
-        );
-        assert!(first_flags.0, "valid source should sync");
-        assert!(inputs[0].contains(BODY));
-        assert!(!inputs[0].contains("before_source_café"));
-        assert!(!inputs[0].contains("after_source_secret"));
-        if let Some((outcome, revised_hash)) = second {
-            assert_eq!(
-                outcome.expect("body-only reindex sync"),
-                ProjectionFileSyncOutcome::Synced { symbols: 1 }
-            );
-            assert!(vector_flags(&mut state.conn, &ctx.project_id, &revised_hash).0);
-            assert_eq!(inputs.len(), 2, "body-only reindex must embed again");
-            assert!(inputs[1].contains(REVISED_BODY));
-            assert!(!inputs[1].contains(BODY));
-        } else {
-            assert_eq!(inputs.len(), 1);
-        }
+    let upserted = requests.iter().any(|request| request.starts_with("PUT "));
+    SourceSyncRun {
+        inputs: embedding_inputs(&requests),
+        upserted,
+        first,
+        first_flags,
+        second,
     }
 }
 
@@ -213,7 +207,19 @@ fn exercise_source_sync(disk_body: Option<&str>, reindex: bool) {
     ignore = "requires a PostgreSQL test database URL"
 )]
 fn stale_source_is_not_embedded_or_marked_synced() {
-    exercise_source_sync(Some(REVISED_BODY), false);
+    let run = exercise_source_sync(Some(REVISED_BODY), false);
+    assert_eq!(
+        (
+            run.inputs.len(),
+            run.upserted,
+            run.first_flags.0,
+            run.first.is_err()
+        ),
+        (0, false, false, true),
+        "invalid source must be rejected without embedding, upsert or synced flag; inputs={:?}, outcome={:?}",
+        run.inputs,
+        run.first,
+    );
 }
 
 #[test]
@@ -223,7 +229,19 @@ fn stale_source_is_not_embedded_or_marked_synced() {
     ignore = "requires a PostgreSQL test database URL"
 )]
 fn missing_source_is_not_embedded_or_marked_synced() {
-    exercise_source_sync(None, false);
+    let run = exercise_source_sync(None, false);
+    assert_eq!(
+        (
+            run.inputs.len(),
+            run.upserted,
+            run.first_flags.0,
+            run.first.is_err()
+        ),
+        (0, false, false, true),
+        "invalid source must be rejected without embedding, upsert or synced flag; inputs={:?}, outcome={:?}",
+        run.inputs,
+        run.first,
+    );
 }
 
 #[test]
@@ -233,7 +251,16 @@ fn missing_source_is_not_embedded_or_marked_synced() {
     ignore = "requires a PostgreSQL test database URL"
 )]
 fn valid_source_embeds_exact_stored_range() {
-    exercise_source_sync(Some(BODY), false);
+    let run = exercise_source_sync(Some(BODY), false);
+    assert_eq!(
+        run.first.as_ref().expect("valid source sync"),
+        &ProjectionFileSyncOutcome::Synced { symbols: 1 }
+    );
+    assert!(run.first_flags.0, "valid source should sync");
+    assert_eq!(run.inputs.len(), 1);
+    assert!(run.inputs[0].contains(BODY));
+    assert!(!run.inputs[0].contains("before_source_café"));
+    assert!(!run.inputs[0].contains("after_source_secret"));
 }
 
 #[test]
@@ -243,5 +270,22 @@ fn valid_source_embeds_exact_stored_range() {
     ignore = "requires a PostgreSQL test database URL"
 )]
 fn body_only_reindex_reembeds_source() {
-    exercise_source_sync(Some(BODY), true);
+    let run = exercise_source_sync(Some(BODY), true);
+    assert_eq!(
+        run.first.as_ref().expect("valid source sync"),
+        &ProjectionFileSyncOutcome::Synced { symbols: 1 }
+    );
+    assert!(run.first_flags.0, "valid source should sync");
+    let second = run.second.expect("body-only reindex run");
+    assert_eq!(
+        second.outcome.expect("body-only reindex sync"),
+        ProjectionFileSyncOutcome::Synced { symbols: 1 }
+    );
+    assert!(second.flags.0, "body-only reindex should sync");
+    assert_eq!(run.inputs.len(), 2, "body-only reindex must embed again");
+    assert!(run.inputs[0].contains(BODY));
+    assert!(!run.inputs[0].contains("before_source_café"));
+    assert!(!run.inputs[0].contains("after_source_secret"));
+    assert!(run.inputs[1].contains(REVISED_BODY));
+    assert!(!run.inputs[1].contains(BODY));
 }
