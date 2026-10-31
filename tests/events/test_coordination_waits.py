@@ -245,6 +245,27 @@ def test_transient_status_and_idempotent_set(harness: CoordinationHarness) -> No
     assert completed["matched_status"] == "paused"
 
 
+@pytest.mark.parametrize("routine_status", ["idle", "waiting"])
+def test_paused_only_subscription_ignores_routine_turn_ends(
+    harness: CoordinationHarness, routine_status: str
+) -> None:
+    row = harness.wait(statuses=["paused"])
+    harness.status(routine_status)
+    assert harness.row(row["id"])["outcome"] == "waiting"
+    harness.status("paused")
+    completed = harness.row(row["id"])
+    assert completed["outcome"] == "status_matched"
+    assert completed["matched_status"] == "paused"
+
+
+def test_explicit_routine_turn_end_statuses_release_the_wait(harness: CoordinationHarness) -> None:
+    row = harness.wait(statuses=["idle", "waiting", "paused"])
+    harness.status("idle")
+    completed = harness.row(row["id"])
+    assert completed["outcome"] == "status_matched"
+    assert completed["matched_status"] == "idle"
+
+
 @pytest.mark.parametrize("status", ["completed", "cancelled", "closed", "expired", "deleted"])
 def test_owner_ending_and_requested_terminal_status(
     harness: CoordinationHarness,

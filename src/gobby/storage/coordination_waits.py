@@ -54,12 +54,7 @@ class CoordinationWaitManager:
         if statuses is not None:
             if not statuses or any(status not in ALLOWED_SESSION_STATUSES for status in statuses):
                 raise ValueError("statuses must be a nonempty set of canonical session statuses")
-            expanded = set(statuses)
-            if "paused" in expanded:
-                # "paused" once meant any turn end. A turn end is now "waiting" (armed wait)
-                # or "idle" (routine), so "paused" subscribers must still see both.
-                expanded.update(("waiting", "idle"))
-            statuses = sorted(expanded)
+            statuses = sorted(set(statuses))
         if isinstance(timeout, bool) or not math.isfinite(timeout) or not 0 < timeout <= 3600:
             raise ValueError("timeout must be greater than zero and at most 3600 seconds")
         if waiter_session_id == owner_session_id:

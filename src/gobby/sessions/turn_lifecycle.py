@@ -415,7 +415,10 @@ class TurnLifecycleReducer:
         def mutate(current: TurnLifecycleState, status: str) -> tuple[TurnLifecycleState, str]:
             if disposition == "unknown":
                 return current, status
-            if disposition == "user_interrupted":
+            if status == "paused":
+                # An operator pause is held until resume; no turn end overrides it.
+                next_status = "paused"
+            elif disposition == "user_interrupted":
                 next_status = "interrupted"
             elif awaiting_reply:
                 next_status = "waiting"
