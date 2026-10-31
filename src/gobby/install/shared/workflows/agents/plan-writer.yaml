@@ -19,6 +19,7 @@ blocked_mcp_tools:
   - "gobby-worktrees:create_worktree"
   - "gobby-agents:spawn_agent"
   - "gobby-agents:kill_agent"
+task_step_writes: [implementation]
 
 prompts:
   persona: |

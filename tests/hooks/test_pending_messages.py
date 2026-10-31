@@ -146,3 +146,21 @@ def test_render_pending_messages_shows_attachment_local_paths() -> None:
 
     assert result.context is not None
     assert local_path in result.context
+
+
+def test_every_injected_line_carries_its_message_id_regardless_of_length() -> None:
+    short = Message(id="short-id", content="PROOF_REQUEST: rerun the gate")
+    boundary = Message(id="boundary-id", content="b" * PENDING_MESSAGE_INLINE_LIMIT)
+    long = Message(id="long-id", content="l" * (PENDING_MESSAGE_INLINE_LIMIT + 1))
+
+    result = render_pending_messages([short, boundary, long], resolve_sender=_sender_label)
+
+    assert result.context is not None
+    lines = [line for line in result.context.splitlines() if line.startswith("- ")]
+    assert len(lines) == 3
+    assert lines[0] == (
+        "- Session sender-12345678: PROOF_REQUEST: rerun the gate "
+        "(message_id=short-id, type=message, from_session=sender-12345678)"
+    )
+    assert "(message_id=boundary-id, type=message" in lines[1]
+    assert 'get_inter_session_message(message_id="long-id")' in lines[2]
