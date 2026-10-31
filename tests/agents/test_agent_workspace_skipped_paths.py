@@ -126,3 +126,37 @@ async def test_newline_skipped_path_stays_out_and_unrelated_notes_back_up(
     assert await agent_workspaces.commit_workspace(project_id, "timer")
     tracked = await git(project_id, "ls-files", "-z")
     assert skipped in tracked.stdout.split("\0")
+
+
+async def test_skipped_path_parent_replaced_by_file_does_not_block_backups(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    project_id = "44444444-4444-4444-8444-444444444444"
+    anchor = agent_workspaces.ensure_workspace(project_id)
+    parent_path = "developer/session-1/evidence"
+    folder = anchor / parent_path
+    folder.mkdir(parents=True)
+    skipped = f"{parent_path}/link.md"
+    (anchor / skipped).symlink_to(anchor / "README.md")
+    assert await agent_workspaces.commit_workspace(project_id, "timer")
+    exclude = agent_workspaces.workspace_git_dir(project_id) / "info/exclude"
+    assert skipped in exclude.read_text()
+
+    (anchor / skipped).unlink()
+    folder.rmdir()
+    folder.write_text("directory replaced with eligible evidence\n")
+    try:
+        sha = await agent_workspaces.commit_workspace(project_id, "timer")
+    except OSError as exc:
+        pytest.fail(f"A stale skipped descendant must not block backups: {exc}")
+
+    assert sha is not None
+    committed = await agent_workspaces._git(project_id, "show", f"HEAD:{parent_path}")
+    assert committed.stdout == "directory replaced with eligible evidence\n"
+    assert skipped not in exclude.read_text()
+    assert await agent_workspaces.commit_workspace(project_id, "timer") is None
+    status = await agent_workspaces._git(
+        project_id, "status", "--porcelain", "-z", "--untracked-files=all", "--no-renames"
+    )
+    assert status.stdout == ""
