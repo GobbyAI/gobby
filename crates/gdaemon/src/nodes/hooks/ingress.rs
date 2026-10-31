@@ -1,7 +1,7 @@
 //! Node-local hook ingress and durable forwarding.
 
 use super::{ledger::Ledger, receipts};
-use crate::state::NodeServices;
+use crate::{nodes::agents::checkouts, state::NodeServices};
 use axum::{
     body::{Body, Bytes, to_bytes},
     http::{HeaderMap, Request, Response, StatusCode},
@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use std::{
     convert::Infallible,
     error::Error as _,
+    path::PathBuf,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -86,10 +87,14 @@ pub async fn execute(
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
     let request = Request::from_parts(parts, Body::from(body));
-    if payload["response_capability"] != "hook-response.v1"
-        || id.is_none()
-        || !has_node_key(&node, request.headers()).await
+    let authenticated = has_node_key(&node, request.headers()).await;
+    if let Some(cwd) = payload["input_data"]["cwd"]
+        .as_str()
+        .filter(|_| authenticated)
     {
+        checkouts::observe_hook_cwd(node.clone(), PathBuf::from(cwd));
+    }
+    if payload["response_capability"] != "hook-response.v1" || id.is_none() || !authenticated {
         return node.relay.forward(request).await;
     }
     let (sender, receiver) = oneshot::channel();

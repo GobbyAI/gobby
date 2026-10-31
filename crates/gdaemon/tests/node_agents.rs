@@ -1,7 +1,19 @@
 #![cfg(unix)]
 
+#[path = "node_support/checkout_tests.rs"]
+mod checkout_tests;
 #[path = "node_support/fake_gterm.rs"]
 mod fake_gterm;
+#[path = "node_support/fd_constructor_tests.rs"]
+mod fd_constructor_tests;
+#[path = "node_support/fd_hygiene.rs"]
+mod fd_hygiene;
+#[path = "node_support/fixer_regressions.rs"]
+mod fixer_regressions;
+#[path = "node_support/launch_tests.rs"]
+mod launch_tests;
+#[path = "node_support/report_tests.rs"]
+mod report_tests;
 #[path = "node_support/workspace_fixtures.rs"]
 mod workspace_fixtures;
 
@@ -288,7 +300,7 @@ async fn fake_host_scripts_inventory_and_spawn_lifecycle() -> Result<()> {
             ..request
         })
         .await?;
-    client.spawn_abort(&aborted, 0).await?;
+    client.kill(&aborted.host_terminal_id, 0).await?;
     assert_eq!(client.list().await?.terminals, inventory);
     let requests = host.requests();
     for method in ["hello", "list", "spawn", "spawn_commit", "write", "kill"] {
@@ -514,7 +526,10 @@ async fn restart_fails_unlaunched_runs() -> Result<()> {
         for recovered in &state.exits[1..] {
             assert_eq!(recovered.exit.reason, ExitReason::PrepareFailed);
             assert!(!recovered.exit.launched);
-            assert!(recovered.exit.workspace.is_none());
+            assert!(
+                recovered.exit.workspace.is_none(),
+                "a launched:false exit names no workspace"
+            );
             assert!(recovered.exit.exit_code.is_none());
         }
         state.clone()

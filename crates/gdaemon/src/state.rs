@@ -28,6 +28,9 @@ pub struct NodeServices {
     pub relay: HubRelay,
     pub hook_ledger: crate::nodes::hooks::ledger::Ledger,
     pub agents: Arc<crate::nodes::agents::NodeAgents>,
+    /// Command launches read this. Its installation is verified once at startup, so a node
+    /// without SRT still starts and refuses managed spawns.
+    pub launch: Arc<crate::nodes::agents::launch::LaunchContext>,
 }
 
 impl NodeServices {
@@ -65,15 +68,54 @@ impl NodeServices {
         let Some(claim) = claim_from_environment(&home.join("gobby.pid"))? else {
             return Ok(None);
         };
-        Ok(Some((
-            Arc::new(Self {
-                bootstrap_path: path.to_owned(),
-                relay,
-                hook_ledger: crate::nodes::hooks::ledger::Ledger::new(home.join("hooks/inbox")),
-                agents: Arc::new(crate::nodes::agents::NodeAgents::open(home)?),
-            }),
-            claim,
-        )))
+        let installation =
+            match crate::nodes::agents::sandbox::runtime::verify_srt_installation(home) {
+                Ok(installation) => installation,
+                Err(error) => {
+                    eprintln!(
+                        "gdaemon node: SRT install unverified, managed spawns refused: {error}"
+                    );
+                    // An empty root is the unverified sentinel; spawn refuses it.
+                    crate::nodes::agents::sandbox::runtime::SrtInstallation {
+                        root: PathBuf::new(),
+                        node: PathBuf::new(),
+                        runner: PathBuf::new(),
+                    }
+                }
+            };
+        let launch = crate::nodes::agents::launch::LaunchContext {
+            installation,
+            front_door_url: gobby_core::daemon_url::daemon_url_at(path)?,
+            home: std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .context("HOME is not set")?,
+            path_env: std::env::var("PATH").unwrap_or_default(),
+            ambient: std::env::vars_os()
+                .filter_map(|(key, value)| {
+                    Some((key.into_string().ok()?, value.into_string().ok()?))
+                })
+                .collect(),
+            cache_env: Default::default(),
+            daemon_port: bootstrap.daemon_port,
+            websocket_port: bootstrap.websocket_port,
+            platform: match std::env::consts::OS {
+                "macos" => "darwin".to_owned(),
+                other => other.to_owned(),
+            },
+        };
+        let node = Arc::new(Self {
+            bootstrap_path: path.to_owned(),
+            relay,
+            hook_ledger: crate::nodes::hooks::ledger::Ledger::new(home.join("hooks/inbox")),
+            agents: Arc::new(crate::nodes::agents::NodeAgents::open(home)?),
+            launch: Arc::new(launch),
+        });
+        // Agent background work reaches the relay through this weak back-reference.
+        node.agents
+            .services
+            .set(Arc::downgrade(&node))
+            .map_err(|_| anyhow::anyhow!("node agents already have services"))?;
+        Ok(Some((node, claim)))
     }
 }
 

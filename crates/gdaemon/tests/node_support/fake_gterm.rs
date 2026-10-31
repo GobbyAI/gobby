@@ -13,7 +13,7 @@ use std::{
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixListener,
-    sync::broadcast,
+    sync::{Notify, broadcast},
     task::{JoinHandle, JoinSet},
 };
 
@@ -21,11 +21,41 @@ pub const TOKEN: &str = "node-host-fixture-token";
 pub const EPOCH: &str = "node-host-fixture-epoch";
 
 pub struct FakeGterm {
+    script: Arc<Mutex<HostScript>>,
+    writes: Arc<WriteGate>,
     process: Child,
     task: JoinHandle<()>,
     requests: Arc<Mutex<Vec<Value>>>,
     drop_next_list: Arc<AtomicBool>,
+    reject_next_commit: Arc<AtomicBool>,
     events: broadcast::Sender<Value>,
+    exit_before_commit: Arc<AtomicBool>,
+    disconnect_after_exit: Arc<AtomicBool>,
+    resume_commit: Arc<Notify>,
+    pause_list: Arc<AtomicBool>,
+    list_snapshot: Arc<Notify>,
+    subscription: Arc<Notify>,
+    resume_list: Arc<Notify>,
+    pause_snapshot: Arc<AtomicBool>,
+    resume_snapshot: Arc<Notify>,
+    spawn_reply: Arc<ReplyGate>,
+    commit_reply: Arc<ReplyGate>,
+}
+
+#[derive(Default)]
+struct WriteGate {
+    pause: AtomicBool,
+    disconnect: AtomicBool,
+    received: Notify,
+    release: Notify,
+}
+
+/// Holds one reply after the host has acted on its request.
+#[derive(Default)]
+struct ReplyGate {
+    pause: AtomicBool,
+    held: Notify,
+    release: Notify,
 }
 
 impl FakeGterm {
@@ -61,17 +91,46 @@ impl FakeGterm {
             }
         };
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let writes = Arc::new(WriteGate::default());
         let drop_next_list = Arc::new(AtomicBool::new(false));
+        let reject_next_commit = Arc::new(AtomicBool::new(false));
         let (events, _) = broadcast::channel(16);
+        let exit_before_commit = Arc::new(AtomicBool::new(false));
+        let disconnect_after_exit = Arc::new(AtomicBool::new(false));
+        let resume_commit = Arc::new(Notify::new());
+        let pause_list = Arc::new(AtomicBool::new(false));
+        let list_snapshot = Arc::new(Notify::new());
+        let subscription = Arc::new(Notify::new());
+        let resume_list = Arc::new(Notify::new());
+        let pause_snapshot = Arc::new(AtomicBool::new(false));
+        let resume_snapshot = Arc::new(Notify::new());
+        let spawn_reply = Arc::new(ReplyGate::default());
+        let commit_reply = Arc::new(ReplyGate::default());
         let script = Arc::new(Mutex::new(HostScript {
             inventory,
             pending: BTreeMap::new(),
             seq: 0,
+            pane: String::new(),
+            refuse_write: false,
         }));
         let task = tokio::spawn({
+            let script = script.clone();
+            let writes = writes.clone();
             let requests = requests.clone();
             let drop_next_list = drop_next_list.clone();
+            let reject_next_commit = reject_next_commit.clone();
             let events = events.clone();
+            let exit_before_commit = exit_before_commit.clone();
+            let disconnect_after_exit = disconnect_after_exit.clone();
+            let resume_commit = resume_commit.clone();
+            let pause_list = pause_list.clone();
+            let list_snapshot = list_snapshot.clone();
+            let subscription = subscription.clone();
+            let resume_list = resume_list.clone();
+            let pause_snapshot = pause_snapshot.clone();
+            let resume_snapshot = resume_snapshot.clone();
+            let spawn_reply = spawn_reply.clone();
+            let commit_reply = commit_reply.clone();
             let pid = process.id();
             async move {
                 let mut connections = JoinSet::new();
@@ -80,8 +139,22 @@ impl FakeGterm {
                         accepted = listener.accept() => {
                             let Ok((stream, _)) = accepted else { return };
                             let requests = requests.clone();
+                            let writes = writes.clone();
                             let drop_next_list = drop_next_list.clone();
+                            let reject_next_commit = reject_next_commit.clone();
+                            let emit_events = events.clone();
                             let mut events = events.subscribe();
+                            let exit_before_commit = exit_before_commit.clone();
+                            let disconnect_after_exit = disconnect_after_exit.clone();
+                            let resume_commit = resume_commit.clone();
+                            let pause_list = pause_list.clone();
+                            let list_snapshot = list_snapshot.clone();
+                            let subscription = subscription.clone();
+                            let resume_list = resume_list.clone();
+                            let pause_snapshot = pause_snapshot.clone();
+                            let resume_snapshot = resume_snapshot.clone();
+                            let spawn_reply = spawn_reply.clone();
+                            let commit_reply = commit_reply.clone();
                             let script = script.clone();
                             connections.spawn(async move {
                                 let (reader, mut writer) = stream.into_split();
@@ -100,11 +173,23 @@ impl FakeGterm {
                                         event = events.recv(), if subscribed => {
                                             let Ok(event) = event else { return };
                                             if send(&mut writer, &event).await.is_err() { return }
+                                            if event["event"] == "terminal_exited"
+                                                && disconnect_after_exit.swap(false, Ordering::SeqCst)
+                                            { return }
                                             continue;
                                         }
                                     };
                                     requests.lock().expect("fixture requests").push(request.clone());
                                     let method = request["method"].as_str().unwrap_or("");
+                                    if method == "write" {
+                                        if writes.pause.swap(false, Ordering::SeqCst) {
+                                            writes.received.notify_one();
+                                            writes.release.notified().await;
+                                        }
+                                        if writes.disconnect.swap(false, Ordering::SeqCst) {
+                                            return;
+                                        }
+                                    }
                                     if method == "list" && drop_next_list.swap(false, Ordering::SeqCst) { return }
                                     let mut reply = if method == "hello" {
                                         authenticated = request["control_token"] == TOKEN;
@@ -114,10 +199,60 @@ impl FakeGterm {
                                         } else { json!({"ok":false,"error":"token_mismatch"}) }
                                     } else if !authenticated {
                                         json!({"ok":false,"error":"authentication_failure"})
+                                    } else if method == "spawn_commit" && reject_next_commit.swap(false, Ordering::SeqCst) {
+                                        json!({"ok":false,"error":"spawn_key_mismatch"})
                                     } else {
-                                        subscribed |= method == "subscribe_events";
+                                        if method == "subscribe_events" {
+                                            subscribed = true;
+                                            subscription.notify_one();
+                                        }
                                         script.lock().expect("fixture inventory").reply(&request, pid)
                                     };
+                                    if method == "list" && pause_list.swap(false, Ordering::SeqCst) {
+                                        list_snapshot.notify_one();
+                                        resume_list.notified().await;
+                                    }
+                                    if method == "snapshot" && pause_snapshot.swap(false, Ordering::SeqCst) {
+                                        resume_snapshot.notified().await;
+                                    }
+                                    // Keep the event cursor contiguous with this fixture's
+                                    // spawn/commit sequence increments before emitting the exit.
+                                    if matches!(method, "spawn" | "spawn_commit")
+                                        && exit_before_commit.load(Ordering::SeqCst)
+                                    {
+                                        let _ = emit_events.send(json!({"event":"input_activity",
+                                            "epoch":EPOCH,"seq":reply["seq"],
+                                            "terminal_id":request["terminal_id"],
+                                            "host_terminal_id":format!("host-{}", request["terminal_id"].as_str().unwrap()),
+                                            "attachment_id":"fixture-input","kind":"input",
+                                            "bytes":1,"submit":false}));
+                                    }
+                                    if method == "spawn_commit" && reply["ok"] == true
+                                        && exit_before_commit.swap(false, Ordering::SeqCst)
+                                    {
+                                        let event = {
+                                            let mut script = script.lock().expect("fixture inventory");
+                                            script.inventory.retain(|item| item["terminal_id"] != request["terminal_id"]);
+                                            script.seq += 1;
+                                            json!({"event":"terminal_exited","epoch":EPOCH,"seq":script.seq,
+                                                "terminal_id":request["terminal_id"],
+                                                "host_terminal_id":format!("host-{}", request["terminal_id"].as_str().unwrap()),
+                                                "exit_code":7})
+                                        };
+                                        let _ = emit_events.send(event);
+                                        resume_commit.notified().await;
+                                    }
+                                    let gate = match method {
+                                        "spawn" => Some(&spawn_reply),
+                                        "spawn_commit" => Some(&commit_reply),
+                                        _ => None,
+                                    };
+                                    if let Some(gate) = gate
+                                        && gate.pause.swap(false, Ordering::SeqCst)
+                                    {
+                                        gate.held.notify_one();
+                                        gate.release.notified().await;
+                                    }
                                     reply["id"] = request["id"].clone();
                                     if send(&mut writer, &reply).await.is_err() { return }
                                 }
@@ -129,20 +264,117 @@ impl FakeGterm {
             }
         });
         Ok(Self {
+            script,
+            writes,
             process,
             task,
             requests,
             drop_next_list,
+            reject_next_commit,
             events,
+            exit_before_commit,
+            disconnect_after_exit,
+            resume_commit,
+            pause_list,
+            list_snapshot,
+            subscription,
+            resume_list,
+            pause_snapshot,
+            resume_snapshot,
+            spawn_reply,
+            commit_reply,
         })
+    }
+
+    /// Holds the next `spawn` or `spawn_commit` reply after the host has acted on it.
+    pub fn hold_next_reply(&self, method: &str) {
+        self.reply_gate(method).pause.store(true, Ordering::SeqCst);
+    }
+
+    pub async fn wait_for_held_reply(&self, method: &str) {
+        self.reply_gate(method).held.notified().await;
+    }
+
+    pub fn release_held_reply(&self, method: &str) {
+        self.reply_gate(method).release.notify_one();
+    }
+
+    fn reply_gate(&self, method: &str) -> &ReplyGate {
+        match method {
+            "spawn" => &self.spawn_reply,
+            "spawn_commit" => &self.commit_reply,
+            other => panic!("the fixture host holds no `{other}` reply"),
+        }
+    }
+
+    pub fn pause_next_list_reply(&self) {
+        self.pause_list.store(true, Ordering::SeqCst);
+    }
+
+    pub async fn wait_for_list_snapshot(&self) {
+        self.list_snapshot.notified().await;
+    }
+
+    /// Resolves once the host has accepted a `subscribe_events` request.
+    pub async fn wait_for_subscription(&self) {
+        self.subscription.notified().await;
+    }
+
+    pub fn release_list_reply(&self) {
+        self.resume_list.notify_one();
+    }
+
+    /// Holds the next `snapshot` reply after the host has built it, so a test sets the pane first.
+    pub fn pause_next_snapshot_reply(&self) {
+        self.pause_snapshot.store(true, Ordering::SeqCst);
+    }
+
+    pub fn release_snapshot_reply(&self) {
+        self.resume_snapshot.notify_one();
     }
 
     pub fn requests(&self) -> Vec<Value> {
         self.requests.lock().expect("fixture requests").clone()
     }
 
+    pub fn set_pane(&self, text: &str) {
+        self.script.lock().expect("fixture script").pane = text.into();
+    }
+
+    pub fn clear_inventory(&self) {
+        self.script
+            .lock()
+            .expect("fixture script")
+            .inventory
+            .clear();
+    }
+
+    pub fn refuse_writes(&self) {
+        self.script.lock().expect("fixture script").refuse_write = true;
+    }
+
+    pub fn pause_next_write(&self) {
+        self.writes.pause.store(true, Ordering::SeqCst);
+    }
+
+    pub async fn wait_for_write(&self) {
+        self.writes.received.notified().await;
+    }
+
+    pub fn release_write(&self) {
+        self.writes.release.notify_one();
+    }
+
+    pub fn disconnect_next_write(&self) {
+        self.writes.disconnect.store(true, Ordering::SeqCst);
+    }
+
     pub fn drop_next_list(&self) {
         self.drop_next_list.store(true, Ordering::SeqCst);
+    }
+
+    pub fn reject_next_commit(&self) {
+        self.reject_next_commit.store(true, Ordering::SeqCst);
     }
 
     pub fn terminal_exited(&self) -> Result<()> {
@@ -151,12 +383,24 @@ impl FakeGterm {
         Ok(())
     }
 
+    /// Hold the commit reply until the test observes the exit watcher's reconnect.
+    pub fn exit_before_next_commit_reply(&self) {
+        self.exit_before_commit.store(true, Ordering::SeqCst);
+        self.disconnect_after_exit.store(true, Ordering::SeqCst);
+    }
+
+    pub fn release_commit_reply(&self) {
+        self.resume_commit.notify_one();
+    }
+
     pub fn alive(&mut self) -> Result<bool> {
         Ok(self.process.try_wait()?.is_none())
     }
 }
 
 struct HostScript {
+    pane: String,
+    refuse_write: bool,
     inventory: Vec<Value>,
     pending: BTreeMap<String, Value>,
     seq: u64,
@@ -193,12 +437,6 @@ impl HostScript {
                     _ => json!({"ok":false,"error":"spawn_key_mismatch"}),
                 }
             }
-            "spawn_abort" => {
-                if let Some(id) = request["terminal_id"].as_str() {
-                    self.pending.remove(id);
-                }
-                self.ack()
-            }
             "kill" => {
                 self.inventory
                     .retain(|item| item["host_terminal_id"] != request["host_terminal_id"]);
@@ -206,6 +444,9 @@ impl HostScript {
                     .retain(|_, item| item["host_terminal_id"] != request["host_terminal_id"]);
                 self.ack()
             }
+            "snapshot" => json!({"ok":true,"mode":"text","text":self.pane,
+                "truncated":false,"dropped_bytes":0,"total_bytes":self.pane.len()}),
+            "write" if self.refuse_write => json!({"ok":false,"error":"write_refused"}),
             "write" => self.ack(),
             _ => json!({"ok":false,"error":"unknown_method"}),
         }

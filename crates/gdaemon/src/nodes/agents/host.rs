@@ -1,9 +1,10 @@
 //! Node-local terminal host integration.
 use super::NodeAgents;
 use gobby_terminals::{
-    control::{ControlClient, ControlError},
+    control::{ControlClient, ControlError, WriteRequest},
     host::{EpochAuthority, EpochBinding, HostFailure, HostOptions, READY_DEADLINE},
 };
+use serde_json::Value;
 use std::{
     future::Future,
     path::{Path, PathBuf},
@@ -112,7 +113,9 @@ impl HostControl {
                     *slot = Some(client);
                     return Ok(value);
                 }
-                Err(ControlError::Io(_) | ControlError::Closed) if attempt == 0 => {
+                Err(ControlError::Io(_) | ControlError::Closed | ControlError::NotSent(_))
+                    if attempt == 0 =>
+                {
                     client = self.connect().await?;
                 }
                 Err(error) => return Err(error),
@@ -121,7 +124,8 @@ impl HostControl {
         unreachable!("the second attempt always returns")
     }
 
-    async fn connect(&self) -> Result<ControlClient<UnixStream>, ControlError> {
+    /// A fresh authenticated connection, for a consumer that holds it across blocking reads.
+    pub async fn connect(&self) -> Result<ControlClient<UnixStream>, ControlError> {
         timeout(READY_DEADLINE, async {
             let token = tokio::fs::read_to_string(self.home.join("gterm-control.token")).await?;
             if token.trim().is_empty() {
@@ -134,6 +138,19 @@ impl HostControl {
         })
         .await
         .unwrap_or_else(|_| Err(deadline_error()))
+    }
+
+    /// One write on its own connection, never replayed: a lost reply can follow a write the host
+    /// already ran. A shared slot would also hold other runs' writes behind a paused host write.
+    pub async fn write_once(&self, request: &WriteRequest) -> Result<Value, ControlError> {
+        // Connection setup runs before any write bytes, so its failure is not sent.
+        let mut client = self
+            .connect()
+            .await
+            .map_err(|error| ControlError::NotSent(std::io::Error::other(error)))?;
+        timeout(READY_DEADLINE, client.write(request))
+            .await
+            .unwrap_or_else(|_| Err(deadline_error()))
     }
 }
 

@@ -390,9 +390,15 @@ async fn connect_client(
     Ok(socket)
 }
 
+/// The frame a text message carries when it is a node command; `None` for any other message.
+fn command_frame(text: &str) -> Option<serde_json::Value> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .filter(|frame| frame["type"] == "command")
+}
+
 #[cfg(unix)]
 pub async fn run_client(node: Arc<crate::state::NodeServices>, timing: ChannelTiming) {
-    use tokio_tungstenite::tungstenite::Message as PeerMessage;
     let mut backoff = timing.backoff_start;
     let mut failure_reported = false;
     loop {
@@ -400,33 +406,16 @@ pub async fn run_client(node: Arc<crate::state::NodeServices>, timing: ChannelTi
             .await
             .map_err(anyhow::Error::from)
             .and_then(std::convert::identity);
-        if let Ok(mut socket) = attempt {
+        if let Ok(socket) = attempt {
             failure_reported = false;
             backoff = timing.backoff_start;
-            let mut idle = Instant::now() + timing.idle_timeout;
-            let mut pings = tokio::time::interval_at(
-                Instant::now() + timing.ping_interval,
-                timing.ping_interval,
-            );
-            pings.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = tokio::time::sleep_until(idle) => break,
-                    frame = socket.next() => {
-                        match frame {
-                            Some(Ok(PeerMessage::Close(_))) | Some(Err(_)) | None => break,
-                            Some(Ok(_)) => idle = Instant::now() + timing.idle_timeout,
-                        }
-                    },
-                    _ = pings.tick() => {
-                        if !matches!(tokio::time::timeout_at(idle,
-                            socket.send(PeerMessage::Ping(Vec::new().into()))).await, Ok(Ok(()))) {
-                            break;
-                        }
-                    },
-                }
-            }
+            serve_channel(
+                socket,
+                Arc::clone(&node.agents),
+                Arc::clone(&node.launch),
+                timing,
+            )
+            .await;
         } else if let Err(error) = attempt
             && !failure_reported
         {
@@ -435,5 +424,63 @@ pub async fn run_client(node: Arc<crate::state::NodeServices>, timing: ChannelTi
         }
         tokio::time::sleep(backoff).await;
         backoff = backoff.saturating_mul(2).min(timing.backoff_max);
+    }
+}
+
+/// Serves one connected channel until it closes: command frames, the replies they earn, and pings.
+#[cfg(unix)]
+pub async fn serve_channel<S>(
+    mut socket: tokio_tungstenite::WebSocketStream<S>,
+    agents: Arc<crate::nodes::agents::NodeAgents>,
+    launch: Arc<crate::nodes::agents::launch::LaunchContext>,
+    timing: ChannelTiming,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+{
+    use tokio_tungstenite::tungstenite::Message as PeerMessage;
+    let mut idle = Instant::now() + timing.idle_timeout;
+    let mut pings =
+        tokio::time::interval_at(Instant::now() + timing.ping_interval, timing.ping_interval);
+    pings.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    use crate::nodes::agents::commands;
+    // Command replies leave through this loop, the socket's only writer. A sent reply releases its
+    // run's next turn and any preparation it started; an unsent one cancels a run it accepted.
+    let (replies_tx, mut replies) = tokio::sync::mpsc::unbounded_channel::<commands::Dispatched>();
+    loop {
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(idle) => break,
+            frame = socket.next() => {
+                match frame {
+                    Some(Ok(PeerMessage::Close(_))) | Some(Err(_)) | None => break,
+                    Some(Ok(PeerMessage::Text(text))) => {
+                        idle = Instant::now() + timing.idle_timeout;
+                        if let Some(command) = command_frame(text.as_str()) {
+                            // Admission commits in arrival order; the run is answered off the loop.
+                            let admitted = commands::admit(&agents, &launch, command).await;
+                            let reply_tx = replies_tx.clone();
+                            tokio::spawn(async move {
+                                let _ = reply_tx.send(admitted.run().await);
+                            });
+                        }
+                    }
+                    Some(Ok(_)) => idle = Instant::now() + timing.idle_timeout,
+                }
+            },
+            Some(dispatched) = replies.recv() => {
+                let sent = tokio::time::timeout_at(idle,
+                    socket.send(PeerMessage::Text(dispatched.reply.to_string().into()))).await;
+                if !matches!(sent, Ok(Ok(()))) {
+                    break;
+                }
+                dispatched.delivered();
+            },
+            _ = pings.tick() => {
+                if !matches!(tokio::time::timeout_at(idle,
+                    socket.send(PeerMessage::Ping(Vec::new().into()))).await, Ok(Ok(()))) {
+                    break;
+                }
+            },
+        }
     }
 }

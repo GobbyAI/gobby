@@ -31,6 +31,8 @@ pub enum ControlError {
     },
     #[error("host epoch changed: expected {expected}, got {actual}")]
     EpochChanged { expected: String, actual: String },
+    #[error("snapshot_mode_mismatch: requested {expected}, host replied {actual}")]
+    SnapshotModeMismatch { expected: String, actual: String },
     #[error("malformed host line: {0}")]
     Malformed(String),
     /// A request over the ceiling, refused before any byte is written.
@@ -45,8 +47,27 @@ pub enum ControlError {
     Closed,
     #[error(transparent)]
     Event(#[from] EventError),
+    /// The request never completed on the wire, so the host never ran it and a retry cannot repeat it.
+    #[error("control request was not sent: {0}")]
+    NotSent(std::io::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+/// The signal a `kill` asks the host to send. `Term` gets the grace period before SIGKILL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KillSignal {
+    Term,
+    Kill,
+}
+
+impl KillSignal {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Term => "TERM",
+            Self::Kill => "KILL",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -83,6 +104,15 @@ pub struct Inventory {
     pub epoch: String,
     pub seq: u64,
     pub terminals: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Snapshot {
+    pub mode: String,
+    pub text: String,
+    pub truncated: bool,
+    pub dropped_bytes: u64,
+    pub total_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -399,6 +429,44 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
         }
     }
 
+    /// Reads a bounded snapshot of one host terminal. A reply in another mode is refused.
+    pub async fn snapshot(
+        &mut self,
+        host_terminal_id: &str,
+        mode: &str,
+        max_bytes: usize,
+        max_lines: usize,
+    ) -> Result<Snapshot, ControlError> {
+        let reply = self
+            .request(
+                "snapshot",
+                json!({
+                    "host_terminal_id": host_terminal_id,
+                    "mode": mode,
+                    "max_bytes": max_bytes,
+                    "max_lines": max_lines,
+                }),
+            )
+            .await?;
+        let actual = reply_str(&reply, "mode")?;
+        if actual != mode {
+            return Err(ControlError::SnapshotModeMismatch {
+                expected: mode.into(),
+                actual,
+            });
+        }
+        Ok(Snapshot {
+            mode: actual,
+            text: reply_str(&reply, "text")?,
+            truncated: reply
+                .get("truncated")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| ControlError::Malformed("truncated".into()))?,
+            dropped_bytes: reply_u64(&reply, "dropped_bytes")?,
+            total_bytes: reply_u64(&reply, "total_bytes")?,
+        })
+    }
+
     pub async fn hello(&mut self, control_token: &str) -> Result<Hello, ControlError> {
         let reply = self
             .roundtrip(
@@ -518,12 +586,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
         host_terminal_id: &str,
         grace_ms: u64,
     ) -> Result<(), ControlError> {
-        self.mutating(
-            "kill",
-            json!({"host_terminal_id": host_terminal_id, "grace_ms": grace_ms}),
-        )
-        .await
-        .map(drop)
+        self.kill_signal(host_terminal_id, grace_ms, KillSignal::Term)
+            .await
+    }
+
+    pub async fn kill_signal(
+        &mut self,
+        host_terminal_id: &str,
+        grace_ms: u64,
+        signal: KillSignal,
+    ) -> Result<(), ControlError> {
+        let fields = json!({
+            "host_terminal_id": host_terminal_id,
+            "grace_ms": grace_ms,
+            "signal": signal.as_str(),
+        });
+        self.mutating("kill", fields).await.map(drop)
     }
 
     pub async fn resize(
@@ -696,7 +774,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
         if line.len() > MAX_CONTROL_LINE {
             return Err(ControlError::RequestTooLarge);
         }
-        self.stream.write_all(&line).await?;
+        self.stream
+            .write_all(&line)
+            .await
+            .map_err(ControlError::NotSent)?;
         self.stream.flush().await?;
         loop {
             let reply = self.read_line().await?;

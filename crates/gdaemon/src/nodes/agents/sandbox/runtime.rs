@@ -196,7 +196,7 @@ pub fn prepare_launch_with(
     {
         let allowed_root = paths::resolve_nonstrict(Path::new(&paths::subtree_prefix(allowed)));
         let is_glob = allowed.contains(['*', '?', '[', '{']);
-        if managed_root.starts_with(&allowed_root)
+        if super::grant_glob::reaches(allowed, &managed_root)
             || (allowed_root.starts_with(&managed_root)
                 && (is_glob || !allowed_root.starts_with(&own_root)))
         {

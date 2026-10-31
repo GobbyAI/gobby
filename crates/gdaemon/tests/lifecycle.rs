@@ -15,7 +15,7 @@ use gobby_terminals::write_api::WriteRefused;
 use serde_json::json;
 use std::fs;
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -26,6 +26,21 @@ use tokio::{
 };
 use tokio_postgres::{Client, NoTls};
 use uuid::Uuid;
+
+/// The repo's synced `.venv`. A cold managed env makes `uv run` sync the whole project inside
+/// the test deadline.
+fn repo_venv() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.venv")
+}
+
+fn backend_config(home: &Path, argv: &str) -> Result<BackendConfig> {
+    let mut config = BackendConfig::from_command_json(home, Some(argv))?;
+    config.environment.insert(
+        "UV_PROJECT_ENVIRONMENT".into(),
+        repo_venv().into_os_string(),
+    );
+    Ok(config)
+}
 
 struct TestDb {
     admin: Client,
@@ -52,7 +67,7 @@ impl TestDb {
         let claim = claim_pid_file(&home.join("gobby.pid"), Role::Daemon)?
             .ok_or_else(|| anyhow::anyhow!("fixture PID claim unavailable"))?;
         let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
-        let mut config = BackendConfig::from_command_json(home, Some(&argv))?;
+        let mut config = backend_config(home, &argv)?;
         config
             .environment
             .insert("HOME".into(), home.as_os_str().to_owned());
@@ -195,7 +210,7 @@ async fn refused_daemon_releases_lease_to_standby() -> Result<()> {
         let claim=claim_pid_file(&healthy_home.path().join("gobby.pid"),Role::Daemon)?.context("standby PID claim")?;
         let script="import os,pathlib; (pathlib.Path(os.environ['GOBBY_HOME'])/'ready').write_text('healthy'); open(int(os.environ['GOBBY_SUPERVISOR_FD']),'rb').read()";
         let argv=serde_json::to_string(&["uv","run","python","-c",script])?;
-        let mut config=BackendConfig::from_command_json(healthy_home.path(),Some(&argv))?;
+        let mut config=backend_config(healthy_home.path(), &argv)?;
         config.drain_timeout=Duration::from_millis(100);
         let mut healthy=BackendSupervisor::new(standby,claim,config);
         let (stop,stop_rx)=watch::channel(false);
@@ -289,7 +304,7 @@ os.read(fd,1)
         let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
             .context("fixture PID claim")?;
         let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
-        let mut config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+        let mut config = backend_config(home.path(), &argv)?;
         config.drain_timeout = Duration::from_millis(100);
         let slot = config.write_token.clone();
         assert_eq!(slot.authorize(None), Err(WriteRefused::NoBackend));
@@ -368,7 +383,7 @@ control.recv(1)
 raise SystemExit(1)
 "#;
     let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
-    let mut config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+    let mut config = backend_config(home.path(), &argv)?;
     config.drain_timeout = Duration::from_millis(100);
     let claim =
         claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("test PID claim")?;
@@ -426,7 +441,7 @@ raise SystemExit({code})
 "#
         );
         let argv = serde_json::to_string(&["uv", "run", "python", "-c", &script])?;
-        let mut config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+        let mut config = backend_config(home.path(), &argv)?;
         config.drain_timeout = Duration::from_millis(100);
         let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
             .context("test PID claim")?;
@@ -500,7 +515,7 @@ async fn standby_does_not_spawn_a_backend() -> Result<()> {
             "-c",
             "raise RuntimeError('standby spawned')",
         ])?;
-        let config = BackendConfig::from_command_json(home.path(), Some(&command))?;
+        let config = backend_config(home.path(), &command)?;
         let mut supervisor = BackendSupervisor::new(lease, claim, config);
         let (_tx, rx) = watch::channel(false);
         assert_eq!(supervisor.run(rx).await?, SupervisorExit::Standby);
@@ -584,7 +599,7 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
         let claim =
             claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("claim")?;
         let argv = serde_json::to_string(&["uv", "run", "python", "-c", IGNORE_TERM])?;
-        let mut config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+        let mut config = backend_config(home.path(), &argv)?;
         config
             .environment
             .insert("HOME".into(), home.path().as_os_str().to_owned());
@@ -650,6 +665,7 @@ async fn supervisor_death_gives_backend_eof() -> Result<()> {
             .env("DATABASE_URL", &db.url)
             .env("GOBBY_TEST_PROTECT", "1")
             .env("GOBBY_BACKEND_COMMAND", command)
+            .env("UV_PROJECT_ENVIRONMENT", repo_venv())
             .env("GOBBY_LIFECYCLE_PEER_HOME", home.path())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -877,7 +893,7 @@ async fn front_door_secret_reaches_backend_only_on_its_pipe() -> Result<()> {
     let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
         .context("fixture PID claim")?;
     let argv = serde_json::to_string(&["uv", "run", "python", "-c", SECRET_BACKEND])?;
-    let mut config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+    let mut config = backend_config(home.path(), &argv)?;
     config.front_door_secret = Some(FRONT_DOOR_SECRET.into());
     config.drain_timeout = Duration::from_millis(100);
     let mut supervisor = BackendSupervisor::with_lease(None, claim, config);

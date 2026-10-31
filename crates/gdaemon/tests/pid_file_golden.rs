@@ -5,13 +5,19 @@ use serde_json::{Value, json};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tempfile::TempDir;
 
 const DAEMON: &[u8] = include_bytes!("../../../tests/fixtures/pid_file_records/daemon_claim.json");
 const RESERVATION: &[u8] =
     include_bytes!("../../../tests/fixtures/pid_file_records/service_reservation.json");
+
+/// The repo's synced `.venv`. A cold managed env makes `uv run` sync the whole project inside
+/// the test.
+fn repo_venv() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.venv")
+}
 
 fn record(path: &Path) -> anyhow::Result<Value> {
     parse_record(&fs::read(path.with_extension("pid.lock"))?)
@@ -63,6 +69,7 @@ assert record is not None, raw
 assert encode_record(record) == raw
 "#;
     let output = Command::new("uv")
+        .env("UV_PROJECT_ENVIRONMENT", repo_venv())
         .args(["run", "python", "-c", script])
         .arg(String::from_utf8(encoded)?)
         .env("GOBBY_TEST_PROTECT", "1")
@@ -369,6 +376,7 @@ for mode in ('claim', 'reserve', 'convert', 'held'):
 print(json.dumps(cases))
 "#;
     let output = Command::new("uv")
+        .env("UV_PROJECT_ENVIRONMENT", repo_venv())
         .args(["run", "python", "-c", prepare])
         .arg(dir.path())
         .current_dir(&root)
@@ -425,6 +433,7 @@ for case in json.loads(sys.argv[1]):
     assert encode_record(record) == raw, case
 "#;
     let output = Command::new("uv")
+        .env("UV_PROJECT_ENVIRONMENT", repo_venv())
         .args(["run", "python", "-c", verify])
         .arg(serde_json::to_string(&cases)?)
         .current_dir(root)
@@ -485,6 +494,7 @@ assert encode_record(record) == raw
 assert probe_daemon_lock(p).state is ProbeState.LIVE_RESERVATION
 "#;
     let output = Command::new("uv")
+        .env("UV_PROJECT_ENVIRONMENT", repo_venv())
         .args(["run", "python", "-c", script])
         .arg(&path)
         .env(

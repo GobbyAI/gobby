@@ -1,26 +1,60 @@
 //! Durable node-local agent ownership.
+pub mod agy_gate;
+pub mod checkouts;
+#[cfg(unix)]
+pub mod codex_prompt;
+pub mod commands;
+pub mod executable;
 #[cfg(unix)]
 pub mod host;
+mod lanes;
+pub mod launch;
+pub mod provider_command;
+pub mod provider_env;
 pub mod repair;
+pub mod reports;
 pub mod sandbox;
 pub mod state;
+pub mod trust;
 pub mod workspace;
 
 use anyhow::{Context, Result};
 use state::AgentState;
 use std::{
+    collections::HashMap,
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
+    sync::Arc,
 };
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, watch};
 
 pub struct NodeAgents {
     pub home: PathBuf,
     pub state: Mutex<AgentState>,
     pub changed: Notify,
+    /// Serializes node reports, so a slower report never posts after a newer one.
+    pub report_lock: Mutex<()>,
+    /// Checkout roots the hub has accepted from this node. A root is added only after a 2xx.
+    pub registered: Mutex<std::collections::BTreeSet<PathBuf>>,
+    /// Checkout roots with a registration in flight. The flag records a hook that arrived during it.
+    pub checkout_attempts: Mutex<std::collections::BTreeMap<PathBuf, bool>>,
+    /// The node's services, set once they exist. Background delivery reaches the hub relay here.
+    pub services: std::sync::OnceLock<std::sync::Weak<crate::state::NodeServices>>,
+    /// Arrival-ordered turns for the commands that name each run.
+    lanes: Arc<lanes::Lanes>,
+    /// Runs whose preparation task is still live.
+    preparing: std::sync::Mutex<HashMap<String, Preparing>>,
     #[cfg(unix)]
     pub host: host::HostControl,
+}
+
+/// A live preparation task. The task holds `busy` until it ends, so a cancel that waits on
+/// `busy` reads the run's final phase.
+struct Preparing {
+    /// Set by a cancel; the task selects on it, which stops an awaited seed child.
+    cancel: watch::Sender<bool>,
+    busy: Arc<Mutex<()>>,
 }
 
 impl NodeAgents {
@@ -48,6 +82,12 @@ impl NodeAgents {
             home: home.to_owned(),
             state: Mutex::new(state),
             changed,
+            report_lock: Mutex::new(()),
+            registered: Mutex::default(),
+            checkout_attempts: Mutex::default(),
+            services: Default::default(),
+            lanes: Arc::default(),
+            preparing: Default::default(),
             #[cfg(unix)]
             host: host::HostControl::new(home),
         })

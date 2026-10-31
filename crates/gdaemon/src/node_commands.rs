@@ -358,9 +358,9 @@ pub struct SpawnPayload {
 #[serde(deny_unknown_fields)]
 pub struct CancelPayload {
     pub run_id: String,
-    pub terminal_id: String,
+    pub terminal_id: Option<String>,
     pub signal: CancelSignal,
-    pub close_terminal: bool,
+    pub close_terminal: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

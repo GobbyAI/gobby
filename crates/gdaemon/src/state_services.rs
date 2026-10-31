@@ -139,8 +139,47 @@ mod tests {
             backend::{BackendConfig, BackendSupervisor},
             pid_file::{Role, claim_pid_file},
         };
+        let fixture_home = tempfile::tempdir()?;
+        let runtime = fixture_home.path().join("uv-environment");
+        let cache = fixture_home.path().join("uv-cache");
+        let environment = std::collections::BTreeMap::from([
+            (
+                "UV_PROJECT_ENVIRONMENT".into(),
+                runtime.clone().into_os_string(),
+            ),
+            ("UV_CACHE_DIR".into(), cache.clone().into_os_string()),
+        ]);
+        assert!(runtime.starts_with(fixture_home.path()));
+        assert!(cache.starts_with(fixture_home.path()));
+        assert!(
+            !runtime.exists(),
+            "fixture must start with a cold uv environment"
+        );
+        assert!(!cache.exists(), "fixture must start with a cold uv cache");
+        // The shutdown helper uses only stdlib; prepare its interpreter without
+        // installing the application's dependencies or downloading Python.
+        let prewarm = tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio::process::Command::new("uv")
+                .args(["venv", "--quiet", "--no-python-downloads"])
+                .arg(&runtime)
+                .envs(&environment)
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .context("temporary uv fixture prewarm exceeded 30s")??;
+        anyhow::ensure!(
+            prewarm.status.success(),
+            "temporary uv fixture prewarm failed: {}",
+            String::from_utf8_lossy(&prewarm.stderr)
+        );
+        assert!(
+            runtime.join("bin/python").is_file(),
+            "cold uv startup must finish inside the temp home before the supervisor deadline"
+        );
         for drain in [false, true] {
-            let home = tempfile::tempdir()?;
+            let home = tempfile::tempdir_in(fixture_home.path())?;
             // The host's installed process-identity contract requires basename gterm.
             let binary = home.path().join("gterm");
             std::fs::copy("/bin/sleep", &binary)?;
@@ -185,8 +224,30 @@ mod tests {
                 "import os,pathlib,json,time; p=pathlib.Path(os.environ['GOBBY_HOME']); (p/'shutdown_intent_active.json').write_text(json.dumps({{'intent':'stop','timestamp':time.time(),'details':{{'drain_terminals':{}}}}})); raise SystemExit(0)",
                 if drain { "True" } else { "False" }
             );
-            let argv = serde_json::to_string(&["uv", "run", "python", "-c", &script])?;
-            let config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+            let config = BackendConfig {
+                home: home.path().to_owned(),
+                command: ["uv", "run", "--no-sync", "python", "-c", &script]
+                    .into_iter()
+                    .map(std::ffi::OsString::from)
+                    .collect(),
+                environment: environment.clone(),
+                front_door_secret: None,
+                drain_timeout: Duration::from_secs(17),
+                heartbeat_interval: Duration::from_secs(1),
+                write_token: gobby_terminals::write_api::TokenSlot::default(),
+            };
+            for key in ["UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR"] {
+                let path = std::path::PathBuf::from(
+                    config
+                        .environment
+                        .get(std::ffi::OsStr::new(key))
+                        .context(key)?,
+                );
+                assert!(
+                    path.starts_with(fixture_home.path()),
+                    "fixture {key} escaped temp home"
+                );
+            }
             let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
                 .context("test claim")?;
             let mut supervisor = BackendSupervisor::with_lease(None, claim, config);

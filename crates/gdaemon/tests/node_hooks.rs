@@ -1718,7 +1718,7 @@ async fn ledger_reads_python_markers() {
         .unwrap()
         .parent()
         .unwrap();
-    let output = Command::new("uv").args(["run", "--no-sync", "python", "-c", "from pathlib import Path; import sys; from gobby.hooks.envelope_dedupe import mark_envelope_processed; mark_envelope_processed('python', processed_dir=Path(sys.argv[1]), response={'decision':'deny','reason':'oracle','nested':{'count':2}}, hook_type='pre_tool_use')"]).arg(ledger.inbox.join("processed")).current_dir(root).output().unwrap();
+    let output = Command::new("uv").args(["run", "--no-sync", "python", "-c", "from pathlib import Path; import sys; from gobby.hooks.envelope_dedupe import mark_envelope_processed; mark_envelope_processed('python', processed_dir=Path(sys.argv[1]), response={'decision':'deny','reason':'oracle','nested':{'count':2}}, hook_type='pre_tool_use')"]).arg(ledger.inbox.join("processed")).current_dir(root).env("UV_PROJECT_ENVIRONMENT", root.join(".venv")).output().unwrap();
     assert!(
         output.status.success(),
         "{}",

@@ -9,7 +9,11 @@ use axum::{
 };
 use common::{TIMEOUT, channel::*};
 use futures_util::{SinkExt, StreamExt};
-use gobby_daemon::{front_door::FrontDoor, node_commands::CONTRACT_VERSION, nodes::NativeRoutes};
+use gobby_daemon::{
+    front_door::FrontDoor,
+    node_commands::CONTRACT_VERSION,
+    nodes::{NativeRoutes, channel::ChannelTiming},
+};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tokio::{
@@ -60,7 +64,11 @@ fn call(door: &FrontDoor, body: Value, machine: Uuid) -> JoinHandle<Response<Bod
 }
 
 async fn live(db: &ChannelDb) -> Result<(ChannelHub, ChannelPeer)> {
-    let hub = channel_hub(db, channel_timing()).await?;
+    live_with(db, channel_timing()).await
+}
+
+async fn live_with(db: &ChannelDb, timing: ChannelTiming) -> Result<(ChannelHub, ChannelPeer)> {
+    let hub = channel_hub(db, timing).await?;
     let mut peer = open_channel(hub.addr).await?;
     hello(&mut peer, "internal-route-test").await?;
     ack(&mut peer, db.machine).await?;
@@ -223,7 +231,13 @@ async fn pending_commands_end_with_channel() -> Result<()> {
 #[tokio::test]
 async fn admission_is_loopback_and_secret() -> Result<()> {
     channel_database(async |db| {
-        let (hub, mut peer) = live(db).await?;
+        // The hub closes a peer that sends nothing for `idle_timeout`. Under load this sequence
+        // outlives the 2s idle window, and that close would read as a frame from a refusal.
+        let timing = ChannelTiming {
+            idle_timeout: Duration::from_secs(60),
+            ..channel_timing()
+        };
+        let (hub, mut peer) = live_with(db, timing).await?;
         for (remote, secret) in [
             ("192.0.2.1:1", Some("test-secret")),
             ("127.0.0.1:1", None),

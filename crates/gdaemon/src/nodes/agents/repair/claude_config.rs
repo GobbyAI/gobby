@@ -3,6 +3,7 @@
 //! a heartbeat, then an atomic replace. Lock ownership is checked before the
 //! temp file is written and again before it is renamed into place, so a lost
 //! lock aborts the change and leaves the original file intact.
+//! Codex trust updates reuse the locking and replacement via the text adapter.
 
 use super::write_temp;
 use anyhow::{Context, Result, bail, ensure};
@@ -50,25 +51,47 @@ fn update_with(
     timing: Timing,
     change: impl FnOnce(&mut Map<String, Value>) -> Result<()>,
 ) -> Result<()> {
+    update_text_with(path, timing, |text| {
+        let mut data = match text {
+            Some(text) => serde_json::from_str::<Value>(&text)
+                .with_context(|| format!("parse {}", path.display()))?,
+            None => Value::Object(Map::new()),
+        };
+        let object = data
+            .as_object_mut()
+            .with_context(|| format!("parse {}: expected a JSON object", path.display()))?;
+        change(object)?;
+        let mut text = serde_json::to_string_pretty(&data)?;
+        text.push('\n');
+        Ok(text)
+    })
+}
+
+/// Applies a non-JSON provider update with the same lock and atomic-write contract.
+pub fn update_text(path: &Path, change: impl FnOnce(&str) -> Result<String>) -> Result<()> {
+    update_text_with(path, PYTHON_TIMING, |text| {
+        change(text.as_deref().unwrap_or(""))
+    })
+}
+
+fn update_text_with(
+    path: &Path,
+    timing: Timing,
+    change: impl FnOnce(Option<String>) -> Result<String>,
+) -> Result<()> {
     ensure!(
         !path.is_symlink(),
         "{} must not be a symlink",
         path.display()
     );
     let lock = acquire(path, timing)?;
-    let mut data = match fs::read(path) {
-        Ok(bytes) => serde_json::from_slice::<Value>(&bytes)
-            .with_context(|| format!("parse {}", path.display()))?,
-        Err(error) if error.kind() == ErrorKind::NotFound => Value::Object(Map::new()),
+    let text = match fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
         Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
     };
     let mode = config_mode(path)?;
-    let object = data
-        .as_object_mut()
-        .with_context(|| format!("parse {}: expected a JSON object", path.display()))?;
-    change(object)?;
-    let mut text = serde_json::to_string_pretty(&data)?;
-    text.push('\n');
+    let text = change(text)?;
     lock.check()?;
     let temp = write_temp(path, text.as_bytes(), mode)?;
     let published = lock.check().and_then(|()| {
@@ -137,7 +160,8 @@ impl Lock {
         let held = lock_state(&self.held);
         if let Some(reason) = &held.lost {
             bail!(
-                "Claude config lock was compromised: {}: {reason}",
+                "{} lock was compromised: {}: {reason}",
+                config_label(&self.path),
                 self.path.display()
             );
         }
@@ -145,7 +169,8 @@ impl Lock {
             identity(&self.path).with_context(|| format!("stat {}", self.path.display()))?;
         ensure!(
             current == held.identity,
-            "Claude config lock ownership changed: {}",
+            "{} lock ownership changed: {}",
+            config_label(&self.path),
             self.path.display()
         );
         Ok(())
@@ -193,7 +218,8 @@ fn refresh(path: &Path, expected: Identity) -> Result<Identity> {
     let current = identity(path).with_context(|| format!("stat {}", path.display()))?;
     ensure!(
         current == expected,
-        "Claude config lock ownership changed: {}",
+        "{} lock ownership changed: {}",
+        config_label(path),
         path.display()
     );
     fs::File::open(path)?.set_modified(SystemTime::now())?;
@@ -209,6 +235,15 @@ fn identity(path: &Path) -> io::Result<Identity> {
     })
 }
 
+/// Names the config a lock guards, so a Codex lock error does not read as a Claude one.
+fn config_label(lock: &Path) -> &'static str {
+    if lock.ends_with(".codex/config.toml.lock") {
+        "Codex config"
+    } else {
+        "Claude config"
+    }
+}
+
 fn acquire(path: &Path, timing: Timing) -> Result<Lock> {
     let file_name = path
         .file_name()
@@ -219,7 +254,8 @@ fn acquire(path: &Path, timing: Timing) -> Result<Lock> {
     loop {
         ensure!(
             Instant::now() < deadline,
-            "timed out waiting for Claude config lock {}",
+            "timed out waiting for {} lock {}",
+            config_label(&lock),
             lock.display()
         );
         match DirBuilder::new().mode(0o700).create(&lock) {
@@ -243,7 +279,8 @@ fn clear_stale(lock: &Path, stale: Duration) -> Result<bool> {
     };
     ensure!(
         metadata.is_dir(),
-        "Claude config lock is not a directory: {}",
+        "{} lock is not a directory: {}",
+        config_label(lock),
         lock.display()
     );
     let aged = SystemTime::now()
@@ -255,8 +292,13 @@ fn clear_stale(lock: &Path, stale: Duration) -> Result<bool> {
     match fs::remove_dir(lock) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(true),
-        Err(error) => Err(error)
-            .with_context(|| format!("remove stale Claude config lock {}", lock.display())),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "remove stale {} lock {}",
+                config_label(lock),
+                lock.display()
+            )
+        }),
     }
 }
 
@@ -396,6 +438,37 @@ mod tests {
         assert!(
             result.is_err(),
             "an unremovable stale lock must fail the update"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn codex_lock_timeout_names_the_codex_config() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join(".codex/config.toml");
+        fs::create_dir_all(path.parent().context("Codex config parent")?)?;
+        fs::create_dir(path.with_file_name("config.toml.lock"))?;
+        let timing = Timing {
+            timeout: Duration::from_millis(20),
+            retry: Duration::from_millis(1),
+            ..PYTHON_TIMING
+        };
+        let error = super::update_text_with(&path, timing, |_| {
+            anyhow::bail!("occupied Codex lock must prevent config mutation")
+        })
+        .expect_err("Codex lock remains occupied");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("timed out"),
+            "unexpected lock failure: {message}"
+        );
+        assert!(
+            message.contains(path.to_str().context("Codex config path")?),
+            "lock diagnostic omits its Codex config: {message}"
+        );
+        assert!(
+            !message.contains("Claude"),
+            "Codex lock diagnostic names the wrong provider: {message}"
         );
         Ok(())
     }

@@ -4,6 +4,10 @@ mod claude_config;
 mod hygiene;
 mod seed;
 
+pub(super) use claude_config::{
+    update as update_claude_config, update_text as update_provider_config,
+};
+
 use super::workspace::git_output;
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value, json};

@@ -81,8 +81,12 @@ impl FakeHub {
         self.state.lock().unwrap().requests.clone()
     }
 
-    pub async fn shutdown(self) {
+    pub fn disconnect(&self) {
         self.server.abort();
+    }
+
+    pub async fn shutdown(self) {
+        self.disconnect();
         let _ = self.server.await;
     }
 }
