@@ -41,7 +41,10 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         if statusline::is_statusline_hook(cli, hook_type) {
             return ExitCode::SUCCESS;
         }
-        if is_codex_interrupt(cfg.source, hook_type) {
+        // A git guard refuses here: a disabled hook is not a verdict to allow on.
+        if is_codex_interrupt(cfg.source, hook_type)
+            || crate::git_verdict::is_git_source(cfg.source)
+        {
             return emit_exit(continue_action(cfg.source, hook_type));
         }
         emit_empty_json();
@@ -199,23 +202,29 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
             }
         };
 
-    // Enqueue first (atomic write to ~/.gobby/hooks/inbox/).
-    let inbox = match transport::inbox_dir() {
-        Ok(d) => d,
-        Err(e) => {
-            return match direct_post_after_enqueue_failure(e.to_string()) {
-                Ok(action) => emit_exit(action),
-                Err(exit_code) => exit_code,
-            };
-        }
-    };
-    let enqueued_path = match transport::enqueue_to(&env, &inbox) {
-        Ok(p) => p,
-        Err(e) => {
-            return match direct_post_after_enqueue_failure(e.to_string()) {
-                Ok(action) => emit_exit(action),
-                Err(exit_code) => exit_code,
-            };
+    // Enqueue first (atomic write to ~/.gobby/hooks/inbox/). A git verdict is a
+    // synchronous guard and never enters the inbox, so a failed POST cannot be
+    // replayed later as a stale allow.
+    let enqueued_path = if crate::git_verdict::is_git_source(cfg.source) {
+        PathBuf::new()
+    } else {
+        let inbox = match transport::inbox_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                return match direct_post_after_enqueue_failure(e.to_string()) {
+                    Ok(action) => emit_exit(action),
+                    Err(exit_code) => exit_code,
+                };
+            }
+        };
+        match transport::enqueue_to(&env, &inbox) {
+            Ok(p) => p,
+            Err(e) => {
+                return match direct_post_after_enqueue_failure(e.to_string()) {
+                    Ok(action) => emit_exit(action),
+                    Err(exit_code) => exit_code,
+                };
+            }
         }
     };
 
@@ -497,6 +506,10 @@ fn delivered_action(
 ) -> Result<(HookAction, Option<DeliveryReceiptAck>), ExitCode> {
     let body = report.response_body.as_deref().unwrap_or_default();
     let (stripped, receipt) = extract_delivery_receipt(body);
+    if crate::git_verdict::is_git_source(cfg.source) {
+        let verdict = crate::git_verdict::verdict_from_delivery(report.status_code, &stripped);
+        return Ok((verdict, receipt));
+    }
     match action_from_success_response(cfg.source, hook_type, &stripped) {
         Ok(action) => Ok((action, receipt)),
         Err(error) => {

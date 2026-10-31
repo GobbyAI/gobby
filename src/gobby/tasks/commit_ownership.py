@@ -1,5 +1,6 @@
 """Admission of commit paths against live task ownership."""
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -89,3 +90,20 @@ async def assert_auto_link_commit_available(
     await assert_task_commit_paths_available_async(
         task_manager, canonical, paths, str(checkout_root), [commit_sha]
     )
+
+
+async def linked_commit_paths(
+    commit_shas: Sequence[str], checkout_root: str | Path
+) -> tuple[str, ...]:
+    """Every path the given commits change, or ValueError when git cannot list them."""
+    paths: dict[str, None] = {}
+    for sha in commit_shas:
+        result = await daemon_git.run(
+            ["show", "--first-parent", "--format=", "--name-only", "-z", sha],
+            cwd=checkout_root,
+            timeout=30,
+        )
+        if not isinstance(result, GitOk):
+            raise ValueError(f"Cannot list the paths changed by commit {sha}.")
+        paths.update(dict.fromkeys(path for path in result.stdout.split("\0") if path))
+    return tuple(paths)

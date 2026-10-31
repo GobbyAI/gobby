@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
@@ -17,6 +19,9 @@ from gobby.storage.team_records import live_team_rows_sql
 from gobby.tasks.criteria_text import normalized_validation_criteria
 from gobby.tasks.state_semantics import NO_WORK_CLOSE_REASONS, validate_task_close_reason
 from gobby.utils.datetime import utc_now
+
+if TYPE_CHECKING:
+    from gobby.workflows.agent_models import AgentDefinitionBody
 
 _LEGACY_VALIDATION_CRITERIA = (
     "Legacy task: validation criteria were not recorded before they became required."
@@ -48,10 +53,13 @@ def _close_task_in_txn(
     closed_ancestors: list[str] | None = None,
     expected_updated_at: datetime | None = None,
     closing_note: str | None = None,
+    closer_definition: AgentDefinitionBody | None = None,
+    commit_paths: Sequence[str] = (),
 ) -> None:
     """Close a task inside the caller's already-open transaction.
 
     ``force`` skips only the open-children check; required step records always apply.
+    The closer's direct-commit grant judges them with the same inputs as the close preview.
     """
     reason = validate_task_close_reason("done" if reason is None else reason)
 
@@ -74,7 +82,12 @@ def _close_task_in_txn(
         # step_records imports this package, so it loads at call time.
         from gobby.tasks.step_records import task_step_requirements
 
-        missing = task_step_requirements(db, Task.from_row(row)).missing
+        missing = task_step_requirements(
+            db,
+            Task.from_row(row),
+            closer_definition=closer_definition,
+            commit_paths=commit_paths,
+        ).missing
         if missing:
             raise TaskStepRecordsMissingError(task_id, missing)
 

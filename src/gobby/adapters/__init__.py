@@ -26,6 +26,7 @@ from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
+from gobby.adapters.git import GitAdapter
 from gobby.adapters.grok import GrokAdapter
 
 __all__ = [
@@ -38,6 +39,7 @@ __all__ = [
     "CodexHooksAdapter",
     "DROID_PASCAL_HOOK_NAMES",
     "DroidAdapter",
+    "GitAdapter",
     "GrokAdapter",
     "get_provider_capabilities",
 ]

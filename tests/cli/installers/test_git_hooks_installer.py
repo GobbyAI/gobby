@@ -1420,31 +1420,53 @@ def test_gobby_sections_chain_to_foreign_hook_content(tmp_path: Path) -> None:
     git.ok(tmp_path, "init", "-q", "-b", "main", str(repo))
     git.ok(tmp_path, "init", "-q", "--bare", str(tmp_path / "remote.git"))
     hooks_dir = repo / ".git" / "hooks"
+    # The PATH symlink to git (macOS) leaves init without a hooks/ directory.
+    hooks_dir.mkdir(parents=True, exist_ok=True)
     chained = ("reference-transaction", "pre-push", "pre-merge-commit", "post-rewrite")
     for name in chained:
         (hooks_dir / name).write_text(FOREIGN_RECORDER)
         (hooks_dir / name).chmod(0o755)
     assert install_git_hooks(repo)["success"] is True
 
-    git.commit(repo, "README.md", "base\n")
+    # Protected-branch updates pass the operator override so only the foreign hooks decide.
+    git.commit(repo, "README.md", "base\n", GOBBY_LAND_COMMIT="1")
     old = git.ok(repo, "rev-parse", "main")
-    git.commit(repo, "docs/a.md", "a\n")
+    git.commit(repo, "docs/a.md", "a\n", GOBBY_LAND_COMMIT="1")
     new = git.ok(repo, "rev-parse", "main")
     git.ok(repo, "push", "-q", str(tmp_path / "remote.git"), "main:refs/heads/gone")
     git.ok(repo, "push", "-q", str(tmp_path / "remote.git"), ":refs/heads/gone")
     git.ok(repo, "checkout", "-q", "-b", "side")
-    git.commit(repo, "docs/side.md", "side\n")
+    git.commit(repo, "docs/side.md", "side\n", GOBBY_LAND_COMMIT="1")
     # Detach the main checkout so no branch is protected there, then work on
     # main from a linked worktree: the guard refuses a merge that moves a
     # protected checkout's HEAD, and Gobby lands code only through land_commit.
     git.ok(repo, "checkout", "-q", "--detach")
     work = tmp_path / "work"
     git.ok(repo, "worktree", "add", "-q", str(work), "main")
-    git.ok(work, "merge", "-q", "--no-ff", "-m", "merge side", "side", GOBBY_MERGE="1")
+    git.ok(
+        work,
+        "merge",
+        "-q",
+        "--no-ff",
+        "-m",
+        "merge side",
+        "side",
+        GOBBY_MERGE="1",
+        GOBBY_LAND_COMMIT="1",
+    )
     merged = git.ok(repo, "rev-parse", "main")
-    git.ok(work, "commit", "-q", "--amend", "-m", "merge side, amended")
+    git.ok(work, "commit", "-q", "--amend", "-m", "merge side, amended", GOBBY_LAND_COMMIT="1")
     amended = git.ok(repo, "rev-parse", "main")
-    refused = git.run(work, "commit", "-q", "--allow-empty", "-m", "x", FOREIGN_REFUSE="1")
+    refused = git.run(
+        work,
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "x",
+        FOREIGN_REFUSE="1",
+        GOBBY_LAND_COMMIT="1",
+    )
     log = git.log.read_text()
 
     assert f"== reference-transaction prepared\n{old} {new} refs/heads/main\n" in log
@@ -1485,6 +1507,7 @@ def test_posix_precommit_section_runs_under_foreign_sh_shebang(tmp_path: Path) -
         "}\n"
     )
     (tmp_path / "bin" / "pre-commit").chmod(0o755)
+    (repo / ".git" / "hooks").mkdir(parents=True, exist_ok=True)
     (repo / ".git" / "hooks" / "pre-commit").write_text(FOREIGN_RECORDER)
     assert install_git_hooks(repo)["success"] is True
 

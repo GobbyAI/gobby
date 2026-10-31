@@ -10,7 +10,6 @@ from gobby.tasks.landing_policy import (
     UNREADABLE_FREEZE_REASON,
     classify_paths,
     freeze_path,
-    is_direct_commit_path,
     read_freeze,
 )
 
@@ -86,24 +85,6 @@ def test_project_agents_and_variables_require_restart(kind: str, suffix: str) ->
 )
 def test_classify_paths_strongest_class_wins(paths: list[str], expected: str) -> None:
     assert classify_paths(paths) == expected
-
-
-@pytest.mark.parametrize(
-    ("path", "allowed"),
-    [
-        ("README.md", True),
-        (".gobby/plans/reviewer-landing.md", True),
-        ("docs/guides/sessions.md", True),
-        (".gobby/plans/coverage/d45545c5/23273/x.coverage.yaml", True),
-        (".gobby/plans/coverage/.regenerate.log", True),
-        ("docs/reference-audit/admin.json", False),
-        (".gobby/plans/x.svg", False),
-        (".gobby/plans/coverage-notes/x.yaml", False),
-        ("src/gobby/AGENTS.md", False),
-    ],
-)
-def test_direct_commit_allows_listed_markdown_and_coverage(path: str, allowed: bool) -> None:
-    assert is_direct_commit_path(path) is allowed
 
 
 @pytest.mark.parametrize(

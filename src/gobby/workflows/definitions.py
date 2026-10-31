@@ -454,6 +454,8 @@ class RuleDefinitionBody(BaseModel):
     group: str | None = None
     audience: str | None = None  # all, interactive, autonomous, or a concrete audience name
     agent_scope: list[str] | None = None  # Only active for these agent types
+    # Active for every definition; no rule_selectors include or exclude removes it.
+    mandatory: bool = False
 
     @model_validator(mode="after")
     def _validate_effects(self) -> RuleDefinitionBody:

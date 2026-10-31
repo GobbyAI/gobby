@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.tasks._close_context import (
     CloseAttributionLookupError,
     capture_attribution,
     children,
+    closer_commit_paths,
     step_requirements,
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -202,9 +203,20 @@ async def _evaluate_close(
         target = None
     integration_ref = f"refs/heads/{target[1]}" if target else None
     try:
-        steps = await step_requirements(ctx, task, commits, closer_definition=closer_definition)
+        commit_paths = await closer_commit_paths(
+            commits, closer_definition=closer_definition, repo_path=repo
+        )
+        steps = await step_requirements(
+            ctx,
+            task,
+            commits,
+            closer_definition=closer_definition,
+            commit_paths=commit_paths,
+        )
     except ValueError as exc:
         return evaluation.refuse("step_records_unavailable", str(exc))
+    evaluation.closer_definition = closer_definition
+    evaluation.commit_paths = tuple(commit_paths)
     evaluation.checklist = await evaluate_close_invariants(
         open_children=[child.id for child in child_tasks if not is_task_closed(child)],
         commit_shas=commits,

@@ -252,14 +252,29 @@ def _project_close_policy(db: HubDatabase, project_id: str) -> TaskClosePolicyCo
 
 
 def task_step_requirements(
-    db: HubDatabase, task: Task, *, closer_definition: AgentDefinitionBody | None = None
+    db: HubDatabase,
+    task: Task,
+    *,
+    closer_definition: AgentDefinitionBody | None = None,
+    commit_paths: Sequence[str] = (),
 ) -> StepRequirements:
-    """Evaluate project and definition policy at the task's present commits."""
+    """Evaluate project and definition policy at the task's present commits.
+
+    A closer whose direct-commit grant covers every path the linked commits change
+    replaces the policy's steps with the steps that grant declares.
+    """
     required = required_task_steps(
         _project_close_policy(db, task.project_id),
         task_type=task.task_type,
         category=task.category,
     )
+    declared = closer_definition.direct_integration_commit_steps if closer_definition else []
+    if (
+        declared
+        and closer_definition is not None
+        and closer_definition.covers_direct_integration_paths(commit_paths)
+    ):
+        required = tuple(step for step in TASK_STEPS if step in declared)
     review_capabilities = (
         closer_definition.required_review_capabilities if closer_definition else []
     )

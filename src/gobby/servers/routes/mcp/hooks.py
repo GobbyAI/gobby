@@ -82,7 +82,7 @@ logger = logging.getLogger(__name__)
 
 
 HOOK_ADAPTER_MAX_WORKERS = _HOOK_ADAPTER_MAX_WORKERS
-SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "codex", "droid", "agy")
+SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "codex", "droid", "agy", "git")
 
 
 _PROVIDER_SESSION_KEYS: Final = ("session_id", "sessionId", "conversationId", "conversation_id")
@@ -468,6 +468,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             from gobby.adapters.claude_code import ClaudeCodeAdapter
             from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
             from gobby.adapters.droid import DroidAdapter
+            from gobby.adapters.git import GitAdapter
             from gobby.adapters.grok import GrokAdapter
 
             if source == "claude":
@@ -488,6 +489,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 adapter = DroidAdapter(hook_manager=hook_manager)
             elif source == "agy":
                 adapter = AgyAdapter(hook_manager=hook_manager)
+            elif source == "git":
+                adapter = GitAdapter(hook_manager=hook_manager)
             else:
                 raise HTTPException(
                     status_code=400,

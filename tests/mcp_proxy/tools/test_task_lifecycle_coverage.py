@@ -281,11 +281,26 @@ class TestCloseTask(_CloseTaskGitIsolation):
     ) -> None:
         task = _make_task(task_type="epic")
         mock_task_manager.get_task.return_value = task
-        with patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as archive:
+        # The closer holds the no-work grant and resolves no agent role, so only the close is tested.
+        mock_svm = MagicMock()
+        mock_svm.get_variable_subset.return_value = {}
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionVariableManager",
+                return_value=mock_svm,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.session_has_capability_or_operator",
+                return_value=True,
+            ),
+            patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as archive,
+        ):
             result = await _create_registry(mock_task_manager).call(
                 "close_task", {"task_id": task.id, "reason": "moot"}
             )
+        assert result["success"] is True
         assert result["closed"] is True
+        assert result["commit_shas"] == []
         mock_task_manager.close_task.assert_called_once()
         archive.assert_called_once()
 
@@ -318,6 +333,8 @@ class TestCloseTask(_CloseTaskGitIsolation):
             expected_updated_at=task.updated_at,
             closed_ancestors=[],
             closing_note=None,
+            closer_definition=None,
+            commit_paths=(),
         )
         mock_task_manager.link_commit.assert_not_called()
         mock_task_manager.close_task.assert_not_called()
@@ -412,6 +429,7 @@ class TestCloseTask(_CloseTaskGitIsolation):
             "active_task_id": epic.id,
             "task_edited_files": {},
         }
+        mock_svm.get_variable_subset.return_value = {}
         mock_svm.merge_variables.side_effect = lambda *_args, **_kwargs: order.append("cleanup")
 
         with (

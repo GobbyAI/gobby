@@ -249,6 +249,10 @@ class RuleEngine(
             attributes={"event_type": str(event.event_type), "session_id": session_id},
         ) as span:
             try:
+                # Rule `when` clauses read the canonical session from event metadata;
+                # the engine's session_id is that same canonical id.
+                if session_id and not event.metadata.get("_platform_session_id"):
+                    event.metadata["_platform_session_id"] = session_id
                 if isinstance(event.data, dict):
                     if event.cwd and "cwd" not in event.data:
                         event.data["cwd"] = event.cwd
@@ -904,16 +908,25 @@ class RuleEngine(
         *,
         project_id: str | None = None,
     ) -> list[tuple[RuleDefinitionRow, RuleDefinitionBody]]:
-        """Use enabled definition selectors, or baseline rules when no definition resolves."""
+        """Use enabled definition selectors, or baseline rules when no definition resolves.
+
+        Mandatory rules are active under every definition, including one that selects none.
+        """
         agent = self._load_active_agent_definition(
             variables.get("_agent_type"),
             project_id=project_id,
         )
         if agent is not None:
-            return [(row, body) for row, body in rules if rule_matches_agent(agent, row)]
+            return [
+                (row, body)
+                for row, body in rules
+                if body.mandatory or rule_matches_agent(agent, row)
+            ]
 
         # The cached names are a projection, not authority after definition removal.
-        return [(row, body) for row, body in rules if "default" in (row.tags or [])]
+        return [
+            (row, body) for row, body in rules if body.mandatory or "default" in (row.tags or [])
+        ]
 
     def _load_active_agent_definition(
         self,

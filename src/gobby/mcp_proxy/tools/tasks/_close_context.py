@@ -6,12 +6,14 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._task_scope import collect_commit_paths_async
 from gobby.storage.tasks import Task
 from gobby.tasks.attributed_roots import is_ignorable_attributed_root
+from gobby.tasks.commit_ownership import linked_commit_paths
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.step_records import StepRequirements, task_step_requirements
 from gobby.workflows.agent_models import AgentDefinitionBody
@@ -41,12 +43,30 @@ class CloseAttributionSnapshot:
     complete: bool
 
 
+async def closer_commit_paths(
+    commit_shas: Sequence[str],
+    *,
+    closer_definition: AgentDefinitionBody | None = None,
+    repo_path: str | Path | None = None,
+) -> tuple[str, ...]:
+    """Paths the linked commits change, read only when the closer's grant could replace the steps.
+
+    An unreadable commit raises ValueError, which the close refuses.
+    """
+    if closer_definition is None or not closer_definition.direct_integration_commit_steps:
+        return ()
+    if repo_path is None:
+        raise ValueError("Cannot list the paths of the linked commits without a checkout.")
+    return await linked_commit_paths(commit_shas, repo_path)
+
+
 async def step_requirements(
     ctx: RegistryContext,
     task: Task,
     commit_shas: Sequence[str],
     *,
     closer_definition: AgentDefinitionBody | None = None,
+    commit_paths: Sequence[str] = (),
 ) -> StepRequirements:
     """Judge step records against the close's prospective commits, as final close will."""
     prospective = replace(task, commits=list(commit_shas))
@@ -55,6 +75,7 @@ async def step_requirements(
         ctx.task_manager.db,
         prospective,
         closer_definition=closer_definition,
+        commit_paths=commit_paths,
     )
 
 

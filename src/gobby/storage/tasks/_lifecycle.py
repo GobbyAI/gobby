@@ -8,10 +8,14 @@ This module provides operations for managing task lifecycle:
 - delete_task: Delete a task
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import re
+from collections.abc import Sequence
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.review_history import read_review_row
@@ -26,6 +30,9 @@ from gobby.storage.tasks._review_status import review_status_sql
 from gobby.storage.tasks._transitions import close_task as _close_task_transition
 from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transition
 from gobby.utils.datetime import utc_now
+
+if TYPE_CHECKING:
+    from gobby.workflows.agent_models import AgentDefinitionBody
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +197,8 @@ def close_task(
     closed_ancestors: list[str] | None = None,
     expected_updated_at: datetime | None = None,
     closing_note: str | None = None,
+    closer_definition: AgentDefinitionBody | None = None,
+    commit_paths: Sequence[str] = (),
 ) -> None:
     """Close a task.
 
@@ -200,6 +209,8 @@ def close_task(
         force: If True, close even if there are open children (default: False)
         closed_in_session_id: Session ID where task was closed
         closed_commit_sha: Git commit SHA at time of closing
+        closer_definition: Closing definition whose direct-commit grant may judge step records
+        commit_paths: Paths the linked commits change, for that grant's coverage
 
     Raises:
         ValueError: If task not found or has open children (and force=False)
@@ -226,6 +237,8 @@ def close_task(
         closed_ancestors=collected,
         expected_updated_at=expected_updated_at,
         closing_note=closing_note,
+        closer_definition=closer_definition,
+        commit_paths=commit_paths,
     )
 
 

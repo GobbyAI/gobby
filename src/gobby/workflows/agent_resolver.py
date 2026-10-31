@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+from collections.abc import Sequence
 
 from pydantic import ValidationError
 
@@ -48,6 +49,13 @@ def session_has_capability(db: HubDatabase, session_id: str, capability: str) ->
     session = SessionManager(db).get(session_id)
     resolved = session_agent_definition(db, session) if session is not None else None
     return resolved is not None and capability in resolved[0].capabilities
+
+
+def session_declared_paths_cover(db: HubDatabase, session_id: str, paths: Sequence[str]) -> bool:
+    """Whether a known session's enabled definition declares direct commit rights over all paths."""
+    session = SessionManager(db).get(session_id)
+    resolved = session_agent_definition(db, session) if session is not None else None
+    return resolved is not None and resolved[0].covers_direct_integration_paths(paths)
 
 
 def is_operator_session(session: Session, role: object) -> bool:

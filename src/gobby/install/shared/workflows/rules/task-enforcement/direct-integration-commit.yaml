@@ -1,0 +1,27 @@
+tags: [task-enforcement, git, default, guardrail]
+
+# The protected-branch guard sends this rule a synthetic before_tool event for every
+# update to the integration branch. The event carries the staged paths and the branch.
+# A caller lands directly only when its definition holds the direct_integration_commit
+# capability and declares a path glob for every staged path. Everything else is
+# refused with land_commit guidance. Ordinary commit calls carry no integration_branch,
+# so this rule never judges them.
+rules:
+  direct-integration-commit:
+    description: "Block direct integration-branch commits unless the caller's definition declares every staged path"
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 20
+    when: >
+      event.data.get('integration_branch')
+      and not (
+        session_has_capability(event.metadata.get('_platform_session_id'), 'direct_integration_commit')
+        and session_declared_paths_cover(event.metadata.get('_platform_session_id'), event.data.get('staged_paths') or []))
+    effects:
+      - type: block
+        tools: [Bash]
+        reason: >-
+          This commit targets the integration branch. Code lands through gobby-tasks-ops:land_commit.
+          Only a definition that declares the direct_integration_commit capability and path globs
+          covering every staged path may commit here directly.

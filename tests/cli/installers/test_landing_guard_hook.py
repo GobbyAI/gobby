@@ -12,6 +12,7 @@ import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,7 +21,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.land_commit import land_candidate
-from gobby.tasks.landing_policy import is_direct_commit_path
 from gobby.tasks.step_records import StepSubmission, record_task_step
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
@@ -32,24 +32,19 @@ pytestmark = pytest.mark.unit
 LAND_COMMIT_TEXT = "gobby-tasks-ops:land_commit"
 BASE_PLAN = ".gobby/plans/p.md"
 BASE_MANIFEST = ".gobby/plans/coverage/p/1/p.coverage.yaml"
+SESSION_ID = "session-under-test"
 
-# Paths compared one commit at a time against is_direct_commit_path.
-ALLOWED_PATHS = {
-    "docs/x.md",
-    "docs/sub/deep.md",
-    "NOTES.md",
-    ".gobby/plans/q.md",
-    ".gobby/plans/coverage/q/2/q.coverage.yaml",
-    ".gobby/plans/coverage/.regenerate.log",
-}
-REFUSED_PATHS = {
-    "src/gobby/a.py",
-    "src/gobby/AGENTS.md",
-    "src/gobby/install/shared/skills/s/SKILL.md",
-    "docs/reference-audit/a.json",
-    ".gobby/plans/x.svg",
-    "README.txt",
-}
+# Stands in for ghook. It records each verdict request and answers with the verdict
+# planted in its file: allow exits 0, unavailable exits 2, anything else refuses.
+PLANTED_GHOOK = """#!/bin/sh
+cat >> "$PLANTED_GHOOK_LOG"
+echo >> "$PLANTED_GHOOK_LOG"
+case $(cat "$PLANTED_GHOOK_VERDICT") in
+allow) exit 0 ;;
+unavailable) exit 2 ;;
+*) echo "planted verdict refused" >&2; exit 1 ;;
+esac
+"""
 
 
 class _Repo:
@@ -84,6 +79,23 @@ class _Repo:
         hook.parent.mkdir(parents=True, exist_ok=True)
         hook.write_text(f"#!/bin/sh\n{HOOK_TEMPLATES['reference-transaction']}", encoding="utf-8")
         hook.chmod(0o755)
+        self.tmp_path = tmp_path
+        self.verdict = tmp_path / "ghook-verdict"
+        self.requests = tmp_path / "ghook-requests.jsonl"
+
+    def plant_ghook(self) -> None:
+        """Install the stand-in ghook for the committing session. Every direct commit is
+        refused until a test plants an allow."""
+        self.plant_verdict("block")
+        ghook = self.tmp_path / "home" / ".gobby" / "bin" / "ghook"
+        ghook.parent.mkdir(parents=True)
+        ghook.write_text(PLANTED_GHOOK, encoding="utf-8")
+        ghook.chmod(0o755)
+        self.env |= {
+            "GOBBY_SESSION_ID": SESSION_ID,
+            "PLANTED_GHOOK_LOG": str(self.requests),
+            "PLANTED_GHOOK_VERDICT": str(self.verdict),
+        }
 
     def git(self, cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -111,9 +123,19 @@ class _Repo:
     def unstage(self, cwd: Path, *paths: str) -> None:
         self.ok(cwd, "reset", "-q", "--", *paths)
 
+    def plant_verdict(self, verdict: str) -> None:
+        self.verdict.write_text(f"{verdict}\n", encoding="utf-8")
+
+    def verdict_requests(self) -> list[dict[str, Any]]:
+        if not self.requests.exists():
+            return []
+        lines = self.requests.read_text(encoding="utf-8").splitlines()
+        return [json.loads(line) for line in lines if line]
+
 
 def _baseline(tmp_path: Path, *init_args: str, marker: str | None = None) -> _Repo:
     repo = _Repo(tmp_path, *init_args)
+    repo.plant_ghook()
     # The first commit creates the protected ref, which the guard allows even for code.
     files = {"src/gobby/base.py": "x = 1\n", BASE_PLAN: "plan\n", BASE_MANIFEST: "m\n"}
     if marker is not None:
@@ -123,15 +145,14 @@ def _baseline(tmp_path: Path, *init_args: str, marker: str | None = None) -> _Re
     return repo
 
 
-def _assert_refused(result: subprocess.CompletedProcess[str], path: str | None = None) -> None:
+def _assert_refused(result: subprocess.CompletedProcess[str]) -> None:
     assert result.returncode != 0
-    if path is not None:
-        assert f"{path} is not a direct-commit path" in result.stderr
     assert LAND_COMMIT_TEXT in result.stderr
 
 
-def test_direct_commit_allows_listed_markdown_and_coverage(tmp_path: Path) -> None:
+def test_granted_verdict_lands_direct_commits_on_the_protected_branch(tmp_path: Path) -> None:
     repo = _baseline(tmp_path)
+    repo.plant_verdict("allow")
 
     docs = repo.commit(repo.root, {"docs/x.md": "x\n", "NOTES.md": "n\n"})
     coverage = repo.commit(
@@ -149,17 +170,34 @@ def test_direct_commit_allows_listed_markdown_and_coverage(tmp_path: Path) -> No
     assert docs.returncode == 0, docs.stderr
     assert coverage.returncode == 0, coverage.stderr
     assert archive.returncode == 0, archive.stderr
+    first, second = repo.verdict_requests()[:2]
+    assert {key: value for key, value in first.items() if key != "cwd"} == {
+        "session_id": SESSION_ID,
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git commit"},
+        "staged_paths": ["NOTES.md", "docs/x.md"],
+        "integration_branch": "main",
+    }
+    assert second["staged_paths"] == [
+        ".gobby/plans/coverage/.regenerate.log",
+        ".gobby/plans/coverage/p/2/p.coverage.yaml",
+    ]
 
-    verdicts: dict[str, bool] = {}
-    for path in sorted(ALLOWED_PATHS | REFUSED_PATHS):
-        result = repo.commit(repo.root, {path: "change\n"})
-        verdicts[path] = result.returncode == 0
-        if not verdicts[path]:
-            _assert_refused(result, path)
-            repo.unstage(repo.root, path)
 
-    assert {path for path, allowed in verdicts.items() if allowed} == ALLOWED_PATHS
-    assert verdicts == {path: is_direct_commit_path(path) for path in verdicts}
+@pytest.mark.parametrize("verdict", ["block", "unavailable"])
+def test_refused_verdict_blocks_direct_commits_on_the_protected_branch(
+    tmp_path: Path, verdict: str
+) -> None:
+    repo = _baseline(tmp_path)
+    repo.plant_verdict(verdict)
+    protected_before = repo.ok(repo.root, "rev-parse", "main")
+
+    result = repo.commit(repo.root, {"docs/x.md": "x\n"})
+
+    _assert_refused(result)
+    assert repo.verdict_requests()[-1]["staged_paths"] == ["docs/x.md"]
+    assert repo.ok(repo.root, "rev-parse", "main") == protected_before
 
 
 @pytest.mark.parametrize(
@@ -235,8 +273,9 @@ def test_incoming_project_policy_cannot_authorize_its_ref_update(tmp_path: Path)
     _assert_refused(result)
 
 
-def test_false_project_policy_preserves_documentation_allowance(tmp_path: Path) -> None:
+def test_false_project_policy_defers_documentation_to_the_verdict(tmp_path: Path) -> None:
     repo = _baseline(tmp_path, marker='{"allow_direct_integration_commits": false}')
+    repo.plant_verdict("allow")
 
     result = repo.commit(repo.root, {"docs/policy.md": "policy\n", BASE_MANIFEST: "updated\n"})
 
@@ -296,7 +335,7 @@ def test_protected_branch_refuses_writes_from_any_worktree(tmp_path: Path) -> No
     assert lane_commit.returncode == 0, lane_commit.stderr
     for result in (merge, reset):
         _assert_refused(result)
-    _assert_refused(update_ref, "src/gobby/a.py")
+    _assert_refused(update_ref)
     assert delete_ref.returncode != 0
     assert "the protected branch cannot be deleted" in delete_ref.stderr
     assert branch_force.returncode != 0
@@ -382,6 +421,7 @@ def test_pack_refs_prunes_the_protected_ref_but_deletions_stay_refused(tmp_path:
     lane = tmp_path / "lane"
     repo.ok(repo.root, "worktree", "add", "-q", "-b", "lane", str(lane))
     loose_main = repo.root / ".git" / "refs" / "heads" / "main"
+    repo.plant_verdict("allow")
 
     maintenance = repo.git(lane, "maintenance", "run", "--task=pack-refs")
     pruned_by_maintenance = not loose_main.exists()
@@ -406,7 +446,7 @@ def test_pack_refs_prunes_the_protected_ref_but_deletions_stay_refused(tmp_path:
     assert repo.ok(repo.root, "rev-parse", "main") == main_before
 
 
-def test_guard_classifies_unusual_paths_fail_closed(tmp_path: Path) -> None:
+def test_guard_forwards_unusual_paths_exactly_and_fails_closed(tmp_path: Path) -> None:
     repo = _baseline(tmp_path)
 
     mixed = repo.commit(repo.root, {"docs/a.md": "a\n", "src/gobby/a.py": "a = 1\n"})
@@ -418,16 +458,22 @@ def test_guard_classifies_unusual_paths_fail_closed(tmp_path: Path) -> None:
     agents = repo.commit(repo.root, {"src/gobby/AGENTS.md": "agents\n"})
     repo.unstage(repo.root, "src/gobby/AGENTS.md")
     spaced = repo.commit(repo.root, {"docs/with space.md": "s\n"})
-    accented = repo.commit(repo.root, {"docs/résumé.md": "r\n"})
+    repo.unstage(repo.root, "docs/with space.md")
 
-    _assert_refused(mixed, "src/gobby/a.py")
+    _assert_refused(mixed)
     for result in quoted.values():
-        assert result.returncode != 0
-        assert '"docs/' in result.stderr
-        assert "is not a direct-commit path" in result.stderr
-    _assert_refused(agents, "src/gobby/AGENTS.md")
-    assert spaced.returncode == 0, spaced.stderr
+        _assert_refused(result)
+    _assert_refused(agents)
+    _assert_refused(spaced)
+    # git quotes control characters, so the grant sees the quoted spelling.
+    requested = [path for request in repo.verdict_requests() for path in request["staged_paths"]]
+    assert '"docs/tab\\there.md"' in requested
+    assert '"docs/new\\nline.md"' in requested
+
+    repo.plant_verdict("allow")
+    accented = repo.commit(repo.root, {"docs/résumé.md": "r\n"})
     assert accented.returncode == 0, accented.stderr
+    assert repo.verdict_requests()[-1]["staged_paths"] == ["docs/résumé.md"]
 
 
 def test_guard_resolves_reftable_head_and_fails_closed(tmp_path: Path) -> None:
@@ -449,7 +495,7 @@ def test_guard_resolves_reftable_head_and_fails_closed(tmp_path: Path) -> None:
 
     assert reftable_commit.returncode == 0, reftable_commit.stderr
     assert head_stub == "ref: refs/heads/.invalid\n"
-    _assert_refused(update_ref, "src/gobby/a.py")
+    _assert_refused(update_ref)
     assert reftable.ok(reftable.root, "rev-parse", "main") == main_before
     assert lane_commit.returncode != 0
     assert "cannot resolve the main checkout's HEAD" in lane_commit.stderr
@@ -511,7 +557,7 @@ def test_guard_and_chained_hook_need_no_writable_temp_directory(tmp_path: Path) 
     refused = repo.commit(repo.root, {"src/gobby/x.py": "x = 2\n"})
 
     assert allowed.returncode == 0, allowed.stderr
-    _assert_refused(refused, "src/gobby/x.py")
+    _assert_refused(refused)
     assert repo.ok(repo.root, "rev-parse", "main") == new
     assert f"== reference-transaction prepared\n{old} {new} refs/heads/main\n" in log.read_text()
 
@@ -536,9 +582,10 @@ def test_misplaced_end_marker_cannot_bypass_the_guard(
     refused = repo.commit(repo.root, {"src/gobby/x.py": "x = 2\n"})
     repo.unstage(repo.root, "src/gobby/x.py")
     main_before = repo.ok(repo.root, "rev-parse", "main")
+    repo.plant_verdict("allow")
     allowed = repo.commit(repo.root, {"docs/ok.md": "ok\n"})
 
-    _assert_refused(refused, "src/gobby/x.py")
+    _assert_refused(refused)
     assert allowed.returncode == 0, allowed.stderr
     assert repo.ok(repo.root, "rev-parse", "main~1") == main_before
     assert "== reference-transaction prepared\n" in log.read_text()

@@ -1,7 +1,9 @@
 name: orchestrator
 cold_start_commands: [admin]
 cold_start_counterpart: assistant
-capabilities: [reset_review_epoch, message_restricted_seats, follow_relaunch, coordinate_tasks, manage_task_claims, land_tasks, close_without_work, override_spawn_network, write_session_variables, approve_report_review, send_keys]
+capabilities: [reset_review_epoch, message_restricted_seats, follow_relaunch, coordinate_tasks, manage_task_claims, land_tasks, close_without_work, override_spawn_network, write_session_variables, approve_report_review, send_keys, direct_integration_commit]
+direct_integration_commit_paths: ["src/gobby/install/shared/workflows/agents/*.yaml", ".gobby/project.json"]
+direct_integration_commit_steps: [closing]
 message_sender_capabilities: [message_restricted_seats]
 description: |
   Orchestrator seat. Sets priority and owners, rules on contracts, launches the

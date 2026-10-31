@@ -27,6 +27,7 @@ mod diagnose;
 mod diagnostics;
 mod dispatch;
 mod envelope;
+mod git_verdict;
 mod json_value;
 mod output;
 mod planned_shutdown;
