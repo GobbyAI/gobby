@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,6 +31,7 @@ from gobby.tasks.step_records import (
     record_task_step,
     task_step_requirements,
 )
+from gobby.utils.daemon_git import GitFailed, GitResult, GitTimeout, daemon_git
 from gobby.utils.git import normalize_commit_sha
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
@@ -436,6 +438,34 @@ def test_checkout_free_project_closes_under_the_default_policy(temp_db: HubDatab
     assert manager.get_task(chore.id).closed_at is not None
 
 
+def test_second_rejection_claimant_records_its_implementation_step(
+    temp_db: HubDatabase, seats: _Seats, task: Task, team: dict[str, str]
+) -> None:
+    """The claimant that fixes after the second rejection records its implementation step.
+
+    The Dev Manager may hand the fix to a reviewer seat that did not reject, so the claim
+    holder, not the rejecting session, is the fixer.
+    """
+    manager = LocalTaskManager(temp_db)
+    fixer = seats.add("step-reviewer", ["review"])
+    manager.claim_task(task.id, team["developer"])
+    _step(temp_db, task, team["developer"], "implementation", "approved", feedback="Implemented.")
+    _step(temp_db, task, team["reviewer"], "review", "rejected", 1)
+    _step(temp_db, task, team["second_reviewer"], "review", "rejected", 2)
+    manager.claim_task(task.id, fixer, expected_owner=team["developer"])
+    manager.link_commit(task.id, _NEXT[:10])
+
+    with pytest.raises(StepRecordError, match="cannot write the implementation step"):
+        _step(temp_db, task, team["second_reviewer"], "implementation", "approved", 3, sha=_NEXT)
+    record, created = _step(temp_db, task, fixer, "implementation", "approved", 3, sha=_NEXT)
+    assert created
+    assert (record.step, record.status, record.session_id) == (
+        "implementation",
+        "approved",
+        fixer,
+    )
+
+
 def test_round_two_approval_leaves_the_implementation_step_approved(
     temp_db: HubDatabase, task: Task, team: dict[str, str]
 ) -> None:
@@ -498,7 +528,11 @@ def test_close_gate_reads_the_approval_not_the_stored_status(
 
 @pytest.fixture
 def candidate_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Real Git ancestry with checkout discovery and daemon Git isolated."""
+    """Real Git ancestry with checkout discovery and daemon Git isolated.
+
+    The candidates sit on their own branch, unlanded, while the registered main checkout
+    stays on main at the base commit.
+    """
 
     def git(*args: str) -> str:
         return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
@@ -506,10 +540,13 @@ def candidate_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[s
     git("init", "-b", "main")
     git("config", "user.name", "Candidate regression")
     git("config", "user.email", "test@example.invalid")
+    git("-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", "base")
+    git("checkout", "-b", "candidate")
     commits = []
     for index in range(3):
         git("-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", f"step {index}")
         commits.append(git("rev-parse", "HEAD"))
+    git("checkout", "main")
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
         lambda **_kwargs: str(tmp_path),
@@ -568,6 +605,75 @@ async def test_declared_candidate_relink_accepts_exact_sha_steps(
     with session_context_for_test(team["developer"]):
         repeated = await registry.call("link_commit", {**arguments, "candidate": True})
     assert repeated == declared
+
+
+async def test_relinking_a_landed_commit_declares_no_candidate(
+    temp_db: HubDatabase,
+    task: Task,
+    team: dict[str, str],
+    candidate_history: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Landed history is not a candidate: a relink after landing leaves the developer in implement."""
+    monkeypatch.setattr(
+        "gobby.tasks.land_commit.main_checkout_target",
+        AsyncMock(return_value=(tmp_path, "main")),
+    )
+    subprocess.check_output(["git", "merge", "--ff-only", "candidate"], cwd=tmp_path)
+    manager = LocalTaskManager(temp_db)
+    manager.unlink_commit(task.id, _TIP[:10])
+    landed = candidate_history[-1]
+    manager.link_commit(task.id, landed)
+    registry = create_commit_registry(manager)
+    with session_context_for_test(team["developer"]):
+        relink = await registry.call(
+            "link_commit", {"task_id": task.id, "commit_sha": landed, "candidate": True}
+        )
+    assert "error" not in relink, relink
+    assert relink["declared_candidate"] is None
+    assert manager.get_task(task.id).commits == [landed]
+
+
+@pytest.mark.parametrize("unprovable", ["git_failed", "timeout", "detached_target"])
+async def test_unprovable_landing_status_refuses_the_candidate(
+    temp_db: HubDatabase,
+    task: Task,
+    team: dict[str, str],
+    candidate_history: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unprovable: str,
+) -> None:
+    """A candidate whose landing status is unproven is refused before anything persists."""
+    manager = LocalTaskManager(temp_db)
+    manager.unlink_commit(task.id, _TIP[:10])
+    target = None if unprovable == "detached_target" else (tmp_path, "main")
+    monkeypatch.setattr(
+        "gobby.tasks.land_commit.main_checkout_target",
+        AsyncMock(return_value=target),
+    )
+    failure: GitResult = (
+        GitTimeout("timeout", ("git", "merge-base"), 10.0)
+        if unprovable == "timeout"
+        else GitFailed("failed", ("git", "merge-base"), 128, "", "fatal: bad object")
+    )
+    real_run = daemon_git.run
+
+    async def run(args: Sequence[str], **kwargs: Any) -> GitResult:
+        return failure if args[0] == "merge-base" else await real_run(args, **kwargs)
+
+    monkeypatch.setattr(daemon_git, "run", run)
+    before = manager.get_task(task.id).commits
+    registry = create_commit_registry(manager)
+    candidate = candidate_history[-1]
+    with session_context_for_test(team["developer"]):
+        relink = await registry.call(
+            "link_commit", {"task_id": task.id, "commit_sha": candidate, "candidate": True}
+        )
+    assert "integration branch" in relink.get("error", ""), relink
+    assert "declared_candidate" not in relink
+    assert manager.get_task(task.id).commits == before
 
 
 async def test_declared_candidate_cannot_demote_a_newer_link(

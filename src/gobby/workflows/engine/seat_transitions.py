@@ -36,6 +36,10 @@ from gobby.workflows.engine.seat_messages import (
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
+# Owned by the step instance. The engine must not mirror it into session variables: a
+# mirror outlives a lost instance write and refuses the same BOUNCE on its next read.
+SEAT_CONSUMED_KEY = "_seat_consumed_messages"
+
 
 def _approved(db: HubDatabase, reviewer_session_id: str, task: Task, sha: str) -> bool:
     """Landing reads the same approval, so the land gate and land_commit agree."""
@@ -101,7 +105,7 @@ def _submit_return_rejection(
     proof = event.fields.get("EVENT") == "PROOF_REQUEST"
     if event.message.to_session != session_id:
         return "message is not addressed to this seat"
-    if event.message.id in (state.get("_seat_consumed_messages") or []):
+    if event.message.id in (state.get(SEAT_CONSUMED_KEY) or []):
         return "message already consumed"
     if not _returns_to_implement(event.fields):
         return "only EVENT=PROOF_REQUEST or CANDIDATE_VERDICT VERDICT=BOUNCE returns to implement"
@@ -195,7 +199,7 @@ def _monitor_message(
 def _candidate_rejection(
     db: HubDatabase, variables: dict[str, Any], event: CandidateEvent, reviewer_session_id: str
 ) -> str | None:
-    if event.message.id in (variables.get("_seat_consumed_messages") or []):
+    if event.message.id in (variables.get(SEAT_CONSUMED_KEY) or []):
         return "message already consumed"
     relayed = event.message.from_session != event.task.claimed_by_session_id
     # A relay binds only from the bound Dev Manager, for a SHA the claimant linked.
@@ -372,7 +376,7 @@ def advance_seat(
         return {}
     if mcp_tool[0] != "gobby-agents":
         return {}
-    consumed = list(state.get("_seat_consumed_messages") or [])
+    consumed = list(state.get(SEAT_CONSUMED_KEY) or [])
     monitor_updates: dict[str, Any] = {}
     for message in completion_messages(db, session_id, mcp_tool[1], tool_input, tool_output):
         if message.id in consumed:
@@ -428,6 +432,6 @@ def advance_seat(
             return {
                 **monitor_updates,
                 **changes,
-                "_seat_consumed_messages": (consumed + [message.id])[-64:],
+                SEAT_CONSUMED_KEY: (consumed + [message.id])[-64:],
             }
-    return {**monitor_updates, "_seat_consumed_messages": consumed[-64:]} if monitor_updates else {}
+    return {**monitor_updates, SEAT_CONSUMED_KEY: consumed[-64:]} if monitor_updates else {}
