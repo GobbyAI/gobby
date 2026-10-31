@@ -2124,6 +2124,8 @@ def _team_runbook(db: HubDatabase, task: Task) -> str:
         worktree_id=worktree.id,
         reviewers={},
         mode="single",
+        # A standalone team has no parent; the default would be a non-UUID id.
+        parent_team_id=None,
     )
     executions.update_step_execution(step.id, output_json=json.dumps({"team": team}))
     session = SessionManager(db).register(
