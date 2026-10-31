@@ -5,10 +5,6 @@ use std::collections::btree_map::Entry;
 use anyhow::Context as _;
 use gobby_core::falkor::GraphClient;
 
-use super::queries::{
-    report_bridge_edges_query, report_code_edge_counts_query, report_hotspots_query,
-    report_incoming_call_hotspots_query, report_node_counts_query, report_target_frequencies_query,
-};
 use super::rows::{
     row_to_bridge_edge_hypothesis, row_to_graph_hotspot, row_to_target_frequency,
     rows_to_named_counts,
@@ -59,27 +55,6 @@ pub(super) fn load_report_snapshot(
     namespaces: &[AdmittedNamespace],
     top_n: usize,
 ) -> anyhow::Result<ReportGraphSnapshot> {
-    if let Ok(chunks) = std::env::var("SPIKE_CHUNK_ORACLE") { // SPIKE-PARITY
-        for namespace in namespaces.iter().filter(|ns| std::env::var("SPIKE_CHUNK_ONLY").map_or(true, |only| only == ns.project_id)) { // SPIKE-PARITY
-            super::spike_oracle::run(client, namespace, chunks.parse()?)?; // SPIKE-PARITY
-        } // SPIKE-PARITY
-        std::process::exit(0); // SPIKE-PARITY
-    } // SPIKE-PARITY
-    if let Ok(probe) = std::env::var("SPIKE_PROBE_FILE") { // SPIKE-TIMING
-        let text = std::fs::read_to_string(&probe)?; // SPIKE-TIMING
-        for namespace in namespaces { // SPIKE-TIMING
-            for (idx, query) in text.split(";;").map(str::trim).filter(|q| !q.is_empty()).enumerate() { // SPIKE-TIMING
-                let params = crate::graph::typed_query::string_params(&[("project", namespace.project_id.as_str())]); // SPIKE-TIMING
-                let (query, params) = with_admitted_versions((query.to_string(), params), &namespace.versions); // SPIKE-TIMING
-                let started = std::time::Instant::now(); // SPIKE-TIMING
-                match client.query(&query, Some(params)) { // SPIKE-TIMING
-                    Ok(rows) => eprintln!("SPIKE probe ns={} q={idx} rows={} {:?} all={:?}", namespace.project_id, rows.len(), started.elapsed(), rows), // SPIKE-TIMING
-                    Err(error) => eprintln!("SPIKE probe ns={} q={idx} error={error:#} {:?}", namespace.project_id, started.elapsed()), // SPIKE-TIMING
-                } // SPIKE-TIMING
-            } // SPIKE-TIMING
-        } // SPIKE-TIMING
-        std::process::exit(0); // SPIKE-TIMING
-    } // SPIKE-TIMING
     let mut parts = Vec::with_capacity(namespaces.len());
     for namespace in namespaces {
         parts.push(load_namespace_rows(client, namespace, top_n)?);
@@ -106,42 +81,34 @@ fn load_namespace_rows(
     let project_id = namespace.project_id.as_str();
     let admitted = &namespace.versions;
 
-    let started = std::time::Instant::now(); // SPIKE-TIMING
-    let (query, params) = with_admitted_versions(super::queries::report_node_counts_query(project_id), admitted);
+    let (query, params) = with_admitted_versions(
+        super::queries::report_node_counts_query(project_id),
+        admitted,
+    );
     let node_counts_by_type = rows_to_named_counts(
         client
             .query(&query, Some(params))
             .context("load graph report node counts")?,
     );
-    eprintln!("SPIKE node_counts {:?} {:?}", node_counts_by_type, started.elapsed()); // SPIKE-TIMING
 
-    let started = std::time::Instant::now(); // SPIKE-TIMING
-    let (query, params) =
-        with_admitted_versions(super::queries::report_code_edge_counts_query(project_id), admitted);
+    let (query, params) = with_admitted_versions(
+        super::queries::report_code_edge_counts_query(project_id),
+        admitted,
+    );
     let code_edge_counts = rows_to_named_counts(
         client
             .query(&query, Some(params))
             .context("load graph report code edge counts")?,
     );
-    eprintln!("SPIKE code_edge_counts {:?} {:?}", code_edge_counts, started.elapsed()); // SPIKE-TIMING
 
     // Files, symbols, and external or unresolved targets never repeat across
     // namespaces, so a namespace's top rows cover its share of the global top
     // rows. Module names do repeat, and one module can gain degree in several
     // namespaces, so module rows stay unlimited until the merge ranks them.
-    let started = std::time::Instant::now(); // SPIKE-TIMING
-    let skip_hotspots = std::env::var_os("SPIKE_SKIP_HOTSPOTS").is_some(); // SPIKE-TIMING
-    let high_degree_files = if skip_hotspots { Vec::new() } else { load_hotspots(client, project_id, admitted, "file", Some(top_n))? }; // SPIKE-TIMING
-    eprintln!("SPIKE hot file {:?}", started.elapsed()); // SPIKE-TIMING
-    let started = std::time::Instant::now(); // SPIKE-TIMING
-    let high_degree_symbols = if skip_hotspots { Vec::new() } else { load_hotspots(client, project_id, admitted, "symbol", Some(top_n))? }; // SPIKE-TIMING
-    eprintln!("SPIKE hot symbol {:?}", started.elapsed()); // SPIKE-TIMING
-    let started = std::time::Instant::now(); // SPIKE-TIMING
-    let high_degree_modules = if skip_hotspots { Vec::new() } else { load_hotspots(client, project_id, admitted, "module", None)? }; // SPIKE-TIMING
-    eprintln!("SPIKE hot module {:?}", started.elapsed()); // SPIKE-TIMING
-    let started = std::time::Instant::now(); // SPIKE-TIMING
+    let high_degree_files = load_hotspots(client, project_id, admitted, "file", Some(top_n))?;
+    let high_degree_symbols = load_hotspots(client, project_id, admitted, "symbol", Some(top_n))?;
+    let high_degree_modules = load_hotspots(client, project_id, admitted, "module", None)?;
     let incoming_call_hotspots = load_incoming_call_hotspots(client, project_id, admitted, top_n)?;
-    eprintln!("SPIKE incoming {:?}", started.elapsed()); // SPIKE-TIMING
     let hotspots = GraphReportHotspots {
         high_degree_files,
         high_degree_symbols,
@@ -149,14 +116,10 @@ fn load_namespace_rows(
         incoming_call_hotspots,
     };
 
-    let started = std::time::Instant::now(); // SPIKE-TIMING
     let unresolved_targets =
         load_target_frequencies(client, project_id, admitted, "unresolved", top_n)?;
-    eprintln!("SPIKE targets unresolved {:?}", started.elapsed()); // SPIKE-TIMING
-    let started = std::time::Instant::now(); // SPIKE-TIMING
     let external_targets =
         load_target_frequencies(client, project_id, admitted, "external", top_n)?;
-    eprintln!("SPIKE targets external {:?}", started.elapsed()); // SPIKE-TIMING
 
     let (base, base_params) = super::queries::report_bridge_edges_query(project_id);
     let rows = read_to_completion(|skip, page| {
@@ -339,12 +302,15 @@ fn load_hotspots(
             .with_context(|| format!("load graph report {node_class} hotspots"))
     };
     let rows = match limit {
-        Some(top_n) => run(super::queries::report_hotspots_query(project_id, node_class, Some(top_n)))?,
+        Some(top_n) => run(super::queries::report_hotspots_query(
+            project_id,
+            node_class,
+            Some(top_n),
+        ))?,
         None => {
-            let (base, params) = super::queries::report_hotspots_query(project_id, node_class, None);
-            read_to_completion(|skip, page| {
-                run((window_query(&base, skip, page), params.clone()))
-            })?
+            let (base, params) =
+                super::queries::report_hotspots_query(project_id, node_class, None);
+            read_to_completion(|skip, page| run((window_query(&base, skip, page), params.clone())))?
         }
     };
     Ok(collect_report_rows(
@@ -361,7 +327,7 @@ fn load_incoming_call_hotspots(
     top_n: usize,
 ) -> anyhow::Result<Vec<GraphHotspot>> {
     let (query, params) = with_admitted_versions(
-        (if spike_head() { super::head_queries::report_incoming_call_hotspots_query(project_id, top_n) } else { super::queries::report_incoming_call_hotspots_query(project_id, top_n) }),
+        super::queries::report_incoming_call_hotspots_query(project_id, top_n),
         admitted,
     );
     let rows = client
@@ -382,7 +348,7 @@ fn load_target_frequencies(
     top_n: usize,
 ) -> anyhow::Result<Vec<TargetFrequency>> {
     let (query, params) = with_admitted_versions(
-        (if spike_head() { super::head_queries::report_target_frequencies_query(project_id, target_type, top_n) } else { super::queries::report_target_frequencies_query(project_id, target_type, top_n) }),
+        super::queries::report_target_frequencies_query(project_id, target_type, top_n),
         admitted,
     );
     let rows = client
@@ -437,6 +403,3 @@ pub(super) fn read_to_completion<T>(
 fn window_query(query: &str, skip: usize, limit: usize) -> String {
     format!("{query} SKIP {skip} LIMIT {limit}")
 }
-
-// SPIKE-PARITY
-fn spike_head() -> bool { std::env::var_os("SPIKE_HEAD").is_some() }

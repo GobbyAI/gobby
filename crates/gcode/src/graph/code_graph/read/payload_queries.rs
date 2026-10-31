@@ -310,7 +310,8 @@ mod tests {
             "every path node must be admitted"
         );
         assert!(
-            filter.contains("(node.file_path + '|' + node.file_content_hash) IN $admitted_versions"),
+            filter
+                .contains("(node.file_path + '|' + node.file_content_hash) IN $admitted_versions"),
             "a replaced intermediate symbol must not connect an otherwise admitted path"
         );
     }

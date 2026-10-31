@@ -15,7 +15,8 @@ const ADMITTED_TARGET: &str = "NOT sym \
 
 /// Edge-version check for rows that the seed does not imply (`chk`): the edge's own
 /// hash `eh` must be an admitted version of its file `ef`. Other rows pass.
-const ADMITTED_EDGE: &str = "CASE WHEN chk THEN eh IN coalesce($admitted_map[ef], []) ELSE true END";
+const ADMITTED_EDGE: &str =
+    "CASE WHEN chk THEN eh IN coalesce($admitted_map[ef], []) ELSE true END";
 
 pub(super) fn report_node_type_case(alias: &str) -> String {
     format!(
@@ -91,7 +92,11 @@ fn placeholder_edge_rows() -> String {
 
 /// Every admitted candidate edge row (see `edge_columns`).
 fn admitted_edge_rows() -> String {
-    format!("{} UNION ALL {}", seeded_edge_rows(), placeholder_edge_rows())
+    format!(
+        "{} UNION ALL {}",
+        seeded_edge_rows(),
+        placeholder_edge_rows()
+    )
 }
 
 /// Admitted nodes by identity: files by admitted path, symbols by admitted

@@ -854,7 +854,11 @@ fn unlimited_reads_page_past_engine_result_cap() {
         Ok(rows[start..end].to_vec())
     };
     let read = read_to_completion(engine).expect("paged read");
-    assert_eq!(read.len(), rows.len(), "rows past the engine cap must be read");
+    assert_eq!(
+        read.len(),
+        rows.len(),
+        "rows past the engine cap must be read"
+    );
     assert_eq!(read, rows);
 }
 
