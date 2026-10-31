@@ -744,6 +744,7 @@ async def test_merge_commit_with_literal_substitution_outside_safe_charset_is_re
     [
         ("unmerged", True),
         ("ordinary-path", False),
+        ("resolved-and-staged", False),
         ("merge-aborted", False),
         ("unregistered", False),
         ("ungranted", False),
@@ -773,6 +774,11 @@ async def test_conflict_write_overrides_native_block_only_with_scoped_grant(
         _conflict_base_merge(worktree)
     if condition == "merge-aborted":
         _git(worktree, "merge", "--abort")
+    if condition == "resolved-and-staged":
+        (worktree / "shared.txt").write_text("resolved\n")
+        _git(worktree, "add", "shared.txt")
+        assert _git(worktree, "rev-parse", "--verify", "MERGE_HEAD")
+        assert _git(worktree, "diff", "--name-only", "--diff-filter=U") == ""
     if condition == "unregistered":
         temp_db.execute("DELETE FROM worktrees WHERE worktree_path = %s", (str(worktree),))
     path = worktree / ("task.txt" if condition == "ordinary-path" else "shared.txt")
@@ -874,25 +880,30 @@ async def test_claim_free_base_merge_candidate_binding(
     assert tasks.get_task(task.id).claimed_by_session_id is None
 
 
-@pytest.mark.parametrize(
-    "condition,allowed",
-    [("unmerged", True), ("merge-aborted", False), ("unregistered", False), ("ungranted", False)],
-)
-async def test_conflict_write_scope_reaches_srt_policy(
-    seat: tuple[WorkflowHookHandler, Session, Path],
+@pytest.mark.parametrize("granted", [True, False], ids=["merge-capability", "no-capability"])
+async def test_team_worktree_scope_is_static_in_srt_launch_policy(
+    landing: tuple[LandingCase, WorkflowHookHandler, Session, Path, Task],
     temp_db: HubDatabase,
     tmp_path: Path,
-    condition: str,
-    allowed: bool,
+    granted: bool,
 ) -> None:
-    """Launch/resume policy grants the conflict file, never its tree or ordinary files."""
-    _, session, worktree = seat
-    _seat(temp_db, session, "custom-seat", granted=condition != "ungranted", selectors=GATED_RULES)
-    _conflict_base_merge(worktree)
-    if condition == "merge-aborted":
-        _git(worktree, "merge", "--abort")
-    if condition == "unregistered":
-        temp_db.execute("DELETE FROM worktrees WHERE worktree_path = %s", (str(worktree),))
+    """The merge capability grants its bound team's checkout before any merge starts."""
+    case, _, session, worktree, task = landing
+    case.manager_for(task, session=session.id)
+    _seat(temp_db, session, "custom-seat", granted=granted, selectors=GATED_RULES)
+    assert not _git(worktree, "ls-files", "--unmerged")
+    assert not (Path(_git(worktree, "rev-parse", "--absolute-git-dir")) / "MERGE_HEAD").exists()
+
+    unrelated_task = case.task("Another team's work")
+    unrelated = tmp_path / "unrelated-task"
+    _git(case.repo, "worktree", "add", "-q", "-b", "unrelated-team", str(unrelated))
+    LocalWorktreeManager(temp_db).create(
+        project_id=case.project_id,
+        branch_name="unrelated-team",
+        worktree_path=str(unrelated.resolve()),
+        base_branch="trunk",
+        task_id=unrelated_task.id,
+    )
     private = tmp_path / "agent_workspaces"
     with patch("gobby.agents.agent_workspaces.workspaces_root", return_value=private):
         scoped = grant_seat_workspace_paths(
@@ -903,8 +914,8 @@ async def test_conflict_write_scope_reaches_srt_policy(
         paths = await compute_sandbox_paths(scoped, scoped.extra_write_paths[0])
         filesystem = render_srt_settings(paths)["filesystem"]
     writes = filesystem["allowWrite"]
-    # Exact file grants are required: a tree grant would let the coordinator
-    # edit every developer-owned path during this merge.
-    assert (str(worktree / "shared.txt") in writes) == allowed
-    assert str(worktree) not in writes
-    assert str(worktree / "task.txt") not in writes
+    # SRT's launch grant is static. The live BEFORE_TOOL rule matrix above
+    # owns path and MERGE_HEAD restrictions inside this checkout.
+    assert (str(worktree) in writes) == granted
+    assert str(worktree.parent) not in writes
+    assert str(unrelated.resolve()) not in writes
