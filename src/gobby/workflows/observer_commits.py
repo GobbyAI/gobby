@@ -6,6 +6,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from gobby.utils.git import run_git_command
 from gobby.workflows.git_commit_parsing import parse_git_commit_invocations
 from gobby.workflows.observer_utils import (
     _extract_shell_command,
@@ -22,6 +23,11 @@ logger = logging.getLogger("gobby.workflows.observers")
 # Pattern matching git's commit success output: [branch hash] message.
 # Branch labels can contain spaces for detached HEAD output.
 _GIT_COMMIT_RE = re.compile(r"^\[[^\]\n]+ [a-f0-9]{7,}\]", re.MULTILINE)
+
+# Full SHAs of the two-parent commits this session made. A base-merge candidate binds only
+# to a commit its own sender authored, so this list is the sender's record of authorship.
+AUTHORED_MERGES_VARIABLE = "_authored_merge_commits"
+_AUTHORED_MERGES_LIMIT = 50
 
 
 def _is_git_commit_command(command: str) -> bool:
@@ -88,6 +94,25 @@ def detect_commit_link(event: HookEvent, variables: dict[str, Any], session_id: 
     logger.debug("Session %s: task_has_commits=true (via %s)", session_id, inner_tool)
 
 
+def _record_authored_merge(event: HookEvent, variables: dict[str, Any]) -> None:
+    """Record HEAD when the commit just made is a merge this session authored."""
+    cwd = event.cwd
+    if not cwd:
+        return
+    head = run_git_command(["git", "rev-parse", "--verify", "-q", "HEAD^{commit}"], cwd)
+    if (
+        head is None
+        or run_git_command(["git", "rev-parse", "--verify", "-q", "HEAD^2"], cwd) is None
+    ):
+        return
+    recorded = [
+        sha for sha in variables.get(AUTHORED_MERGES_VARIABLE) or [] if isinstance(sha, str)
+    ]
+    variables[AUTHORED_MERGES_VARIABLE] = list(dict.fromkeys([*recorded, head]))[
+        -_AUTHORED_MERGES_LIMIT:
+    ]
+
+
 def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: str) -> bool:
     """Detect git commit success output from shell tool invocations."""
     if not event.data:
@@ -112,12 +137,14 @@ def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: 
     if _GIT_COMMIT_RE.search(output):
         variables["task_has_commits"] = True
         variables["_found_work_fix_commit_turn"] = True
+        _record_authored_merge(event, variables)
         logger.debug("Session %s: task_has_commits=true (Bash git commit output)", session_id)
         return True
 
     if outcome is True and _looks_like_commit_success(output):
         variables["task_has_commits"] = True
         variables["_found_work_fix_commit_turn"] = True
+        _record_authored_merge(event, variables)
         logger.debug(
             "Session %s: task_has_commits=true (Bash git commit command fallback)",
             session_id,

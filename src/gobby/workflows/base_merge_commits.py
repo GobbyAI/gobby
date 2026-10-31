@@ -42,6 +42,7 @@ from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.daemon_git import GitOk, daemon_git
+from gobby.utils.git import run_git_command
 from gobby.workflows.agent_resolver import session_has_capability
 from gobby.workflows.enforcement.blocking import get_touched_file_paths
 from gobby.workflows.git_utils import resolve_git_worktree_root_async
@@ -158,6 +159,68 @@ async def _admitted_tips(db: HubDatabase, task: Task, root: str) -> frozenset[st
             return None
         tips.add(tip)
     return frozenset(tips)
+
+
+def admitted_parent_tips(db: HubDatabase, task: Task, repo: Path) -> frozenset[str] | None:
+    """Full SHAs of the integration tip and the landing tip, read for candidate intake.
+
+    The synchronous twin of `_admitted_tips`: a leaf of an epic lands in the epic's branch,
+    and every other task lands in the integration branch. None when a tip cannot be read.
+    """
+    from gobby.agents.team_admission_records import team_binding
+    from gobby.agents.team_lifecycle import task_team
+    from gobby.releases.activation import project_checkout_root
+    from gobby.storage.team_records import EPIC_MODE
+
+    try:
+        checkout = Path(project_checkout_root(db, task.project_id))
+    except ValueError:
+        return None
+    integration = _integration_branch(checkout)
+    team = task_team(db, task.id)
+    epic = None
+    if team is not None and team.parent_team_id:
+        epic = team_binding(db, team.parent_team_id)
+        if epic is None:
+            return None
+    elif team is not None and team.mode == EPIC_MODE and team.task_id != task.id:
+        epic = team
+    landing = integration
+    if epic is not None:
+        if epic.worktree_path is None:
+            return None
+        if _checkout_branch(Path(epic.worktree_path)) != epic.branch:
+            return None
+        landing = epic.branch
+    tips: set[str] = set()
+    for branch in (integration, landing):
+        if branch is None:
+            return None
+        tip = run_git_command(
+            ["git", "rev-parse", "--verify", "-q", f"refs/heads/{branch}^{{commit}}"], repo
+        )
+        if tip is None:
+            return None
+        tips.add(tip)
+    return frozenset(tips)
+
+
+def _integration_branch(checkout: Path) -> str | None:
+    """The branch the project's main checkout holds, found through the common Git directory."""
+    common = run_git_command(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], checkout
+    )
+    if common is None:
+        return None
+    return _checkout_branch(Path(common).parent)
+
+
+def _checkout_branch(checkout: Path) -> str | None:
+    """The branch a checkout's HEAD names; None when detached or unreadable."""
+    ref = run_git_command(["git", "symbolic-ref", "--quiet", "HEAD"], checkout)
+    if ref is None or not ref.startswith("refs/heads/"):
+        return None
+    return ref.removeprefix("refs/heads/")
 
 
 @dataclass(frozen=True)

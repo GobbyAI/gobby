@@ -702,35 +702,66 @@ def _seat_epic_folder(db: HubDatabase, session_id: str) -> Path | None:
     return _epic_folder(db, binding)
 
 
-def assigned_task_worktree(db: HubDatabase, session_id: str) -> Path | None:
-    """Resolve a run's registered task checkout without granting its containing seat."""
-    from gobby.storage.worktrees import LocalWorktreeManager
+def _checkout_root(path: Path) -> Path | None:
+    """``path`` when it is spelled canonically and git reports it as its own toplevel.
+
+    A symlinked or aliased spelling (macOS /var vs /private/var, or a link inside a seat
+    folder) is refused, so only the one canonical location grants the checkout.
+    """
     from gobby.utils.git import run_git_command
+
+    if path.resolve() != path:
+        return None
+    checkout = run_git_command(["git", "rev-parse", "--show-toplevel"], path)
+    if checkout is None or Path(checkout).resolve() != path:
+        return None
+    return path
+
+
+def assigned_run_checkout(db: HubDatabase, session_id: str) -> Path | None:
+    """The run's registered checkout, canonical and git-verified, wherever it lives."""
+    from gobby.storage.worktrees import LocalWorktreeManager
 
     worktree = LocalWorktreeManager(db).get_for_session_run(session_id)
     if worktree is None:
         return None
-    path = Path(worktree.worktree_path)
-    root = workspaces_root()
-    if not path.is_relative_to(root):
-        return None
-    resolved = path.resolve()
-    if resolved != root.resolve() / path.relative_to(root):
-        return None
-    checkout = run_git_command(["git", "rev-parse", "--show-toplevel"], path)
-    if checkout is None or Path(checkout).resolve() != resolved:
+    return _checkout_root(Path(worktree.worktree_path))
+
+
+def assigned_task_worktree(db: HubDatabase, session_id: str) -> Path | None:
+    """Resolve a run's registered task checkout under the workspaces root, never its container."""
+    path = assigned_run_checkout(db, session_id)
+    if path is None or not path.is_relative_to(workspaces_root()):
         return None
     return path
+
+
+def _team_checkout(db: HubDatabase, session_id: str) -> Path | None:
+    """The seat's team checkout, when the worktree table registers it as a checkout."""
+    from gobby.agents.team_lifecycle import seat_team
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    team = seat_team(db, session_id)
+    if team is None or team.worktree_path is None:
+        return None
+    if LocalWorktreeManager(db).get_by_path(team.worktree_path) is None:
+        return None
+    return _checkout_root(Path(team.worktree_path))
 
 
 def spawn_workspace_write_paths(
     db: HubDatabase, session_id: str, definition: str | None
 ) -> list[str]:
-    """The seat's own folder, epic folder, and assigned existing task worktree.
+    """The seat's own folder, epic folder, and its registered merge checkouts.
 
     Reuse a bound folder on resume, including a clear predecessor's grant. Before the first
-    SessionStart binding, derive it from the definition and sequence number.
+    SessionStart binding, derive it from the definition and sequence number. The run's
+    registered checkout goes to every seat under the workspaces root, and to a base-merge
+    seat wherever it lives. The team's registered checkout goes only to a base-merge seat.
+    Neither reaches a pod, a parent, or the containing directory.
     """
+    from gobby.workflows.agent_resolver import session_has_capability
+    from gobby.workflows.base_merge_commits import CAPABILITY
     from gobby.workflows.state_manager import SessionVariableManager
 
     location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
@@ -750,10 +781,15 @@ def spawn_workspace_write_paths(
     epic = _seat_epic_folder(db, session_id)
     if epic is not None:
         folders.append(epic)
-    worktree = assigned_task_worktree(db, session_id)
-    if worktree is not None:
+    capable = session_has_capability(db, session_id, CAPABILITY)
+    worktree = assigned_run_checkout(db, session_id)
+    if worktree is not None and (capable or worktree.is_relative_to(workspaces_root())):
         folders.append(worktree)
-    return [str(folder) for folder in folders]
+    if capable:
+        team = _team_checkout(db, session_id)
+        if team is not None:
+            folders.append(team)
+    return [str(folder) for folder in dict.fromkeys(folders)]
 
 
 def grant_seat_workspace_paths(
@@ -767,7 +803,10 @@ def grant_seat_workspace_paths(
     from gobby.storage.definitions import AgentDefinitionManager
 
     granted = spawn_workspace_write_paths(db, session_id, definition)
-    reads = list(granted)
+    # Workspace scope holds only folders under the root. A registered checkout is a write
+    # grant alone, because restrict_workspace_paths judges scope paths against the root.
+    folders = [path for path in granted if Path(path).is_relative_to(workspaces_root())]
+    reads = list(folders)
     location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
     if location is not None and location["project_id"] is not None:
         anchor = workspace_anchor(location["project_id"])
@@ -798,7 +837,7 @@ def grant_seat_workspace_paths(
                         str(folder),
                     )
                 )
-    scoped = config.with_workspace_scope(reads, granted)
+    scoped = config.with_workspace_scope(reads, folders)
     # Reject aliasing bindings before launch creates any directories in them.
     scoped.restrict_workspace_paths([], [])
     # SRT's Linux bind grants require existing paths, including persona launches
