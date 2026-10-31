@@ -199,9 +199,10 @@ fn project_freshness(ctx: &Context) -> anyhow::Result<FreshnessStatus> {
 
 fn refresh_project(ctx: &Context) -> anyhow::Result<FreshnessStatus> {
     let _guard = FreshnessGuard::enter();
-    let result = index_lock::with_project_lock(ctx, IndexLockPolicy::brief_freshness_try(), || {
-        Ok(refresh_files(ctx, Vec::new()).map_err(|error| degraded_detail(&error)))
-    })?;
+    let result =
+        index_lock::with_project_lock(ctx, IndexLockPolicy::brief_freshness_try(), || {
+            Ok(refresh_files(ctx, Vec::new()).map_err(|error| degraded_detail(&error)))
+        })?;
     Ok(freshness_from_lock(result))
 }
 

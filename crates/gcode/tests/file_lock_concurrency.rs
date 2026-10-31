@@ -614,6 +614,14 @@ mod serial_db {
             stderr.contains("left out of grep"),
             "grep past the foreground budget must name the stale paths it left out: {stderr}"
         );
+        // No live read past the budget: the 400 unindexed files have no rows, so a
+        // read that reached them would print their matches. Visibility holds for the
+        // read-only principal, which serves only the rows it can see.
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains("unindexed_"),
+            "a read-only grep past the budget must not read or serve stale files: {stdout}"
+        );
         assert!(output.status.success(), "{output:?}");
     }
 
