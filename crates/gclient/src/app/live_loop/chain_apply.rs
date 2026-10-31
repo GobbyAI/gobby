@@ -5,7 +5,7 @@
 //! mutation as an orphan that is disposed once the model says it still exists.
 
 use crate::daemon::{
-    Daemon, DaemonError, KillOutcome, LiveDaemon, Snapshot, SpawnOutcome, WorkspaceOp,
+    Daemon, DaemonError, Generation, KillOutcome, LiveDaemon, SpawnOutcome, WorkspaceOp,
 };
 use crate::frame_source::FrameError;
 use crate::ui::status::Toast;
@@ -140,10 +140,15 @@ pub(super) fn apply_adopted(
         Ok(terminal_id) => terminal_id,
         Err(error) => {
             match (&new_tab, rolled_back) {
-                (Some(tab), false) => chrome.notify(Toast::error(format!(
-                    "Adopted tab {tab} could not be closed: {}",
-                    FrameError::from(error)
-                ))),
+                (Some(tab), false) => {
+                    let orphan = Orphan::Tab(tab.clone());
+                    commit_orphan(jobs, orphan.clone());
+                    let outcome = match error {
+                        DaemonError::Workspace(refusal) => DisposalOutcome::Refused(refusal.reason),
+                        error => DisposalOutcome::Failed(error),
+                    };
+                    apply_disposed(workspace, chrome, jobs, orphan, outcome);
+                }
                 _ if current => match error {
                     DaemonError::Workspace(refusal) => {
                         chrome.notify(Toast::warning(refusal.reason));
@@ -159,25 +164,37 @@ pub(super) fn apply_adopted(
         }
     };
     let Some(new_tab) = new_tab else { return };
+    // Resolve the initiating local view before installing/reprojecting the snapshot.
+    let target = chrome.tabs().tabs.iter().position(|tab| tab.id == old_tab);
     if !current {
         commit_orphan(jobs, Orphan::Tab(new_tab));
         return;
+    }
+    if target.is_none() {
+        if let Some(snapshot) = snapshot {
+            workspace.apply_workspace_snapshot(snapshot);
+        }
+        commit_orphan(jobs, Orphan::Tab(new_tab));
+        return;
+    }
+    let was_active = chrome.active_tab().is_some_and(|tab| tab.id == old_tab);
+    if let Some(tab) = target.and_then(|index| chrome.tabs_mut().tabs.get_mut(index)) {
+        tab.id = new_tab.clone();
     }
     if let Some(snapshot) = snapshot {
         workspace.apply_workspace_snapshot(snapshot);
     }
     let was_zoomed = chrome.viewer.zoomed.remove(&old_tab);
-    if let Some(tab) = chrome.active_tab_mut() {
-        tab.id = new_tab.clone();
-    }
     chrome.viewer.focus.remove(&old_tab);
     if was_zoomed {
         chrome.viewer.zoomed.insert(new_tab.clone());
     }
-    chrome
-        .viewer
-        .active_tab
-        .insert(chrome.project_tabs.key().to_owned(), new_tab);
+    if was_active {
+        chrome
+            .viewer
+            .active_tab
+            .insert(chrome.project_tabs.key().to_owned(), new_tab);
+    }
     if let Some(warning) = tab_order_warning {
         chrome.notify(Toast::warning(warning));
     }
@@ -185,7 +202,11 @@ pub(super) fn apply_adopted(
     install_roster(workspace, roster);
     jobs.ledger.awaiting_panes.push(AwaitingPane {
         terminal_id,
-        then: PaneAction::Focus,
+        then: if was_active {
+            PaneAction::Focus
+        } else {
+            PaneAction::Attach
+        },
     });
     settle_panes(jobs, workspace, chrome);
 }
@@ -231,7 +252,7 @@ pub(super) fn apply_disposed(
     let entry = &mut jobs.ledger.committed_orphans[index];
     entry.in_flight = false;
     entry.settled = Some(Settled {
-        watermark: model_watermark(workspace),
+        model_install: model_install(workspace),
         lost,
     });
 }
@@ -286,7 +307,10 @@ pub(super) fn evaluate(jobs: &mut LoopJobs, workspace: &Workspace<LiveDaemon>) {
     let Some(model) = workspace.workspace_model() else {
         return;
     };
-    let watermark = model.watermark.clone();
+    if !workspace.daemon_ready() || model.installed_generation != workspace.daemon().generation() {
+        return;
+    }
+    let install = model_install(workspace);
     let daemon = workspace.daemon().clone();
     let outcomes = jobs.outcomes().clone();
     jobs.ledger.committed_orphans.retain_mut(|entry| {
@@ -296,7 +320,7 @@ pub(super) fn evaluate(jobs: &mut LoopJobs, workspace: &Workspace<LiveDaemon>) {
         if entry
             .settled
             .as_ref()
-            .is_some_and(|settled| settled.watermark == watermark)
+            .is_some_and(|settled| settled.model_install == install)
         {
             return true;
         }
@@ -348,11 +372,10 @@ fn install_roster(
     }
 }
 
-fn model_watermark(workspace: &Workspace<LiveDaemon>) -> Snapshot {
+fn model_install(workspace: &Workspace<LiveDaemon>) -> Option<(Generation, u64)> {
     workspace
         .workspace_model()
-        .map(|model| model.watermark.clone())
-        .unwrap_or_default()
+        .map(|model| (model.installed_generation, model.install))
 }
 
 fn spawn_disposal(daemon: &LiveDaemon, outcomes: &UnboundedSender<JobOutcome>, orphan: Orphan) {

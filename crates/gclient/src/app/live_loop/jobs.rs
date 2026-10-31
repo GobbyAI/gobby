@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::daemon::{
-    Daemon, DaemonError, Generation, LiveDaemon, Snapshot, SpawnOutcome, TerminalRow, WorkspaceOp,
+    Daemon, DaemonError, Generation, LiveDaemon, SpawnOutcome, TerminalRow, WorkspaceOp,
     WorkspaceSnapshot,
 };
 use crate::frame_source::{FrameError, FrameSource, PaneFrameSource};
@@ -253,7 +253,7 @@ pub struct CommittedOrphan {
 /// How the last disposal of an orphan settled, against which model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settled {
-    pub watermark: Snapshot,
+    pub model_install: Option<(Generation, u64)>,
     /// The daemon never answered, so the target may already be gone.
     pub lost: bool,
 }

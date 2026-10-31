@@ -11,9 +11,10 @@ mod draw;
 mod host;
 
 use super::*;
+use crate::app::live_loop::jobs;
 use crate::app::live_loop::lifecycle::spawn_live_shell;
 use crate::app::live_loop::mouse::Placement;
-use crate::daemon::WorkspaceSnapshot;
+use crate::daemon::{Daemon, WorkspaceSnapshot};
 use crossterm::event::{KeyCode, KeyModifiers};
 use futures_util::poll;
 use gobby_terminal::input::TerminalKey;
@@ -600,7 +601,6 @@ async fn a_stale_committed_adoption_step_rolls_back_its_captured_tab() {
                 .expect("post-close model");
             assert!(snapshot.tabs.iter().all(|tab| tab.id != adopted));
         }
-        snapshot.snapshot.seq += 1;
         workspace.apply_workspace_snapshot(snapshot.clone());
         if disposal == "refused" {
             pump_until(&mut workspace, &mut chrome, &mut jobs, |_, _| {
@@ -649,6 +649,254 @@ async fn a_stale_committed_adoption_step_rolls_back_its_captured_tab() {
         assert!(
             requests(&mock, "terminal_kill").is_empty(),
             "adopted terminal remains live"
+        );
+        mock.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn held_adoption_uses_its_local_tab_after_switch_or_close() {
+    for closed in [false, true] {
+        let mock = MockDaemon::start("local-token").await;
+        let (mut workspace, mut chrome, _) = fixture(&mock).await;
+        let mut jobs = LoopJobs::new(&workspace);
+        let old_tab = chrome.active_tab().unwrap().id.clone();
+        let release = mock.hold_ws("workspace_op", |request| request["op"] == "tab.create");
+        spawn_live_shell(
+            &mut workspace,
+            &mut chrome,
+            jobs.outcomes(),
+            Placement::SplitRight,
+            None,
+            None,
+        )
+        .await
+        .expect("enqueue adoption");
+        wait_request(&mock, "workspace_op", 1).await;
+        let pane = workspace.pane_for_terminal("existing").unwrap();
+        chrome.open_tab(pane, "unrelated");
+        let unrelated = chrome.active_tab().unwrap().id.clone();
+        if closed {
+            chrome.tabs_mut().tabs.retain(|tab| tab.id != old_tab);
+        }
+        release.notify_one();
+        let outcome = received(&mut jobs).await;
+        let jobs::JobResult::Adopted { adopted, .. } = &outcome.result else {
+            panic!("adoption outcome");
+        };
+        let adopted = adopted.new_tab.clone().expect("created tab");
+        apply_job_outcome(&mut workspace, &mut chrome, &mut jobs, outcome);
+        assert!(
+            chrome
+                .tabs()
+                .tabs
+                .iter()
+                .any(|tab| tab.id == unrelated && tab.title == "unrelated"),
+            "completion preserves the switched-to tab's identity and title"
+        );
+        if closed {
+            assert!(
+                jobs.ledger
+                    .committed_orphans
+                    .iter()
+                    .any(|entry| matches!(&entry.orphan, jobs::Orphan::Tab(id) if id == &adopted)),
+                "closing the initiating local tab retains cleanup ownership"
+            );
+            pump_until(&mut workspace, &mut chrome, &mut jobs, |_, _| {
+                mock.workspace_requests()
+                    .iter()
+                    .any(|op| op["op"] == "tab.close")
+            })
+            .await;
+            let closes: Vec<_> = mock
+                .workspace_requests()
+                .into_iter()
+                .filter(|op| op["op"] == "tab.close")
+                .collect();
+            assert_eq!(closes.len(), 1);
+            assert_eq!(
+                closes[0]["tab"], adopted,
+                "cleanup closes the captured adopted tab"
+            );
+            assert!(
+                requests(&mock, "terminal_kill").is_empty(),
+                "cleanup never kills the adopted original terminal"
+            );
+        } else {
+            assert!(
+                chrome
+                    .tabs()
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id == adopted && tab.title == "local shell"),
+                "the captured local tab receives the daemon identity"
+            );
+            assert_eq!(
+                chrome.active_tab().unwrap().id,
+                unrelated,
+                "completion preserves newer focus"
+            );
+        }
+        mock.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn cleanup_waits_for_a_snapshot_from_the_reconnected_generation() {
+    for placed in [false, true] {
+        let mock = MockDaemon::start("local-token").await;
+        let (mut workspace, mut chrome, mut snapshot) = fixture(&mock).await;
+        let mut jobs = LoopJobs::new(&workspace);
+        issue_create(&mut workspace, &mut chrome, &jobs).await;
+        let outcome = received(&mut jobs).await;
+        workspace.apply_workspace_snapshot(snapshot.clone());
+        let daemon = workspace.daemon().clone();
+        let (before, mut events) = daemon.subscribe();
+        mock.drop_websockets();
+        timeout(WAIT, async {
+            loop {
+                if matches!(
+                    events.recv().await.expect("daemon event"),
+                    crate::daemon::DaemonEvent::Disconnected { .. }
+                ) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("disconnect observed");
+        let after = daemon
+            .reconnect(before.generation)
+            .await
+            .expect("reconnect");
+        assert_ne!(
+            before.generation, after,
+            "the socket actually changed generation"
+        );
+        jobs.sync_generation(after);
+        apply_job_outcome(&mut workspace, &mut chrome, &mut jobs, outcome);
+        for _ in 0..3 {
+            jobs.drain_pending_refetch(&mut workspace, &mut chrome);
+        }
+        wire_barrier(&workspace).await;
+        assert!(
+            requests(&mock, "terminal_kill").is_empty(),
+            "retained pre-reconnect model cannot authorize cleanup"
+        );
+        if placed {
+            snapshot.panes[0].terminal_id = Some(CREATED.to_owned());
+        }
+        workspace.apply_workspace_snapshot(snapshot);
+        if placed {
+            jobs.drain_pending_refetch(&mut workspace, &mut chrome);
+            assert!(
+                jobs.ledger.committed_orphans.is_empty(),
+                "current placement clears cleanup ownership"
+            );
+        } else {
+            pump_until(&mut workspace, &mut chrome, &mut jobs, |_, _| {
+                !requests(&mock, "terminal_kill").is_empty()
+            })
+            .await;
+        }
+        wire_barrier(&workspace).await;
+        assert_eq!(requests(&mock, "terminal_kill").len(), usize::from(!placed));
+        mock.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn failed_adoption_rollback_remains_owned_until_a_new_snapshot() {
+    for lost in [false, true] {
+        let mock = MockDaemon::start("local-token").await;
+        let (mut workspace, mut chrome, _) = fixture(&mock).await;
+        let mut jobs = LoopJobs::new(&workspace);
+        mock.refuse_workspace_op_at("pane.split", 1, "busy", "split refused");
+        if !lost {
+            mock.refuse_workspace_op_at("tab.close", 1, "busy", "rollback refused");
+        }
+        let release = mock.hold_ws("workspace_op", |request| request["op"] == "tab.close");
+        spawn_live_shell(
+            &mut workspace,
+            &mut chrome,
+            jobs.outcomes(),
+            Placement::SplitRight,
+            None,
+            None,
+        )
+        .await
+        .expect("enqueue adoption");
+        wait_request(&mock, "workspace_op", 3).await;
+        if lost {
+            mock.suppress_ws("workspace_op");
+        }
+        release.notify_one();
+        if lost {
+            tokio::time::pause();
+            tokio::time::advance(crate::daemon::REQUEST_DEADLINE + Duration::from_secs(1)).await;
+        }
+        let outcome = received(&mut jobs).await;
+        if lost {
+            tokio::time::resume();
+        }
+        let jobs::JobResult::Adopted { adopted, .. } = &outcome.result else {
+            panic!("adoption outcome");
+        };
+        let adopted = adopted.new_tab.clone().expect("captured rollback tab");
+        apply_job_outcome(&mut workspace, &mut chrome, &mut jobs, outcome);
+        assert!(
+            jobs.ledger
+                .committed_orphans
+                .iter()
+                .any(|entry| matches!(&entry.orphan, jobs::Orphan::Tab(id) if id == &adopted)),
+            "a failed chain rollback keeps the created tab owned"
+        );
+        for _ in 0..3 {
+            jobs.drain_pending_refetch(&mut workspace, &mut chrome);
+        }
+        wire_barrier(&workspace).await;
+        assert_eq!(
+            mock.workspace_requests()
+                .iter()
+                .filter(|op| op["op"] == "tab.close")
+                .count(),
+            1,
+            "failure settles until a snapshot is installed"
+        );
+        assert_eq!(
+            chrome
+                .alert_log
+                .iter()
+                .filter(|toast| toast.title.contains(&adopted))
+                .count(),
+            1
+        );
+        mock.allow_ws("workspace_op");
+        let snapshot = workspace
+            .daemon()
+            .workspace_snapshot(None, WORKSPACE)
+            .await
+            .expect("fresh snapshot");
+        workspace.apply_workspace_snapshot(snapshot);
+        if lost {
+            jobs.drain_pending_refetch(&mut workspace, &mut chrome);
+            assert!(
+                jobs.ledger.committed_orphans.is_empty(),
+                "lost successful close clears ownership"
+            );
+        } else {
+            pump_until(&mut workspace, &mut chrome, &mut jobs, |_, _| {
+                mock.workspace_requests()
+                    .iter()
+                    .filter(|op| op["op"] == "tab.close")
+                    .count()
+                    == 2
+            })
+            .await;
+        }
+        assert!(
+            requests(&mock, "terminal_kill").is_empty(),
+            "adopted original terminal stays live"
         );
         mock.shutdown().await;
     }

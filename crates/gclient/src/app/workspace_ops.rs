@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use super::tab_sort::title_cmp;
 use super::Workspace;
 use crate::daemon::{
-    Daemon, PaneRow, Snapshot, TabRow, WorkspaceEvent, WorkspaceEventKind, WorkspaceRow,
-    WorkspaceSnapshot,
+    Daemon, Generation, PaneRow, Snapshot, TabRow, WorkspaceEvent, WorkspaceEventKind,
+    WorkspaceRow, WorkspaceSnapshot,
 };
 
 /// The attached workspace's rows, keyed by daemon id.
@@ -22,11 +22,17 @@ pub struct WorkspaceModel {
     pub watermark: Snapshot,
     /// Bumped by every change, so a viewer knows when to re-project.
     generation: u64,
+    /// Snapshot installs, independent of the daemon's mutation watermark.
+    pub(crate) install: u64,
+    /// Connection whose snapshot established this model's authority.
+    pub(crate) installed_generation: Generation,
 }
 
 impl WorkspaceModel {
     pub fn from_snapshot(snapshot: WorkspaceSnapshot) -> Self {
         Self {
+            install: 1,
+            installed_generation: Generation(0),
             workspace: snapshot.workspace,
             tabs: snapshot
                 .tabs
@@ -96,6 +102,7 @@ impl WorkspaceModel {
     /// Continue `previous`'s generation count, so a viewer that projected
     /// the old model sees this one as newer.
     pub fn succeed(&mut self, previous: &WorkspaceModel) {
+        self.install = previous.install.wrapping_add(1);
         self.generation = previous.generation + 1;
     }
 
@@ -174,6 +181,7 @@ impl<D: Daemon> Workspace<D> {
     /// Replace the workspace model with a fresh `workspace_attach` snapshot.
     pub fn apply_workspace_snapshot(&mut self, snapshot: WorkspaceSnapshot) {
         let mut model = WorkspaceModel::from_snapshot(snapshot);
+        model.installed_generation = self.daemon.subscribe().0.generation;
         if let Some(previous) = &self.workspace_model {
             model.succeed(previous);
         }
