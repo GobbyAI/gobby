@@ -7,6 +7,7 @@ use std::ffi::{OsStr, OsString};
 
 use serde::Serialize;
 
+use crate::models::SearchWarning;
 use crate::output::{self, Format};
 
 pub(crate) const AUTOMATIC_TEXT_TOKEN_BUDGET: usize = 2_000;
@@ -18,6 +19,8 @@ pub(crate) struct CollectionPageMeta<'a> {
     pub offset: usize,
     pub limit: usize,
     pub hint: Option<&'a str>,
+    /// Degraded-state notices that qualify the rows, such as a pending projection.
+    pub warnings: &'a [SearchWarning],
 }
 
 #[derive(Serialize)]
@@ -33,6 +36,15 @@ struct CollectionPage<'a, T: Serialize> {
     budget_exceeded: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     hint: Option<&'a str>,
+    #[serde(skip_serializing_if = "<[SearchWarning]>::is_empty")]
+    warnings: &'a [SearchWarning],
+}
+
+/// Writes degraded-state notices to stderr; text output carries no JSON envelope.
+pub(crate) fn print_warnings_text(warnings: &[SearchWarning]) {
+    for warning in warnings {
+        eprintln!("Warning: {}", warning.message);
+    }
 }
 
 pub(crate) fn window<T>(
@@ -85,6 +97,7 @@ where
             print_json_page(meta, &page.results, page.next_offset, page.budget_exceeded)
         }
         Format::Text => {
+            print_warnings_text(meta.warnings);
             let rendered = render_text_page(&render_rows(&page.results), page.next_offset);
             if rendered.is_empty() {
                 Ok(())
@@ -140,6 +153,7 @@ fn collection_page<'a, T: Serialize>(
         next_offset,
         budget_exceeded,
         hint: meta.hint,
+        warnings: meta.warnings,
     }
 }
 

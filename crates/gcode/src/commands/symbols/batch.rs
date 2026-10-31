@@ -147,6 +147,7 @@ pub fn symbols(
         offset,
         limit,
         hint: None,
+        warnings: &[],
     };
     let hint = missing_symbols_hint(&batch.missing_ids);
     let has_more = total > offset.saturating_add(results.len());

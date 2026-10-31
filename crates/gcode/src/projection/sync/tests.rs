@@ -418,6 +418,17 @@ pub(crate) mod serial_db {
         (ctx, source, source_cleanup, overlay_cleanup, root)
     }
 
+    /// Direct-route lifecycle over the fixture's mock Qdrant and embedding service.
+    fn direct_vector_lifecycle(ctx: &Context) -> CodeSymbolVectorLifecycle {
+        CodeSymbolVectorLifecycle::new(
+            ctx.project_id.clone(),
+            ctx.qdrant.clone().expect("qdrant config"),
+            ctx.embedding.clone().expect("embedding config"),
+            ctx.code_vectors.clone(),
+        )
+        .expect("vector lifecycle")
+    }
+
     fn pinned_vector_service(
         ctx: &mut Context,
         on_upsert: impl FnOnce() + Send + 'static,
@@ -478,12 +489,23 @@ pub(crate) mod serial_db {
         let (mut ctx, source, _source_cleanup, _overlay_cleanup, _root) =
             pinned_fixture(&mut conn, &database_url);
         let server = pinned_vector_service(&mut ctx, || {});
-        let lifecycle = vector_lifecycle_from_context(&ctx).expect("vector lifecycle");
+        let lifecycle = direct_vector_lifecycle(&ctx);
         let mut state = VectorProjectionState {
             ctx: &ctx,
             conn,
             lifecycle,
         };
+
+        let mut check = db::connect_readwrite(&database_url).expect("check connection");
+        let baseline = [
+            vector_flags(&mut check, &source, "hash-h"),
+            vector_flags(&mut check, &source, "hash-k"),
+        ];
+        assert_eq!(
+            baseline,
+            [(false, true); 2],
+            "fixture source attempts unstamped"
+        );
 
         let outcome = state.sync_file(FILE).expect("sync pinned path");
 
@@ -512,7 +534,6 @@ pub(crate) mod serial_db {
             Symbol::make_id(&source, FILE, hash_h.as_str(), "run", "function", 0)
         );
         assert_eq!(body["points"][0]["payload"]["file_path"], FILE);
-        let mut check = db::connect_readwrite(&database_url).expect("check connection");
         let projected: bool = check
             .query_one(
                 "SELECT vector_projected FROM code_overlay_pins
@@ -591,13 +612,23 @@ pub(crate) mod serial_db {
                         }
                     })
                 };
-            let lifecycle = vector_lifecycle_from_context(&ctx).expect("vector lifecycle");
+            let lifecycle = direct_vector_lifecycle(&ctx);
             let mut state = VectorProjectionState {
                 ctx: &ctx,
                 conn,
                 lifecycle,
             };
 
+            let mut check = db::connect_readwrite(&database_url).expect("check connection");
+            let baseline = [
+                vector_flags(&mut check, &source, "hash-h"),
+                vector_flags(&mut check, &source, "hash-k"),
+            ];
+            assert_eq!(
+                baseline,
+                [(false, true); 2],
+                "fixture source attempts unstamped"
+            );
             let outcome = state.sync_file(FILE).expect("sync races with pin change");
 
             assert!(
@@ -610,7 +641,6 @@ pub(crate) mod serial_db {
                 ProjectionFileSyncOutcome::SkippedMissingIndexedFile,
                 "{change}"
             );
-            let mut check = db::connect_readwrite(&database_url).expect("check connection");
             let pin = check
                 .query_opt(
                     "SELECT vector_projected FROM code_overlay_pins

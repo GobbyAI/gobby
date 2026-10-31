@@ -3,7 +3,10 @@ use crate::db;
 use crate::graph::code_graph::{self, GraphLifecycleAction, GraphLifecycleOutput};
 use crate::index_lock::{self, IndexLockPolicy, ProjectFileLockSet};
 use crate::output::{self, Format};
-use crate::projection::{self, ProjectionReconcileFailure, sync::ProjectionSyncReport};
+use crate::projection::{
+    self, ProjectionReconcileFailure,
+    sync::{ProjectionSyncReport, pinned},
+};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::io::Write as _;
@@ -251,6 +254,24 @@ pub(super) fn has_no_graph_facts<I, D, C, H>(
     imports.is_empty() && definitions.is_empty() && calls.is_empty() && inheritance.is_empty()
 }
 
+fn sync_pinned_graph_file(
+    ctx: &Context,
+    conn: &mut postgres::Client,
+    file_path: &str,
+    pin: &pinned::PinAttempt,
+) -> anyhow::Result<GraphFileSyncOutcome> {
+    let written = code_graph::with_code_graph(ctx, |graph| {
+        pinned::sync_graph_attempt(graph, conn, &ctx.project_id, file_path, pin)
+    })?;
+    Ok(match written {
+        Some(write) => GraphFileSyncOutcome::Synced {
+            relationships_written: write.relationships_written,
+            symbols_synced: write.symbols_synced,
+        },
+        None => GraphFileSyncOutcome::SkippedSuperseded,
+    })
+}
+
 fn sync_file_graph(
     ctx: &Context,
     file_path: &str,
@@ -260,9 +281,15 @@ fn sync_file_graph(
     if !db::indexed_project_exists(&mut conn, &ctx.project_id)? {
         return Err(GraphSyncContractError::project_not_indexed(ctx, file_path).into());
     }
+    // Pin recovery stamps its attempt before the backend check, so an unreachable
+    // graph still records that the pinned path was attempted.
+    let pin = pinned::begin_graph_attempt(&mut conn, &ctx.project_id, file_path)?;
     code_graph::require_graph_reads(ctx)?;
     let Some(attempt) = db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)?
     else {
+        if let Some(pin) = pin {
+            return sync_pinned_graph_file(ctx, &mut conn, file_path, &pin);
+        }
         if allow_missing_indexed_file {
             return Ok(GraphFileSyncOutcome::SkippedMissingIndexedFile {
                 reconcile_failures: projection::reconcile_deleted_file(ctx, file_path),
