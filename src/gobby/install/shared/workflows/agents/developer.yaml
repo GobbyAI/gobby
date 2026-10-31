@@ -198,6 +198,12 @@ step_workflow:
           action: set_variable
           variable: skills_routed
           value: false
+        # The test gate belongs to the claimed task; a previous task's approval never opens it.
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: tests_ready
+          value: false
         - server: gobby-tasks
           tool: claim_task
           action: set_variable
