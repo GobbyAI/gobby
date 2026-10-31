@@ -21,7 +21,7 @@ pub const MAX_WRITE_BATCH_TOTAL_DELAY_MS: u64 = 5_000;
 
 struct BatchOperation {
     delay_ms: u64,
-    payload: Vec<u8>,
+    payload: NativeInput,
 }
 
 struct BatchTarget {
@@ -35,7 +35,7 @@ struct ScheduledOperation {
     target_index: usize,
     operation_index: usize,
     host_terminal_id: String,
-    payload: Vec<u8>,
+    payload: NativeInput,
 }
 
 impl HostState {
@@ -339,11 +339,14 @@ impl HostState {
             #[cfg(feature = "vt-engine")]
             match slot.child.as_ref() {
                 Some(child) => {
-                    if child
-                        .runtime
-                        .try_send_bytes(bytes::Bytes::from(operation.payload))
-                        .is_err()
-                    {
+                    let sent = match operation.payload {
+                        NativeInput::Bytes(data) => child
+                            .runtime
+                            .try_send_bytes(bytes::Bytes::from(data))
+                            .is_err(),
+                        NativeInput::Paste(text) => child.runtime.try_send_paste(text).is_err(),
+                    };
+                    if sent {
                         mark_batch_failure(
                             &mut results[operation.target_index],
                             "write_queue_unavailable",
@@ -508,7 +511,7 @@ fn parse_batch_operations(
             .get("kind")
             .and_then(Value::as_str)
             .ok_or("invalid_operation")?;
-        if !matches!(kind, "text" | "key") {
+        if !matches!(kind, "text" | "key" | "paste") {
             return Err("invalid_kind");
         }
         if operation.get("encoding").and_then(Value::as_str) != Some("utf8-b64") {
@@ -537,10 +540,10 @@ fn parse_batch_operations(
         if total_delay_ms > MAX_WRITE_BATCH_TOTAL_DELAY_MS {
             return Err("invalid_delay");
         }
-        let payload = if kind == "key" {
-            named_key_bytes(&String::from_utf8_lossy(&raw))
-        } else {
-            raw
+        let payload = match kind {
+            "key" => NativeInput::Bytes(named_key_bytes(&String::from_utf8_lossy(&raw))),
+            "paste" => NativeInput::Paste(String::from_utf8(raw).map_err(|_| "invalid_encoding")?),
+            _ => NativeInput::Bytes(raw),
         };
         parsed.push(BatchOperation { delay_ms, payload });
     }

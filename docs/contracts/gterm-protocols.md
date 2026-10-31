@@ -197,8 +197,11 @@ Single `write` refuses a full or closed PTY writer with `ok:false`, `written:fal
 
 `write_batch` is the native wake-specific bounded write surface. One request has
 at most 64 targets with unique `recipient_id` and `host_terminal_id` values. Each
-target has 1–128 ordered `text` or `key` operations. Operation bytes use
-`utf8-b64`; decoded bytes across the request are capped at 1 MiB. Each delay is
+target has 1–128 ordered `text`, `key`, or `paste` operations. Operation bytes use
+`utf8-b64`; decoded bytes across the request are capped at 1 MiB. A `paste`
+operation sends its text as one paste, bracketed when the child enabled bracketed
+paste; the daemon splits long native text into a `paste` and a separate `key` for
+the submitting Return. Each delay is
 capped at 1,000 ms and cumulative delay per target at 5,000 ms. The host may
 interleave different terminals by due time, but it never reorders operations
 within a terminal. The response preserves target order and includes one result
