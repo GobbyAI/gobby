@@ -499,8 +499,8 @@ pub(crate) mod serial_db {
 
         let mut check = db::connect_readwrite(&database_url).expect("check connection");
         let baseline = [
-            vector_flags(&mut check, &source, "hash-h"),
-            vector_flags(&mut check, &source, "hash-k"),
+            vector_flags(&mut check, &source, hash_h.as_str()),
+            vector_flags(&mut check, &source, hash_k.as_str()),
         ];
         assert_eq!(
             baseline,
@@ -622,8 +622,8 @@ pub(crate) mod serial_db {
 
             let mut check = db::connect_readwrite(&database_url).expect("check connection");
             let baseline = [
-                vector_flags(&mut check, &source, "hash-h"),
-                vector_flags(&mut check, &source, "hash-k"),
+                vector_flags(&mut check, &source, hash_h.as_str()),
+                vector_flags(&mut check, &source, hash_k.as_str()),
             ];
             assert_eq!(
                 baseline,
