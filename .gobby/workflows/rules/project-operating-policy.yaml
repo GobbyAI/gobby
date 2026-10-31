@@ -34,7 +34,7 @@ rules:
             "integration_branch": "0.5.0",
             "operator": "Josh",
             "operator_channel": "gobby-telegram",
-            "quiet_hours": "04:45–06:45 America/Chicago",
+            "quiet_hours": "04:00–05:00 America/Chicago daily; 04:00–06:00 on Mondays",
             "report_cadence_seconds": 1800,
             "release_cadence_minutes": 120,
             "full_report_minutes": "00-29 UTC",
@@ -193,7 +193,7 @@ rules:
           - close preview is deterministic only; the Dev Manager closes after landing.
           - Hold: two consecutive 5-minute loads>60; lift: two <36; one/equality does nothing. Threshold/admission/escalation changes need Josh via Assistant. Report load only if breaching.
           - Skip landed Rust retest if tree equals reviewed merge; build gclient in same cutover run.
-          - Game Goblins04:45–06:45 CT: no restart/cutover, low load; never rerun.
+          - Quiet hours (project_policy.quiet_hours, for the Game Goblins jobs): no restart/cutover, low load; never rerun.
           - Crate release: read project_policy.release_guidance first.
           - Place panes by project_policy.workspace_layout.
       - type: set_variable

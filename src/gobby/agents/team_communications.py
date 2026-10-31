@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from gobby.storage.hub.protocol import HubDatabase, Row
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, system_session_id
+from gobby.utils.session_context import is_daemon_execution
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.agent_resolver import (
     AgentResolutionError,
@@ -49,7 +50,8 @@ def _definition(db: HubDatabase, row: Row) -> AgentDefinitionBody | None:
 def recipient_policy(
     db: HubDatabase, sender_id: str, recipient_ids: Sequence[str]
 ) -> RecipientPolicy:
-    if sender_id == system_session_id():
+    # The system sender and daemon-owned execution (pipeline steps, cron actions) are the daemon.
+    if sender_id == system_session_id() or is_daemon_execution():
         return RecipientPolicy(frozenset())
     rows = db.fetchall(_SEATS + "WHERE s.id = ANY(%s::uuid[])", ([sender_id, *recipient_ids],))
     sender = next((row for row in rows if str(row["id"]) == sender_id), None)

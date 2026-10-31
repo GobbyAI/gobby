@@ -6,6 +6,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from gobby.tasks.state_semantics import serialize_task_state
+from gobby.tasks.step_records import current_task_steps, list_task_step_records
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -178,10 +179,20 @@ def brief_task_card(ctx: RegistryContext, task: Any) -> dict[str, Any]:
         linked = ctx.task_manager.get_task(linked_task_id)
         return dependency_payload(dep, linked_task_id, linked)
 
-    return task_summary_payload(
+    card = task_summary_payload(
         task,
         {
             "blocked_by": [summary(dep, dep.depends_on) for dep in blockers],
             "blocking": [summary(dep, dep.task_id) for dep in blocking],
         },
     )
+    # The await_tests gate reads the review epoch and each current step's status and epoch.
+    current_steps = current_task_steps(
+        list_task_step_records(ctx.task_manager.db, task.id), task.review_epoch
+    )
+    card["review_epoch"] = task.review_epoch
+    card["step_records"] = {
+        step: {"status": record.status, "epoch": record.epoch}
+        for step, record in current_steps.items()
+    }
+    return card
