@@ -330,3 +330,54 @@ async def test_reviewer_holding_the_claim_withdraws_its_own_candidate(world: Tea
     assert event is not None
 
     assert is_task_coordinator(chain.db, event, chain.reviewer)
+
+
+async def test_unaddressed_live_seat_takes_the_candidate_from_its_team(world: TeamWorld) -> None:
+    chain = await _chain(world, "Roster fallback reaches the reviewer")
+    _implement(chain)
+    LocalTaskManager(chain.db).claim_task(chain.task.id, chain.developer, force=True)
+    # The developer addresses only its Dev Manager, which writes no review step.
+    ids = _send(chain, chain.developer, _candidate(chain, chain.impl_sha), chain.manager)
+
+    result = _hand(chain, chain.developer, "review", ids)
+
+    assert result["handed_to"] == chain.reviewer
+    assert _owner(chain) == chain.reviewer
+    inbox = InterSessionMessageManager(chain.db).list_messages(chain.reviewer, direction="inbox")
+    assert _candidate(chain, chain.impl_sha) in [message.content for message in inbox]
+
+
+async def test_no_live_reviewer_staffs_the_seat_through_the_dev_manager(world: TeamWorld) -> None:
+    chain = await _chain(world, "No live reviewer is staffed by the Dev Manager")
+    _implement(chain)
+    LocalTaskManager(chain.db).claim_task(chain.task.id, chain.developer, force=True)
+    chain.db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (chain.reviewer,))
+    ids = _send(chain, chain.developer, _candidate(chain, chain.impl_sha), chain.reviewer)
+
+    result = _hand(chain, chain.developer, "review", ids)
+
+    assert result["handed_to"] is None
+    assert _owner(chain) == chain.developer
+    inbox = InterSessionMessageManager(chain.db).list_messages(chain.manager, direction="inbox")
+    requests = [message.content for message in inbox if "EVENT=HANDOFF_PENDING" in message.content]
+    assert len(requests) == 1
+    assert f"TASK=#{chain.task.seq_num}" in requests[0]
+    assert "STEP=review" in requests[0]
+
+
+async def test_no_live_reviewer_or_dev_manager_escalates_the_task(world: TeamWorld) -> None:
+    chain = await _chain(world, "No live staff escalates the hand-off")
+    _implement(chain)
+    LocalTaskManager(chain.db).claim_task(chain.task.id, chain.developer, force=True)
+    chain.db.execute(
+        "UPDATE sessions SET status = 'expired' WHERE id IN (%s, %s)",
+        (chain.reviewer, chain.manager),
+    )
+    ids = _send(chain, chain.developer, _candidate(chain, chain.impl_sha), chain.reviewer)
+
+    result = _hand(chain, chain.developer, "review", ids)
+
+    assert result["handed_to"] is None
+    task = LocalTaskManager(chain.db).get_task(chain.task.id)
+    assert task.escalated_at is not None
+    assert "hand-off" in (task.escalation_reason or "")

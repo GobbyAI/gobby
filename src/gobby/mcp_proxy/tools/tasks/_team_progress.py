@@ -1,0 +1,86 @@
+"""The team_progress tool: stage spans and stall flags for a Dev Manager or Orchestrator."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+from gobby.agents.team_lifecycle import seat_team, team_binding
+from gobby.agents.team_progress import TaskProgress, TeamProgress, team_progress
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+
+
+def create_team_progress_registry(ctx: RegistryContext) -> InternalToolRegistry:
+    registry = InternalToolRegistry(
+        name="gobby-tasks-progress",
+        description="Team stage timing and stall flags",
+    )
+
+    def team_progress_tool(team_id: str | None = None) -> dict[str, Any]:
+        """Report each task a team claimed: stage spans, claim-to-close time and stall flags.
+
+        Args:
+            team_id: Team to read. Omit it to read the calling seat's own team.
+
+        Returns:
+            The team's tasks, or an error dict when the team or the caller's team is unknown.
+        """
+        from gobby.utils.session_context import get_current_session_id
+
+        db = ctx.task_manager.db
+        if team_id is None:
+            session_id = get_current_session_id()
+            if not session_id:
+                return {"error": "Session context is required", "error_code": "session_required"}
+            try:
+                caller = ctx.resolve_session_id(session_id)
+            except ValueError as e:
+                return {"error": f"Cannot resolve session '{session_id}': {e}"}
+            seat = seat_team(db, caller)
+            if seat is None:
+                return {
+                    "error": "The caller is not on a team; pass team_id",
+                    "error_code": "team_required",
+                }
+            team_id = seat.team_id
+        if team_binding(db, team_id) is None:
+            return {"error": f"Team {team_id} not found", "error_code": "team_not_found"}
+        return _payload(team_progress(db, team_id, now=datetime.now(UTC)))
+
+    registry.register(
+        name="team_progress",
+        description=(
+            "Report a team's task progress: each stage's span in seconds, claim-to-close time, "
+            "and flags (handoff_unacknowledged, handoff_pending, holder_not_live, "
+            "idle_on_open_work)."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "team_id": {
+                    "type": "string",
+                    "description": "Team to read; omit to read the calling seat's team",
+                },
+            },
+        },
+        func=team_progress_tool,
+    )
+    return registry
+
+
+def _payload(progress: TeamProgress) -> dict[str, Any]:
+    return {
+        "team_id": progress.team_id,
+        "tasks": [_task_payload(task) for task in progress.tasks],
+    }
+
+
+def _task_payload(task: TaskProgress) -> dict[str, Any]:
+    return {
+        "task_id": task.task_id,
+        "seq_num": task.seq_num,
+        "stages": [{"stage": span.stage, "seconds": span.seconds} for span in task.stages],
+        "claim_to_close_seconds": task.claim_to_close_seconds,
+        "flags": sorted(task.flags),
+    }

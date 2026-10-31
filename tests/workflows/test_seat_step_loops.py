@@ -1899,7 +1899,13 @@ async def test_reviewer_first_claim_after_release_enters_fix(
     await run.load(*run.vars["required_skills"])
     task = run.task()
     assert run.step == "await"
-    claimed: dict[str, Any] = {"task_id": task.id, "ref": f"#{task.seq_num}", "title": task.title}
+    # The fixer gate opens only after the second rejection, which claim_task reports.
+    claimed: dict[str, Any] = {
+        "task_id": task.id,
+        "ref": f"#{task.seq_num}",
+        "title": task.title,
+        "review_fail_count": 2,
+    }
     if shape == "wrapped":
         # The live proxy wraps the claim and drops the inner success flag.
         output: dict[str, Any] = {"success": True, "result": claimed}
@@ -1920,6 +1926,19 @@ async def test_reviewer_failed_claim_keeps_await(temp_db: HubDatabase) -> None:
         "claim_task",
         {"task_id": task.id},
         {"success": False, "error": "task is claimed by another session"},
+    )
+    assert (run.step, run.vars["fixing"]) == ("await", False)
+
+
+async def test_reviewer_claim_before_second_rejection_keeps_await(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "code-reviewer", definition=_bundled_code_reviewer())
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"success": True, "task_id": task.id, "ref": f"#{task.seq_num}", "review_fail_count": 1},
     )
     assert (run.step, run.vars["fixing"]) == ("await", False)
 

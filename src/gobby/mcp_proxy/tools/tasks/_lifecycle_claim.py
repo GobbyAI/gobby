@@ -220,11 +220,14 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         # The title travels with the claim so memory surfacing can query the
         # task's subject without a second read; step workflows bind the ref.
         task_ref = f"#{task.seq_num}" if task.seq_num else resolved_id
+        # The review standing travels with the claim: a reviewer takes the fix step only once the
+        # task's second rejection has handed it the claim.
         result: dict[str, Any] = {
             "success": True,
             "task_id": resolved_id,
             "ref": task_ref,
             "title": task.title,
+            "review_fail_count": updated.review_fail_count,
         }
         if already_selected:
             result.update(

@@ -143,9 +143,9 @@ step_workflow:
         Manager; re-arm after an interim owner reply. If no wait applies,
         send EVENT=SEAT_READY NOTE=idle to your Dev Manager and end the turn.
         An idle declaration expires when the next turn starts.
-        When your Dev Manager hands you the task's claim after a second
-        rejection, call gobby-tasks:claim_task(task_id) once; its
-        successful result opens the fix step.
+        After a second rejection the claim stays with you: call
+        gobby-tasks:claim_task(task_id) once; a result whose review_fail_count
+        is 2 or more opens the fix step.
         When told to end while idle, call gobby-agents:end_agent_run with
         current_state naming the last verdict sent and next_steps naming any
         open item.
@@ -172,10 +172,11 @@ step_workflow:
         - server: gobby-agents
           tool: get_inter_session_message
           action: advance_seat
-        # The Dev Manager's handover is the claim. A release leaves the first claim a plain
-        # success, so any successful claim here opens the fix step.
+        # A second rejection keeps the claim with this seat: its claim_task result carries the
+        # task's review_fail_count, and only a count of two or more opens the fix step.
         - server: gobby-tasks
           tool: claim_task
+          when: "(tool_output.get('result') or tool_output).get('review_fail_count', 0) >= 2"
           action: set_variable
           variable: fixing
           value: true
@@ -270,7 +271,11 @@ step_workflow:
       status_message: |
         Send the CANDIDATE_VERDICT line. For a LAND, record the approved review
         step first, then send the LAND verdict to your Dev Manager and the
-        author; your Dev Manager lands it. A message that starts with the
+        author; your Dev Manager lands it. The first line that reaches the seat
+        taking the next step moves the claim there, so send a LAND to your Dev
+        Manager first and a BOUNCE to the author first; the second send then
+        finds the claim already moved. A LAND on tests hands the claim to the
+        Developer, and a BOUNCE hands it back to the author. A message that starts with the
         BOUNCE verdict line, or with the LAND verdict line after your approved
         review step record, for candidate_task returns you to await.
         On withdrawal or reassignment, read the Orchestrator's or the task's
@@ -317,6 +322,16 @@ step_workflow:
         - server: gobby-tasks
           tool: record_review_step
           action: advance_seat
+        # A BOUNCE returns the claim to its maker, and a LAND moves it to the next open step.
+        # Each hop reads the sent line and ignores the other verdict.
+        - server: gobby-agents
+          tool: send_message
+          action: hand_off_claim
+          hop: maker
+        - server: gobby-agents
+          tool: send_message
+          action: hand_off_claim
+          hop: next_open
       transitions:
         - to: review
           when: "vars.candidate_received and not vars.verdict_ready"
