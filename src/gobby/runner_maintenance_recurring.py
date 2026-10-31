@@ -223,13 +223,15 @@ async def memory_reconcile_loop(
             qdrant_orphans = report.get("qdrant", {}).get("orphans_deleted", 0)
             falkordb_orphans = report.get("falkordb", {}).get("orphan_memories_deleted", 0)
             falkordb_entities = report.get("falkordb", {}).get("orphan_entities_deleted", 0)
-            if qdrant_orphans or falkordb_orphans or falkordb_entities:
+            reembedded = report.get("falkordb", {}).get("entity_vectors_reembedded", 0)
+            if qdrant_orphans or falkordb_orphans or falkordb_entities or reembedded:
                 logger.info(
                     "Memory reconciliation: %s Qdrant orphans, %s FalkorDB memory orphans, "
-                    "%s FalkorDB entity orphans cleaned",
+                    "%s FalkorDB entity orphans cleaned; %s entity vectors re-embedded",
                     qdrant_orphans,
                     falkordb_orphans,
                     falkordb_entities,
+                    reembedded,
                 )
         except asyncio.CancelledError:
             break

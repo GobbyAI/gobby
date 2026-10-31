@@ -282,3 +282,53 @@ class TestSetNodeVector:
 
         with pytest.raises(ValueError, match="Invalid Cypher property name"):
             await client.set_node_vector("carol", [0.5], property_name="bad'; DROP")
+
+
+class TestStagedEntityVectors:
+    """Tests for the embedding-switch staged vector queries."""
+
+    async def test_staging_pages_by_key_and_skips_entities_already_staged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _client(monkeypatch)
+        client.query = AsyncMock(return_value=[])
+
+        await client.list_entities_to_stage(1024, after="beta", limit=100)
+
+        cypher, params = client.query.call_args.args
+        assert "n.entity_key > $after" in cypher
+        assert "n.embedding_next_dim IS NULL OR n.embedding_next_dim <> $dim" in cypher
+        assert "ORDER BY n.entity_key LIMIT $limit" in cypher
+        assert params == {"dim": 1024, "after": "beta", "limit": 100}
+
+    async def test_promotion_swaps_vectors_between_dropping_and_rebuilding_the_index(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _client(monkeypatch)
+        client.query = AsyncMock(
+            side_effect=[[], [{"promoted": 2}], [], [], []],
+        )
+
+        promoted = await client.promote_staged_vectors(1024)
+
+        cyphers = [call.args[0] for call in client.query.call_args_list]
+        assert promoted == 2
+        assert cyphers[0] == "DROP VECTOR INDEX FOR (n:_Entity) ON (n.embedding)"
+        assert "SET n.embedding = n.embedding_next" in cyphers[1]
+        assert "n.embedding_dim <> $dim" in cyphers[2]
+        assert "SET n.embedding = NULL" in cyphers[2]
+        assert "n.embedding_next = NULL" in cyphers[3]
+        assert cyphers[4].startswith("CREATE VECTOR INDEX FOR (n:_Entity) ON (n.embedding)")
+        assert client.query.call_args_list[4].args[1] == {"dim": 1024}
+
+    async def test_discard_clears_only_staged_vectors(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _client(monkeypatch)
+        client.query = AsyncMock(return_value=[])
+
+        await client.discard_staged_vectors()
+
+        cypher = client.query.call_args.args[0]
+        assert "SET n.embedding_next = NULL, n.embedding_next_dim = NULL" in cypher
+        assert "n.embedding =" not in cypher

@@ -15,6 +15,8 @@ import redis.exceptions
 logger = logging.getLogger(__name__)
 
 _CONSTRAINT_POLL_INTERVAL_SECONDS = 0.25
+# An embedding switch stages target-model entity vectors here until its flip.
+STAGED_VECTOR_PROPERTY = "embedding_next"
 _CONSTRAINT_READY_TIMEOUT_SECONDS = 30.0
 
 
@@ -704,12 +706,58 @@ class FalkorClient:
         )
 
     async def list_entities_with_stale_vectors(self, dimension: int) -> list[dict[str, Any]]:
-        """Return entities whose stored embedding was not written at ``dimension``."""
+        """Return named entities with no embedding written at ``dimension``."""
         return await self.query(
-            "MATCH (n:_Entity) WHERE n.embedding IS NOT NULL AND n.name IS NOT NULL "
+            "MATCH (n:_Entity) WHERE n.name IS NOT NULL "
             "AND (n.embedding_dim IS NULL OR n.embedding_dim <> $dim) "
             "RETURN n.entity_key AS entity_key, n.name AS name",
             {"dim": int(dimension)},
+        )
+
+    async def list_entities_to_stage(
+        self, dimension: int, *, after: str, limit: int
+    ) -> list[dict[str, Any]]:
+        """Page named entities, by key, that have no staged vector at ``dimension``."""
+        return await self.query(
+            "MATCH (n:_Entity) WHERE n.name IS NOT NULL AND n.entity_key > $after "
+            f"AND (n.{STAGED_VECTOR_PROPERTY}_dim IS NULL "
+            f"OR n.{STAGED_VECTOR_PROPERTY}_dim <> $dim) "
+            "RETURN n.entity_key AS entity_key, n.name AS name, n.project_id AS project_id "
+            "ORDER BY n.entity_key LIMIT $limit",
+            {"dim": int(dimension), "after": after, "limit": int(limit)},
+        )
+
+    async def promote_staged_vectors(self, dimension: int) -> int:
+        """Swap staged entity vectors into ``embedding`` and rebuild the index at ``dimension``.
+
+        Entities left with a vector of another dimension lose it, so the index can
+        be built; memory reconcile re-embeds them.
+        """
+        await self.drop_vector_index()
+        staged = STAGED_VECTOR_PROPERTY
+        rows = await self.query(
+            f"MATCH (n:_Entity) WHERE n.{staged}_dim = $dim "
+            f"SET n.embedding = n.{staged}, n.embedding_dim = n.{staged}_dim, "
+            f"n.{staged} = NULL, n.{staged}_dim = NULL "
+            "RETURN count(n) AS promoted",
+            {"dim": int(dimension)},
+        )
+        await self.query(
+            "MATCH (n:_Entity) WHERE n.embedding IS NOT NULL "
+            "AND (n.embedding_dim IS NULL OR n.embedding_dim <> $dim) "
+            "SET n.embedding = NULL, n.embedding_dim = NULL",
+            {"dim": int(dimension)},
+        )
+        await self.discard_staged_vectors()
+        await self.ensure_vector_index(dimension=dimension)
+        return int(rows[0]["promoted"]) if rows else 0
+
+    async def discard_staged_vectors(self) -> None:
+        """Remove every staged entity vector."""
+        staged = STAGED_VECTOR_PROPERTY
+        await self.query(
+            f"MATCH (n:_Entity) WHERE n.{staged}_dim IS NOT NULL "
+            f"SET n.{staged} = NULL, n.{staged}_dim = NULL"
         )
 
     async def drop_vector_index(self) -> None:

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -20,7 +20,7 @@ from gobby.ai.embedding_switch import (
     SwitchJournal,
     get_switch_status,
 )
-from gobby.ai.embedding_switch_runner import EmbeddingSwitchRunner
+from gobby.ai.embedding_switch_runner import EmbeddingSwitchRunError, EmbeddingSwitchRunner
 from gobby.ai.embedding_switch_service import EmbeddingSwitchControl
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_BASE_KEY,
@@ -840,3 +840,156 @@ async def test_detect_provider_from_config_uses_fingerprint(
     monkeypatch.setattr(embedding_switch_runner, "fingerprint_embedding_server", _vllm)
 
     assert await embedding_switch_runner.detect_provider_from_config(config) == "vllm"
+
+
+class FakeGraph:
+    """In-memory _Entity vectors with FalkorClient's staging semantics."""
+
+    def __init__(self, entities: dict[str, dict[str, Any]], operations: list[Any]) -> None:
+        self.entities = entities
+        self.operations = operations
+
+    async def list_entities_to_stage(
+        self, dimension: int, *, after: str, limit: int
+    ) -> list[dict[str, Any]]:
+        rows = [
+            {"entity_key": key, "name": node["name"], "project_id": node.get("project_id")}
+            for key, node in sorted(self.entities.items())
+            if key > after and node.get("embedding_next_dim") != dimension
+        ]
+        return rows[:limit]
+
+    async def set_node_vector(
+        self, entity_key: str, embedding: list[float], property_name: str = "embedding"
+    ) -> None:
+        node = self.entities[entity_key]
+        node[property_name] = embedding
+        node[f"{property_name}_dim"] = len(embedding)
+
+    async def promote_staged_vectors(self, dimension: int) -> int:
+        self.operations.append(("graph_promote", dimension))
+        promoted = 0
+        for node in self.entities.values():
+            if node.get("embedding_next_dim") == dimension:
+                node["embedding"] = node.pop("embedding_next")
+                node["embedding_dim"] = node.pop("embedding_next_dim")
+                promoted += 1
+        return promoted
+
+    async def discard_staged_vectors(self) -> None:
+        self.operations.append(("graph_discard",))
+        for node in self.entities.values():
+            node.pop("embedding_next", None)
+            node.pop("embedding_next_dim", None)
+
+
+class TargetEmbeddingService:
+    def __init__(self, dim: int) -> None:
+        self.dim = dim
+        self.texts: list[str] = []
+
+    async def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
+        self.texts.extend(texts)
+        return [[1.0] * self.dim for _ in texts]
+
+
+def _graph_entities() -> dict[str, dict[str, Any]]:
+    return {
+        key: {"name": key.title(), "project_id": "proj-1", "embedding": [0.5], "embedding_dim": 1}
+        for key in ("alpha", "beta", "gamma")
+    }
+
+
+def _attach_graph(
+    monkeypatch: pytest.MonkeyPatch, runner: EmbeddingSwitchRunner, graph: FakeGraph
+) -> None:
+    @asynccontextmanager
+    async def open_graph() -> AsyncIterator[FakeGraph]:
+        yield graph
+
+    monkeypatch.setattr(runner, "_graph", open_graph)
+
+
+@pytest.mark.asyncio
+async def test_build_stages_target_entity_vectors_and_keeps_active_ones_serving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeConfigStore()
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
+    graph = FakeGraph(_graph_entities(), store.operations)
+    _attach_graph(monkeypatch, runner, graph)
+    journal = _journal(PHASE_BUILDING)
+    service = TargetEmbeddingService(journal.target_dim)
+
+    staged = await runner._stage_graph_vectors(journal, cast(Any, service))
+
+    assert staged == 3
+    assert service.texts == ["Alpha", "Beta", "Gamma"]
+    for node in graph.entities.values():
+        assert node["embedding"] == [0.5]
+        assert node["embedding_next_dim"] == journal.target_dim
+    assert await runner._stage_graph_vectors(journal, cast(Any, service)) == 0
+
+
+@pytest.mark.asyncio
+async def test_build_refuses_entity_vectors_of_the_wrong_dimension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeConfigStore()
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
+    graph = FakeGraph(_graph_entities(), store.operations)
+    _attach_graph(monkeypatch, runner, graph)
+    journal = _journal(PHASE_BUILDING)
+
+    with pytest.raises(EmbeddingSwitchRunError, match="expected 4096"):
+        await runner._stage_graph_vectors(journal, cast(Any, TargetEmbeddingService(8)))
+
+    assert all("embedding_next" not in node for node in graph.entities.values())
+
+
+@pytest.mark.asyncio
+async def test_flip_promotes_staged_entity_vectors_before_the_config_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeConfigStore()
+    vector_store = FakeVectorStore(
+        {"memories": "memories@old", "tool_embeddings": "tool_embeddings@old"}
+    )
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
+    monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
+    graph = FakeGraph(_graph_entities(), store.operations)
+    _attach_graph(monkeypatch, runner, graph)
+    journal = _journal(PHASE_FLIPPING)
+    await runner._stage_graph_vectors(journal, cast(Any, TargetEmbeddingService(4096)))
+
+    _result, journal = await runner.flip(journal)
+
+    kinds = [operation[0] for operation in store.operations]
+    assert kinds.index("graph_promote") < kinds.index("complete")
+    assert all(node["embedding_dim"] == 4096 for node in graph.entities.values())
+
+
+@pytest.mark.asyncio
+async def test_abort_discards_staged_entity_vectors_and_keeps_the_old_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeConfigStore()
+    vector_store = FakeVectorStore()
+    control = EmbeddingSwitchControl()
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase(), control=control)
+    monkeypatch.setattr(runner, "_vector_store", lambda _journal: vector_store)
+    graph = FakeGraph(_graph_entities(), store.operations)
+    _attach_graph(monkeypatch, runner, graph)
+    await runner._stage_graph_vectors(
+        _journal(PHASE_BUILDING), cast(Any, TargetEmbeddingService(4096))
+    )
+    control.abort_requested.set()
+
+    report = await runner.run(_journal(PHASE_BUILDING))
+
+    assert report.failed is False
+    assert ("graph_discard",) in store.operations
+    assert ("graph_promote", 4096) not in store.operations
+    for node in graph.entities.values():
+        assert node["embedding"] == [0.5]
+        assert "embedding_next" not in node

@@ -39,9 +39,11 @@ from gobby.cli.installers.embedding import (
     _setup_ollama,
 )
 from gobby.config.app import DaemonConfig
+from gobby.config.persistence import is_falkordb_enabled
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 from gobby.memory.collection_names import delete_retired_embedding_collections
+from gobby.memory.falkor_client import STAGED_VECTOR_PROPERTY, FalkorClient
 from gobby.memory.vectorstore import VectorStore
 from gobby.projects.write_fence import ProjectWriteRejected
 from gobby.storage.embedding_generation_state import (
@@ -289,6 +291,7 @@ class EmbeddingSwitchRunner:
         count += await self._build_memory_collection(journal, service, vector_store)
         count += await self._build_tool_collection(journal, vector_store)
         count += await self._replay_projection_changes(journal, service, vector_store)
+        count += await self._stage_graph_vectors(journal, service)
 
         self._check_abort()
         journal = advance_phase(self.config_store, journal, PHASE_FLIPPING)
@@ -319,6 +322,10 @@ class EmbeddingSwitchRunner:
             if journal.old_physical_names.get(kind) == alias_name and alias_name not in aliases:
                 await _delete_collection_if_present(vector_store, alias_name)
             await vector_store.create_alias(target_name, alias_name)
+
+        async with self._graph() as graph:
+            if graph is not None:
+                await graph.promote_staged_vectors(journal.target_dim)
 
         self._completed_record = complete_switch(self.config_store, journal)
         if self.config_runtime is not None and self._completed_record.committed_revision:
@@ -678,6 +685,9 @@ class EmbeddingSwitchRunner:
     ) -> SwitchRunReport:
         try:
             await self._cleanup_staged_collections(journal)
+            async with self._graph() as graph:
+                if graph is not None:
+                    await graph.discard_staged_vectors()
             complete_aborted_switch(self.config_store, journal)
         except Exception as exc:
             report.error = str(exc)
@@ -698,6 +708,71 @@ class EmbeddingSwitchRunner:
         if self.fence is not None:
             return self.fence.writer(project_id)
         return _noop_writer()
+
+    @asynccontextmanager
+    async def _graph(self) -> AsyncIterator[FalkorClient | None]:
+        """Open this run's knowledge graph, or yield None when FalkorDB is off."""
+        databases = self._runtime_config().databases
+        if not is_falkordb_enabled(databases):
+            yield None
+            return
+        falkor = databases.falkordb
+        client = FalkorClient(
+            host=falkor.host,
+            port=falkor.port,
+            password=falkor.password,
+            graph_name=falkor.graph_name,
+        )
+        try:
+            yield client
+        finally:
+            await client.close()
+
+    async def _stage_graph_vectors(self, journal: SwitchJournal, service: EmbeddingService) -> int:
+        """Embed each named entity with the target model into its staged vector.
+
+        The active ``embedding`` keeps serving until the flip promotes the staged
+        vectors. Paging by key lets a resumed build skip entities already staged.
+        """
+        async with self._graph() as graph:
+            if graph is None:
+                return 0
+            total = 0
+            after = ""
+            while True:
+                self._check_abort()
+                rows = await graph.list_entities_to_stage(
+                    journal.target_dim, after=after, limit=_BATCH_SIZE
+                )
+                if not rows:
+                    return total
+                after = str(rows[-1]["entity_key"])
+                embeddings = await service.generate_embeddings([str(row["name"]) for row in rows])
+                by_project: dict[str | None, list[tuple[str, list[float]]]] = {}
+                for row, embedding in zip(rows, embeddings, strict=True):
+                    if len(embedding) != journal.target_dim:
+                        raise EmbeddingSwitchRunError(
+                            f"Target model returned a {len(embedding)}-dim entity vector; "
+                            f"expected {journal.target_dim}"
+                        )
+                    by_project.setdefault(row.get("project_id"), []).append(
+                        (str(row["entity_key"]), embedding)
+                    )
+                for project_id, items in by_project.items():
+                    writer = self._writer(project_id) if project_id else _noop_writer()
+                    try:
+                        async with writer:
+                            for entity_key, embedding in items:
+                                await graph.set_node_vector(
+                                    entity_key, embedding, property_name=STAGED_VECTOR_PROPERTY
+                                )
+                    except ProjectWriteRejected:
+                        logger.info(
+                            "Skipping embedding-switch graph build for unavailable project %s",
+                            project_id,
+                        )
+                        continue
+                    total += len(items)
 
 
 @asynccontextmanager
