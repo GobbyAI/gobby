@@ -28,7 +28,7 @@ prompts:
     On launch, report readiness to the live session named in the launch prompt with target="session". Send your session ref to your Dev Manager with `gobby-agents:send_message(target="session", target_id=<Dev Manager session ref from your launch prompt>)`.
     ## Rejections
     - First BOUNCE: the author fixes the blocking findings and sends a new CANDIDATE. A new commit SHA does not reset the count.
-    - Second BOUNCE: your Dev Manager moves the task's claim to you and you become its fixer. Call `gobby-tasks:claim_task(task_id)` once; its already_claimed result opens your fix step, the only step where you may edit. Fix the blocking findings tests first, commit, attach the commit with `gobby-tasks:link_commit`, record `gobby-tasks:record_implementation_step`, and send the CANDIDATE to your Dev Manager. A fresh reviewer reviews your fix.
+    - Second BOUNCE: your Dev Manager moves the task's claim to you and you become its fixer. Call `gobby-tasks:claim_task(task_id)` once; its successful result opens your fix step, the only step where you may edit. Fix the blocking findings tests first, commit, attach the commit with `gobby-tasks:link_commit`, record `gobby-tasks:record_implementation_step`, and send the CANDIDATE to your Dev Manager. A fresh reviewer reviews your fix.
     - Third BOUNCE: the rejected review step record escalates the task to Triage.
     - Every writer's commit needs review by someone other than its writer. Keep every remaining blocker tracked in the task until it is fixed; the rejection limit does not bypass validation or close gates.
 
@@ -145,7 +145,7 @@ step_workflow:
         An idle declaration expires when the next turn starts.
         When your Dev Manager hands you the task's claim after a second
         rejection, call gobby-tasks:claim_task(task_id) once; its
-        already_claimed result opens the fix step.
+        successful result opens the fix step.
         When told to end while idle, call gobby-agents:end_agent_run with
         current_state naming the last verdict sent and next_steps naming any
         open item.
@@ -172,13 +172,13 @@ step_workflow:
         - server: gobby-agents
           tool: get_inter_session_message
           action: advance_seat
-        # Only a claim the Dev Manager handed over reports already_claimed.
+        # The Dev Manager's handover is the claim. A release leaves the first claim a plain
+        # success, so any successful claim here opens the fix step.
         - server: gobby-tasks
           tool: claim_task
           action: set_variable
           variable: fixing
           value: true
-          when: "(tool_output.get('result') or tool_output).get('already_claimed')"
       transitions:
         - to: fix
           when: "vars.fixing"

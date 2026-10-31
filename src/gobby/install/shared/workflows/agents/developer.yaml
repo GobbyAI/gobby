@@ -81,6 +81,7 @@ step_workflow:
     required_skills_loaded: false
     additional_skills: []
     additional_skills_loaded: false
+    tests_ready: false
     implementation_complete: false
     candidate_sent: false
     bounced: false
@@ -196,6 +197,12 @@ step_workflow:
           tool: claim_task
           action: set_variable
           variable: skills_routed
+          value: false
+        # The test gate belongs to the claimed task; a previous task's approval never opens it.
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: tests_ready
           value: false
         - server: gobby-tasks
           tool: claim_task
@@ -315,10 +322,46 @@ step_workflow:
       transitions:
         - to: claim
           when: "not vars.task_claimed"
-        - to: implement
+        - to: await_tests
           when: >-
             not vars.additional_skills
             or all(skill_loaded(skill) for skill in vars.additional_skills)
+
+    - name: await_tests
+      mcp_error_policy: stay
+      idle: true
+      description: "Wait until the Test Writer's test step is approved for this epoch"
+      status_message: |
+        Read the claimed task with gobby-tasks:get_task(task_id=assigned_task_id, brief=false) and check
+        its step_records.test. Implementation opens only when that record is approved for the
+        current review_epoch: either a committed test set, or a moot disposition whose feedback
+        says why no new tests are needed. Until then, do not edit files or run implementation
+        commands. Register a gobby-agents:wait_for_coordination reply wait on your Dev Manager
+        and end each idle turn on it; re-arm after an interim owner reply. If no wait applies,
+        send EVENT=SEAT_READY NOTE=idle to your Dev Manager and end the turn.
+        An idle declaration expires when the next turn starts.
+      allowed_tools:
+        - Read
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks:get_task"
+        - "gobby-agents:wait_for_coordination"
+        - "gobby-agents:get_inter_session_message"
+      on_mcp_success:
+        - server: gobby-tasks
+          tool: get_task
+          action: set_variable
+          variable: tests_ready
+          value: >-
+            (tool_output.get('result') or tool_output).get('step_records', {}).get('test', {}).get('status') == 'approved'
+            and (tool_output.get('result') or tool_output).get('step_records', {}).get('test', {}).get('epoch') == (tool_output.get('result') or tool_output).get('review_epoch')
+          when: "(tool_output.get('result') or tool_output).get('id') == vars.assigned_task_id"
+      transitions:
+        - to: implement
+          when: "vars.tests_ready"
 
     - name: implement
       mcp_error_policy: stay
