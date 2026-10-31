@@ -21,7 +21,7 @@ from gobby.agents.agent_workspaces import (
     drain_workspace_commits,
     workspace_git_dir,
 )
-from gobby.agents.team_lifecycle import TeamBinding
+from gobby.agents.team_admission_records import TeamBinding
 from gobby.agents.team_review import sync_epic_review
 from gobby.agents.team_teardown import TEARDOWN_GRACE, TEARDOWN_KEY
 from gobby.mcp_proxy.tools import agent_cancellation

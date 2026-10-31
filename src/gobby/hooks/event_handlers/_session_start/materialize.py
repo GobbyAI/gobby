@@ -306,6 +306,14 @@ def _bind_clear_successor(
             "Failed to bind agent workspace for clear successor %s: %s", successor_id, exc
         )
     try:
+        from gobby.agents.srt_runtime import inherit_run_socket_root
+
+        inherit_run_socket_root(handler._session_manager.db, successor_id, predecessor_id)
+    except Exception as exc:
+        handler.logger.warning(
+            "Failed to carry the SRT socket root to clear successor %s: %s", successor_id, exc
+        )
+    try:
         from gobby.sessions.title_lifecycle import apply_clear_successor_title
 
         apply_clear_successor_title(handler._session_manager, successor_id, predecessor)

@@ -106,6 +106,25 @@ def pytest_configure(config: pytest.Config) -> None:
     _ensure_isolated_bootstrap()
 
 
+@pytest.fixture(autouse=True)
+def isolated_darwin_cache_locations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point Darwin's per-user temp and cache grants at this test's own temporary roots.
+
+    The real per-user temp dir holds every pytest home, so an unredirected
+    toolchain grant covers the test's sensitive roots and the sandbox contract
+    refuses it. Every test gets the redirect, not only the agent suite.
+    """
+    original = os.confstr
+    roots = {65537: str(tmp_path / "darwin-temp"), 65538: str(tmp_path / "darwin-cache")}
+
+    def confstr(name: str | int) -> str | None:
+        if isinstance(name, int) and name in roots:
+            return roots[name]
+        return original(name)
+
+    monkeypatch.setattr(os, "confstr", confstr)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _select_schema_contract_gdaemon() -> Iterator[None]:
     """Pin schema-contract gdaemon calls at the binary ``select_test_gdaemon`` chooses.

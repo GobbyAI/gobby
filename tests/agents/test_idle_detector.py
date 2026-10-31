@@ -458,6 +458,18 @@ class TestComposerRead:
         read = self.detector.composer_read(_framed("❯ first line", "  second line"))
         assert (read.state, read.line) == ("draft", "first line\nsecond line")
 
+    def test_goal_footer_under_an_empty_frame_reads_empty(self) -> None:
+        rule = "─" * 20
+        output = (
+            "\n".join(["⏺ done", rule, "❯\xa0", rule, "  /goal active · 2% until auto-compact"])
+            + "\n"
+        )
+
+        read = self.detector.composer_read(output)
+
+        assert (read.state, read.line) == ("empty", None)
+        assert self.detector.detect(output) == "idle"
+
     def test_no_frame_is_unknown(self) -> None:
         assert self.detector.composer_read("❯ \n   Fable 5.1  12%\n").state == "unknown"
         assert self.detector.composer_read(None).state == "unknown"

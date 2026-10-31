@@ -53,10 +53,13 @@ from gobby.utils.native_bin import (
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, MutableMapping, Sequence
 
+    from gobby.storage.hub.protocol import HubDatabase
+
 from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig
 from gobby.agents.sandbox_resolvers import SandboxResolver, preflight_provider_native_settings
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.utils import spawn
+from gobby.workflows.reserved_variables import SRT_RUN_SOCKET_ROOT_VARIABLE
 
 SRT_POLICY_SCHEMA_VERSION = 1
 # Ceiling for the Node --preflight probe. It normally finishes in a few seconds,
@@ -102,6 +105,7 @@ class SandboxLaunch:
     node_path: str | None = None
     runner_path: str | None = None
     shim_path: str | None = None
+    run_socket_root: str | None = None
 
     def wrap(self, command: Sequence[str]) -> list[str]:
         """Wrap one provider argv exactly once when SRT is active."""
@@ -496,6 +500,44 @@ def _preflight_provider_native(
         raise SrtRuntimeError(f"{provider} emitted an unverifiable sensitive-root policy") from exc
 
 
+def record_run_socket_root(db: HubDatabase, session_id: str, launch: SandboxLaunch) -> None:
+    """Expose the launch's run socket root to the rule engine as a session variable.
+
+    A relaunch that grants no socket root withdraws the root an earlier launch recorded,
+    so the rule admits only the root the live process holds.
+    """
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    variables = SessionVariableManager(db)
+    if launch.run_socket_root:
+        variables.merge_variables(
+            session_id, {SRT_RUN_SOCKET_ROOT_VARIABLE: launch.run_socket_root}
+        )
+    else:
+        variables.withdraw_variable(session_id, SRT_RUN_SOCKET_ROOT_VARIABLE)
+
+
+def inherit_run_socket_root(db: HubDatabase, session_id: str, predecessor_id: str) -> None:
+    """Carry a sandboxed predecessor's run socket root to its clear successor.
+
+    The successor runs in the predecessor's process under the same grant. An unsandboxed
+    predecessor holds no such grant, so nothing carries.
+    """
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    predecessor = db.execute(
+        "SELECT sandbox_enabled FROM sessions WHERE id = %s", (predecessor_id,)
+    ).fetchone()
+    if predecessor is None or not predecessor["sandbox_enabled"]:
+        return
+    variables = SessionVariableManager(db)
+    root = variables.get_variable_subset(predecessor_id, (SRT_RUN_SOCKET_ROOT_VARIABLE,)).get(
+        SRT_RUN_SOCKET_ROOT_VARIABLE
+    )
+    if isinstance(root, str) and root:
+        variables.merge_variables(session_id, {SRT_RUN_SOCKET_ROOT_VARIABLE: root})
+
+
 async def prepare_sandbox_launch(
     *,
     config: SandboxConfig,
@@ -676,6 +718,7 @@ async def prepare_sandbox_launch(
             provider_env={**run_environment, **provider_env},
         )
 
+    run_socket_root: str | None = None
     if run_sockets:
         # Derive this capability from the current run, including on resume.
         run_socket_root = str(run_paths.tmp.resolve())
@@ -751,6 +794,7 @@ async def prepare_sandbox_launch(
         provider_executable=provider_executable,
         node_path=str(installation.node),
         runner_path=str(installation.runner),
+        run_socket_root=run_socket_root,
     )
     preflight_started = start_spawn_phase()
     try:

@@ -138,3 +138,37 @@ async def test_claim_step_denial_names_claim_task(temp_db: HubDatabase) -> None:
 
     assert response.decision == "block"
     assert "claim_task" in (response.reason or "")
+
+
+async def test_holder_outside_the_team_reclaims_and_advances_the_claim_step(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task = await _developer_at_claim(temp_db)
+    # The holder's run is spawned outside any team, so its own claim alone binds it to the task.
+    runs = LocalAgentRunManager(temp_db)
+    runs.create(
+        parent_session_id=COORDINATOR_ID,
+        provider="claude",
+        prompt="Hold the claim outside the team",
+        agent_name="developer",
+        child_session_id=SESSION_ID,
+        task_id=task.id,
+    )
+    monkeypatch.setattr(run.engine, "_runner", SimpleNamespace(run_storage=runs))
+    run.session_vars.update(
+        task_claimed=True,
+        active_task_id=task.id,
+        claimed_tasks={task.id: f"#{task.seq_num}"},
+    )
+
+    # The holder's re-claim is admitted and returns already_claimed, so the claim step advances.
+    assert await run.admits("gobby-tasks", "claim_task", {"task_id": task.id})
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": f"#{task.seq_num}"},
+        {"success": True, "result": _already_claimed(task)},
+    )
+
+    assert run.step == "route_skills"
+    assert run.vars["assigned_task_id"] == task.id

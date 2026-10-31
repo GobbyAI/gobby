@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.recovery_state import is_daemon_stop_parked
-from gobby.agents.team_lifecycle import TeamBinding
+from gobby.agents.team_admission_records import TeamBinding
 from gobby.agents.team_teardown import TEARDOWN_KEY, TeamTreeDeleter, reconcile_team_teardowns
 from gobby.runner_maintenance.isolation import team_run_terminator, team_tree_deleter
 from gobby.storage.agents import AgentRun, LocalAgentRunManager

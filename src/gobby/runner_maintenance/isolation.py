@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
-from gobby.agents.team_lifecycle import TeamBinding
+from gobby.agents.team_admission_records import TeamBinding
 from gobby.agents.team_teardown import (
     SEAT_NOT_ENDED,
     TeamRunTerminator,

@@ -8,6 +8,7 @@ import pytest
 from gobby.agents.isolation import IsolationContext
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
@@ -36,6 +37,7 @@ def _seat_definition(seat: str) -> AgentDefinitionBody:
             name=seat,
             prompts={"agent": "Synthetic team manager."},
             model="claude-sonnet-5",
+            capabilities=["manage_task_claims", "land_tasks", "accept_resume_retype"],
             task_step_writes=["closing"],
             workflows=make_agent_workflows(variables={"team_manager": True}),
         )
@@ -49,6 +51,10 @@ def _seat_definition(seat: str) -> AgentDefinitionBody:
 
 async def _spawn_task_seat(case: LandingCase, task: Task, mock_runner: MagicMock, seat: str) -> str:
     body = _seat_definition(seat)
+    # The spawned session's authority is read from the installed row, not the patched body.
+    AgentDefinitionManager(case.db).create(
+        name=seat, source="custom", definition_json=body.model_dump(mode="json", exclude_none=True)
+    )
     runs = LocalAgentRunManager(case.db)
     mock_runner.run_storage = runs
     registry = create_spawn_agent_registry(

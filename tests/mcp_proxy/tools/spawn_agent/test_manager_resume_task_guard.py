@@ -21,6 +21,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.agent_definitions import make_agent_definition
 from tests.workflows.test_spawn_scope_rules import _define_agent, _Teams
 from tests.workflows.test_spawn_scope_rules import teams as teams_fixture
@@ -74,6 +75,8 @@ def _run_storage(*active: Any) -> MagicMock:
 def _expire_seat(h: _Teams) -> None:
     """Hold the team's developer seat as an expired, natively resumable session."""
     seat = h.seats[SEAT_TYPE]
+    # A spawned seat records its definition as _agent_type; a resume checks the retype against it.
+    SessionVariableManager(h.db).merge_variables(seat.id, {"_agent_type": SEAT_TYPE})
     h.db.execute(
         "UPDATE sessions SET source = 'claude', external_id = %s WHERE id = %s",
         ("native-seat-thread", seat.id),

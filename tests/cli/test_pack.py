@@ -55,8 +55,14 @@ def clean_start_proof(monkeypatch: pytest.MonkeyPatch) -> None:
     runtime.read_only_operational_config.return_value = config
     monkeypatch.setattr(pack_module, "get_cli_runtime", lambda *_args: runtime)
     monkeypatch.setattr(daemon_preflight, "open_preflight_hub", lambda _runtime: None)
-    # No bootstrap database_url, so the schema plan is skipped as it is for an unreadable hub.
-    monkeypatch.setattr(daemon_preflight, "load_bootstrap", lambda: MagicMock(database_url=None))
+    # A readable hub URL that never connects: an unreadable one refuses the restart.
+    monkeypatch.setattr(
+        daemon_preflight,
+        "load_bootstrap",
+        lambda: MagicMock(database_url=fake_database_url()),
+    )
+    monkeypatch.setattr(daemon_preflight, "plan_schema", lambda *_a, **_k: "")
+    monkeypatch.setattr(daemon_preflight, "preflight_schema", lambda *_a, **_k: "")
     monkeypatch.setattr(daemon_preflight, "node_daemon_refusal", lambda _bootstrap: None)
     monkeypatch.setattr(daemon_preflight, "worktree_daemon_refusal", lambda: None)
     monkeypatch.setattr(schema_divergence, "binary_set_apply_refusal", lambda: None)

@@ -8,13 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from gobby.agents.team_lifecycle import (
+from gobby.agents.team_admission_records import (
     TeamAdmissionRefused,
     TeamBinding,
-    _admission_step,
-    _binding,
-    _merge,
-    _recorded,
+    admission_step,
+    binding_from_record,
+    merge_step_output,
+    recorded_team,
     team_binding,
 )
 from gobby.storage.hub.protocol import HubDatabase
@@ -108,11 +108,11 @@ def _merged_tips(binding: TeamBinding, leaves: list[Task], tip: str | None) -> d
 def sync_epic_review(db: HubDatabase, team_id: str) -> EpicReviewState:
     """Derive readiness from the linked tip; a leaf rejection never escalates its epic."""
     executions = LocalPipelineExecutionManager(db, None)
-    step = _admission_step(executions, team_id)
-    record = _recorded(step)
+    step = admission_step(executions, team_id)
+    record = recorded_team(step)
     if step is None or record is None:
         raise TeamAdmissionRefused("team_missing", f"team {team_id} has no admission record")
-    binding = _binding(record)
+    binding = binding_from_record(record)
     if binding is None or binding.mode != EPIC_MODE:
         return EpicReviewState(held=False, holds=(), next_reviewers={}, epic_tip_ready=False)
 
@@ -125,7 +125,7 @@ def sync_epic_review(db: HubDatabase, team_id: str) -> EpicReviewState:
         holds.add(epic.id)
     held = epic.escalated_at is not None
     if record.get("held") != held:
-        _merge(executions, step, team={**record, "held": held})
+        merge_step_output(executions, step, team={**record, "held": held})
 
     next_reviewers: dict[str, str] = {}
     tip = epic.commits[-1] if epic.commits else None
