@@ -1,15 +1,13 @@
 """A claimed task never inherits the previous task's test gate.
 
-Drives the bundled developer workflow through two successive tasks on one seat.
+Drives a synthetic developer-shaped workflow through two successive tasks on one seat.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -30,20 +28,88 @@ from tests.workflows.test_seat_step_loops import (
 
 pytestmark = pytest.mark.unit
 
-DEVELOPER_YAML = (
-    Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents/developer.yaml"
-)
+RESULT = "(tool_output.get('result') or tool_output)"
 
 
-def _bundled_developer() -> dict[str, Any]:
-    loaded: dict[str, Any] = yaml.safe_load(DEVELOPER_YAML.read_text())
-    return loaded
+def _set(tool: str, variable: str, value: Any, when: str | None = None) -> dict[str, Any]:
+    handler: dict[str, Any] = {
+        "server": "gobby-tasks",
+        "tool": tool,
+        "action": "set_variable",
+        "variable": variable,
+        "value": value,
+    }
+    if when is not None:
+        handler["when"] = when
+    return handler
+
+
+def _test_gate_workflow() -> dict[str, Any]:
+    """Claim resets the test gate, an approved test record opens it, and close releases it."""
+    test_record = f"{RESULT}.get('step_records', {{}}).get('test', {{}})"
+    return {
+        "name": "inline-test-gate",
+        "prompts": {"agent": "Exercise the task test gate."},
+        "task_step_writes": ["implementation"],
+        "workflows": {"rule_selectors": {"include": []}},
+        "step_workflow": {
+            "variables": {
+                "required_skills": [],
+                "assigned_task_id": None,
+                "tests_ready": False,
+                "implementation_complete": False,
+            },
+            "steps": [
+                {
+                    "name": "claim",
+                    "on_mcp_success": [
+                        _set("claim_task", "tests_ready", False),
+                        _set("claim_task", "implementation_complete", False),
+                        _set("claim_task", "assigned_task_id", f"{RESULT}.get('task_id')"),
+                    ],
+                    "transitions": [{"to": "await_tests", "when": "vars.assigned_task_id"}],
+                },
+                {
+                    "name": "await_tests",
+                    "allowed_tools": ["mcp__gobby__call_tool"],
+                    "allowed_mcp_tools": ["gobby-tasks:get_task"],
+                    "on_mcp_success": [
+                        _set(
+                            "get_task",
+                            "tests_ready",
+                            f"{test_record}.get('status') == 'approved' and "
+                            f"{test_record}.get('epoch') == {RESULT}.get('review_epoch')",
+                            when="tool_input.get('task_id') == vars.assigned_task_id",
+                        )
+                    ],
+                    "transitions": [{"to": "implement", "when": "vars.tests_ready"}],
+                },
+                {
+                    "name": "implement",
+                    "on_mcp_success": [_set("link_commit", "implementation_complete", True)],
+                    "transitions": [{"to": "submit", "when": "vars.implementation_complete"}],
+                },
+                {
+                    "name": "submit",
+                    "on_mcp_success": [
+                        _set(
+                            "get_task",
+                            "assigned_task_id",
+                            None,
+                            when=f"{RESULT}.get('state', {{}}).get('is_closed') is True",
+                        )
+                    ],
+                    "transitions": [{"to": "claim", "when": "not vars.assigned_task_id"}],
+                },
+            ],
+        },
+    }
 
 
 @pytest.fixture
 def seat(temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> SeatRun:
     patch_local_machine_id(monkeypatch, AUTHORITY_MACHINE_ID)
-    run = SeatRun(temp_db, "developer", definition=_bundled_developer())
+    run = SeatRun(temp_db, "inline-test-gate", definition=_test_gate_workflow())
     AgentDefinitionManager(temp_db).create(
         "inline-test-author",
         {
