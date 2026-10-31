@@ -53,6 +53,7 @@ fn source_symbol(source: &str, slice: &str, kind: &str) -> (tempfile::TempDir, S
     symbol.kind = kind.to_string();
     symbol.byte_start = start;
     symbol.byte_end = start + slice.len();
+    symbol.file_content_hash = gobby_core::indexing::content_hash(source.as_bytes());
     (dir, symbol)
 }
 
@@ -103,7 +104,8 @@ fn body_only_edit_changes_embedding_input_hash() {
     std::fs::write(&symbol.file_path, after).expect("body-only edit");
     let mut changed = symbol.clone();
     changed.content_hash = "changed-body-hash".to_string();
-    changed.file_content_hash = "changed-file-hash".to_string();
+    changed.byte_end = after.len();
+    changed.file_content_hash = gobby_core::indexing::content_hash(after.as_bytes());
 
     assert_ne!(
         old_hash,

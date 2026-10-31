@@ -753,7 +753,9 @@ mod pin_recovery {
     use crate::config::{CodeVectorSettings, EmbeddingConfig, QdrantConfig};
     use crate::db;
     use crate::models::Symbol;
-    use crate::projection::sync::tests::serial_db::{FILE, pinned_fixture, respond, seed_version};
+    use crate::projection::sync::tests::serial_db::{
+        FILE, pinned_fixture, respond, seed_version, version_hash,
+    };
     use crate::vector::code_symbols::{self, tests::read_http_request};
     use serde_json::json;
     use std::net::{TcpListener, TcpStream};
@@ -768,9 +770,9 @@ mod pin_recovery {
     fn text_search_survives_projection_recovery() {
         let database_url = crate::test_env::postgres_test_database_url("pinned text recovery");
         let mut conn = db::connect_readwrite(&database_url).expect("connect");
-        let (mut ctx, source, _source_cleanup, _overlay_cleanup) =
+        let (mut ctx, source, _source_cleanup, _overlay_cleanup, _root) =
             pinned_fixture(&mut conn, &database_url);
-        let symbol_id = Symbol::make_id(&source, FILE, "hash-h", "run", "function", 0);
+        let symbol_id = Symbol::make_id(&source, FILE, &version_hash("h"), "run", "function", 0);
         let facts = crate::codewiki_facts::CodewikiFacts::from_context(ctx.clone());
         let text = facts.search("run", 10).expect("pinned PostgreSQL search");
         assert_eq!(
@@ -835,9 +837,9 @@ mod pin_recovery {
         };
         let database_url = crate::test_env::postgres_test_database_url("pin projection reads");
         let mut conn = db::connect_readwrite(&database_url).expect("connect");
-        let (mut ctx, source, _source_cleanup, _overlay_cleanup) =
+        let (mut ctx, source, _source_cleanup, _overlay_cleanup, _root) =
             pinned_fixture(&mut conn, &database_url);
-        let symbol_id = Symbol::make_id(&source, FILE, "hash-h", "run", "function", 0);
+        let symbol_id = Symbol::make_id(&source, FILE, &version_hash("h"), "run", "function", 0);
         // The PostgreSQL/BM25 lane remains available before projection recovery.
         let facts = crate::codewiki_facts::CodewikiFacts::from_context(ctx.clone());
         let text = facts.search("run", 10).expect("read pinned text facts");
@@ -892,16 +894,18 @@ mod pin_recovery {
                 }
             })
         };
+        let hash_h = version_hash("h");
+        let hash_k = version_hash("k");
         let mut observed = Vec::new();
         for (hash, projected, backend, expected) in [
-            ("hash-h", false, 0, true),  // live source namespace
-            ("hash-h", false, 1, false), // stray child rows are not recovered rows
-            ("hash-k", true, 1, true),   // completed child projection
-            ("hash-k", true, 0, false),  // source moved; old source projection is excluded
-            ("hash-k", false, 0, false),
-            ("hash-k", false, 1, false), // late/discarded upsert remains unadmitted
+            (hash_h.as_str(), false, 0, true),  // live source namespace
+            (hash_h.as_str(), false, 1, false), // stray child rows are not recovered rows
+            (hash_k.as_str(), true, 1, true),   // completed child projection
+            (hash_k.as_str(), true, 0, false),  // source moved; old source projection is excluded
+            (hash_k.as_str(), false, 0, false),
+            (hash_k.as_str(), false, 1, false), // late/discarded upsert remains unadmitted
         ] {
-            seed_version(&mut conn, &source, hash, hash == "hash-h");
+            seed_version(&mut conn, &source, hash, hash == hash_h.as_str());
             conn.execute(
                 "UPDATE code_overlay_pins SET vector_projected = $2 WHERE overlay_project_id = $1",
                 &[
@@ -923,10 +927,10 @@ mod pin_recovery {
                 &[&overlay_uuid],
             )
             .expect("clear child shadow");
-            conn.execute("UPDATE code_overlay_pins SET content_hash = 'hash-h', vector_projected = false WHERE overlay_project_id = $1", &[&overlay_uuid]).expect("restore pin");
+            conn.execute("UPDATE code_overlay_pins SET content_hash = $2, vector_projected = false WHERE overlay_project_id = $1", &[&overlay_uuid, &hash_h]).expect("restore pin");
             match change {
                 "repin" => {
-                    conn.execute("UPDATE code_overlay_pins SET content_hash = 'hash-k' WHERE overlay_project_id = $1", &[&overlay_uuid]).expect("repin");
+                    conn.execute("UPDATE code_overlay_pins SET content_hash = $2 WHERE overlay_project_id = $1", &[&overlay_uuid, &hash_k]).expect("repin");
                 }
                 "purge" => {
                     conn.execute(

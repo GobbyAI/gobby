@@ -16,7 +16,9 @@ fn sync_recovers_from_collection_creation_conflict() {
         ),
         (200, json!({"result": {"status": "completed"}})),
     ]);
-    let mut lifecycle = conflict_test_lifecycle(url, embedding_url);
+    let root = fixture_source_root();
+    let mut lifecycle =
+        conflict_test_lifecycle(url, embedding_url).with_project_root(root.path().to_path_buf());
     let result = lifecycle.sync_file_symbols("src/lib.rs", &[test_symbol(None)]);
     let requests = handle.join();
     let embedding_requests = embedding_handle.join();
@@ -49,7 +51,9 @@ fn sync_waits_for_collection_readiness_after_creation_conflict() {
         ),
         (200, json!({"result": {"status": "completed"}})),
     ]);
-    let mut lifecycle = conflict_test_lifecycle(url, embedding_url);
+    let root = fixture_source_root();
+    let mut lifecycle =
+        conflict_test_lifecycle(url, embedding_url).with_project_root(root.path().to_path_buf());
     let result = lifecycle.sync_file_symbols("src/lib.rs", &[test_symbol(None)]);
     let requests = handle.join();
     let embedding_requests = embedding_handle.join();
@@ -133,7 +137,9 @@ fn collection_creation_conflict_rejects_unusable_collection() {
         ];
         responses.extend(std::iter::repeat_n((status, body), read_attempts));
         let (url, handle) = spawn_http_responses(responses);
-        let mut lifecycle = conflict_test_lifecycle(url, "http://127.0.0.1:9".to_string());
+        let root = fixture_source_root();
+        let mut lifecycle = conflict_test_lifecycle(url, "http://127.0.0.1:9".to_string())
+            .with_project_root(root.path().to_path_buf());
         let result = lifecycle.sync_file_symbols("src/lib.rs", &[test_symbol(None)]);
         let requests = handle.join();
         let error = result.expect_err("unusable collection must fail");
@@ -184,6 +190,7 @@ fn conflict_test_lifecycle(qdrant_url: String, embedding_url: String) -> CodeSym
 
 #[test]
 fn sync_rejects_embedding_vectors_with_wrong_dimension() {
+    let root = fixture_source_root();
     let (embedding_url, embedding_handle) =
         spawn_http_responses(vec![(200, json!({"data": [{"embedding": [0.1, 0.2]}]}))]);
     let (qdrant_url, qdrant_handle) = spawn_http_responses(vec![(
@@ -205,7 +212,8 @@ fn sync_rejects_embedding_vectors_with_wrong_dimension() {
         },
         CodeVectorSettings::with_vector_dim(Some(3)),
     )
-    .expect("lifecycle");
+    .expect("lifecycle")
+    .with_project_root(root.path().to_path_buf());
 
     let err = lifecycle
         .sync_file_symbols("src/lib.rs", &[test_symbol(None)])
@@ -223,6 +231,7 @@ fn sync_rejects_embedding_vectors_with_wrong_dimension() {
 
 #[test]
 fn sync_rejects_embedding_vector_count_mismatch() {
+    let root = fixture_source_root();
     let (embedding_url, embedding_handle) = spawn_http_responses(vec![(
         200,
         json!({"data": [{"embedding": [0.1, 0.2, 0.3]}]}),
@@ -246,7 +255,8 @@ fn sync_rejects_embedding_vector_count_mismatch() {
         },
         CodeVectorSettings::with_vector_dim(Some(3)),
     )
-    .expect("lifecycle");
+    .expect("lifecycle")
+    .with_project_root(root.path().to_path_buf());
     let mut second = test_symbol(None);
     second.id = "symbol-2".to_string();
 
@@ -270,6 +280,7 @@ fn sync_rejects_embedding_vector_count_mismatch() {
 
 #[test]
 fn sync_file_symbols_batches_embedding_and_qdrant_upsert() {
+    let root = fixture_source_root();
     let first_embedding_batch = (0..128)
         .map(|index| json!({"index": index, "embedding": [0.1, 0.2, 0.3]}))
         .collect::<Vec<_>>();
@@ -307,7 +318,8 @@ fn sync_file_symbols_batches_embedding_and_qdrant_upsert() {
         },
         CodeVectorSettings::with_vector_dim(Some(3)),
     )
-    .expect("lifecycle");
+    .expect("lifecycle")
+    .with_project_root(root.path().to_path_buf());
     let symbols = (0..129).map(test_symbol_with_index).collect::<Vec<_>>();
 
     let output = lifecycle
