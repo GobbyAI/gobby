@@ -11,7 +11,7 @@ use gobby_terminals::write_api::{TokenLease, TokenSlot};
 use rand::RngCore;
 use std::{
     collections::BTreeMap,
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     io::{self, Write as _},
     os::fd::AsRawFd,
     path::{Path, PathBuf},
@@ -84,41 +84,16 @@ impl BackendConfig {
             !argv.is_empty() && !argv[0].is_empty() && argv.iter().all(|s| !s.contains('\0')),
             "GOBBY_BACKEND_COMMAND requires a nonempty executable and no NUL bytes"
         );
-        let environment = Self::uv_environment(home, &argv[0])?;
         Ok(Self {
             home: home.into(),
             command: argv.into_iter().map(OsString::from).collect(),
-            environment,
+            environment: BTreeMap::new(),
             front_door_secret: None,
             // Python runner_lifecycle_shutdown's overall settlement budget.
             drain_timeout: Duration::from_secs(17),
             heartbeat_interval: Duration::from_secs(1),
             write_token: TokenSlot::default(),
         })
-    }
-
-    /// A `uv` backend inherits the sandbox's `UV_PROJECT_ENVIRONMENT`, which can point into
-    /// the real runtime, so it gets a project environment beneath `home`. The sync runs here,
-    /// before the supervisor deadline starts, so a cold start cannot time the backend out.
-    fn uv_environment(home: &Path, executable: &str) -> Result<BTreeMap<OsString, OsString>> {
-        let mut environment = BTreeMap::new();
-        if Path::new(executable).file_name() != Some(OsStr::new("uv")) {
-            return Ok(environment);
-        }
-        let project = home.join("runtime").join("backend-uv-environment");
-        let sync = std::process::Command::new(executable)
-            .args(["sync", "--quiet"])
-            .env("UV_PROJECT_ENVIRONMENT", &project)
-            .output()
-            .context("start uv sync for the backend environment")?;
-        ensure!(
-            sync.status.success(),
-            "uv sync exited with {}: {}",
-            sync.status,
-            String::from_utf8_lossy(&sync.stderr).trim()
-        );
-        environment.insert("UV_PROJECT_ENVIRONMENT".into(), project.into_os_string());
-        Ok(environment)
     }
 }
 
