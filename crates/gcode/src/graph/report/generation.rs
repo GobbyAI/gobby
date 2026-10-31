@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use gobby_core::degradation::ServiceState;
 
 use crate::config::Context;
-use crate::visibility::graph_versions::admitted_graph_versions;
+use crate::visibility::graph_versions::admitted_namespaces;
 
 #[cfg(test)]
 use super::RELATES_TO_CODE;
@@ -41,8 +41,8 @@ pub fn generate_report_with_options(
         &config.graph_name,
         ReportGraphSnapshot::default(),
         |client| {
-            let admitted = admitted_graph_versions(ctx)?;
-            load_report_snapshot(client, &ctx.project_id, &admitted, options.top_n)
+            let namespaces = admitted_namespaces(ctx)?;
+            load_report_snapshot(client, &namespaces, options.top_n)
         },
     );
 

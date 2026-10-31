@@ -1006,4 +1006,80 @@ mod pin_recovery {
             "a recorded graph projection clears the pending warning"
         );
     }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn fresh_pin_graph_reads_admit_source_namespace() {
+        let database_url = crate::test_env::postgres_test_database_url("fresh pin graph source");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let (ctx, source, _source_cleanup, _overlay_cleanup) =
+            pinned_fixture(&mut conn, &database_url);
+        // Point the source selector back at the pinned hash: the pin is fresh, its
+        // graph projection has not landed, and the source still serves that version.
+        seed_version(&mut conn, &source, "hash-h", true);
+        let pinned_key = format!("{FILE}|hash-h");
+
+        let namespaces =
+            crate::visibility::graph_versions::admitted_namespaces(&ctx).expect("admit");
+        let source_namespace = namespaces
+            .iter()
+            .find(|namespace| namespace.project_id == source)
+            .unwrap_or_else(|| panic!("source namespace must serve the fresh pin: {namespaces:?}"));
+        assert_eq!(
+            source_namespace.versions.keys,
+            vec![pinned_key.clone()],
+            "a fresh pin is admitted from the source namespace at its pinned hash"
+        );
+        assert!(
+            namespaces
+                .iter()
+                .filter(|namespace| namespace.project_id == ctx.project_id)
+                .all(|namespace| !namespace.versions.keys.contains(&pinned_key)),
+            "an unprojected pin is not admitted in the child namespace: {namespaces:?}"
+        );
+        assert!(
+            crate::visibility::graph_versions::pending_projection_warnings(&ctx).is_empty(),
+            "a source that still names the pinned hash leaves nothing pending"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn projected_pin_keeps_pinned_version_after_source_moves() {
+        let database_url = crate::test_env::postgres_test_database_url("projected pin graph");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let (ctx, _source, _source_cleanup, _overlay_cleanup) =
+            pinned_fixture(&mut conn, &database_url);
+        let overlay_uuid = db::id_param(&ctx.project_id).expect("child UUID");
+        conn.execute(
+            "UPDATE code_overlay_pins SET graph_projected = true WHERE overlay_project_id = $1",
+            &[&overlay_uuid],
+        )
+        .expect("record graph projection");
+
+        // The fixture's source selector already moved to hash-k. The projected pin is
+        // served from the child namespace at its pinned hash, never at the new one.
+        let namespaces =
+            crate::visibility::graph_versions::admitted_namespaces(&ctx).expect("admit");
+        let child = namespaces
+            .iter()
+            .find(|namespace| namespace.project_id == ctx.project_id)
+            .expect("child namespace");
+        assert!(
+            child.versions.keys.contains(&format!("{FILE}|hash-h")),
+            "a projected pin keeps serving its pinned version: {child:?}"
+        );
+        assert!(
+            !child.versions.keys.contains(&format!("{FILE}|hash-k")),
+            "the moved source version stays out of the child namespace: {child:?}"
+        );
+    }
 }

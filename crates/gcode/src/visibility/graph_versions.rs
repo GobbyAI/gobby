@@ -1,8 +1,10 @@
 //! Content versions a graph read may serve. Graph edges carry the content hash
 //! they were projected from, so reads filter on `path|hash` before any LIMIT or
-//! aggregation. A pin serves its graph only after its projection is recorded.
+//! aggregation. Each admitted version is served by one graph namespace: the
+//! scope's own namespace for owned files and projected pins, or the source
+//! project for a pin whose graph projection has not landed yet.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::config::Context;
 use crate::db;
@@ -15,7 +17,8 @@ use super::{
 };
 
 /// Degraded-state notices for graph reads. A pin whose graph projection has not
-/// landed serves no graph facts, so reads report it instead of returning empty.
+/// landed and whose source no longer names its hash serves no graph facts, so
+/// reads report it instead of returning empty.
 pub(crate) fn pending_projection_warnings(ctx: &Context) -> Vec<SearchWarning> {
     match has_pending_pinned_graph_projection(ctx) {
         Ok(true) => vec![SearchWarning {
@@ -51,6 +54,13 @@ fn has_pending_pinned_graph_projection(ctx: &Context) -> anyhow::Result<bool> {
                    WHERE shadow.machine_id = $1 AND shadow.project_id = $2
                      AND shadow.file_path = p.file_path
                )
+               AND NOT EXISTS (
+                   SELECT 1 FROM code_indexed_file_states src
+                   WHERE src.machine_id = p.machine_id
+                     AND src.project_id = p.source_project_id
+                     AND src.file_path = p.file_path
+                     AND src.content_hash = p.content_hash
+               )
          )",
         &[&machine, &project],
     )?;
@@ -65,18 +75,36 @@ pub(crate) struct AdmittedGraphVersions {
     pub(crate) paths: Vec<String>,
 }
 
-/// Versions the scope's graph namespace may serve: the owned file states, plus
-/// pins whose graph projection has landed and that no owned state shadows.
-pub(crate) fn admitted_graph_versions(ctx: &Context) -> anyhow::Result<AdmittedGraphVersions> {
+/// One graph namespace a read runs in: the project id its nodes carry and the
+/// `path|hash` versions it admits there. Node ids and edges are namespace-local,
+/// so a read runs once per namespace and never mixes versions across them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AdmittedNamespace {
+    pub(crate) project_id: String,
+    pub(crate) versions: AdmittedGraphVersions,
+}
+
+/// Namespaces the scope's graph reads run in. The scope's own namespace comes
+/// first and is always present, so an empty overlay still answers with empty
+/// results. Each source project that serves a fresh pin adds one namespace.
+///
+/// Owned file states and graph-projected pins are served from the scope's own
+/// namespace. An unprojected pin is served from its source project while the
+/// source selector still names the pinned hash and no owned state shadows it.
+pub(crate) fn admitted_namespaces(ctx: &Context) -> anyhow::Result<Vec<AdmittedNamespace>> {
     let (Some(machine), Some(project)) = (
         machine_uuid_or_invisible(&ctx.machine_id),
         project_uuid_or_invisible(scope_project_id(ctx)),
     ) else {
-        return Ok(AdmittedGraphVersions::default());
+        return Ok(vec![AdmittedNamespace {
+            project_id: ctx.project_id.clone(),
+            versions: AdmittedGraphVersions::default(),
+        }]);
     };
     let owned = file_selectors_sql("$1", "$2", false);
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let rows = conn.query(
+    let mut overlay = VersionSet::default();
+    for row in conn.query(
         &format!(
             "SELECT file_path, content_hash FROM ({owned}) owned
              UNION
@@ -95,17 +123,81 @@ pub(crate) fn admitted_graph_versions(ctx: &Context) -> anyhow::Result<AdmittedG
                )"
         ),
         &[&machine, &project],
-    )?;
-    let mut admitted = AdmittedGraphVersions::default();
-    let mut paths = BTreeSet::new();
-    for row in &rows {
-        let path: String = row.try_get("file_path")?;
-        let hash: String = row.try_get("content_hash")?;
-        admitted.keys.push(format!("{path}|{hash}"));
-        paths.insert(path);
+    )? {
+        overlay.admit(
+            &row.try_get::<_, String>("file_path")?,
+            &row.try_get::<_, String>("content_hash")?,
+        );
     }
-    admitted.paths = paths.into_iter().collect();
-    Ok(admitted)
+
+    let mut sources = BTreeMap::<String, VersionSet>::new();
+    for row in conn.query(
+        &format!(
+            "SELECT p.source_project_id::text AS source_project_id, p.file_path, p.content_hash
+             FROM code_overlay_pins p
+             JOIN code_indexed_files f
+               ON f.project_id = p.source_project_id AND f.file_path = p.file_path
+              AND f.content_hash = p.content_hash
+             WHERE p.machine_id = $1 AND p.overlay_project_id = $2
+               AND NOT p.graph_projected
+               AND f.language != '{TOMBSTONE_LANGUAGE}'
+               AND EXISTS (
+                   SELECT 1 FROM code_indexed_file_states src
+                   WHERE src.machine_id = p.machine_id
+                     AND src.project_id = p.source_project_id
+                     AND src.file_path = p.file_path
+                     AND src.content_hash = p.content_hash
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM code_indexed_file_states shadow
+                   WHERE shadow.machine_id = $1 AND shadow.project_id = $2
+                     AND shadow.file_path = p.file_path
+               )"
+        ),
+        &[&machine, &project],
+    )? {
+        sources
+            .entry(row.try_get::<_, String>("source_project_id")?)
+            .or_default()
+            .admit(
+                &row.try_get::<_, String>("file_path")?,
+                &row.try_get::<_, String>("content_hash")?,
+            );
+    }
+
+    let mut namespaces = vec![AdmittedNamespace {
+        project_id: ctx.project_id.clone(),
+        versions: overlay.into_versions(),
+    }];
+    namespaces.extend(
+        sources
+            .into_iter()
+            .map(|(project_id, set)| AdmittedNamespace {
+                project_id,
+                versions: set.into_versions(),
+            }),
+    );
+    Ok(namespaces)
+}
+
+#[derive(Default)]
+struct VersionSet {
+    keys: BTreeSet<String>,
+    paths: BTreeSet<String>,
+}
+
+impl VersionSet {
+    fn admit(&mut self, path: &str, hash: &str) {
+        self.keys.insert(format!("{path}|{hash}"));
+        self.paths.insert(path.to_string());
+    }
+
+    fn into_versions(self) -> AdmittedGraphVersions {
+        AdmittedGraphVersions {
+            keys: self.keys.into_iter().collect(),
+            paths: self.paths.into_iter().collect(),
+        }
+    }
 }
 
 /// Binds `$admitted_versions` and `$admitted_paths` into a query built by a

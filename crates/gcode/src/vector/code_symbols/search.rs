@@ -129,13 +129,6 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
         );
         return Vec::new();
     }
-    if ctx.qdrant.is_none() {
-        log::warn!(
-            "semantic vector search skipped: {}",
-            SearchError::MissingQdrantConfig
-        );
-        return Vec::new();
-    }
     let Some(embedding_source) = embedding_source_from_context(ctx) else {
         log::warn!(
             "semantic vector search skipped: {}",

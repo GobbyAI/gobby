@@ -23,7 +23,7 @@ pub(super) fn project_overview_files_query(
              WHERE f.path + '|' + i.content_hash IN $admitted_versions \
              WITH f, sym_count, count(m) AS imp_count \
              RETURN f.path AS id, f.path AS name, 'file' AS type, \
-                    f.path AS file_path, sym_count AS symbol_count \
+                    f.path AS file_path, sym_count AS symbol_count, imp_count AS import_count \
              ORDER BY imp_count DESC, sym_count DESC, f.path \
              LIMIT {limit}"
         ),

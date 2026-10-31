@@ -58,17 +58,18 @@ pub(super) fn report_code_edge_counts_query(project_id: &str) -> (String, HashMa
     )
 }
 
+/// `limit` of `None` returns every ranked node of the class.
 pub(super) fn report_hotspots_query(
     project_id: &str,
     node_class: &str,
-    top_n: usize,
+    limit: Option<usize>,
 ) -> (String, HashMap<String, String>) {
     let label = match node_class {
         "file" => "CodeFile",
         "module" => "CodeModule",
         _ => "CodeSymbol",
     };
-    let limit = top_n.max(1);
+    let limit_clause = limit.map_or_else(String::new, |limit| format!(" LIMIT {}", limit.max(1)));
     (
         // Compute in/out degree with two edge-driven aggregations combined by
         // node, instead of seeding every node and double-expanding it. The
@@ -92,8 +93,7 @@ pub(super) fn report_hotspots_query(
              WITH node, outgoing, incoming, outgoing + incoming AS degree \
              WHERE degree > 0 \
              RETURN {} AS id, {} AS name, {} AS node_type, degree, incoming, outgoing, coalesce(node.file_path, node.path) AS file_path \
-             ORDER BY degree DESC, name ASC, id ASC \
-             LIMIT {limit}",
+             ORDER BY degree DESC, name ASC, id ASC{limit_clause}",
             report_node_id_expr("node"),
             report_node_name_expr("node"),
             report_node_type_case("node")
@@ -173,7 +173,10 @@ mod tests {
         let queries = [
             ("nodes", report_node_counts_query("child")),
             ("edges", report_code_edge_counts_query("child")),
-            ("hotspots", report_hotspots_query("child", "symbol", 1)),
+            (
+                "hotspots",
+                report_hotspots_query("child", "symbol", Some(1)),
+            ),
             (
                 "incoming calls",
                 report_incoming_call_hotspots_query("child", 1),
@@ -235,7 +238,7 @@ mod tests {
 
     #[test]
     fn hotspots_query_uses_label_scoped_seed_and_typed_edges() {
-        let (query, params) = report_hotspots_query("proj-1", "symbol", 6);
+        let (query, params) = report_hotspots_query("proj-1", "symbol", Some(6));
 
         // Seeds from the :CodeSymbol(project) index instead of scanning every
         // project node and filtering by label afterwards, which forced a
@@ -315,10 +318,11 @@ mod tests {
 
     #[test]
     fn hotspots_query_scopes_seed_label_by_node_class() {
-        let (file_query, _) = report_hotspots_query("proj-1", "file", 3);
+        let (file_query, _) = report_hotspots_query("proj-1", "file", Some(3));
         assert!(file_query.contains("MATCH (n:CodeFile {project: $project})"));
 
-        let (module_query, _) = report_hotspots_query("proj-1", "module", 3);
+        let (module_query, _) = report_hotspots_query("proj-1", "module", None);
         assert!(module_query.contains("MATCH (n:CodeModule {project: $project})"));
+        assert!(!module_query.contains("LIMIT"));
     }
 }
