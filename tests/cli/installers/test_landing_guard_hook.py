@@ -21,10 +21,11 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.land_commit import land_candidate
 from gobby.tasks.landing_policy import is_direct_commit_path
+from gobby.tasks.step_records import StepSubmission, record_task_step
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.fixtures.landing_case import bind_task_manager
-from tests.fixtures.review_approvals import approve_review, grant_review_writes
+from tests.fixtures.review_approvals import approve_review, grant_review_writes, grant_step_writes
 
 pytestmark = pytest.mark.unit
 
@@ -76,7 +77,11 @@ class _Repo:
         self.wrapper: list[str] = []
         self.root = tmp_path / "repo"
         self.ok(tmp_path, "init", "-q", "-b", "main", *init_args, str(self.root))
+        # git finds its template directory from the invoked path, so the PATH symlink above
+        # (macOS) leaves `git init` without the hooks/ and info/ directories it would copy.
+        (self.root / ".git" / "info").mkdir(parents=True, exist_ok=True)
         hook = self.root / ".git" / "hooks" / "reference-transaction"
+        hook.parent.mkdir(parents=True, exist_ok=True)
         hook.write_text(f"#!/bin/sh\n{HOOK_TEMPLATES['reference-transaction']}", encoding="utf-8")
         hook.chmod(0o755)
 
@@ -571,6 +576,22 @@ async def test_land_commit_passes_installed_guard(
     )
     temp_db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha]), task.id))
     task = LocalTaskManager(temp_db).get_task(task.id)
+    grant_step_writes(
+        temp_db, claimant.id, isolated.project.id, "fixture-developer", ("implementation",)
+    )
+    record_task_step(
+        temp_db,
+        task_id=task.id,
+        session_id=claimant.id,
+        step="implementation",
+        submission=StepSubmission(
+            status="approved",
+            epoch=task.review_epoch,
+            round_number=1,
+            feedback="Candidate implementation is complete.",
+            commit_sha=sha,
+        ),
+    )
     grant_review_writes(temp_db, reviewer.id, isolated.project.id)
     approve_review(temp_db, task_id=task.id, reviewer_session_id=reviewer.id, commit_sha=sha)
     bind_task_manager(

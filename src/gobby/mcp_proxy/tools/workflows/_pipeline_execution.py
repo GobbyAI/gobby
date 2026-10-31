@@ -13,6 +13,7 @@ from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.workflows.definitions import PipelineDefinition
+from gobby.workflows.pipeline_inputs import input_refusal
 from gobby.workflows.pipeline_state import (
     ApprovalRequired,
     ExecutionStatus,
@@ -427,6 +428,10 @@ async def run_pipeline(
 
     if not pipeline.enabled:
         return {"success": False, "error": f"Pipeline '{name}' is disabled"}
+
+    refusal = input_refusal(pipeline, inputs)
+    if refusal is not None:
+        return {"success": False, "error": refusal}
 
     # Pre-create execution record so we can return the ID immediately
     try:

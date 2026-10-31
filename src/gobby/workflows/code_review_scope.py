@@ -403,13 +403,18 @@ async def inspect_commit_review_scope(
     *,
     integration_branch: str | None = None,
     db: HubDatabase | None = None,
+    base_merge_git_step: bool = False,
 ) -> CommitReviewScope:
     """Return reviewability and only the current session's review target paths.
 
     Unknown commit shapes stay gated, but expose no paths. This keeps a
     conservative gate from ever directing one session to review another
-    session's staged work.
+    session's staged work. A base merge the `merge_base_commits` capability admits
+    (see `workflows.base_merge_commits`) is exempt from the self-review gates by
+    that grant, not by its paths.
     """
+    if base_merge_git_step:
+        return CommitReviewScope(False, () if variables is not None else None)
     command = _extract_shell_command(event)
     scope = parse_commit_scope(command)
     if scope is None:

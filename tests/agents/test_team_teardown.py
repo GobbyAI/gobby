@@ -18,12 +18,8 @@ import gobby.runner_lifecycle_agents as lifecycle_agents
 import gobby.runner_lifecycle_callbacks as lifecycle_callbacks
 from gobby.agents import resume_executor
 from gobby.agents.resume_executor import ResumeAgentResult
-from gobby.agents.team_lifecycle import (
-    SeatTarget,
-    TeamAdmissionRefused,
-    TeamBinding,
-    check_team_spawn,
-)
+from gobby.agents.team_admission_records import SeatTarget, TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_lifecycle import check_team_spawn
 from gobby.agents.team_teardown import FINDING_LABEL, TEARDOWN_GRACE
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools import agent_cancellation

@@ -10,7 +10,8 @@ from typing import Any, cast
 import pytest
 
 from gobby.agents.runbook_seats import check_runbook_seats
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding, managed_task_team
+from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_lifecycle import managed_task_team
 from gobby.mcp_proxy.tools.runbook_seat_tools import runbook_seat_stores
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.storage.agents import LocalAgentRunManager
@@ -347,6 +348,64 @@ async def test_manager_leaf_spawns_scoped(world: TeamWorld) -> None:
 
 
 @pytest.mark.asyncio
+async def test_manager_names_only_its_own_team_in_seat_context(world: TeamWorld) -> None:
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    other_epic = new_task(world, "Other epic", epic=True)
+    other_leaf = new_task(world, "Other epic leaf", parent=other_epic)
+    other = await epic_team(world, other_epic)
+    launches = len(world.launches)
+
+    # Another team, a malformed team, and a leaf of another epic are refused unlaunched. These run
+    # before the team's primary exists, so the refusal reason is the naming check itself.
+    refused_team = await team.spawn(
+        "developer", task_id=leaf.id, seat_context={"team_id": other.binding.team_id}
+    )
+    assert refused_team.get("error_code") == "team_scope", refused_team
+    malformed = await team.spawn("developer", task_id=leaf.id, seat_context={"team_id": "x"})
+    assert malformed.get("error_code") == "team_scope", malformed
+    foreign_leaf = await team.spawn(
+        "developer", task_id=other_leaf.id, seat_context={"team_id": other.binding.team_id}
+    )
+    assert foreign_leaf.get("success") is not True, foreign_leaf
+    assert len(world.launches) == launches
+
+    # A seat the team holds no grant for stays refused even when it names the team.
+    out_of_scope = await team.spawn(
+        "tech-writer", task_id=leaf.id, seat_context={"team_id": team.binding.team_id}
+    )
+    assert out_of_scope.get("error_code") == "seat_not_granted", out_of_scope
+    assert len(world.launches) == launches
+
+    # Naming the caller's own team admits the seat into that team's tree, as the procedure says.
+    own = await team.spawn(
+        "developer", task_id=leaf.id, seat_context={"team_id": team.binding.team_id}
+    )
+    assert own.get("success") is True, own
+    assert len(world.launches) == launches + 1
+    assert world.launches[-1]["worktree_id"] == team.binding.worktree_id
+
+    # The admitted run is now the team's primary, so a second fresh seat for the team is refused.
+    second = await team.spawn(
+        "developer", task_id=leaf.id, seat_context={"team_id": team.binding.team_id}
+    )
+    assert second.get("error_code") == "primary_live", second
+    assert len(world.launches) == launches + 1
+
+    # A session that is not the team's manager cannot name the team to spawn into it.
+    developer = world.case.session("developer", parent=team.runbook.id)
+    outsider = await world.direct_spawn(
+        developer,
+        agent="developer",
+        task_id=leaf.id,
+        seat_context={"team_id": team.binding.team_id},
+    )
+    assert outsider.get("success") is not True, outsider
+    assert len(world.launches) == launches + 1
+
+
+@pytest.mark.asyncio
 async def test_one_live_primary_across_implementation_domains(world: TeamWorld) -> None:
     """Parallel leaves use pods even when their implementation domains differ."""
     epic = new_task(world, TITLE, epic=True)
@@ -650,7 +709,8 @@ async def test_resumed_primary_refused_beside_a_live_primary(
 @pytest.mark.asyncio
 async def test_single_team_manager_spawns_no_fresh_seat(world: TeamWorld) -> None:
     """A single-task team runs the redesign flow: its runbook starts the seats, and its manager
-    only resumes them. A fresh spawn from its manager is refused, never launched."""
+    only resumes them. A fresh spawn of a seat type the team never ran is refused, never launched;
+    relaunching a lost seat is covered by test_pod_manager_relaunches_a_lost_seat_into_the_pod_tab."""
     db = world.case.db
     task = new_task(world, "Single task")
     runbook = world.child(task)

@@ -60,7 +60,15 @@ class TestSetVariableScoped:
 
         token = set_session_context(SessionContext(session_id="uuid-session-1"))
         try:
-            with patch("gobby.workflows.state_manager.SessionVariableManager") as authority:
+            with (
+                patch("gobby.workflows.state_manager.SessionVariableManager") as authority,
+                # The mock db cannot resolve the default agent's grant; bundled default.yaml
+                # grants write_session_variables, so the caller holds it.
+                patch(
+                    "gobby.workflows.engine.idle_declaration.session_has_capability_or_operator",
+                    return_value=True,
+                ),
+            ):
                 authority.return_value.get_variable_subset.return_value = {"_agent_type": "default"}
                 yield
         finally:
@@ -95,6 +103,29 @@ class TestSetVariableScoped:
             {"my_flag": True},
         )
         mocks["instance_manager"].save.assert_not_called()
+
+    def test_set_variable_refuses_caller_without_write_capability(self) -> None:
+        """A caller whose definition lacks write_session_variables is refused (#25228)."""
+        from gobby.mcp_proxy.tools.workflows._variables import set_variable
+
+        mocks = _make_mocks()
+
+        with patch(
+            "gobby.workflows.engine.idle_declaration.session_has_capability_or_operator",
+            return_value=False,
+        ):
+            result = set_variable(
+                mocks["session_manager"],
+                mocks["db"],
+                name="counter",
+                value=42,
+                session_id="#1",
+                session_var_manager=mocks["session_var_manager"],
+            )
+
+        assert result["success"] is False
+        assert "write_session_variables" in result["error"]
+        mocks["session_var_manager"].set_variable.assert_not_called()
 
     def test_set_variable_without_workflow_writes_to_session_variables(self) -> None:
         """set_variable() without workflow writes to session_variables."""

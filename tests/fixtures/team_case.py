@@ -13,7 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.agents.team_lifecycle import TeamBinding, admit_team
+from gobby.agents.team_admission_records import TeamBinding
+from gobby.agents.team_lifecycle import admit_team
 from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
