@@ -43,6 +43,14 @@ HUB_ONLY_PERIODIC_TASKS = frozenset(
 )
 
 
+def _current_memory_manager(runner: GobbyRunner) -> Any | None:
+    """Resolve the current runtime epoch's memory manager per use."""
+    service = runner.config_runtime.capture().services.get("memory_services")
+    if service is None:
+        return getattr(runner, "memory_manager", None)
+    return getattr(service, "memory_manager", None)
+
+
 def _log_periodic_task_failure(task: asyncio.Task[None]) -> None:
     """Log periodic task failures so a dead maintenance job is visible in daemon logs."""
     if task.cancelled():
@@ -253,7 +261,8 @@ def start_periodic_tasks(
         runner._memory_reconcile_task = spawn(
             "memory-reconcile",
             lambda: loops["memory_reconcile_loop"](
-                memory_manager, lambda: runner._shutdown_requested
+                lambda: _current_memory_manager(runner),
+                lambda: runner._shutdown_requested,
             ),
         )
 

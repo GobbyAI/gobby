@@ -188,14 +188,18 @@ async def metrics_archive_loop(
 
 
 async def memory_reconcile_loop(
-    memory_manager: Any,
+    resolve_memory_manager: Callable[[], Any | None],
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 24 * 60 * 60,
     *,
     startup_delay_seconds: float | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
 ) -> None:
-    """Reconcile memory stores shortly after startup, then at the configured interval."""
+    """Reconcile memory stores shortly after startup, then at the configured interval.
+
+    The manager is resolved each cycle: an embedding switch replaces the memory
+    services and fences the old manager's vector store.
+    """
     sleep_fn = sleep or asyncio.sleep
     if not await _wait_for_first_maintenance_cycle(
         "memory-reconcile",
@@ -208,7 +212,12 @@ async def memory_reconcile_loop(
     while True:
         next_delay = interval_seconds
         try:
-            report = await memory_manager.reconcile_stores(dry_run=False)
+            memory_manager = resolve_memory_manager()
+            report = (
+                await memory_manager.reconcile_stores(dry_run=False)
+                if memory_manager is not None
+                else {}
+            )
             if report.get("qdrant", {}).get("error"):
                 next_delay = min(interval_seconds, 5 * 60)
             qdrant_orphans = report.get("qdrant", {}).get("orphans_deleted", 0)

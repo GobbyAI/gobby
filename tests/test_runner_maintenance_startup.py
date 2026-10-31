@@ -314,7 +314,7 @@ async def test_memory_reconcile_runs_before_24_hours_then_waits_for_normal_inter
     memory_manager.reconcile_stores = AsyncMock(side_effect=reconcile_stores)
 
     await memory_reconcile_loop(
-        memory_manager,
+        lambda: memory_manager,
         lambda: False,
         startup_delay_seconds=_TEST_STARTUP_DELAY_SECONDS,
         sleep=sleep,
@@ -332,7 +332,7 @@ async def test_memory_reconcile_retries_qdrant_failure_before_daily_interval() -
     )
 
     await memory_reconcile_loop(
-        memory_manager,
+        lambda: memory_manager,
         lambda: False,
         startup_delay_seconds=_TEST_STARTUP_DELAY_SECONDS,
         sleep=sleep,
@@ -340,6 +340,39 @@ async def test_memory_reconcile_retries_qdrant_failure_before_daily_interval() -
 
     assert memory_manager.reconcile_stores.await_count == 1
     assert sleep.requests == [_TEST_STARTUP_DELAY_SECONDS, 5 * 60]
+
+
+async def test_memory_reconcile_uses_the_current_manager_each_cycle() -> None:
+    """An embedding switch swaps memory services; the loop must not keep the fenced one."""
+    sleep_requests: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        sleep_requests.append(seconds)
+        if len(sleep_requests) == 3:
+            raise asyncio.CancelledError
+
+    before = MagicMock()
+    before.reconcile_stores = AsyncMock(return_value={})
+    after = MagicMock()
+    after.reconcile_stores = AsyncMock(return_value={})
+    current = [before]
+
+    async def swap_after_reconcile(*, dry_run: bool) -> dict[str, object]:
+        current[0] = after
+        return {}
+
+    before.reconcile_stores.side_effect = swap_after_reconcile
+
+    await memory_reconcile_loop(
+        lambda: current[0],
+        lambda: False,
+        startup_delay_seconds=_TEST_STARTUP_DELAY_SECONDS,
+        sleep=sleep,
+    )
+
+    assert before.reconcile_stores.await_count == 1
+    assert after.reconcile_stores.await_count == 1
+    assert sleep_requests == [_TEST_STARTUP_DELAY_SECONDS, _DAY_SECONDS, _DAY_SECONDS]
 
 
 @pytest.mark.asyncio
