@@ -48,6 +48,7 @@ async def execute_mcp_step(
     from gobby.utils.session_context import (
         reset_seeded_contexts,
         resolve_and_seed_contexts,
+        set_daemon_execution,
         set_request_principal,
     )
 
@@ -63,6 +64,8 @@ async def execute_mcp_step(
     # The run's launch was authorized at run_pipeline. A background run must not inherit the
     # launching request's principal, so the step acts as the pipeline's own session.
     tokens.principal_token = set_request_principal(_pipeline_principal)
+    # The step is daemon-owned execution, so its sends are admitted as the daemon's.
+    tokens.daemon_execution_token = set_daemon_execution()
     # Lightweight executors without a SessionManager cannot canonicalize the
     # already-bound caller ID. Production executors still fail closed when a
     # configured manager cannot resolve the supplied reference.

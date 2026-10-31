@@ -166,7 +166,7 @@ def add_messaging_tools(
         brief: bool = True,
     ) -> dict[str, Any]:
         try:
-            from gobby.utils.session_context import get_current_session_id
+            from gobby.utils.session_context import get_current_session_id, is_daemon_execution
 
             ctx_session_id = get_current_session_id()
             if from_session is None:
@@ -247,6 +247,18 @@ def add_messaging_tools(
                     }
 
             from_id = _resolve(from_session)
+            # A caller's from_session cannot claim the system sender; only daemon-owned execution can.
+            if (
+                from_id == system_session_id()
+                and not is_daemon_execution()
+                and ctx_session_id is not None
+                and ctx_session_id != from_id
+            ):
+                return {
+                    "success": False,
+                    "error": "Only daemon-owned execution can send as the system session.",
+                    "error_code": "send_message_sender_mismatch",
+                }
             if project_id is None and normalized_target == "agent":
                 project_id = get_context_project_id(session_manager)
 
