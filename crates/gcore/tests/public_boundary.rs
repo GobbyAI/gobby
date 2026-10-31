@@ -21,10 +21,10 @@ fn cargo_features_define_public_boundary() {
 
     for expected in [
         "default = []",
-        r#"postgres = ["dep:postgres", "dep:postgres-openssl", "dep:base64", "dep:scrypt", "dep:sha2"]"#,
+        r#"postgres = ["dep:postgres", "dep:postgres-openssl", "dep:base64", "dep:scrypt"]"#,
         r#"falkor = ["dep:redis"]"#,
         r#"qdrant = ["dep:reqwest", "dep:urlencoding"]"#,
-        r#"indexing = ["dep:ignore", "dep:sha2"]"#,
+        r#"indexing = ["dep:ignore"]"#,
         "search = []",
         "graph-analytics = []",
         r#"ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "reqwest/multipart"]"#,
@@ -44,7 +44,7 @@ fn cargo_features_define_public_boundary() {
         r#"rand = { version = "0.8", optional = true }"#,
         r#"ureq = { version = "2", features = ["json"] }"#,
         r#"ignore = { version = "0.4", optional = true }"#,
-        r#"sha2 = { version = "0.11", optional = true }"#,
+        r#"sha2 = "0.11""#,
         r#"urlencoding = { version = "2", optional = true }"#,
     ] {
         assert!(
