@@ -175,7 +175,7 @@ async def test_former_claimant_cannot_land_its_own_task(case: LandingCase, relea
         manager.claim_task(task.id, case.delegator, force=True)
     case.approve(task, sha)
     refused = await case.land(task, sha, caller=case.manager_for(task, session=case.claimant))
-    assert refused["blockers"] == ["caller_was_claimant"]
+    assert refused["blockers"] == ["caller_is_maker"]
     assert case.git("rev-parse", "trunk") == case.base
     landed = await case.land(task, sha)
     assert landed["landed"] is True

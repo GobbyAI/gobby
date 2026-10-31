@@ -90,8 +90,11 @@ def record_close_receipt(
         ).fetchone()
         if authority is None:
             raise CloseReceiptError(f"task {task.id} no longer exists")
-        if author_session_id == authority["claimed_by_session_id"]:
-            raise CloseReceiptError("the task's claimant cannot attest evidence for its own close")
+        # Authorship bars a receipt, not the claim: the Dev Manager closes under a handed-off claim.
+        from gobby.tasks.step_records import maker_sessions_in
+
+        if author_session_id in maker_sessions_in(conn, task.id):
+            raise CloseReceiptError("an author of the task's tests or implementation cannot attest")
         rows = conn.execute(
             """
             SELECT id, task_id, author, body, created_at FROM task_comments
