@@ -144,8 +144,17 @@ impl AgentState {
         Ok(revision)
     }
 
+    /// Runs that hold capacity. Exited records await a report and do not count.
     pub fn live_and_accepted(&self) -> usize {
-        self.runs.len()
+        self.runs
+            .values()
+            .filter(|run| {
+                matches!(
+                    run.phase,
+                    RunPhase::Accepted | RunPhase::Preparing | RunPhase::Launched
+                )
+            })
+            .count()
     }
 
     pub fn prune_cancelled(&mut self, now_ms: u64) {
@@ -186,32 +195,47 @@ impl AgentState {
             .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
             .unwrap_or(0);
         for run_id in interrupted {
-            let workspace = self
-                .runs
-                .get(&run_id)
-                .and_then(|run| run.workspace.as_ref())
-                .map(WorkspaceRecord::report);
-            self.to_removals(&run_id);
             let pending = self.pending_exits.remove(&run_id);
-            if let Some(run) = self.runs.remove(&run_id) {
-                // A host exit seen before the commit reply means the child ran and ended.
-                let (launched, exit_code, reason) = match pending {
-                    Some(exit_code) => (true, exit_code, self.exit_reason(&run_id)),
-                    None => (false, None, ExitReason::PrepareFailed),
-                };
-                self.exits.push(ExitRecord {
-                    exit: ReportExit {
+            let Some(run) = self.runs.get(&run_id) else {
+                continue;
+            };
+            let terminal_id = run.terminal_id.clone();
+            let launched_workspace = run.workspace.as_ref().map(WorkspaceRecord::report);
+            let exit = match pending {
+                // A host exit seen before the commit reply means the child ran and ended. The
+                // launched workspace stays with the run until a report carrying the exit gets 200.
+                Some(exit_code) => {
+                    let reason = self.exit_reason(&run_id);
+                    if let Some(run) = self.runs.get_mut(&run_id) {
+                        run.phase = RunPhase::Exited;
+                    }
+                    ReportExit {
                         run_id,
-                        terminal_id: run.terminal_id,
-                        launched,
+                        terminal_id,
+                        launched: true,
                         exit_code,
                         reason,
-                        workspace,
+                        workspace: launched_workspace,
                         sandbox: None,
-                    },
-                    ended_at_ms,
-                });
-            }
+                    }
+                }
+                // Nothing launched: the preparation record still queues the path for removal,
+                // and the exit names no workspace.
+                None => {
+                    self.to_removals(&run_id);
+                    self.runs.remove(&run_id);
+                    ReportExit {
+                        run_id,
+                        terminal_id,
+                        launched: false,
+                        exit_code: None,
+                        reason: ExitReason::PrepareFailed,
+                        workspace: None,
+                        sandbox: None,
+                    }
+                }
+            };
+            self.exits.push(ExitRecord { exit, ended_at_ms });
         }
         self.exits.sort_by_key(|exit| exit.ended_at_ms);
     }

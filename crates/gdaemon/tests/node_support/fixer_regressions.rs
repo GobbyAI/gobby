@@ -95,8 +95,14 @@ async fn restart_exit_keeps_workspace_metadata_and_cleanup_ownership() -> Result
             assert_eq!(reported.path, expected_workspace.path.display().to_string());
             assert_eq!(reported.branch_name, expected_workspace.branch_name);
             assert_eq!(reported.base_branch, expected_workspace.base_branch);
-            assert_eq!(state.removals.contains_key("interrupted"), !reused);
-            assert!(state.runs.is_empty());
+            assert!(
+                state.removals.is_empty(),
+                "a launched workspace is queued for removal only after its exit is acknowledged"
+            );
+            assert_eq!(
+                state.runs.get("interrupted").map(|run| run.phase),
+                Some(RunPhase::Exited)
+            );
             assert!(state.pending_exits.is_empty());
             assert_eq!(persisted_state(home.path())?, *state);
         }

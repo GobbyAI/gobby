@@ -503,6 +503,57 @@ async fn spawn_refused_at_capacity() -> Result<()> {
 }
 
 #[tokio::test]
+async fn spawn_accepted_beside_exited_records() -> Result<()> {
+    let fixture = CommandsFixture::new(true).await?;
+    {
+        let mut state = fixture.launch.agents.state.lock().await;
+        for index in 0..1000 {
+            state
+                .runs
+                .insert(format!("exited-{index}"), run(RunPhase::Exited, None));
+        }
+        state.commit(&fixture.launch.agents.home, &fixture.launch.agents.changed)?;
+    }
+    ok(
+        &fixture.call(fixture.spawn("spawn")).await,
+        "spawn",
+        json!({"accepted":true}),
+    );
+    assert!(
+        persisted_state(&fixture.launch.agents.home)?
+            .runs
+            .contains_key(&fixture.launch.payload.run_id),
+        "exited records must not refuse a new run"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn spawn_counts_only_live_runs_beside_exited() -> Result<()> {
+    let fixture = CommandsFixture::new(true).await?;
+    {
+        let mut state = fixture.launch.agents.state.lock().await;
+        for index in 0..1000 {
+            state
+                .runs
+                .insert(format!("exited-{index}"), run(RunPhase::Exited, None));
+        }
+        for index in 0..999 {
+            state
+                .runs
+                .insert(format!("live-{index}"), run(RunPhase::Launched, None));
+        }
+        state.commit(&fixture.launch.agents.home, &fixture.launch.agents.changed)?;
+    }
+    ok(
+        &fixture.call(fixture.spawn("spawn")).await,
+        "spawn",
+        json!({"accepted":true}),
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn cancel_before_launch() -> Result<()> {
     let fixture = CommandsFixture::new(true).await?;
     let id = &fixture.launch.payload.run_id;

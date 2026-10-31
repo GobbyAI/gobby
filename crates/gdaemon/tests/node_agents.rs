@@ -524,9 +524,9 @@ async fn restart_fails_unlaunched_runs() -> Result<()> {
         for recovered in &state.exits[1..] {
             assert_eq!(recovered.exit.reason, ExitReason::PrepareFailed);
             assert!(!recovered.exit.launched);
-            assert_eq!(
-                recovered.exit.workspace.is_some(),
-                recovered.exit.run_id != "accepted"
+            assert!(
+                recovered.exit.workspace.is_none(),
+                "a launched:false exit names no workspace"
             );
             assert!(recovered.exit.exit_code.is_none());
         }

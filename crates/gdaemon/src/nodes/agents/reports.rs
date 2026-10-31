@@ -116,7 +116,8 @@ pub async fn report_once(node: &NodeServices) -> Result<()> {
         .await
         .context("node report timed out")?;
     let status = response.status();
-    if status.is_success() {
+    // Only 200 acknowledges the exits and workspaces; other 2xx answers keep them for the next report.
+    if status == StatusCode::OK {
         let mut state = agents.state.lock().await;
         for record in &page {
             let run_id = &record.exit.run_id;

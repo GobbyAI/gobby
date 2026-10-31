@@ -750,3 +750,134 @@ async fn node_registers_report_job() -> Result<()> {
     child.wait().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn non_200_success_keeps_exits_until_200() -> Result<()> {
+    let mut f = Fixture::new(Vec::new()).await?;
+    let workspace = record(f.home.path(), "exit-0000");
+    {
+        let mut state = f.node.agents.state.lock().await;
+        state.runs.insert(
+            "exit-0000".into(),
+            RunRecord {
+                terminal_id: "fixture-terminal".into(),
+                phase: RunPhase::Exited,
+                accepted_at_ms: 0,
+                host_terminal_id: Some("fixture-host-terminal".into()),
+                workspace: Some(workspace.clone()),
+            },
+        );
+        state.exits.push(ended("exit-0000", 1, Some(&workspace)));
+        state.commit(f.home.path(), &f.node.agents.changed)?;
+    }
+    for status in [StatusCode::ACCEPTED, StatusCode::NO_CONTENT] {
+        let mut report = Running::once(f.node.clone());
+        let exchange = f.hub.next(&mut report).await;
+        assert_eq!(exchange.body.exits.len(), 1);
+        exchange.answer(status, json!({}));
+        assert!(
+            report.finish().await.is_err(),
+            "{status} is not an acknowledgement"
+        );
+        let retained = persisted_state(f.home.path())?;
+        assert_eq!(retained.exits.len(), 1, "{status} must keep the exit");
+        assert!(
+            retained.runs.contains_key("exit-0000"),
+            "{status} must keep the launched workspace"
+        );
+    }
+    let mut report = Running::once(f.node.clone());
+    let exchange = f.hub.next(&mut report).await;
+    assert_eq!(exchange.body.exits.len(), 1);
+    exchange.answer(StatusCode::OK, json!({}));
+    report.finish().await?;
+    let retained = persisted_state(f.home.path())?;
+    assert!(retained.exits.is_empty());
+    assert!(!retained.runs.contains_key("exit-0000"));
+    assert_eq!(retained.removals.get("exit-0000"), Some(&workspace));
+    Ok(())
+}
+
+#[tokio::test]
+async fn unlaunched_recovery_reports_no_workspace() -> Result<()> {
+    let mut f = Fixture::new(Vec::new()).await?;
+    let workspace = record(f.home.path(), "prepare-0000");
+    f.put_run("prepare-0000", RunPhase::Preparing, Some(workspace.clone()))
+        .await?;
+    {
+        let mut state = f.node.agents.state.lock().await;
+        state.recover_after_restart();
+        state.commit(f.home.path(), &f.node.agents.changed)?;
+    }
+    let mut failed = Running::once(f.node.clone());
+    let first = f.hub.next(&mut failed).await;
+    assert_eq!(first.body.exits.len(), 1);
+    assert!(!first.body.exits[0].launched);
+    assert!(
+        first.body.exits[0].workspace.is_none(),
+        "a launched:false exit names no workspace"
+    );
+    first.answer(StatusCode::INTERNAL_SERVER_ERROR, json!({}));
+    let _ = failed.finish().await;
+    assert_eq!(persisted_state(f.home.path())?.exits.len(), 1);
+
+    let mut retry = Running::once(f.node.clone());
+    let second = f.hub.next(&mut retry).await;
+    assert_eq!(second.body.exits.len(), 1);
+    second.answer(StatusCode::OK, json!({}));
+    retry.finish().await?;
+    let retained = persisted_state(f.home.path())?;
+    assert!(retained.exits.is_empty());
+    assert_eq!(
+        retained.removals.get("prepare-0000"),
+        Some(&workspace),
+        "the preparation record survives the acknowledged exit"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn pending_exit_recovery_keeps_launched_workspace() -> Result<()> {
+    let mut f = Fixture::new(Vec::new()).await?;
+    let workspace = record(f.home.path(), "prepare-0001");
+    f.put_run("prepare-0001", RunPhase::Preparing, Some(workspace.clone()))
+        .await?;
+    {
+        let mut state = f.node.agents.state.lock().await;
+        state.pending_exits.insert("prepare-0001".into(), Some(0));
+        state.recover_after_restart();
+        assert!(
+            state.removals.is_empty(),
+            "the launched workspace waits for its exit's acknowledgement"
+        );
+        state.commit(f.home.path(), &f.node.agents.changed)?;
+    }
+    let mut failed = Running::once(f.node.clone());
+    let first = f.hub.next(&mut failed).await;
+    assert_eq!(first.body.exits.len(), 1);
+    assert!(first.body.exits[0].launched);
+    assert_eq!(first.body.exits[0].exit_code, Some(0));
+    assert_eq!(
+        first.body.exits[0].workspace.as_ref().unwrap().path,
+        workspace.path.to_str().unwrap()
+    );
+    first.answer(StatusCode::INTERNAL_SERVER_ERROR, json!({}));
+    let _ = failed.finish().await;
+    let retained = persisted_state(f.home.path())?;
+    assert_eq!(
+        retained.runs.get("prepare-0001").map(|run| run.phase),
+        Some(RunPhase::Exited)
+    );
+    assert!(retained.removals.is_empty());
+
+    let mut retry = Running::once(f.node.clone());
+    let second = f.hub.next(&mut retry).await;
+    assert_eq!(second.body.exits.len(), 1);
+    second.answer(StatusCode::OK, json!({}));
+    retry.finish().await?;
+    let retained = persisted_state(f.home.path())?;
+    assert!(retained.exits.is_empty());
+    assert!(!retained.runs.contains_key("prepare-0001"));
+    assert_eq!(retained.removals.get("prepare-0001"), Some(&workspace));
+    Ok(())
+}
