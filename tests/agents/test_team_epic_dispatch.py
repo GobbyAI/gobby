@@ -808,3 +808,176 @@ async def test_routed_reviewer_bindings(world: TeamWorld) -> None:
     replacement = await team.spawn("docs-reviewer", **tree)
     assert replacement.get("success") is True, replacement
     assert reviewer_bindings(team) == {**spawned, "docs-reviewer": replacement["run_id"]}
+
+
+def leaf_tree(
+    team: EpicTeam,
+    epic: Task,
+    leaf: Task,
+    *,
+    branch: str | None = None,
+    base: str | None = None,
+    dirty: bool = False,
+) -> tuple[str, Path, str]:
+    """A tree a finished pod left on its leaf: one commit of leaf work, or dirty with none."""
+    epic_tree = tree_of(team.binding)
+    path = epic_tree.parent / f"leaf-{epic.seq_num}-{leaf.seq_num}"
+    branch = branch or f"epic/{epic.seq_num}/{leaf.seq_num}"
+    git_in(epic_tree, "worktree", "add", "-b", branch, str(path), team.binding.branch)
+    row = LocalWorktreeManager(team.world.case.db).create(
+        team.world.case.project_id,
+        branch_name=branch,
+        worktree_path=str(path),
+        base_branch=base or team.binding.branch,
+        task_id=leaf.id,
+    )
+    if dirty:
+        (path / "scratch.txt").write_text("unsaved\n")
+    else:
+        (path / f"leaf_{leaf.seq_num}.py").write_text("work = True\n")
+        git_in(path, "add", f"leaf_{leaf.seq_num}.py")
+        git_in(path, "commit", "-m", f"[gobby-#{leaf.seq_num}] feat: leaf work")
+    return row.id, path, branch
+
+
+@pytest.mark.asyncio
+async def test_pod_adopts_its_leafs_clean_tree_on_the_leaf_branch(world: TeamWorld) -> None:
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    tree_id, path, branch = leaf_tree(team, epic, leaf)
+    head = git_in(path, "rev-parse", "HEAD")
+    trees = sorted(world.tree_ids())
+
+    pod = await world.admit(
+        world.child(leaf, parent=team.manager), leaf, parent_team_id=team.binding.team_id
+    )
+
+    assert pod.worktree_id == tree_id
+    assert tree_of(pod) == path
+    assert pod.branch == branch
+    assert pod.base_branch == team.binding.branch
+    assert git_in(path, "branch", "--show-current") == branch
+    assert git_in(path, "rev-parse", "HEAD") == head
+    assert sorted(world.tree_ids()) == trees
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tree_kwargs",
+    [{"branch": "task-stray"}, {"base": "main"}, {"dirty": True}],
+    ids=["other_branch", "other_base", "dirty"],
+)
+async def test_pod_refuses_a_leaf_tree_it_cannot_adopt(
+    world: TeamWorld, tree_kwargs: dict[str, Any]
+) -> None:
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    _, path, _ = leaf_tree(team, epic, leaf, **tree_kwargs)
+    trees = sorted(world.tree_ids())
+
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(
+            world.child(leaf, parent=team.manager), leaf, parent_team_id=team.binding.team_id
+        )
+
+    assert refused.value.code == "team_exists"
+    assert sorted(world.tree_ids()) == trees
+    assert path.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_pod_adopts_its_leaf_tree_once_the_prior_pod_has_ended(world: TeamWorld) -> None:
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    prior = world.child(leaf, parent=team.manager)
+    first = await world.admit(prior, leaf, parent_team_id=team.binding.team_id)
+    world.finish(prior)
+    trees = sorted(world.tree_ids())
+
+    pod = await world.admit(
+        world.child(leaf, parent=team.manager), leaf, parent_team_id=team.binding.team_id
+    )
+
+    assert pod.worktree_id == first.worktree_id
+    assert pod.branch == first.branch
+    assert tree_of(pod) == tree_of(first)
+    assert sorted(world.tree_ids()) == trees
+
+
+@pytest.mark.asyncio
+async def test_pod_refuses_a_leaf_tree_a_prior_seat_still_works_in(world: TeamWorld) -> None:
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    prior = world.child(leaf, parent=team.manager)
+    await world.admit(prior, leaf, parent_team_id=team.binding.team_id)
+    running_seat(world, prior, "developer")
+    world.finish(prior)
+    trees = sorted(world.tree_ids())
+
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(
+            world.child(leaf, parent=team.manager), leaf, parent_team_id=team.binding.team_id
+        )
+
+    assert refused.value.code == "team_exists"
+    assert sorted(world.tree_ids()) == trees
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("started", [False, True], ids=["pending", "running"])
+async def test_pod_refuses_a_leaf_tree_an_unattached_seat_still_holds(
+    world: TeamWorld, started: bool
+) -> None:
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    prior = world.child(leaf, parent=team.manager)
+    await world.admit(prior, leaf, parent_team_id=team.binding.team_id)
+    runs = LocalAgentRunManager(world.case.db)
+    seat = runs.create(
+        parent_session_id=prior.id,
+        provider="claude",
+        prompt="Implement the leaf.",
+        agent_name="developer",
+    )
+    if started:
+        assert runs.start(seat.id) is not None
+    world.finish(prior)
+    trees = sorted(world.tree_ids())
+
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(
+            world.child(leaf, parent=team.manager), leaf, parent_team_id=team.binding.team_id
+        )
+
+    assert refused.value.code == "team_exists"
+    assert sorted(world.tree_ids()) == trees
+
+
+@pytest.mark.asyncio
+async def test_pod_adopts_its_leaf_tree_once_an_unattached_seat_has_ended(world: TeamWorld) -> None:
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    prior = world.child(leaf, parent=team.manager)
+    first = await world.admit(prior, leaf, parent_team_id=team.binding.team_id)
+    runs = LocalAgentRunManager(world.case.db)
+    seat = runs.create(
+        parent_session_id=prior.id,
+        provider="claude",
+        prompt="Implement the leaf.",
+        agent_name="developer",
+    )
+    runs.complete(seat.id)
+    world.finish(prior)
+
+    pod = await world.admit(
+        world.child(leaf, parent=team.manager), leaf, parent_team_id=team.binding.team_id
+    )
+
+    assert pod.worktree_id == first.worktree_id
+    assert tree_of(pod) == tree_of(first)
