@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
+from gobby.agents.idle_detector import ComposerRead
+from gobby.events.live_wake import TerminalActivity
+from gobby.events.wake_active_recovery import (
+    reconcile_idle_prompt_session,
+    reconcile_restart_stale_session,
+)
 from gobby.sessions.turn_lifecycle import TurnDisposition, TurnEvidence, TurnLifecycleReducer
 from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -135,3 +143,78 @@ def test_operator_pause_survives_an_armed_routine_stop(
     stored = sessions.get(seat.id)
     assert stored is not None
     assert stored.status == "paused", "An operator pause holds even while a wait is armed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disposition", ["completed", "ended_non_user"])
+@pytest.mark.parametrize("armed", [False, True], ids=["unarmed", "armed"])
+@pytest.mark.parametrize("restart_sweep", [True, False], ids=["restart-sweep", "idle-prompt"])
+async def test_recovery_then_routine_stop_never_holds(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    disposition: TurnDisposition,
+    armed: bool,
+    restart_sweep: bool,
+) -> None:
+    sessions = SessionManager(temp_db)
+    seat = sessions.register(
+        external_id=f"swept-{armed}-{disposition}",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    lifecycle = TurnLifecycleReducer(sessions)
+    evidence = TurnEvidence(source="codex", provider_turn_key="pre-restart-turn")
+    lifecycle.begin_turn(seat.id, evidence)
+    if armed:
+        owner = sessions.register(
+            external_id=f"swept-owner-{disposition}",
+            machine_id=None,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        CoordinationWaitManager(temp_db).register(seat.id, owner.id, statuses=["idle"])
+
+    horizon = datetime.now(UTC)
+    before = horizon - timedelta(seconds=1)
+    temp_db.execute(
+        "UPDATE sessions SET updated_at = %s, last_activity = %s WHERE id = %s",
+        (before, before, seat.id),
+    )
+    observed = sessions.get(seat.id)
+    assert observed is not None
+
+    async def empty_activity(_session: object, _terminal: object | None) -> TerminalActivity:
+        return TerminalActivity(ComposerRead("empty"))
+
+    async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    if restart_sweep:
+        reconciled = await reconcile_restart_stale_session(
+            session_manager=sessions,
+            observed=observed,
+            terminal=None,
+            activity_probe=empty_activity,
+            run_db=run_db,
+            restart_horizon_ms=int(horizon.timestamp() * 1_000),
+            excluded_session_ids=frozenset(),
+        )
+    else:
+        await reconcile_idle_prompt_session(
+            session_manager=sessions,
+            observed=observed,
+            terminal=None,
+            activity_probe=empty_activity,
+            run_db=run_db,
+        )
+        reconciled = sessions.get(seat.id)
+    assert reconciled is not None
+    ended = lifecycle.end_turn(seat.id, disposition, evidence)
+
+    assert ended.applied
+    stored = sessions.get(seat.id)
+    assert stored is not None
+    assert stored.status == ("waiting" if armed else "idle")
+    assert reconciled.status == "idle", "Restart recovery carries no operator pause intent"
+    assert reconciled.last_activity == before, "Recovery preserves the activity clock"
