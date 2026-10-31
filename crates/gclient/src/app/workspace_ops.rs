@@ -179,9 +179,24 @@ impl<D: Daemon> Workspace<D> {
     }
 
     /// Replace the workspace model with a fresh `workspace_attach` snapshot.
+    ///
+    /// A snapshot older than the installed model of the same workspace, daemon
+    /// epoch and connection is dropped: the model already holds every event up
+    /// to its newer watermark, so installing the older rows would lose them.
+    /// An equal watermark still reinstalls.
     pub fn apply_workspace_snapshot(&mut self, snapshot: WorkspaceSnapshot) {
+        let generation = self.daemon.subscribe().0.generation;
+        let older = self.workspace_model.as_ref().is_some_and(|previous| {
+            previous.installed_generation == generation
+                && previous.workspace.id == snapshot.workspace.id
+                && previous.watermark.daemon_epoch == snapshot.snapshot.daemon_epoch
+                && snapshot.snapshot.seq < previous.watermark.seq
+        });
+        if older {
+            return;
+        }
         let mut model = WorkspaceModel::from_snapshot(snapshot);
-        model.installed_generation = self.daemon.subscribe().0.generation;
+        model.installed_generation = generation;
         if let Some(previous) = &self.workspace_model {
             model.succeed(previous);
         }

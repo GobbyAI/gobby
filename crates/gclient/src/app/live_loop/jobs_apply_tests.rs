@@ -11,6 +11,9 @@ mod draw;
 mod host;
 
 use super::*;
+
+#[path = "jobs_snapshot_order_tests.rs"]
+mod snapshot_order;
 use crate::app::live_loop::jobs;
 use crate::app::live_loop::lifecycle::spawn_live_shell;
 use crate::app::live_loop::mouse::Placement;
