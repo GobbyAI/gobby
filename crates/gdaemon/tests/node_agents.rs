@@ -2313,7 +2313,7 @@ fn chokepoint_droid_ps_shim() -> Result<()> {
         .join("runtime/droid-ps-shim")
         .join(sha256_hex(&keyed));
     let shim = shim_dir.join("ps");
-    let real = shim_dir.join("ps-bin");
+    let real = shim_dir.join("bin").join("ps");
     // Ad hoc signing rewrites the copy's bytes, so the copy is checked by its signature. The
     // wrapper is a script and runs the copy; the probe runs the wrapper as `ps`.
     assert!(

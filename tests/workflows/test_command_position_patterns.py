@@ -621,6 +621,12 @@ RULE_CASES = (
             "x=ps; timeout 5 $x aux",
             "export x=ps; bash -c '$x aux'",
             "export x=ps; echo '$x aux' | sh",
+            # #25368 round 6: the unrestricted copy is bin/ps, off PATH; path forms read as ps.
+            "/Users/josh/.gobby/runtime/droid-ps-shim/abc123/bin/ps aux",
+            "~/.gobby/runtime/droid-ps-shim/*/bin/ps aux",
+            "bin/ps aux",
+            "cd ~/.gobby/runtime/droid-ps-shim/*/bin && ./ps eww",
+            "cd ~/.gobby/runtime/droid-ps-shim/*/ && ./bin/ps aux",
             # #25368 round 5: zsh parameter forms the engine cannot parse read as ps.
             "${=GOBBY_PS_SHIM} aux",
             "${~GOBBY_PS_SHIM} aux",

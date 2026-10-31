@@ -28,8 +28,8 @@ the true parent pid, so Droid's orphan cleanup keeps working instead of being
 faked out by a stubbed response.
 
 The shim directory's ``ps`` is a wrapper, not the binary. It checks its argv against the
-non-argument allow-list (#25368) and then runs the re-signed copy ``ps-bin`` beside it, so
-``ps aux`` and other argument listings are refused where the seat runs them. The wrapper
+non-argument allow-list (#25368) and then runs the re-signed copy at ``bin/ps``, which sits
+off PATH, so ``ps aux`` and other argument listings are refused where the seat runs them. The wrapper
 text is mirrored byte for byte in ``crates/gdaemon/.../sandbox/ps_shim_wrapper.sh``, which
 the Rust daemon embeds; a parity test keeps the two in step.
 """
@@ -56,11 +56,12 @@ logger = logging.getLogger(__name__)
 SYSTEM_PS = Path("/bin/ps")
 CODESIGN = Path("/usr/bin/codesign")
 _SHIM_DIRNAME = "droid-ps-shim"
-REAL_PS_NAME = "ps-bin"
+REAL_PS_DIR = "bin"
+REAL_PS_NAME = "ps"
 # Mirror of crates/gdaemon/src/nodes/agents/sandbox/ps_shim_wrapper.sh (parity-tested).
 PS_WRAPPER = """#!/bin/sh
-# Refuses argv outside the sandbox-safe ps allow-list, then runs the re-signed copy beside
-# it as ps-bin (#25368). Only -o with non-argument columns and the selector flags
+# Refuses argv outside the sandbox-safe ps allow-list, then runs the re-signed copy at
+# bin/ps (#25368), off PATH. Only -o with non-argument columns and the selector flags
 # -A -a -x -r -w -W -p -q -U -G -g -t reach ps, so `ps aux`, `ps -e` and `ps -o args`
 # never list other processes' arguments. The column list must match the
 # no-process-environment-listing rule and the Python copy in droid_ps_shim.py.
@@ -129,7 +130,7 @@ for arg; do
     done
 done
 [ -z "$expect" ] && [ -n "$seen_columns" ] || refuse
-exec "${0%/*}/ps-bin" "$@"
+exec "${0%/*}/bin/ps" "$@"
 """
 
 
@@ -156,8 +157,9 @@ def droid_ps_shim_dir() -> Path | None:
         target = directory / "ps"
         if target.exists():
             return directory
-        directory.mkdir(parents=True, exist_ok=True)
-        staged = directory / f".{REAL_PS_NAME}.{os.getpid()}.tmp"
+        real_dir = directory / REAL_PS_DIR
+        real_dir.mkdir(parents=True, exist_ok=True)
+        staged = real_dir / f".{REAL_PS_NAME}.{os.getpid()}.tmp"
         try:
             shutil.copyfile(SYSTEM_PS, staged)
             os.chmod(staged, 0o755)  # nosec B103 # mirrors /bin/ps; user-owned home.
@@ -167,10 +169,10 @@ def droid_ps_shim_dir() -> Path | None:
                 capture_output=True,
                 timeout=30,
             )
-            os.replace(staged, directory / REAL_PS_NAME)
+            os.replace(staged, real_dir / REAL_PS_NAME)
         finally:
             staged.unlink(missing_ok=True)
-        # The wrapper lands last: its presence means the binary beside it is in place.
+        # The wrapper lands last: its presence means bin/ps is in place.
         staged = directory / f".ps.{os.getpid()}.tmp"
         try:
             staged.write_text(PS_WRAPPER, encoding="utf-8")

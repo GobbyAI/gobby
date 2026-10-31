@@ -1,6 +1,6 @@
 #!/bin/sh
-# Refuses argv outside the sandbox-safe ps allow-list, then runs the re-signed copy beside
-# it as ps-bin (#25368). Only -o with non-argument columns and the selector flags
+# Refuses argv outside the sandbox-safe ps allow-list, then runs the re-signed copy at
+# bin/ps (#25368), off PATH. Only -o with non-argument columns and the selector flags
 # -A -a -x -r -w -W -p -q -U -G -g -t reach ps, so `ps aux`, `ps -e` and `ps -o args`
 # never list other processes' arguments. The column list must match the
 # no-process-environment-listing rule and the Python copy in droid_ps_shim.py.
@@ -69,4 +69,4 @@ for arg; do
     done
 done
 [ -z "$expect" ] && [ -n "$seen_columns" ] || refuse
-exec "${0%/*}/ps-bin" "$@"
+exec "${0%/*}/bin/ps" "$@"

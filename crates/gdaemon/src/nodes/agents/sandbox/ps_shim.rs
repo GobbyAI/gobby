@@ -2,7 +2,7 @@
 //! refuses to exec the setuid `/bin/ps`, so a sandboxed `ps` probe fails without a copy. The
 //! copy is re-signed ad hoc because AMFI kills an Apple binary executed outside its trusted
 //! location. The `ps` the PATH resolves is a wrapper: it checks argv against the
-//! non-argument allow-list (#25368) and runs the re-signed copy `ps-bin` beside it.
+//! non-argument allow-list (#25368) and runs the re-signed copy at `bin/ps`, off PATH.
 //!
 //! TODO(#22407): Droid's supervisor, the upstream defect that first needed this shim,
 //! SIGKILLs its process group when its `ps` probe fails. Drop Droid's dependency once
@@ -26,7 +26,8 @@ const SHIM_DIRNAME: &str = "droid-ps-shim";
 const CODESIGN_TIMEOUT: Duration = Duration::from_secs(30);
 /// The argv-checking `ps`. Its allow-list is mirrored in `droid_ps_shim.py` (parity-tested).
 const WRAPPER: &str = include_str!("ps_shim_wrapper.sh");
-const REAL_PS: &str = "ps-bin";
+const REAL_PS_DIR: &str = "bin";
+const REAL_PS: &str = "ps";
 
 /// The directory holding the shim, or `None` when it is unavailable. A non-darwin host,
 /// a missing `/bin/ps` or `codesign`, or a shim that fails to stage all return `None`:
@@ -57,19 +58,20 @@ fn ensure_shim(gobby: &Path) -> Result<PathBuf> {
     if target.exists() {
         return Ok(directory);
     }
-    fs::create_dir_all(&directory).context("create shim directory")?;
-    let staged = directory.join(format!(".{REAL_PS}.{}.tmp", std::process::id()));
-    let installed = stage_signed(&staged, &source, &directory.join(REAL_PS));
+    let real_dir = directory.join(REAL_PS_DIR);
+    fs::create_dir_all(&real_dir).context("create shim directory")?;
+    let staged = real_dir.join(format!(".{REAL_PS}.{}.tmp", std::process::id()));
+    let installed = stage_signed(&staged, &source, &real_dir.join(REAL_PS));
     let _ = fs::remove_file(&staged);
     installed?;
-    // The wrapper lands last: its presence means the binary beside it is in place.
+    // The wrapper lands last: its presence means bin/ps is in place.
     let staged = directory.join(format!(".ps.{}.tmp", std::process::id()));
     let installed = stage_script(&staged, &target);
     let _ = fs::remove_file(&staged);
     installed.map(|()| directory)
 }
 
-/// The re-signed copy of `/bin/ps`, installed as `ps-bin` beside the wrapper.
+/// The re-signed copy of `/bin/ps`, installed at `bin/ps`, off PATH.
 fn stage_signed(staged: &Path, source: &[u8], target: &Path) -> Result<()> {
     fs::write(staged, source).context("copy /bin/ps")?;
     fs::set_permissions(staged, fs::Permissions::from_mode(0o755)).context("chmod shim")?;
@@ -77,7 +79,7 @@ fn stage_signed(staged: &Path, source: &[u8], target: &Path) -> Result<()> {
     fs::rename(staged, target).context("install shim")
 }
 
-/// The argv-checking `ps` wrapper. It runs `ps-bin` only when every argument is allowed.
+/// The argv-checking `ps` wrapper. It runs `bin/ps` only when every argument is allowed.
 fn stage_script(staged: &Path, target: &Path) -> Result<()> {
     fs::write(staged, WRAPPER).context("write shim wrapper")?;
     fs::set_permissions(staged, fs::Permissions::from_mode(0o755)).context("chmod shim wrapper")?;

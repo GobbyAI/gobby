@@ -90,11 +90,25 @@ class TestDroidPsShimDir:
         assert shim.is_file()
         assert shim.stat().st_mode & 0o111
         assert shim.read_text(encoding="utf-8") == PS_WRAPPER
-        assert (directory / "ps-bin").read_bytes() == b"signed"
+        assert (directory / "bin" / "ps").read_bytes() == b"signed"
         assert len(calls) == 1
         assert calls[0][0] == str(droid_ps_shim.CODESIGN)
         assert calls[0][1:4] == ["-f", "-s", "-"]
-        assert calls[0][4].startswith(str(directory / ".ps-bin."))
+        assert calls[0][4].startswith(str(directory / "bin" / ".ps."))
+
+    def test_only_the_wrapper_is_executable_at_the_top_of_the_shim_directory(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The unrestricted copy stays off PATH, so the wrapper is the one ps a seat reaches."""
+        _stub_darwin(monkeypatch, tmp_path)
+        directory = droid_ps_shim_dir()
+        assert directory is not None
+        executables = sorted(
+            entry.name
+            for entry in directory.iterdir()
+            if entry.is_file() and os.access(entry, os.X_OK)
+        )
+        assert executables == ["ps"]
 
     def test_reuses_the_cached_copy_instead_of_re_signing(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -186,7 +200,9 @@ def shim_dir(tmp_path: Path) -> Path:
     wrapper = directory / "ps"
     wrapper.write_text(PS_WRAPPER, encoding="utf-8")
     wrapper.chmod(0o755)
-    real = directory / "ps-bin"
+    real_dir = directory / "bin"
+    real_dir.mkdir()
+    real = real_dir / "ps"
     real.write_text('#!/bin/sh\necho "ran $*"\n', encoding="utf-8")
     real.chmod(0o755)
     return directory

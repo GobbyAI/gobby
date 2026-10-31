@@ -6,7 +6,9 @@ tags: [worker-safety, enforcement, default, gobby]
 # variable, $GOBBY_PS_SHIM or ${GOBBY_PS_SHIM}, followed by a space, separator or end of line.
 # Any other spelling is refused: quotes before or after the name (`$GOBBY_PS_SHIM""`), a braced
 # body that names the shim with an operator or zsh flag (`${GOBBY_PS_SHIM:-...}`,
-# `${=GOBBY_PS_SHIM}`), and the shim adjoined to anything else. The wrapper list matches
+# `${=GOBBY_PS_SHIM}`), and the shim adjoined to anything else. Indirection through another
+# name (`${(P)y}`) does not name the shim, so the engine's opaque fallback reads it, not this
+# rule. The wrapper list matches
 # no-process-environment-listing, so a quoted shim behind rtk, nohup or timeout is refused too.
 # The shim itself refuses argv outside its -o allow-list, so a quoted shim behind an option
 # operand that is not a known wrapper is caught there.
