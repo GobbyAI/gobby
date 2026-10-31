@@ -4,6 +4,7 @@ pub mod commands;
 pub mod executable;
 #[cfg(unix)]
 pub mod host;
+mod lanes;
 pub mod launch;
 pub mod provider_command;
 pub mod provider_env;
@@ -20,7 +21,7 @@ use std::{
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
-    sync::{Arc, PoisonError},
+    sync::Arc,
 };
 use tokio::sync::{Mutex, Notify, watch};
 
@@ -28,8 +29,8 @@ pub struct NodeAgents {
     pub home: PathBuf,
     pub state: Mutex<AgentState>,
     pub changed: Notify,
-    /// FIFO gates ordering one run's terminal commands. An entry lives while a command holds it.
-    gates: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Arrival-ordered turns for each run's cancel and write commands.
+    lanes: Arc<lanes::Lanes>,
     /// Runs whose preparation task is still live.
     preparing: std::sync::Mutex<HashMap<String, Preparing>>,
     #[cfg(unix)]
@@ -69,28 +70,10 @@ impl NodeAgents {
             home: home.to_owned(),
             state: Mutex::new(state),
             changed,
-            gates: Default::default(),
+            lanes: Arc::default(),
             preparing: Default::default(),
             #[cfg(unix)]
             host: host::HostControl::new(home),
         })
-    }
-
-    /// The FIFO gate for `run_id`'s terminal commands.
-    fn gate(&self, run_id: &str) -> Arc<Mutex<()>> {
-        let mut gates = self.gates.lock().unwrap_or_else(PoisonError::into_inner);
-        Arc::clone(gates.entry(run_id.to_owned()).or_default())
-    }
-
-    /// Drop `run_id`'s gate once no command holds it. Clones are made only under this lock,
-    /// so a count of one means no command is waiting on or holding the gate.
-    fn release_gate(&self, run_id: &str) {
-        let mut gates = self.gates.lock().unwrap_or_else(PoisonError::into_inner);
-        if gates
-            .get(run_id)
-            .is_some_and(|gate| Arc::strong_count(gate) == 1)
-        {
-            gates.remove(run_id);
-        }
     }
 }

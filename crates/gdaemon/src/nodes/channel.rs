@@ -442,8 +442,10 @@ pub async fn serve_channel<S>(
     let mut pings =
         tokio::time::interval_at(Instant::now() + timing.ping_interval, timing.ping_interval);
     pings.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    // Command replies leave through this loop, the socket's only writer.
-    let (replies_tx, mut replies) = tokio::sync::mpsc::unbounded_channel::<String>();
+    use crate::nodes::agents::commands;
+    // Command replies leave through this loop, the socket's only writer. A reply is dropped once
+    // it is sent, which releases its run's next turn and any preparation it started.
+    let (replies_tx, mut replies) = tokio::sync::mpsc::unbounded_channel::<commands::Dispatched>();
     loop {
         tokio::select! {
             biased;
@@ -454,24 +456,23 @@ pub async fn serve_channel<S>(
                     Some(Ok(PeerMessage::Text(text))) => {
                         idle = Instant::now() + timing.idle_timeout;
                         if let Some(command) = command_frame(text.as_str()) {
+                            // Admission commits in arrival order; the run is answered off the loop.
+                            let admitted = commands::admit(&agents, &launch, command).await;
                             let reply_tx = replies_tx.clone();
-                            let agents = Arc::clone(&agents);
-                            let launch = Arc::clone(&launch);
                             tokio::spawn(async move {
-                                let reply = crate::nodes::agents::commands::dispatch(
-                                    agents, launch, command,
-                                )
-                                .await;
-                                let _ = reply_tx.send(reply.to_string());
+                                let _ = reply_tx.send(admitted.run().await);
                             });
                         }
                     }
                     Some(Ok(_)) => idle = Instant::now() + timing.idle_timeout,
                 }
             },
-            Some(reply) = replies.recv() => {
-                if !matches!(tokio::time::timeout_at(idle,
-                    socket.send(PeerMessage::Text(reply.into()))).await, Ok(Ok(()))) {
+            Some(dispatched) = replies.recv() => {
+                let sent = tokio::time::timeout_at(idle,
+                    socket.send(PeerMessage::Text(dispatched.reply.to_string().into()))).await;
+                // Dropped once sent, so the run's next turn and any preparation go after the reply.
+                drop(dispatched);
+                if !matches!(sent, Ok(Ok(()))) {
                     break;
                 }
             },

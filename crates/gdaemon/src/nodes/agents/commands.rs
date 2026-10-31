@@ -1,7 +1,15 @@
 //! Node command dispatch: spawn, cancel and terminal write, answered over the node channel.
+//!
+//! Admission runs in arrival order and commits each command's state effects. A cancel or write
+//! then waits for its run's earlier turns. A spawn starts its preparation only after its reply
+//! has been sent.
 use super::{
     NodeAgents, Preparing,
-    launch::{LaunchContext, LaunchFailure, launch_with, now_ms, record_failure},
+    lanes::Turn,
+    launch::{
+        LaunchContext, LaunchFailure, cancelled_failure, now_ms, record_failure, spawn_plan,
+        start_planned,
+    },
     repair::RepairEnv,
     sandbox::runtime::require_managed_srt,
     state::{RunPhase, RunRecord},
@@ -33,80 +41,250 @@ const SEED_TIMEOUT: Duration = Duration::from_secs(180);
 /// Providers a spawn may name. Each maps to a command in `provider_command`.
 const PROVIDERS: [&str; 5] = ["claude", "codex", "grok", "droid", "agy"];
 
-/// Answers one command frame. Every outcome is a reply, including refusals of malformed input.
-pub async fn dispatch(agents: Arc<NodeAgents>, context: Arc<LaunchContext>, frame: Value) -> Value {
+/// One admitted command. A refusal is answered at once; a cancel or write waits for its run's
+/// earlier turns before it acts.
+pub enum Admitted {
+    Answered(Dispatched),
+    Cancel {
+        agents: Arc<NodeAgents>,
+        request_id: String,
+        run_id: String,
+        signal: KillSignal,
+        turn: Turn,
+    },
+    Write {
+        agents: Arc<NodeAgents>,
+        request_id: String,
+        run_id: String,
+        payload: WritePayload,
+        turn: Turn,
+    },
+}
+
+impl Admitted {
+    /// Waits for this command's turn, then runs it.
+    pub async fn run(self) -> Dispatched {
+        match self {
+            Self::Answered(dispatched) => dispatched,
+            Self::Cancel {
+                agents,
+                request_id,
+                run_id,
+                signal,
+                turn,
+            } => {
+                turn.wait().await;
+                let reply = cancel_turn(&agents, &request_id, &run_id, signal).await;
+                Dispatched::held(reply, turn)
+            }
+            Self::Write {
+                agents,
+                request_id,
+                run_id,
+                payload,
+                turn,
+            } => {
+                turn.wait().await;
+                let reply = write_turn(&agents, &request_id, &run_id, &payload).await;
+                Dispatched::held(reply, turn)
+            }
+        }
+    }
+}
+
+/// A command's reply. It holds the run's turn and starts any preparation when dropped. The
+/// channel drops it after the reply is sent, so a later command on the run and a spawn's
+/// preparation both wait for the reply to leave.
+pub struct Dispatched {
+    pub reply: Value,
+    _turn: Option<Turn>,
+    _release: Release,
+}
+
+impl Dispatched {
+    fn answer(reply: Value) -> Self {
+        Self {
+            reply,
+            _turn: None,
+            _release: Release::default(),
+        }
+    }
+
+    fn held(reply: Value, turn: Turn) -> Self {
+        Self {
+            reply,
+            _turn: Some(turn),
+            _release: Release::default(),
+        }
+    }
+
+    /// Takes the reply for a caller that sends nothing. The turn and any preparation end here.
+    pub fn into_reply(self) -> Value {
+        self.reply
+    }
+}
+
+/// Starts a spawned run's preparation when dropped.
+#[derive(Default)]
+pub struct Release(Option<Box<Prepare>>);
+
+impl Drop for Release {
+    fn drop(&mut self) {
+        if let Some(prepare) = self.0.take() {
+            tokio::spawn(prepare.run());
+        }
+    }
+}
+
+/// A spawned run's preparation. It holds the run's `busy` lock until the run settles.
+struct Prepare {
+    agents: Arc<NodeAgents>,
+    context: Arc<LaunchContext>,
+    payload: SpawnPayload,
+    cancelled: watch::Receiver<bool>,
+    busy: OwnedMutexGuard<()>,
+}
+
+impl Prepare {
+    /// Prepares and launches the run, settles it on failure, and clears its preparation entry.
+    async fn run(self) {
+        let Self {
+            agents,
+            context,
+            payload,
+            cancelled,
+            busy,
+        } = self;
+        let run_id = payload.run_id.clone();
+        if let Err(failure) = prelaunch(&agents, &context, &payload, cancelled).await {
+            record_failure(&agents, &run_id, failure).await;
+        }
+        agents
+            .preparing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&run_id);
+        // Last, so a cancel that waits on the lock reads the settled phase.
+        drop(busy);
+    }
+}
+
+/// Admits one command frame in arrival order.
+pub async fn admit(
+    agents: &Arc<NodeAgents>,
+    context: &Arc<LaunchContext>,
+    frame: Value,
+) -> Admitted {
     let request_id = frame["request_id"].as_str().unwrap_or_default().to_owned();
     if frame["v"].as_u64() != Some(CONTRACT_VERSION) {
-        return reply_err(
+        return answered(reply_err(
             &request_id,
             "unsupported_version",
             "unsupported command contract version",
             Stage::None,
-        );
+        ));
     }
     let command = frame["command"].as_str().unwrap_or_default().to_owned();
     match command.as_str() {
         "agent.spawn" => match serde_json::from_value::<SpawnCommand>(frame) {
-            Ok(command) => spawn(&agents, &context, &request_id, command.payload).await,
-            Err(error) => invalid_payload(&request_id, &error),
+            Ok(command) => {
+                Admitted::Answered(spawn(agents, context, &request_id, command.payload).await)
+            }
+            Err(error) => answered(invalid_payload(&request_id, &error)),
         },
         "agent.cancel" => match serde_json::from_value::<CancelCommand>(frame) {
-            Ok(command) => cancel(&agents, &request_id, command.payload).await,
-            Err(error) => invalid_payload(&request_id, &error),
+            Ok(command) => cancel(agents, request_id, command.payload).await,
+            Err(error) => answered(invalid_payload(&request_id, &error)),
         },
         "terminal.write" => match serde_json::from_value::<WriteCommand>(frame) {
-            Ok(command) => write(&agents, &request_id, command.payload).await,
-            Err(error) => invalid_payload(&request_id, &error),
+            Ok(command) => write(agents, request_id, command.payload).await,
+            Err(error) => answered(invalid_payload(&request_id, &error)),
         },
-        _ => reply_err(
+        _ => answered(reply_err(
             &request_id,
             "unknown_command",
             "unknown command",
             Stage::None,
-        ),
+        )),
     }
 }
 
-/// Accepts a spawn and starts its preparation. The reply is durable before any preparation runs.
+/// Answers one command frame in full: admission, the run's turn, then the reply.
+pub async fn dispatch(agents: Arc<NodeAgents>, context: Arc<LaunchContext>, frame: Value) -> Value {
+    admit(&agents, &context, frame)
+        .await
+        .run()
+        .await
+        .into_reply()
+}
+
+fn answered(reply: Value) -> Admitted {
+    Admitted::Answered(Dispatched::answer(reply))
+}
+
+/// Accepts a spawn and commits the acceptance. Preparation starts when the reply is dropped.
 async fn spawn(
     agents: &Arc<NodeAgents>,
     context: &Arc<LaunchContext>,
     request_id: &str,
     payload: SpawnPayload,
-) -> Value {
+) -> Dispatched {
     if !PROVIDERS.contains(&payload.provider.as_str()) {
         let message = format!("unsupported provider `{}`", payload.provider);
-        return reply_err(request_id, "invalid_payload", message, Stage::None);
+        return Dispatched::answer(reply_err(
+            request_id,
+            "invalid_payload",
+            message,
+            Stage::None,
+        ));
     }
     if !Path::new(&payload.source_root).is_dir() {
         let message = format!("source_root `{}` is not a directory", payload.source_root);
-        return reply_err(request_id, "invalid_payload", message, Stage::None);
+        return Dispatched::answer(reply_err(
+            request_id,
+            "invalid_payload",
+            message,
+            Stage::None,
+        ));
     }
     if let Err(error) = require_managed_srt(&payload.sandbox) {
-        return reply_err(
+        return Dispatched::answer(reply_err(
             request_id,
             "invalid_payload",
             error.to_string(),
             Stage::None,
-        );
+        ));
     }
     if context.installation.root.as_os_str().is_empty() {
         let message = "SRT install is not verified; managed spawns are refused";
-        return reply_err(request_id, "command_failed", message, Stage::None);
+        return Dispatched::answer(reply_err(
+            request_id,
+            "command_failed",
+            message,
+            Stage::None,
+        ));
     }
     let run_id = payload.run_id.clone();
-    let (cancel, cancelled) = watch::channel(false);
-    let busy = Arc::new(Mutex::new(()));
     let mut state = agents.state.lock().await;
     if state.cancelled.contains_key(&run_id) {
-        return reply_err(request_id, "cancelled", "run was cancelled", Stage::None);
+        return Dispatched::answer(reply_err(
+            request_id,
+            "cancelled",
+            "run was cancelled",
+            Stage::None,
+        ));
     }
     if state.runs.contains_key(&run_id) {
-        return reply_ok(request_id, json!({"accepted": true}));
+        return Dispatched::answer(reply_ok(request_id, json!({"accepted": true})));
     }
     if state.live_and_accepted() >= LIVE_LIMIT {
         let message = format!("node holds {LIVE_LIMIT} live or accepted runs");
-        return reply_err(request_id, "command_failed", message, Stage::None);
+        return Dispatched::answer(reply_err(
+            request_id,
+            "command_failed",
+            message,
+            Stage::None,
+        ));
     }
     let mut next = state.clone();
     next.runs.insert(
@@ -121,10 +299,17 @@ async fn spawn(
     );
     if let Err(error) = next.commit(&agents.home, &agents.changed) {
         let message = format!("record accepted run: {error:#}");
-        return reply_err(request_id, "command_failed", message, Stage::None);
+        return Dispatched::answer(reply_err(
+            request_id,
+            "command_failed",
+            message,
+            Stage::None,
+        ));
     }
     *state = next;
-    // Taken before the run is visible to cancel, so a cancel waits for this task to finish.
+    let (cancel, cancelled) = watch::channel(false);
+    let busy = Arc::new(Mutex::new(()));
+    // Taken before the run is visible to cancel, so a cancel waits for this preparation to end.
     let guard = Arc::clone(&busy)
         .try_lock_owned()
         .expect("a fresh preparation lock is free");
@@ -134,53 +319,66 @@ async fn spawn(
         .unwrap_or_else(PoisonError::into_inner)
         .insert(run_id, Preparing { cancel, busy });
     drop(state);
-    tokio::spawn(prepare_and_launch(
-        Arc::clone(agents),
-        Arc::clone(context),
-        payload,
-        cancelled,
-        guard,
-    ));
-    reply_ok(request_id, json!({"accepted": true}))
+    Dispatched {
+        reply: reply_ok(request_id, json!({"accepted": true})),
+        _turn: None,
+        _release: Release(Some(Box::new(Prepare {
+            agents: Arc::clone(agents),
+            context: Arc::clone(context),
+            payload,
+            cancelled,
+            busy: guard,
+        }))),
+    }
 }
 
-/// Prepares and launches one accepted run. `_busy` holds the run's preparation lock until the
-/// run is launched or settled.
-async fn prepare_and_launch(
-    agents: Arc<NodeAgents>,
-    context: Arc<LaunchContext>,
-    payload: SpawnPayload,
+/// Runs a spawn's preparation and launch under one deadline. The deadline and a cancel each stop
+/// the wait. An abandoned blocking plan is joined before the failure, so its files settle first.
+async fn prelaunch(
+    agents: &Arc<NodeAgents>,
+    context: &Arc<LaunchContext>,
+    payload: &SpawnPayload,
     mut cancelled: watch::Receiver<bool>,
-    _busy: OwnedMutexGuard<()>,
-) {
-    let run_id = payload.run_id.clone();
+) -> Result<(), LaunchFailure> {
+    // Biased order makes the deadline win a tie with the stage's own timers.
+    let deadline = tokio::time::sleep(PREPARE_TIMEOUT);
+    tokio::pin!(deadline);
     let checks = cancelled.clone();
-    // Dropping `prepare` kills its seed child, so the deadline or a cancel ends the wait. Biased
-    // order makes the deadline win a tie with the seed's own timer.
-    let prepared = tokio::select! {
+    let cwd = tokio::select! {
         biased;
-        () = tokio::time::sleep(PREPARE_TIMEOUT) => {
-            Err(LaunchFailure::new(ExitReason::PrepareTimeout, "preparation timed out"))
-        }
-        _ = cancelled.wait_for(|cancel| *cancel) => {
-            Err(LaunchFailure::new(ExitReason::Cancelled, "preparation cancelled"))
-        }
-        prepared = prepare(&agents, &context, &payload, &checks) => prepared,
+        () = &mut deadline => return Err(timeout_failure()),
+        () = cancel_recorded(&mut cancelled) => return Err(cancelled_failure()),
+        cwd = prepare(agents, context, payload, &checks) => cwd?,
     };
-    match prepared {
-        Ok(cwd) => {
-            // A failed launch is recorded as the run's exit by `launch_with`.
-            let _ = launch_with(&agents, &context, &run_id, &payload, &cwd).await;
-        }
-        Err(failure) => {
-            record_failure(&agents, &run_id, failure).await;
-        }
+    if *cancelled.borrow() {
+        return Err(cancelled_failure());
     }
-    agents
-        .preparing
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .remove(&run_id);
+    let mut plan = spawn_plan(agents, context, &payload.run_id, payload, &cwd);
+    let (argv, env) = tokio::select! {
+        biased;
+        () = &mut deadline => {
+            let _ = (&mut plan).await;
+            return Err(timeout_failure());
+        }
+        () = cancel_recorded(&mut cancelled) => {
+            let _ = (&mut plan).await;
+            return Err(cancelled_failure());
+        }
+        joined = &mut plan => joined.map_err(|error| {
+            LaunchFailure::new(ExitReason::PrepareFailed, format!("prepare task: {error}"))
+        })??,
+    };
+    start_planned(agents, payload, &payload.run_id, &cwd, argv, env).await
+}
+
+fn timeout_failure() -> LaunchFailure {
+    LaunchFailure::new(ExitReason::PrepareTimeout, "preparation timed out")
+}
+
+/// Resolves once a cancel is recorded. The watch guard drops here, so no select output holds it
+/// across an await; that output would make the preparation future unsendable.
+async fn cancel_recorded(cancelled: &mut watch::Receiver<bool>) {
+    let _ = cancelled.wait_for(|cancel| *cancel).await;
 }
 
 /// Prepares the workspace and returns the launch cwd.
@@ -240,9 +438,9 @@ fn prepare_failure(cancel: &watch::Receiver<bool>, error: &anyhow::Error) -> Lau
     }
 }
 
-/// Records the cancel before answering, so a spawn after this reply is refused. A launched run is
-/// signalled; an unlaunched run has its preparation stopped and then reads the phase it settled in.
-async fn cancel(agents: &Arc<NodeAgents>, request_id: &str, payload: CancelPayload) -> Value {
+/// Records the cancel fence in arrival order, so a spawn after this point is refused. A cancel for
+/// a known run takes that run's turn.
+async fn cancel(agents: &Arc<NodeAgents>, request_id: String, payload: CancelPayload) -> Admitted {
     let run_id = payload.run_id;
     let signal = match payload.signal {
         CancelSignal::Term => KillSignal::Term,
@@ -250,54 +448,77 @@ async fn cancel(agents: &Arc<NodeAgents>, request_id: &str, payload: CancelPaylo
     };
     let known = {
         let mut state = agents.state.lock().await;
-        let known = state
-            .runs
-            .get(&run_id)
-            .map(|run| (run.phase, run.host_terminal_id.clone()));
+        let known = state.runs.contains_key(&run_id);
         let mut next = state.clone();
         next.cancelled.insert(run_id.clone(), now_ms());
         if let Err(error) = next.commit(&agents.home, &agents.changed) {
             let message = format!("record cancel: {error:#}");
-            return reply_err(request_id, "command_failed", message, Stage::None);
+            return answered(reply_err(
+                &request_id,
+                "command_failed",
+                message,
+                Stage::None,
+            ));
         }
         *state = next;
         known
     };
-    let Some((phase, host_terminal_id)) = known else {
-        return reply_err(
-            request_id,
+    if !known {
+        return answered(reply_err(
+            &request_id,
             "not_found",
             "no run has this run_id",
             Stage::None,
-        );
-    };
-    if let (RunPhase::Launched, Some(host)) = (phase, &host_terminal_id) {
-        return stop_launched(agents, request_id, host, signal).await;
+        ));
+    }
+    let turn = agents.lanes.enter(&run_id);
+    Admitted::Cancel {
+        agents: Arc::clone(agents),
+        request_id,
+        run_id,
+        signal,
+        turn,
+    }
+}
+
+/// Stops a run. A launched run is signalled. A run still preparing has its preparation stopped,
+/// and the reply reads the phase the run settled in.
+async fn cancel_turn(
+    agents: &Arc<NodeAgents>,
+    request_id: &str,
+    run_id: &str,
+    signal: KillSignal,
+) -> Value {
+    if let Some(host) = launched_host(agents, run_id).await {
+        return stop_launched(agents, request_id, &host, signal).await;
     }
     let preparing = {
         let tasks = agents
             .preparing
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        tasks.get(&run_id).map(|entry| {
+        tasks.get(run_id).map(|entry| {
             entry.cancel.send_replace(true);
             Arc::clone(&entry.busy)
         })
     };
     if let Some(busy) = preparing {
         drop(busy.lock().await);
-        let settled = agents
-            .state
-            .lock()
-            .await
-            .runs
-            .get(&run_id)
-            .map(|run| (run.phase, run.host_terminal_id.clone()));
-        if let Some((RunPhase::Launched, Some(host))) = settled {
-            return stop_launched(agents, request_id, &host, signal).await;
-        }
     }
-    reply_ok(request_id, json!({"stopped": true}))
+    match launched_host(agents, run_id).await {
+        Some(host) => stop_launched(agents, request_id, &host, signal).await,
+        None => reply_ok(request_id, json!({"stopped": true})),
+    }
+}
+
+/// The host terminal of a run that has launched.
+async fn launched_host(agents: &NodeAgents, run_id: &str) -> Option<String> {
+    let state = agents.state.lock().await;
+    state
+        .runs
+        .get(run_id)
+        .filter(|run| matches!(run.phase, RunPhase::Launched))
+        .and_then(|run| run.host_terminal_id.clone())
 }
 
 async fn stop_launched(
@@ -316,8 +537,9 @@ async fn stop_launched(
     reply_ok(request_id, json!({"stopped": killed.is_ok()}))
 }
 
-/// Writes to a run's terminal. Writes to one run run in order; a failed write is never replayed.
-async fn write(agents: &Arc<NodeAgents>, request_id: &str, payload: WritePayload) -> Value {
+/// Admits a terminal write to its run's lane. Writes to one run run in arrival order; a failed
+/// write is never replayed.
+async fn write(agents: &Arc<NodeAgents>, request_id: String, payload: WritePayload) -> Admitted {
     let owner = agents
         .state
         .lock()
@@ -327,21 +549,21 @@ async fn write(agents: &Arc<NodeAgents>, request_id: &str, payload: WritePayload
         .find(|(_, run)| run.terminal_id == payload.terminal_id)
         .map(|(run_id, _)| run_id.clone());
     let Some(run_id) = owner else {
-        return reply_err(
-            request_id,
+        return answered(reply_err(
+            &request_id,
             "not_found",
             "no run owns this terminal",
             Stage::None,
-        );
+        ));
     };
-    let gate = agents.gate(&run_id);
-    let reply = {
-        let _turn = gate.lock().await;
-        write_turn(agents, request_id, &run_id, &payload).await
-    };
-    drop(gate);
-    agents.release_gate(&run_id);
-    reply
+    let turn = agents.lanes.enter(&run_id);
+    Admitted::Write {
+        agents: Arc::clone(agents),
+        request_id,
+        run_id,
+        payload,
+        turn,
+    }
 }
 
 async fn write_turn(

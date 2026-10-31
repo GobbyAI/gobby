@@ -836,6 +836,7 @@ async fn same_run_commands_serialize() -> Result<()> {
 
 #[tokio::test]
 async fn same_run_cancel_waits_for_write() -> Result<()> {
+    // test-quality: allow SLEEP_IN_TEST -- the held cancel must stay unfinished for a bounded window; absence of a reply cannot be awaited, and paused time would advance over the fake host's real socket I/O
     let fixture = CommandsFixture::new(false).await?;
     fixture.known("run-a", "a").await?;
     fixture.launch.host.pause_next_write();
@@ -914,6 +915,7 @@ async fn channel_orders_same_run_commands() -> Result<()> {
 
 #[tokio::test]
 async fn preparation_waits_for_acceptance_send() -> Result<()> {
+    // test-quality: allow SLEEP_IN_TEST -- preparation must stay unstarted for a bounded window while the acceptance is unread; absence cannot be awaited, and paused time would advance over the real duplex and seed child I/O
     use futures_util::SinkExt;
     use tokio_tungstenite::tungstenite::Message;
 

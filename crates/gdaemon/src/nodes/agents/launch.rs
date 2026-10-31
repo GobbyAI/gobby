@@ -23,6 +23,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tokio::task::JoinHandle;
 
 /// The node-level inputs a launch takes besides the payload.
 #[derive(Debug, Clone)]
@@ -91,6 +92,24 @@ async fn launch_steps(
     payload: &SpawnPayload,
     cwd: &Path,
 ) -> Result<(), LaunchFailure> {
+    let plan = spawn_plan(agents, context, run_id, payload, cwd);
+    let (argv, env) = plan.await.map_err(|error| {
+        LaunchFailure::new(ExitReason::PrepareFailed, format!("prepare task: {error}"))
+    })??;
+    start_planned(agents, payload, run_id, cwd, argv, env).await
+}
+
+type Plan = (Vec<String>, BTreeMap<String, String>);
+
+/// Starts a launch's blocking plan on the blocking pool. The caller joins the handle, so an
+/// abandoned plan finishes before its run is cleaned up.
+pub(super) fn spawn_plan(
+    agents: &NodeAgents,
+    context: &LaunchContext,
+    run_id: &str,
+    payload: &SpawnPayload,
+    cwd: &Path,
+) -> JoinHandle<Result<Plan, LaunchFailure>> {
     let (gobby_home, owned_context, owned_run_id, owned_payload, owned_cwd) = (
         agents.home.clone(),
         context.clone(),
@@ -99,7 +118,7 @@ async fn launch_steps(
         cwd.to_owned(),
     );
     // The agy probe, the file writes and the chokepoint block, so they run off the async workers.
-    let (argv, env) = tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         prepare(
             &gobby_home,
             &owned_context,
@@ -108,10 +127,21 @@ async fn launch_steps(
             &owned_cwd,
         )
     })
-    .await
-    .map_err(|error| {
-        LaunchFailure::new(ExitReason::PrepareFailed, format!("prepare task: {error}"))
-    })??;
+}
+
+/// Starts the planned child and records it as launched. A cancel committed before this point stops
+/// the launch, so a cancelled run starts no child.
+pub(super) async fn start_planned(
+    agents: &NodeAgents,
+    payload: &SpawnPayload,
+    run_id: &str,
+    cwd: &Path,
+    argv: Vec<String>,
+    env: BTreeMap<String, String>,
+) -> Result<(), LaunchFailure> {
+    if agents.state.lock().await.cancelled.contains_key(run_id) {
+        return Err(cancelled_failure());
+    }
     let host_terminal_id = start_child(agents, payload, run_id, cwd, argv, env).await?;
     if let Err(error) = record_launched(agents, run_id, &host_terminal_id).await {
         // The child is live but unrecorded, so it is killed rather than left unowned.
@@ -122,6 +152,11 @@ async fn launch_steps(
         ));
     }
     Ok(())
+}
+
+/// The failure for a run cancelled before its child started.
+pub(super) fn cancelled_failure() -> LaunchFailure {
+    LaunchFailure::new(ExitReason::Cancelled, "preparation cancelled")
 }
 
 /// The blocking half of a launch: the agy gate, trust, the prompt file, the chokepoint, and the
