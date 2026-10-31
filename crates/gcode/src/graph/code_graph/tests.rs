@@ -318,7 +318,7 @@ fn imports_query_returns_stable_id() {
     assert!(query.contains("m.name AS module_name"), "{query}");
     assert!(query.contains("[r:IMPORTS]"), "{query}");
     assert!(
-        query.contains("$path + '|' + r.content_hash IN $admitted_versions"),
+        query.contains("($path + '|' + r.content_hash) IN $admitted_versions"),
         "{query}"
     );
 }
@@ -361,7 +361,7 @@ fn symbol_path_queries_stay_project_scoped_and_symbol_only() {
         "{edges_query}"
     );
     assert!(
-        edges_query.contains("r.file + '|' + r.content_hash IN $admitted_versions"),
+        edges_query.contains("(r.file + '|' + r.content_hash) IN $admitted_versions"),
         "{edges_query}"
     );
     assert!(
