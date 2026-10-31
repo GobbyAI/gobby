@@ -123,8 +123,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 "On this node, retry with a command beginning cd '/absolute/task/worktree' && "
                 "followed by one command, with no additional directory changes or subshells."
                 if node_origin()
-                else "Retry with one exec_command call whose cmd and absolute workdir are literal "
-                "strings in the functions.exec source; do not use load() or a variable for workdir."
+                else "Retry with one exec_command per functions.exec cell: a single call "
+                "whose cmd and absolute workdir are literal strings in that cell's source; "
+                "do not use load() or a variable for workdir."
             )
             return HookResponse(
                 decision="block",

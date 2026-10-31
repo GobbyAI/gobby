@@ -61,6 +61,7 @@ def test_example_preserves_research_in_leaf() -> None:
         entry=plan.manifest_entries[0],
         section=section,
         phase_id="phase-p1",
+        agent_definitions=[],
     )
     research = example.read_text(encoding="utf-8").split("**Research context:**", 1)[1]
     research = "**Research context:**" + research.split("**Acceptance:**", 1)[0].rstrip()
