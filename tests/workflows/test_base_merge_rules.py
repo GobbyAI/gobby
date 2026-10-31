@@ -885,17 +885,43 @@ async def test_team_worktree_scope_is_static_in_srt_launch_policy(
     landing: tuple[LandingCase, WorkflowHookHandler, Session, Path, Task],
     temp_db: HubDatabase,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     granted: bool,
 ) -> None:
     """The merge capability grants its bound team's checkout before any merge starts."""
     case, _, session, worktree, task = landing
+    # Match the managed checkout layout while keeping the operator's HOME untouched.
+    home = tmp_path / "home"
+    managed = home / ".gobby" / "worktrees" / "gobby" / f"task-{task.seq_num}-base-merge"
+    managed.parent.mkdir(parents=True)
+    _git(case.repo, "worktree", "move", str(worktree), str(managed))
+    temp_db.execute(
+        "UPDATE worktrees SET worktree_path = %s WHERE task_id = %s",
+        (str(managed.resolve()), task.id),
+    )
+    worktree = managed.resolve()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
     case.manager_for(task, session=session.id)
+    registered = LocalWorktreeManager(temp_db).get_by_task(task.id)
+    assert registered is not None
+    run = temp_db.execute(
+        "SELECT id FROM agent_runs WHERE child_session_id = %s AND task_id = %s",
+        (session.id, task.id),
+    ).fetchone()
+    assert run is not None
+    temp_db.execute(
+        "UPDATE agent_runs SET worktree_id = %s WHERE id = %s", (registered.id, run["id"])
+    )
+    temp_db.execute("UPDATE sessions SET agent_run_id = %s WHERE id = %s", (run["id"], session.id))
+    assignment = LocalWorktreeManager(temp_db).get_for_session_run(session.id)
+    assert assignment is not None and assignment.worktree_path == str(worktree)
     _seat(temp_db, session, "custom-seat", granted=granted, selectors=GATED_RULES)
     assert not _git(worktree, "ls-files", "--unmerged")
     assert not (Path(_git(worktree, "rev-parse", "--absolute-git-dir")) / "MERGE_HEAD").exists()
 
     unrelated_task = case.task("Another team's work")
-    unrelated = tmp_path / "unrelated-task"
+    unrelated = managed.parent / "unrelated-task"
     _git(case.repo, "worktree", "add", "-q", "-b", "unrelated-team", str(unrelated))
     LocalWorktreeManager(temp_db).create(
         project_id=case.project_id,
@@ -904,7 +930,7 @@ async def test_team_worktree_scope_is_static_in_srt_launch_policy(
         base_branch="trunk",
         task_id=unrelated_task.id,
     )
-    private = tmp_path / "agent_workspaces"
+    private = home / ".gobby" / "agents_workspaces"
     with patch("gobby.agents.agent_workspaces.workspaces_root", return_value=private):
         scoped = grant_seat_workspace_paths(
             SandboxConfig(backend="srt"), temp_db, session.id, "custom-seat"
