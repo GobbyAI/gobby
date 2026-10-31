@@ -91,6 +91,19 @@ impl WorkspaceSim {
         find(&self.panes).or_else(|| self.parked.iter().find_map(|(_, _, panes)| find(panes)))
     }
 
+    /// The terminal row the daemon serves for a shell this workspace created,
+    /// once a placed pane owns it. Adopted and seeded terminals are read from
+    /// the roster instead.
+    pub fn owned_terminal_row(&self, terminal_id: &str) -> Option<Value> {
+        self.panes
+            .iter()
+            .any(|pane| {
+                pane["terminal_id"].as_str() == Some(terminal_id)
+                    && pane["owns_terminal"] == json!(true)
+            })
+            .then(|| json!({"terminal_id": terminal_id, "backend": "native", "state": "live"}))
+    }
+
     /// Replace every tab with `project`'s: one tab per entry, its terminals
     /// laid out left to right, the named terminal focused. Returns each
     /// tab's id with its pane ids in layout order.
