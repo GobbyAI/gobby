@@ -23,6 +23,8 @@ from gobby.config.values import ConfigRuntimeReader
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.sessions.mailbox import MailboxService
+from gobby.sessions.mailbox_delivery import WakeDispatcherProtocol
 from gobby.skills.materialization import (
     SkillScriptMaterializer,
     get_skill_script_materializer,
@@ -32,6 +34,7 @@ from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.revisions import get_definitions_revision
 from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.pipeline_subscribers import (
     CompletionSubscriberManager,
     PipelineSubscriberStorageError,
@@ -145,6 +148,7 @@ class RuleEngine(
         skill_script_materializer: SkillScriptMaterializer | None = None,
         internal_manager: "InternalRegistryManager | None" = None,
         session_manager: SessionManager | None = None,
+        wake_dispatcher: WakeDispatcherProtocol | None = None,
     ):
         self.db = db
         self.rule_manager = RuleDefinitionManager(db)
@@ -158,6 +162,12 @@ class RuleEngine(
         self._completion_registry = completion_registry
         self._task_manager = task_manager
         self._session_manager = session_manager or SessionManager(db)
+        self._handoff_mailbox = MailboxService(
+            db=db,
+            message_manager=InterSessionMessageManager(db),
+            session_manager=self._session_manager,
+            wake_dispatcher=wake_dispatcher,
+        )
         self._internal_manager = internal_manager
         self._pending_terminal_denials: dict[str, tuple[Any, Any, str]] = {}
         self._config_runtime = config_runtime

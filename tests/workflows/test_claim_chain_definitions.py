@@ -108,6 +108,16 @@ def test_dev_manager_procedure_keeps_the_proof_request_hand_off() -> None:
     assert "PROOF_REQUEST" in procedure
 
 
+def test_manager_guidance_allows_independent_reviewers_and_closers_to_hold_the_claim() -> None:
+    prompt = _definition("dev-manager")["prompts"]["agent"]
+    procedure = (PROCEDURES / "dev-manager.md").read_text(encoding="utf-8")
+    assert "never hold the task claim" not in prompt
+    assert "ever claimed the task" not in prompt
+    assert "never claimed or edited" not in procedure
+    assert "authored" in prompt
+    assert "authored" in procedure
+
+
 def test_test_writer_edits_only_after_its_claim() -> None:
     definition = _definition("test-writer")
     # The bundled edit gate reaches every default-tagged seat, and the Test Writer selects that tag.

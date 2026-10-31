@@ -77,6 +77,11 @@ def _pin_hand_offs(chain: Chain, offsets: list[float]) -> None:
         "UPDATE session_tasks SET created_at = %s WHERE task_id = %s AND action = 'claimed'",
         (_at(0), chain.task.id),
     )
+    chain.db.execute(
+        "UPDATE task_lifecycle_events SET created_at = %s "
+        "WHERE task_id = %s AND to_state = 'claim:started'",
+        (_at(0), chain.task.id),
+    )
 
 
 def _progress(chain: Chain, now: float | datetime) -> TaskProgress:
@@ -141,6 +146,41 @@ async def test_stage_spans_and_claim_to_close_come_from_the_hand_offs(world: Tea
     ]
     assert task.claim_to_close_seconds == 4800.0
     assert task.flags == frozenset()
+
+
+async def test_test_bounce_preserves_the_initial_claim_boundary(world: TeamWorld) -> None:
+    chain = await _chain(world, "Claim timing survives a Test Writer BOUNCE")
+    # Admission fixture claims precede this scenario. Begin with the writer's
+    # first claim, without synthetic timestamps on any returning claimant.
+    chain.db.execute("DELETE FROM session_tasks WHERE task_id = %s", (chain.task.id,))
+    chain.db.execute("DELETE FROM task_lifecycle_events WHERE task_id = %s", (chain.task.id,))
+    LocalTaskManager(chain.db).claim_task(chain.task.id, chain.writer)
+    initial = chain.db.fetchone(
+        "SELECT created_at FROM session_tasks WHERE task_id = %s AND action = 'claimed' "
+        "ORDER BY created_at LIMIT 1",
+        (chain.task.id,),
+    )
+    assert initial is not None
+    _record(chain, chain.writer, "test", chain.tests_sha)
+    ids = _send(chain, chain.writer, _candidate(chain, chain.tests_sha), chain.reviewer)
+    _hand(chain, chain.writer, "review", ids)
+    _record(chain, chain.reviewer, "review", chain.tests_sha, status="rejected")
+    ids = _send(chain, chain.reviewer, _verdict(chain, chain.tests_sha, "BOUNCE"), chain.writer)
+    _hand(chain, chain.reviewer, "maker", ids)
+    # The same writer and reviewer take the claim again; their mutable claimant
+    # rows must not become the beginning of the task's elapsed time.
+    ids = _send(chain, chain.writer, _candidate(chain, chain.tests_sha), chain.reviewer)
+    _hand(chain, chain.writer, "review", ids)
+    closed = TaskLifecycleEventManager(chain.db).record_lifecycle_event(
+        chain.task.id, None, "closed", "timing fixture", by_actor="close_task"
+    )
+
+    task = _progress(chain, now=closed.created_at)
+
+    expected = (closed.created_at - initial["created_at"]).total_seconds()
+    assert task.claim_to_close_seconds == pytest.approx(expected)
+    assert task.stages[0].stage == "test"
+    assert task.stages[0].seconds > 0
 
 
 async def test_hand_off_unacknowledged_past_the_bound_is_flagged(world: TeamWorld) -> None:

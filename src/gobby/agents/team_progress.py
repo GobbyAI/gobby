@@ -87,10 +87,13 @@ def _task_progress(db: HubDatabase, task: Task, now: datetime) -> TaskProgress |
     events = [
         event
         for event in TaskLifecycleEventManager(db).list_lifecycle_events(task.id)
-        if event.to_state in (_HANDED_OFF, _PENDING, _CLOSED)
+        if event.to_state in (_HANDED_OFF, _PENDING, _CLOSED, "claim:started")
     ]
     claimants = _claimants(db, task.id)
-    if claimants:
+    first_claims = [event for event in events if event.to_state == "claim:started"]
+    if first_claims:
+        start = first_claims[0].created_at
+    elif claimants:
         start = claimants[0][1]
     elif events:
         start = events[0].created_at
@@ -104,7 +107,11 @@ def _task_progress(db: HubDatabase, task: Task, now: datetime) -> TaskProgress |
 
     parties = [_parties(event) for event in hand_offs]
     first_holder = parties[0][0] if parties else None
-    initial = first_holder or (claimants[0][0] if claimants else task.claimed_by_session_id)
+    initial = first_holder or (
+        first_claims[0].by_actor
+        if first_claims
+        else (claimants[0][0] if claimants else task.claimed_by_session_id)
+    )
     holders = [initial, *(recipient for _, recipient in parties)]
     bounds = [start, *(event.created_at for event in hand_offs), end]
     stages = tuple(

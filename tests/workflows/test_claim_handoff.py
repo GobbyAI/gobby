@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -19,9 +20,13 @@ from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.tasks.step_records import StepSubmission, TaskStep, record_task_step
+from gobby.workflows.agent_models import AgentStepWorkflowBody
+from gobby.workflows.definitions import WorkflowStep
+from gobby.workflows.engine import RuleEngine
 from gobby.workflows.engine.claim_handoff import HandOff, hand_off_claim
 from gobby.workflows.engine.seat_messages import candidate_event, is_task_coordinator
 from gobby.workflows.engine.seat_transitions import _candidate_rejection
+from gobby.workflows.step_instances import AgentStepInstance
 from tests.fixtures.landing_case import LandingCase, make_landing_case
 from tests.fixtures.review_approvals import grant_review_writes, grant_step_writes
 from tests.fixtures.team_case import TeamWorld, make_team_world
@@ -345,6 +350,7 @@ async def test_unaddressed_live_seat_takes_the_candidate_from_its_team(world: Te
     assert _owner(chain) == chain.reviewer
     inbox = InterSessionMessageManager(chain.db).list_messages(chain.reviewer, direction="inbox")
     assert _candidate(chain, chain.impl_sha) in [message.content for message in inbox]
+    assert chain.reviewer in InterSessionMessageManager(chain.db).get_undelivered_wake_recipients()
 
 
 async def test_no_live_reviewer_staffs_the_seat_through_the_dev_manager(world: TeamWorld) -> None:
@@ -363,6 +369,7 @@ async def test_no_live_reviewer_staffs_the_seat_through_the_dev_manager(world: T
     assert len(requests) == 1
     assert f"TASK=#{chain.task.seq_num}" in requests[0]
     assert "STEP=review" in requests[0]
+    assert chain.manager in InterSessionMessageManager(chain.db).get_undelivered_wake_recipients()
 
 
 async def test_no_live_reviewer_or_dev_manager_escalates_the_task(world: TeamWorld) -> None:
@@ -381,3 +388,45 @@ async def test_no_live_reviewer_or_dev_manager_escalates_the_task(world: TeamWor
     task = LocalTaskManager(chain.db).get_task(chain.task.id)
     assert task.escalated_at is not None
     assert "hand-off" in (task.escalation_reason or "")
+
+
+@pytest.mark.parametrize("missing_reviewer", [False, True])
+async def test_engine_dispatches_fallback_wake_after_the_claim_decision(
+    world: TeamWorld, missing_reviewer: bool
+) -> None:
+    chain = await _chain(world, "Idle fallback recipient wakes without a restart")
+    _implement(chain)
+    LocalTaskManager(chain.db).claim_task(chain.task.id, chain.developer, force=True)
+    recipient = chain.manager if missing_reviewer else chain.reviewer
+    chain.db.execute("UPDATE sessions SET status = 'paused' WHERE id = %s", (recipient,))
+    if missing_reviewer:
+        chain.db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (chain.reviewer,))
+    ids = _send(chain, chain.developer, _candidate(chain, chain.impl_sha), chain.manager)
+    dispatched: list[tuple[str, str | None]] = []
+
+    async def dispatch(session_id: str, *, priority: str) -> dict[str, Any]:
+        dispatched.append((session_id, _owner(chain)))
+        return {"session_id": session_id, "delivered": True, "method": "fixture"}
+
+    runner = MagicMock()
+    runner.wake_dispatcher.dispatch_live_wake = AsyncMock(side_effect=dispatch)
+    engine = RuleEngine(chain.db, wake_dispatcher=runner.wake_dispatcher)
+    instance = AgentStepInstance(
+        id="fallback-wake",
+        session_id=chain.developer,
+        agent_name="fixture-developer",
+        snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name="submit")]),
+    )
+    await engine._run_step_handlers(
+        [{"server": SEND[0], "tool": SEND[1], "action": "hand_off_claim", "hop": "review"}],
+        session_id=chain.developer,
+        instance=instance,
+        step_name="submit",
+        variables={},
+        tool_input={},
+        mcp_tool=SEND,
+        tool_output={"message_ids": ids},
+    )
+
+    owner = chain.developer if missing_reviewer else chain.reviewer
+    assert dispatched == [(recipient, owner)]

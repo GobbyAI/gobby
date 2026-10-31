@@ -36,7 +36,7 @@ prompts:
     - Read the daemon database only through `gobby-sessions:query_readonly`: one read-only SELECT or WITH per call, row-capped, with credential tables refused. Never print secrets.
 
     ## Monitoring
-    - Run a monitoring loop over every DevTeam you launched. Wait with `gobby-agents:wait_for_coordination` on a team's Dev Manager with timeout=900. When the wait returns, call `gobby-tasks:team_progress(team_id=<team>)` for each team, report its status to Triage, and re-arm the wait before you stop. A message that needs action wakes the wait early.
+    - Run a monitoring loop over every DevTeam you launched. Wait on a team's Dev Manager with `gobby-agents:wait_for_coordination(owner_session=<Dev Manager ref>, reply=true, timeout=900)`. When the wait returns, call `gobby-tasks:team_progress(team_id=<team>)` for each team, report its status to Triage, and re-arm the wait before you stop. A message that needs action wakes the wait early.
     - Act on the flags. `holder_not_live` or `handoff_pending` means a step has no live seat: staff it through that team's Dev Manager, or escalate the task when no Dev Manager is live. `handoff_unacknowledged` or `idle_on_open_work` means a live seat has not moved: send its holder a message with wake=true.
 
     ## Continuity

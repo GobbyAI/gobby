@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from gobby.agents.team_lifecycle import TeamBinding, seat_team
 from gobby.mcp_proxy.tools.tasks._claim_release import ClaimTransferRefused, transfer_task_claim
@@ -51,6 +51,7 @@ _MAKER_STEPS = frozenset({"test", "implementation"})
 
 class HandOff(TypedDict):
     handed_to: str | None
+    wake_message_ids: NotRequired[list[str]]
 
 
 @dataclass(frozen=True)
@@ -181,23 +182,25 @@ def _reason(event: CandidateEvent) -> str:
     return " ".join([*kinds, "hand-off"])
 
 
-def _staff(hop: _Hop, why: str) -> None:
+def _staff(hop: _Hop, why: str) -> str | None:
     """Ask the team's Dev Manager to staff the seat, or escalate the task when none is live."""
     db = hop.db
     step = hop.step or "maker"
     manager = _team_manager(db, hop.team, _team_seats(db, hop.team))
     if manager is not None and _live(manager):
-        InterSessionMessageManager(db).create_message(
+        message = InterSessionMessageManager(db).create_message(
             hop.sender.id,
             manager.id,
             f"EVENT=HANDOFF_PENDING TASK=#{hop.task.seq_num} STEP={step} "
             f"FROM={hop.sender.id} NOTE={why}",
+            metadata_json='{"wake_requested":true}',
         )
-        return
+        return message.id
     LocalTaskManager(db).escalate_task(
         hop.task.id,
         f"claim hand-off to {step} has no live seat and no live Dev Manager: {why}",
     )
+    return None
 
 
 def _pending(hop: _Hop, why: str) -> HandOff:
@@ -209,8 +212,8 @@ def _pending(hop: _Hop, why: str) -> HandOff:
         f"{_reason(hop.event)} from {hop.sender.id} did not move the claim: {why}",
         by_actor=hop.sender.id,
     )
-    _staff(hop, why)
-    return _nobody()
+    message_id = _staff(hop, why)
+    return {"handed_to": None, "wake_message_ids": [message_id] if message_id else []}
 
 
 def _transfer(hop: _Hop, recipient: Session) -> HandOff:
@@ -283,6 +286,7 @@ def hand_off_claim(
         db, [to for _, to in addressed], session_id, team.team_id, step, maker
     )
     ready = [seat for seat in addressed_seats if seat.id not in excluded and _live(seat)]
+    copied_message_ids: list[str] = []
     if not ready:
         roster = [
             seat
@@ -291,10 +295,16 @@ def hand_off_claim(
         ]
         if roster:
             # The copy is written before the claim moves, so it reads as sent by the claimant.
-            InterSessionMessageManager(db).create_message(
-                session_id, roster[0].id, event.message.content
+            message = InterSessionMessageManager(db).create_message(
+                session_id,
+                roster[0].id,
+                event.message.content,
+                metadata_json='{"wake_requested":true}',
             )
+            copied_message_ids.append(message.id)
             ready = roster[:1]
     if not ready:
         return _pending(target, "no addressed or team seat that takes the step is live")
-    return _transfer(target, ready[0])
+    result = _transfer(target, ready[0])
+    result["wake_message_ids"] = [*copied_message_ids, *result.get("wake_message_ids", [])]
+    return result
