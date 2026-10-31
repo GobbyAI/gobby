@@ -79,7 +79,7 @@ def _test_gate_workflow() -> dict[str, Any]:
                             "tests_ready",
                             f"{test_record}.get('status') == 'approved' and "
                             f"{test_record}.get('epoch') == {RESULT}.get('review_epoch')",
-                            when="tool_input.get('task_id') == vars.assigned_task_id",
+                            when=f"{RESULT}.get('id') == vars.assigned_task_id",
                         )
                     ],
                     "transitions": [{"to": "implement", "when": "vars.tests_ready"}],
@@ -218,4 +218,24 @@ async def test_second_claim_waits_for_its_own_test_record(seat: SeatRun) -> None
 
     _approve_moot_tests(seat, second)
     await _refresh(seat, second)
+    assert seat.step == "implement"
+
+
+async def _get_task_as_documented(run: SeatRun, task: Task, *, brief: bool) -> None:
+    """Call get_task the way the await step documents it: by assigned_task_id, brief set."""
+    arguments: dict[str, Any] = {"task_id": task.id, "brief": brief}
+    with session_context_for_test(SESSION_ID):
+        output = await create_task_registry(LocalTaskManager(run.db)).call("get_task", arguments)
+    await run.call("gobby-tasks", "get_task", arguments, output)
+
+
+@pytest.mark.asyncio
+async def test_documented_get_task_call_opens_the_gate(seat: SeatRun) -> None:
+    await seat.load(*seat.vars["required_skills"])
+    task = seat.task(owner=SESSION_ID)
+    await _claim(seat, task)
+    _approve_committed_tests(seat, task)
+    await _get_task_as_documented(seat, task, brief=True)
+    assert seat.step == "await_tests"
+    await _get_task_as_documented(seat, task, brief=False)
     assert seat.step == "implement"

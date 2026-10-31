@@ -332,7 +332,7 @@ step_workflow:
       idle: true
       description: "Wait until the Test Writer's test step is approved for this epoch"
       status_message: |
-        Read the claimed task with gobby-tasks:get_task(task_id=assigned_task_id) and check
+        Read the claimed task with gobby-tasks:get_task(task_id=assigned_task_id, brief=false) and check
         its step_records.test. Implementation opens only when that record is approved for the
         current review_epoch: either a committed test set, or a moot disposition whose feedback
         says why no new tests are needed. Until then, do not edit files or run implementation
@@ -358,7 +358,7 @@ step_workflow:
           value: >-
             (tool_output.get('result') or tool_output).get('step_records', {}).get('test', {}).get('status') == 'approved'
             and (tool_output.get('result') or tool_output).get('step_records', {}).get('test', {}).get('epoch') == (tool_output.get('result') or tool_output).get('review_epoch')
-          when: "tool_input.get('task_id') == vars.assigned_task_id"
+          when: "(tool_output.get('result') or tool_output).get('id') == vars.assigned_task_id"
       transitions:
         - to: implement
           when: "vars.tests_ready"
