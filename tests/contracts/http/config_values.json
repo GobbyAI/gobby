@@ -788,6 +788,7 @@
         "session_feedback": {
           "survey": "gobby",
           "review": {
+            "agent": null,
             "candidates": [
               {
                 "candidate": "codex/gpt-6-luna",
@@ -1883,6 +1884,7 @@
         "session_feedback": {
           "survey": "gobby",
           "review": {
+            "agent": null,
             "candidates": [
               {
                 "candidate": "codex/gpt-6-luna",

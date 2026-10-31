@@ -532,8 +532,10 @@ describe("storage round-trip", () => {
       "awaiting_approval",
       "awaiting_handoff",
       "awaiting_input",
+      "idle",
       "interrupted",
       "paused",
+      "waiting",
     ]);
   });
 

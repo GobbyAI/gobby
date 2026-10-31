@@ -10,7 +10,10 @@ export type StatusKind =
   | "error"
   | "paused"
   | "stopped"
-  | "disabled";
+  | "disabled"
+  | "idle"
+  | "waiting"
+  | "unknown";
 
 interface ActivityRowStatusDotProps {
   kind: StatusKind;
@@ -25,11 +28,13 @@ interface ActivityRowStatusDotProps {
   glyph?: StatusGlyph;
 }
 
-// Each kind anchors to a distinct OKLCH lightness band so grayscale viewers
+// Each base kind anchors to a distinct OKLCH lightness band so grayscale viewers
 // can rank states by L alone:
 //   active (L≈82) > warning (L≈78) > success (L≈72) > info (L≈70)
 //   > paused (L≈68) > error (L≈65) > disabled (L≈62)
 //   > inactive/stopped (L≈60)
+// Session-row idle, waiting and unknown reuse the disabled, info and inactive
+// bands; the palette is locked, so their glyphs carry the difference.
 const KIND_TOKEN: Record<StatusKind, string> = {
   active: "var(--accent)",
   success: "var(--color-success-foreground)",
@@ -39,6 +44,9 @@ const KIND_TOKEN: Record<StatusKind, string> = {
   paused: "var(--text-secondary)",
   stopped: "var(--color-inactive)",
   disabled: "var(--text-muted)",
+  idle: "var(--text-muted)",
+  waiting: "var(--color-info)",
+  unknown: "var(--color-inactive)",
 };
 
 type LocalGlyphProps = SVGProps<SVGSVGElement> & {
@@ -115,6 +123,20 @@ const KIND_ICON: Record<StatusKind, StatusGlyph> = {
   disabled: (props) => (
     <LocalGlyph {...props}>
       <path d="M5 12h14" />
+    </LocalGlyph>
+  ),
+  idle: (props) => <CircleGlyph {...props} />,
+  waiting: (props) => (
+    <LocalGlyph {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </LocalGlyph>
+  ),
+  unknown: (props) => (
+    <LocalGlyph {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.5 9.5a2.5 2.5 0 0 1 4.9.7c0 1.7-2.4 2.3-2.4 3.8" />
+      <path d="M12 17h.01" />
     </LocalGlyph>
   ),
 };

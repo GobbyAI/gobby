@@ -13,6 +13,8 @@ export type TaskRefRole = "claimed" | "created" | "closed";
 export type DatePreset = "24h" | "7d" | "30d" | "all" | "custom";
 export type SessionStatus =
   | "active"
+  | "idle"
+  | "waiting"
   | "paused"
   | "interrupted"
   | "awaiting_input"
@@ -35,6 +37,8 @@ const ALL_DATE_PRESETS: readonly DatePreset[] = [
 ];
 const ALL_STATUSES: readonly SessionStatus[] = [
   "active",
+  "idle",
+  "waiting",
   "paused",
   "interrupted",
   "awaiting_input",
@@ -46,6 +50,8 @@ const ALL_STATUSES: readonly SessionStatus[] = [
 /** Default Live set — the SegmentedControl's "Live" option resolves here. */
 export const DEFAULT_LIVE_STATUSES: readonly SessionStatus[] = [
   "active",
+  "idle",
+  "waiting",
   "paused",
   "interrupted",
   "awaiting_input",

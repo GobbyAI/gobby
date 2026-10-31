@@ -144,7 +144,7 @@ class SessionLifecycleConfig(BaseModel):
 
     active_session_pause_minutes: int = Field(
         default=30,
-        description="Minutes of inactivity before active sessions are marked paused",
+        description="Minutes of inactivity before active sessions are marked idle",
     )
     stale_session_timeout_hours: int = Field(
         default=24,

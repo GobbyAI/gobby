@@ -113,6 +113,23 @@ function glyphShape(status: string): string {
   return svg.innerHTML;
 }
 
+// Each new or unrecognized lifecycle against every drawn status it could be
+// confused with, including interrupted's dash glyph.
+const NEW_LIFECYCLES = ["idle", "waiting", "future_status"];
+const DRAWN_STATUSES = [
+  "active",
+  "paused",
+  "interrupted",
+  "awaiting_input",
+  "awaiting_approval",
+  "expired",
+];
+const GEOMETRY_PAIRS: [string, string][] = NEW_LIFECYCLES.flatMap((first) =>
+  [...NEW_LIFECYCLES, ...DRAWN_STATUSES]
+    .filter((second) => second !== first)
+    .map((second): [string, string] => [first, second]),
+);
+
 describe.each(["Sessions", "Terminal"] as const)(
   "%s lifecycle dots",
   (surface) => {
@@ -123,7 +140,7 @@ describe.each(["Sessions", "Terminal"] as const)(
 
         expect(dot(status)).not.toHaveAttribute("data-kind", "paused");
         expect(glyphShape(status)).not.toBe(glyphShape("paused"));
-        expect(dot(status).style.color).not.toBe("");
+        expect(dot(status).style.color).toMatch(/^var\(--[a-z-]+\)$/);
       },
     );
 
@@ -132,6 +149,15 @@ describe.each(["Sessions", "Terminal"] as const)(
 
       expect(glyphShape("idle")).not.toBe(glyphShape("waiting"));
     });
+
+    it.each(GEOMETRY_PAIRS)(
+      "draws %s and %s with distinct geometry",
+      (first, second) => {
+        renderRows(surface, [first, second]);
+
+        expect(glyphShape(first)).not.toBe(glyphShape(second));
+      },
+    );
 
     it("renders an unrecognized lifecycle as neutral rather than paused", () => {
       renderRows(surface, ["future_status", "paused"]);

@@ -103,7 +103,13 @@ function SessionEntryRow({
             : entry.status === "awaiting_approval" ||
                 entry.status === "awaiting_handoff"
               ? "warning"
-              : "paused";
+              : entry.status === "idle"
+                ? "idle"
+                : entry.status === "waiting"
+                  ? "waiting"
+                  : entry.status === "paused" || entry.status === "interrupted"
+                    ? "paused"
+                    : "unknown";
   const statusGlyph =
     blockedCount > 0
       ? undefined

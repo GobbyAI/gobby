@@ -3712,6 +3712,19 @@
           "default": true,
           "description": "Log warning when falling back to keyword search"
         },
+        "session_feedback.review.agent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "namespace": "session_feedback",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Enabled agent definition to run for feedback review; must be configured"
+        },
         "session_feedback.review.candidates": {
           "type": [
             "string"
@@ -3821,7 +3834,7 @@
           "activation": "live",
           "machineExport": false,
           "default": 30,
-          "description": "Minutes of inactivity before active sessions are marked paused"
+          "description": "Minutes of inactivity before active sessions are marked idle"
         },
         "session_lifecycle.expire_check_interval_minutes": {
           "type": "integer",

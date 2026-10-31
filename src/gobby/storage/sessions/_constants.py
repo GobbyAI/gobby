@@ -53,8 +53,8 @@ LIVE_SESSION_STATUS_ORDER = (
 LIVE_SESSION_STATUSES = frozenset(LIVE_SESSION_STATUS_ORDER)
 # Parked between turns: a seat rests here until a wake, resume or expiry moves it on.
 # "waiting" is a turn end with an armed coordination wait; "idle" is any other turn end,
-# background work included. "paused" marks an explicit operator pause or a recovered
-# stale-active row. An interrupt keeps "interrupted". Only paused and interrupted are held.
+# background work and a recovered stale-active row included. "paused" marks an explicit
+# operator pause. An interrupt keeps "interrupted". Only paused and interrupted are held.
 TURN_ENDED_SESSION_STATUSES = frozenset({"idle", "paused", "waiting"})
 TERMINAL_SESSION_STATUSES = frozenset({"expired", "deleted"})
 

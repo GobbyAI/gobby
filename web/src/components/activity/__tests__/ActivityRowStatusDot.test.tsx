@@ -33,6 +33,9 @@ const TOKENS: Record<StatusKind, string> = {
   paused: "var(--text-secondary)",
   stopped: "var(--color-inactive)",
   disabled: "var(--text-muted)",
+  idle: "var(--text-muted)",
+  waiting: "var(--color-info)",
+  unknown: "var(--color-inactive)",
 };
 
 const EXPECTED_DEFAULT_LIGHTNESS: Array<[string, number]> = [
@@ -82,6 +85,9 @@ const ICON_CLASS: Record<StatusKind, string> = {
   paused: "activity-row-status-dot__glyph--paused",
   stopped: "activity-row-status-dot__glyph--stopped",
   disabled: "activity-row-status-dot__glyph--disabled",
+  idle: "activity-row-status-dot__glyph--idle",
+  waiting: "activity-row-status-dot__glyph--waiting",
+  unknown: "activity-row-status-dot__glyph--unknown",
 };
 
 function renderDot(
