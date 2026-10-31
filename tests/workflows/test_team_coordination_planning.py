@@ -16,6 +16,20 @@ PIPELINES = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/work
 SEATS = {"team-planning": ("plan-writer", "plan-adversary", "plan-enhancer")}
 SHARED_INPUTS = {"workspace", "task", "seat_pane", "project_path", "seats", "report_to"}
 STEP_REFERENCE = re.compile(r"steps\['([^']+)'\]")
+STEP_ORDER = {
+    "team-planning": (
+        "guard",
+        "target",
+        "planning-children-count",
+        "planning-children",
+        "planning-child",
+        "plan-writer",
+        "plan-adversary",
+        "plan-enhancer",
+        "notify-writer",
+        "arrange",
+    ),
+}
 
 
 @pytest.mark.parametrize("pipeline", SEATS)
@@ -26,7 +40,7 @@ def test_team_runbook_guards_only_approved_seats(pipeline: str) -> None:
     assert definition.name == pipeline
     assert definition.tags == ["runbook"]
     assert definition.resume_on_restart
-    assert [step.id for step in definition.steps] == ["guard", *SEATS[pipeline], "arrange"]
+    assert [step.id for step in definition.steps] == list(STEP_ORDER[pipeline])
     assert definition.inputs["seats"]["default"] == SEATS[pipeline][0]
     assert definition.inputs["workspace"]["required"]
     assert definition.inputs["project_path"]["required"]
@@ -71,6 +85,38 @@ def test_team_pipelines_carry_no_retired_seats(pipeline: str) -> None:
         assert not any(name.startswith(f"{retired}_") for name in definition.inputs), retired
 
 
+def _assert_support_step(
+    step_id: str, mcp: Any, args: dict[str, Any], seats: tuple[str, ...], context: dict[str, Any]
+) -> None:
+    """Check a non-seat step's contract and record the output later steps read."""
+    if step_id == "target":
+        assert (mcp.server, mcp.tool) == ("gobby-tasks", "get_task")
+        assert args == {"task_id": "#25186"}
+        context["steps"][step_id] = {"output": {"title": "Planning runbook"}}
+    elif step_id == "planning-children-count":
+        assert (mcp.server, mcp.tool) == ("gobby-tasks", "list_tasks")
+        assert args == {"parent_task_id": "#25186", "closed": False, "limit": 1}
+        context["steps"][step_id] = {"output": {"open_count": 0, "tasks": []}}
+    elif step_id == "planning-children":
+        assert (mcp.server, mcp.tool) == ("gobby-tasks", "list_tasks")
+        assert args == {"parent_task_id": "#25186", "closed": False, "limit": 1}
+        context["steps"][step_id] = {"output": {"tasks": []}}
+    elif step_id == "planning-child":
+        assert (mcp.server, mcp.tool) == ("gobby-tasks", "create_task")
+        assert args["title"] == "Plan Planning runbook"
+        assert args["parent_task_id"] == "#25186"
+        assert args["category"] == "planning"
+        context["steps"][step_id] = {"output": {"ref": "#25400"}}
+    else:
+        assert step_id == "notify-writer"
+        assert (mcp.server, mcp.tool) == ("gobby-agents", "send_message")
+        assert args["target"] == "session"
+        assert args["target_id"] == "plan-writer-session"
+        for seat in seats:
+            if seat != "plan-writer":
+                assert f"session {seat}-session" in args["content"]
+
+
 @pytest.mark.parametrize("seat_pane", [None, "pilot:existing-pane"])
 @pytest.mark.parametrize(
     ("pipeline", "seats"),
@@ -96,7 +142,11 @@ def test_team_runbook_renders_each_subset_in_one_tab(
         seat_pane=seat_pane,
         report_to="gobby#14972",
     )
-    guard_output = {"tab_title": "Team Planning - #25186", "launch": list(seats)}
+    guard_output = {
+        "tab_title": "Team Planning - #25186",
+        "tab_exists": False,
+        "launch": list(seats),
+    }
     context: dict[str, Any] = {
         "inputs": inputs,
         "steps": {"guard": {"output": guard_output}},
@@ -118,8 +168,11 @@ def test_team_runbook_renders_each_subset_in_one_tab(
         if not renderer.should_run_step(step, context):
             continue
         assert step.mcp is not None and step.mcp.arguments is not None
-        assert (step.mcp.server, step.mcp.tool) == ("gobby-agents", "spawn_agent")
         args = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
+        if step.id not in SEATS[pipeline]:
+            _assert_support_step(step.id, step.mcp, args, seats, context)
+            continue
+        assert (step.mcp.server, step.mcp.tool) == ("gobby-agents", "spawn_agent")
         assert args["agent"] == step.id
         assert not {"provider", "model", "reasoning_effort"}.intersection(args)
         assert args["execution_mode"] == "interactive"
@@ -127,9 +180,12 @@ def test_team_runbook_renders_each_subset_in_one_tab(
         assert args["project_path"] == "/pilot/shared-checkout"
         assert "worktree_id" not in args
         assert args["reserved_run_id"] == "pilot-run"
-        assert ".gobby/" not in args["prompt"]
+        assert ".gobby/roles" not in args["prompt"]
+        assert ".gobby/plans/task-25186.md" in args["prompt"]
         assert "installed agent definition" in args["prompt"]
-        assert args["prompt"].startswith(f"You are the {step.id.replace('-', ' ')} seat.")
+        assert args["prompt"].startswith(
+            f"You are the {step.id.replace('-', ' ')} seat for task #25186 ("
+        )
         assert 'target="session", target_id="gobby#14972"' in args["prompt"]
         assert "every SRT denial" in args["prompt"]
         assert "current session ref" in args["prompt"]
@@ -144,7 +200,9 @@ def test_team_runbook_renders_each_subset_in_one_tab(
             assert args["placement"] == {
                 "split": {"pane": anchor, "axis": "right", "title": catalogue[step.id]["title"]}
             }
-        context["steps"][step.id] = {"output": {"pane_ref": f"pilot:{step.id}"}}
+        context["steps"][step.id] = {
+            "output": {"pane_ref": f"pilot:{step.id}", "child_session_id": f"{step.id}-session"}
+        }
         launched.append(step.id)
     assert launched == list(seats)
 
@@ -172,10 +230,13 @@ def test_team_runbook_preserves_operator_seat_overrides(pipeline: str, seat: str
         }
     )
     inputs["task"] = "#25186"
-    guard_output = {"tab_title": "Team Planning - #25186", "launch": [seat]}
+    guard_output = {"tab_title": "Team Planning - #25186", "tab_exists": False, "launch": [seat]}
     context: dict[str, Any] = {
         "inputs": inputs,
-        "steps": {"guard": {"output": guard_output}},
+        "steps": {
+            "guard": {"output": guard_output},
+            "target": {"output": {"title": "Planning runbook"}},
+        },
         "invocation_id": "pilot-run",
     }
     renderer = StepRenderer(TemplateEngine())

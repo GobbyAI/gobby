@@ -49,6 +49,16 @@ def test_status_procedure_reads_cadence_from_policy_without_literal() -> None:
     assert "1800" not in text
 
 
+def test_status_procedure_deliver_takes_one_path_per_tick() -> None:
+    deliver = PROCEDURE.read_text(encoding="utf-8").split("## Deliver", 1)[1]
+
+    assert "list_conversation_attachments" in deliver
+    assert "- Attached: type the whole markdown report once" in deliver
+    assert "Do not call `send_operator_message` for this tick" in deliver
+    assert "- Not attached: send the whole markdown report once" in deliver
+    assert "Type nothing in this pane for this tick" in deliver
+
+
 def test_wake_pipeline_has_no_cadence_literal() -> None:
     assert "1800" not in WAKE.read_text(encoding="utf-8")
 
