@@ -693,3 +693,69 @@ async def test_declared_candidate_cannot_demote_a_newer_link(
             assert "must descend from every other linked commit" in refused.get("error", "")
             assert "declared_candidate" not in refused
             assert manager.get_task(task.id).commits == [old, newest]
+
+
+def _handed_reviewer(manager: LocalTaskManager, task: Task, team: dict[str, str]) -> str:
+    """The developer's candidate hands the claim to the reviewer."""
+    manager.claim_task_for_agent(
+        task.id, session_id=team["reviewer"], expected_owner=team["developer"], handed=True
+    )
+    return team["reviewer"]
+
+
+def test_candidate_handoff_reviewer_may_approve(
+    temp_db: HubDatabase, task: Task, team: dict[str, str]
+) -> None:
+    reviewer = _handed_reviewer(LocalTaskManager(temp_db), task, team)
+
+    _, created = _step(temp_db, task, reviewer, "review", "approved")
+
+    assert created
+
+
+def test_handed_reviewer_is_refused_after_editing_the_task(
+    temp_db: HubDatabase, task: Task, team: dict[str, str]
+) -> None:
+    reviewer = _handed_reviewer(LocalTaskManager(temp_db), task, team)
+    SessionVariableManager(temp_db).set_variable(
+        reviewer, "task_edited_files", {task.id: ["src/gobby/tasks/step_records.py"]}
+    )
+
+    with pytest.raises(StepRecordError, match="task-attributed edits"):
+        _step(temp_db, task, reviewer, "review", "approved")
+
+
+def test_claim_task_claimant_is_refused_as_reviewer(
+    temp_db: HubDatabase, task: Task, team: dict[str, str]
+) -> None:
+    LocalTaskManager(temp_db).claim_task_for_agent(
+        task.id, session_id=team["reviewer"], expected_owner=team["developer"]
+    )
+
+    with pytest.raises(StepRecordError, match="claimant"):
+        _step(temp_db, task, team["reviewer"], "review", "approved")
+
+
+def test_direct_claim_before_a_handoff_stays_refused(
+    temp_db: HubDatabase, task: Task, team: dict[str, str]
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    reviewer, developer = team["reviewer"], team["developer"]
+    manager.claim_task_for_agent(task.id, session_id=reviewer, expected_owner=developer)
+    manager.claim_task_for_agent(task.id, session_id=developer, expected_owner=reviewer)
+    manager.claim_task_for_agent(
+        task.id, session_id=reviewer, expected_owner=developer, handed=True
+    )
+
+    with pytest.raises(StepRecordError, match="claimant"):
+        _step(temp_db, task, reviewer, "review", "approved")
+
+
+def test_fixer_holding_its_claim_is_refused_as_reviewer(
+    temp_db: HubDatabase, seats: _Seats, task: Task, team: dict[str, str]
+) -> None:
+    fixer = seats.add("step-fixer", ["implementation", "review"])
+    LocalTaskManager(temp_db).claim_task(task.id, fixer, expected_owner=team["developer"])
+
+    with pytest.raises(StepRecordError, match="claimant"):
+        _step(temp_db, task, fixer, "review", "approved")

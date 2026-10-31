@@ -141,6 +141,7 @@ class TaskTransitionsMixin:
         force: bool = False,
         *,
         expected_owner: str | None = None,
+        handed: bool = False,
     ) -> Task:
         """Serialize an agent claim and select its task atomically."""
         task = _claim_task_for_agent(
@@ -149,6 +150,7 @@ class TaskTransitionsMixin:
             session_id=session_id,
             force=force,
             expected_owner=expected_owner,
+            handed=handed,
         )
         self._notify_listeners()
         return task

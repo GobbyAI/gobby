@@ -19,7 +19,7 @@ from gobby.config.tasks import TaskClosePolicyConfig, load_project_task_close_po
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.project_checkouts import require_root
 from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
-from gobby.storage.session_tasks import claimant_sessions
+from gobby.storage.session_tasks import claim_arrived_by_handoff_only, claimant_sessions
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.storage.tasks._de_escalation import REVIEW_EXHAUSTED, REVIEW_REJECTION_LIMIT
@@ -377,7 +377,11 @@ def _require_independent_reviewer(
     session_id: str,
     records: list[TaskStepRecord],
 ) -> None:
-    if task.claimed_by_session_id == session_id or session_id in claimant_sessions(conn, task.id):
+    claimant = task.claimed_by_session_id == session_id or session_id in claimant_sessions(
+        conn, task.id
+    )
+    # A claim handed over by a candidate is the reviewer's own; a claim_task claim is not.
+    if claimant and not claim_arrived_by_handoff_only(conn, task.id, session_id):
         raise StepRecordError("a current or former claimant cannot review its own task")
     if any(
         record.step == "implementation" and record.session_id == session_id for record in records

@@ -1300,9 +1300,12 @@ async def test_inline_readiness_rule_declares_idle_only_for_a_ready_report(
         priority=6,
     )
     run.session_vars.update({"current_step_idle": True, "task_claimed": False})
-    message = InterSessionMessageManager(temp_db).create_message(
-        SESSION_ID, COORDINATOR_ID, content
+    # The engine fills the caller identity from the session, so the identity failure is a
+    # report this seat did not send: the coordinator's message names the seat as recipient.
+    sender, recipient = (
+        (COORDINATOR_ID, SESSION_ID) if failure == "identity" else (SESSION_ID, COORDINATOR_ID)
     )
+    message = InterSessionMessageManager(temp_db).create_message(sender, recipient, content)
     output: dict[str, Any] = {
         "success": failure not in {"direct", "content", "structured"},
         "message_ids": [message.id],
@@ -1325,8 +1328,6 @@ async def test_inline_readiness_rule_declares_idle_only_for_a_ready_report(
     )
     if failure == "transport":
         event.metadata["is_failure"] = True
-    if failure != "identity":
-        event.metadata["_platform_session_id"] = SESSION_ID
     await run._evaluate(event)
     assert bool(run.session_vars.get("seat_idle")) == (
         content == "EVENT=SEAT_READY NOTE=idle" and not failure
@@ -2123,6 +2124,8 @@ def _team_runbook(db: HubDatabase, task: Task) -> str:
         worktree_id=worktree.id,
         reviewers={},
         mode="single",
+        # A standalone team has no parent; the default would be a non-UUID id.
+        parent_team_id=None,
     )
     executions.update_step_execution(step.id, output_json=json.dumps({"team": team}))
     session = SessionManager(db).register(
