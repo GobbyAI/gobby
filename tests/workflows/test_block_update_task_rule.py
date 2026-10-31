@@ -97,21 +97,12 @@ def _tasks_call(tool_name: str, arguments: dict[str, Any]) -> HookEvent:
     )
 
 
-@pytest.fixture(params=["_agent_type", "_active_rule_names"])
-def activated_by(request: pytest.FixtureRequest) -> str:
-    """RuleEngine filters by the agent definition when set, else by the activated names."""
-    return str(request.param)
-
-
-async def _decision(
-    db: HubDatabase, agent_name: str, event: HookEvent, activated_by: str
-) -> tuple[str, str]:
-    """Evaluate one call as a session activated from `agent_name`."""
-    variables: dict[str, Any] = {"claimed_tasks": {TASK_UUID: TASK_REF}}
-    if activated_by == "_agent_type":
-        variables["_agent_type"] = agent_name
-    else:
-        variables["_active_rule_names"] = sorted(_active_rules(db, agent_name))
+async def _decision(db: HubDatabase, agent_name: str, event: HookEvent) -> tuple[str, str]:
+    """Evaluate one call as a session whose `_agent_type` names `agent_name`."""
+    variables: dict[str, Any] = {
+        "claimed_tasks": {TASK_UUID: TASK_REF},
+        "_agent_type": agent_name,
+    }
     _only_rule_under_test_enabled(db)
     response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
     return response.decision, response.reason or ""
@@ -129,14 +120,11 @@ def test_other_definitions_activate_the_rule(db: HubDatabase, agent_name: str) -
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_name", BLOCKED_DEFINITIONS)
-async def test_owner_cannot_edit_its_own_claimed_task(
-    db: HubDatabase, agent_name: str, activated_by: str
-) -> None:
+async def test_owner_cannot_edit_its_own_claimed_task(db: HubDatabase, agent_name: str) -> None:
     decision, reason = await _decision(
         db,
         agent_name,
         _tasks_call("update_task", {"task_id": TASK_REF, "title": "Retitled"}),
-        activated_by,
     )
 
     assert decision == "block"
@@ -147,10 +135,10 @@ async def test_owner_cannot_edit_its_own_claimed_task(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_name", ("orchestrator", "assistant"))
 async def test_coordinators_edit_another_sessions_claimed_task(
-    db: HubDatabase, agent_name: str, activated_by: str
+    db: HubDatabase, agent_name: str
 ) -> None:
     decision, _ = await _decision(
-        db, agent_name, _tasks_call("update_task", {"task_id": "#8", "priority": 1}), activated_by
+        db, agent_name, _tasks_call("update_task", {"task_id": "#8", "priority": 1})
     )
 
     assert decision == "allow"
@@ -159,10 +147,8 @@ async def test_coordinators_edit_another_sessions_claimed_task(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool_name", ("claim_task", "close_task", "get_task"))
 async def test_rule_leaves_other_task_tools_to_their_own_guards(
-    db: HubDatabase, tool_name: str, activated_by: str
+    db: HubDatabase, tool_name: str
 ) -> None:
-    decision, _ = await _decision(
-        db, "developer", _tasks_call(tool_name, {"task_id": TASK_REF}), activated_by
-    )
+    decision, _ = await _decision(db, "developer", _tasks_call(tool_name, {"task_id": TASK_REF}))
 
     assert decision == "allow"

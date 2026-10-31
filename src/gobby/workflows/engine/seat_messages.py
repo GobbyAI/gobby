@@ -14,7 +14,11 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessage, InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
-from gobby.tasks.step_records import NoWorkDisposition
+from gobby.tasks.step_records import (
+    NoWorkDisposition,
+    list_task_step_records,
+    maker_sessions,
+)
 
 _PREFIX = re.compile(r"^(?:LANE=\S* )?EVENT=(\S+) TASK=(\S+)(?: |$)")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -337,7 +341,8 @@ def is_task_coordinator(
         or caller.project_id != event.task.project_id
         or reviewer.project_id != event.task.project_id
         or caller.machine_id != reviewer.machine_id
-        or caller.id == event.task.claimed_by_session_id
+        # A maker of the work never controls its unit; the claim itself may sit with a reviewer.
+        or caller.id in maker_sessions(list_task_step_records(db, event.task.id))
     ):
         return False
     if caller.id == reviewer.id:

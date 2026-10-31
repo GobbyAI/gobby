@@ -28,7 +28,7 @@ REFUSALS: dict[str, list[str]] = {
     "reviewer": ["caller_not_task_manager", "caller_is_reviewer", "review_approval_missing"],
     "self_reviewing_manager": ["caller_is_reviewer", "review_approval_missing"],
     "self_reviewing_orchestrator": ["caller_is_reviewer", "review_approval_missing"],
-    "claimant_manager": ["caller_is_claimant"],
+    "claimant_manager": ["caller_is_maker"],
     "missing_approval": ["review_approval_missing"],
 }
 
@@ -81,7 +81,12 @@ async def test_manager_landing_authority(case: LandingCase, caller_kind: str) ->
     elif caller_kind == "self_reviewing_manager":
         caller = case.manager_for(task)
         grant_step_writes(
-            case.db, caller, case.project_id, "fixture-reviewing-manager", ("review", "closing")
+            case.db,
+            caller,
+            case.project_id,
+            "fixture-reviewing-manager",
+            ("review", "closing"),
+            capabilities=("land_tasks",),
         )
         approve_review(case.db, task_id=task.id, reviewer_session_id=caller, commit_sha=sha)
     elif caller_kind == "self_reviewing_orchestrator":

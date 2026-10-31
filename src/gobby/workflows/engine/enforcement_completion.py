@@ -12,6 +12,7 @@ from gobby.adapters.capabilities import hook_supports_model_context
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.tool_outcomes import classify_raw_tool_result, tool_outcome_from_data
+from gobby.sessions.mailbox import MailboxService
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_audit import WorkflowAuditManager
@@ -52,6 +53,7 @@ class EnforcementCompletionMixin:
     db: HubDatabase
     instance_manager: AgentStepInstanceManager
     workflow_audit: WorkflowAuditManager
+    _handoff_mailbox: MailboxService
 
     if TYPE_CHECKING:
         _runner: AgentRunner | None
@@ -384,6 +386,21 @@ class EnforcementCompletionMixin:
                         changed_name,
                         changed_value,
                     )
+            elif handler.get("action") == "hand_off_claim":
+                from gobby.workflows.engine.claim_handoff import hand_off_claim
+
+                handoff = await offload(
+                    hand_off_claim,
+                    self.db,
+                    session_id,
+                    str(handler.get("hop") or ""),
+                    mcp_tool,
+                    tool_output,
+                )
+                # Persistence and claim transfer precede live delivery. The
+                # wake-marked rows remain replayable if dispatch is declined.
+                for message_id in handoff.get("wake_message_ids", []):
+                    await self._handoff_mailbox.wake_committed(message_id)
             elif handler.get("action") == "set_variable":
                 var_name = handler.get("variable")
                 ctx = {

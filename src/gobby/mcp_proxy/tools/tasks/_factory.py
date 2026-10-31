@@ -19,6 +19,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
 from gobby.mcp_proxy.tools.tasks._search import create_search_registry
 from gobby.mcp_proxy.tools.tasks._session import create_session_registry
 from gobby.mcp_proxy.tools.tasks._step_records import create_step_record_registry
+from gobby.mcp_proxy.tools.tasks._team_progress import create_team_progress_registry
 from gobby.storage.tasks import LocalTaskManager
 
 if TYPE_CHECKING:
@@ -72,6 +73,9 @@ def create_task_registry(
 
     # Merge session tools
     registry.merge_from(create_session_registry(ctx))
+
+    # Merge team progress reads for Dev Managers and the Orchestrator
+    registry.merge_from(create_team_progress_registry(ctx))
 
     # Merge search tools (search_tasks only; reindex_tasks is in gobby-tasks-ops)
     registry.merge_from(create_search_registry(ctx))
