@@ -1,0 +1,18 @@
+tags: [worker-safety, enforcement, default, gobby]
+
+# mask_quoted blanks a quoted "$GOBBY_PS_SHIM", so no-process-environment-listing cannot
+# see it. Refusing the quoted spelling outright keeps the pinned shim under that -o check
+# (#25368). The prescribed form is the unquoted variable.
+rules:
+  no-quoted-ps-shim:
+    description: "Block a quoted $GOBBY_PS_SHIM, the pinned ps shim, because quoting hides it from the process-listing check."
+    event: before_tool
+    enabled: true
+    priority: 50
+    effects:
+      - type: block
+        tools: [Bash]
+        # Raw text on purpose: mask_quoted would blank the quoted variable it must see.
+        mask_quoted: false
+        command_pattern: '(^|(?<=[;&|(`\n]))\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S*|sudo|command|do|then|else|env|exec|nice|time|xargs|watch|-\S+|\d+)\s+)*"\$\{?GOBBY_PS_SHIM\}?"(?=[ \t\n;&|)]|$)'
+        reason: "The pinned $GOBBY_PS_SHIM must be written unquoted. Quoting it hides the command from the process-listing check, so write $GOBBY_PS_SHIM with an allowed -o list and no quotes."

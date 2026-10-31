@@ -14,6 +14,7 @@ from gobby.agents.constants import (
     GOBBY_AGENT_API_TOKEN,
     GOBBY_AGENT_RUN_ID,
     GOBBY_PROJECT_ID,
+    GOBBY_PS_SHIM,
     GOBBY_SESSION_ID,
 )
 from gobby.agents.resume_metadata import (
@@ -648,4 +649,9 @@ def _codex_runtime_config_overrides(
                 overrides.append(
                     f"shell_environment_policy.set.{variable_name}={json.dumps(value)}"
                 )
+        # Codex's rebuilt shell takes its PATH from a login profile that can put /bin ahead
+        # of the ps shim, so the prescribed `$GOBBY_PS_SHIM` carries the shim path itself.
+        # The shell needs it, the MCP server does not (#25368).
+        if value := managed_identity_env.get(GOBBY_PS_SHIM):
+            overrides.append(f"shell_environment_policy.set.{GOBBY_PS_SHIM}={json.dumps(value)}")
     return overrides

@@ -574,6 +574,12 @@ RULE_CASES = (
             "ps -o pid\nps aux",
             "sudo ps aux",
             "/bin/ps -o args",
+            # #25368: the pinned shim variable is the same ps; it gets the same -o allowlist.
+            "$GOBBY_PS_SHIM",
+            "$GOBBY_PS_SHIM aux",
+            "${GOBBY_PS_SHIM} -e",
+            "$GOBBY_PS_SHIM -o args",
+            "$GOBBY_PS_SHIM -axo args",
         ),
         allowed=(
             "pgrep -f gobby.runner",
@@ -591,10 +597,25 @@ RULE_CASES = (
             # #25069: the column-safe diagnostic reviewer seats run must stay allowed.
             "ps -axo pid,ppid,etime,comm",
             "ps -axo pid,ppid,etime,state,comm",
+            # #25368: the prescribed invocation is the unquoted pinned shim variable.
+            "$GOBBY_PS_SHIM -axo pid,ppid,etime,comm",
+            "$GOBBY_PS_SHIM -axo pid=",
+            "${GOBBY_PS_SHIM} -p 123 -o pid,etime",
             "ps -o comm -p 123",
             'echo "ps e"',
             "pkill -f gobby.runner",
         ),
+    ),
+    # #25368: mask_quoted blanks a quoted "$GOBBY_PS_SHIM", so this rule refuses the quoted
+    # spelling outright; the prescribed form is the unquoted variable.
+    RuleCase(
+        "no-quoted-ps-shim",
+        blocked=(
+            '"$GOBBY_PS_SHIM" aux',
+            '"$GOBBY_PS_SHIM" -axo pid,ppid,etime,comm',
+            '"${GOBBY_PS_SHIM}" -e',
+        ),
+        allowed=("$GOBBY_PS_SHIM -axo pid,ppid,etime,comm",),
     ),
 )
 

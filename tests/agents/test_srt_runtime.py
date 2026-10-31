@@ -735,7 +735,8 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     # resolves inside the sandbox.
     ps_shim_dir = tmp_path / "ps-shim"
     ps_shim_dir.mkdir()
-    (ps_shim_dir / "ps").write_text("#!/bin/sh\n", encoding="utf-8")
+    (ps_shim_dir / "ps").write_text('#!/bin/sh\necho "FAKE-PS-HIT args=$*"\n', encoding="utf-8")
+    (ps_shim_dir / "ps").chmod(0o755)
     monkeypatch.setattr(srt_runtime, "droid_ps_shim_dir", lambda: ps_shim_dir)
     original_which = shutil.which
     provider_lookups = 0
@@ -816,6 +817,25 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         assert Path(launch.provider_env["BASH_ENV"]).is_relative_to(expected_parent / "assets")
         assert Path(launch.provider_env["ZDOTDIR"]).is_relative_to(expected_parent / "assets")
     assert launch.provider_env.get("PATH") == expected_path
+    # #25368: the prescribed `$GOBBY_PS_SHIM` form pins the shim by absolute path, so a login
+    # shell that put /bin ahead of the shim (a failing ps first here) cannot reach /bin/ps.
+    assert launch.provider_env.get("GOBBY_PS_SHIM") == str(ps_shim_dir / "ps")
+    login_bin = tmp_path / "login-bin"
+    login_bin.mkdir()
+    (login_bin / "ps").write_text(
+        "#!/bin/sh\necho 'Operation not permitted' >&2\nexit 1\n", encoding="utf-8"
+    )
+    (login_bin / "ps").chmod(0o755)
+    reordered_path = os.pathsep.join([str(login_bin), "/usr/bin", "/bin", expected_path])
+    shim_run = subprocess.run(
+        ["sh", "-c", "$GOBBY_PS_SHIM -axo pid,ppid,etime,comm"],
+        env={**launch.provider_env, "PATH": reordered_path},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert shim_run.returncode == 0, shim_run.stderr
+    assert "FAKE-PS-HIT args=-axo pid,ppid,etime,comm" in shim_run.stdout
     if platform_name == "darwin":
         assert mux_dir.is_dir()
         assert mux_dir.stat().st_mode & 0o777 == 0o700

@@ -26,6 +26,7 @@ pub const SRT_VERSION: &str = super::verify::SRT_RELEASE.version;
 
 const SRT_SETTINGS_RELATIVE_PATH: &str = "assets/settings.json";
 const SRT_VIOLATIONS_RELATIVE_PATH: &str = "logs/violations.jsonl";
+const PS_SHIM_ENV: &str = "GOBBY_PS_SHIM";
 const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// A refusal carrying the lockout text the Python oracle reports.
@@ -239,7 +240,13 @@ pub fn prepare_launch_with(
             format!("{}:{existing}", paths::text(dir))
         };
         env.insert("PATH".to_string(), joined);
+        // The prescribed `$GOBBY_PS_SHIM` pins the shim by absolute path (#25368): a login
+        // shell can put /bin ahead of the shim on PATH and resolve `ps` to the denied /bin/ps.
+        env.insert(PS_SHIM_ENV.to_string(), paths::text(&dir.join("ps")));
     }
+    // Without a shim the variable is the PATH-resolved ps, as in unsandboxed seats.
+    env.entry(PS_SHIM_ENV.to_string())
+        .or_insert_with(|| "ps".to_string());
     let run_key = layout
         .root
         .file_name()

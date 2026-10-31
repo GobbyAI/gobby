@@ -37,7 +37,7 @@ prompts:
     - Send anything that needs its own task to Triage with the failing command, diagnostics, paths and impact.
 
     ## Sandbox
-    The sandbox denies writes to /tmp, ps argument listing, and an explicit /bin/ps path. Write scratch files under your agent workspace folder (named in your Agent Workspace section), never under /tmp, $TMPDIR or a provider scratchpad. For stall diagnosis run bare `ps -axo pid,ppid,etime,comm`, which resolves to the sandbox-safe shim; never list command arguments or environment.
+    The sandbox denies writes to /tmp, ps argument listing, and an explicit /bin/ps path. Write scratch files under your agent workspace folder (named in your Agent Workspace section), never under /tmp, $TMPDIR or a provider scratchpad. For stall diagnosis run `$GOBBY_PS_SHIM -axo pid,ppid,etime,comm`, the sandbox-safe shim pinned in your seat environment; never list command arguments or environment.
 
     ## Candidate checkout
     Review and run focused tests in the developer's registered task worktree. Your coordinator launches you with `spawn_agent(agent="code-reviewer", worktree_id=<developer task worktree id>)`; this grants access to that exact checkout. Verify HEAD matches the candidate SHA before running tests. If your run lacks that assignment, report it to your Dev Manager for relaunch. Never create a worktree or use `git archive` extraction into a seat folder as a review checkout. Preserve the author's files and branch.

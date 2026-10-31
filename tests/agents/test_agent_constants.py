@@ -143,6 +143,7 @@ class TestEnvironmentVariableConstants:
             UV_CACHE_DIR,
             CARGO_HOME,
             CARGO_TARGET_DIR,
+            "GOBBY_PS_SHIM",
             *IDENTITY_ENV_VARS,
         }
         assert set(ALL_TERMINAL_ENV_VARS) == expected
@@ -192,6 +193,23 @@ class TestGetTerminalEnvVars:
         agent_target = agent_checkout_cargo_target_dir(checkout, "proj-abc")
         assert result[CARGO_TARGET_DIR] == str(agent_target)
         assert agent_target.is_dir()
+
+    def test_seat_env_names_plain_ps_until_a_sandbox_pins_the_shim(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # #25368: the prescribed `$GOBBY_PS_SHIM` must expand in every seat. Unsandboxed
+        # seats have no shim, so the default is the PATH-resolved ps the sandbox replaces.
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+        result = get_terminal_env_vars(
+            session_id="sess-child",
+            parent_session_id="sess-parent",
+            agent_run_id="run-123",
+            project_id="proj-abc",
+            checkout_root=tmp_path / "checkout",
+        )
+
+        assert result["GOBBY_PS_SHIM"] == "ps"
+        assert "GOBBY_PS_SHIM" in ALL_TERMINAL_ENV_VARS
 
     def test_agent_and_operator_builds_never_share_a_target_under_different_homes(
         self,

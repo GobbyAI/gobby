@@ -118,6 +118,18 @@ def test_codex_shell_and_mcp_use_provisioned_cache_paths() -> None:
         assert config["mcp_servers"]["gobby"]["env"][name] == path
 
 
+def test_codex_shell_gets_pinned_ps_shim_path() -> None:
+    import tomllib
+
+    shim = "/Users/dev/.gobby/runtime/droid-ps-shim/abc/ps"
+    overrides = _codex_mcp_config_overrides("/repo", managed_identity_env={"GOBBY_PS_SHIM": shim})
+    config = tomllib.loads("\n".join(overrides))
+
+    # #25368: Codex rebuilds the shell from its login PATH, which can put /bin ahead of the
+    # shim, so the prescribed `$GOBBY_PS_SHIM` must carry the absolute shim path into it.
+    assert config["shell_environment_policy"]["set"]["GOBBY_PS_SHIM"] == shim
+
+
 def test_managed_codex_requires_gobby_before_first_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

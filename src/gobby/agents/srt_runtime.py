@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from gobby.agents.constants import GOBBY_PS_SHIM
+
 # Re-signed `ps` shim for every SRT seat (#22407 Droid Execute, #25069 reviewer diagnostics):
 # seatbelt denies exec of setuid /bin/ps, so the shim is the only ps a sandboxed seat can run.
 # ON REMOVAL: delete this import with the ps shim block in prepare_sandbox_launch.
@@ -700,6 +702,10 @@ async def prepare_sandbox_launch(
     finally:
         finish_spawn_phase(phase_timings_ms, "verify_srt_installation", verify_started)
     run_environment.update(ps_shim_path_env(ps_shim_dir, effective_env))
+    if ps_shim_dir is not None:
+        # The prescribed `$GOBBY_PS_SHIM` is pinned by absolute path: a login shell can put
+        # /bin ahead of the shim on PATH, where `ps` would resolve to the denied /bin/ps (#25368).
+        run_environment[GOBBY_PS_SHIM] = str(ps_shim_dir / "ps")
     run_environment.update(
         await asyncio.to_thread(
             sandbox_cargo_environment,

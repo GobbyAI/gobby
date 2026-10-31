@@ -2342,6 +2342,13 @@ fn chokepoint_droid_ps_shim() -> Result<()> {
         path.starts_with(&format!("{}:", shim_dir.display())),
         "the shim is not first on PATH: {path}"
     );
+    // #25368: the prescribed `$GOBBY_PS_SHIM` pins the shim by absolute path, because a login
+    // shell can put /bin ahead of the shim on PATH and resolve `ps` to the denied /bin/ps.
+    assert_eq!(
+        launch.env.get("GOBBY_PS_SHIM"),
+        Some(&shim.display().to_string()),
+        "GOBBY_PS_SHIM does not pin the shim by absolute path"
+    );
 
     // A shim that cannot be staged only warns: the launch goes on without it.
     let (tree, inputs) = chokepoint_fixture(&root.path().join("droid-no-shim"), "droid", |_| {})?;
@@ -2361,6 +2368,12 @@ fn chokepoint_droid_ps_shim() -> Result<()> {
             .iter()
             .any(|path| path.to_string_lossy().contains("droid-ps-shim")),
         "a shim that failed to stage stayed readable"
+    );
+    // Without a shim the prescribed form still expands to the PATH-resolved ps (#25368).
+    assert_eq!(
+        launch.env.get("GOBBY_PS_SHIM").map(String::as_str),
+        Some("ps"),
+        "GOBBY_PS_SHIM is not the PATH-resolved ps without a shim"
     );
     Ok(())
 }
