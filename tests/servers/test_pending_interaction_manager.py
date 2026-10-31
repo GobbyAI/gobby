@@ -171,7 +171,7 @@ class TestExpire:
         assert row["decision"] == "timeout"
         session = SessionManager(db).get(SESSION_1)
         assert session is not None
-        assert session.status == "paused"
+        assert session.status == "idle"
 
     @pytest.mark.asyncio
     async def test_expire_wakes_waiter_with_timeout(
@@ -314,8 +314,8 @@ class TestExpireAllPending:
         sessions = SessionManager(db)
         first = sessions.get(SESSION_1)
         second = sessions.get(SESSION_2)
-        assert first is not None and first.status == "paused"
-        assert second is not None and second.status == "paused"
+        assert first is not None and first.status == "idle"
+        assert second is not None and second.status == "idle"
 
     @pytest.mark.asyncio
     async def test_expire_all_clears_in_memory(self, manager: PendingInteractionManager) -> None:

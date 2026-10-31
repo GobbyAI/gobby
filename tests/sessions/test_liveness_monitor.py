@@ -496,6 +496,8 @@ class TestGetActiveTerminalSessions:
             [
                 "active",
                 "paused",
+                "waiting",
+                "idle",
                 "interrupted",
                 "awaiting_input",
                 "awaiting_approval",

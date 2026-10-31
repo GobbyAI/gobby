@@ -196,7 +196,11 @@ const LEGEND: [(RowState, &str, &str); 7] = [
         "waiting on you: an approval, a question, an error it cannot pass",
     ),
     (RowState::Working, "active", "running a turn"),
-    (RowState::Idle, "idle", "at its prompt, nothing pending"),
+    (
+        RowState::Idle,
+        "idle",
+        "at its prompt, or ended its turn on an armed wait or background work",
+    ),
     (
         RowState::Unseen,
         "idle",
@@ -205,7 +209,7 @@ const LEGEND: [(RowState, &str, &str); 7] = [
     (
         RowState::Paused,
         "idle",
-        "a run someone paused on purpose; never an agent idle at its prompt",
+        "paused on purpose or interrupted by you",
     ),
     (
         RowState::Orphaned,

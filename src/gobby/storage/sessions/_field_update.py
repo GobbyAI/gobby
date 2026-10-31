@@ -319,7 +319,7 @@ class _FieldUpdateMixin(
                 UPDATE sessions s
                 SET status = 'expired', updated_at = %s
                 WHERE s.id = %s
-                  AND s.status IN ('paused', 'waiting')
+                  AND s.status IN ('paused', 'waiting', 'idle')
                   AND s.machine_id = %s
                   AND s.updated_at = %s
                   AND s.terminal_context->>'gobby_terminal_id' = %s

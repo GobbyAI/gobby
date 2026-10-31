@@ -804,7 +804,7 @@ async def test_readiness_timeout_recovers_only_matching_awaiting_session(
     row = session_db.fetchone("SELECT status FROM sessions WHERE id = %s", (SESSION_ID,))
     assert row is not None
     recover = status == "awaiting_handoff" and conflict is None
-    assert row["status"] == ("paused" if recover else status)
+    assert row["status"] == ("idle" if recover else status)
     after = variables.get_variables(SESSION_ID)
     assert after[HANDOFF_COMPACT_CONTINUE_VARIABLE] == before[HANDOFF_COMPACT_CONTINUE_VARIABLE]
     assert tmux.sent_keys == []

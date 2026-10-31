@@ -158,9 +158,13 @@ fn help_opens_on_the_attention_legend_and_a_search_hides_it() {
     let states = [
         ("⍾ needs you", "need you", "an error it cannot pass"),
         ("▶ active", "active", "running a turn"),
-        ("○ idle", "idle", "at its prompt, nothing pending"),
+        (
+            "○ idle",
+            "idle",
+            "at its prompt, or ended its turn on an armed wait or background work",
+        ),
         ("◆ output unseen", "idle", "clears when its pane is focused"),
-        ("‖ held", "idle", "never an agent idle at its prompt"),
+        ("‖ held", "idle", "paused on purpose or interrupted by you"),
         ("◌ gone", "n gone", "shown only when not zero"),
         ("· no state yet", "idle", "before the daemon has a state"),
     ];

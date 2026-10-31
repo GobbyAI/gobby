@@ -291,7 +291,7 @@ class ChatStreamingMixin:
         finally:
             if session is not None and not state.completed:
                 await persistence.persist_current_assistant(session)
-                await persistence.set_status(session, "paused")
+                await persistence.set_status(session, "idle")
             await self._close_generator(gen)
             self._clear_active_task(conversation_id)
 

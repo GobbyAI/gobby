@@ -502,6 +502,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "active": 0,
             "paused": 0,
             "waiting": 0,
+            "idle": 0,
             "awaiting_handoff": 0,
             "total": 0,
         }

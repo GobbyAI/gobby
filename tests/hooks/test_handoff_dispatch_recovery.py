@@ -461,8 +461,8 @@ async def test_dispatch_killed_after_precompact_confirms_its_boundary_once(
         continuation.assert_not_called()
     current = session_manager.get(SESSION_ID)
     assert current is not None
-    # A Claude compact's SessionStart moves the row on; Codex has none, so the wait releases it.
-    assert current.status == ("paused" if source == "codex" else "awaiting_handoff")
+    # A Claude compact's SessionStart moves the row on; Codex has none, so the wait releases it to idle.
+    assert current.status == ("idle" if source == "codex" else "awaiting_handoff")
     consumed = consume_pending_handoff(hub_db, SESSION_ID)
     assert consumed is not None
     assert consume_pending_handoff(hub_db, SESSION_ID) is None
@@ -491,7 +491,7 @@ async def test_dispatch_killed_after_precompact_fails_when_no_boundary_lands_by_
     assert gate["error_code"] == "compact_unconfirmed"
     current = session_manager.get(SESSION_ID)
     assert current is not None
-    assert current.status == "paused"
+    assert current.status == "idle"
     assert _sweep(session_manager, asyncio.get_running_loop()) == 0
 
 
@@ -588,7 +588,7 @@ async def test_out_of_band_codex_compact_continues_and_releases_awaiting_handoff
 
     current = session_manager.get(SESSION_ID)
     assert current is not None
-    assert current.status == "paused"
+    assert current.status == "idle"
     if pending:
         continuation.assert_called_once()
         assert continuation.call_args.args[1] == build_handoff_continue_prompt()

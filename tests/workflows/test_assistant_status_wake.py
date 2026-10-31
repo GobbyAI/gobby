@@ -32,6 +32,8 @@ PIPELINE = "assistant-status-wake"
 LIVE_STATUSES = (
     "active",
     "paused",
+    "waiting",
+    "idle",
     "interrupted",
     "awaiting_input",
     "awaiting_approval",

@@ -140,7 +140,7 @@ class ChatStreamPersistence:
             )
 
     async def persist_done_metadata(self, session: Any, event: Any) -> None:
-        """Persist usage, context window, model, and paused status from DoneEvent."""
+        """Persist usage, context window, model, and idle status from DoneEvent."""
         db_sid = getattr(session, "db_session_id", None)
         session_manager = getattr(self.owner, "session_manager", None)
         if not (db_sid and session_manager):
@@ -167,7 +167,7 @@ class ChatStreamPersistence:
         else:
             await self._persist_context_window_and_model(session, db_sid, event)
 
-        await self.set_status(session, "paused")
+        await self.set_status(session, "idle")
 
     async def _persist_context_window_and_model(
         self,

@@ -461,7 +461,7 @@ async def test_compaction_holds_the_lock_across_its_whole_ladder(
     assert lock_held and all(lock_held), lock_held
 
 
-async def test_grok_compacted_seat_accepts_keys_wake_and_consumes_handoff(
+async def test_grok_compacted_seat_refuses_keys_fail_closed_and_consumes_handoff(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -469,6 +469,8 @@ async def test_grok_compacted_seat_accepts_keys_wake_and_consumes_handoff(
     composer_ledger: ComposerLedger,
 ) -> None:
     """Exercise Gobby's real input path; the fake editor cannot prove a native UI fix."""
+    from gobby.agents.detection.registry import sync_bundled_detection_manifests
+    from gobby.mcp_proxy.tools.sessions import _terminal_send_keys_gate as send_keys_gate
     from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
     from gobby.sessions.compact_continuation import (
         arm_compact_boundary_waiter,
@@ -479,6 +481,10 @@ async def test_grok_compacted_seat_accepts_keys_wake_and_consumes_handoff(
     from gobby.sessions.handoff import clear_handoff_turn_end_pending, stage_handoff_attempt
     from gobby.sessions.handoff_records import build_handoff_payload
     from gobby.sessions.mailbox import MailboxService
+    from gobby.terminals.composer_ledger import (
+        record_composer_command_consumed,
+        record_composer_submit,
+    )
     from gobby.utils.session_context import session_context_for_test
 
     dispatcher, messages, runtime, session_id, pane = _editor_seat(
@@ -489,12 +495,23 @@ async def test_grok_compacted_seat_accepts_keys_wake_and_consumes_handoff(
     messages.mark_delivered_batch([message.id for message in pending], session_id)
     store = dispatcher._terminal_manager
     coordinator = composer_lock_module._coordinator
-    assert store is not None
+    assert isinstance(store, MemoryTerminalStore)
     assert coordinator is not None
+    # The gate reads the installed grok composer manifest from the hub database.
+    store.db = temp_db
+    sync_bundled_detection_manifests(temp_db)
+    # The memory terminal has no process tree; report the grok CLI as the foreground agent.
+    monkeypatch.setattr(send_keys_gate, "shell_pid", lambda _terminal: 4321)
+    monkeypatch.setattr(
+        send_keys_gate,
+        "foreground_executables",
+        lambda pids: dict.fromkeys(pids, "grok"),
+    )
     registry = create_session_messages_registry(
         session_manager=session_manager,
         db=temp_db,
         terminal_manager=store,
+        terminal_runtime_registry=runtime_registry(runtime),
         write_coordinator=coordinator,
     )
     sender = session_manager.register(
@@ -527,6 +544,9 @@ async def test_grok_compacted_seat_accepts_keys_wake_and_consumes_handoff(
                 compact = await _send_command(pane, "/compact", session_id, "grok")
                 assert compact[0] is True, compact
                 notify_compact_boundary(temp_db, session_id, session.terminal_context)
+                # POST_COMPACT's consume acknowledges the daemon's own /compact; without
+                # that provider record the ledger keeps the submitted command as held.
+                record_composer_command_consumed(pane.target, "/compact")
                 await asyncio.wait_for(waiter.event.wait(), timeout=2)
             finally:
                 unregister_compact_boundary_waiter(session_id, attempt_id)
@@ -541,8 +561,13 @@ async def test_grok_compacted_seat_accepts_keys_wake_and_consumes_handoff(
                     "send_keys",
                     {"session_id": session_id, "keys": resume + "\n"},
                 )
-            assert keys["success"] is True, keys
-            assert runtime.submitted[-2:] == ["/compact", resume]
+            # The acknowledged /compact left the ledger clean, so the gate reaches its probe
+            # check. Grok ships no composer rules, so no frame proves an idle composer.
+            assert composer_ledger.read(pane.target).state == "empty"
+            assert keys["success"] is False, keys
+            assert keys["error_code"] == "send_keys_target_unconfirmed"
+            assert "no composer probe" in keys["error"]
+            assert runtime.submitted[-1] == "/compact"
             with session_context_for_test(session_id):
                 delivered = await registry.call("get_handoff", {})
                 duplicate = await registry.call("get_handoff", {})
@@ -567,16 +592,15 @@ async def test_grok_compacted_seat_accepts_keys_wake_and_consumes_handoff(
             assert len(wake.wake_results) == 1
             assert wake.wake_results[0]["delivered"] is True, wake.wake_results
             assert runtime.submitted[-1] == CONTINUE_WAKE_MESSAGE
+            record_composer_submit(pane.target)
             unread = messages.get_undelivered_messages(session_id)
             assert [message.content for message in unread] == [f"compact-cycle-{cycle}-wake"]
             messages.mark_delivered_batch([message.id for message in unread], session_id)
             assert runtime.buffer == ""
         assert runtime.submitted == [
             "/compact",
-            "Resume compact cycle 1",
             CONTINUE_WAKE_MESSAGE,
             "/compact",
-            "Resume compact cycle 2",
             CONTINUE_WAKE_MESSAGE,
         ]
     finally:

@@ -149,7 +149,7 @@ class TurnLifecycleState:
     turn_state: Literal["open", "terminal"] = "terminal"
     # How this generation's turn last ended; ``None`` until ``end_turn`` records it.
     disposition: TurnDisposition | None = None
-    prior_status: str = "paused"
+    prior_status: str = "idle"
     request_ids: tuple[str, ...] = ()
     evidence_source: str | None = None
     cursor: str | int | None = None
@@ -203,7 +203,7 @@ class TurnLifecycleState:
             waits=waits,
             turn_state=turn_state if turn_state in {"open", "terminal"} else "terminal",
             disposition=disposition if disposition in _TURN_DISPOSITIONS else None,
-            prior_status=_optional_str(raw.get("prior_status")) or "paused",
+            prior_status=_optional_str(raw.get("prior_status")) or "idle",
             request_ids=request_ids,
             evidence_source=_optional_str(raw.get("evidence_source")),
             cursor=_cursor(raw.get("cursor")),
@@ -365,7 +365,7 @@ class TurnLifecycleReducer:
             waits = tuple(wait for wait in current.waits if wait.token != token)
             next_status = _status_for_waits(waits)
             if next_status is None:
-                next_status = "active" if resolution == "resumed" else "paused"
+                next_status = "active" if resolution == "resumed" else "idle"
             return self._with_evidence(current, evidence, waits=waits), next_status
 
         return self._apply(session_id, evidence, mutate)
@@ -393,7 +393,7 @@ class TurnLifecycleReducer:
             return CoordinationWaitManager(self._db).has_active_wait(session_id)
         except Exception:
             logger.warning(
-                "Failed to read coordination waits for session %s; ending turn as paused",
+                "Failed to read coordination waits for session %s; ending turn as idle",
                 session_id,
                 exc_info=True,
             )
@@ -406,8 +406,8 @@ class TurnLifecycleReducer:
         evidence: TurnEvidence,
     ) -> TurnLifecycleTransitionResult:
         """Apply terminal evidence; unknown observations retain current state."""
-        # A routine turn end with an armed coordination wait is parked on that wait,
-        # not paused on purpose.
+        # A routine turn end with an armed coordination wait is parked on that wait.
+        # Any other routine turn end is idle: only an operator pause or interrupt is held.
         awaiting_reply = disposition in {"completed", "ended_non_user"} and self._has_armed_wait(
             session_id
         )
@@ -420,7 +420,7 @@ class TurnLifecycleReducer:
             elif awaiting_reply:
                 next_status = "waiting"
             else:
-                next_status = "paused"
+                next_status = "idle"
             updated = replace(
                 self._with_evidence(current, evidence, waits=(), turn_state="terminal"),
                 disposition=disposition,
@@ -483,7 +483,7 @@ class TurnLifecycleReducer:
                         error_type, message, attempts, retryable, current.generation
                     ),
                 ),
-                "paused",
+                "idle",
             )
 
         return self._apply(
@@ -568,7 +568,7 @@ class TurnLifecycleReducer:
                     False, session_id, current.generation, None, current, "session_not_found"
                 )
             raw_status = getattr(session, "status", None)
-            session_status = raw_status if isinstance(raw_status, str) else "paused"
+            session_status = raw_status if isinstance(raw_status, str) else "idle"
             # Terminal ownership/explicit resume must reactivate a session first.
             # Delayed hook evidence alone cannot reclaim a superseded session.
             if session_status in TERMINAL_SESSION_STATUSES:

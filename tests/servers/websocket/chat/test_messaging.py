@@ -802,7 +802,7 @@ class TestStreamChatResponse:
         assert done_msg[0]["interrupted"] is True
 
     @pytest.mark.parametrize("exit_mode", ["cancel", "error", "disconnect"])
-    async def test_abnormal_stream_exit_persists_partial_message_and_pauses_session(
+    async def test_abnormal_stream_exit_persists_partial_message_and_idles_session(
         self,
         mixin: DummyMessagingMixin,
         ws: AsyncMock,
@@ -843,7 +843,7 @@ class TestStreamChatResponse:
         ]
         persisted_session = session_manager.get(stored_session.id)
         assert persisted_session is not None
-        assert persisted_session.status == "paused"
+        assert persisted_session.status == "idle"
 
     @pytest.mark.asyncio
     async def test_stream_client_disconnect(

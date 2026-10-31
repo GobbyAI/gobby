@@ -565,7 +565,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             if (
                 event.turn_disposition != "unknown"
                 and not self._skip_session_status_update_during_shutdown(
-                    "AFTER_AGENT", session_id, "paused"
+                    "AFTER_AGENT", session_id, "idle"
                 )
             ):
                 self._end_turn_lifecycle(event, event.turn_disposition)
@@ -592,7 +592,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 if (
                     event.turn_disposition != "unknown"
                     and not self._skip_session_status_update_during_shutdown(
-                        "STOP", session_id, "paused"
+                        "STOP", session_id, "idle"
                     )
                 ):
                     self._end_turn_lifecycle(event, event.turn_disposition)

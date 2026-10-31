@@ -56,9 +56,9 @@ class CoordinationWaitManager:
                 raise ValueError("statuses must be a nonempty set of canonical session statuses")
             expanded = set(statuses)
             if "paused" in expanded:
-                # A routine turn end with an armed wait is "waiting"; "paused" subscribers
-                # must still see that turn end.
-                expanded.add("waiting")
+                # "paused" once meant any turn end. A turn end is now "waiting" (armed wait)
+                # or "idle" (routine), so "paused" subscribers must still see both.
+                expanded.update(("waiting", "idle"))
             statuses = sorted(expanded)
         if isinstance(timeout, bool) or not math.isfinite(timeout) or not 0 < timeout <= 3600:
             raise ValueError("timeout must be greater than zero and at most 3600 seconds")

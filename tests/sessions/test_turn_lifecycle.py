@@ -102,7 +102,7 @@ def test_transition_matrix_and_simultaneous_wait_priority(
         "completed",
         TurnEvidence(source="codex", generation=1, provider_turn_key="turn-1"),
     )
-    assert completed.status == "paused"
+    assert completed.status == "idle"
 
 
 @pytest.mark.asyncio
@@ -159,9 +159,9 @@ async def test_post_restart_genuine_turn_is_not_reconciled(
             calls.append(current.status)
             return {
                 "session_id": session_id,
-                "delivered": current.status == "paused",
-                "method": "terminal" if current.status == "paused" else "next_call_context",
-                "decline_reason": None if current.status == "paused" else "session_active",
+                "delivered": current.status == "idle",
+                "method": "terminal" if current.status == "idle" else "next_call_context",
+                "decline_reason": None if current.status == "idle" else "session_active",
             }
 
     coordinator = WakeReplayCoordinator(
@@ -180,7 +180,7 @@ async def test_post_restart_genuine_turn_is_not_reconciled(
         TurnEvidence(source="codex", generation=1, provider_turn_key="post-restart-turn"),
     )
     await drain_asyncio_tasks(cycles=10)
-    assert calls == ["active", "paused"]
+    assert calls == ["active", "idle"]
 
 
 def test_replacement_prompt_fences_late_wait_and_terminal_evidence(
@@ -274,7 +274,7 @@ def test_notification_after_terminal_turn_cannot_create_a_new_wait(
     )
 
     assert delayed.applied is False
-    assert delayed.status == "paused"
+    assert delayed.status == "idle"
     assert delayed.lifecycle.waits == ()
 
 
@@ -488,7 +488,7 @@ def test_turn_end_disposition_stays_durable_until_the_next_turn(
     ended = lifecycle.end_turn(
         session_id, "ended_non_user", TurnEvidence(source="agy", generation=1)
     )
-    assert ended.status == "paused"
+    assert ended.status == "idle"
     assert ended.lifecycle.disposition == "ended_non_user"
     # A fresh reader sees the stored payload, as the health monitor does after exit.
     assert TurnLifecycleReducer(sessions).get(session_id).disposition == "ended_non_user"
@@ -569,7 +569,7 @@ def test_provider_failure_count_persists_until_completed_turn(
             evidence=evidence,
         )
         assert failed.applied
-        assert failed.status == "paused"
+        assert failed.status == "idle"
         assert failed.lifecycle.provider_error is not None
         assert failed.lifecycle.provider_error.attempts == turn
         assert TurnLifecycleReducer(sessions, attention).get(session_id).provider_error == (

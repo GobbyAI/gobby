@@ -108,7 +108,7 @@ async def test_backlog_keeps_later_same_session_events(
         for value in types
     ]
     after = session_manager.get(session.id)
-    assert after is not None and after.status == "paused"
+    assert after is not None and after.status == "idle"
     expected_start = times[types.index("UserPromptSubmit")]
     assert TurnLifecycleReducer(session_manager).get(session.id).started_at == expected_start
     assert not inbox_envelopes.get_hook_quarantine_dir(pending).exists()

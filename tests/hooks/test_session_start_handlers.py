@@ -298,6 +298,8 @@ def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
         "terminal",
         "active",
         "paused",
+        "waiting",
+        "idle",
         "current-session",
         200,
     )

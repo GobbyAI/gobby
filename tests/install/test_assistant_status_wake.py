@@ -70,6 +70,8 @@ def test_wake_pipeline_resolves_each_live_status_then_wakes_that_session() -> No
     assert statuses == [
         "active",
         "paused",
+        "waiting",
+        "idle",
         "interrupted",
         "awaiting_input",
         "awaiting_approval",

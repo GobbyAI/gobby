@@ -191,7 +191,7 @@ def expire_stale_terminal_sessions_for_context(
             WHERE project_id = %s
             AND machine_id = (SELECT machine_id FROM sessions WHERE id = %s)
             AND session_type = %s
-            AND status IN (%s, %s, %s)
+            AND status IN (%s, %s, %s, %s)
             AND id <> %s
             AND terminal_context IS NOT NULL
             ORDER BY updated_at DESC
@@ -204,6 +204,7 @@ def expire_stale_terminal_sessions_for_context(
                 "active",
                 "paused",
                 "waiting",
+                "idle",
                 session_id,
                 STALE_TERMINAL_SESSION_SCAN_LIMIT,
             ),

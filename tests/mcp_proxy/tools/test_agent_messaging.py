@@ -21,6 +21,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
+from gobby.agents.team_communications import RecipientPolicy
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.hooks.event_enrichment import EventEnricher
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
@@ -144,6 +145,18 @@ def mock_db() -> MagicMock:
     db.fetchone = MagicMock(return_value=None)
     db.execute = MagicMock()
     return db
+
+
+@pytest.fixture(autouse=True)
+def admit_all_recipients(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Send-shape tests use a mock hub with no seat rows, so admission would withhold everyone.
+
+    Recipient admission is covered by tests/tasks/test_definition_coordination.py.
+    """
+    monkeypatch.setattr(
+        "gobby.sessions.mailbox.recipient_policy",
+        lambda _db, _sender, _recipients: RecipientPolicy(frozenset()),
+    )
 
 
 @pytest.fixture

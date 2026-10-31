@@ -128,4 +128,4 @@ def release_awaiting_handoff(db: HubDatabase, session_id: str) -> None:
     manager = SessionManager(db)
     current = manager.get(session_id)
     if current is not None and current.status == "awaiting_handoff":
-        manager.update_session_status(session_id, "paused")
+        manager.update_session_status(session_id, "idle")

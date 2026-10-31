@@ -157,32 +157,47 @@ fn agent_state_follows_attention_and_terminal() {
         }
     }
 
-    // Handoff and coordination waits never require the operator by themselves.
-    for status in ["awaiting_handoff", "interrupted"] {
-        let mut waiting = running.clone();
-        waiting.lifecycle_status = Some(status.to_string());
+    // A handoff wait never requires the operator by itself.
+    let mut handoff = running.clone();
+    handoff.lifecycle_status = Some("awaiting_handoff".to_string());
+    assert_eq!(
+        agent_state(&handoff, Some(&quiet)),
+        RowState::Idle,
+        "awaiting_handoff is idle at its prompt"
+    );
+    assert_eq!(
+        agent_state(&handoff, Some(&busy)),
+        RowState::Unseen,
+        "awaiting_handoff with new output is unseen"
+    );
+    assert_eq!(
+        agent_state(&handoff, None),
+        RowState::Idle,
+        "awaiting_handoff with no pane is idle"
+    );
+    handoff.attention = blocked();
+    assert_eq!(
+        agent_state(&handoff, Some(&quiet)),
+        RowState::Attention,
+        "a prompt outranks awaiting_handoff"
+    );
+
+    // A user interrupt stays held until the operator acts, whatever the pane shows.
+    let mut interrupted = running.clone();
+    interrupted.lifecycle_status = Some("interrupted".to_string());
+    for pane in [Some(&quiet), Some(&busy), None] {
         assert_eq!(
-            agent_state(&waiting, Some(&quiet)),
-            RowState::Idle,
-            "{status} is idle at its prompt"
-        );
-        assert_eq!(
-            agent_state(&waiting, Some(&busy)),
-            RowState::Unseen,
-            "{status} with new output is unseen"
-        );
-        assert_eq!(
-            agent_state(&waiting, None),
-            RowState::Idle,
-            "{status} with no pane is idle"
-        );
-        waiting.attention = blocked();
-        assert_eq!(
-            agent_state(&waiting, Some(&quiet)),
-            RowState::Attention,
-            "a prompt outranks {status}"
+            agent_state(&interrupted, pane),
+            RowState::Paused,
+            "interrupted is held"
         );
     }
+    interrupted.attention = blocked();
+    assert_eq!(
+        agent_state(&interrupted, Some(&quiet)),
+        RowState::Attention,
+        "a prompt outranks an interrupt"
+    );
 
     let mut stalled = finished.clone();
     stalled.attention = Some(Attention {
@@ -208,6 +223,44 @@ fn agent_state_follows_attention_and_terminal() {
     assert_eq!(
         model.agents[0].project_id, PROJECT,
         "a terminal the daemon joins to no session or run belongs to the focused project"
+    );
+}
+
+/// The daemon writes four turn states; gclient draws each as one row state.
+/// Only an operator pause or a user interrupt is held.
+#[test]
+fn daemon_turn_states_map_to_four_row_states() {
+    let running = entry("run:a", Some("terminal-a"));
+    let quiet = pane(1, "terminal-a", false, true);
+    let row_state = |status: &str| {
+        let mut row = running.clone();
+        row.lifecycle_status = Some(status.to_string());
+        agent_state(&row, Some(&quiet))
+    };
+    assert_eq!(
+        row_state("active"),
+        RowState::Working,
+        "a turn in progress is working"
+    );
+    assert_eq!(
+        row_state("waiting"),
+        RowState::Idle,
+        "a turn parked on an armed wait is idle"
+    );
+    assert_eq!(
+        row_state("idle"),
+        RowState::Idle,
+        "a routine turn end is idle, never held"
+    );
+    assert_eq!(
+        row_state("paused"),
+        RowState::Paused,
+        "an operator pause is held"
+    );
+    assert_eq!(
+        row_state("interrupted"),
+        RowState::Paused,
+        "a user interrupt is held"
     );
 }
 

@@ -537,7 +537,7 @@ async def test_replayed_stop_settles_active_session_before_queued_terminal_wake(
     assert replayed == 1
     assert not envelope_path.exists()
     settled = session_manager.get(recipient_id)
-    assert settled is not None and settled.status == "paused"
+    assert settled is not None and settled.status == "idle"
 
     messages = InterSessionMessageManager(temp_db)
     _pending_wake(messages, sender_id, recipient_id)

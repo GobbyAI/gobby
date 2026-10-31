@@ -61,6 +61,7 @@ def test_each_case_is_bounded_and_classified(contract: dict[str, Any]) -> None:
             assert expected["wait_kind"] in valid_waits
             assert expected["status"] in {
                 "active",
+                "idle",
                 "paused",
                 "interrupted",
                 "awaiting_input",
@@ -81,7 +82,7 @@ def test_positive_interrupt_negative_completion_and_structural_waits(
             "distinction": "whole_turn_interruption",
         }
         assert cases["normal_answer"]["expected"]["disposition"] == "completed"
-        assert cases["normal_answer"]["expected"]["status"] == "paused"
+        assert cases["normal_answer"]["expected"]["status"] == "idle"
         assert cases["prose_question"]["expected"]["distinction"] == "prose_question"
         assert cases["structured_question"]["expected"]["wait_kind"] == "input"
         assert cases["permission_wait"]["expected"]["wait_kind"] == "approval"

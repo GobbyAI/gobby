@@ -584,9 +584,10 @@ fn resolve_state(
     if orphaned {
         return RowState::Orphaned;
     }
-    // Coordination and handoff waits stay quiet; human input and approval
-    // above are attention even before a screen detector finds a prompt.
-    if lifecycle_status == Some("paused") {
+    // Held: an operator pause or a user interrupt only. A routine turn end, with or
+    // without an armed wait, is "idle" or "waiting" and draws as idle. Human input and
+    // approval above are attention even before a screen detector finds a prompt.
+    if matches!(lifecycle_status, Some("paused" | "interrupted")) {
         return RowState::Paused;
     }
     if lifecycle_status.is_some_and(|status| matches!(status, "running" | "active")) {
