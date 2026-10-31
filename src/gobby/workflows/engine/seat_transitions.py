@@ -315,7 +315,7 @@ def _claim_to_reviewer(
 
 
 def _relay_hands_claim(db: HubDatabase, reviewer_id: str, event: CandidateEvent) -> bool:
-    """A reviewer reading the bound Dev Manager's relay of a claimant's CANDIDATE takes the claim.
+    """A reviewer reading the bound Dev Manager's relay of a fixer's CANDIDATE takes the claim.
 
     _candidate_rejection has already authenticated the relay: the bound Dev Manager sent it, and
     the SHA is linked to the claimant. The claimant's edit ledger guards the move, because its
@@ -329,6 +329,11 @@ def _relay_hands_claim(db: HubDatabase, reviewer_id: str, event: CandidateEvent)
         return True
     if not _same_team(db, holder_id, reviewer_id):
         return False
+    holder = SessionManager(db).get(holder_id)
+    definition = session_agent_definition(db, holder) if holder is not None else None
+    # Only a fixer (a review-writing holder) hands its claim on; a Developer keeps it to its BOUNCE.
+    if definition is None or "review" not in definition[0].task_step_writes:
+        return True
     holder_variables = SessionVariableManager(db).get_variables(holder_id)
     return _move_claim(db, event.task.id, holder_id, reviewer_id, holder_variables, handed=True)
 
