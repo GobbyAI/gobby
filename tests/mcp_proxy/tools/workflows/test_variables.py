@@ -308,6 +308,36 @@ class TestSetVariableScoped:
             {"flag": True},
         )
 
+    @pytest.mark.parametrize("scope", ["session", "step"])
+    def test_set_variable_blocks_authored_merge_ledger(
+        self, scope: Literal["session", "step"]
+    ) -> None:
+        """Agents cannot forge the observer-recorded base-merge authorship ledger."""
+        from gobby.mcp_proxy.tools.workflows._variables import set_variable
+
+        mocks = _make_mocks()
+
+        result = set_variable(
+            mocks["session_manager"],
+            mocks["db"],
+            name="_authored_merge_commits",
+            value=["72aea1d149594384de1ce27023f92845236cf7d0"],
+            session_id="#1",
+            scope=scope,
+            instance_manager=mocks["instance_manager"],
+            session_var_manager=mocks["session_var_manager"],
+        )
+
+        assert result == {
+            "success": False,
+            "error": (
+                "_authored_merge_commits is managed by the workflow runtime "
+                "and cannot be set directly."
+            ),
+        }
+        mocks["session_var_manager"].set_variable.assert_not_called()
+        mocks["instance_manager"].merge_variables.assert_not_called()
+
 
 class TestGetVariableScoped:
     """Tests for get_variable with session/step scoping."""

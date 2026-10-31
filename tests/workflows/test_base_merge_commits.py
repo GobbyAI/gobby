@@ -15,11 +15,11 @@ import pytest
 
 from gobby.workflows.base_merge_commits import (
     _completes_admitted_merge,
-    _lone_git_command,
     _stages_conflicted_paths,
     _starts_admitted_merge,
     _writes_conflicted_paths,
 )
+from gobby.workflows.git_lone_command import lone_git_command
 
 pytestmark = pytest.mark.unit
 
@@ -125,12 +125,12 @@ async def test_plain_commit_without_a_merge_in_progress_is_refused(repo: Path) -
 def test_compound_cd_and_global_options_do_not_parse_as_one_git_step(
     command: str | None,
 ) -> None:
-    assert _lone_git_command(command) is None
+    assert lone_git_command(command) is None
 
 
 def test_quoted_operators_outside_safe_message_charset_are_refused() -> None:
-    assert _lone_git_command('git commit -m "a && b"') is None
-    assert _lone_git_command('git commit -m "a > b"') is None
+    assert lone_git_command('git commit -m "a && b"') is None
+    assert lone_git_command('git commit -m "a > b"') is None
 
 
 @pytest.mark.parametrize(
@@ -145,7 +145,7 @@ def test_quoted_operators_outside_safe_message_charset_are_refused() -> None:
 )
 def test_redirected_git_command_is_not_one_git_step(command: str) -> None:
     """A redirection writes a file the admission never names, so it is never a lone git step."""
-    assert _lone_git_command(command) is None
+    assert lone_git_command(command) is None
 
 
 async def test_conflicted_merge_admits_the_resolving_commit_only(repo: Path) -> None:

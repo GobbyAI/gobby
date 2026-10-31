@@ -14,8 +14,8 @@ the capability covers, and reads nothing else from the definition:
 - a structured write to one of those paths. A shell command never earns a path
   grant, because its output and its side effects are not named.
 
-The git call must match the closed grammar in `_FORMS` on its raw command text, as one
-line, before any shell lexing reads it; anything else is not admitted. A `-C <path>`
+The git call must match the closed grammar in `git_lone_command` on its raw command text,
+as one line, before any shell lexing reads it; anything else is not admitted. A `-C <path>`
 names the worktree the call runs in, and that worktree is the merge root.
 
 Admitted tips are the integration branch of the project's main checkout and the
@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,8 +41,10 @@ from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.daemon_git import GitOk, daemon_git
+from gobby.utils.git import run_git_command
 from gobby.workflows.agent_resolver import session_has_capability
 from gobby.workflows.enforcement.blocking import get_touched_file_paths
+from gobby.workflows.git_lone_command import lone_git_command
 from gobby.workflows.git_utils import resolve_git_worktree_root_async
 
 logger = logging.getLogger(__name__)
@@ -52,20 +53,6 @@ CAPABILITY = "merge_base_commits"
 _GIT_TIMEOUT = 10.0
 _MERGE_FLAGS = frozenset({"--no-edit", "--no-ff"})
 _COMMIT_VALUE_FLAGS = frozenset({"-m"})
-_PATH = r"(?!-)[A-Za-z0-9._/-]+"
-_MESSAGE = r"[A-Za-z0-9 ._:#()/,-]+"
-_GIT = rf"git(?: -C (?P<target>{_PATH}))? "
-# The closed grammar. Each form must match the whole raw command text on one line.
-_FORMS = tuple(
-    re.compile(form)
-    for form in (
-        rf"{_GIT}(?P<args>merge(?: --no-ff)?(?: --no-edit)? {_PATH})",
-        rf"{_GIT}(?P<args>merge --(?:continue|abort))",
-        rf"{_GIT}(?P<args>add -- {_PATH}(?: {_PATH})*)",
-        rf"{_GIT}(?P<args>commit --no-edit)",
-        rf"{_GIT}(?P<args>commit(?: --no-edit)? -m) '(?P<message>{_MESSAGE})'",
-    )
-)
 
 
 @dataclass(frozen=True)
@@ -97,7 +84,7 @@ async def base_merge_admission(
     """
     if not is_session_uuid(session_id) or not session_has_capability(db, session_id, CAPABILITY):
         return NOT_ADMITTED
-    call = _lone_git_command(command)
+    call = lone_git_command(command)
     if command and call is None:
         return NOT_ADMITTED
     anchor = cwd
@@ -160,33 +147,66 @@ async def _admitted_tips(db: HubDatabase, task: Task, root: str) -> frozenset[st
     return frozenset(tips)
 
 
-@dataclass(frozen=True)
-class _GitCall:
-    """A git call the closed grammar admits: its `-C` path and its argument tokens."""
+def admitted_parent_tips(db: HubDatabase, task: Task, repo: Path) -> frozenset[str] | None:
+    """Full SHAs of the integration tip and the landing tip, read for candidate intake.
 
-    target: str | None
-    tokens: list[str]
-
-
-def _lone_git_command(command: str | None) -> _GitCall | None:
-    """The one git call a raw command spells in the closed grammar, or None.
-
-    The whole text must fit one form. A second segment, a `cd`, a global option, a
-    redirection, a quote, a comment, a heredoc or a substitution fails the match, so
-    no shell reading decides admission. A `-C` path is the call's target.
+    The synchronous twin of `_admitted_tips`: a leaf of an epic lands in the epic's branch,
+    and every other task lands in the integration branch. None when a tip cannot be read.
     """
-    if not isinstance(command, str):
+    from gobby.agents.team_admission_records import team_binding
+    from gobby.agents.team_lifecycle import task_team
+    from gobby.releases.activation import project_checkout_root
+    from gobby.storage.team_records import EPIC_MODE
+
+    try:
+        checkout = Path(project_checkout_root(db, task.project_id))
+    except ValueError:
         return None
-    for form in _FORMS:
-        match = form.fullmatch(command)
-        if match is None:
-            continue
-        tokens = ["git", *(token for token in match["args"].split(" ") if token != "--")]
-        message = match.groupdict().get("message")
-        if message is not None:
-            tokens.append(message)
-        return _GitCall(target=match["target"], tokens=tokens)
-    return None
+    integration = _integration_branch(checkout)
+    team = task_team(db, task.id)
+    epic = None
+    if team is not None and team.parent_team_id:
+        epic = team_binding(db, team.parent_team_id)
+        if epic is None:
+            return None
+    elif team is not None and team.mode == EPIC_MODE and team.task_id != task.id:
+        epic = team
+    landing = integration
+    if epic is not None:
+        if epic.worktree_path is None:
+            return None
+        if _checkout_branch(Path(epic.worktree_path)) != epic.branch:
+            return None
+        landing = epic.branch
+    tips: set[str] = set()
+    for branch in (integration, landing):
+        if branch is None:
+            return None
+        tip = run_git_command(
+            ["git", "rev-parse", "--verify", "-q", f"refs/heads/{branch}^{{commit}}"], repo
+        )
+        if tip is None:
+            return None
+        tips.add(tip)
+    return frozenset(tips)
+
+
+def _integration_branch(checkout: Path) -> str | None:
+    """The branch the project's main checkout holds, found through the common Git directory."""
+    common = run_git_command(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], checkout
+    )
+    if common is None:
+        return None
+    return _checkout_branch(Path(common).parent)
+
+
+def _checkout_branch(checkout: Path) -> str | None:
+    """The branch a checkout's HEAD names; None when detached or unreadable."""
+    ref = run_git_command(["git", "symbolic-ref", "--quiet", "HEAD"], checkout)
+    if ref is None or not ref.startswith("refs/heads/"):
+        return None
+    return ref.removeprefix("refs/heads/")
 
 
 def _merge_head_arg(args: Sequence[str]) -> str | None:
