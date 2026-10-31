@@ -1,7 +1,7 @@
 //! Node-local hook ingress and durable forwarding.
 
 use super::{ledger::Ledger, receipts};
-use crate::state::NodeServices;
+use crate::{nodes::agents::checkouts, state::NodeServices};
 use axum::{
     body::{Body, Bytes, to_bytes},
     http::{HeaderMap, Request, Response, StatusCode},
@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use std::{
     convert::Infallible,
     error::Error as _,
+    path::PathBuf,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -91,6 +92,9 @@ pub async fn execute(
         || !has_node_key(&node, request.headers()).await
     {
         return node.relay.forward(request).await;
+    }
+    if let Some(cwd) = payload["input_data"]["cwd"].as_str() {
+        checkouts::observe_hook_cwd(node.clone(), PathBuf::from(cwd));
     }
     let (sender, receiver) = oneshot::channel();
     // The forwarding task owns the claim even if axum drops this handler.

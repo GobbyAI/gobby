@@ -1,5 +1,6 @@
 //! Durable node-local agent ownership.
 pub mod agy_gate;
+pub mod checkouts;
 pub mod commands;
 pub mod executable;
 #[cfg(unix)]
@@ -32,7 +33,7 @@ pub struct NodeAgents {
     pub changed: Notify,
     /// Serializes node reports, so a slower report never posts after a newer one.
     pub report_lock: Mutex<()>,
-    /// Compile-only state shape for #24378; populated after a successful registration.
+    /// Checkout roots the hub has accepted from this node. A root is added only after a 2xx.
     pub registered: Mutex<std::collections::BTreeSet<PathBuf>>,
     /// Arrival-ordered turns for the commands that name each run.
     lanes: Arc<lanes::Lanes>,
