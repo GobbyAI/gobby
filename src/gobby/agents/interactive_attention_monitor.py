@@ -12,16 +12,23 @@ from gobby.agents.prompt_detector import PromptDetector, PromptKind
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.hub.machine_routing import is_local_machine
 from gobby.hub.remote_runtime import resolve_terminal_runtime
+from gobby.sessions.transcript_cursor import ClaudeTranscriptCursor
 from gobby.storage.attention import session_attention_entry_id
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 from gobby.terminals.composer_attention import composer_attention_holds
+from gobby.terminals.composer_ledger import (
+    composer_unconsumed_submit_at,
+    record_composer_local_command,
+)
 from gobby.terminals.host_client import HostUnavailableError
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.utils.logging import ThrottledLogger
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.attention import AttentionKind, AttentionStateManager
     from gobby.storage.session_models import Session
@@ -34,6 +41,10 @@ _AGENT_RUN_PAGE_SIZE = 100
 _INTERACTIVE_SESSION_PAGE_SIZE = 100
 _pool_outage_log = ThrottledLogger()
 _host_outage_log = ThrottledLogger()
+
+
+def _claude_local_command_at(transcript_path: str) -> datetime | None:
+    return ClaudeTranscriptCursor.at_eof(transcript_path).latest_local_command_at()
 
 
 class InteractiveAttentionMonitor:
@@ -246,12 +257,36 @@ class InteractiveAttentionMonitor:
                 continue
             if pane_output is None:
                 continue
+            await self._settle_local_command(session, str(row.id))
             await self._sync_interactive_attention(
                 session.id,
                 session.source or "",
                 pane_output,
                 terminal_id=str(row.id),
             )
+
+    async def _settle_local_command(self, session: Session, terminal_id: str) -> None:
+        """Settle a flagged human submit that Claude ran as a local slash command.
+
+        Claude runs typed slash commands natively, so no provider hook records their
+        submit. The transcript is read only while the ledger holds such a submit.
+        """
+        if session.source != "claude" or composer_unconsumed_submit_at(terminal_id) is None:
+            return
+        transcript_path = getattr(session, "transcript_path", None)
+        if not transcript_path:
+            return
+        try:
+            row_at = await asyncio.to_thread(_claude_local_command_at, transcript_path)
+        except Exception:
+            logger.warning(
+                "InteractiveAttentionMonitor: failed to read local command rows for terminal %s",
+                terminal_id,
+                exc_info=True,
+            )
+            return
+        if row_at is not None:
+            record_composer_local_command(terminal_id, row_at=row_at)
 
     async def _sync_interactive_attention(
         self,

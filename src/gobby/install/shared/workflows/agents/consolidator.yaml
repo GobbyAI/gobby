@@ -1,5 +1,5 @@
 name: consolidator
-capabilities: [accept_resume_retype, close_without_work]
+capabilities: [accept_resume_retype, close_without_work, message_assistant]
 task_close_reasons: [moot, superseded]
 respect_task_protections: true
 description: Consolidator seat. Proposes backlog bundles, stale-item retirement and epic moves, and applies Orchestrator-directed folds and retirements.

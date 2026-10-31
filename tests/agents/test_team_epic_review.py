@@ -859,6 +859,7 @@ async def test_only_epic_manager_can_launch_pods(world: TeamWorld) -> None:
     with pytest.raises(TeamAdmissionRefused) as refused:
         await world.admit(outsider, leaf, parent_team_id=team.binding.team_id)
     assert refused.value.code == "pod_parent_invalid"
+    assert "team_id alone" not in str(refused.value)
     single = new_task(world, "Single task")
     single_team = await epic_team(world, single)
     single_run = world.child(leaf, parent=single_team.manager)
@@ -915,9 +916,10 @@ async def test_pod_relaunch_joins_with_matching_parent_and_refuses_mismatch(
             world.child(leaf, parent=team.manager), leaf, pod.team_id, parent_team_id=UNKNOWN_TEAM
         )
     assert refused.value.code == "pod_parent_mismatch"
-    with pytest.raises(TeamAdmissionRefused) as refused:
+    with pytest.raises(TeamAdmissionRefused, match="pass team_id alone") as refused:
         await world.admit(world.child(leaf), leaf, pod.team_id, parent_team_id=team.binding.team_id)
     assert refused.value.code == "pod_parent_invalid"
+    assert await world.admit(world.child(leaf), leaf, pod.team_id) == pod
 
 
 @pytest.mark.asyncio

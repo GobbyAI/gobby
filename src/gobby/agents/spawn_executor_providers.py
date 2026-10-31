@@ -45,6 +45,7 @@ from gobby.agents.srt_runtime import (
     SandboxLaunch,
     SrtRuntimeError,
     prepare_sandbox_launch,
+    record_run_socket_root,
 )
 from gobby.agents.trust import active_codex_launch_models, pre_approve_directory
 from gobby.utils.terminal_output import redact_terminal_output
@@ -165,6 +166,22 @@ def ensure_sandbox_write_directories(declared_paths: list[str], workspace: str) 
     return directories
 
 
+async def _record_sandbox_launch(
+    request: SpawnRequest,
+    spawn_context: PreparedSpawn,
+    launch: SandboxLaunch,
+) -> None:
+    """Record the enforcement and the run socket root that this launch actually produced."""
+    await asyncio.to_thread(_record_actual_sandbox_enforcement, request, spawn_context, launch)
+    if request.session_manager is not None:
+        await asyncio.to_thread(
+            record_run_socket_root,
+            request.session_manager._storage.db,
+            spawn_context.session_id,
+            launch,
+        )
+
+
 async def _prepare_provider_sandbox(
     request: SpawnRequest,
     spawn_context: PreparedSpawn,
@@ -263,9 +280,7 @@ async def _prepare_provider_sandbox(
         )
         if config is None:
             launch = SandboxLaunch(backend="provider-native", enforced=False)
-            await asyncio.to_thread(
-                _record_actual_sandbox_enforcement, request, spawn_context, launch
-            )
+            await _record_sandbox_launch(request, spawn_context, launch)
             return launch
         resolver = None
         if config.enabled and config.backend == "provider-native":
@@ -305,7 +320,7 @@ async def _prepare_provider_sandbox(
             error=error,
         )
     env.update(launch.provider_env)
-    await asyncio.to_thread(_record_actual_sandbox_enforcement, request, spawn_context, launch)
+    await _record_sandbox_launch(request, spawn_context, launch)
     return launch
 
 

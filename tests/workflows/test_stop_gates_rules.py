@@ -73,8 +73,10 @@ def _insert_rule(
     priority: int = 100,
 ) -> str:
     """Insert a test rule into the database."""
+    # Unmarked sessions resolve the default agent, which selects rules by tag:default.
     row = manager.create(
         name=name,
+        tags=["default"],
         definition_json=body.model_dump_json(),
         priority=priority,
         enabled=True,
@@ -1662,6 +1664,7 @@ class TestConsecutiveBlockScoping:
         }
         mgr.create(
             name="block-todowrite-test",
+            tags=["default"],
             definition_json=json.dumps(rule_body),
             source="installed",
             enabled=True,
@@ -1705,6 +1708,7 @@ class TestConsecutiveBlockScoping:
         }
         mgr.create(
             name="block-todowrite-stop-test",
+            tags=["default"],
             definition_json=json.dumps(rule_body),
             source="installed",
             enabled=True,
@@ -1757,6 +1761,7 @@ class TestConsecutiveBlockScoping:
         }
         mgr.create(
             name="block-todowrite-test",
+            tags=["default"],
             definition_json=json.dumps(rule_body),
             source="installed",
             enabled=True,

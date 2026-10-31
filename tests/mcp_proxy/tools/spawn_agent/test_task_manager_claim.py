@@ -37,9 +37,8 @@ def _seat_definition(seat: str) -> AgentDefinitionBody:
             name=seat,
             prompts={"agent": "Synthetic team manager."},
             model="claude-sonnet-5",
+            capabilities=["manage_task_claims", "land_tasks", "accept_resume_retype"],
             task_step_writes=["closing"],
-            # Landing authority is declared in the definition (#25228), as dev-manager.yaml does.
-            capabilities=["land_tasks"],
             workflows=make_agent_workflows(variables={"team_manager": True}),
         )
     return make_agent_definition(
@@ -52,9 +51,9 @@ def _seat_definition(seat: str) -> AgentDefinitionBody:
 
 async def _spawn_task_seat(case: LandingCase, task: Task, mock_runner: MagicMock, seat: str) -> str:
     body = _seat_definition(seat)
-    # Landing authority is read from the installed definition, so the seat must be stored too.
+    # The spawned session's authority is read from the installed row, not the patched body.
     AgentDefinitionManager(case.db).create(
-        seat, body.model_dump(mode="json", exclude_none=True), project_id=case.project_id
+        name=seat, source="custom", definition_json=body.model_dump(mode="json", exclude_none=True)
     )
     runs = LocalAgentRunManager(case.db)
     mock_runner.run_storage = runs
