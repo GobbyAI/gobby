@@ -139,6 +139,8 @@ pub(crate) fn run(
     output_debug_files: bool,
 ) -> anyhow::Result<()> {
     let request = prepared.request;
+    // Evidence bundles the reconciled worktree, so it keeps the unbudgeted reconcile:
+    // a deferred read would bundle rows the worktree has already moved past.
     crate::freshness::ensure_fresh(ctx, crate::freshness::FreshnessScope::Project)?;
     let facts = Arc::new(CodewikiFacts::from_context(ctx.clone()));
     let mut library = EvidenceLibrary::new(&ctx.project_root, request.binding.clone(), facts)

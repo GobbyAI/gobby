@@ -64,21 +64,22 @@ fn ensure_files_fresh(
     ensure_scope_fresh(ctx, disabled, freshness::FreshnessScope::Files(files)).map(drop)
 }
 
-/// Checks freshness for `scope` and returns whether another run held the
-/// project's refresh lock, so the caller can serve the existing index as is.
+/// Checks freshness for `scope`. Returns the whole-project stale paths the check
+/// computed, so grep reads them rather than walking the checkout again; `None` when
+/// the check did not compute them. A busy refresh lock returns an empty set, so the
+/// read serves the existing index as it stands.
 pub(super) fn ensure_scope_fresh(
     ctx: &config::Context,
     disabled: bool,
     scope: freshness::FreshnessScope,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<Vec<String>>> {
     warn_if_freshness_skipped(ctx, disabled);
     if disabled {
-        return Ok(false);
+        return Ok(None);
     }
-    let status = freshness::ensure_fresh(ctx, scope)?;
-    let busy = matches!(status, freshness::FreshnessStatus::SkippedBusy(_));
+    let freshness::ReadFreshness { status, stale } = freshness::ensure_read_fresh(ctx, scope)?;
     warn_if_busy(ctx, status);
-    Ok(busy)
+    Ok(stale)
 }
 
 pub(super) fn ensure_file_fresh(
@@ -459,7 +460,7 @@ fn run() -> anyhow::Result<()> {
         Command::Repair => commands::repair::run(&ctx, format),
         Command::Pin => commands::pin::run(&ctx, format),
         Command::Status => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
+            ensure_project_read_fresh(&ctx, cli.allow_stale)?;
             commands::status::run(&ctx, format)
         }
         Command::Invalidate {
@@ -500,7 +501,7 @@ fn run() -> anyhow::Result<()> {
         Command::Graph {
             command: GraphCommand::Report { top_n },
         } => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
+            ensure_project_read_fresh(&ctx, cli.allow_stale)?;
             commands::graph::report(&ctx, top_n, format)
         }
         Command::Vector {
@@ -548,7 +549,7 @@ fn run() -> anyhow::Result<()> {
         Command::Graph {
             command: GraphCommand::Overview { limit },
         } => {
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
+            ensure_project_read_fresh(&ctx, cli.allow_stale)?;
             commands::graph::overview(&ctx, limit, format)
         }
         Command::Graph {
@@ -577,7 +578,7 @@ fn run() -> anyhow::Result<()> {
                 .as_deref()
                 .map(|file| resolve_exact_file(&ctx, &cwd, file))
                 .transpose()?;
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
+            ensure_project_read_fresh(&ctx, cli.allow_stale)?;
             commands::graph::graph_blast_radius(
                 &ctx,
                 symbol_id.as_deref(),
@@ -593,7 +594,7 @@ fn run() -> anyhow::Result<()> {
             if let Some(GraphViewSeed::File(file)) = &mut args.seed {
                 *file = resolve_exact_file(&ctx, &cwd, file)?;
             }
-            ensure_project_fresh(&ctx, cli.allow_stale)?;
+            ensure_project_read_fresh(&ctx, cli.allow_stale)?;
             commands::graph::view(&ctx, &args, format)
         }
 

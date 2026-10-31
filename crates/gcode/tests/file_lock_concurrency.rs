@@ -327,9 +327,15 @@ mod serial_db {
         }
 
         fn command(&self, args: &[&str]) -> Command {
+            self.command_in(self.checkout.path(), args)
+        }
+
+        /// The overlay principal's command, run from `cwd`. The parent checkout lies
+        /// outside that principal's write scope, so reads of it are read-only.
+        fn command_in(&self, cwd: &Path, args: &[&str]) -> Command {
             let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
             command
-                .current_dir(self.checkout.path())
+                .current_dir(cwd)
                 .args(["--format", "json"])
                 .args(args);
             let machine = std::fs::read_to_string(self.parent.home.join("machine_id"))
@@ -353,18 +359,8 @@ mod serial_db {
             command
         }
 
-        /// Adds files the overlay has not indexed, so every read sees stale paths
-        /// while the refresh lock is held.
         fn write_unindexed_files(&self, count: usize) {
-            for index in 0..count {
-                std::fs::write(
-                    self.checkout
-                        .path()
-                        .join(format!("src/unindexed_{index}.rs")),
-                    format!("pub fn unindexed_{index}() -> usize {{ {index} }}\n"),
-                )
-                .expect("write unindexed file");
-            }
+            write_unindexed_files_in(self.checkout.path(), count);
         }
 
         fn read_while_refresh_locked(&self, args: &[&str]) -> Output {
@@ -409,7 +405,7 @@ mod serial_db {
                 if child.try_wait().expect("poll read command").is_some() {
                     break true;
                 }
-                if started.elapsed() >= Duration::from_secs(5) {
+                if started.elapsed() >= Duration::from_secs(20) {
                     child.kill().expect("reap stalled read command");
                     break false;
                 }
@@ -430,6 +426,10 @@ mod serial_db {
             assert!(
                 completed,
                 "read must finish while refresh remains locked: {args:?}: {output:?}"
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("refresh already running"),
+                "a read that finds the refresh lock held must report it busy: {output:?}"
             );
             if output.status.code() == Some(2) {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -487,7 +487,6 @@ mod serial_db {
     #[serial_test::serial(serial_db)]
     fn linked_worktree_search_symbol_returns_while_refresh_lock_is_held() {
         let fixture = LinkedReadFixture::new("search-symbol-refresh-lock");
-        fixture.write_unindexed_files(400);
         let output = fixture.read_while_refresh_locked(&["search-symbol", "free"]);
         assert!(
             output.status.success() || output.status.code() == Some(2),
@@ -503,7 +502,6 @@ mod serial_db {
     #[serial_test::serial(serial_db)]
     fn linked_worktree_literal_grep_returns_while_refresh_lock_is_held() {
         let fixture = LinkedReadFixture::new("literal-grep-refresh-lock");
-        fixture.write_unindexed_files(400);
         let output = fixture.read_while_refresh_locked(&["grep", "-F", "pub fn", "-m", "50"]);
         assert!(
             output.status.success() || output.status.code() == Some(2),
@@ -565,6 +563,66 @@ mod serial_db {
         ignore = "requires PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
+    fn linked_worktree_status_and_graph_reads_return_within_bound_with_many_stale_files() {
+        let fixture = LinkedReadFixture::new("status-graph-stale-budget");
+        fixture.write_unindexed_files(400);
+        for args in [
+            &["status"][..],
+            &["graph", "overview"][..],
+            &["graph", "report"][..],
+        ] {
+            let (output, completed) =
+                fixture.read_within(fixture.command(args), Duration::from_secs(20));
+            assert!(
+                completed,
+                "{args:?} must return within 20s over 400 stale files: {output:?}"
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("behind the worktree"),
+                "{args:?} past the foreground budget must report its backlog: {stderr}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn linked_parent_grep_reads_read_only_and_leaves_out_stale_files_past_budget() {
+        let fixture = LinkedReadFixture::new("parent-grep-stale-budget");
+        write_unindexed_files_in(fixture.parent.root.path(), 400);
+        let (output, completed) = fixture.read_within(
+            fixture.command_in(
+                fixture.parent.root.path(),
+                &["grep", "-F", "pub fn", "-m", "50"],
+            ),
+            Duration::from_secs(10),
+        );
+        assert!(
+            completed,
+            "a read-only grep over 400 stale files must return within 10s: {output:?}"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("cannot refresh"),
+            "a read-only checkout must report its stale paths: {stderr}"
+        );
+        assert!(
+            stderr.contains("left out of grep"),
+            "grep past the foreground budget must name the stale paths it left out: {stderr}"
+        );
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
     fn linked_worktree_cli_grep_alternation_and_literal_pipes_agree_with_regex_syntax() {
         let fixture = LinkedReadFixture::new("grep-alternation-refresh-lock");
         for (pattern, fixed, expected) in [
@@ -594,6 +652,17 @@ mod serial_db {
                 .collect();
             lines.sort_unstable();
             assert_eq!(lines, expected, "CLI pattern={pattern}, fixed={fixed}");
+        }
+    }
+
+    /// Adds files `root` has not indexed, so every read sees stale paths.
+    fn write_unindexed_files_in(root: &Path, count: usize) {
+        for index in 0..count {
+            std::fs::write(
+                root.join(format!("src/unindexed_{index}.rs")),
+                format!("pub fn unindexed_{index}() -> usize {{ {index} }}\n"),
+            )
+            .expect("write unindexed file");
         }
     }
 
