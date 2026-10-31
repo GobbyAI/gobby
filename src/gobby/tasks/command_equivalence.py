@@ -11,7 +11,7 @@ from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 
-from gobby.config.shell_lexing import ParsedShellCommand
+from gobby.config.shell_lexing import ParsedShellCommand, has_shell_expansion
 from gobby.config.validation_detection import normalize_validation_evidence_command
 from gobby.tasks.validation_launchers import first_executable
 
@@ -59,7 +59,7 @@ def parse_validation_shell(command: str) -> ParsedShellCommand:
             operators.append(raw)
         else:
             # Reject expansion outside single quotes, including inside double quotes.
-            if _has_expansion(raw):
+            if has_shell_expansion(raw):
                 return ParsedShellCommand((), ())
             words = shlex.split(raw)
             if len(words) != 1:
@@ -76,24 +76,6 @@ def parse_validation_shell(command: str) -> ParsedShellCommand:
     if current:
         segments.append(tuple(current))
     return ParsedShellCommand(tuple(segments), tuple(operators))
-
-
-def _has_expansion(word: str) -> bool:
-    quote: str | None = None
-    cursor = 0
-    while cursor < len(word):
-        char = word[cursor]
-        if char == "\\" and quote != "'":
-            cursor += 2
-            continue
-        if char == quote:
-            quote = None
-        elif char in {"'", '"'} and quote is None:
-            quote = char
-        elif char in {"$", "`"} and quote != "'":
-            return True
-        cursor += 1
-    return False
 
 
 def canonical_command(command: str) -> str | None:

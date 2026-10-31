@@ -333,6 +333,28 @@ class ClaudeTranscriptCursor(TranscriptTailCursor):
                 return None
         return None
 
+    def latest_local_command_at(self) -> datetime | None:
+        """Return when the latest user prompt was a local slash command, else ``None``.
+
+        Claude writes a local command as a meta caveat row, then its command and stdout
+        rows. Meta rows are skipped; the first other user row decides. A typed prompt or
+        tool result written after the command means the command is not the latest input.
+        """
+        for record in reversed(self.tail_records()):
+            if record.get("type") != "user" or record.get("isMeta") is True:
+                continue
+            texts = _claude_user_texts(record)
+            if not texts or not texts[0].lstrip().startswith(_CLAUDE_LOCAL_COMMAND_PREFIXES):
+                return None
+            timestamp = record.get("timestamp")
+            if not isinstance(timestamp, str):
+                return None
+            try:
+                return parse_stored_datetime(timestamp)
+            except ValueError:
+                return None
+        return None
+
     def turn_settled(self) -> bool | None:
         """Return whether the last turn ended; ``None`` without a turn record.
 

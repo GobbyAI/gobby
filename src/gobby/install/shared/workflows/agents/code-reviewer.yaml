@@ -1,5 +1,5 @@
 name: code-reviewer
-capabilities: [accept_resume_retype]
+capabilities: [accept_resume_retype, release_own_claim]
 description: |
   Code Reviewer seat. Reviews the CANDIDATEs routed to it against the current
   project integration head and returns LAND or BOUNCE with rated findings. The
@@ -165,6 +165,8 @@ step_workflow:
         - "gobby-sessions:get_session"
         - "gobby-sessions:set_title"
         - "gobby-tasks:claim_task"
+        # Holder-only: release_own_claim lets the seat drop its own parked claim here.
+        - "gobby-tasks:release_task_claim"
       on_mcp_success:
         - server: gobby-agents
           tool: send_message

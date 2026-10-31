@@ -201,6 +201,67 @@ def test_queued_prompt_after_a_settled_gap_clears_its_flagged_enter() -> None:
     assert ledger.read("t1") == _EMPTY
 
 
+def test_local_command_row_settles_a_flagged_only_draft() -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(1))
+    ledger.observe_host_event(_host(2, submit=True))
+
+    ledger.record_local_command("t1", row_at=datetime.now(UTC) + timedelta(seconds=1))
+
+    assert ledger.read("t1") == _EMPTY
+
+
+def test_local_command_row_older_than_the_flagged_submit_stays_a_draft() -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(1))
+    ledger.observe_host_event(_host(2, submit=True))
+
+    ledger.record_local_command("t1", row_at=datetime.now(UTC) - timedelta(minutes=1))
+
+    assert ledger.read("t1") == _DRAFT
+
+
+def test_input_typed_after_a_local_command_submit_stays_a_draft() -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(1))
+    ledger.observe_host_event(_host(2, submit=True))
+    ledger.observe_host_event(_host(3))
+
+    ledger.record_local_command("t1", row_at=datetime.now(UTC) + timedelta(seconds=1))
+
+    assert ledger.read("t1") == _DRAFT
+
+
+def test_local_command_row_does_not_clear_a_live_interrupt_block() -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(1, interrupt="esc"))
+    ledger.observe_host_event(_host(2, submit=True))
+
+    ledger.record_local_command("t1", row_at=datetime.now(UTC) + timedelta(seconds=1))
+
+    assert ledger.read("t1") == LedgerRead("blocked", "interrupt")
+
+
+def test_empty_enter_without_a_local_command_row_stays_a_draft() -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(1, submit=True))
+
+    assert ledger.read("t1") == _DRAFT
+
+
+def test_state_written_before_flagged_at_loads_and_stays_a_draft() -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(1, submit=True))
+    state = ledger.to_state()
+    for entry in state["terminals"].values():
+        entry.pop("flagged_at", None)
+
+    restored = ComposerLedger.from_state(state)
+    restored.record_local_command("t1", row_at=datetime.now(UTC) + timedelta(seconds=1))
+
+    assert restored.read("t1") == _DRAFT
+
+
 def test_flagless_input_stays_a_draft_after_a_queued_prompt() -> None:
     ledger = _tracked()
     ledger.observe_host_event(_host(1, submit=None))

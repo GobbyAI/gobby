@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.agents.team_lifecycle import _binding
+from gobby.agents.team_admission_records import binding_from_record
 
 pytestmark = pytest.mark.unit
 
 
 def test_record_without_reviewers_or_primaries_still_binds() -> None:
     """Teams the daemon admitted before any seat bound carry no reviewers or primaries key."""
-    binding = _binding(
+    binding = binding_from_record(
         {
             "team_id": "team-1",
             "task_id": "task-1",

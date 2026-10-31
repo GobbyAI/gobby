@@ -14,6 +14,7 @@ import pytest
 import gobby.mcp_proxy.tools.tasks._claim_release as claim_release
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import _claim_release, create_task_registry
+from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -26,6 +27,8 @@ from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.fixtures.landing_case import grant_orchestrator
 
 pytestmark = pytest.mark.unit
+
+SEAT_ROLE = "fixture-parked-seat"
 
 
 @dataclass
@@ -189,6 +192,46 @@ async def test_release_dirty_check_runs_off_the_event_loop(
 
 @pytest.mark.asyncio
 async def test_refuses_non_coordinator(world: ReleaseWorld) -> None:
+    result = await world.release(world.receiver)
+    assert result.get("error_code") == "coordinator_required", result
+    assert world.tasks.get_task(world.task.id).claimed_by_session_id == world.holder
+
+
+def _declare_seat(world: ReleaseWorld, seat: str, capabilities: list[str]) -> None:
+    """Bind a seat to an enabled definition that declares exactly these capabilities."""
+    AgentDefinitionManager(world.db).create(
+        SEAT_ROLE,
+        {
+            "name": SEAT_ROLE,
+            "version": "1.0",
+            "prompts": {"agent": "Hold a parked claim."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "capabilities": capabilities,
+        },
+        project_id=world.task.project_id,
+    )
+    world.variables.merge_variables(seat, {"_agent_type": SEAT_ROLE})
+
+
+@pytest.mark.asyncio
+async def test_holder_declaring_release_own_claim_releases_its_claim(world: ReleaseWorld) -> None:
+    _declare_seat(world, world.holder, ["release_own_claim"])
+    result = await world.release(world.holder)
+    assert result.get("success") is True, result
+    assert world.tasks.get_task(world.task.id).claimed_by_session_id is None
+
+
+@pytest.mark.asyncio
+async def test_holder_without_release_own_claim_is_refused(world: ReleaseWorld) -> None:
+    _declare_seat(world, world.holder, ["accept_resume_retype"])
+    result = await world.release(world.holder)
+    assert result.get("error_code") == "coordinator_required", result
+    assert world.tasks.get_task(world.task.id).claimed_by_session_id == world.holder
+
+
+@pytest.mark.asyncio
+async def test_non_holder_declaring_release_own_claim_is_refused(world: ReleaseWorld) -> None:
+    _declare_seat(world, world.receiver, ["release_own_claim"])
     result = await world.release(world.receiver)
     assert result.get("error_code") == "coordinator_required", result
     assert world.tasks.get_task(world.task.id).claimed_by_session_id == world.holder

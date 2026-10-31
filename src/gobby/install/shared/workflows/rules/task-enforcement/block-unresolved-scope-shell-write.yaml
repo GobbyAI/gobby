@@ -11,6 +11,10 @@ rules:
       or event.data.get('canonical_git_checkout_mutation'))
       and event.data.get('canonical_repo_mutation')
       and event.data.get('canonical_repo_mutation_scope_unknown')
+      and not (
+        session_has_capability(event.metadata.get('_platform_session_id'), 'merge_base_commits')
+        and base_merge_git_step
+      )
     effects:
       - type: block
         reason: >-
