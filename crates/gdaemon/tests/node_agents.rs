@@ -1,5 +1,7 @@
 #![cfg(unix)]
 
+#[path = "node_support/checkout_tests.rs"]
+mod checkout_tests;
 #[path = "node_support/fake_gterm.rs"]
 mod fake_gterm;
 #[path = "node_support/fd_constructor_tests.rs"]

@@ -32,6 +32,8 @@ pub struct NodeAgents {
     pub changed: Notify,
     /// Serializes node reports, so a slower report never posts after a newer one.
     pub report_lock: Mutex<()>,
+    /// Compile-only state shape for #24378; populated after a successful registration.
+    pub registered: Mutex<std::collections::BTreeSet<PathBuf>>,
     /// Arrival-ordered turns for the commands that name each run.
     lanes: Arc<lanes::Lanes>,
     /// Runs whose preparation task is still live.
@@ -74,6 +76,7 @@ impl NodeAgents {
             state: Mutex::new(state),
             changed,
             report_lock: Mutex::new(()),
+            registered: Mutex::default(),
             lanes: Arc::default(),
             preparing: Default::default(),
             #[cfg(unix)]
