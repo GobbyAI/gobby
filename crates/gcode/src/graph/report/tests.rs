@@ -7,7 +7,10 @@ use std::time::SystemTime;
 use super::generation::{
     generate_report_from_snapshot, generate_report_from_snapshot_with_options,
 };
-use super::loading::{CODE_COMMUNITIES_INPUT, MISSING_COMMUNITIES_DETAIL, community_input};
+use super::loading::{
+    CODE_COMMUNITIES_INPUT, ENGINE_RESULT_CAP, MISSING_COMMUNITIES_DETAIL, community_input,
+    read_to_completion,
+};
 use super::queries::{
     report_bridge_edges_query, report_code_edge_counts_query, report_hotspots_query,
     report_incoming_call_hotspots_query, report_node_counts_query, report_target_frequencies_query,
@@ -834,6 +837,21 @@ fn call_queries_keep_foreign_file_calls_by_their_own_version() {
             "{surface}: foreign-file CALLS must be admitted by their own version: {query}"
         );
     }
+}
+
+#[test]
+fn unlimited_reads_page_past_engine_result_cap() {
+    // The engine truncates each result set at RESULTSET_SIZE. An unlimited read
+    // must page to completion, or rows past the cap vanish without an error.
+    let rows: Vec<usize> = (0..ENGINE_RESULT_CAP + 1).collect();
+    let engine = |skip: usize, limit: usize| -> anyhow::Result<Vec<usize>> {
+        let start = skip.min(rows.len());
+        let end = (start + limit.min(ENGINE_RESULT_CAP)).min(rows.len());
+        Ok(rows[start..end].to_vec())
+    };
+    let read = read_to_completion(engine).expect("paged read");
+    assert_eq!(read.len(), rows.len(), "rows past the engine cap must be read");
+    assert_eq!(read, rows);
 }
 
 /// Fixture nodes for the live hotspot test. `a.hub.old` replaces `a.hub` and

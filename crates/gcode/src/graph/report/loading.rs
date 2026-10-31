@@ -399,5 +399,15 @@ fn collect_report_rows<T>(rows: &[Row], label: &str, mapper: impl Fn(&Row) -> Op
     values
 }
 
+/// Engine result cap (RESULTSET_SIZE). A read past it truncates silently.
+pub(super) const ENGINE_RESULT_CAP: usize = 10_000;
+
+/// Reads one page. Stub: the first page only, which is the pre-change behavior.
+pub(super) fn read_to_completion<T>(
+    mut page: impl FnMut(usize, usize) -> anyhow::Result<Vec<T>>,
+) -> anyhow::Result<Vec<T>> {
+    page(0, ENGINE_RESULT_CAP)
+}
+
 // SPIKE-PARITY
 fn spike_head() -> bool { std::env::var_os("SPIKE_HEAD").is_some() }
