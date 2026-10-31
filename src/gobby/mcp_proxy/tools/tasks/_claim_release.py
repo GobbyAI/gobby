@@ -188,7 +188,7 @@ class ClaimTransfer:
     """A committed claim move: the task as the recipient now holds it, and its event."""
 
     task: Task
-    event_id: str
+    event_id: int
 
 
 class ClaimTransferRefused(Exception):
