@@ -2,6 +2,8 @@ use super::*;
 use std::path::PathBuf;
 use std::time::Instant;
 
+mod source_integrity_serial_db;
+
 #[derive(Default)]
 struct CollectingProgress {
     events: Vec<String>,
@@ -768,7 +770,11 @@ pub(crate) mod serial_db {
     }
 
     /// Returns `(vectors_synced, attempt_is_null)` for version `hash` of `FILE`.
-    fn vector_flags(conn: &mut postgres::Client, project_id: &str, hash: &str) -> (bool, bool) {
+    pub(super) fn vector_flags(
+        conn: &mut postgres::Client,
+        project_id: &str,
+        hash: &str,
+    ) -> (bool, bool) {
         let project_uuid = db::id_param(project_id).expect("uuid");
         let row = conn
             .query_one(
@@ -781,7 +787,7 @@ pub(crate) mod serial_db {
         (row.get(0), row.get(1))
     }
 
-    fn unique_project_id() -> String {
+    pub(super) fn unique_project_id() -> String {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("epoch")
@@ -801,7 +807,11 @@ pub(crate) mod serial_db {
     impl ProjectCleanup {
         /// Clears leftovers, seeds this machine's project state, and removes
         /// the project's rows on drop.
-        fn new(conn: &mut postgres::Client, database_url: &str, project_id: &str) -> Self {
+        pub(super) fn new(
+            conn: &mut postgres::Client,
+            database_url: &str,
+            project_id: &str,
+        ) -> Self {
             cleanup(conn, project_id).expect("pre-clean test project rows");
             let machine_id = gobby_core::machine::read_local_machine_id().expect("machine");
             api::upsert_project_stats(
