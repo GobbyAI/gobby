@@ -201,8 +201,9 @@ def own_team_tab(session_manager: SessionManager, caller_ref: Any, agent: Any) -
     Placement admits an autonomous fresh seat only where its spawn is for the caller's own
     epic team: the caller is a running team manager whose definition permits the target,
     and the caller's team is an epic. Admission owns the runbook's declared tab title.
-    A single-task team and any other spawn get no tab.
+    A single-task team gets its tab only to relaunch a lost seat; other spawns get none.
     """
+    from gobby.agents.team_dispatch import missing_team_seat
     from gobby.agents.team_lifecycle import seat_team
     from gobby.storage.team_records import EPIC_MODE
 
@@ -216,7 +217,9 @@ def own_team_tab(session_manager: SessionManager, caller_ref: Any, agent: Any) -
     if definition is None or not definition.may_spawn(agent):
         return None
     team = seat_team(session_manager.db, caller.id)
-    if team is None or team.mode != EPIC_MODE:
+    if team is None:
+        return None
+    if team.mode != EPIC_MODE and not missing_team_seat(session_manager.db, team, agent):
         return None
     return team.tab_title
 

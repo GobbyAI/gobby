@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.agents.team_dispatch import dispatch_for_caller
+from gobby.agents.team_dispatch import dispatch_for_caller, missing_team_seat
 from gobby.agents.team_lifecycle import (
     TeamAdmissionRefused,
     TeamBinding,
@@ -1068,3 +1068,106 @@ async def test_epic_tip_rejection_repairs_through_leaf(world: TeamWorld) -> None
     landed = tasks.get_task(epic.id)
     assert approved(team.db, epic, "review")
     assert (landed.review_fail_count, landed.escalated_at) == (1, None)
+
+
+@pytest.mark.asyncio
+async def test_pod_claim_holder_outside_the_chain_reclaims_its_leaf(world: TeamWorld) -> None:
+    epic = new_task(world, "Pod reclaim", epic=True)
+    leaf = new_task(world, "Pod reclaim leaf", parent=epic)
+    team = await epic_team(world, epic)
+    run = world.child(leaf, parent=team.manager)
+    await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+    tasks = LocalTaskManager(team.db)
+    tools = create_task_registry(tasks)
+
+    async def claim(session_id: str) -> dict[str, Any]:
+        with session_context_for_test(session_id):
+            return cast(dict[str, Any], await tools.call("claim_task", {"task_id": leaf.id}))
+
+    # A seat outside the pod's chain holds the claim, as a seat spawned outside the team does.
+    outside = world.child(leaf)
+    holder = running_seat(world, outside, "developer")
+    tasks.claim_task(leaf.id, holder.id, force=True)
+    reclaimed = await claim(holder.id)
+    assert reclaimed.get("success") is True, reclaimed
+    assert tasks.get_task(leaf.id).claimed_by_session_id == holder.id
+
+    # A session outside the team's chain that does not hold the claim stays refused.
+    stranger = running_seat(world, outside, "developer")
+    refused = await claim(stranger.id)
+    assert refused.get("error_code") == "TASK_CLAIM_CONFLICT", refused
+    assert tasks.get_task(leaf.id).claimed_by_session_id == holder.id
+
+
+@pytest.mark.asyncio
+async def test_pod_manager_relaunches_a_lost_seat_into_the_pod_tab(world: TeamWorld) -> None:
+    epic = new_task(world, "Pod relaunch", epic=True)
+    leaf = new_task(world, "Pod relaunch leaf", parent=epic)
+    team = await epic_team(world, epic)
+    run = world.child(leaf, parent=team.manager)
+    pod_tab = f"Dev Pod - #{leaf.seq_num}"
+    pod = await world.admit(run, leaf, parent_team_id=team.binding.team_id, tab_title=pod_tab)
+    manager = running_seat(world, run, "dev-manager")
+    lost = running_seat(world, run, "developer")
+    runs = LocalAgentRunManager(team.db)
+    assert lost.agent_run_id is not None
+    assert runs.fail(lost.agent_run_id, "pane lost") is not None
+    runs.expire_sessions_for_terminal_runs()
+    sessions = SessionManager(team.db)
+
+    # The lost developer resumes as itself, and the pod's tab admits its placement.
+    assert own_seat_resume(sessions, manager.id, "developer", lost.id)
+    assert own_team_tab(sessions, manager.id, "developer") == pod_tab
+
+    # A fresh developer relaunches the missing seat on the pod's tree and joins the pod's chain.
+    scope = dispatch_for_caller(
+        team.db,
+        manager.id,
+        agent_body=None,
+        agent="developer",
+        task_id=None,
+        checkout_mode=None,
+        branch_name=None,
+        base_branch=None,
+        worktree_id=None,
+    )
+    assert scope is not None and scope.team_id == pod.team_id
+    assert scope.worktree_id == pod.worktree_id
+    launches = len(world.launches)
+    relaunch = await world.direct_spawn(manager.id, agent="developer", task_id=leaf.id)
+    assert relaunch.get("success") is True, relaunch
+    assert len(world.launches) == launches + 1
+
+    # The real launch reserves a pending run under the manager before pickup, with no child yet.
+    # The stub records none, so model that row: the relaunch in flight holds the seat.
+    pending = runs.create(
+        parent_session_id=manager.id, provider="claude", prompt="relaunch", agent_name="developer"
+    )
+    assert pending.child_session_id is None
+    assert missing_team_seat(team.db, pod, "developer") is False
+    assert own_team_tab(sessions, manager.id, "developer") is None
+    early = await world.direct_spawn(manager.id, agent="developer", task_id=leaf.id)
+    assert early.get("error_code") == "team_manager_scope", early
+    assert len(world.launches) == launches + 1
+
+    # A taskless reviewer relaunch in flight holds its lost reviewer seat the same way.
+    reviewer = running_seat(world, manager, "code-reviewer")
+    assert reviewer.agent_run_id is not None
+    assert runs.fail(reviewer.agent_run_id, "pane lost") is not None
+    runs.expire_sessions_for_terminal_runs()
+    assert missing_team_seat(team.db, pod, "code-reviewer") is True
+    runs.create(
+        parent_session_id=manager.id, provider="claude", prompt="review", agent_name="code-reviewer"
+    )
+    assert missing_team_seat(team.db, pod, "code-reviewer") is False
+
+    replacement = running_seat(world, manager, "developer")
+    assert seat_team(team.db, replacement.id) == pod
+    tools = create_task_registry(LocalTaskManager(team.db))
+    with session_context_for_test(replacement.id):
+        claimed = await tools.call("claim_task", {"task_id": leaf.id})
+    assert claimed.get("success") is True, claimed
+
+    # While the relaunched seat lives, the manager cannot add a second developer.
+    again = await world.direct_spawn(manager.id, agent="developer", task_id=leaf.id)
+    assert again.get("error_code") == "team_manager_scope", again
