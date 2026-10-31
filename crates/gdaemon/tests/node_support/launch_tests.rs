@@ -1,8 +1,9 @@
 //! Frozen launch goldens and isolated node/host acceptance tests for #24375.
 use super::*;
-use gobby_daemon::node_commands::SpawnPayload;
+use gobby_daemon::node_commands::{CONTRACT_VERSION, SpawnPayload};
 use gobby_daemon::nodes::agents::{
     agy_gate::ensure_agy_support,
+    commands,
     launch::{LaunchContext, launch_with, reconcile, watch_exits},
     provider_command::build_command,
     provider_env::{EnvInputs, build_env},
@@ -350,6 +351,38 @@ fn codex_prunes_stale_projects_only_when_trust_is_pending() -> Result<()> {
             "stale-project pruning must depend on pending trust paths (pending={pending})"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn spawn_refuses_an_unresolvable_external_root_before_accepting() -> Result<()> {
+    let mut case = LaunchFixture::build(false).await?;
+    let missing = case.tree.path("home").join("absent-root");
+    case.payload.run_id = "run-missing-root".into();
+    case.payload.sandbox.extra_write_paths = vec![missing.display().to_string()];
+    let frame = json!({
+        "type": "command",
+        "v": CONTRACT_VERSION,
+        "request_id": "spawn-missing-root",
+        "command": "agent.spawn",
+        "payload": case.payload,
+    });
+    let runs_before = case.agents.state.lock().await.runs.len();
+    let reply = commands::dispatch(case.agents.clone(), Arc::new(case.context), frame).await;
+    assert_eq!(reply["ok"], false, "{reply}");
+    assert_eq!(reply["error"]["code"], "invalid_write_grant", "{reply}");
+    assert_eq!(reply["error"]["stage"], "none", "{reply}");
+    let message = reply["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("cannot resolve"), "{reply}");
+    assert!(message.contains(&missing.display().to_string()), "{reply}");
+    let state = case.agents.state.lock().await;
+    assert!(!state.runs.contains_key("run-missing-root"));
+    assert_eq!(state.runs.len(), runs_before);
+    drop(state);
+    let persisted = persisted_state(&case.tree.path("gobby_home"))?;
+    assert!(!persisted.runs.contains_key("run-missing-root"));
+    let requests = case.host.requests();
+    assert!(requests.iter().all(|request| request["method"] != "spawn"));
     Ok(())
 }
 

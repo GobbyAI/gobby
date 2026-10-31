@@ -15,7 +15,7 @@ fn accepts_an_existing_directory_outside_gobby_state() {
     let home = TempDir::new().unwrap();
     let root = TempDir::new().unwrap();
     let gobby = home.path().join(".gobby");
-    check(&[text(root.path())], &gobby, home.path()).expect("an existing directory is grantable");
+    assert_eq!(check(&[text(root.path())], &gobby, home.path()), Ok(()));
 }
 
 #[test]
