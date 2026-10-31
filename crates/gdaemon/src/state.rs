@@ -103,16 +103,16 @@ impl NodeServices {
                 other => other.to_owned(),
             },
         };
-        Ok(Some((
-            Arc::new(Self {
-                bootstrap_path: path.to_owned(),
-                relay,
-                hook_ledger: crate::nodes::hooks::ledger::Ledger::new(home.join("hooks/inbox")),
-                agents: Arc::new(crate::nodes::agents::NodeAgents::open(home)?),
-                launch: Arc::new(launch),
-            }),
-            claim,
-        )))
+        let node = Arc::new(Self {
+            bootstrap_path: path.to_owned(),
+            relay,
+            hook_ledger: crate::nodes::hooks::ledger::Ledger::new(home.join("hooks/inbox")),
+            agents: Arc::new(crate::nodes::agents::NodeAgents::open(home)?),
+            launch: Arc::new(launch),
+        });
+        // Agent background work reaches the relay through this weak back-reference.
+        let _ = node.agents.services.set(Arc::downgrade(&node));
+        Ok(Some((node, claim)))
     }
 }
 

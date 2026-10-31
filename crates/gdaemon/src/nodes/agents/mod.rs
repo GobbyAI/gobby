@@ -1,6 +1,7 @@
 //! Durable node-local agent ownership.
 pub mod agy_gate;
 pub mod checkouts;
+#[cfg(unix)]
 pub mod codex_prompt;
 pub mod commands;
 pub mod executable;
@@ -38,6 +39,8 @@ pub struct NodeAgents {
     pub registered: Mutex<std::collections::BTreeSet<PathBuf>>,
     /// Checkout roots with a registration in flight. The flag records a hook that arrived during it.
     pub checkout_attempts: Mutex<std::collections::BTreeMap<PathBuf, bool>>,
+    /// The node's services, set once they exist. Background delivery reaches the hub relay here.
+    pub services: std::sync::OnceLock<std::sync::Weak<crate::state::NodeServices>>,
     /// Arrival-ordered turns for the commands that name each run.
     lanes: Arc<lanes::Lanes>,
     /// Runs whose preparation task is still live.
@@ -82,6 +85,7 @@ impl NodeAgents {
             report_lock: Mutex::new(()),
             registered: Mutex::default(),
             checkout_attempts: Mutex::default(),
+            services: Default::default(),
             lanes: Arc::default(),
             preparing: Default::default(),
             #[cfg(unix)]

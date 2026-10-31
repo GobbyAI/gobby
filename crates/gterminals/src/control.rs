@@ -31,6 +31,8 @@ pub enum ControlError {
     },
     #[error("host epoch changed: expected {expected}, got {actual}")]
     EpochChanged { expected: String, actual: String },
+    #[error("snapshot_mode_mismatch: requested {expected}, host replied {actual}")]
+    SnapshotModeMismatch { expected: String, actual: String },
     #[error("malformed host line: {0}")]
     Malformed(String),
     /// A request over the ceiling, refused before any byte is written.
@@ -109,8 +111,8 @@ pub struct Snapshot {
     pub mode: String,
     pub text: String,
     pub truncated: bool,
-    pub dropped_bytes: usize,
-    pub total_bytes: usize,
+    pub dropped_bytes: u64,
+    pub total_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -427,15 +429,42 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
         }
     }
 
-    // Compile-only shape for the tests-first snapshot contract (#24379).
+    /// Reads a bounded snapshot of one host terminal. A reply in another mode is refused.
     pub async fn snapshot(
         &mut self,
-        _host_terminal_id: &str,
-        _mode: &str,
-        _max_bytes: usize,
-        _max_lines: usize,
+        host_terminal_id: &str,
+        mode: &str,
+        max_bytes: usize,
+        max_lines: usize,
     ) -> Result<Snapshot, ControlError> {
-        Err(ControlError::NotAuthenticated)
+        let reply = self
+            .request(
+                "snapshot",
+                json!({
+                    "host_terminal_id": host_terminal_id,
+                    "mode": mode,
+                    "max_bytes": max_bytes,
+                    "max_lines": max_lines,
+                }),
+            )
+            .await?;
+        let actual = reply_str(&reply, "mode")?;
+        if actual != mode {
+            return Err(ControlError::SnapshotModeMismatch {
+                expected: mode.into(),
+                actual,
+            });
+        }
+        Ok(Snapshot {
+            mode: actual,
+            text: reply_str(&reply, "text")?,
+            truncated: reply
+                .get("truncated")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| ControlError::Malformed("truncated".into()))?,
+            dropped_bytes: reply_u64(&reply, "dropped_bytes")?,
+            total_bytes: reply_u64(&reply, "total_bytes")?,
+        })
     }
 
     pub async fn hello(&mut self, control_token: &str) -> Result<Hello, ControlError> {

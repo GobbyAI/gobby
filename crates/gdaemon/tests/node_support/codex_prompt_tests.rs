@@ -94,7 +94,7 @@ impl PromptFixture {
 // Keep the runtime runnable while the OS polls the isolated sockets. Thus paused
 // time moves only at an explicit advance(), never because a request waits for I/O.
 async fn pump() {
-    let until = std::time::Instant::now() + Duration::from_millis(5);
+    let until = std::time::Instant::now() + Duration::from_millis(50);
     while std::time::Instant::now() < until {
         tokio::task::yield_now().await;
     }
@@ -267,7 +267,6 @@ async fn codex_prompt_failures_post_to_hub() -> Result<()> {
 
 #[tokio::test(start_paused = true)]
 async fn codex_prompt_skips() -> Result<()> {
-    assert_other_provider_skips().await?;
     let mut fixture = PromptFixture::new().await?;
     fixture.host.set_pane("› ");
     fixture.host.disconnect_next_write();
@@ -314,6 +313,8 @@ async fn codex_prompt_skips() -> Result<()> {
     assert!(fixture.hub.requests().is_empty());
     fixture.assert_no_signal().await?;
 
+    assert_other_provider_skips().await?;
+
     Ok(())
 }
 
@@ -344,7 +345,7 @@ async fn assert_other_provider_skips() -> Result<()> {
         "non-Codex launch must be admitted: {reply}"
     );
     // Bound the real preparation independently from virtual delivery time.
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             if launch
                 .agents

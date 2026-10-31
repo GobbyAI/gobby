@@ -423,7 +423,10 @@ async fn prelaunch(
             LaunchFailure::new(ExitReason::PrepareFailed, format!("prepare task: {error}"))
         })??,
     };
-    start_planned(agents, payload, &payload.run_id, &cwd, argv, env).await
+    start_planned(agents, payload, &payload.run_id, &cwd, argv, env).await?;
+    #[cfg(unix)]
+    super::codex_prompt::schedule(agents, payload);
+    Ok(())
 }
 
 fn timeout_failure() -> LaunchFailure {
