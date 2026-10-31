@@ -303,9 +303,9 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
 
     async def _expire_stale_sessions(self, config: SessionLifecycleConfig) -> int:
         """Run the full session expiry pipeline, including zero-message cleanup."""
-        # First, pause active sessions that have been idle too long
+        # First, idle active sessions that have been inactive too long
         # This catches orphaned sessions that never got AFTER_AGENT hook
-        paused = self.session_manager.pause_inactive_active_sessions(
+        idled = self.session_manager.idle_inactive_active_sessions(
             timeout_minutes=config.active_session_pause_minutes
         )
 
@@ -340,7 +340,7 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
         fast_expired = self.session_manager.expire_empty_sessions(timeout_hours=2)
         pruned = self.session_manager.prune_empty_sessions(min_age_hours=1)
 
-        return paused + orphaned + expired + fast_expired + pruned
+        return idled + orphaned + expired + fast_expired + pruned
 
     def _cleanup_prompt_files(self, max_age_seconds: int = 3600) -> int:
         """Delete prompt files older than max_age_seconds.

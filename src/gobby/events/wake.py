@@ -197,7 +197,7 @@ class WakeDispatcher:
         recovery_safe: bool,
     ) -> tuple[str, ...]:
         """Run initial reconciliation, then enable the same policy for later wakes."""
-        paused = await reconcile_restart_stale_sessions(
+        idled = await reconcile_restart_stale_sessions(
             session_manager=self._session_manager,
             terminal_manager=self._terminal_manager,
             activity_probe=self._activity_probe,
@@ -209,7 +209,7 @@ class WakeDispatcher:
         if recovery_safe and isinstance(restart_horizon_ms, int):
             self._restart_horizon_ms = restart_horizon_ms
             self._restart_excluded_session_ids = excluded_session_ids
-        return paused
+        return idled
 
     def bind_owner_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Confine wakes to the daemon loop that owns the per-session locks."""
@@ -425,12 +425,12 @@ class WakeDispatcher:
                 if self._lifecycle_refresh is not None:
                     try:
                         await self._lifecycle_refresh(session_id)
-                        idle = await self._pause_idle_prompt(session_id)
+                        idle = await self._reconcile_idle_prompt(session_id)
                     except asyncio.CancelledError:
                         raise
                     except Exception:
                         idle = "error"
-                    if idle == "paused":
+                    if idle == "idle":
                         # Reconciliation proved an idle composer; dispatch now.
                         continue
             delay = min(delay * 2, COMPOSER_RETRY_MAX_SECONDS)
@@ -440,13 +440,13 @@ class WakeDispatcher:
         """Sleep between composer retries; tests replace this to avoid real time."""
         await asyncio.sleep(delay)
 
-    async def _pause_idle_prompt(self, session_id: str) -> str:
+    async def _reconcile_idle_prompt(self, session_id: str) -> str:
         """Drop active at an idle empty prompt; return the reconcile outcome.
 
         ``lifecycle_refresh`` only flushes the transcript. A provider turn can
         end on screen while the row stays active, and the retry would then
         decline ``session_active`` again. Two idle reads plus an exact
-        compare-and-set pause the row before that retry.
+        compare-and-set idle the row before that retry.
         """
         probe = self._activity_probe
         if probe is None:
@@ -481,7 +481,7 @@ class WakeDispatcher:
             return
         refreshed = time.monotonic()
         try:
-            idle = await self._pause_idle_prompt(session_id)
+            idle = await self._reconcile_idle_prompt(session_id)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -509,7 +509,7 @@ class WakeDispatcher:
             return
         finished = time.monotonic()
         skipped = result.get("skipped")
-        # The refresh may have unpaused the row only to find a composer that was
+        # The refresh may have idled the row only to find a composer that was
         # not confirmed empty: the withheld message still owes a retry.
         if skipped == "session_active":
             self._schedule_composer_retry(session_id, priority=priority)
@@ -594,10 +594,10 @@ class WakeDispatcher:
                     session = reconciled
             if getattr(session, "status", None) == "active":
                 # A Claude turn that ended at an empty prompt leaves its row active. The
-                # deferred retry pauses such a row the same way; a direct wake takes it now.
+                # deferred retry idles such a row the same way; a direct wake takes it now.
                 if (
                     getattr(session, "source", None) == "claude"
-                    and await self._pause_idle_prompt(session_id) == "paused"
+                    and await self._reconcile_idle_prompt(session_id) == "idle"
                 ):
                     session = await self._run_db(self._session_manager.get, session_id)
             if getattr(session, "status", None) == "active":

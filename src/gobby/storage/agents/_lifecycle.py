@@ -347,8 +347,13 @@ class _AgentRunLifecycleMixin:
         self: _AgentRunLifecycleHost,
         run: AgentRun,
     ) -> int:
-        """Pause parked sessions and expire sessions for genuine terminal outcomes."""
-        status = "paused" if run.terminal_reason == "daemon_stop" else "expired"
+        """Idle parked sessions and expire sessions for genuine terminal outcomes."""
+        status = "idle" if run.terminal_reason == "daemon_stop" else "expired"
+        statuses = [
+            live_status
+            for live_status in LIVE_SESSION_STATUS_ORDER
+            if status != "idle" or live_status not in {"paused", "interrupted"}
+        ]
         now = utc_now()
         rows = self.db.execute(
             """
@@ -360,7 +365,7 @@ class _AgentRunLifecycleMixin:
               AND agent_run_id = %s
             FOR UPDATE OF sessions
             """,
-            (list(LIVE_SESSION_STATUS_ORDER), run.id),
+            (statuses, run.id),
         ).fetchall()
         cursor = self.db.execute(
             """
@@ -370,7 +375,7 @@ class _AgentRunLifecycleMixin:
             WHERE status = ANY(%s)
               AND agent_run_id = %s
             """,
-            (status, now, list(LIVE_SESSION_STATUS_ORDER), run.id),
+            (status, now, statuses, run.id),
         )
         if self._status_notifier is not None:
             for row in rows:

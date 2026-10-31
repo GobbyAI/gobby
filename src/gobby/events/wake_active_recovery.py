@@ -98,7 +98,7 @@ async def reconcile_restart_stale_session(
     restart_horizon_ms: int | None,
     excluded_session_ids: frozenset[str],
 ) -> Session | None:
-    """Pause one restart-stale row after two activity reads and an exact CAS."""
+    """Idle one restart-stale row after two activity reads and an exact CAS."""
     if observed.id in excluded_session_ids or not session_precedes_restart_horizon(
         observed,
         restart_horizon_ms,
@@ -122,7 +122,7 @@ async def reconcile_restart_stale_session(
     return cast(
         "Session | None",
         await run_db(
-            session_manager._pause_restart_stale_active,
+            session_manager._idle_restart_stale_active,
             observed.id,
             observed_updated_at=observed.updated_at,
             restart_horizon_ms=restart_horizon_ms,
@@ -147,14 +147,14 @@ async def reconcile_idle_prompt_session(
     activity_probe: ActivityProbe,
     run_db: RunDb,
 ) -> str:
-    """Pause an active row whose provider reads an idle, empty composer.
+    """Idle an active row whose provider reads an idle, empty composer.
 
     Two agreeing reads, then an exact ``updated_at`` compare-and-set. Unlike
     restart recovery, the row does not have to predate a daemon restart: a
     finished turn can leave ``sessions.status`` active while the pane is
-    already back at the prompt. Only a positive empty composer pauses: an
-    unknown composer may hide a draft, and a paused row accepts terminal
-    input (#23102). Returns ``"paused"`` or the reason the row stayed active.
+    already back at the prompt. Only a positive empty composer permits recovery:
+    an unknown composer may hide a draft, and an idle row accepts terminal
+    input (#23102). Returns ``"idle"`` or the reason the row stayed active.
     """
     if observed.status != "active":
         return "not_active"
@@ -170,12 +170,12 @@ async def reconcile_idle_prompt_session(
         or current.updated_at != observed.updated_at
     ):
         return "row_changed"
-    paused = await run_db(
-        session_manager._pause_idle_prompt_active,
+    idle = await run_db(
+        session_manager._idle_prompt_active,
         observed.id,
         observed_updated_at=observed.updated_at,
     )
-    return "row_changed" if paused is None else "paused"
+    return "row_changed" if idle is None else "idle"
 
 
 async def reconcile_restart_stale_sessions(
@@ -188,7 +188,7 @@ async def reconcile_restart_stale_sessions(
     excluded_session_ids: frozenset[str],
     recovery_safe: bool,
 ) -> tuple[str, ...]:
-    """Snapshot active candidates, reconcile safe rows, and return paused IDs."""
+    """Snapshot active candidates, reconcile safe rows, and return idled IDs."""
     if not recovery_safe or activity_probe is None:
         return ()
 
@@ -200,7 +200,7 @@ async def reconcile_restart_stale_sessions(
         )
 
     candidates = await run_db(snapshot_candidates)
-    paused: list[str] = []
+    idled: list[str] = []
     for observed in candidates:
         if observed.id in excluded_session_ids or not session_precedes_restart_horizon(
             observed,
@@ -230,5 +230,5 @@ async def reconcile_restart_stale_sessions(
             excluded_session_ids=excluded_session_ids,
         )
         if updated is not None:
-            paused.append(updated.id)
-    return tuple(paused)
+            idled.append(updated.id)
+    return tuple(idled)

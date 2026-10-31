@@ -607,7 +607,7 @@ async def test_post_restart_codex_idle_prompt_replays_one_queued_wake(
     await asyncio.wait_for(wake_delivered.wait(), timeout=1)
 
     settled = session_manager.get(recipient_id)
-    assert settled is not None and settled.status == "paused"
+    assert settled is not None and settled.status == "idle"
     native_sender.assert_awaited_once()
     assert messages.get_undelivered_wake_messages(recipient_id)
 
@@ -738,7 +738,7 @@ async def test_committed_reconciliation_survives_callback_and_task_failure(
         restart_horizon_ms=int(horizon.timestamp() * 1_000),
         excluded_session_ids=frozenset(),
     )
-    assert reconciled is not None and reconciled.status == "paused"
+    assert reconciled is not None and reconciled.status == "idle"
     coordinator.bind_owner_loop(asyncio.get_running_loop())
     await coordinator.open()
     assert recording.calls == [(first_id, "normal")]

@@ -1,6 +1,6 @@
 """Session lifecycle operations.
 
-Standalone functions for expiring and pausing inactive sessions.
+Standalone functions for expiring and idling inactive sessions.
 Extracted from SessionManager as part of the Strangler Fig
 decomposition.
 """
@@ -396,33 +396,33 @@ def cleanup_expired_session_state(
     return result
 
 
-def pause_inactive_active_sessions(
+def idle_inactive_active_sessions(
     db: HubDatabase,
     timeout_minutes: int = 30,
     *,
     status_notifier: SessionStatusTransitionCallback | None = None,
 ) -> int:
     """
-    Mark active sessions as paused if they've been inactive for too long.
+    Mark active sessions as idle if they've been inactive for too long.
 
     This catches orphaned sessions that never received an AFTER_AGENT hook
     (e.g., Claude Code crashed mid-response).
 
     Args:
         db: Database connection.
-        timeout_minutes: Minutes of inactivity before pausing.
+        timeout_minutes: Minutes of inactivity before idling.
 
     Returns:
-        Number of sessions paused.
+        Number of sessions idled.
     """
-    # Intentionally global: inactivity pausing must cover sessions left by a sleeping machine.
+    # Intentionally global: inactivity recovery covers sessions left by a sleeping machine.
     transitioned_at = utc_now()
     inactive_stale_sql = older_than_now_expr(db, "last_activity", "%s", "minute")
     with db.transaction() as conn:
         rows = conn.execute(
             f"""
             UPDATE sessions
-            SET status = 'paused'
+            SET status = 'idle'
             WHERE status = 'active'
             AND source != %s
             AND {inactive_stale_sql}
@@ -440,7 +440,7 @@ def pause_inactive_active_sessions(
                 )
     count = len(rows)
     if count > 0:
-        logger.info("Paused %s inactive active sessions (>%sm)", count, timeout_minutes)
+        logger.info("Idled %s inactive active sessions (>%sm)", count, timeout_minutes)
     return count
 
 

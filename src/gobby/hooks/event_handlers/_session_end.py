@@ -96,13 +96,13 @@ class SessionEndMixin(EventHandlersBase):
         ):
             # Gobby no longer spawns tmux, so every tmux pane is hand-started and
             # outlives the CLI that ended in it.
-            end_status = "paused"
+            end_status = session.status if session.status in {"paused", "interrupted"} else "idle"
         elif (
             end_reason == SessionEndReason.IDLE
             and session is not None
             and session.session_type == "web_chat"
         ):
-            end_status = "paused"
+            end_status = session.status if session.status in {"paused", "interrupted"} else "idle"
         else:
             end_status = "expired"
         terminal_outcome = end_status == "expired"

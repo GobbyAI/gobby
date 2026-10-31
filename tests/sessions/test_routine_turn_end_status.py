@@ -148,13 +148,13 @@ def test_operator_pause_survives_an_armed_routine_stop(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("disposition", ["completed", "ended_non_user"])
 @pytest.mark.parametrize("armed", [False, True], ids=["unarmed", "armed"])
-@pytest.mark.parametrize("restart_sweep", [True, False], ids=["restart-sweep", "idle-prompt"])
+@pytest.mark.parametrize("recovery", ["restart-sweep", "idle-prompt", "inactive-sweep"])
 async def test_recovery_then_routine_stop_never_holds(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     disposition: TurnDisposition,
     armed: bool,
-    restart_sweep: bool,
+    recovery: str,
 ) -> None:
     sessions = SessionManager(temp_db)
     seat = sessions.register(
@@ -176,7 +176,7 @@ async def test_recovery_then_routine_stop_never_holds(
         CoordinationWaitManager(temp_db).register(seat.id, owner.id, statuses=["idle"])
 
     horizon = datetime.now(UTC)
-    before = horizon - timedelta(seconds=1)
+    before = horizon - timedelta(minutes=31)
     temp_db.execute(
         "UPDATE sessions SET updated_at = %s, last_activity = %s WHERE id = %s",
         (before, before, seat.id),
@@ -190,7 +190,7 @@ async def test_recovery_then_routine_stop_never_holds(
     async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         return func(*args, **kwargs)
 
-    if restart_sweep:
+    if recovery == "restart-sweep":
         reconciled = await reconcile_restart_stale_session(
             session_manager=sessions,
             observed=observed,
@@ -200,7 +200,7 @@ async def test_recovery_then_routine_stop_never_holds(
             restart_horizon_ms=int(horizon.timestamp() * 1_000),
             excluded_session_ids=frozenset(),
         )
-    else:
+    elif recovery == "idle-prompt":
         await reconcile_idle_prompt_session(
             session_manager=sessions,
             observed=observed,
@@ -209,6 +209,9 @@ async def test_recovery_then_routine_stop_never_holds(
             run_db=run_db,
         )
         reconciled = sessions.get(seat.id)
+    else:
+        assert sessions.idle_inactive_active_sessions(timeout_minutes=30) == 1
+        reconciled = sessions.get(seat.id)
     assert reconciled is not None
     ended = lifecycle.end_turn(seat.id, disposition, evidence)
 
@@ -216,5 +219,5 @@ async def test_recovery_then_routine_stop_never_holds(
     stored = sessions.get(seat.id)
     assert stored is not None
     assert stored.status == ("waiting" if armed else "idle")
-    assert reconciled.status == "idle", "Restart recovery carries no operator pause intent"
+    assert reconciled.status == "idle", "Recovery carries no operator pause intent"
     assert reconciled.last_activity == before, "Recovery preserves the activity clock"

@@ -143,7 +143,7 @@ class TestSetProviderWithExistingSession:
         await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": provider})
 
         server.session_manager.update.assert_called_once_with(
-            "db-456", source=provider, status="paused"
+            "db-456", source=provider, status="idle"
         )
         assert server.session_manager.update.call_count == 1
         assert server.session_manager.update.call_args is not None

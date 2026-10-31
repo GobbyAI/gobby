@@ -407,7 +407,7 @@ async def handle_set_project(
                         mixin,
                         session_manager.update,
                         session.db_session_id,
-                        status="paused",
+                        status="idle",
                         project_id=new_project_id,
                         workspace_path=None,
                         workspace_generation=next_generation,
@@ -505,7 +505,7 @@ async def handle_set_worktree(
                         mixin,
                         session_manager.update,
                         session.db_session_id,
-                        status="paused",
+                        status="idle",
                         workspace_path=worktree_path,
                         workspace_generation=next_generation,
                     )
@@ -628,7 +628,7 @@ async def handle_set_agent(
                         mixin,
                         session_manager.update,
                         session.db_session_id,
-                        status="paused",
+                        status="idle",
                     )
                 except Exception as e:
                     logger.warning("Failed to update session on agent switch: %s", e)
@@ -691,7 +691,7 @@ async def handle_set_provider(
                         session_manager.update,
                         session.db_session_id,
                         source=provider,
-                        status="paused",
+                        status="idle",
                     )
                 except Exception as e:
                     logger.warning("Failed to update session on provider switch: %s", e)

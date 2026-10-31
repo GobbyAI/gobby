@@ -112,20 +112,20 @@ class _FieldUpdateMixin(
                 )
         return updated
 
-    def _pause_restart_stale_active(
+    def _idle_restart_stale_active(
         self: _ManagerState,
         session_id: str,
         *,
         observed_updated_at: datetime,
         restart_horizon_ms: int,
     ) -> Session | None:
-        """Pause one exact pre-horizon active row without changing activity time."""
+        """Idle one exact pre-horizon active row without changing activity time."""
         now = utc_now()
         with self.db.transaction():
             cursor = self.db.execute(
                 """
                 UPDATE sessions
-                SET status = 'paused', updated_at = %s
+                SET status = 'idle', updated_at = %s
                 WHERE id = %s
                   AND status = 'active'
                   AND updated_at = %s
@@ -151,13 +151,13 @@ class _FieldUpdateMixin(
             )
         return updated
 
-    def _pause_idle_prompt_active(
+    def _idle_prompt_active(
         self: _ManagerState,
         session_id: str,
         *,
         observed_updated_at: datetime,
     ) -> Session | None:
-        """Pause one exact active row proved idle at its prompt.
+        """Idle one exact active row proved idle at its prompt.
 
         The compare-and-set refuses a row whose activity timestamp moved, so a
         turn that started during the probe stays active. last_activity is left
@@ -168,7 +168,7 @@ class _FieldUpdateMixin(
             cursor = self.db.execute(
                 """
                 UPDATE sessions
-                SET status = 'paused', updated_at = %s
+                SET status = 'idle', updated_at = %s
                 WHERE id = %s
                   AND status = 'active'
                   AND updated_at = %s

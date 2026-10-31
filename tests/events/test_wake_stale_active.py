@@ -114,23 +114,23 @@ def _deferred_line(caplog: pytest.LogCaptureFixture, session_id: str) -> str:
     return lines[0]
 
 
-async def test_empty_prompt_pauses_stranded_row_and_delivers_wake(
+async def test_empty_prompt_idles_stranded_row_and_delivers_wake(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Stale active row, positive empty composer, no in-flight fingerprint: pause, then wake."""
+    """Stale active row, positive empty composer, no in-flight fingerprint: idle, then wake."""
     caplog.set_level(logging.INFO, logger="gobby.events.wake")
 
     wake = await _deferred_wake(temp_db, session_manager, sample_project["id"], lambda _id: _EMPTY)
 
     row = session_manager.get(wake.session_id)
-    assert row is not None and row.status == "paused"
+    assert row is not None and row.status == "idle"
     wake.sender.assert_awaited_once()
     line = _deferred_line(caplog, wake.session_id)
     assert "delivered=True" in line
-    assert "idle=paused" in line
+    assert "idle=idle" in line
     assert "reconcile_ms=" in line
 
 
@@ -254,7 +254,7 @@ async def test_active_wake_retries_after_open_turn_ends(
         assert len(wake.messages.get_undelivered_wake_messages(wake.session_id)) == 1
         wake.sender.assert_not_awaited()
         failed = False
-        pause_idle = wake.dispatcher._pause_idle_prompt
+        reconcile_idle = wake.dispatcher._reconcile_idle_prompt
 
         async def refresh(session_id: str) -> None:
             nonlocal failed
@@ -268,16 +268,16 @@ async def test_active_wake_retries_after_open_turn_ends(
             if failure == "reconcile" and not failed:
                 failed = True
                 raise RuntimeError("transient reconcile failure")
-            return await pause_idle(session_id)
+            return await reconcile_idle(session_id)
 
         monkeypatch.setattr(wake.dispatcher, "_lifecycle_refresh", refresh)
-        monkeypatch.setattr(wake.dispatcher, "_pause_idle_prompt", reconcile)
+        monkeypatch.setattr(wake.dispatcher, "_reconcile_idle_prompt", reconcile)
         settled = True
         release_retry.set()
         await asyncio.wait_for(wake.dispatcher._composer_retries[wake.session_id], timeout=2)
         wake.sender.assert_awaited_once()
         row = session_manager.get(wake.session_id)
-        assert row is not None and row.status == "paused"
+        assert row is not None and row.status == "idle"
         assert delays == ([15.0] if failure == "none" else [15.0, 30.0])
     finally:
         await _cancel_followups(wake.dispatcher)
@@ -312,7 +312,7 @@ async def test_send_time_blocked_composer_withholds_and_keeps_message_durable(
     send_read: Callable[[], TerminalActivity],
     skipped: str,
 ) -> None:
-    """#23102: after the reconcile pauses the row, a re-probe at the send boundary
+    """#23102: after the reconcile idles the row, a re-probe at the send boundary
     that is unconfirmed or finds an operator draft must not reach the terminal
     sender or drop the durable message.
     """
@@ -330,7 +330,7 @@ async def test_send_time_blocked_composer_withholds_and_keeps_message_durable(
     )
 
     row = session_manager.get(wake.session_id)
-    assert row is not None and row.status == "paused"
+    assert row is not None and row.status == "idle"
     assert reads == 3, reads
     wake.sender.assert_not_awaited()
     assert [m.content for m in wake.messages.get_undelivered_wake_messages(wake.session_id)] == [

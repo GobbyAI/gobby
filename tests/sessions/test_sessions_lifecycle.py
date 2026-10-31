@@ -210,7 +210,7 @@ class TestSessionLifecycleManager:
     async def test_expire_stale_sessions(self, manager: SessionLifecycleManager) -> None:
         """Test expiring stale sessions."""
         # Setup mocks
-        manager.session_manager.pause_inactive_active_sessions.return_value = 2
+        manager.session_manager.idle_inactive_active_sessions.return_value = 2
         manager.session_manager.expire_orphaned_handoff_sessions.return_value = 1
         manager.session_manager.expire_stale_sessions.return_value = 3
         manager.session_manager.expire_empty_sessions.return_value = 4
@@ -221,7 +221,7 @@ class TestSessionLifecycleManager:
         count = await manager._expire_stale_sessions(manager._capture_active().session_lifecycle)
 
         assert count == 15
-        manager.session_manager.pause_inactive_active_sessions.assert_called_once_with(
+        manager.session_manager.idle_inactive_active_sessions.assert_called_once_with(
             timeout_minutes=manager._capture_active().session_lifecycle.active_session_pause_minutes
         )
         manager.session_manager.expire_orphaned_handoff_sessions.assert_called_once_with(
@@ -241,7 +241,7 @@ class TestSessionLifecycleManager:
     async def test_expire_stale_sessions_retires_hook_effects(
         self, manager: SessionLifecycleManager
     ) -> None:
-        manager.session_manager.pause_inactive_active_sessions.return_value = 0
+        manager.session_manager.idle_inactive_active_sessions.return_value = 0
         manager.session_manager.expire_orphaned_handoff_sessions.return_value = 0
         manager.session_manager.expire_stale_sessions.return_value = 1
         manager.session_manager.expire_empty_sessions.return_value = 0

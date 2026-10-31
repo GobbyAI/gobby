@@ -198,7 +198,7 @@ class TestSessionManagerLifecycle:
         assert updated is not None
         assert updated.status == "paused"
 
-    def test_restart_stale_pause_uses_exact_updated_at_and_preserves_activity(
+    def test_restart_stale_idle_uses_exact_updated_at_and_preserves_activity(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, str],
@@ -218,14 +218,14 @@ class TestSessionManagerLifecycle:
         observed = session_manager.get(session.id)
         assert observed is not None
 
-        paused = session_manager._pause_restart_stale_active(
+        idle = session_manager._idle_restart_stale_active(
             session.id,
             observed_updated_at=observed.updated_at,
             restart_horizon_ms=int(observed_at.timestamp() * 1_000),
         )
 
-        assert paused is not None and paused.status == "paused"
-        assert paused.last_activity == observed_at
+        assert idle is not None and idle.status == "idle"
+        assert idle.last_activity == observed_at
 
         with session_manager.db.transaction():
             session_manager.db.execute(
@@ -241,7 +241,7 @@ class TestSessionManagerLifecycle:
             )
 
         assert (
-            session_manager._pause_restart_stale_active(
+            session_manager._idle_restart_stale_active(
                 session.id,
                 observed_updated_at=raced.updated_at,
                 restart_horizon_ms=int(observed_at.timestamp() * 1_000),
@@ -251,7 +251,7 @@ class TestSessionManagerLifecycle:
         current = session_manager.get(session.id)
         assert current is not None and current.status == "active"
 
-    def test_idle_prompt_pause_accepts_codex_and_preserves_exact_updated_at(
+    def test_idle_prompt_recovery_accepts_codex_and_preserves_exact_updated_at(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, str],
@@ -275,13 +275,13 @@ class TestSessionManagerLifecycle:
         observed = session_manager.get(claude.id)
         assert observed is not None
 
-        paused = session_manager._pause_idle_prompt_active(
+        idle = session_manager._idle_prompt_active(
             claude.id,
             observed_updated_at=observed.updated_at,
         )
 
-        assert paused is not None and paused.status == "paused"
-        assert paused.last_activity == observed_at
+        assert idle is not None and idle.status == "idle"
+        assert idle.last_activity == observed_at
 
         codex = session_manager.register(
             external_id="idle-prompt-codex",
@@ -296,11 +296,11 @@ class TestSessionManagerLifecycle:
             )
         codex_row = session_manager.get(codex.id)
         assert codex_row is not None
-        paused_codex = session_manager._pause_idle_prompt_active(
+        idle_codex = session_manager._idle_prompt_active(
             codex.id,
             observed_updated_at=codex_row.updated_at,
         )
-        assert paused_codex is not None and paused_codex.status == "paused"
+        assert idle_codex is not None and idle_codex.status == "idle"
 
         with session_manager.db.transaction():
             session_manager.db.execute(
@@ -316,7 +316,7 @@ class TestSessionManagerLifecycle:
             )
 
         assert (
-            session_manager._pause_idle_prompt_active(
+            session_manager._idle_prompt_active(
                 claude.id,
                 observed_updated_at=raced.updated_at,
             )
