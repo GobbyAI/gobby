@@ -188,23 +188,23 @@ async def test_task_external_alias_round_trips_all_config_surfaces(world: _World
         expected_revision=world.runtime.snapshot.revision,
         values={
             "gobby-tasks": {
-                "validation": {"confirmation_timeout_seconds": 12.5},
+                "validation": {"confirmation_timeout_seconds": 7.5},
                 "expansion": {"pattern_criteria": {"patterns": {"audit": ["Verified"]}}},
             }
         },
     )
     assert changed["committed"] is True
-    assert world.runtime.snapshot.active.gobby_tasks.validation.confirmation_timeout_seconds == 12.5
+    assert world.runtime.snapshot.active.gobby_tasks.validation.confirmation_timeout_seconds == 7.5
     assert world.runtime.snapshot.active.gobby_tasks.expansion.pattern_criteria.patterns[
         "audit"
     ] == ["Verified"]
     stored = world.repository.read().overrides
-    assert stored["gobby-tasks.validation.confirmation_timeout_seconds"] == 12.5
+    assert stored["gobby-tasks.validation.confirmation_timeout_seconds"] == 7.5
     assert "gobby_tasks.validation.confirmation_timeout_seconds" not in stored
 
     public = await world.values.values()
     desired = cast(dict[str, dict[str, dict[str, object]]], public["desired"])
-    assert desired["gobby-tasks"]["validation"]["confirmation_timeout_seconds"] == 12.5
+    assert desired["gobby-tasks"]["validation"]["confirmation_timeout_seconds"] == 7.5
     exported = await world.documents.export_yaml()
     content = cast(str, exported["content"])
     assert "gobby-tasks:" in content
