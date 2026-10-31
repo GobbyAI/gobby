@@ -18,6 +18,24 @@ pub fn fetch_symbols_for_file(
     )
 }
 
+/// Symbols of one exact file version, regardless of which version the project's
+/// file state currently names. Pinned recovery reads a retained source version.
+pub fn fetch_symbols_for_file_version(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+) -> anyhow::Result<Vec<Symbol>> {
+    fetch_symbols_where(
+        conn,
+        SymbolPredicate::FileVersion {
+            project_id,
+            file_path,
+            content_hash,
+        },
+    )
+}
+
 pub fn fetch_symbols_for_project(
     conn: &mut impl GenericClient,
     project_id: &str,
@@ -32,6 +50,11 @@ enum SymbolPredicate<'a> {
     File {
         project_id: &'a str,
         file_path: &'a str,
+    },
+    FileVersion {
+        project_id: &'a str,
+        file_path: &'a str,
+        content_hash: &'a str,
     },
 }
 
@@ -58,12 +81,17 @@ impl SymbolPredicate<'_> {
                       AND cifs.content_hash = s.file_content_hash
                  )"
             }
+            Self::FileVersion { .. } => {
+                "s.project_id = $1 AND s.file_path = $2 AND s.file_content_hash = $3"
+            }
         }
     }
 
     fn project_id(&self) -> &str {
         match self {
-            Self::Project { project_id } | Self::File { project_id, .. } => project_id,
+            Self::Project { project_id }
+            | Self::File { project_id, .. }
+            | Self::FileVersion { project_id, .. } => project_id,
         }
     }
 
@@ -81,6 +109,15 @@ impl SymbolPredicate<'_> {
                 project_uuid as &(dyn ToSql + Sync),
                 file_path as &(dyn ToSql + Sync),
                 machine_uuid as &(dyn ToSql + Sync),
+            ],
+            Self::FileVersion {
+                file_path,
+                content_hash,
+                ..
+            } => vec![
+                project_uuid as &(dyn ToSql + Sync),
+                file_path as &(dyn ToSql + Sync),
+                content_hash as &(dyn ToSql + Sync),
             ],
         }
     }

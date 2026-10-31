@@ -752,7 +752,7 @@ fn seeded_views_still_require_a_seed() {
 mod pin_recovery {
     use crate::config::{CodeVectorSettings, EmbeddingConfig, QdrantConfig};
     use crate::db;
-    use crate::models::Symbol;
+    use crate::models::{SearchWarningCause, SearchWarningLane, Symbol};
     use crate::projection::sync::tests::serial_db::{FILE, pinned_fixture, respond, seed_version};
     use crate::vector::code_symbols::{self, tests::read_http_request};
     use serde_json::json;
@@ -863,6 +863,8 @@ mod pin_recovery {
             timeout_seconds: 5,
         });
         ctx.code_vectors = CodeVectorSettings::with_vector_dim(Some(3));
+        let direct =
+            code_symbols::EmbeddingSource::Direct(ctx.embedding.clone().expect("embedding config"));
         let stop = Arc::new(AtomicBool::new(false));
         let namespace = Arc::new(AtomicUsize::new(0));
         let server = {
@@ -911,7 +913,7 @@ mod pin_recovery {
             )
             .expect("set recovery state");
             namespace.store(backend, Ordering::SeqCst);
-            let hits = code_symbols::semantic_search(&ctx, "run", 10);
+            let hits = code_symbols::semantic_search_with_source(&ctx, &direct, "run", 10);
             observed.push(((hash, projected, backend), hits, expected));
         }
         // Simulate rows left by a late child upsert after each invalidating event.
@@ -944,7 +946,7 @@ mod pin_recovery {
             }
             observed.push((
                 (change, false, 1),
-                code_symbols::semantic_search(&ctx, "run", 10),
+                code_symbols::semantic_search_with_source(&ctx, &direct, "run", 10),
                 false,
             ));
         }
@@ -963,5 +965,45 @@ mod pin_recovery {
                 "selector/projected/backend={state:?}"
             );
         }
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn graph_reads_report_pending_pin_projection() {
+        let database_url = crate::test_env::postgres_test_database_url("pinned graph pending");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let (ctx, _source, _source_cleanup, _overlay_cleanup) =
+            pinned_fixture(&mut conn, &database_url);
+        let overlay_uuid = db::id_param(&ctx.project_id).expect("child UUID");
+
+        // The fixture pin has no recorded graph projection, so its path serves no
+        // graph facts; graph reads must report that instead of returning empty.
+        let warnings = crate::visibility::graph_versions::pending_projection_warnings(&ctx);
+        assert_eq!(
+            warnings.len(),
+            1,
+            "pending graph pin must warn: {warnings:?}"
+        );
+        assert_eq!(warnings[0].lane, SearchWarningLane::Graph);
+        assert_eq!(warnings[0].cause, SearchWarningCause::ProjectionPending);
+        assert!(
+            warnings[0].message.contains("graph") && warnings[0].message.contains("pending"),
+            "{}",
+            warnings[0].message
+        );
+
+        conn.execute(
+            "UPDATE code_overlay_pins SET graph_projected = true WHERE overlay_project_id = $1",
+            &[&overlay_uuid],
+        )
+        .expect("record graph projection");
+        assert!(
+            crate::visibility::graph_versions::pending_projection_warnings(&ctx).is_empty(),
+            "a recorded graph projection clears the pending warning"
+        );
     }
 }

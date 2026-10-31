@@ -71,6 +71,7 @@ pub fn outline(
         offset,
         limit,
         hint: None,
+        warnings: &[],
     };
     let has_more = total > offset.saturating_add(groups.len());
     let page = token_budget::paginate_results(
@@ -373,6 +374,7 @@ pub fn kinds(
         offset,
         limit,
         hint: None,
+        warnings: &[],
     };
     let page = token_budget::paginate(kinds, meta, token_budget, format, |rows| rows.join("\n"));
     token_budget::print_page(&page, meta, format, |rows| rows.join("\n"))
@@ -407,6 +409,7 @@ pub fn tree(
         offset,
         limit,
         hint: None,
+        warnings: &[],
     };
     let has_more = total > offset.saturating_add(groups.len());
     let page = token_budget::paginate_results(
@@ -869,6 +872,7 @@ mod tests {
             offset: 0,
             limit: results.len(),
             hint: None,
+            warnings: &[],
         };
         let first_render = |rows: &[RetrievedSymbol], next_offset, budget_exceeded| {
             render_symbol_batch_json(
@@ -891,6 +895,7 @@ mod tests {
                 offset,
                 limit: results.len() - offset,
                 hint: None,
+                warnings: &[],
             };
             let render = |rows: &[RetrievedSymbol], next_offset, budget_exceeded| {
                 render_symbol_batch_json(

@@ -31,7 +31,9 @@ pub(super) fn report_node_counts_query(project_id: &str) -> (String, HashMap<Str
     (
         format!(
             "MATCH (n {{project: $project}}) \
-             WHERE n:CodeFile OR n:CodeSymbol OR n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol \
+             WHERE (n:CodeFile AND n.path IN $admitted_paths) \
+               OR (n:CodeSymbol AND n.file_path + '|' + n.file_content_hash IN $admitted_versions) \
+               OR n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol \
              RETURN {} AS name, count(n) AS count",
             report_node_type_case("n")
         ),
@@ -44,6 +46,7 @@ pub(super) fn report_code_edge_counts_query(project_id: &str) -> (String, HashMa
         format!(
             "MATCH (source {{project: $project}})-[r]->(target {{project: $project}}) \
              WHERE type(r) IN {CODE_EDGE_REL_TYPES} \
+               AND coalesce(r.file, startNode(r).path) + '|' + r.content_hash IN $admitted_versions \
              RETURN type(r) AS name, count(r) AS count"
         ),
         typed_query::string_params(&[("project", project_id)]),
@@ -72,10 +75,12 @@ pub(super) fn report_hotspots_query(
             "CALL {{ \
              MATCH (n:{label} {{project: $project}})-[out:{CODE_EDGE_REL_PATTERN}]->(out_target {{project: $project}}) \
              WHERE (out_target:CodeFile OR out_target:CodeSymbol OR out_target:CodeModule OR out_target:UnresolvedCallee OR out_target:ExternalSymbol) \
+             AND coalesce(out.file, startNode(out).path) + '|' + out.content_hash IN $admitted_versions \
              RETURN n AS node, count(out) AS outgoing, 0 AS incoming \
              UNION ALL \
              MATCH (in_source {{project: $project}})-[inc:{CODE_EDGE_REL_PATTERN}]->(n:{label} {{project: $project}}) \
              WHERE (in_source:CodeFile OR in_source:CodeSymbol OR in_source:CodeModule OR in_source:UnresolvedCallee OR in_source:ExternalSymbol) \
+             AND coalesce(inc.file, startNode(inc).path) + '|' + inc.content_hash IN $admitted_versions \
              RETURN n AS node, 0 AS outgoing, count(inc) AS incoming \
              }} \
              WITH node, sum(outgoing) AS outgoing, sum(incoming) AS incoming \
@@ -100,6 +105,7 @@ pub(super) fn report_incoming_call_hotspots_query(
     (
         format!(
             "MATCH (:CodeSymbol {{project: $project}})-[r:CALLS]->(n:CodeSymbol {{project: $project}}) \
+             WHERE r.file + '|' + r.content_hash IN $admitted_versions \
              WITH n, count(r) AS incoming \
              WHERE incoming > 0 \
              RETURN n.id AS id, coalesce(n.name, n.id) AS name, {} AS node_type, incoming AS degree, incoming, 0 AS outgoing, n.file_path AS file_path \
@@ -125,6 +131,7 @@ pub(super) fn report_target_frequencies_query(
     (
         format!(
             "MATCH (:CodeSymbol {{project: $project}})-[r:CALLS]->(target:{target_label} {{project: $project}}) \
+             WHERE r.file + '|' + r.content_hash IN $admitted_versions \
              RETURN target.id AS id, coalesce(target.name, target.id) AS name, count(r) AS count \
              ORDER BY count DESC, name ASC, id ASC \
              LIMIT {limit}"
@@ -136,6 +143,7 @@ pub(super) fn report_target_frequencies_query(
 pub(super) fn report_bridge_edges_query(project_id: &str) -> (String, HashMap<String, String>) {
     (
         "MATCH (source)-[r:RELATES_TO_CODE]->(target:CodeSymbol {project: $project}) \
+         WHERE target.file_path + '|' + target.file_content_hash IN $admitted_versions \
          RETURN coalesce(source.id, source.uuid, source.name) AS source_id, \
                 target.id AS target_symbol_id, \
                 'RELATES_TO_CODE' AS relation, \

@@ -4,7 +4,7 @@ use crate::graph::typed_query;
 
 use super::support::{
     CALL_TARGET_PREDICATE, LINK_METADATA_RETURN, NEIGHBOR_PREDICATE, NEIGHBOR_TYPE_CASE,
-    NODE_TYPE_CASE, TARGET_TYPE_CASE, anchored_call_node, clamp_limit,
+    NODE_TYPE_CASE, TARGET_TYPE_CASE, admitted_symbol_anchor, anchored_call_node, clamp_limit,
 };
 
 pub(super) fn project_overview_files_query(
@@ -15,9 +15,12 @@ pub(super) fn project_overview_files_query(
     (
         format!(
             "MATCH (f:CodeFile {{project: $project}}) \
-             OPTIONAL MATCH (f)-[:DEFINES]->(s:CodeSymbol) \
+             WHERE f.path IN $admitted_paths \
+             OPTIONAL MATCH (f)-[d:DEFINES]->(s:CodeSymbol) \
+             WHERE f.path + '|' + d.content_hash IN $admitted_versions \
              WITH f, count(DISTINCT s) AS sym_count \
-             OPTIONAL MATCH (f)-[:IMPORTS]->(m:CodeModule) \
+             OPTIONAL MATCH (f)-[i:IMPORTS]->(m:CodeModule) \
+             WHERE f.path + '|' + i.content_hash IN $admitted_versions \
              WITH f, sym_count, count(m) AS imp_count \
              RETURN f.path AS id, f.path AS name, 'file' AS type, \
                     f.path AS file_path, sym_count AS symbol_count \
@@ -38,7 +41,7 @@ pub(super) fn project_overview_imports_query(
     (
         format!(
             "MATCH (f:CodeFile {{project: $project}})-[r:IMPORTS]->(m:CodeModule {{project: $project}}) \
-             WHERE f.path IN [{file_paths}] \
+             WHERE f.path IN [{file_paths}] AND f.path + '|' + r.content_hash IN $admitted_versions \
              RETURN f.path AS source, m.name AS target, 'IMPORTS' AS type, {LINK_METADATA_RETURN} \
              LIMIT {limit}"
         ),
@@ -56,7 +59,7 @@ pub(super) fn project_overview_defines_query(
     (
         format!(
             "MATCH (f:CodeFile {{project: $project}})-[r:DEFINES]->(s:CodeSymbol {{project: $project}}) \
-             WHERE f.path IN [{file_paths}] \
+             WHERE f.path IN [{file_paths}] AND f.path + '|' + r.content_hash IN $admitted_versions \
              RETURN f.path AS source, s.id AS target, 'DEFINES' AS type, \
                     s.name AS symbol_name, s.kind AS symbol_kind, \
                     s.file_path AS symbol_file_path, s.line_start AS line_start, \
@@ -78,6 +81,7 @@ pub(super) fn project_overview_calls_query(
         format!(
             "MATCH (f:CodeFile {{project: $project}})-[:DEFINES]->(s:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
              WHERE f.path IN [{file_paths}] AND ({CALL_TARGET_PREDICATE}) \
+             AND r.file + '|' + r.content_hash IN $admitted_versions \
              RETURN s.id AS source, target.id AS target, 'CALLS' AS type, \
                     target.name AS target_name, {TARGET_TYPE_CASE} AS target_type, \
                     target.kind AS target_kind, target.file_path AS target_file_path, \
@@ -96,6 +100,7 @@ pub(super) fn file_symbols_query(
     (
         format!(
             "MATCH (:CodeFile {{path: $path, project: $project}})-[r:DEFINES]->(s:CodeSymbol {{project: $project}}) \
+             WHERE $path + '|' + r.content_hash IN $admitted_versions \
              RETURN s.id AS id, s.name AS name, coalesce(s.kind, 'function') AS type, \
                     s.kind AS kind, s.file_path AS file_path, \
                     s.line_start AS line_start, s.signature AS signature, \
@@ -131,12 +136,15 @@ pub(in crate::graph::code_graph) fn file_calls_query(
         format!(
             "MATCH (source:CodeSymbol {{project: $project, file_path: $path}})-[r:CALLS]->(target {{project: $project}}) \
              WHERE ({CALL_TARGET_PREDICATE}) \
+             AND r.file + '|' + r.content_hash IN $admitted_versions \
              {columns} \
              UNION ALL \
              MATCH (target:CodeSymbol {{project: $project, file_path: $path}}) \
              WITH target \
              MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target) \
              WHERE source.file_path IS NULL OR source.file_path <> $path \
+             WITH source, r, target \
+             WHERE r.file + '|' + r.content_hash IN $admitted_versions \
              {columns}"
         ),
         typed_query::string_params(&[("project", project_id), ("path", file_path)]),
@@ -154,7 +162,7 @@ pub(super) fn symbol_neighbors_query(
         format!(
             "{anchor} \
              MATCH (center)-[r:CALLS]-(neighbor {{project: $project}}) \
-             WHERE {NEIGHBOR_PREDICATE} \
+             WHERE ({NEIGHBOR_PREDICATE}) AND r.file + '|' + r.content_hash IN $admitted_versions \
              RETURN neighbor.id AS id, neighbor.name AS name, {NEIGHBOR_TYPE_CASE} AS type, \
                     neighbor.kind AS kind, neighbor.file_path AS file_path, \
                     neighbor.line_start AS line_start, neighbor.signature AS signature, \
@@ -170,7 +178,7 @@ pub(super) fn blast_radius_center_query(
     project_id: &str,
     symbol_id: &str,
 ) -> (String, HashMap<String, String>) {
-    let anchor = anchored_call_node("n", "$id");
+    let anchor = admitted_symbol_anchor("n", "$id");
     (
         format!(
             "{anchor} \
@@ -192,10 +200,13 @@ pub(super) fn blast_radius_file_call_query(
     let limit = clamp_limit(limit);
     (
         format!(
-            "MATCH (tf:CodeFile {{path: $path, project: $project}})-[:DEFINES]->(target_sym:CodeSymbol {{project: $project}}) \
+            "MATCH (tf:CodeFile {{path: $path, project: $project}})-[td:DEFINES]->(target_sym:CodeSymbol {{project: $project}}) \
+             WHERE $path + '|' + td.content_hash IN $admitted_versions \
              MATCH path = (affected:CodeSymbol {{project: $project}})-[:CALLS*1..{depth}]->(target_sym) \
+             WHERE all(rel IN relationships(path) WHERE rel.file + '|' + rel.content_hash IN $admitted_versions) \
              WITH affected, min(length(path)) AS distance \
-             OPTIONAL MATCH (file:CodeFile {{project: $project}})-[:DEFINES]->(affected) \
+             OPTIONAL MATCH (file:CodeFile {{project: $project}})-[d:DEFINES]->(affected) \
+             WHERE file.path + '|' + d.content_hash IN $admitted_versions \
              RETURN DISTINCT affected.id AS node_id, \
                     affected.name AS node_name, \
                     affected.kind AS kind, file.path AS file_path, \
@@ -218,9 +229,11 @@ pub(in crate::graph::code_graph) fn blast_radius_file_import_query(
     let limit = clamp_limit(limit);
     (
         format!(
-            "MATCH (tf:CodeFile {{path: $path, project: $project}})-[:IMPORTS]->(m:CodeModule {{project: $project}}) \
+            "MATCH (tf:CodeFile {{path: $path, project: $project}})-[ti:IMPORTS]->(m:CodeModule {{project: $project}}) \
+             WHERE $path + '|' + ti.content_hash IN $admitted_versions \
              MATCH path = (importer:CodeFile {{project: $project}})-[:IMPORTS*1..{depth}]-(m) \
              WHERE importer.path <> $path \
+               AND all(rel IN relationships(path) WHERE startNode(rel).path + '|' + rel.content_hash IN $admitted_versions) \
              WITH importer, min(length(path)) AS distance \
              RETURN DISTINCT importer.path AS node_id, \
                     importer.path AS node_name, NULL AS kind, importer.path AS file_path, \

@@ -16,9 +16,13 @@ pub use qdrant::{
     delete_code_symbol_collections_with_prefix, delete_project_collection,
     list_code_symbol_collections,
 };
-pub use repository::{fetch_symbols_for_file, fetch_symbols_for_project};
-pub(crate) use search::audited_semantic_search;
+pub use repository::{
+    fetch_symbols_for_file, fetch_symbols_for_file_version, fetch_symbols_for_project,
+};
 pub use search::semantic_search;
+#[cfg(test)]
+pub(crate) use search::semantic_search_with_source;
+pub(crate) use search::{audited_semantic_search, has_pending_pinned_projection};
 pub use types::{
     CodeSymbolVectorLifecycleAction, CodeSymbolVectorLifecycleOutput, CodeSymbolVectorPayload,
     CodeSymbolVectorSearchHit, CodeSymbolVectorSearchRequest, VectorLifecycleError,
