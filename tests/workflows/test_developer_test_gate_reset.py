@@ -224,23 +224,24 @@ async def test_second_claim_waits_for_its_own_test_record(seat: SeatRun) -> None
     assert seat.step == "implement"
 
 
-async def _get_task_as_documented(run: SeatRun, task: Task, *, brief: bool) -> None:
-    """Call get_task the way the await step documents it: by assigned_task_id, brief set."""
-    arguments: dict[str, Any] = {"task_id": task.id, "brief": brief}
+async def _get_task_as_documented(run: SeatRun, task: Task, *, brief: bool | None) -> None:
+    """Exercise the public task view, preserving the default when brief is omitted."""
+    arguments: dict[str, Any] = {"task_id": task.id}
+    if brief is not None:
+        arguments["brief"] = brief
     with session_context_for_test(SESSION_ID):
         output = await create_task_registry(LocalTaskManager(run.db)).call("get_task", arguments)
     await run.call("gobby-tasks", "get_task", arguments, output)
 
 
 @pytest.mark.asyncio
-async def test_documented_get_task_call_opens_the_gate(seat: SeatRun) -> None:
+@pytest.mark.parametrize("brief", [None, True, False], ids=["default", "brief", "full"])
+async def test_documented_get_task_call_opens_the_gate(seat: SeatRun, brief: bool | None) -> None:
     await seat.load(*seat.vars["required_skills"])
     task = seat.task(owner=SESSION_ID)
     await _claim(seat, task)
     _approve_committed_tests(seat, task)
-    await _get_task_as_documented(seat, task, brief=True)
-    assert seat.step == "await_tests"
-    await _get_task_as_documented(seat, task, brief=False)
+    await _get_task_as_documented(seat, task, brief=brief)
     assert seat.step == "implement"
 
 
@@ -371,3 +372,44 @@ async def test_get_task_field_transitions_survive_offload(
     )
 
     assert run.step == target
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("brief", [None, True, False], ids=["default", "brief", "full"])
+@pytest.mark.parametrize("status", ["pending", "in_progress", "rejected"])
+async def test_unapproved_tests_keep_gate_closed(
+    seat: SeatRun, brief: bool | None, status: str
+) -> None:
+    await seat.load(*seat.vars["required_skills"])
+    task = seat.task(owner=SESSION_ID)
+    await _claim(seat, task)
+    record_task_step(
+        seat.db,
+        task_id=task.id,
+        session_id=PEER_ID,
+        step="test",
+        submission=StepSubmission.model_validate(
+            {
+                "status": status,
+                "epoch": task.review_epoch,
+                "round_number": 1,
+                "feedback": "Test preparation has not completed successfully.",
+            }
+        ),
+    )
+    await _get_task_as_documented(seat, task, brief=brief)
+    assert seat.step == "await_tests"
+    assert seat.vars["tests_ready"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("brief", [None, True, False], ids=["default", "brief", "full"])
+async def test_previous_epoch_tests_keep_gate_closed(seat: SeatRun, brief: bool | None) -> None:
+    await seat.load(*seat.vars["required_skills"])
+    task = seat.task(owner=SESSION_ID)
+    await _claim(seat, task)
+    _approve_committed_tests(seat, task)
+    seat.db.execute("UPDATE tasks SET review_epoch = review_epoch + 1 WHERE id = %s", (task.id,))
+    await _get_task_as_documented(seat, task, brief=brief)
+    assert seat.step == "await_tests"
+    assert seat.vars["tests_ready"] is False

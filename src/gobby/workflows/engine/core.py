@@ -549,6 +549,7 @@ class RuleEngine(
                         event,
                         session_id,
                         variables,
+                        bool((eval_context or {}).get("base_merge_write")),
                     )
                     await self._flush_pending_terminal_denial(session_id)
                     if agent_block is not None:

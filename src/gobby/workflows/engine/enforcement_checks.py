@@ -19,6 +19,12 @@ from gobby.workflows.enforcement.blocking import (
     is_provider_discovery_tool,
 )
 from gobby.workflows.engine.block_batching import operator_event_is_subagent
+from gobby.workflows.engine.enforcement_guidance import (
+    agent_tool_block_guidance,
+    execution_wrapper_guidance,
+    step_tool_block_guidance,
+    step_tool_denial_reason,
+)
 from gobby.workflows.engine.idle_declaration import (
     gates_idle_write,
     is_idle_declaration,
@@ -26,10 +32,6 @@ from gobby.workflows.engine.idle_declaration import (
 )
 from gobby.workflows.engine.idle_declaration import (
     reserved_variable_block_guidance as _reserved_variable_block_guidance,
-)
-from gobby.workflows.engine.skill_load_guidance import (
-    skill_load_block_guidance,
-    skill_load_call_lead,
 )
 from gobby.workflows.engine.step_tool_input import inner_tool_input, step_tool_input
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
@@ -79,51 +81,6 @@ def _is_parent_send_message(mcp_key: str, tool_input: dict[str, Any]) -> bool:
     if not isinstance(target, str):
         return False
     return target.strip().lower() in {"", "parent"}
-
-
-def _step_tool_block_guidance(step_name: str) -> str:
-    claim = " Call gobby-tasks:claim_task to leave claim." if step_name == "claim" else ""
-    return (
-        f"\nThis capability is unavailable for the rest of the '{step_name}' step.{claim} "
-        "Abandon this call, continue with an allowed operation, and do not retry "
-        "the same blocked tool in this step. Repeating an identical denial three "
-        "times ends an autonomous run in a terminal blocked state."
-    )
-
-
-def _step_tool_denial_reason(
-    wf_name: str,
-    step: WorkflowStep,
-    variables: dict[str, Any],
-    detail: str,
-) -> str:
-    """Lead a skill-step denial with its unloaded targets; the boilerplate follows."""
-    return (
-        f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
-        f"{skill_load_call_lead(step, variables)}"
-        f"{detail}"
-        f"{skill_load_block_guidance(step, variables)}"
-        f"{_step_tool_block_guidance(step.name)}"
-    )
-
-
-def _agent_tool_block_guidance() -> str:
-    return (
-        "\nAbandon this call and continue with an operation permitted by the agent "
-        "definition. Do not retry the same denied target. Repeating an identical "
-        "denial three times ends an autonomous run in a terminal blocked state."
-    )
-
-
-def _execution_wrapper_guidance(tool_name: str) -> str:
-    """Name the direct call when a denial hits an execution-wrapper tool."""
-    folded = tool_name.casefold()
-    if "js_repl" not in folded and "cua_repl" not in folded:
-        return ""
-    return (
-        f"\nTool '{tool_name}' is an execution wrapper. "
-        "Call mcp__gobby__call_tool directly instead of the wrapper."
-    )
 
 
 class EnforcementCheckMixin:
@@ -415,7 +372,11 @@ class EnforcementCheckMixin:
         return step, instance
 
     def _check_agent_tool_enforcement(
-        self, event: HookEvent, session_id: str, variables: dict[str, Any]
+        self,
+        event: HookEvent,
+        session_id: str,
+        variables: dict[str, Any],
+        base_merge_write: bool = False,
     ) -> HookResponse | None:
         """Check agent-level tool restrictions. Returns block response or None to continue."""
         tool_name = event.data.get("tool_name", "")
@@ -481,13 +442,17 @@ class EnforcementCheckMixin:
         canonical_tool = canonical_gobby_tool_name(tool_name)
 
         # Check native tool block-list first so explicit agent blocks override exemptions.
-        if blocked_tools and canonical_tool in {
-            canonical_gobby_tool_name(blocked) for blocked in blocked_tools
-        }:
+        # The one override is an admitted base-merge write to a path the merge left
+        # conflicted. The admission scopes it per call, so the definition's block stays.
+        if (
+            blocked_tools
+            and canonical_tool in {canonical_gobby_tool_name(blocked) for blocked in blocked_tools}
+            and not (base_merge_write and canonical_tool in {"Edit", "Write"})
+        ):
             reason = (
                 f"Rule enforced by Gobby: [agent-enforcement:{agent_type}]\n"
                 f"Tool '{tool_name}' is blocked for the '{agent_type}' agent."
-                f"{_agent_tool_block_guidance()}"
+                f"{agent_tool_block_guidance()}"
             )
             reason = self._record_enforcement_denial(
                 session_id=session_id,
@@ -514,7 +479,7 @@ class EnforcementCheckMixin:
                 reason = (
                     f"Rule enforced by Gobby: [agent-enforcement:{agent_type}]\n"
                     f"{_UNAVAILABLE_MCP_TARGET} the '{agent_type}' agent's MCP block-list."
-                    f"{_agent_tool_block_guidance()}"
+                    f"{agent_tool_block_guidance()}"
                 )
                 reason = self._record_enforcement_denial(
                     session_id=session_id,
@@ -542,7 +507,7 @@ class EnforcementCheckMixin:
                     reason = (
                         f"Rule enforced by Gobby: [agent-enforcement:{agent_type}]\n"
                         f"MCP tool '{mcp_key}' is blocked for the '{agent_type}' agent."
-                        f"{_agent_tool_block_guidance()}"
+                        f"{agent_tool_block_guidance()}"
                     )
                     reason = self._record_enforcement_denial(
                         session_id=session_id,
@@ -669,13 +634,13 @@ class EnforcementCheckMixin:
             if canonical_tool not in admitted and not is_idle_declaration(
                 step, canonical_tool, tool_input, session_id, sessions
             ):
-                reason = _step_tool_denial_reason(
+                reason = step_tool_denial_reason(
                     wf_name,
                     step,
                     {**variables, **instance.variables},
                     f"Tool '{tool_name}' is not allowed in the '{step.name}' step.\n"
                     f"Allowed tools: {', '.join(step.allowed_tools)}"
-                    f"{_execution_wrapper_guidance(tool_name)}",
+                    f"{execution_wrapper_guidance(tool_name)}",
                 )
                 reason = self._record_enforcement_denial(
                     session_id=session_id,
@@ -703,7 +668,7 @@ class EnforcementCheckMixin:
             reason = (
                 f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                 f"Tool '{tool_name}' is blocked in the '{step.name}' step."
-                f"{_step_tool_block_guidance(step.name)}"
+                f"{step_tool_block_guidance(step.name)}"
             )
             reason = self._record_enforcement_denial(
                 session_id=session_id,
@@ -735,7 +700,7 @@ class EnforcementCheckMixin:
                 reason = (
                     f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                     f"{_UNAVAILABLE_MCP_TARGET} the '{step.name}' step's MCP restrictions."
-                    f"{_step_tool_block_guidance(step.name)}"
+                    f"{step_tool_block_guidance(step.name)}"
                 )
                 reason = self._record_enforcement_denial(
                     session_id=session_id,
@@ -778,7 +743,7 @@ class EnforcementCheckMixin:
                         reason = (
                             f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                             f"MCP tool '{mcp_key}' is blocked in the '{step.name}' step."
-                            f"{_step_tool_block_guidance(step.name)}"
+                            f"{step_tool_block_guidance(step.name)}"
                         )
                         reason = self._record_enforcement_denial(
                             session_id=session_id,
@@ -835,7 +800,7 @@ class EnforcementCheckMixin:
 
                 if mcp_key and step.allowed_mcp_tools != "all":
                     if not self._mcp_tool_matches(mcp_key, step.allowed_mcp_tools):
-                        reason = _step_tool_denial_reason(
+                        reason = step_tool_denial_reason(
                             wf_name,
                             step,
                             {**variables, **instance.variables},

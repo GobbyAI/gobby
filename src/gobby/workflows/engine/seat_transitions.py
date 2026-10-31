@@ -7,12 +7,14 @@ tools. Each declared permission owns bounded flags; no tool exposes this writer.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.tools.task_repo_paths import resolve_task_repo_path
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessage
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_models import Session
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import (
@@ -22,14 +24,15 @@ from gobby.storage.tasks import (
     TaskClosedError,
     TaskNotFoundError,
 )
+from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.tasks.lifecycle_access import session_grants
 from gobby.tasks.step_records import (
     approved_task_step,
     landing_review_approval,
     list_task_step_records,
 )
-from gobby.utils.git import normalize_commit_sha
-from gobby.workflows.agent_resolver import session_agent_definition
+from gobby.utils.git import normalize_commit_sha, run_git_command
+from gobby.workflows.agent_resolver import session_agent_definition, session_has_capability
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 from gobby.workflows.engine.seat_messages import (
     CandidateEvent,
@@ -227,10 +230,14 @@ def _candidate_rejection(
         db, event.message.from_session, reviewer_session_id
     )
     relayed = event.message.from_session != _claimant_at(db, event) and not handed
-    # A relay binds only from the bound Dev Manager, for a SHA the claimant linked.
-    if relayed and not is_relaying_dev_manager(db, event, reviewer_session_id):
-        return "sender does not claim task"
-    if event.sha is None:
+    # A relay binds only from the bound Dev Manager, for a SHA the claimant linked. A task with
+    # no claim has no claimant to link against, so only a base-merge author binds there.
+    claim_free = event.task.claimed_by_session_id is None
+    if relayed and (claim_free or not is_relaying_dev_manager(db, event, reviewer_session_id)):
+        error = _base_merge_rejection(db, event)
+        if error is not None:
+            return error
+    elif event.sha is None:
         # A no-work unit binds only a task with no linked work, whoever sends it.
         if event.task.commits:
             return "DISPOSITION needs a task with no linked commits"
@@ -245,6 +252,70 @@ def _candidate_rejection(
     if same_task and isinstance(previous, str) and event.message.sent_at.isoformat() <= previous:
         return "candidate is older than or equal to the active message"
     return None
+
+
+def _base_merge_rejection(db: HubDatabase, event: CandidateEvent) -> str | None:
+    """Bind a base merge its capable sender authored, at the task's latest linked commit.
+
+    The sender needs the base-merge capability, and any claim authority it declares must cover
+    this task. The COMMIT must be the latest link, a merge this sender made, and a merge of an
+    admitted tip: the integration branch or the epic's branch.
+    """
+    from gobby.workflows.base_merge_commits import CAPABILITY, admitted_parent_tips
+    from gobby.workflows.reserved_variables import AUTHORED_MERGES_VARIABLE
+
+    refused = "sender does not claim task"
+    sender = SessionManager(db).get(event.message.from_session)
+    if sender is None or not session_has_capability(db, sender.id, CAPABILITY):
+        return refused
+    if not _claim_authority_covers(db, sender, event.task):
+        return refused
+    worktree = LocalWorktreeManager(db).get_by_task(event.task.id)
+    if worktree is None or event.sha is None or not event.task.commits:
+        return "COMMIT is not the task's latest linked commit"
+    repo = Path(worktree.worktree_path)
+    sha = _full_commit(event.sha, repo)
+    if sha is None or sha != _full_commit(event.task.commits[-1], repo):
+        return "COMMIT is not the task's latest linked commit"
+    authored = SessionVariableManager(db).get_variables(sender.id).get(AUTHORED_MERGES_VARIABLE)
+    recorded = authored if isinstance(authored, list) else []
+    if sha not in {_full_commit(entry, repo) for entry in recorded if isinstance(entry, str)}:
+        return "COMMIT was not authored by the sender"
+    second = _full_commit(f"{sha}^2", repo)
+    tips = admitted_parent_tips(db, event.task, repo)
+    if second is None or tips is None or second not in tips:
+        return "COMMIT is not a base merge of the integration or epic branch"
+    return None
+
+
+def _claim_authority_covers(db: HubDatabase, sender: Session, task: Task) -> bool:
+    """A sender that declares claim authority must hold it for this task; others need none.
+
+    A declared manager covers a task only as a seat of that task's team, so an unbound or
+    other-team manager is refused while a root coordinator with the capability is not.
+    """
+    from gobby.agents.team_lifecycle import seat_team, task_team
+    from gobby.tasks.lifecycle_access import is_operator_coordinator
+
+    definition = session_agent_definition(db, sender)
+    if definition is None:
+        return False
+    if "manage_task_claims" not in definition[0].capabilities:
+        return True
+    if is_operator_coordinator(LocalTaskManager(db), sender, capability="manage_task_claims"):
+        return True
+    manager = seat_team(db, sender.id)
+    team = task_team(db, task.id)
+    return (
+        manager is not None
+        and team is not None
+        and (team.team_id == manager.team_id or team.parent_team_id == manager.team_id)
+    )
+
+
+def _full_commit(ref: str, repo: Path) -> str | None:
+    """The full SHA a ref names in the repo, or None when it names no commit."""
+    return run_git_command(["git", "rev-parse", "--verify", "-q", f"{ref}^{{commit}}"], repo)
 
 
 def candidate_binding_error(

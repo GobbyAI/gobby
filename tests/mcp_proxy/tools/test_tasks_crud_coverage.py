@@ -52,6 +52,8 @@ SUMMARY_TASK_KEYS = {
     "assigned_agent",
     "implementation_domain",
     "additional_skills",
+    "review_epoch",
+    "step_records",
 }
 
 NOISY_TASK_KEYS = {
