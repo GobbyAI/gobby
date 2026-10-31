@@ -35,6 +35,8 @@ pub struct NodeAgents {
     pub report_lock: Mutex<()>,
     /// Checkout roots the hub has accepted from this node. A root is added only after a 2xx.
     pub registered: Mutex<std::collections::BTreeSet<PathBuf>>,
+    /// Checkout roots with a registration in flight. The flag records a hook that arrived during it.
+    pub checkout_attempts: Mutex<std::collections::BTreeMap<PathBuf, bool>>,
     /// Arrival-ordered turns for the commands that name each run.
     lanes: Arc<lanes::Lanes>,
     /// Runs whose preparation task is still live.
@@ -78,6 +80,7 @@ impl NodeAgents {
             changed,
             report_lock: Mutex::new(()),
             registered: Mutex::default(),
+            checkout_attempts: Mutex::default(),
             lanes: Arc::default(),
             preparing: Default::default(),
             #[cfg(unix)]

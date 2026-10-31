@@ -283,17 +283,32 @@ async fn concurrent_unregistered_hooks_register_once() -> Result<()> {
     hub.script(HOOK, vec![(StatusCode::OK, json!({"decision":"allow"})); 2]);
     hub.script(
         CHECKOUTS,
-        vec![(StatusCode::CREATED, json!({"root_path":root, "created":true})); 2],
+        vec![
+            (
+                StatusCode::CREATED,
+                json!({"root_path":root, "created":true})
+            );
+            2
+        ],
     );
     let (entered, release) = hub.pause_next(CHECKOUTS);
-    assert_eq!(hook(&node, &root, "concurrent-first").await?.0, StatusCode::OK);
+    assert_eq!(
+        hook(&node, &root, "concurrent-first").await?.0,
+        StatusCode::OK
+    );
     let attempted = tokio::time::timeout(Duration::from_secs(3), entered).await;
-    assert!(attempted.is_ok(), "first registration never reached the hub");
+    assert!(
+        attempted.is_ok(),
+        "first registration never reached the hub"
+    );
     attempted
         .unwrap()
         .expect("registration barrier was reached");
     // The first registration is still held. A second hook from the same root must not POST again.
-    assert_eq!(hook(&node, &cwd, "concurrent-second").await?.0, StatusCode::OK);
+    assert_eq!(
+        hook(&node, &cwd, "concurrent-second").await?.0,
+        StatusCode::OK
+    );
     assert_registration_count(&hub, 1).await;
     release.send(()).expect("release registration response");
     wait_until_registered(&node, &root).await;
@@ -311,7 +326,10 @@ async fn authenticated_pass_through_hook_registers_checkout() -> Result<()> {
     hub.script(HOOK, vec![(StatusCode::OK, json!({"decision":"allow"}))]);
     hub.script(
         CHECKOUTS,
-        vec![(StatusCode::CREATED, json!({"root_path":root, "created":true}))],
+        vec![(
+            StatusCode::CREATED,
+            json!({"root_path":root, "created":true}),
+        )],
     );
     // No hook-response capability and no envelope ID: the hook takes the pass-through branch.
     let payload = json!({

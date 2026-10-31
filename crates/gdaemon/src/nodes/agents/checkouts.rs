@@ -22,8 +22,8 @@ pub fn observe_hook_cwd(node: Arc<NodeServices>, cwd: PathBuf) {
     });
 }
 
-/// Posts a registration for an unregistered checkout. Only a 2xx answer remembers the root, so a
-/// failed registration is retried on the next hook from it.
+/// Registers an unregistered checkout with at most one POST in flight per root. A hook that
+/// arrives during the POST asks for one retry if that POST fails.
 async fn register(node: &NodeServices, cwd: &Path) -> Result<()> {
     let agents = &node.agents;
     let (home, cwd) = (agents.home.clone(), cwd.to_owned());
@@ -32,10 +32,36 @@ async fn register(node: &NodeServices, cwd: &Path) -> Result<()> {
     else {
         return Ok(());
     };
-    if agents.registered.lock().await.contains(&root) {
-        return Ok(());
+    {
+        // Lock order: attempts, then registered. A success updates both under the attempts lock.
+        let mut attempts = agents.checkout_attempts.lock().await;
+        if agents.registered.lock().await.contains(&root) {
+            return Ok(());
+        }
+        if let Some(retry) = attempts.get_mut(&root) {
+            *retry = true;
+            return Ok(());
+        }
+        attempts.insert(root.clone(), false);
     }
-    let payload = json!({"v": CONTRACT_VERSION, "project_id": project_id, "root_path": &root});
+    loop {
+        let outcome = post(node, &root, &project_id).await;
+        let mut attempts = agents.checkout_attempts.lock().await;
+        if outcome.is_err() && attempts.get(&root) == Some(&true) {
+            attempts.insert(root.clone(), false);
+            continue;
+        }
+        attempts.remove(&root);
+        if outcome.is_ok() {
+            agents.registered.lock().await.insert(root);
+        }
+        return outcome;
+    }
+}
+
+/// Posts one registration. Only a 2xx answer counts.
+async fn post(node: &NodeServices, root: &Path, project_id: &str) -> Result<()> {
+    let payload = json!({"v": CONTRACT_VERSION, "project_id": project_id, "root_path": root});
     let request = drain::request(node, CHECKOUTS, &payload, None).await?;
     let response = tokio::time::timeout(REGISTER_DEADLINE, node.relay.forward(request))
         .await
@@ -43,7 +69,6 @@ async fn register(node: &NodeServices, cwd: &Path) -> Result<()> {
     if !response.status().is_success() {
         bail!("checkout registration hub returned {}", response.status());
     }
-    agents.registered.lock().await.insert(root);
     Ok(())
 }
 

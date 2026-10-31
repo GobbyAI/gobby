@@ -87,14 +87,15 @@ pub async fn execute(
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
     let request = Request::from_parts(parts, Body::from(body));
-    if payload["response_capability"] != "hook-response.v1"
-        || id.is_none()
-        || !has_node_key(&node, request.headers()).await
+    let authenticated = has_node_key(&node, request.headers()).await;
+    if let Some(cwd) = payload["input_data"]["cwd"]
+        .as_str()
+        .filter(|_| authenticated)
     {
-        return node.relay.forward(request).await;
-    }
-    if let Some(cwd) = payload["input_data"]["cwd"].as_str() {
         checkouts::observe_hook_cwd(node.clone(), PathBuf::from(cwd));
+    }
+    if payload["response_capability"] != "hook-response.v1" || id.is_none() || !authenticated {
+        return node.relay.forward(request).await;
     }
     let (sender, receiver) = oneshot::channel();
     // The forwarding task owns the claim even if axum drops this handler.
