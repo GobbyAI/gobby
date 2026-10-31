@@ -169,9 +169,13 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
     .with_project_root(root.path().to_path_buf());
 
     let cleared = lifecycle.clear_project_vectors().expect("clear");
+    let mut embedded = Vec::new();
     let rebuilt = lifecycle
-        .rebuild_symbols(&[symbol("sym-1", "src/lib.rs", None)])
+        .rebuild_symbols(&[symbol("sym-1", "src/lib.rs", None)], &mut |symbol| {
+            embedded.push(symbol.id.clone())
+        })
         .expect("rebuild");
+    assert_eq!(embedded, ["sym-1"]);
     let embedding_requests = embedding_handle
         .join()
         .expect("embedding requests")

@@ -89,7 +89,7 @@ impl CodeSymbolVectorLifecycle {
         symbols: &[Symbol],
     ) -> Result<CodeSymbolVectorLifecycleOutput, VectorLifecycleError> {
         let schema = self.ensure_collection()?;
-        let points = self.points_for_symbols(symbols, schema.size)?;
+        let points = self.points_for_symbols(symbols, schema.size, &mut |_| {})?;
         let vectors_upserted = self.upsert_points(points)?;
 
         Ok(self.output(
@@ -137,12 +137,15 @@ impl CodeSymbolVectorLifecycle {
         Ok(self.output(CodeSymbolVectorLifecycleAction::Clear, None, 0, 0, deleted))
     }
 
+    /// Rebuild vectors for `symbols`, calling `on_embedded` once per symbol as
+    /// each embedding batch returns.
     pub fn rebuild_symbols(
         &mut self,
         symbols: &[Symbol],
+        on_embedded: &mut dyn FnMut(&Symbol),
     ) -> Result<CodeSymbolVectorLifecycleOutput, VectorLifecycleError> {
         let schema = self.ensure_collection()?;
-        let points = self.points_for_symbols(symbols, schema.size)?;
+        let points = self.points_for_symbols(symbols, schema.size, on_embedded)?;
         let vectors_upserted = self.upsert_points(points)?;
 
         Ok(self.output(
@@ -331,6 +334,7 @@ impl CodeSymbolVectorLifecycle {
         &self,
         symbols: &[Symbol],
         expected_vector_size: usize,
+        on_embedded: &mut dyn FnMut(&Symbol),
     ) -> Result<Vec<UpsertRequest>, VectorLifecycleError> {
         if symbols.is_empty() {
             return Ok(Vec::new());
@@ -372,6 +376,7 @@ impl CodeSymbolVectorLifecycle {
                     vector,
                     payload,
                 });
+                on_embedded(symbol);
             }
         }
 

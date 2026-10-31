@@ -11,6 +11,7 @@ use crate::vector::code_symbols::{
     CodeSymbolVectorLifecycleOutput, EmbeddingSource, VectorLifecycleError, VectorOrphanCleanup,
     embedding_source_from_context,
 };
+use gobby_core::progress::ProgressBar;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -237,7 +238,11 @@ pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
         db::reset_vectors_sync_for_project(&mut conn, &ctx.project_id)?;
         db::mark_project_vector_sync_attempted(&mut conn, &ctx.project_id)?;
         let symbols = code_symbols::fetch_symbols_for_project(&mut conn, &ctx.project_id)?;
-        let output = lifecycle.rebuild_symbols(&symbols)?;
+        let mut bar = ProgressBar::new(symbols.len(), ctx.quiet);
+        bar.draw("embedding");
+        let output = lifecycle.rebuild_symbols(&symbols, &mut |symbol| bar.tick(&symbol.file_path));
+        bar.finish();
+        let output = output?;
         let files_synced = db::mark_project_vectors_synced(&mut conn, &ctx.project_id)? as usize;
         let report = ProjectionSyncReport::ok(files_synced.min(file_paths.len()), output.symbols);
         print_lifecycle_output(&output, report, format)
