@@ -165,8 +165,9 @@ def monitor_harness(
         event_file.write_text("")
         fake_log = root / "log.mjs"
         # The child records its start before it announces readiness, so the
-        # monitor's ready signal implies the record exists. A slow child only
-        # delays readiness; the stall models that.
+        # monitor's ready signal implies the record exists. The slow-start stall
+        # sits between the two lines: a readiness-first child reports ready while
+        # the record is still missing for the whole stall.
         stall = (
             "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);\n"
             if getattr(request, "param", None) == "slow-start"
@@ -175,9 +176,9 @@ def monitor_harness(
         fake_log.write_text(
             f"#!{node}\n"
             "import { openSync, fstatSync, readSync, closeSync, appendFileSync } from 'node:fs';\n"
-            + stall
             + f"appendFileSync({json.dumps(str(root / 'starts'))}, 'start\\n');\n"
-            "console.log('Filtering the log data using test predicate');\n"
+            + stall
+            + "console.log('Filtering the log data using test predicate');\n"
             f"const events = {json.dumps(str(event_file))};\n"
             "const fd = openSync(events, 'r'); let offset = 0; let pending = '';\n"
             "const owner = process.ppid;\n"
