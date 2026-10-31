@@ -226,7 +226,7 @@ checks. The current bundled catalogue is:
 | `release-manager` | Rebuilds and promotes the Rust binaries whose crates changed; the Orchestrator owns every daemon restart and activation |
 | `recovery-steward` | Patrols live seats on a 10-minute reminder, resumes idle stalled composers, and alerts Triage on quiet DevTeams |
 | `researcher` | Answers bounded research requests |
-| `reporter` | Short-lived spawned run that drafts the 30-minute operator status and ends |
+| `reporter` | Standing spawned seat that drafts the operator status each `report_cadence_seconds` tick and yields between ticks |
 | `archivist` | Maintains the operational digest |
 | `log-monitor` | Monitor-only check of daemon health, status and logs every ten minutes; reports to Triage |
 | `metrics-monitor` | Observe-only Prometheus watch of daemon RSS, CPU and uptime; reports to Triage and Log Monitor |
@@ -239,9 +239,10 @@ Orchestrator declare only the `persona` surface, because they run in
 operator-opened panes and are never spawned. The other standing seats declare
 both `spawn` and `persona` surfaces and share one anchored prompt between the
 two. Standing seats inherit provider and checkout mode, omit a model override,
-and use `execution_mode: interactive` with `timeout: 0`. The reporter is the one
-short-lived seat: spawn-only, with `execution_mode: one_shot` and a bounded
-`timeout`. Definitions never select a terminal backend. The researcher
+and use `execution_mode: interactive` with `timeout: 0`. The reporter declares
+only the `spawn` surface. It waits between ticks with `wait_for_coordination`
+on the project-policy `report_cadence_seconds` and does not end after one
+report. Definitions never select a terminal backend. The researcher
 additionally declares `idle_ttl_seconds: 900`.
 
 Shared seat guidance is injected by the `inject-seat-common` rule in the `roles`
