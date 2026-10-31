@@ -20,6 +20,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from gobby.agents.external_write_grants import GRANT_KEY, apply_remote_write_grant
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox_network import definition_sandbox_config
 from gobby.agents.session import ChildSessionManager
@@ -80,6 +81,7 @@ class RemoteSpawnRequest:
     reserved_run_id: str | None = None
     execution_mode: Literal["one_shot", "interactive"] | None = None
     idle_ttl_seconds: int | None = None
+    write_grant: dict[str, Any] | None = None
 
 
 def _machine_lock(machine_id: str) -> asyncio.Lock:
@@ -106,6 +108,8 @@ def _resume_metadata(request: RemoteSpawnRequest, resume_target: Session | None)
         metadata["idle_ttl_seconds"] = request.idle_ttl_seconds
     if request.allow_closed_task:
         metadata["allow_closed_task"] = True
+    if request.write_grant is not None:
+        metadata[GRANT_KEY] = request.write_grant
     if resume_target is not None:
         metadata.update(
             {
@@ -213,7 +217,9 @@ async def spawn_remote_agent(
     ok, reason, _depth = runner.can_spawn(request.parent_session_id)
     if not ok:
         return _refusal("spawn_refused", reason)
-    sandbox = definition_sandbox_config(daemon_config, request.agent_body)
+    sandbox = apply_remote_write_grant(
+        definition_sandbox_config(daemon_config, request.agent_body), request.write_grant
+    )
     if not sandbox.enabled or sandbox.backend != "srt":
         return _refusal("sandbox_required", "A remote run needs the enabled srt sandbox")
 

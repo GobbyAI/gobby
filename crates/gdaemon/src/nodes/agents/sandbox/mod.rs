@@ -3,6 +3,7 @@
 //! Each submodule owns one step; `resolve_srt_policy` runs them in oracle order.
 
 mod caches;
+pub mod external_roots;
 mod grant_glob;
 mod grok_home;
 mod monitor;

@@ -111,3 +111,52 @@ def authorize_write_grant(
         "parent_run_id": run_id,
         "asserted_at": datetime.now(UTC).isoformat(),
     }
+
+
+def authorize_remote_write_grant(
+    paths: list[str] | None,
+    reason: str | None,
+    *,
+    asserting_session_id: str | None,
+    target_machine_id: str,
+    session_manager: Any,
+    run_storage: Any,
+) -> dict[str, Any] | None:
+    """An explicit assertion for a run on another machine. The target node canonicalizes the roots.
+
+    A run-backed caller holds authority bound to its own machine, so it cannot delegate roots here.
+    """
+    if not paths:
+        return None
+    if any(not isinstance(path, str) or not Path(path).is_absolute() for path in paths):
+        raise ValueError("extra_write_paths must be a list of absolute directory paths")
+    if not reason or not reason.strip():
+        raise ValueError("Nonempty extra_write_paths require a nonblank write_paths_reason")
+    if not asserting_session_id or session_manager is None:
+        raise ValueError("External write grants require a recorded asserting session")
+    session = session_manager.get(asserting_session_id)
+    if session is None:
+        raise ValueError("External write grant asserting session was not found")
+    run_id = getattr(session, "agent_run_id", None)
+    run = run_storage.get(run_id) if run_id else run_storage.get_by_session(session.id)
+    if run is not None or run_id or getattr(session, "parent_session_id", None):
+        raise ValueError(
+            "A managed write grant applies only on its run's machine, "
+            f"so it cannot authorize a run on {target_machine_id}"
+        )
+    return {
+        "machine_id": target_machine_id,
+        "requested_roots": list(paths),
+        "reason": reason.strip(),
+        "asserting_session_id": session.id,
+        "parent_run_id": None,
+        "asserted_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def apply_remote_write_grant(config: SandboxConfig, grant: dict[str, Any] | None) -> SandboxConfig:
+    """Forward the requested roots as given. The target node canonicalizes them on its disk."""
+    if grant is None:
+        return config
+    paths = list(dict.fromkeys([*config.extra_write_paths, *grant["requested_roots"]]))
+    return config.model_copy(update={"extra_write_paths": paths})

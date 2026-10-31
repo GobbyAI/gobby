@@ -11,7 +11,7 @@ use super::{
         start_planned,
     },
     repair::RepairEnv,
-    sandbox::runtime::require_managed_srt,
+    sandbox::{external_roots::validate_external_write_roots, runtime::require_managed_srt},
     state::{RunPhase, RunRecord},
     workspace::{self, plan_workspace},
 };
@@ -311,6 +311,20 @@ async fn spawn(
             request_id,
             "invalid_payload",
             error.to_string(),
+            Stage::None,
+        ));
+    }
+    // Refused before acceptance, so the hub settles the run as never launched.
+    if let Err(message) = validate_external_write_roots(
+        &payload.sandbox.extra_write_paths,
+        &agents.home,
+        &context.home,
+        &context.ambient,
+    ) {
+        return Dispatched::answer(reply_err(
+            request_id,
+            "invalid_write_grant",
+            message,
             Stage::None,
         ));
     }

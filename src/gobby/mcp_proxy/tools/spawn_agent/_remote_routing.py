@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.external_write_grants import authorize_remote_write_grant
 from gobby.agents.session import ChildSessionManager
 from gobby.config.app import DaemonConfig
 
@@ -133,11 +134,18 @@ async def spawn_remote_route(
     if daemon_config is None or session_manager is None:
         return spawn_refusal("config_unavailable", "The daemon config snapshot is unavailable")
     if request.extra_write_paths:
-        # A managed grant is recorded on one machine's disk; a node run cannot inherit it.
-        return spawn_refusal(
-            "remote_write_grant_unsupported",
-            "External write paths are not supported for a run on another machine",
-        )
+        try:
+            write_grant = authorize_remote_write_grant(
+                request.extra_write_paths,
+                request.write_paths_reason,
+                asserting_session_id=request.caller_session_id or request.parent_session_id,
+                target_machine_id=routed.machine_id,
+                session_manager=session_manager,
+                run_storage=runner.run_storage,
+            )
+        except ValueError as exc:
+            return spawn_refusal("write_grant_refused", str(exc))
+        request = replace(request, write_grant=write_grant)
 
     resume_target = None
     if request.resume_session_id is not None:
