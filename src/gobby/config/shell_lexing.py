@@ -22,6 +22,9 @@ class ParsedShellCommand:
 
     segments: tuple[tuple[str, ...], ...]
     operators: tuple[str, ...]
+    redirected: bool = False
+    expanded: bool = False
+    commented: bool = False
 
 
 def shell_command_segments(command: str) -> list[list[str]]:
@@ -51,6 +54,7 @@ def parse_shell_command(command: str) -> ParsedShellCommand:
     operators: list[str] = []
     current: list[str] = []
     skip_redirection_target = False
+    redirected = False
     for token in tokens:
         if skip_redirection_target:
             skip_redirection_target = False
@@ -65,11 +69,66 @@ def parse_shell_command(command: str) -> ParsedShellCommand:
             if current and current[-1].isdigit():
                 current.pop()
             skip_redirection_target = True
+            redirected = True
             continue
         current.append(token)
     if current:
         segments.append(tuple(current))
-    return ParsedShellCommand(tuple(segments), tuple(operators))
+    return ParsedShellCommand(
+        tuple(segments),
+        tuple(operators),
+        redirected,
+        has_shell_expansion(command),
+        _has_shell_comment(command),
+    )
+
+
+def has_shell_expansion(command: str) -> bool:
+    """Detect dynamic shell words before tokenization erases quote provenance.
+
+    Parameter and arithmetic expansion are conservative too: their contents can
+    execute substitutions, and their runtime values are unavailable to callers.
+    Single-quoted and backslash-escaped expansion markers remain literal.
+    """
+    quote: str | None = None
+    cursor = 0
+    while cursor < len(command):
+        char = command[cursor]
+        if char == "\\" and quote != "'":
+            cursor += 2
+            continue
+        if char == quote:
+            quote = None
+        elif char in {"'", '"'} and quote is None:
+            quote = char
+        elif char in {"$", "`"} and quote != "'":
+            return True
+        cursor += 1
+    return False
+
+
+def _has_shell_comment(command: str) -> bool:
+    """Retain comment syntax that shlex's literal-comment mode cannot interpret.
+
+    A quote inside a comment can otherwise hide a later executable line inside
+    an apparent argument. Static single-command grants must refuse that syntax.
+    """
+    quote: str | None = None
+    cursor = 0
+    while cursor < len(command):
+        char = command[cursor]
+        if char == "\\" and quote != "'":
+            cursor += 2
+            continue
+        if char == quote:
+            quote = None
+        elif char in {"'", '"'} and quote is None:
+            quote = char
+        elif char == "#" and quote is None:
+            if cursor == 0 or command[cursor - 1] in " \t\r\n;&|()":
+                return True
+        cursor += 1
+    return False
 
 
 def _strip_heredoc_bodies(command: str) -> str:
@@ -81,12 +140,14 @@ def _strip_heredoc_bodies(command: str) -> str:
     """
     lines = command.split("\n")
     kept: list[str] = []
+    quote: str | None = None
     index = 0
     while index < len(lines):
         line = lines[index]
         kept.append(line)
         index += 1
-        for dedent, delimiter in _heredoc_openers(line):
+        openers, quote = _heredoc_openers(line, quote)
+        for dedent, delimiter in openers:
             while index < len(lines):
                 terminator = lines[index].rstrip()
                 index += 1
@@ -95,11 +156,14 @@ def _strip_heredoc_bodies(command: str) -> str:
     return "\n".join(kept)
 
 
-def _heredoc_openers(line: str) -> list[tuple[bool, str]]:
-    """Return unquoted here-document operators and their quote-removed words."""
+def _heredoc_openers(line: str, quote: str | None) -> tuple[list[tuple[bool, str]], str | None]:
+    """Return unquoted here-document operators and the quote open at the line's end.
+
+    `quote` is the quote an earlier line left open. A quote that spans lines keeps a
+    `<<` inside it literal, so it opens no here-document.
+    """
     openers: list[tuple[bool, str]] = []
-    quote: str | None = None
-    at_word_start = True
+    at_word_start = quote is None
     index = 0
     while index < len(line):
         char = line[index]
@@ -138,7 +202,7 @@ def _heredoc_openers(line: str) -> list[tuple[bool, str]]:
             continue
         at_word_start = char in " \t;&|<>()"
         index += 1
-    return openers
+    return openers, quote
 
 
 def _parse_heredoc_delimiter(value: str) -> str | None:

@@ -332,6 +332,8 @@ class RuleEngine(
                 # Gate-keeping default: an uninspected commit is reviewable.
                 eval_context.setdefault("commit_has_reviewable_paths", True)
                 eval_context.setdefault("commit_records_only_plan_paths", False)
+                eval_context.setdefault("base_merge_git_step", False)
+                eval_context.setdefault("base_merge_write", False)
                 eval_context.setdefault("found_work_shirk", False)
                 eval_context.setdefault("found_work_shirk_confirmed", False)
                 eval_context.setdefault("terminal_validation_failure", False)

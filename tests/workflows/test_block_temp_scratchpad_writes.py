@@ -31,6 +31,14 @@ RULE_PATH = (
     ROOT / "src/gobby/install/shared/workflows/rules/roles/block-temp-scratchpad-writes.yaml"
 )
 SESSION_ID = "55555555-5555-4555-8555-555555555555"
+SRT_SOCKET_ROOT_VARIABLE = "_agent_srt_socket_root"
+SRT_RUN_ROOT = "/private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-aaaa1111"
+SIBLING_RUN_ROOT = "/private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-bbbb2222"
+TEMPDIR_PARENT = "/private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T"
+EPIC_WORKSPACE = (
+    "/Users/dev/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/epics/epic-7"
+)
+ADMITTED_DIRS_HELPER = "temp_write_admitted_dirs"
 
 PROJECT = "/Users/dev/.gobby/worktrees/gobby/task-25218-example"
 WORKSPACE = (
@@ -94,10 +102,12 @@ def _rule() -> dict[str, Any]:
     return rule
 
 
-def _variables(seat: str | None) -> dict[str, Any]:
+def _variables(seat: str | None, socket_root: str | None = None) -> dict[str, Any]:
     variables: dict[str, Any] = {"_agent_workspace_dir": WORKSPACE}
     if seat is not None:
         variables["_agent_type"] = seat
+    if socket_root is not None:
+        variables[SRT_SOCKET_ROOT_VARIABLE] = socket_root
     return variables
 
 
@@ -112,12 +122,12 @@ def _normalized(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _rule_fires(data: dict[str, Any], seat: str | None) -> bool:
+def _rule_fires(data: dict[str, Any], seat: str | None, socket_root: str | None = None) -> bool:
     evaluator = SafeExpressionEvaluator(
         {
             "event": SimpleNamespace(data=data),
             "tool_input": data["tool_input"],
-            "variables": _variables(seat),
+            "variables": _variables(seat, socket_root),
         },
         build_condition_helpers(),
     )
@@ -136,7 +146,11 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 async def _evaluate_claimed(
-    db: HubDatabase, tool_name: str, tool_input: dict[str, Any], seat: str
+    db: HubDatabase,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    seat: str,
+    socket_root: str | None = None,
 ) -> HookResponse:
     data = _normalized(tool_name, tool_input)
     event = HookEvent(
@@ -153,7 +167,7 @@ async def _evaluate_claimed(
             "require_task_before_edit": True,
             "task_claimed": True,
             "plan_mode": False,
-            **_variables(seat),
+            **_variables(seat, socket_root),
         },
     )
 
@@ -299,3 +313,135 @@ async def test_engine_allows_write_into_the_assigned_workspace_for_a_claimed_tas
     )
 
     assert response.decision == "allow"
+
+
+# --- SRT run socket root (#25365) -------------------------------------------
+# A macOS SRT run grants Unix sockets under its own short temp root, which is also its
+# TMPDIR. That one root is admitted. Every other temp and scratchpad path stays blocked.
+
+RUN_SOCKET_WRITES = [
+    pytest.param(f"{SRT_RUN_ROOT}/gterm/control.sock", id="socket-dir-entry"),
+    pytest.param(f"{SRT_RUN_ROOT}/sccache.sock", id="top-level-entry"),
+    pytest.param(f"{SRT_RUN_ROOT}/nested/deeper/notes.txt", id="nested-entry"),
+]
+
+OTHER_TEMP_WRITES = [
+    pytest.param("/tmp/gobby-scratch/notes.md", id="tmp"),
+    pytest.param(f"{PROVIDER_SCRATCHPAD}/notes.md", id="provider-scratchpad"),
+    pytest.param(f"{TEMPDIR_PARENT}/notes.md", id="tempdir-parent"),
+    pytest.param(f"{SIBLING_RUN_ROOT}/gterm/control.sock", id="sibling-run-root"),
+    pytest.param(f"{SRT_RUN_ROOT}-evil/notes.md", id="prefix-sibling-run-root"),
+    pytest.param(f"{SRT_RUN_ROOT}/../gobby-bbbb2222/notes.md", id="dotdot-into-sibling"),
+]
+
+
+@pytest.mark.parametrize("seat", SEATS, ids=_seat_id)
+@pytest.mark.parametrize("path", RUN_SOCKET_WRITES)
+def test_write_into_own_srt_socket_root_is_not_blocked(path: str, seat: str | None) -> None:
+    data = _normalized("Write", {"file_path": path, "content": "x"})
+    assert _rule_fires(data, seat, socket_root=SRT_RUN_ROOT) is False
+
+
+@pytest.mark.parametrize("seat", SEATS, ids=_seat_id)
+def test_own_srt_socket_root_stays_blocked_without_the_runtime_variable(
+    seat: str | None,
+) -> None:
+    data = _normalized("Write", {"file_path": f"{SRT_RUN_ROOT}/gterm/control.sock", "content": "x"})
+    assert _rule_fires(data, seat) is True
+
+
+@pytest.mark.parametrize("seat", SEATS, ids=_seat_id)
+@pytest.mark.parametrize("path", OTHER_TEMP_WRITES)
+def test_other_temp_writes_stay_blocked_beside_own_srt_socket_root(
+    path: str, seat: str | None
+) -> None:
+    data = _normalized("Write", {"file_path": path, "content": "x"})
+    assert _rule_fires(data, seat, socket_root=SRT_RUN_ROOT) is True
+
+
+@pytest.mark.parametrize("seat", SEATS, ids=_seat_id)
+def test_shell_write_into_own_srt_socket_root_is_not_blocked(seat: str | None) -> None:
+    data = _normalized("Bash", {"command": f"echo hi > {SRT_RUN_ROOT}/out.txt"})
+    assert _rule_fires(data, seat, socket_root=SRT_RUN_ROOT) is False
+
+
+@pytest.mark.parametrize("seat", SEATS, ids=_seat_id)
+def test_shell_write_into_sibling_run_root_stays_blocked(seat: str | None) -> None:
+    data = _normalized("Bash", {"command": f"echo hi > {SIBLING_RUN_ROOT}/out.txt"})
+    assert _rule_fires(data, seat, socket_root=SRT_RUN_ROOT) is True
+
+
+def test_admitted_dirs_are_the_workspace_folders_and_the_own_socket_root() -> None:
+    helper = build_condition_helpers()[ADMITTED_DIRS_HELPER]
+    variables = {
+        "_agent_workspace_dir": WORKSPACE,
+        "_agent_workspace_epic_dir": EPIC_WORKSPACE,
+        SRT_SOCKET_ROOT_VARIABLE: SRT_RUN_ROOT,
+    }
+    assert helper(variables) == [WORKSPACE, EPIC_WORKSPACE, SRT_RUN_ROOT]
+
+
+def test_admitted_dirs_without_a_socket_root_are_the_workspace_folders_only() -> None:
+    helper = build_condition_helpers()[ADMITTED_DIRS_HELPER]
+    assert helper({"_agent_workspace_dir": WORKSPACE}) == [WORKSPACE]
+
+
+@pytest.mark.parametrize("value", ["", None, 7], ids=["empty", "null", "not-a-string"])
+def test_admitted_dirs_ignore_a_malformed_socket_root(value: object) -> None:
+    helper = build_condition_helpers()[ADMITTED_DIRS_HELPER]
+    assert helper({"_agent_workspace_dir": WORKSPACE, SRT_SOCKET_ROOT_VARIABLE: value}) == [
+        WORKSPACE
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seat", ENGINE_SEATS)
+async def test_engine_allows_write_into_own_srt_socket_root_for_a_claimed_task(
+    db: HubDatabase, seat: str
+) -> None:
+    _sync_bundled(db)
+
+    response = await _evaluate_claimed(
+        db,
+        "Write",
+        {"file_path": f"{SRT_RUN_ROOT}/gterm/control.sock", "content": "x"},
+        seat,
+        socket_root=SRT_RUN_ROOT,
+    )
+
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seat", ENGINE_SEATS)
+async def test_engine_blocks_tmpdir_write_beside_own_srt_socket_root(
+    db: HubDatabase, seat: str
+) -> None:
+    _sync_bundled(db)
+
+    response = await _evaluate_claimed(
+        db,
+        "Bash",
+        {"command": 'echo hi > "$TMPDIR/out.txt"'},
+        seat,
+        socket_root=SRT_RUN_ROOT,
+    )
+
+    assert response.decision == "block"
+    assert f"[{RULE}]" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_engine_blocks_sibling_run_root_for_a_claimed_task(db: HubDatabase) -> None:
+    _sync_bundled(db)
+
+    response = await _evaluate_claimed(
+        db,
+        "Write",
+        {"file_path": f"{SIBLING_RUN_ROOT}/gterm/control.sock", "content": "x"},
+        "developer",
+        socket_root=SRT_RUN_ROOT,
+    )
+
+    assert response.decision == "block"
+    assert f"[{RULE}]" in (response.reason or "")

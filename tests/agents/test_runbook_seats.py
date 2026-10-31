@@ -877,6 +877,7 @@ def test_devteam_guard_validates_rendered_report_target(env: _Env, report_to: st
         task=f"#{team.seq_num}",
         workspace=env.workspace_id,
         seats="developer",
+        developer_model="claude-test-model",
         reviewer_agent="fixture-reviewer",
         report_to=env.parent_session_id if report_to == "operator" else report_to,
     )

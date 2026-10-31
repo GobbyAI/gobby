@@ -50,10 +50,12 @@ __all__ = [
     "bind_composer_ledger",
     "composer_drain_keys",
     "composer_ledger_path",
+    "composer_unconsumed_submit_at",
     "load_ledger",
     "persist_ledger",
     "read_composer",
     "record_composer_drain",
+    "record_composer_local_command",
     "record_composer_submit",
     "record_composer_command_consumed",
     "release_composer",
@@ -122,6 +124,7 @@ class _Entry:
     dialog_interrupt: bool = False
     interrupt_prior_human_seq: int | None = None
     interrupt_at: float | None = None
+    flagged_at: float | None = None
 
 
 class ComposerLedger:
@@ -359,6 +362,30 @@ class ComposerLedger:
             entry.interrupt_prior_human_seq = None
             self._next()
 
+    def unconsumed_submit_at(self, terminal_id: str) -> float | None:
+        """Receipt time of a flagged submit that no provider record has settled, or ``None``."""
+        with self._lock:
+            entry = self._entries.get(terminal_id)
+            return None if entry is None else _unconsumed_flagged_at(entry)
+
+    def record_local_command(self, terminal_id: str, *, row_at: datetime) -> None:
+        """A local slash command row written at or after the flagged submit settles it.
+
+        Claude runs typed slash commands natively, so no hook records their submit. The
+        command's transcript row proves the flagged input left the composer when it was
+        written at or after the submit's receipt time. An older row, input typed after
+        the submit, or a live interrupt or gap block leaves the draft.
+        """
+        with self._lock:
+            entry = self._entries.get(terminal_id)
+            if entry is None:
+                return
+            flagged_at = _unconsumed_flagged_at(entry)
+            if flagged_at is None or to_aware_utc(row_at).timestamp() < flagged_at:
+                return
+            entry.clean_seq = entry.flagged_seq
+            self._next()
+
     def open_wait(self, terminal_id: str) -> None:
         with self._lock:
             entry = self._entries.get(terminal_id)
@@ -444,6 +471,7 @@ class ComposerLedger:
             entry.unflagged_seq = seq
         elif submit:
             entry.flagged_seq = seq
+            entry.flagged_at = utc_now().timestamp()
 
     def _mark_all(self, reason: str) -> None:
         seq = self._next()
@@ -471,6 +499,20 @@ def _read(entry: _Entry) -> LedgerRead:
     if entry.pending_seq > entry.clean_seq:
         return LedgerRead("held", pending=entry.pending_text)
     return LedgerRead("empty")
+
+
+def _unconsumed_flagged_at(entry: _Entry) -> float | None:
+    """Receipt time of a flagged submit that is the composer's last human input.
+
+    Input typed after the submit, or a live interrupt or gap block, leaves no proof that
+    the submitted text is the only text that left the composer. A state written before
+    ``flagged_at`` existed carries no receipt time and stays unsettled.
+    """
+    if entry.flagged_seq <= entry.clean_seq or entry.human_seq != entry.flagged_seq:
+        return None
+    if entry.unsafe is not None and entry.unsafe_seq > entry.clean_seq:
+        return None
+    return entry.flagged_at
 
 
 def bind_composer_ledger(ledger: ComposerLedger | None) -> None:
@@ -521,6 +563,19 @@ def record_composer_command_consumed(terminal_id: str, command: str) -> None:
     """Acknowledge only a matching daemon command on the bound ledger."""
     if _bound is not None:
         _bound.record_command_consumed(terminal_id, command)
+
+
+def composer_unconsumed_submit_at(terminal_id: str) -> float | None:
+    """Receipt time of the bound ledger's unsettled flagged submit, or ``None``."""
+    if _bound is None:
+        return None
+    return _bound.unconsumed_submit_at(terminal_id)
+
+
+def record_composer_local_command(terminal_id: str, *, row_at: datetime) -> None:
+    """Settle the bound ledger's flagged submit with a local command row."""
+    if _bound is not None:
+        _bound.record_local_command(terminal_id, row_at=row_at)
 
 
 class LiveTerminalLookup(Protocol):

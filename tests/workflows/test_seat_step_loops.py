@@ -29,7 +29,7 @@ import yaml
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.runner import AgentRunner
-from gobby.agents.team_lifecycle import TeamBinding
+from gobby.agents.team_admission_records import TeamBinding
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -1943,6 +1943,23 @@ async def test_reviewer_claim_before_second_rejection_keeps_await(temp_db: HubDa
     assert (run.step, run.vars["fixing"]) == ("await", False)
 
 
+async def test_reviewer_in_await_releases_its_own_claim_without_fixing(
+    temp_db: HubDatabase,
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer", definition=_bundled_code_reviewer())
+    await run.load(*run.vars["required_skills"])
+    task = run.task(owner=SESSION_ID)
+    release = {
+        "task_id": task.id,
+        "holder_session_ref": SESSION_ID,
+        "reason": "Withdrawn before review",
+    }
+    assert run.step == "await"
+    assert await run.admits("gobby-tasks", "release_task_claim", release)
+    await run.call("gobby-tasks", "release_task_claim", release, {"success": True})
+    assert (run.step, run.vars["fixing"]) == ("await", False)
+
+
 async def test_developer_without_a_commit_stays_in_implement_on_no_work_bounce(
     temp_db: HubDatabase,
 ) -> None:
@@ -2152,6 +2169,7 @@ async def reviewer_authorities(
             "name": "dev-manager",
             "version": "1.0",
             "prompts": {"agent": "Manage the team."},
+            # A bound manager's run must declare team_manager, or it is not the task's manager.
             "workflows": {
                 "rule_selectors": {"include": []},
                 "variables": {"team_manager": True},

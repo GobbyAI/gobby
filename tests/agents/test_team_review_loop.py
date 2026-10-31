@@ -14,7 +14,8 @@ from typing import Any, cast
 import pytest
 import yaml
 
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding, bind_reviewer_run
+from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_lifecycle import bind_reviewer_run
 from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields

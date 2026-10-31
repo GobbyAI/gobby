@@ -55,7 +55,11 @@ from gobby.agents.spawn_executor_support import (
     schedule_codex_prompt_delivery,
 )
 from gobby.agents.spawners.command_builder import build_cli_command
-from gobby.agents.srt_runtime import SrtRuntimeError, prepare_sandbox_launch
+from gobby.agents.srt_runtime import (
+    SrtRuntimeError,
+    prepare_sandbox_launch,
+    record_run_socket_root,
+)
 from gobby.agents.trust import active_codex_launch_models, pre_approve_directory
 from gobby.ai.codex_endpoint import (
     codex_endpoint_config_overrides,
@@ -446,6 +450,9 @@ async def resume_agent_run(
     )
     if launch.policy_hash and callable(update_policy_hash):
         update_policy_hash(spawn_context.session_id, launch.policy_hash)
+    await asyncio.to_thread(
+        record_run_socket_root, runner.run_storage.db, spawn_context.session_id, launch
+    )
 
     sandbox_args = launch.provider_args
     config_overrides = list(

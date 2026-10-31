@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
-from datetime import UTC, datetime
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, Mock, patch
@@ -12,7 +15,9 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from gobby.agents.interactive_attention_monitor import InteractiveAttentionMonitor
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.host_client import HostConnectionLost, HostUnavailableError
+from gobby.terminals.host_events import InputActivityEvent
 from gobby.utils.logging import ThrottledLogger
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.agents.test_lifecycle_monitor import LifecycleRuntime
@@ -170,6 +175,88 @@ async def test_lost_local_host_still_snapshots_node_native_rows(
 
     assert local_runtime.snapshot_calls == [15]
     assert node_runtime.snapshot_calls == [15]
+
+
+def _claude_user_row(content: str, timestamp: str, *, meta: bool = False) -> str:
+    record: dict[str, object] = {
+        "type": "user",
+        "timestamp": timestamp,
+        "message": {"role": "user", "content": content},
+    }
+    if meta:
+        record["isMeta"] = True
+    return json.dumps(record) + "\n"
+
+
+@pytest.mark.parametrize(
+    ("transcript_rows", "expected"),
+    [
+        pytest.param(
+            lambda at: (
+                _claude_user_row(
+                    "<local-command-caveat>Caveat</local-command-caveat>", at, meta=True
+                )
+                + _claude_user_row("<command-name>/goal</command-name>", at)
+                + _claude_user_row("<local-command-stdout>Goal set</local-command-stdout>", at)
+            ),
+            "empty",
+            id="local-command-consumes-the-flagged-submit",
+        ),
+        pytest.param(
+            lambda at: _claude_user_row("typed prompt", at),
+            "draft",
+            id="typed-prompt-leaves-the-draft",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_claude_local_command_settles_a_flagged_submit_before_sync(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    transcript_rows: Callable[[str], str],
+    expected: str,
+) -> None:
+    row = make_memory_terminal(backend="native")
+    terminal_id = str(row.id)
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(transcript_rows((datetime.now(UTC) + timedelta(seconds=5)).isoformat()))
+    ledger = ComposerLedger()
+    ledger.release(terminal_id)
+    ledger.observe_host_event(
+        InputActivityEvent(
+            terminal_id=terminal_id,
+            host_terminal_id="h1",
+            attachment_id="a1",
+            kind="input",
+            bytes=1,
+            interrupt=None,
+            epoch="e1",
+            seq=1,
+            submit=True,
+            effect="edit",
+        )
+    )
+    monkeypatch.setattr("gobby.terminals.composer_ledger._bound", ledger)
+    monkeypatch.setattr(
+        "gobby.storage.terminals.TerminalManager.get_live_for_session",
+        lambda _manager, _session_id: row,
+    )
+    session = SimpleNamespace(
+        id="session-1",
+        source="claude",
+        terminal_context={},
+        transcript_path=str(transcript),
+    )
+    session_manager = Mock(db=Mock())
+    session_manager.list.return_value = [session]
+    monitor = _monitor(session_manager, LifecycleRuntime(backend="native"))
+    cast(Mock, monitor._attention_manager).list_blocked.return_value = []
+
+    with patch.object(monitor, "_sync_interactive_attention", new_callable=AsyncMock) as sync:
+        await monitor._check_attention_panes(active_agent_sessions=set())
+
+    assert ledger.read(terminal_id).state == expected
+    assert sync.await_count == 1
 
 
 @pytest.mark.asyncio

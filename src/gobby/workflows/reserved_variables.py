@@ -3,6 +3,8 @@
 from typing import TYPE_CHECKING
 
 HANDOFF_TURN_END_PENDING_VARIABLE = "_handoff_turn_end_pending"
+# The Unix-socket root an SRT launch granted its own run; only the launch records it.
+SRT_RUN_SOCKET_ROOT_VARIABLE = "_agent_srt_socket_root"
 
 if TYPE_CHECKING:
     from gobby.storage.definitions.rules import RuleDefinitionRow
@@ -14,6 +16,7 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         "_agent_type",
         "_block_reasons_shown",
         HANDOFF_TURN_END_PENDING_VARIABLE,
+        SRT_RUN_SOCKET_ROOT_VARIABLE,
         "consecutive_tool_blocks",
         # Claim-sweep shields: each keeps an owner's claims through an absence,
         # so only their dedicated writers may place or clear them.
@@ -49,6 +52,7 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
 )
 
 RESERVED_WORKFLOW_VARIABLE_PREFIXES = (
+    "_agent_workspace_",
     "_last_blocked_",
     "edit_write_",
     "enforce_",

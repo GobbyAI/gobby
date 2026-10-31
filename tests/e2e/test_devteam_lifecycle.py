@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-from gobby.agents.team_lifecycle import SeatTarget, TeamAdmissionRefused, check_team_spawn
+from gobby.agents.team_admission_records import SeatTarget, TeamAdmissionRefused
+from gobby.agents.team_lifecycle import check_team_spawn
 from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.storage.hub.protocol import HubDatabase
@@ -179,6 +180,7 @@ async def test_complete_single_task_team(world: TeamWorld, monkeypatch: pytest.M
     assert {session_status(db, session) for session in team.seats} == {"expired"}
     assert teardown(world, team) == {"outcome": "cleaned"}
     assert not tree.exists()
+    assert team.binding.worktree_id is not None
     assert LocalWorktreeManager(db).get(team.binding.worktree_id) is None
     assert not branch_exists(world, team.binding.branch)
     after = tasks.get_task(task_id)
