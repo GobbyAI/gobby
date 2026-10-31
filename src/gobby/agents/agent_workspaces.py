@@ -95,6 +95,7 @@ _GENERATED_DIRECTORIES = (
     "dist",
     "coverage",
     "gobby-pytest-home-*",
+    "gobby-home",
 )
 
 
@@ -261,44 +262,70 @@ def _excluded_path(path: str) -> bool:
     )
 
 
-async def _prepare_exclusions(project_id: str) -> None:
-    """Exclude generated trees before Git expands status; retire old tracked copies."""
+def _exclude_pattern(path: str) -> str:
+    """Anchored gitignore line that matches exactly one work-tree path."""
+    return "/" + re.sub(r"([\\*?\[\] ])", r"\\\1", path)
+
+
+def _still_skipped(full: Path) -> bool:
+    """Symlinks and oversized files are never committed; a missing or small file is not skipped."""
+    if full.is_symlink():
+        return True
+    try:
+        return full.stat().st_size > WORKSPACE_FILE_LIMIT_BYTES
+    except FileNotFoundError:
+        return False
+
+
+def _sync_exclusions(project_id: str, skipped: Sequence[str] = ()) -> int:
+    """Rewrite the managed exclude block; return how many paths it newly hides.
+
+    Git status hides each recorded untracked path, so a skipped path is listed and logged
+    once instead of on every backup cycle. A recorded path is dropped once it stops being skipped.
+    """
+    anchor = workspace_anchor(project_id)
     exclude = workspace_git_dir(project_id) / "info" / "exclude"
     begin, end = "# BEGIN GOBBY WORKSPACE EXCLUDES", "# END GOBBY WORKSPACE EXCLUDES"
     text = exclude.read_text() if exclude.exists() else ""
     prefix, found, remainder = text.partition(begin)
-    suffix = remainder.partition(end)[2] if found else ""
-    patterns = [*sorted(_SECRET_NAMES), *(f"{name}/" for name in _GENERATED_DIRECTORIES)]
+    block, _, suffix = remainder.partition(end) if found else ("", "", "")
+    previous = {
+        re.sub(r"\\(.)", r"\1", line[1:]) for line in block.splitlines() if line.startswith("/")
+    }
+    recorded = {path for path in (*previous, *skipped) if _still_skipped(anchor / path)}
+    patterns = [
+        *sorted(_SECRET_NAMES),
+        *(f"{name}/" for name in _GENERATED_DIRECTORIES),
+        *(_exclude_pattern(path) for path in sorted(recorded)),
+    ]
     managed = f"{prefix.rstrip()}\n{begin}\n" + "\n".join(patterns) + f"\n{end}{suffix}"
     if managed != text:
         exclude.parent.mkdir(parents=True, exist_ok=True)
         exclude.write_text(managed)
+    return len(recorded - previous)
+
+
+async def _prepare_exclusions(project_id: str) -> None:
+    """Hide generated and still-skipped paths from Git status; retire old tracked copies."""
+    _sync_exclusions(project_id)
     tracked = await _git(project_id, "ls-files", "-z")
     retired = [path for path in tracked.stdout.split("\0") if path and _excluded_path(path)]
     for chunk in _chunks(retired):
         await _git(project_id, "rm", "--cached", "--force", "--ignore-unmatch", "--", *chunk)
 
 
-def _eligible_paths(anchor: Path, paths: Sequence[str]) -> list[str]:
-    """Drop symlinks and regular files over the size limit; keep deletions."""
+def _eligible_paths(anchor: Path, paths: Sequence[str]) -> tuple[list[str], list[str]]:
+    """Split listed paths into (eligible, skipped); deletions stay eligible."""
     eligible: list[str] = []
+    skipped: list[str] = []
     for path in paths:
         if _excluded_path(path):
             continue
-        full = anchor / path
-        if full.is_symlink():
-            logger.info("agent workspace skipped symlink %s", path)
-            continue
-        try:
-            size = full.stat().st_size
-        except FileNotFoundError:
+        if _still_skipped(anchor / path):
+            skipped.append(path)
+        else:
             eligible.append(path)
-            continue
-        if size > WORKSPACE_FILE_LIMIT_BYTES:
-            logger.info("agent workspace skipped oversized file %s (%d bytes)", path, size)
-            continue
-        eligible.append(path)
-    return eligible
+    return eligible, skipped
 
 
 def _chunks(paths: Sequence[str]) -> Iterator[Sequence[str]]:
@@ -315,7 +342,12 @@ async def _commit_locked(project_id: str, trigger: str) -> str | None:
     if not status.stdout:
         return None
     entries = parse_porcelain_v1_z(status.stdout)
-    eligible = _eligible_paths(anchor, [entry.path for entry in entries])
+    eligible, skipped = _eligible_paths(anchor, [entry.path for entry in entries])
+    added = _sync_exclusions(project_id, skipped)
+    if added:
+        logger.info(
+            "agent workspace skipped %d new symlinks or oversized files for %s", added, project_id
+        )
     for chunk in _chunks(eligible):
         await _git(project_id, "add", "-A", "--", *chunk)
     staged = await _git(project_id, "diff", "--cached", "--name-only", "-z")
