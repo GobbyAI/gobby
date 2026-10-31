@@ -16,6 +16,7 @@ from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob, CronRun, CronRunStatus
 from gobby.telemetry.health_metrics import record_automation_event
 from gobby.utils import spawn
+from gobby.utils.session_context import reset_daemon_execution, set_daemon_execution
 
 if TYPE_CHECKING:
     from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -174,6 +175,8 @@ class CronExecutor:
         record_automation_event("cron", "fired")
 
         outcome: ActionOutcome
+        # Cron actions are daemon-owned execution; their sends are admitted as the daemon's.
+        daemon_token = set_daemon_execution()
         try:
             raw_output: object
             if job.action_type == "agent_spawn":
@@ -205,6 +208,8 @@ class CronExecutor:
                 output=captured if isinstance(captured, str) else None,
                 error=str(e),
             )
+        finally:
+            reset_daemon_execution(daemon_token)
 
         completed_at = datetime.now(UTC).isoformat()
         updated = await self._run_db(
