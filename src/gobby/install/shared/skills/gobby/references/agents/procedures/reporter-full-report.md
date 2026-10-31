@@ -22,4 +22,5 @@ Start with the report mode, timestamp, and evidence age. Use compact markdown bl
 - Workspace seat roster: every tab and pane, including empty panes and unclaimed seats, as specified above.
 - Consolidator: last review time and source age.
 - ROADMAP: stage progress from task state, plus policy-designated critical paths and their blocked dependency refs and titles.
+- In-flight tasks: every task in flight with its pipeline stage (test-writing, development, review, waiting to land), time in stage and claimed-since time, grouped by root, and the tasks closed in the window with claim-to-close time. Follow the in-flight section of reporter.md. The Assistant runs the stage and closure queries; a Reporter seat marks that part as a GAP.
 - Last 30 minutes: landed, activated, closed, and escalated, separately, with task refs and titles and evidence timestamps. Include stuck items and alarms with their source.

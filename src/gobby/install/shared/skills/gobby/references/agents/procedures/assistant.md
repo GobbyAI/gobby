@@ -18,13 +18,14 @@ paste it into the report.
 ## Gather
 
 Use the query recipe in `gobby:references/agents/procedures/reporter.md`, sections "Cadence and
-budget" and "Sources". Load it completely through
-`gobby-skills:get_skill_file(name="gobby", path="references/agents/procedures/reporter.md")`.
+budget", "Sources" and "In-flight tasks: stage, time in stage, claim-to-close". Load it completely
+through `gobby-skills:get_skill_file(name="gobby", path="references/agents/procedures/reporter.md")`.
 Fetch its schema first when unleased, and follow every page.next_cursor using only cursor until
 null. For a full report, load `references/agents/procedures/reporter-full-report.md` the same way
 for the workspace roster and the full sections.
 
-Those files supply queries and budgets only. You deliver the report. No Reporter seat runs.
+Those files supply queries and budgets only. You deliver the report. No Reporter seat runs. You run
+the two in-flight queries with `query_readonly`; no Reporter seat can.
 Honor the gathering budget. When it expires, deliver what you have with each gap labelled and the
 report marked incomplete.
 
@@ -32,13 +33,14 @@ report marked incomplete.
 
 Open with one line: `Status, <full|delta>, <start>-<end> CT`.
 
-- Full: every section the gather procedure requires. Each root shows its epic, current claims with
-  seat and time, next five, and candidates. Then close backlog against cap, holds, blocked or
+- Full: every section the gather procedure requires, including in-flight tasks by stage with time
+  in stage and claim-to-close. Each root shows its epic, current claims with seat and time, next
+  five, and candidates. Then close backlog against cap, holds, blocked or
   escalated items, operator decisions, stalled or idle seats, worktrees against developers,
   the workspace roster, the last Consolidator review, roadmap progress with its critical path, and
   landed, activated, closed and escalated changes since the last report.
-- Delta: changes since the last report (landed, activated and closed listed separately), stuck
-  items with durations, alarms with sources, decisions needed, current holds, and cap breaches.
+- Delta: changes since the last report (landed, activated and closed listed separately), in-flight
+  stage moves with claim-to-close for closures, stuck items with durations, alarms with sources, decisions needed, current holds, and cap breaches.
   Name the affected roots. Do not repeat the full root table.
 
 Rules for every report:

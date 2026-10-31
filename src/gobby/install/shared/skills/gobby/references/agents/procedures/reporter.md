@@ -18,14 +18,106 @@ Gather only workspace, session, task, agent, git, and Archivist root-queue state
 - At report time, read `git rev-parse --short <integration branch from project policy>` and `git log -1 --format='%h %cI' <integration branch from project policy>` for the fresh integration tip and timestamp. Never take the tip from the digest or receipt facts. One bounded `git log <integration branch from project policy> --since="30 minutes ago" -n 50` supplies recent Git context; it does not enumerate all landing receipts. Last-30-minute landings come from landing receipt timestamps, each verified with `git merge-base --is-ancestor <landing SHA> <integration branch from project policy>`; failed or unavailable ancestry checks are explicit gaps. Git proves landing, never activation or closure. project roadmap progress and policy-designated critical paths come from task dependencies and root-queue evidence.
 Do not read log files, scan ~/.gobby/logs, search transcripts, capture terminals, inspect processes, or run builds/tests. Never infer activation from landing, invent queue order, or turn a missing field into a healthy claim. Reuse the snapshot across sections. If the digest lacks a fact, report "unknown" with its source gap; do not request a new inventory from seats.
 
-Before delivery, check this full-report scaffold has evidence or a specific source gap in every slot: every root defined by the injected project policy; Close backlog / policy cap; Hold state (restart/cutover, quiet hours); Blocked or escalated; Operator decisions; Stalled or idle; Worktrees versus developers; Workspace seat roster; Consolidator last review; project roadmap progress and policy-designated dependency paths; Last 30 minutes landed / activated / closed / escalated. Each root must have epic, current claims with seat and time, next five, and candidates. Count every seat from the complete compact snapshot. Never replace several missing sections with a generic unknowns paragraph. Delivery success and report completeness are separate results.
+Before delivery, check this full-report scaffold has evidence or a specific source gap in every slot: every root defined by the injected project policy; Close backlog / policy cap; Hold state (restart/cutover, quiet hours); Blocked or escalated; Operator decisions; Stalled or idle; Worktrees versus developers; Workspace seat roster; Consolidator last review; project roadmap progress and policy-designated dependency paths; In-flight tasks (stage, time in stage, claim-to-close); Last 30 minutes landed / activated / closed / escalated. Each root must have epic, current claims with seat and time, next five, and candidates. Count every seat from the complete compact snapshot. Never replace several missing sections with a generic unknowns paragraph. Delivery success and report completeness are separate results.
 If query_limit_reached=true, the seat query hit its 500-row ceiling: mark fleet coverage incomplete. A null next_offset alone does not prove coverage beyond that query limit. Flatten worktree arrays before comparing unique paths to developer seats; absent paths are missing evidence. Use task dependency records for policy-designated critical paths, and parent task queries for stage progress; identify any unresolved dependency ref+title explicitly. Include report_complete and seats_read/total in the run result.
+
+## In-flight tasks: stage, time in stage, claim-to-close
+Every full and delta report carries this section. It covers each open task under a policy root (`project_policy.roots`, matched by `path_cache` prefix) that is claimed or has a step record, plus each task closed in the report window.
+
+Who runs each query. `query_readonly` is Assistant- and Orchestrator-only (`query-readonly-seat-scope`). The Assistant runs both queries below. A Reporter seat cannot run them: it writes `GAP: in-flight stage - query_readonly is Assistant-only` in this section's slot and sends the need to its Dev Manager or Triage with `gobby-agents:send_message`. Claim age per seat comes from the `list_running_agents` snapshot (first recorded claim time), so a Reporter still reports time claimed.
+
+Sources until #25377 lands. Claim intervals are `task_claim_intervals` (`claimed_at`, `released_at`), written by a trigger on `tasks.claimed_by_session_id` and released when the task closes; claims made before that tracking have no interval. Step evidence is `task_comments` rows with `author_type = 'task_step'`: the JSON `body` carries `step` (test, implementation, review, closing), `status` (pending, in_progress, approved, rejected) and `sequence`, and the row's `created_at` is the record time. Test Writers hold no claim today, so the test-writing start comes from a step record, not a claim, and the section labels it that way.
+
+Query 1, stage. Params: the root path regex, `^(<root path>|<root path>)\.`, where each root path is its epic's `path_cache` (for example `24818`).
+```sql
+WITH in_flight AS (
+  SELECT t.id, t.seq_num, t.title
+  FROM tasks t
+  WHERE t.closed_at IS NULL
+    AND t.path_cache ~ %s
+    AND (
+      t.claimed_by_session_id IS NOT NULL
+      OR EXISTS (SELECT 1 FROM task_comments c
+                 WHERE c.task_id = t.id AND c.author_type = 'task_step')
+    )
+),
+steps AS (
+  SELECT c.task_id, c.created_at,
+         c.body::jsonb ->> 'step' AS step,
+         c.body::jsonb ->> 'status' AS status,
+         (c.body::jsonb ->> 'sequence')::int AS seq
+  FROM task_comments c
+  JOIN in_flight f ON f.id = c.task_id
+  WHERE c.author_type = 'task_step'
+),
+decisive AS (
+  SELECT DISTINCT ON (task_id) task_id, step, status, created_at
+  FROM steps
+  WHERE status IN ('approved', 'rejected')
+  ORDER BY task_id, seq DESC
+),
+first_step AS (
+  SELECT DISTINCT ON (task_id) task_id, step, created_at
+  FROM steps
+  ORDER BY task_id, seq ASC
+),
+claims AS (
+  SELECT ci.task_id,
+         min(ci.claimed_at) AS first_claimed_at,
+         max(ci.claimed_at) FILTER (WHERE ci.released_at IS NULL) AS holder_since
+  FROM task_claim_intervals ci
+  JOIN in_flight f ON f.id = ci.task_id
+  GROUP BY ci.task_id
+)
+SELECT f.seq_num, f.title,
+       d.step AS decisive_step, d.status AS decisive_status, d.created_at AS decisive_at,
+       fs.step AS first_step, fs.created_at AS first_step_at,
+       cl.first_claimed_at, cl.holder_since
+FROM in_flight f
+LEFT JOIN decisive d ON d.task_id = f.id
+LEFT JOIN first_step fs ON fs.task_id = f.id
+LEFT JOIN claims cl ON cl.task_id = f.id
+ORDER BY f.seq_num
+```
+
+Query 2, claim-to-close. Params: the window start as an ISO timestamp (now minus the report window), then the root path regex.
+```sql
+SELECT t.seq_num, t.title, t.closed_at, min(ci.claimed_at) AS first_claimed_at
+FROM tasks t
+LEFT JOIN task_claim_intervals ci ON ci.task_id = t.id
+WHERE t.closed_at >= %s
+  AND t.path_cache ~ %s
+GROUP BY t.id, t.seq_num, t.title, t.closed_at
+ORDER BY t.closed_at
+```
+
+Stage. The stage follows the decisive record: the latest approved or rejected step row by `seq`. Its start is that row's `decisive_at`.
+
+| Decisive record | Stage | Stage start |
+| --- | --- | --- |
+| test rejected | test-writing | decisive_at |
+| test approved | development | decisive_at |
+| implementation approved | review | decisive_at |
+| implementation rejected, or review rejected | development | decisive_at |
+| review approved, or closing approved | waiting to land | decisive_at |
+
+With no decisive record, the stage is the first step's stage (`test` is test-writing, `implementation` is development, `review` is review), starting at `first_step_at`. With no step row, the stage is development, starting at `first_claimed_at`, labelled "from claim time, no step record". A task with neither a claim nor a step row is not in flight.
+
+Time in stage is now minus the stage start. Claim age is now minus `first_claimed_at`. Claim-to-close is `closed_at` minus `first_claimed_at`; a null `first_claimed_at` reads "untimed: no claim interval". Label any stage whose start is untimed or inferred.
+
+Format, grouped by root epic:
+- `<task title or phrase> (#NNNNN): <stage>, <duration> in stage since <HH:MM CT>; claimed since <HH:MM CT>`
+- Closed in window: `<task title or phrase> (#NNNNN): claim-to-close <duration>`
+
+Write "In flight: N of total read" and "Closed in window: N of total read". A failed query writes `GAP: in-flight stage - <error>` or `GAP: closures claim-to-close - <error>` in that slot.
+
+When #25377 lands, its timestamped claim hand-offs replace the step-record starts for test-writing and development. Update this section then.
 
 ## Full report and roster procedures
 For a full report, or a launch that requests a roster, load `gobby:references/agents/procedures/reporter-full-report.md` completely through `gobby-skills:get_skill_file(name="gobby", path="references/agents/procedures/reporter-full-report.md")` before gathering. Follow every page.next_cursor using only cursor until null. It carries the workspace seat roster and full report sections; a delta report does not need it.
 
 ## Delta report
-Keep it short: Last 30 minutes changes (landed/activated/closed separately), stuck items and durations, alarms with sources, and decisions needed. Name affected roots and include idle/stalled changes. Carry current holds and cap breaches; do not repeat the full root table.
+Keep it short: Last 30 minutes changes (landed/activated/closed separately), in-flight stage moves and closures with claim-to-close, stuck items and durations, alarms with sources, and decisions needed. Name affected roots and include idle/stalled changes. Carry current holds and cap breaches; do not repeat the full root table.
 Every #NNNNN carries its title or a short task phrase. Say "Systems nominal" only when the evidence establishes that nothing is stuck, alarming, or breaching. List unknowns when evidence is incomplete.
 
 ## Delivery
