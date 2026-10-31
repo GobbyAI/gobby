@@ -154,7 +154,7 @@ def _block_pattern_entries(body: RuleDefinitionBody) -> list[tuple[str, str | No
 # gate on is_spawned_agent; overrides below cover the other groups.
 DEFAULT_ENGINE_VARIABLES: dict[str, object] = {"is_spawned_agent": True}
 ENGINE_VARIABLE_OVERRIDES: dict[str, dict[str, object]] = {
-    "no-git-push": {"_agent_type": "push-policy-test"},
+    "no-git-push": {},
     "require-task-before-commit": {"require_task_before_edit": True, "task_claimed": False},
     "require-code-review-skill": {},
     # The skill is loaded and no ocr review has run, which is the state the
@@ -580,6 +580,10 @@ RULE_CASES = (
             "${GOBBY_PS_SHIM} -e",
             "$GOBBY_PS_SHIM -o args",
             "$GOBBY_PS_SHIM -axo args",
+            # #25368: rtk wraps ps, so `rtk ps` runs the same listing under the same -o rule.
+            "rtk ps aux",
+            "rtk ps -e",
+            "rtk ps -axo args",
         ),
         allowed=(
             "pgrep -f gobby.runner",
@@ -601,6 +605,7 @@ RULE_CASES = (
             "$GOBBY_PS_SHIM -axo pid,ppid,etime,comm",
             "$GOBBY_PS_SHIM -axo pid=",
             "${GOBBY_PS_SHIM} -p 123 -o pid,etime",
+            "rtk ps -axo pid,ppid,etime,comm",
             "ps -o comm -p 123",
             'echo "ps e"',
             "pkill -f gobby.runner",
@@ -699,21 +704,24 @@ async def test_invocations_block_and_prose_allowed(
         lambda variables, project_path: ["src/gobby/oversized.py"],
     )
     db.execute("DELETE FROM rule_definitions WHERE name != %s", (case.name,))
-    if case.name == "no-git-push":
-        seed_seat(db, "push-policy-test", include=["name:no-git-push"])
+    # Without an agent definition the engine keeps only default-tagged rules, so a seat
+    # that includes this case's rule selects it, as a real seat does.
+    seat = f"{case.name}-policy-test"
+    seed_seat(db, seat, include=[f"name:{case.name}"])
+    engine_vars = {**case.engine_variables, "_agent_type": seat}
     engine = RuleEngine(db)
     for command in (case.blocked[0], env_prefixed):
         response = await engine.evaluate(
             _bash_event(command),
             session_id=SESSION_ID,
-            variables=dict(case.engine_variables),
+            variables=dict(engine_vars),
         )
         assert response.decision == "block", f"{case.name} engine should block: {command}"
     prose = case.allowed[0]
     response = await engine.evaluate(
         _bash_event(prose),
         session_id=SESSION_ID,
-        variables=dict(case.engine_variables),
+        variables=dict(engine_vars),
     )
     assert response.decision != "block", f"{case.name} engine should allow: {prose}"
 
@@ -842,8 +850,14 @@ async def test_heredoc_bodies_select_a_block_only_when_executable(
         assert _blocks(rule, command), f"{rule_name} should block: {command}"
 
     db.execute("DELETE FROM rule_definitions WHERE name != %s", (rule_name,))
+    # A seat that includes the rule selects it; the baseline keeps only default-tagged rules.
+    seat = f"{rule_name}-policy-test"
+    seed_seat(db, seat, include=[f"name:{rule_name}"])
     engine = RuleEngine(db)
-    variables = ENGINE_VARIABLE_OVERRIDES.get(rule_name, DEFAULT_ENGINE_VARIABLES)
+    variables = {
+        **ENGINE_VARIABLE_OVERRIDES.get(rule_name, DEFAULT_ENGINE_VARIABLES),
+        "_agent_type": seat,
+    }
     allowed = await engine.evaluate(
         _bash_event(data[0]), session_id=SESSION_ID, variables=dict(variables)
     )
