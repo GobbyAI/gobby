@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.agents.team_dispatch import dispatch_for_caller
+from gobby.agents.team_dispatch import dispatch_for_caller, missing_team_seat
 from gobby.agents.team_lifecycle import (
     TeamAdmissionRefused,
     TeamBinding,
@@ -1137,6 +1137,30 @@ async def test_pod_manager_relaunches_a_lost_seat_into_the_pod_tab(world: TeamWo
     relaunch = await world.direct_spawn(manager.id, agent="developer", task_id=leaf.id)
     assert relaunch.get("success") is True, relaunch
     assert len(world.launches) == launches + 1
+
+    # The real launch reserves a pending run under the manager before pickup, with no child yet.
+    # The stub records none, so model that row: the relaunch in flight holds the seat.
+    pending = runs.create(
+        parent_session_id=manager.id, provider="claude", prompt="relaunch", agent_name="developer"
+    )
+    assert pending.child_session_id is None
+    assert missing_team_seat(team.db, pod, "developer") is False
+    assert own_team_tab(sessions, manager.id, "developer") is None
+    early = await world.direct_spawn(manager.id, agent="developer", task_id=leaf.id)
+    assert early.get("error_code") == "team_manager_scope", early
+    assert len(world.launches) == launches + 1
+
+    # A taskless reviewer relaunch in flight holds its lost reviewer seat the same way.
+    reviewer = running_seat(world, manager, "code-reviewer")
+    assert reviewer.agent_run_id is not None
+    assert runs.fail(reviewer.agent_run_id, "pane lost") is not None
+    runs.expire_sessions_for_terminal_runs()
+    assert missing_team_seat(team.db, pod, "code-reviewer") is True
+    runs.create(
+        parent_session_id=manager.id, provider="claude", prompt="review", agent_name="code-reviewer"
+    )
+    assert missing_team_seat(team.db, pod, "code-reviewer") is False
+
     replacement = running_seat(world, manager, "developer")
     assert seat_team(team.db, replacement.id) == pod
     tools = create_task_registry(LocalTaskManager(team.db))

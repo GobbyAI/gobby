@@ -280,16 +280,17 @@ def missing_team_seat(db: HubDatabase, binding: TeamBinding, agent: str) -> bool
     """Whether a seat of ``agent`` ran in the team and none of them is still live.
 
     A team that never ran a seat of that type has none to replace, so only a lost seat relaunches.
+    A launch still pending pickup has no child session yet; its parent is the team's manager.
     """
     rows = db.fetchall(
-        "SELECT r.child_session_id, r.status FROM agent_runs r "
+        "SELECT r.child_session_id, r.parent_session_id, r.status FROM agent_runs r "
         "JOIN sessions parent ON parent.id = r.parent_session_id "
-        "WHERE parent.project_id = %s AND r.agent_name = %s AND r.child_session_id IS NOT NULL",
+        "WHERE parent.project_id = %s AND r.agent_name = %s",
         (binding.project_id, agent),
     )
     recorded = False
     for row in rows:
-        seat = seat_team(db, row["child_session_id"])
+        seat = seat_team(db, row["child_session_id"] or row["parent_session_id"])
         if seat is None or seat.team_id != binding.team_id:
             continue
         if row["status"] in _LIVE:
