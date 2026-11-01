@@ -8,6 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 import gobby.cli.attestation_cutover as cutover
+from gobby.cli.runtime import CliRuntime
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskBackupError, TaskBackupManager
@@ -16,6 +17,51 @@ from tests.fixtures.agent_sessions import AgentSessions
 from tests.tasks.test_attestation_conversion import _seed_legacy
 
 pytestmark = pytest.mark.unit
+
+
+def test_standalone_prepare_owns_a_runtime_without_migrating(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migration_requests: list[bool] = []
+    closed: list[CliRuntime] = []
+    original_close = CliRuntime.close
+
+    def database(self: CliRuntime, *, apply_migrations: bool = True) -> HubDatabase:
+        migration_requests.append(apply_migrations)
+        return temp_db
+
+    def close(self: CliRuntime) -> None:
+        original_close(self)
+        closed.append(self)
+
+    monkeypatch.setattr(CliRuntime, "require_database", database)
+    monkeypatch.setattr(CliRuntime, "close", close)
+    backup = tmp_path / "evidence.json"
+    task_backup = tmp_path / "tasks.jsonl"
+    task_backup.write_bytes(b"")
+    result = CliRunner().invoke(
+        cutover.main,
+        [
+            "prepare",
+            "--project-id",
+            sample_project["id"],
+            "--backup",
+            str(backup),
+            "--task-backup",
+            str(task_backup),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "task data unchanged" in result.output
+    assert migration_requests == [False]
+    assert len(closed) == 1
+    assert backup.exists()
+    assert backup.stat().st_mode & 0o777 == 0o600
+    assert task_backup.read_bytes() == b""
 
 
 def test_cutover_preserves_source_and_proves_converted_backup_restore(

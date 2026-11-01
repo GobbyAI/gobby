@@ -7,7 +7,7 @@ from uuid import UUID
 
 import click
 
-from gobby.cli.runtime import require_cli_database
+from gobby.cli.runtime import CliRuntime, require_cli_database
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.jsonl_io import atomic_write_bytes
 from gobby.sync.tasks import TaskBackupManager
@@ -30,7 +30,10 @@ class CutoverBackup(ConversionBackup):
 @click.option("--project-id", type=click.UUID, required=True)
 @click.option("--backup", type=click.Path(path_type=Path), required=True)
 @click.option("--task-backup", type=click.Path(path_type=Path), required=True)
-def main(action: str, project_id: UUID, backup: Path, task_backup: Path) -> None:
+@click.pass_context
+def main(
+    ctx: click.Context, action: str, project_id: UUID, backup: Path, task_backup: Path
+) -> None:
     """Convert one project's evidence while its writers and closes are paused.
 
     PREPARE saves immutable row and JSONL snapshots without changing task data.
@@ -38,6 +41,11 @@ def main(action: str, project_id: UUID, backup: Path, task_backup: Path) -> None
     RESTORE rolls back both snapshots only while no new evidence has been written.
     Keep writers paused after any failure; retry APPLY to finish backup regeneration.
     """
+    ctx = ctx.find_root()
+    if not isinstance(ctx.obj, CliRuntime):
+        runtime = CliRuntime(config_file=None)
+        ctx.obj = runtime
+        ctx.call_on_close(runtime.close)
     try:
         backup = backup.resolve()
         archive = backup.with_name(backup.name + ".tasks.jsonl").resolve()
