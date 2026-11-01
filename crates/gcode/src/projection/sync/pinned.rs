@@ -12,7 +12,7 @@ use postgres::GenericClient;
 use crate::db;
 use crate::graph::code_graph::CodeGraph;
 use crate::vector::code_symbols::{
-    self, CodeSymbolVectorLifecycle, CodeSymbolVectorLifecycleOutput,
+    self, CodeSymbolVectorLifecycle, CodeSymbolVectorLifecycleOutput, VectorLifecycleError,
 };
 
 /// One recovery attempt's stamp on a pin row.
@@ -158,7 +158,13 @@ pub(crate) fn sync_vector_attempt(
         file_path,
         &attempt.content_hash,
     )?;
-    let output = lifecycle.sync_file_symbols(file_path, &symbols)?;
+    let output = match lifecycle.sync_file_symbols(file_path, &symbols) {
+        Ok(output) => output,
+        // The pinned source moved after indexing. Leave the attempt unfinished so
+        // the file stays pending for the newer index, the same as a lost race.
+        Err(VectorLifecycleError::IndexedSourceChanged { .. }) => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
     if finish_attempt(conn, Stage::Vector, overlay_project_id, file_path, attempt)? {
         Ok(Some(output))
     } else {

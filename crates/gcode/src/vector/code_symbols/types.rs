@@ -140,6 +140,9 @@ pub enum VectorLifecycleError {
     },
     EmbeddingResponse(String),
     EmbeddingInput(String),
+    IndexedSourceChanged {
+        file_path: String,
+    },
     QdrantHttp {
         operation: &'static str,
         status: u16,
@@ -175,6 +178,9 @@ impl fmt::Display for VectorLifecycleError {
             }
             Self::EmbeddingInput(reason) => {
                 write!(f, "embedding input could not be built: {reason}")
+            }
+            Self::IndexedSourceChanged { file_path } => {
+                write!(f, "indexed source {file_path} changed after indexing")
             }
             Self::QdrantHttp {
                 operation,

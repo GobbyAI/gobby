@@ -752,6 +752,7 @@ fn vector_error_kind(error: &VectorLifecycleError) -> &'static str {
         VectorLifecycleError::EmbeddingHttp { .. } => "embedding_http",
         VectorLifecycleError::EmbeddingResponse(_) => "embedding_response",
         VectorLifecycleError::EmbeddingInput(_) => "embedding_input",
+        VectorLifecycleError::IndexedSourceChanged { .. } => "indexed_source_changed",
         VectorLifecycleError::QdrantHttp { .. } => "qdrant_http",
         VectorLifecycleError::QdrantOperation(_) => "qdrant_operation",
         VectorLifecycleError::InvalidCollectionName(_) => "invalid_collection_name",
