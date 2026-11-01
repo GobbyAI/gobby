@@ -23,6 +23,8 @@ use super::vector_text::vector_text_for_symbol_in;
 
 const QDRANT_LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(10);
 const VECTOR_SYNC_BATCH_SIZE: usize = gobby_core::qdrant::DEFAULT_UPSERT_BATCH_SIZE;
+/// Embedding batches a rebuild keeps in flight at once.
+const EMBED_CONCURRENCY: usize = 4;
 
 #[derive(Debug)]
 pub struct CodeSymbolVectorLifecycle {
@@ -137,24 +139,77 @@ impl CodeSymbolVectorLifecycle {
         Ok(self.output(CodeSymbolVectorLifecycleAction::Clear, None, 0, 0, deleted))
     }
 
-    /// Rebuild vectors for `symbols`, calling `on_embedded` once per symbol as
-    /// each embedding batch returns.
+    /// Rebuild vectors for `symbols`, calling `on_embedded` once per symbol
+    /// after its round is upserted.
+    ///
+    /// Each round embeds up to `EMBED_CONCURRENCY` batches in parallel and
+    /// upserts them before the next round, so an interrupted rebuild keeps
+    /// the vectors it finished. A symbol whose file no longer matches the index is
+    /// skipped and counted; the next index refresh re-syncs that file.
     pub fn rebuild_symbols(
         &mut self,
         symbols: &[Symbol],
         on_embedded: &mut dyn FnMut(&Symbol),
     ) -> Result<CodeSymbolVectorLifecycleOutput, VectorLifecycleError> {
         let schema = self.ensure_collection()?;
-        let points = self.points_for_symbols(symbols, schema.size, on_embedded)?;
-        let vectors_upserted = self.upsert_points(points)?;
+        let mut vectors_upserted = 0;
+        let mut skipped = 0;
+        for round in symbols.chunks(VECTOR_SYNC_BATCH_SIZE * EMBED_CONCURRENCY) {
+            let mut batches: Vec<(Vec<&Symbol>, Vec<String>)> = Vec::new();
+            for batch in round.chunks(VECTOR_SYNC_BATCH_SIZE) {
+                let mut kept = Vec::with_capacity(batch.len());
+                let mut texts = Vec::with_capacity(batch.len());
+                for symbol in batch {
+                    match vector_text_for_symbol_in(&self.project_root, symbol) {
+                        Ok(text) => {
+                            kept.push(symbol);
+                            texts.push(text);
+                        }
+                        Err(_) => skipped += 1,
+                    }
+                }
+                if !kept.is_empty() {
+                    batches.push((kept, texts));
+                }
+            }
+            let embedding = &self.embedding;
+            let results = std::thread::scope(|scope| {
+                let workers: Vec<_> = batches
+                    .iter()
+                    .map(|(_, texts)| scope.spawn(move || embedding.embed_text_batch(texts)))
+                    .collect();
+                workers
+                    .into_iter()
+                    .map(|worker| {
+                        worker.join().unwrap_or_else(|_| {
+                            Err(VectorLifecycleError::EmbeddingResponse(
+                                "embedding worker panicked".to_string(),
+                            ))
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            let mut points = Vec::with_capacity(round.len());
+            for ((kept, _), vectors) in batches.iter().zip(results) {
+                points.extend(points_from_vectors(kept, vectors?, schema.size)?);
+            }
+            vectors_upserted += self.upsert_points(points)?;
+            round.iter().for_each(&mut *on_embedded);
+        }
 
-        Ok(self.output(
+        let mut output = self.output(
             CodeSymbolVectorLifecycleAction::Rebuild,
             None,
             symbols.len(),
             vectors_upserted,
             0,
-        ))
+        );
+        if skipped > 0 {
+            output.summary.push_str(&format!(
+                ", {skipped} symbol(s) skipped because their source no longer matches the index"
+            ));
+        }
+        Ok(output)
     }
 
     fn output(
@@ -354,30 +409,9 @@ impl CodeSymbolVectorLifecycle {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let vectors = self.embedding.embed_text_batch(&texts)?;
-            if vectors.len() != batch.len() {
-                return Err(VectorLifecycleError::EmbeddingResponse(format!(
-                    "embedding batch returned {} vector(s) for {} symbol(s)",
-                    vectors.len(),
-                    batch.len()
-                )));
-            }
-            for (symbol, vector) in batch.iter().zip(vectors) {
-                if vector.len() != expected_vector_size {
-                    return Err(VectorLifecycleError::EmbeddingResponse(format!(
-                        "embedding for symbol {} returned {} dimension(s), expected {}",
-                        symbol.id,
-                        vector.len(),
-                        expected_vector_size
-                    )));
-                }
-                let payload = payload_map(CodeSymbolVectorPayload::from_symbol(symbol))?;
-                points.push(UpsertRequest {
-                    id: symbol.id.clone(),
-                    vector,
-                    payload,
-                });
-                on_embedded(symbol);
-            }
+            let batch: Vec<&Symbol> = batch.iter().collect();
+            points.extend(points_from_vectors(&batch, vectors, expected_vector_size)?);
+            batch.iter().for_each(|symbol| on_embedded(symbol));
         }
 
         Ok(points)
@@ -403,4 +437,38 @@ fn payload_map(
             "vector payload did not serialize to an object".to_string(),
         )),
     }
+}
+
+/// Pairs one embedding batch with its symbols, checking count and dimension.
+fn points_from_vectors(
+    symbols: &[&Symbol],
+    vectors: Vec<Vec<f32>>,
+    expected_vector_size: usize,
+) -> Result<Vec<UpsertRequest>, VectorLifecycleError> {
+    if vectors.len() != symbols.len() {
+        return Err(VectorLifecycleError::EmbeddingResponse(format!(
+            "embedding batch returned {} vector(s) for {} symbol(s)",
+            vectors.len(),
+            symbols.len()
+        )));
+    }
+    symbols
+        .iter()
+        .zip(vectors)
+        .map(|(symbol, vector)| {
+            if vector.len() != expected_vector_size {
+                return Err(VectorLifecycleError::EmbeddingResponse(format!(
+                    "embedding for symbol {} returned {} dimension(s), expected {}",
+                    symbol.id,
+                    vector.len(),
+                    expected_vector_size
+                )));
+            }
+            Ok(UpsertRequest {
+                id: symbol.id.clone(),
+                vector,
+                payload: payload_map(CodeSymbolVectorPayload::from_symbol(symbol))?,
+            })
+        })
+        .collect()
 }

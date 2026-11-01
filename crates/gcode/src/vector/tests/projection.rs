@@ -266,3 +266,79 @@ fn incompatible_existing_collection_errors_without_migration() {
             && !request.contains("/points HTTP/1.1")
     }));
 }
+
+#[test]
+fn rebuild_skips_symbols_whose_source_changed_and_upserts_the_rest() {
+    let root = source_root();
+    std::fs::write(
+        root.path().join("src/edited.rs"),
+        "// edited after indexing\n",
+    )
+    .expect("edited source");
+    let (embedding_url, embedding_handle) = spawn_http_responses(vec![(
+        200,
+        json!({"data": [{"embedding": [0.7, 0.8, 0.9]}]}),
+    )]);
+    let (qdrant_url, qdrant_handle) = spawn_http_responses(vec![
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": VECTOR_DISTANCE_COSINE}}}}}),
+        ),
+        (
+            200,
+            json!({"result": {"operation_id": 1, "status": "completed"}}),
+        ),
+    ]);
+    let mut lifecycle = CodeSymbolVectorLifecycle::new(
+        "project-1".to_string(),
+        QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        EmbeddingConfig {
+            api_base: format!("{embedding_url}/v1"),
+            model: "embed-small".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
+    )
+    .expect("lifecycle")
+    .with_project_root(root.path().to_path_buf());
+
+    let mut ticked = Vec::new();
+    let rebuilt = lifecycle
+        .rebuild_symbols(
+            &[
+                symbol("sym-current", "src/lib.rs", None),
+                symbol("sym-edited", "src/edited.rs", None),
+            ],
+            &mut |symbol| ticked.push(symbol.id.clone()),
+        )
+        .expect("rebuild");
+    let embedding_requests = embedding_handle
+        .join()
+        .expect("embedding requests")
+        .expect("embedding server");
+    let qdrant_requests = qdrant_handle
+        .join()
+        .expect("qdrant requests")
+        .expect("qdrant server");
+
+    assert_eq!(ticked, ["sym-current", "sym-edited"]);
+    assert_eq!(rebuilt.symbols, 2);
+    assert_eq!(rebuilt.vectors_upserted, 1);
+    assert!(
+        rebuilt
+            .summary
+            .ends_with(", 1 symbol(s) skipped because their source no longer matches the index")
+    );
+    assert_eq!(embedding_requests.len(), 1);
+    assert!(
+        qdrant_requests[1]
+            .contains("PUT /collections/code_symbols_project-1/points?wait=true HTTP/1.1")
+    );
+    assert!(qdrant_requests[1].contains("sym-current"));
+    assert!(!qdrant_requests[1].contains("sym-edited"));
+}
