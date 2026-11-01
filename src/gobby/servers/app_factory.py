@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import httpx as httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.routing import Route
 
@@ -65,6 +66,13 @@ __all__ = [
 def _register_mcp_http_route(app: FastAPI, mcp_app: Starlette) -> None:
     """Register the MCP sub-application at its canonical external path."""
     app.router.routes.append(Route("/mcp", endpoint=mcp_app, name="mcp", include_in_schema=False))
+
+
+def _mcp_transport_security(
+    bind_host: str, extra_hosts: list[str]
+) -> TransportSecuritySettings | None:
+    """Return the MCP Host/Origin policy for this bind host (stub: behavior not yet written)."""
+    return None
 
 
 def create_app(server: "HTTPServer") -> FastAPI:

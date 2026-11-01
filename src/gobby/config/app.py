@@ -219,6 +219,13 @@ class DaemonConfig(BaseModel):
         description="Allowed CORS origins. Defaults to localhost only. "
         "Add your Tailscale hostname (e.g., 'https://myhost.tail*.ts.net') for remote access.",
     )
+    mcp_allowed_hosts: list[str] = Field(
+        default_factory=list,
+        description="Extra Host header values accepted on the /mcp HTTP route while the daemon "
+        "binds loopback, for example 'myhost.tail4125a0.ts.net' behind Tailscale Funnel. Each "
+        "value must equal the forwarded Host header; append ':*' to accept any port. Bearer "
+        "auth still applies to every request.",
+    )
 
     # Hub connection settings
     hub_backend: Literal["postgres"] = Field(
