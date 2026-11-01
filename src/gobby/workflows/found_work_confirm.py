@@ -114,14 +114,12 @@ async def _shadow(
     user_prompt: str,
     cap: float,
 ) -> bool | None:
-    try:
-        async with asyncio.timeout(cap), asyncio.TaskGroup() as group:
-            classified = group.create_task(_classify(decisions, message, user_prompt, cap))
-            verdict = group.create_task(
-                _llm_verdict(llm_service, validation, message, user_prompt, cap)
-            )
-    except TimeoutError:
-        return None
+    # Each child is bounded by cap; an outer timeout would drop a finished LLM verdict.
+    async with asyncio.TaskGroup() as group:
+        classified = group.create_task(_classify(decisions, message, user_prompt, cap))
+        verdict = group.create_task(
+            _llm_verdict(llm_service, validation, message, user_prompt, cap)
+        )
     _record_shadow(decisions, message, user_prompt, classified.result(), verdict.result())
     return verdict.result()
 

@@ -256,6 +256,29 @@ async def test_shadow_returns_llm_verdict(
 
 
 @pytest.mark.asyncio
+async def test_shadow_keeps_fast_llm_verdict_when_classifier_hangs(
+    monkeypatch: pytest.MonkeyPatch,
+    shadow_records: list[dict[str, Any]],
+) -> None:
+    # The classifier outlives the 1 s cap while the LLM answers at once. The incumbent
+    # verdict decides, and the hung classifier is recorded as a timeout.
+    _install(monkeypatch, _Classifier(0.95, delay=5.0))
+    started = time.monotonic()
+    result = await confirm_shirk(
+        MESSAGE,
+        PROMPT,
+        llm_service=_llm(CLEAR, delay=0.05),
+        daemon_config=_Daemon(_found_work("shadow"), cap=1.0),
+    )
+    assert result is False
+    assert time.monotonic() - started < 2.5
+    assert len(shadow_records) == 1
+    assert shadow_records[0]["classifier"]["status"] == "unavailable"
+    assert shadow_records[0]["classifier"]["reason"] == "timeout"
+    assert shadow_records[0]["incumbent"]["verdict"] is False
+
+
+@pytest.mark.asyncio
 async def test_budget_admission_and_cancellation(
     monkeypatch: pytest.MonkeyPatch,
     shadow_records: list[dict[str, Any]],
