@@ -769,6 +769,7 @@ async def test_start_vllm_resolves_served_model_before_opening_journal(
             "provider": "vllm",
             "target_model": "Qwen/Qwen3-Embedding-0.6B",
             "target_api_base": "http://localhost:8323/v1",
+            "target_dim": None,
         }
     ]
     await coordinator.task
@@ -809,6 +810,7 @@ async def test_start_vllm_uses_the_named_model_among_several_served(
             "provider": "vllm",
             "target_model": "text-embedding-qwen3-embedding-0.6b",
             "target_api_base": "http://localhost:1234/v1",
+            "target_dim": None,
         }
     ]
     await coordinator.task
@@ -950,6 +952,9 @@ async def test_start_lmstudio_uses_the_loaded_embedding_model(
         "AsyncClient",
         lambda: real_client(transport=_lmstudio_models_transport(rows)),
     )
+    # The catalog key is 1024-dim; the loaded model's own 768 must win.
+    probe = AsyncMock(return_value=[0.0] * 768)
+    monkeypatch.setattr("gobby.ai.embeddings.EmbeddingService.generate_embedding", probe)
     calls: list[dict[str, Any]] = []
     coordinator = _vllm_switch_coordinator(calls)
 
@@ -958,12 +963,14 @@ async def test_start_lmstudio_uses_the_loaded_embedding_model(
     )
 
     assert result.status == "started"
+    probe.assert_awaited_once()
     assert calls == [
         {
             "catalog_key": "qwen3-0.6b-q8",
             "provider": "lmstudio",
             "target_model": "text-embedding-qwen3-embedding-0.6b",
             "target_api_base": "http://127.0.0.1:1234/v1",
+            "target_dim": 768,
         }
     ]
 

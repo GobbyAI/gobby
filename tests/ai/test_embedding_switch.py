@@ -124,6 +124,20 @@ class TestSwitchStateMachine:
         assert journal.old_catalog_id == "nomic-v1.5-f16"
         store.set_internal_lifecycle.assert_called_once()
 
+    def test_start_switch_uses_the_measured_target_dim_over_the_catalog(self) -> None:
+        store = self._mock_store()
+        journal, spec = start_switch(
+            store,
+            "qwen3-8b-q8",
+            "lmstudio",
+            target_model="text-embedding-loaded",
+            target_dim=768,
+        )
+        assert spec.dim == 4096
+        assert journal.target_dim == 768
+        assert journal.run_id.startswith("768-")
+        assert journal.target_model == "text-embedding-loaded"
+
     def test_start_switch_can_clear_target_api_base(self) -> None:
         store = self._mock_store()
         journal, _ = start_switch(

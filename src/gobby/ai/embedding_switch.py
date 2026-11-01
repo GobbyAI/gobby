@@ -247,8 +247,13 @@ def start_switch(
     current_api_base: str | None = None,
     target_api_base: str | None | object = _TARGET_API_BASE_UNSET,
     target_model: str | None = None,
+    target_dim: int | None = None,
 ) -> tuple[SwitchJournal, EmbeddingModelSpec]:
     """Open a switch journal and return it with the resolved spec.
+
+    ``target_dim`` is the dimension measured from the target model; it
+    replaces the catalog's dimension when the provider serves a model of its
+    own choosing.
 
     Raises SwitchAlreadyActiveError if a switch is already in progress.
     Raises ValueError if the catalog key is unknown.
@@ -262,6 +267,7 @@ def start_switch(
         current_api_base=current_api_base,
         target_api_base=target_api_base,
         target_model=target_model,
+        target_dim=target_dim,
     )
 
 
@@ -275,6 +281,7 @@ def _start_switch_unlocked(
     current_api_base: str | None,
     target_api_base: str | None | object,
     target_model: str | None = None,
+    target_dim: int | None = None,
 ) -> tuple[SwitchJournal, EmbeddingModelSpec]:
     existing = _read_journal(config_store)
     if existing is not None and existing.phase not in (PHASE_ABORTED, PHASE_GC):
@@ -296,14 +303,15 @@ def _start_switch_unlocked(
         else None
     )
 
-    run_id = f"{spec.dim}-{uuid.uuid4().hex[:8]}"
+    dim = target_dim if target_dim is not None else spec.dim
+    run_id = f"{dim}-{uuid.uuid4().hex[:8]}"
     from datetime import UTC, datetime
 
     now = datetime.now(UTC).isoformat()
     journal = SwitchJournal(
         run_id=run_id,
         catalog_key=catalog_key,
-        target_dim=spec.dim,
+        target_dim=dim,
         target_model=target_model,
         target_query_prefix=spec.query_prefix,
         target_api_base=resolved_target_api_base,

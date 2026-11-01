@@ -111,6 +111,7 @@ class EmbeddingSwitchCoordinator:
             provider_name = provider or await detect_provider_from_config(config)
             target_model: str | None = None
             target_api_base: str | None = None
+            target_dim: int | None = None
             if provider_name == "vllm":
                 target_model, target_api_base = await self._resolve_vllm_target(
                     catalog_key, config, api_base, model
@@ -120,12 +121,16 @@ class EmbeddingSwitchCoordinator:
                 if target_api_base is None:
                     raise ValueError("lmstudio embedding switch requires an api_base")
                 target_model = model or await _lmstudio_loaded_embedding_model(target_api_base)
+                target_dim = await _probe_target_dim(
+                    target_model, target_api_base, config.embeddings.api_key
+                )
             journal = self._start_journal(
                 self.config_store,
                 catalog_key,
                 provider_name,
                 target_model=target_model,
                 target_api_base=target_api_base,
+                target_dim=target_dim,
             )
             if isinstance(journal, tuple):
                 journal = journal[0]
@@ -309,6 +314,7 @@ class EmbeddingSwitchCoordinator:
         *,
         target_model: str | None = None,
         target_api_base: str | None = None,
+        target_dim: int | None = None,
     ) -> Any:
         config = self._active_config()
         current_dim = config.embeddings.dim
@@ -327,6 +333,7 @@ class EmbeddingSwitchCoordinator:
                 target_api_base if target_api_base is not None else _provider_api_base(provider)
             ),
             target_model=target_model,
+            target_dim=target_dim,
         )
         return journal
 
@@ -383,3 +390,19 @@ async def _lmstudio_loaded_embedding_model(api_base: str, *, timeout: float = 10
             "LM Studio or pass --model"
         )
     return loaded[0]
+
+
+async def _probe_target_dim(model: str, api_base: str, api_key: str | None) -> int:
+    """Embed one probe string with the target model and return its dimension."""
+    from gobby.ai.embeddings import EmbeddingGenerationError, EmbeddingService
+
+    service = EmbeddingService(model=model, api_base=api_base, api_key=api_key)
+    try:
+        vector = await service.generate_embedding("dim probe", max_retries=1)
+    except EmbeddingGenerationError as exc:
+        raise ValueError(
+            f"embedding dimension probe failed for {model!r} at {api_base}: {exc}"
+        ) from exc
+    if not vector:
+        raise ValueError(f"embedding dimension probe for {model!r} returned no vector")
+    return len(vector)
