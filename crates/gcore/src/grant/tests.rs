@@ -1703,6 +1703,7 @@ fn presentation_http_classifies_typed_daemon_codes() {
             Some(GrantError::Expired),
             "{code}"
         );
+        assert!(GrantError::Expired.is_retryable_presentation(), "{code}");
     }
     let run_inactive = json!({"error": "Request rejected", "code": "run_inactive"}).to_string();
     assert_eq!(

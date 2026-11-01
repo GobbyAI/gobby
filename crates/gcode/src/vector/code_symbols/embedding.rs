@@ -578,8 +578,16 @@ mod tests {
                 .join("../../tests/runtime_grants/golden/direct_datastores.json"),
         )
         .expect("golden grant");
-        let grant: gobby_core::grant::GrantBundle =
+        let mut grant: gobby_core::grant::GrantBundle =
             serde_json::from_slice(raw.trim_ascii()).expect("parse golden grant");
+        // A live snapshot: a past-half-lifetime one is re-acquired instead of presented.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_secs() as i64;
+        grant.issued_at = now - 10;
+        grant.expires_at = now + 3_600;
+        let grant = grant.with_checksum();
         AiContext {
             bindings: gobby_core::ai_context::AiBindings {
                 embed: binding.clone(),

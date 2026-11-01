@@ -175,7 +175,7 @@
           "activation": "live",
           "machineExport": false,
           "default": null,
-          "description": "Decision endpoint API key or $secret:NAME reference."
+          "description": "Decision endpoint API key or a secret-store reference."
         },
         "ai.decisions.backend_max_question_tokens": {
           "type": [

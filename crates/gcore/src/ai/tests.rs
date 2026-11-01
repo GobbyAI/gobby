@@ -24,6 +24,14 @@ fn vendor_env_keys() -> [String; 4] {
     ["ANTHROPIC", "OPENAI", "OPENROUTER", "GROQ"].map(|vendor| format!("{vendor}_API_KEY"))
 }
 
+/// The process-env reads of `key`. Naming a key in a child process's
+/// environment table (provider CLI launch) is not a read.
+fn reads_env_key(source: &str, key: &str) -> bool {
+    ["var(\"", "var_os(\"", "env!(\""]
+        .iter()
+        .any(|read| source.contains(&format!("{read}{key}\"")))
+}
+
 fn secret_marker() -> String {
     format!("${}:", "secret")
 }
@@ -135,12 +143,21 @@ fn probe_module_is_deleted() {
 }
 
 #[test]
+fn env_key_read_detection_ignores_child_env_tables() {
+    let key = &vendor_env_keys()[1];
+    assert!(reads_env_key(&format!("std::env::var(\"{key}\")"), key));
+    assert!(reads_env_key(&format!("env::var_os(\"{key}\")"), key));
+    assert!(reads_env_key(&format!("option_env!(\"{key}\")"), key));
+    assert!(!reads_env_key(&format!("\"codex\" => &[\"{key}\"],"), key));
+}
+
+#[test]
 fn no_vendor_env_key_reads() {
     let mut hits = Vec::new();
     for path in client_crate_rust_files() {
         let source = production_source_before_tests(&path);
         for key in vendor_env_keys() {
-            if source.contains(&key) {
+            if reads_env_key(&source, &key) {
                 hits.push(format!("{}: {key}", path.display()));
             }
         }
@@ -174,7 +191,7 @@ fn workspace_zero_match_removed_routing() {
             }
         }
         for key in vendor_env_keys() {
-            if source.contains(&key) {
+            if reads_env_key(&source, &key) {
                 hits.push(format!("{}: {key}", path.display()));
             }
         }

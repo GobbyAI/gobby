@@ -157,8 +157,8 @@ where
     present_bundle_with_single_retry(request, &acquired.bundle, present)
 }
 
-/// Present an already-acquired grant. Restart/takeover stale-epoch or rotated
-/// signature errors force exactly one re-handshake and retry.
+/// Present an already-acquired grant. Restart/takeover stale-epoch, rotated
+/// signature or expired-grant errors force exactly one re-handshake and retry.
 pub fn present_bundle_with_single_retry<T, F>(
     request: &AcquireRequest<'_>,
     grant: &GrantBundle,

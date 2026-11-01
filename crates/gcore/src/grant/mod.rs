@@ -151,8 +151,12 @@ impl GrantError {
         matches!(self, Self::Malformed(message) if message == "stale_epoch")
     }
 
+    /// A presentation the caller fixes with one re-handshake: a restart or
+    /// takeover epoch, a rotated signing key, or a grant that expired while a
+    /// long-running caller held it.
     pub fn is_retryable_presentation(&self) -> bool {
         self.is_stale_epoch()
+            || matches!(self, Self::Expired)
             || matches!(self, Self::Malformed(message) if message == "invalid_signature")
     }
 
@@ -301,7 +305,7 @@ fn resolve_home(home: Option<&Path>) -> Result<PathBuf, GrantError> {
     }
 }
 
-fn unix_now() -> i64 {
+pub(crate) fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)

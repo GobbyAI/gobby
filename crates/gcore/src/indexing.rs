@@ -382,12 +382,10 @@ mod tests {
             .lines()
             .find(|line| line.trim_start().starts_with("indexing = ["))
             .expect("indexing feature");
-        for dependency in ["dep:ignore"] {
-            assert!(
-                indexing_feature.contains(&format!("\"{dependency}\"")),
-                "indexing feature should include {dependency}"
-            );
-        }
+        assert!(
+            indexing_feature.contains("\"dep:ignore\""),
+            "indexing feature should include dep:ignore"
+        );
         for forbidden in ["tree-sitter", "markdown", "wiki"] {
             assert!(
                 !indexing_feature.contains(forbidden),

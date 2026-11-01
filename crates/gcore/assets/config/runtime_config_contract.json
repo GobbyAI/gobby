@@ -235,7 +235,7 @@
     {
       "activation": "live",
       "default": null,
-      "description": "Decision endpoint API key or $secret:NAME reference.",
+      "description": "Decision endpoint API key or a secret-store reference.",
       "key": "ai.decisions.api_key",
       "machineExport": false,
       "namespace": "ai.decisions",

@@ -66,6 +66,12 @@ filter = 'package(gobby-code) & (test(::serial_db::) | test(serial_db::))'
 test-group = 'serial-db'
 
 [[profile.default.overrides]]
+# These fixtures create hub roles under one advisory lock; run in parallel they
+# deadlock against each other's role writes.
+filter = 'package(gobby-runtime) & (binary(config) | binary(grant) | binary(handshake) | binary(secrets) | binary(verify))'
+test-group = 'serial-db'
+
+[[profile.default.overrides]]
 filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | binary(frame_producer) | binary(host_lifecycle) | binary(host_handover) | binary(control_protocol) | binary(frame_protocol) | binary(embed) | binary(build_env) | binary(link_artifacts))'
 test-group = 'gterm-pty'
 

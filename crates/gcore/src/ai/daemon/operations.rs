@@ -11,7 +11,7 @@ use super::request::{
 use super::response::{parse_daemon_embeddings, parse_daemon_transcription};
 use super::transport::{daemon_client, daemon_url, read_api_key, with_grant_presentation};
 use super::types::{DaemonEmbeddingResult, DaemonTranscriptionOptions};
-use crate::grant::{AcquireRequest, GrantBundle, GrantError};
+use crate::grant::{AcquireRequest, GrantBundle, GrantError, unix_now};
 
 const VOICE_TRANSCRIBE_PATH: &str = "/api/voice/transcribe";
 const VISION_EXTRACT_PATH: &str = "/api/llm/vision/extract";
@@ -53,7 +53,12 @@ pub(super) fn presented_grant(
     cfg: &AiContext,
     root: Option<&std::path::Path>,
 ) -> Result<GrantBundle, AiError> {
-    if let Some(state) = &cfg.grant {
+    // A long-running caller (a vector rebuild) outlives its context's grant
+    // snapshot. Past half its lifetime, acquire again: that renews the cached
+    // grant before it expires instead of presenting it until the daemon refuses.
+    if let Some(state) = &cfg.grant
+        && (root.is_none() || !state.bundle.past_half_ttl(unix_now()))
+    {
         return Ok(state.bundle.clone());
     }
     let root = root.ok_or_else(|| {

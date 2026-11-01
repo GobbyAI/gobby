@@ -66,6 +66,41 @@ fn presented_grant_reuses_caller_root_and_preserves_grant_errors() {
 }
 
 #[test]
+fn presented_grant_reacquires_a_snapshot_past_half_its_lifetime() {
+    let (home, _env) = isolated_home();
+    let now = crate::grant::unix_now();
+    let mut cfg = test_context(None);
+    let state = cfg.grant.as_mut().expect("test context carries a grant");
+    state.bundle.issued_at = now - 100;
+    state.bundle.expires_at = now + 3_000;
+    let fresh = state.bundle.clone();
+    assert_eq!(
+        presented_grant(&cfg, Some(home.path())).expect("fresh snapshot is reused"),
+        fresh
+    );
+
+    let state = cfg.grant.as_mut().expect("test context carries a grant");
+    state.bundle.expires_at = now + 10;
+    let aging = state.bundle.clone();
+    // The temp root is not a project, so the fallback acquire fails typed:
+    // proof the aging snapshot was not presented again.
+    let error = presented_grant(&cfg, Some(home.path())).expect_err("aging snapshot reacquires");
+    assert!(
+        matches!(
+            error,
+            AiError::Grant {
+                source: GrantError::Malformed(_)
+            }
+        ),
+        "{error:?}"
+    );
+    assert_eq!(
+        presented_grant(&cfg, None).expect("no root keeps the snapshot"),
+        aging
+    );
+}
+
+#[test]
 fn grant_error_from_ai_preserves_taxonomy() {
     assert_eq!(
         grant_error_from_ai(&AiError::from(GrantError::Expired)),

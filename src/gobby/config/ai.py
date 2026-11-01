@@ -392,7 +392,7 @@ class DecisionsConfig(BaseModel):
     )
     api_key: str | None = Field(
         default=None,
-        description="Decision endpoint API key or $secret:NAME reference.",
+        description="Decision endpoint API key or a secret-store reference.",
     )
     model: str | None = Field(
         default=None,

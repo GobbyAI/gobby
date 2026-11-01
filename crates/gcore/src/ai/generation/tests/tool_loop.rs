@@ -858,7 +858,9 @@ fn remaining_loop_budget_precedes_longer_tool_timeout() {
     let completed = Arc::new(AtomicBool::new(false));
     let executor = Arc::new(SlowExecutor {
         completed: Arc::clone(&completed),
-        sleep_for: Duration::from_millis(50),
+        // Far past the 10ms remaining budget, so scheduler delay under a
+        // parallel test run cannot let the tool finish first.
+        sleep_for: Duration::from_secs(1),
     });
     let limits = ToolLoopLimits {
         tool_timeout_seconds: 300,

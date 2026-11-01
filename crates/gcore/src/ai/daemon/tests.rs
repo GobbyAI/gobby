@@ -64,7 +64,11 @@ fn fixture_grant() -> crate::grant::GrantBundle {
         serde_json::from_slice(raw.trim_ascii()).expect("parse golden grant");
     grant.capabilities.vision_extract = crate::grant::AiCapability::Daemon {};
     grant.capabilities.audio_transcribe = crate::grant::AiCapability::Daemon {};
-    grant
+    // A live snapshot: a past-half-lifetime one is re-acquired instead of presented.
+    let now = crate::grant::unix_now();
+    grant.issued_at = now - 10;
+    grant.expires_at = now + 3_600;
+    grant.with_checksum()
 }
 
 fn test_context(project_id: Option<&str>) -> AiContext {
