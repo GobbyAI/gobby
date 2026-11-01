@@ -62,6 +62,12 @@ rounds and the claim has passed to one of those reviewers. The team's `admit`
 output then records it under `fresh_reviewers` for that epoch, and any other
 execution's request for the same epoch is refused `fresh_reviewer_exists`.
 
+`gobby-tasks:team_progress` reads a team's claimed tasks: each stage's span in
+seconds, claim-to-close time and the flags `handoff_unacknowledged`,
+`handoff_pending`, `holder_not_live` and `idle_on_open_work`. Omit `team_id` to
+read the calling seat's team. An unknown team returns `team_not_found`; a caller
+outside any team returns `team_required`.
+
 Runtime isolation accepts `none`, `worktree`, or `clone`; `inherit` belongs to
 agent definitions. Existing isolation IDs request reuse. Boot-failure cleanup is
 opt-in for freshly created isolation; preserve work when inspecting a failed run.

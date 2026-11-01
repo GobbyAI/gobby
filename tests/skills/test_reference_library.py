@@ -94,18 +94,19 @@ async def test_reference_contract_3_2_2(
         harness = reference_close_harness
         with session_context_for_test(harness.session_id):
             preview = await harness.registry.call(
-                "close_task", {"task_id": harness.task.id, "preview": True}
+                "close_task",
+                {"task_id": harness.task.id, "preview": True, "response_detail": "diagnostic"},
             )
             assert preview["success"] is True
             assert preview["can_close"] is True
             assert preview["closed"] is False
-            assert [gate["name"] for gate in preview["gates"]] == [
+            assert preview["blocking_reasons"] == []
+            assert {
                 "children_closed",
-                "linked_commits",
-                "uncommitted_task_edits",
+                "candidate_covers_linked_commits",
+                "task_files_clean",
                 "integration_ancestry",
-                "step_records",
-            ]
+            } <= set(preview["facts"])
             assert not is_task_closed(harness.manager.get_task(harness.task.id))
             closed = await harness.registry.call(
                 "close_task", {"task_id": harness.task.id, "commit_sha": harness.commit_sha}
