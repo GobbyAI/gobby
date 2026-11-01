@@ -146,7 +146,11 @@ async def test_surface_returns_nothing_for_an_unresolvable_session() -> None:
     ):
         result = await registry.call(
             "surface_memories",
-            {"text": "Handoff contract", "trigger": "turn", "session_id": "nope"},
+            {
+                "text": "Rework the handoff contract for spawned workers",
+                "trigger": "turn",
+                "session_id": "nope",
+            },
         )
 
     assert result["count"] == 0
@@ -244,3 +248,34 @@ async def test_turn_trigger_skips_prompts_under_the_word_floor(
 
     assert result["count"] == (1 if searched else 0)
     assert memory_manager.search_memories.await_count == (1 if searched else 0)
+
+
+async def test_turn_trigger_searches_a_prompt_of_exactly_the_floor() -> None:
+    prompt = "rebuild the stamp writer for promotion"
+    assert len(prompt.split()) == TURN_MIN_PROMPT_WORDS
+    registry, memory_manager = _registry(candidates=[_memory(1)])
+
+    result = await registry.call(
+        "surface_memories",
+        {"text": prompt, "trigger": "turn", "session_id": SESSION_ID},
+    )
+
+    assert memory_manager.search_memories.await_args.kwargs["query"] == prompt
+    assert result["count"] == 1
+
+
+async def test_turn_trigger_with_missing_prompt_falls_back_to_assistant_text() -> None:
+    # An unreadable transcript delivers "" rather than a short prompt.
+    assistant_text = "Next I will rebuild promote_workspace_binary_set so the stamp is written"
+    registry, memory_manager = _registry(
+        candidates=[_memory(1)],
+        last_assistant_content=assistant_text,
+    )
+
+    result = await registry.call(
+        "surface_memories",
+        {"text": "", "trigger": "turn", "session_id": SESSION_ID},
+    )
+
+    assert memory_manager.search_memories.await_args.kwargs["query"] == assistant_text
+    assert result["count"] == 1
