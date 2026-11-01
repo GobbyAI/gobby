@@ -68,8 +68,8 @@ def record_close_receipt(
 ) -> tuple[CloseReceipt, bool]:
     """Record a landing receipt, returning a replay with the same author and commit.
 
-    The caller has already verified that ``commit_sha`` names a commit in the
-    task's repository. Authority comes from the task row as locked here, so
+    The landing service verifies the commit and the caller's declared authority.
+    Storage preserves its provenance and serializes duplicate receipt writes;
     ``task`` contributes only its id.
     """
     sha = commit_sha.strip().lower()
@@ -78,23 +78,16 @@ def record_close_receipt(
     body: dict[str, Any] = {"kind": LANDING, "commit_sha": sha, "facts": _bounded_facts(facts)}
 
     with db.transaction() as conn:
-        # Authorize against the locked row, never the caller's snapshot: the claim
-        # can change while the caller awaits commit verification. The lock also
-        # serializes receipts per task so a replay cannot insert a duplicate.
+        # Lock the current row so deletion and duplicate receipt writes serialize.
         authority = conn.execute(
             """
-            SELECT claimed_by_session_id::text AS claimed_by_session_id
+            SELECT id
             FROM tasks WHERE id = %s FOR UPDATE
             """,
             (task.id,),
         ).fetchone()
         if authority is None:
             raise CloseReceiptError(f"task {task.id} no longer exists")
-        # Authorship bars a receipt, not the claim: the Dev Manager closes under a handed-off claim.
-        from gobby.tasks.step_records import maker_sessions_in
-
-        if author_session_id in maker_sessions_in(conn, task.id):
-            raise CloseReceiptError("an author of the task's tests or implementation cannot attest")
         rows = conn.execute(
             """
             SELECT id, task_id, author, body, created_at FROM task_comments

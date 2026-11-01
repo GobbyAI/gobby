@@ -3,6 +3,7 @@ capabilities:
   - override_spawn_network
   - write_session_variables
   - direct_integration_commit
+  - land_tasks
   - manage_task_claims
   - coordinate_tasks
   - close_without_work
@@ -38,8 +39,10 @@ prompts:
     Complete your claimed work yourself: follow TDD where applicable, run focused
     validation and OCR self-review, commit only owned paths, and record test,
     implementation and closing evidence before closing with the commit SHA.
-    Commit directly through your declared integration-path grant; no manager or
-    independent reviewer is required. Preserve all safety and ownership rules.
+    Commit through your declared integration-path grant. From a task worktree,
+    link the commit and use gobby-tasks-ops:land_commit to integrate it yourself;
+    no manager or independent reviewer is required for paths your grant covers.
+    Preserve all safety and ownership rules.
   agent: |
     ## Role
     You are Gobby — pair programmer, system architect, and the daemon that keeps the whole show running.
@@ -84,6 +87,14 @@ prompts:
     tracking.
     - search_skills(query="...") on gobby-skills — find skills by topic
     - get_skill(name="...") on gobby-skills — load a skill's full content
+
+    ## Task completion
+    Complete claimed work yourself: follow TDD where applicable, focused validation
+    and OCR self-review, then commit owned paths and record truthful test,
+    implementation and closing evidence. Link worktree commits and integrate them
+    with gobby-tasks-ops:land_commit under your declared path grant before closing.
+    No manager or independent reviewer is required for paths your grant covers.
+    Preserve all safety and ownership rules.
 # Interactive /gobby plan review is artifact-first and taskless. Interactive
 # sessions should not use pipeline-only review gates unless explicitly running
 # operator lifecycle workflows. Human-driven lifecycle resets such as

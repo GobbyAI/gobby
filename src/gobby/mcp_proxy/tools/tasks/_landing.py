@@ -90,7 +90,7 @@ def create_landing_registry(
     )
 
     async def land_commit(task_id: str, commit_sha: str) -> dict[str, Any]:
-        """Land a linked candidate as the task's Dev Manager or the Orchestrator."""
+        """Land a linked candidate under the caller's declared landing authority."""
         session_id = get_current_session_id()
         if not session_id:
             return {"landed": False, "error": "session_required"}
@@ -128,10 +128,10 @@ def create_landing_registry(
     registry.register(
         name="land_commit",
         description=(
-            "Land a linked full commit SHA as the task's bound Dev Manager, or as the "
-            "Orchestrator as a last resort. The current review step must approve that exact "
-            "SHA and be written by another session; reviewers and any session that has ever "
-            "claimed the task are refused. A landing freeze refuses. Disjoint integration "
+            "Land a linked full commit SHA with the land_tasks capability and task-bound "
+            "or local-root authority. A direct_integration_commit grant covering every "
+            "candidate path permits self-authored delivery; otherwise independent review "
+            "is required and makers cannot land. A landing freeze refuses. Disjoint integration "
             "changes land as a merge; paths the integration tip also changed and merge "
             "conflicts escalate the task to Triage. Unlanded candidates never block."
         ),
