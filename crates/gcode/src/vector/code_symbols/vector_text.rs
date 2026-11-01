@@ -69,7 +69,9 @@ fn metadata_lines(symbol: &Symbol) -> Vec<String> {
 pub(crate) fn vector_text_for_symbol_in(root: &Path, symbol: &Symbol) -> anyhow::Result<String> {
     let mut lines = metadata_lines(symbol);
     match symbol.kind.as_str() {
-        "function" | "method" => {
+        // Type definitions (enums, traits, interfaces, aliases) carry their
+        // meaning in variants and fields, so they embed their source too.
+        "function" | "method" | "type" => {
             let source = indexed_source(root, symbol)?;
             lines.push(format!("source:\n{source}"));
         }
@@ -77,6 +79,10 @@ pub(crate) fn vector_text_for_symbol_in(root: &Path, symbol: &Symbol) -> anyhow:
             let members = member_names(root, symbol)?;
             if !members.is_empty() {
                 lines.push(format!("members: {}", members.join(", ")));
+            } else if symbol.kind == "class" {
+                // A memberless class is a data shape (a Rust struct's fields).
+                let source = indexed_source(root, symbol)?;
+                lines.push(format!("source:\n{source}"));
             }
         }
         _ => {}

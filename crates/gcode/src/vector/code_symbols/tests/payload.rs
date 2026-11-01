@@ -73,6 +73,28 @@ fn vector_text_includes_exact_function_and_method_source_bytes() {
 }
 
 #[test]
+fn vector_text_includes_type_and_memberless_class_source() {
+    let cases = [
+        (
+            "type",
+            "Color",
+            "Color = Literal['red', 'variant_needle']\n",
+        ),
+        ("class", "Point", "class Point:\n    field_needle: int\n"),
+    ];
+    for (kind, name, body) in cases {
+        let source = format!("# preceding\n{body}# following_secret\n");
+        let (_dir, mut symbol) = source_symbol(&source, body, kind);
+        symbol.name = name.to_string();
+
+        let text = vector_text_for_symbol(&symbol);
+
+        assert!(text.contains(body), "{kind} source missing: {text}");
+        assert!(!text.contains("following_secret"));
+    }
+}
+
+#[test]
 fn vector_text_preserves_long_function_body_without_cap() {
     let body = format!(
         "def run():\n{}    return 'tail_only_needle'\n",
