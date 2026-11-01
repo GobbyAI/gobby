@@ -12,14 +12,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.persistence import MemoryConfig
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE
 from gobby.mcp_proxy.tools.memory import create_memory_registry
-from gobby.mcp_proxy.tools.memory_surface import SURFACE_MIN_SCORE
+from gobby.mcp_proxy.tools.memory_surface import SURFACE_MIN_SCORE, TURN_MIN_PROMPT_WORDS
 from gobby.storage.memories import MemoryType
 
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111110042"
 PROJECT_ID = "11111111-1111-4111-8111-111111110001"
+# Long enough to clear the turn word floor, yet it states no work.
+NO_WORK_PROMPT = "please load the brevity skill for this session"
 RANKING_COHORT = Path(__file__).resolve().parents[2] / "memory" / "fixtures" / "ranking_cohort.json"
 
 
@@ -178,7 +181,7 @@ async def test_turn_trigger_falls_back_to_assistant_text() -> None:
 
     result = await registry.call(
         "surface_memories",
-        {"text": "go ahead", "trigger": "turn", "session_id": SESSION_ID},
+        {"text": NO_WORK_PROMPT, "trigger": "turn", "session_id": SESSION_ID},
     )
 
     kwargs = memory_manager.search_memories.await_args.kwargs
@@ -190,7 +193,7 @@ async def test_turn_trigger_falls_back_to_assistant_text() -> None:
 
     silent = await silent_registry.call(
         "surface_memories",
-        {"text": "go ahead", "trigger": "turn", "session_id": SESSION_ID},
+        {"text": NO_WORK_PROMPT, "trigger": "turn", "session_id": SESSION_ID},
     )
 
     assert silent["count"] == 0
@@ -215,3 +218,29 @@ def test_floor_matches_ranking_fixture() -> None:
     cohort = json.loads(RANKING_COHORT.read_text())
 
     assert SURFACE_MIN_SCORE == cohort["surface_min_score"]
+
+
+@pytest.mark.parametrize(
+    ("trigger", "searched"),
+    [("turn", False), ("task", True)],
+)
+@pytest.mark.parametrize(
+    "prompt",
+    [CONTINUE_WAKE_MESSAGE, "go ahead", "fix the stamp writer now"],
+)
+async def test_turn_trigger_skips_prompts_under_the_word_floor(
+    prompt: str, trigger: str, searched: bool
+) -> None:
+    assert len(prompt.split()) < TURN_MIN_PROMPT_WORDS
+    registry, memory_manager = _registry(
+        candidates=[_memory(1)],
+        last_assistant_content="Next I will rebuild promote_workspace_binary_set",
+    )
+
+    result = await registry.call(
+        "surface_memories",
+        {"text": prompt, "trigger": trigger, "session_id": SESSION_ID},
+    )
+
+    assert result["count"] == (1 if searched else 0)
+    assert memory_manager.search_memories.await_count == (1 if searched else 0)

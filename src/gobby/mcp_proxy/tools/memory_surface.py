@@ -27,6 +27,9 @@ SURFACE_LIMIT = 5
 # The whole text reaches the vector leg verbatim; the cap only keeps a runaway
 # payload out of the embedding request.
 MAX_QUERY_CHARS = 2000
+# A turn prompt shorter than this (a daemon wake, "go ahead") carries no intent
+# worth an unasked-for index, so the turn trigger skips the search entirely.
+TURN_MIN_PROMPT_WORDS = 6
 SURFACE_CALLER = "memory.surface"
 
 SurfaceTrigger = Literal["turn", "spawn_agent", "task", "handoff"]
@@ -62,8 +65,9 @@ def register_memory_surface_tools(
             "Search project/global memories related to a block of text and return the ranked "
             "hits as a compact index. Built for rule-driven surfacing at a turn, an agent "
             "spawn, a task claim, or a handoff; review lessons are excluded because they have "
-            "their own injection path. The turn trigger searches the session's last assistant "
-            "message instead when the prompt states no work. Never writes memories, and returns "
+            "their own injection path. The turn trigger skips prompts under six words and "
+            "searches the session's last assistant message instead when a longer prompt "
+            "states no work. Never writes memories, and returns "
             "an empty result rather than failing the caller."
         ),
     )
@@ -76,7 +80,9 @@ def register_memory_surface_tools(
             # Truncation is the only edit the text takes: the search service
             # embeds it verbatim, so trimming here would change the vector.
             query = text[:MAX_QUERY_CHARS]
-            # A turn whose prompt says nothing searchable still has an intent:
+            if trigger == "turn" and len(text.split()) < TURN_MIN_PROMPT_WORDS:
+                return _empty(trigger)
+            # A longer turn prompt that says nothing searchable still has an intent:
             # the one the agent stated in its own last message. That fallback
             # needs the session row, so the empty-text exit waits for it.
             fall_back = trigger == "turn" and not is_substantive_prompt(text)
