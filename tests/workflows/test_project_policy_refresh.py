@@ -94,17 +94,20 @@ async def test_live_policy_refreshes_once_after_import(
     assert "Project Operating Policy" in (first.context or "")
     initial = variables.get_variables(session_id)
     assert initial["_project_policy_injected"] is True
-    assert initial["project_policy"]["operator"] == "Josh"
+    assert initial["project_policy"]["integration_branch"] == "0.5.0"
     assert "Project Operating Policy" not in ((await turn()).context or "")
 
     if changed:
         effects = document["rules"]["project-operating-policy"]["effects"]
-        effects[0]["value"]["operator"] = "Updated policy operator"
+        effects[0]["value"]["integration_branch"] = "updated-branch"
         path.write_text(yaml.safe_dump(document), encoding="utf-8")
     _import_policy(temp_db, path, checkout.project.id, entrypoint)
 
     refreshed = await turn()
-    expected_operator = "Updated policy operator" if changed else "Josh"
-    assert variables.get_variables(session_id)["project_policy"]["operator"] == expected_operator
+    expected_branch = "updated-branch" if changed else "0.5.0"
+    assert (
+        variables.get_variables(session_id)["project_policy"]["integration_branch"]
+        == expected_branch
+    )
     assert ("Project Operating Policy" in (refreshed.context or "")) is changed
     assert "Project Operating Policy" not in ((await turn()).context or "")

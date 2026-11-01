@@ -34,8 +34,15 @@ def test_project_policy_daily_and_monday_quiet_hours() -> None:
 def test_game_goblins_guidance_references_single_quiet_hours_value() -> None:
     document: dict[str, Any] = yaml.safe_load(POLICY.read_text())
     effects = document["rules"]["project-operating-policy"]["effects"]
-    template = next(effect["template"] for effect in effects if effect["type"] == "inject_context")
-    guidance = next(line for line in template.splitlines() if "Game Goblins" in line)
+    templates = [
+        effect["template"]
+        for rule in document["rules"].values()
+        for effect in rule.get("effects", [])
+        if effect["type"] == "inject_context"
+    ]
+    guidance = next(
+        line for template in templates for line in template.splitlines() if "Game Goblins" in line
+    )
     assert "project_policy.quiet_hours" in guidance
     assert re.search(r"\b\d{1,2}:\d{2}\b", guidance) is None
     assert "no restart/cutover" in guidance

@@ -3,7 +3,7 @@ tags: [default, seat, project-policy]
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
 # only; this rule carries how this repository runs them. Lanes are retired
-# (Josh, 2026-10-23); work groups under the domain roots in project_policy.roots.
+# (operator ruling, 2026-10-23); work groups under the domain roots in project_policy.roots.
 rules:
   project-operating-policy:
     description: "Inject general project operating policy for every session"
@@ -20,14 +20,13 @@ rules:
           {
             "roots": [
               {"epic": "#24818", "name": "Runbooks and task system", "lang": "Python", "description": "Runbooks v5 (devteam pair and epic-devteam, #25451), seat definitions and lifecycle, handoff and coordination, task tools, close invariants, landing and DevTeam worktrees, plus critical-path Python fixes that keep seats and the hub working."},
-              {"epic": "#24819", "name": "Rust port candidates", "lang": "Python (deferred)", "description": "Leaves off the critical path. Not worked until the port unless Josh says otherwise."},
+              {"epic": "#24819", "name": "Rust port candidates", "lang": "Python (deferred)", "description": "Leaves off the critical path. Not worked until the port unless the operator says otherwise."},
               {"epic": "#24820", "name": "Code index", "lang": "Rust", "description": "crates/gcode: indexing, freshness, evidence."},
               {"epic": "#24821", "name": "Terminal and client", "lang": "Rust", "description": "crates/gterminal* and crates/gclient: panes, host lifecycle, client UI, pane restore."},
-              {"epic": "#24822", "name": "Gobby Annotate", "lang": "Web/iOS", "description": "Annotate work. #22225 stays under #22978 until Josh moves it."},
+              {"epic": "#24822", "name": "Gobby Annotate", "lang": "Web/iOS", "description": "Annotate work. #22225 stays under #22978 until the operator moves it."},
               {"epic": "#21542", "name": "Gobby 1.0", "lang": "Rust", "description": "gdaemon front door, strangler port, hub and node, including hub mode (#21575)."}
             ],
             "integration_branch": "0.5.0",
-            "operator": "Josh",
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–05:00 America/Chicago daily; 04:00–06:00 on Mondays",
             "report_cadence_seconds": 1800,
@@ -37,7 +36,7 @@ rules:
             "critical_paths": [
               "Story B"
             ],
-            "role_guidance": {"consolidator":"Consolidator first job: the open backlog under the current roots #24818 Runbooks and task system, #24820 Code index, #24821 Terminal and client, #24822 Gobby Annotate and #21542 Gobby 1.0. Route Rust proposals to their Rust root, #24820, #24821 or #21542. Leave #24819 Rust port candidates unworked unless Josh says otherwise. Check stale candidates against current evidence before retirement proposals. Exclude #22978 triage and its whole subtree, including #22360 post-1.0 deferrals, and all plan-expanded epic subtrees.","orchestrator":"1.0 path reference (Josh-approved #25237): .gobby/plans/research/stepwise-path-to-1.0-25237.md; hub-node task list: .gobby/plans/research/hub-node-live-task-list-25236.md. Read by reference; do not paste.","archivist":"1.0 path reference (Josh-approved #25237): .gobby/plans/research/stepwise-path-to-1.0-25237.md; hub-node task list: .gobby/plans/research/hub-node-live-task-list-25236.md. Read by reference; do not paste.","assistant":"Status reports include ROADMAP progress and the Story B critical path from task dependencies. 1.0 path reference (Josh-approved #25237): .gobby/plans/research/stepwise-path-to-1.0-25237.md; hub-node task list: .gobby/plans/research/hub-node-live-task-list-25236.md. Read by reference; do not paste."},
+            "role_guidance": {"consolidator":"Consolidator first job: the open backlog under the current roots #24818 Runbooks and task system, #24820 Code index, #24821 Terminal and client, #24822 Gobby Annotate and #21542 Gobby 1.0. Route Rust proposals to their Rust root, #24820, #24821 or #21542. Leave #24819 Rust port candidates unworked unless the operator says otherwise. Check stale candidates against current evidence before retirement proposals. Exclude #22978 triage and its whole subtree, including #22360 post-1.0 deferrals, and all plan-expanded epic subtrees.","orchestrator":"1.0 path reference (operator-approved #25237): .gobby/plans/research/stepwise-path-to-1.0-25237.md; hub-node task list: .gobby/plans/research/hub-node-live-task-list-25236.md. Read by reference; do not paste.","archivist":"1.0 path reference (operator-approved #25237): .gobby/plans/research/stepwise-path-to-1.0-25237.md; hub-node task list: .gobby/plans/research/hub-node-live-task-list-25236.md. Read by reference; do not paste.","assistant":"Status reports include ROADMAP progress and the Story B critical path from task dependencies. 1.0 path reference (operator-approved #25237): .gobby/plans/research/stepwise-path-to-1.0-25237.md; hub-node task list: .gobby/plans/research/hub-node-live-task-list-25236.md. Read by reference; do not paste."},
             "release_guidance": "Crate releases. Every crate binary release bumps that crate's `Cargo.toml` patch version by +0.0.1 and carries the `Cargo.lock` update in the release commit. A gcode or gdaemon release updates its pin in `MANAGED_BIN_VERSION_PINS` (`src/gobby/install/version_pins.py`); the gcode floors in `src/gobby/code_index/gcode_versions.py`, including `MIN_GCODE_PRUNE_BUDGET_VERSION`, derive from the gcode pin.",
             "handoff_reason_template": "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator decision. The configured closer completes landing and closure.",
             "workspace_layout": {
