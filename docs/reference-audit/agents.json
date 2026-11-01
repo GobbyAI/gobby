@@ -124,6 +124,20 @@
   "operations": [
     {
       "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_team_progress.py",
+        "symbol": "create_team_progress_registry"
+      },
+      "verification": [
+        "source-audit"
+      ],
+      "audience": "agent; a Dev Manager or Orchestrator reads its team's progress",
+      "server": "gobby-tasks",
+      "tool": "team_progress"
+    },
+    {
+      "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/agents_query_tools.py",

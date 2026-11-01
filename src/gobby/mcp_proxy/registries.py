@@ -142,6 +142,9 @@ def setup_internal_registries(
         InternalRegistryManager containing all registries
     """
     manager = InternalRegistryManager()
+    from gobby.mcp_proxy.tools.decisions import create_decisions_registry
+
+    manager.add_registry(create_decisions_registry(config_resolver))
     initial_config = config_resolver()
     # Review learning needs an initial manager; memory tools resolve per call.
     initial_memory_manager = (

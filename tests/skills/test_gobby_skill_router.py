@@ -2,7 +2,7 @@
 
 from importlib.resources import files
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -51,9 +51,15 @@ def test_reference_contract_3_1_2() -> None:
 def test_typed_operator_command_cold_starts_the_pane(prompt: str, role: str) -> None:
     handler = AgentEventHandlerMixin()
     handler._skill_manager = HookSkillManager()
+    handler._session_manager = MagicMock()
+    roles = {"admin": "orchestrator", "assistant": "assistant"}
     with (
         patch.object(handler._skill_manager, "discover_core_skills", return_value=[]),
         patch.object(handler, "_skill_not_found_context", return_value="Skill not found."),
+        patch(
+            "gobby.hooks.event_handlers._agent.resolve_cold_start_command",
+            side_effect=lambda _db, name, **_kwargs: roles.get(name),
+        ),
     ):
         result = handler._intercept_skill_command(prompt, project_id="project-1")
     assert result is not None

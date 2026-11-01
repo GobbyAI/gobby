@@ -491,66 +491,34 @@
     {
       "surface": "mcp",
       "server": "gobby-tasks",
-      "tool": "record_test_step",
+      "tool": "record_attestation",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
       "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_step_records.py",
-        "symbol": "_record_step"
+        "path": "src/gobby/mcp_proxy/tools/tasks/_attestations.py",
+        "symbol": "create_attestation_registry"
       },
       "verification": [
         "registered-inventory",
         "source-contract",
-        "focused-task-tests"
+        "attestation-tools"
       ],
-      "audience": "agent; definitions granting the test step"
+      "audience": "agent; each author records its own attestation, never a peer's"
     },
     {
       "surface": "mcp",
       "server": "gobby-tasks",
-      "tool": "record_implementation_step",
+      "tool": "list_attestations",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
       "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_step_records.py",
-        "symbol": "_record_step"
+        "path": "src/gobby/mcp_proxy/tools/tasks/_attestations.py",
+        "symbol": "create_attestation_registry"
       },
       "verification": [
         "registered-inventory",
         "source-contract",
-        "focused-task-tests"
+        "attestation-tools"
       ],
-      "audience": "agent; definitions granting the implementation step"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks",
-      "tool": "record_review_step",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_step_records.py",
-        "symbol": "_record_step"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; definitions granting the review step, independent of the task's work"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks",
-      "tool": "record_closing_step",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_step_records.py",
-        "symbol": "_record_step"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; definitions granting the closing step"
+      "audience": "agent; reads the append-only attestation history"
     },
     {
       "surface": "mcp",
@@ -1296,6 +1264,12 @@
     ]
   },
   "evidence": [
+    {
+      "id": "attestation-tools",
+      "kind": "isolated-tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/tasks/test_attestations.py tests/mcp_proxy/tools/tasks/test_attestation_authority.py -q",
+      "result": "18 passed in 6.26s (test_attestations.py and test_attestation_authority.py)."
+    },
     {
       "id": "coordinator-claim-release",
       "kind": "isolated-tests",
