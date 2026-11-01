@@ -371,19 +371,56 @@ def _manages_task(db: HubDatabase, task: Task, caller_session_id: str) -> bool:
     return is_operator_coordinator(LocalTaskManager(db), caller, capability="land_tasks")
 
 
+async def _allows_direct_landing(
+    db: HubDatabase,
+    caller_session_id: str,
+    main: Path,
+    tip: str,
+    sha: str,
+    receipts: list[CloseReceipt],
+) -> bool:
+    """Apply the same declared path grant used for direct integration commits."""
+    caller = SessionManager(db).get(caller_session_id)
+    resolved = session_agent_definition(db, caller) if caller is not None else None
+    if (
+        resolved is None
+        or "direct_integration_commit" not in resolved[0].capabilities
+        or not resolved[0].direct_integration_commit_paths
+    ):
+        return False
+    base = await _git(main, "merge-base", tip, sha)
+    if base == sha:
+        # Recheck the original candidate scope, even when the integration delta
+        # is now empty. Missing scope provenance cannot authorize a direct replay.
+        receipt = next((r for r in receipts if r.commit_sha == sha), None)
+        original_tip = receipt.facts.get("integration_base") if receipt else None
+        if not isinstance(original_tip, str) or not _FULL_SHA.fullmatch(original_tip):
+            return False
+        base = await _git(main, "merge-base", original_tip, sha)
+    paths = await _paths(main, base, sha)
+    return resolved[0].covers_direct_integration_paths(sorted(paths))
+
+
 def _review_blockers(
-    task: Task, records: list[TaskStepRecord], sha: str, caller: str, excluded: set[str]
+    task: Task,
+    records: list[TaskStepRecord],
+    sha: str,
+    caller: str,
+    excluded: set[str],
+    *,
+    require_independent_review: bool = True,
 ) -> list[str]:
     blockers: list[str] = []
-    if any(
-        record.step == "review"
-        and record.epoch == task.review_epoch
-        and record.session_id == caller
-        for record in records
-    ):
-        blockers.append("caller_is_reviewer")
-    if independent_review_approval(task, records, sha, caller) is None:
-        blockers.append("review_approval_missing")
+    if require_independent_review:
+        if any(
+            record.step == "review"
+            and record.epoch == task.review_epoch
+            and record.session_id == caller
+            for record in records
+        ):
+            blockers.append("caller_is_reviewer")
+        if independent_review_approval(task, records, sha, caller) is None:
+            blockers.append("review_approval_missing")
     if task.task_type != "epic":
         implementation = approved_task_step(task, records, "implementation")
         if implementation is None or implementation.commit_sha != sha:
@@ -495,7 +532,7 @@ async def land_candidate(
     commit_sha: str,
     code_index: CodeIndexContext | None = None,
 ) -> LandingResult:
-    """Land a linked candidate another session approved, as the task's Dev Manager.
+    """Land a linked candidate under the caller's declared integration authority.
 
     A tip that moved by paths disjoint from the candidate's lands a generated merge;
     paths the tip changed too and merge conflicts escalate the task to Triage.
@@ -532,16 +569,21 @@ async def land_candidate(
                 blockers: list[str] = []
                 if not _manages_task(db, current_task, caller_session_id):
                     blockers.append("caller_not_task_manager")
-                # The claim moves along the team chain, so only authorship bars a closer.
-                if caller_session_id in makers:
+                direct_landing = await _allows_direct_landing(
+                    db, caller_session_id, main, tip, sha, receipts
+                )
+                if not direct_landing and caller_session_id in makers:
                     blockers.append("caller_is_maker")
-                # A security approval must come from a seat outside the task's authorship and
-                # outside its current claim.
                 excluded = set(makers)
                 if current_task.claimed_by_session_id:
                     excluded.add(current_task.claimed_by_session_id)
                 blockers += _review_blockers(
-                    current_task, records, sha, caller_session_id, excluded
+                    current_task,
+                    records,
+                    sha,
+                    caller_session_id,
+                    excluded,
+                    require_independent_review=not direct_landing,
                 )
                 if not linked:
                     blockers.append("candidate_not_linked")
@@ -603,7 +645,8 @@ async def land_candidate(
                     if isinstance(merged, GitFailed):
                         conflict = _refused(refusal, "merge_conflict", merged.stdout)
                         return _escalate(db, current_task, conflict)
-                    subject = f"chore: land reviewed {sha[:10]} for #{current_task.seq_num}"
+                    delivery = "land" if direct_landing else "land reviewed"
+                    subject = f"chore: {delivery} {sha[:10]} for #{current_task.seq_num}"
                     target = await _git(
                         main, "commit-tree", tree, "-p", tip, "-p", sha, "-m", subject
                     )
@@ -626,6 +669,7 @@ async def land_candidate(
                 if await _ancestor(main, target, observed_tip):
                     facts = {
                         "branch": branch,
+                        "integration_base": tip,
                         "landed_tip": target,
                         "observed_tip": observed_tip,
                         "mode": mode,
