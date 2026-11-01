@@ -611,7 +611,7 @@ Current bundled memory rules:
 | `guard-plan-memory-writes` | `before_tool` | Blocks the first plan-time `create_memory` or `update_memory` call until the agent confirms that the write is a durable preference or finalized decision rather than plan evidence. |
 | `reset-memory-tracking-on-start` | `session_start` | Clears `surfaced_memory_ids`, `accessed_memory_ids`, `_memory_surface_seq`, and `injected_review_lesson_ids` after clear, compact, or selected resume events. |
 | `increment-parent-turn-seq` | `turn_start` | Increments the parent session turn sequence counter. |
-| `surface-memories-on-turn-start` | `turn_start` | Calls `surface_memories` once per parent turn and injects the ranked index. A prompt under six words (a daemon wake, "go ahead") gets no search; a longer prompt is searched when it states work, and the session's last assistant message is searched when it does not. |
+| `surface-memories-on-turn-start` | `turn_start` | Calls `surface_memories` once per parent turn and injects the ranked index. A prompt under six words (a daemon wake, "go ahead") gets no search; a longer prompt is searched when it states work, and the session's last assistant message is searched when it does not or when the prompt is missing. |
 | `surface-memories-before-spawn` | `before_tool` | Surfaces a ranked memory index for the spawn prompt before `gobby-agents:spawn_agent` runs. |
 | `surface-memories-before-claiming-create` | `before_tool` | Surfaces the index for a `create_task` title when the same call claims the task. |
 | `surface-memories-after-claim` | `after_tool` | Surfaces the index for the claimed task's title after a successful `claim_task`. |
