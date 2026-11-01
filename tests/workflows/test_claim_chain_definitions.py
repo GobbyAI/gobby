@@ -90,6 +90,15 @@ def test_monitoring_loop_waits_with_a_timeout_then_reads_team_progress(name: str
     assert "timeout" in prompt
 
 
+def test_orchestrator_monitors_team_owners_by_status_not_reply() -> None:
+    """DevTeam seats cannot reply to the Orchestrator, so its owner wait is a status wait."""
+    prompt = " ".join(_definition("orchestrator")["prompts"]["agent"].split())
+
+    assert "wait_for_coordination(owner_session=<owner ref>, reply=true" not in prompt
+    assert 'statuses=["awaiting_input", "awaiting_approval", "awaiting_handoff"' in prompt
+    assert "team_progress" in prompt
+
+
 @pytest.mark.parametrize(
     "name",
     ["dev-manager", "orchestrator", "code-reviewer", "docs-reviewer", "research-reviewer"],

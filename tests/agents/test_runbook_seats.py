@@ -35,6 +35,7 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
 from gobby.workflows.templates import TemplateEngine
 from tests.agents.conftest import AGENT_TEST_MACHINE_ID
@@ -55,10 +56,26 @@ class _Env:
     parent_session_id: str
 
 
-def _install_agent(db: HubDatabase, name: str, project_id: str, *, enabled: bool = True) -> None:
+def _install_agent(
+    db: HubDatabase,
+    name: str,
+    project_id: str,
+    *,
+    enabled: bool = True,
+    capabilities: tuple[str, ...] = (),
+    message_sender_capabilities: tuple[str, ...] = (),
+) -> None:
     AgentDefinitionManager(db).create(
         name=name,
-        definition_json={"name": name, "version": "1.0", "enabled": enabled},
+        definition_json={
+            "name": name,
+            "version": "1.0",
+            "enabled": enabled,
+            "prompts": {"agent": "Coordinate the assigned work."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "capabilities": list(capabilities),
+            "message_sender_capabilities": list(message_sender_capabilities),
+        },
         project_id=project_id,
         enabled=enabled,
     )
@@ -901,3 +918,200 @@ def test_devteam_guard_validates_rendered_report_target(env: _Env, report_to: st
             "error": "report_to must be a nonempty session ref",
             "error_code": "runbook_seat_refused",
         }
+
+
+MESSAGE_RESTRICTED = ("message_restricted_seats",)
+
+
+def _report_session(env: _Env, agent: str | None) -> str:
+    """A live session to report to: a seat running ``agent``, or the operator's terminal."""
+    session = SessionManager(env.db).register(
+        external_id=f"report-{uuid.uuid4()}",
+        machine_id=AGENT_TEST_MACHINE_ID,
+        source="claude",
+        project_id=env.project_id,
+    )
+    if agent is not None:
+        SessionVariableManager(env.db).set_variable(session.id, "_agent_type", agent)
+    return session.id
+
+
+def _report_check(
+    env: _Env,
+    report_to: str,
+    *,
+    requested: str = "lead,dev",
+    catalogue: list[dict[str, Any]] = CATALOGUE,
+) -> AdmittedSeats:
+    return check_runbook_seats(
+        env.stores,
+        caller_session_id=_pipeline_child(env),
+        workspace=env.workspace_id,
+        requested=requested,
+        catalogue=catalogue,
+        report_to=report_to,
+        require_report_to=True,
+    )
+
+
+def test_report_to_must_be_a_live_session(env: _Env) -> None:
+    _install_agent(env.db, "report-agent", env.project_id)
+    report = _report_session(env, "report-agent")
+    env.db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (report,))
+
+    with pytest.raises(RunbookSeatRefusal, match=f"report_to {report} is not a live session"):
+        _report_check(env, report)
+
+
+def test_unknown_report_to_is_not_a_live_session(env: _Env) -> None:
+    unknown = str(uuid.uuid4())
+
+    with pytest.raises(RunbookSeatRefusal, match=f"report_to {unknown} is not a live session"):
+        _report_check(env, unknown)
+
+
+def test_report_to_admits_seats_its_definition_admits(env: _Env) -> None:
+    _install_agent(env.db, "report-agent", env.project_id)
+
+    admitted = _report_check(env, _report_session(env, "report-agent"))
+
+    assert admitted.launch == ("lead", "dev")
+
+
+def test_operator_report_to_admits_every_seat(env: _Env) -> None:
+    admitted = _report_check(env, _report_session(env, None))
+
+    assert admitted.launch == ("lead", "dev")
+
+
+def test_report_to_refuses_seats_its_definition_does_not_admit(env: _Env) -> None:
+    _install_agent(
+        env.db, "report-agent", env.project_id, message_sender_capabilities=MESSAGE_RESTRICTED
+    )
+    report = _report_session(env, "report-agent")
+
+    with pytest.raises(RunbookSeatRefusal) as refused:
+        _report_check(env, report)
+
+    message = str(refused.value)
+    assert f"report_to {report} does not admit seat 'lead' (agent 'lead-agent')" in message
+    assert f"report_to {report} does not admit seat 'dev' (agent 'dev-agent')" in message
+
+
+def test_report_to_admits_a_seat_whose_capabilities_it_admits(env: _Env) -> None:
+    _install_agent(
+        env.db, "report-agent", env.project_id, message_sender_capabilities=MESSAGE_RESTRICTED
+    )
+    _install_agent(env.db, "reporter-agent", env.project_id, capabilities=MESSAGE_RESTRICTED)
+    catalogue = [{"name": "reporter", "title": "Reporter", "agent": "reporter-agent"}]
+
+    admitted = _report_check(
+        env, _report_session(env, "report-agent"), requested="reporter", catalogue=catalogue
+    )
+
+    assert admitted.launch == ("reporter",)
+
+
+def test_report_to_refuses_only_the_seats_it_does_not_admit(env: _Env) -> None:
+    _install_agent(
+        env.db, "report-agent", env.project_id, message_sender_capabilities=MESSAGE_RESTRICTED
+    )
+    _install_agent(env.db, "reporter-agent", env.project_id, capabilities=MESSAGE_RESTRICTED)
+    catalogue = [
+        {"name": "reporter", "title": "Reporter", "agent": "reporter-agent"},
+        {"name": "lead", "title": "Lead", "agent": "lead-agent"},
+    ]
+    report = _report_session(env, "report-agent")
+
+    with pytest.raises(RunbookSeatRefusal) as refused:
+        _report_check(env, report, requested="reporter,lead", catalogue=catalogue)
+
+    message = str(refused.value)
+    assert f"report_to {report} does not admit seat 'lead'" in message
+    assert "seat 'reporter'" not in message
+
+
+def test_report_to_session_ref_resolves_before_the_guard(
+    env: _Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_agent(
+        env.db, "report-agent", env.project_id, message_sender_capabilities=MESSAGE_RESTRICTED
+    )
+    report = _report_session(env, "report-agent")
+    session = SessionManager(env.db).get(report)
+    assert session is not None and session.seq_num is not None
+    # A #N ref is scoped to the caller's project, as the daemon scopes it.
+    monkeypatch.setattr(
+        "gobby.utils.project_context.get_project_context", lambda cwd=None: {"id": env.project_id}
+    )
+    registry = create_agents_registry(
+        MagicMock(), session_manager=SessionManager(env.db), db=env.db
+    )
+    arguments = {
+        "workspace": env.workspace_id,
+        "requested": "lead,dev",
+        "catalogue": CATALOGUE,
+        "report_to": f"#{session.seq_num}",
+        "require_report_to": True,
+    }
+
+    with session_context_for_test(_pipeline_child(env)):
+        result = registry.call_sync("check_runbook_seats", arguments)
+
+    assert result["success"] is False
+    assert result["error_code"] == "runbook_seat_refused"
+    assert f"report_to {report} does not admit seat 'lead'" in result["error"]
+
+
+@pytest.mark.parametrize(
+    ("tab_exists", "developer_launched", "placed"),
+    [(True, False, "split"), (True, True, "split"), (False, True, "split"), (False, False, "tab")],
+)
+def test_devteam_reviewer_places_into_the_tab_its_developer_opens(
+    tab_exists: bool, developer_launched: bool, placed: str
+) -> None:
+    """A reviewer-only re-run opens the tab when its tab is gone, as its developer would."""
+    path = get_bundled_pipelines_path() / "devteam.yaml"
+    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
+    reviewer = next(step for step in definition.steps if step.id == "reviewer")
+    assert reviewer.mcp is not None and reviewer.mcp.arguments is not None
+    steps: dict[str, Any] = {
+        "guard": {
+            "output": {"workspace_id": "ws-1", "tab_title": "Dev Team", "tab_exists": tab_exists}
+        }
+    }
+    # The engine records a step that did not run with a null output.
+    developer_output = {"child_session_id": "dev-child"} if developer_launched else None
+    steps["developer"] = {"output": developer_output}
+    rendered = StepRenderer(TemplateEngine()).render_mcp_arguments(
+        {"placement": reviewer.mcp.arguments["placement"]},
+        {"inputs": {}, "steps": steps},
+        drop_none=True,
+    )
+
+    expected = (
+        {
+            "split": {
+                "workspace": "ws-1",
+                "tab_title": "Dev Team",
+                "axis": "right",
+                "title": "Code Reviewer",
+            }
+        }
+        if placed == "split"
+        else {"tab": {"workspace": "ws-1", "title": "Dev Team"}}
+    )
+    assert rendered["placement"] == expected
+
+
+@pytest.mark.parametrize("step_id", ["developer", "reviewer"])
+def test_devteam_seats_report_a_needed_restart_and_never_run_one(step_id: str) -> None:
+    """A DevTeam seat reports a needed restart to its report target instead of running one."""
+    path = get_bundled_pipelines_path() / "devteam.yaml"
+    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
+    step = next(step for step in definition.steps if step.id == step_id)
+    assert step.mcp is not None and step.mcp.arguments is not None
+    prompt = " ".join(str(step.mcp.arguments["prompt"]).split())
+
+    assert "'activation needs restart'" in prompt
+    assert "never run gobby restart or cutover yourself" in prompt

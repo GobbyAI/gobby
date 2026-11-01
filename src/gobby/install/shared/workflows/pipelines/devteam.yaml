@@ -107,7 +107,9 @@ steps:
           installed definition and selected evidence policy. Coordinate one
           landing/closing owner with the reviewer, then personally clean up the
           merged worktree after the reviewer finishes. Report readiness,
-          completion and blockers to ${{ inputs.report_to }}.
+          completion and blockers to ${{ inputs.report_to }}. If a daemon restart
+          or cutover is needed, send ${{ inputs.report_to }} 'activation needs
+          restart' and never run gobby restart or cutover yourself.
           Before removal inspect Git status; after all seats finish remove only
           known generated untracked isolation metadata owned by this team, preserving
           user-authored config and changes. Never force an unsafe deletion.
@@ -144,13 +146,16 @@ steps:
           installed definition and selected evidence policy. You or the author
           may land and close approved work; agree on one completion owner. Finish
           your run before the developer removes the shared worktree. Report
-          readiness, completion and blockers to ${{ inputs.report_to }}.
-        placement:
-          split:
-            workspace: "${{ steps.guard.output.workspace_id }}"
-            tab_title: "${{ steps.guard.output.tab_title }}"
-            axis: right
-            title: Code Reviewer
+          readiness, completion and blockers to ${{ inputs.report_to }}. If a daemon
+          restart or cutover is needed, send ${{ inputs.report_to }} 'activation needs
+          restart' and never run gobby restart or cutover yourself.
+        placement: >-
+          ${{ {'split': {'workspace': steps.guard.output.workspace_id,
+          'tab_title': steps.guard.output.tab_title, 'axis': 'right',
+          'title': 'Code Reviewer'}}
+          if steps.guard.output.tab_exists or steps.developer.output else
+          {'tab': {'workspace': steps.guard.output.workspace_id,
+          'title': steps.guard.output.tab_title}} }}
 
   - id: connect
     mcp:

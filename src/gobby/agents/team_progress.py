@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 
 from gobby.agents.team_admission_records import TeamBinding, team_binding
 from gobby.agents.team_scope import EPIC_TASK_TYPE
+from gobby.sessions.turn_lifecycle import TurnLifecycleReducer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER, SessionManager
@@ -163,12 +164,23 @@ def _open_flags(
         if not acknowledged:
             flags.add("handoff_unacknowledged")
 
-    if holder_live and not pending and "handoff_unacknowledged" not in flags:
+    if (
+        holder_live
+        and not pending
+        and "handoff_unacknowledged" not in flags
+        and not (holder_id and _mid_turn(db, holder_id))
+    ):
         since = last.created_at if last is not None else start
         activity = [record.created_at for record in records if record.session_id == holder_id]
         if now - max([since, *activity]) > bound:
             flags.add("idle_on_open_work")
     return frozenset(flags)
+
+
+def _mid_turn(db: HubDatabase, session_id: str) -> bool:
+    """A seat mid-turn with no outstanding wait is working, including a running tool call."""
+    state = TurnLifecycleReducer(SessionManager(db)).get(session_id)
+    return state.turn_state == "open" and not state.waits
 
 
 def _claimants(db: HubDatabase, task_id: str) -> list[tuple[str, datetime]]:

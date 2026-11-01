@@ -16,6 +16,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.agents.team_communications import recipient_admits
 from gobby.agents.team_lifecycle import seat_team
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -96,6 +97,8 @@ def check_runbook_seats(
     truncated read, or a live sibling whose machine or workspace is unknown refuses with
     its cause.
 
+    ``report_to`` must be a live session whose definition admits every seat the run launches.
+
     ``launch`` names the seats to start. With ``skip_live_seats`` it leaves out each requested
     seat whose agent already has an active run on this machine with a live session in this
     project. ``live`` maps each such seat to that session. With ``team_id``, ``live`` covers
@@ -128,6 +131,7 @@ def check_runbook_seats(
             tab_title=tab_title,
             task=task,
             seat_models=seat_models,
+            report_to=report_to,
         )
     except RunbookSeatRefusal:
         raise
@@ -183,6 +187,7 @@ def _admit(
     tab_title: str | None,
     task: str | None,
     seat_models: Mapping[str, str | None] | None,
+    report_to: str | None,
 ) -> AdmittedSeats:
     session = stores.sessions.get(caller_session_id)
     if (
@@ -246,6 +251,9 @@ def _admit(
                 )
                 live.update({name: parent_live[name] for name in managers if name in parent_live})
     launch = tuple(seat.name for seat in seats if not (skip_live_seats and seat.name in live))
+    if report_to is not None:
+        launching = tuple(seat for seat in seats if seat.name in launch)
+        _refuse_unreachable_report_to(stores, report_to, project_id=project_id, seats=launching)
     if seat_models is not None:
         _refuse_unmodeled_launches(stores.definitions, project_id, seats, launch, seat_models)
     tab = _runbook_tab_title(stores.tasks, project_id, tab_title, tab_task)
@@ -416,6 +424,31 @@ def _launches_here(
     if not isinstance(workspace, str) or not workspace:
         raise RunbookSeatRefusal(f"live execution {sibling.id} has no workspace input")
     return _workspace_id(stores.workspaces, workspace) == workspace_id
+
+
+def _refuse_unreachable_report_to(
+    stores: RunbookSeatStores,
+    report_to: str,
+    *,
+    project_id: str,
+    seats: Sequence[CatalogueSeat],
+) -> None:
+    """Refuse a report target that is not a live session or whose definition excludes a seat."""
+    report_uuid = parse_uuid_reference(report_to)
+    session = None if report_uuid is None else stores.sessions.get(str(report_uuid))
+    if report_uuid is None or session is None or session.status not in LIVE_SESSION_STATUSES:
+        raise RunbookSeatRefusal(f"report_to {report_to} is not a live session")
+    db = stores.tasks.db
+    refused: list[str] = []
+    for seat in seats:
+        resolved = resolve_agent_with_row(seat.agent, db, project_id=project_id)
+        capabilities = resolved[0].capabilities if resolved is not None else []
+        if not recipient_admits(db, str(report_uuid), capabilities):
+            refused.append(
+                f"report_to {report_to} does not admit seat '{seat.name}' (agent '{seat.agent}')"
+            )
+    if refused:
+        raise RunbookSeatRefusal("; ".join(refused))
 
 
 def _refuse_unresolved_agents(
