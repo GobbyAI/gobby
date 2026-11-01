@@ -213,6 +213,13 @@ The service performs the protected update and writes a landing receipt; agents
 do not need a Git-hook override or write access to the main checkout. Call
 `close_task` separately after recording the required completion evidence.
 
+After landing and closing, the landing owner removes the task worktree promptly.
+Run cleanup from outside that worktree, after confirming it is clean, merged into
+`0.5.0`, unused by live sessions or processes, and no longer needed for pending proof.
+Call `gobby-worktrees:delete_worktree` with its `worktree_id` and
+`merged_into="0.5.0"`, without force. Preserve dirty, unmerged, deferred, or actively
+used worktrees; never stop a live seat just to make cleanup possible.
+
 Human operators may disposition an unneeded leaf directly with
 `gobby tasks close '#14390' --reason moot`. The CLI accepts only
 the three canonical no-work reasons for direct leaf closure and still refuses a
