@@ -3,8 +3,9 @@
 //! The four hotspot stages (file, symbol, module, incoming calls) each cost more
 //! than the 29 s per-query budget on a large overlay, so they are computed on the
 //! index path and stored as one snapshot node per overlay scope. A report reads the
-//! node when its admitted-version digest and top-n match; otherwise the report
-//! computes the same stages live.
+//! node when its admitted-version digest and top-n match. On a miss, a report with
+//! index write authority computes the stages once and saves the snapshot for the
+//! next report; without that authority it computes the same stages live.
 //!
 //! Writers invalidate every snapshot whose namespaces include the written project,
 //! so a stale digest is never served.
@@ -189,6 +190,55 @@ pub(crate) fn read_stored_hotspots(
             None
         }
     }
+}
+
+/// The hotspots a report serves after a snapshot miss, saved for the next report.
+///
+/// Returns `None` when the report must compute live and save nothing: the caller
+/// lacks write authority, or `top_n` asks for more rows than a snapshot stores.
+/// Otherwise the stages run once at `DEFAULT_TOP_LIMIT`, the full result is saved,
+/// and a copy truncated to `top_n` is served. A failed save only logs, symmetric
+/// with a failed snapshot read. Like `refresh_after_index`, the save is not fenced
+/// against a graph write that lands mid-compute; that writer's invalidation runs
+/// first, so its change shows up after the next write or index.
+pub(crate) fn hotspots_on_miss<T>(
+    state: &mut T,
+    top_n: usize,
+    may_save: bool,
+    compute: impl FnOnce(&mut T, usize) -> anyhow::Result<GraphReportHotspots>,
+    save: impl FnOnce(&mut T, &GraphReportHotspots) -> anyhow::Result<()>,
+) -> anyhow::Result<Option<GraphReportHotspots>> {
+    if !may_save || top_n > DEFAULT_TOP_LIMIT {
+        return Ok(None);
+    }
+    let mut hotspots = compute(state, DEFAULT_TOP_LIMIT)?;
+    if let Err(error) = save(state, &hotspots) {
+        log::warn!("hotspot snapshot save after a report miss failed: {error:#}");
+    }
+    truncate_hotspots(&mut hotspots, top_n);
+    Ok(Some(hotspots))
+}
+
+/// Report-path save-on-miss against the live graph: write authority comes from the
+/// context, and a failed authority check computes live like a missing grant.
+pub(crate) fn report_hotspots_on_miss(
+    client: &mut GraphClient,
+    ctx: &Context,
+    namespaces: &[AdmittedNamespace],
+    digest: &str,
+    top_n: usize,
+) -> anyhow::Result<Option<GraphReportHotspots>> {
+    let may_save = ctx.can_refresh_index().unwrap_or_else(|error| {
+        log::warn!("hotspot snapshot write authority check failed; computing live: {error:#}");
+        false
+    });
+    hotspots_on_miss(
+        client,
+        top_n,
+        may_save,
+        |client, limit| load_stored_hotspot_inputs(client, namespaces, limit),
+        |client, hotspots| write_snapshot(client, &ctx.project_id, namespaces, digest, hotspots),
+    )
 }
 
 /// Refreshes the stored snapshot after an index run. The compute runs only when the

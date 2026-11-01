@@ -1086,10 +1086,11 @@ mod hotspot_snapshot_contract {
     use crate::index::indexer::IndexDegradation;
     use crate::visibility::graph_versions::{AdmittedGraphVersions, AdmittedNamespace};
 
+    use super::super::DEFAULT_TOP_LIMIT;
     use super::super::hotspot_snapshot::{
         SNAPSHOT_FORMAT_VERSION, StoredSnapshot, admitted_digest, decode_payload, encode_payload,
-        invalidate_after_write, invalidate_snapshots_query, refresh_failure_degradation,
-        stored_hotspots_for,
+        hotspots_on_miss, invalidate_after_write, invalidate_snapshots_query,
+        refresh_failure_degradation, stored_hotspots_for,
     };
     use super::super::types::{GraphHotspot, GraphReportHotspots};
 
@@ -1238,6 +1239,91 @@ mod hotspot_snapshot_contract {
 
         let message = format!("{:#}", result.expect_err("invalidation error must surface"));
         assert!(message.contains("invalidation refused"), "{message}");
+    }
+
+    fn ranked_symbols(count: usize) -> GraphReportHotspots {
+        GraphReportHotspots {
+            high_degree_symbols: (0..count)
+                .map(|rank| hotspot(&format!("sym:{rank}"), count - rank))
+                .collect(),
+            ..GraphReportHotspots::default()
+        }
+    }
+
+    #[derive(Default)]
+    struct MissCalls {
+        computed_at: Vec<usize>,
+        saved: Vec<GraphReportHotspots>,
+    }
+
+    fn miss(top_n: usize, may_save: bool) -> (MissCalls, Option<GraphReportHotspots>) {
+        let mut calls = MissCalls::default();
+        let served = hotspots_on_miss(
+            &mut calls,
+            top_n,
+            may_save,
+            |calls, limit| {
+                calls.computed_at.push(limit);
+                Ok(ranked_symbols(3))
+            },
+            |calls, hotspots| {
+                calls.saved.push(hotspots.clone());
+                Ok(())
+            },
+        )
+        .expect("a miss never fails the report");
+        (calls, served)
+    }
+
+    #[test]
+    fn report_miss_saves_the_full_snapshot_and_serves_top_n() {
+        let (calls, served) = miss(1, true);
+
+        assert_eq!(calls.computed_at, vec![DEFAULT_TOP_LIMIT]);
+        assert_eq!(
+            calls.saved,
+            vec![ranked_symbols(3)],
+            "the saved payload must be the full default-limit result"
+        );
+        assert_eq!(
+            served.map(|hotspots| hotspots.high_degree_symbols),
+            Some(ranked_symbols(3).high_degree_symbols[..1].to_vec())
+        );
+    }
+
+    #[test]
+    fn report_miss_without_write_authority_computes_live_and_saves_nothing() {
+        let (calls, served) = miss(1, false);
+
+        assert_eq!(served, None);
+        assert!(calls.computed_at.is_empty());
+        assert!(calls.saved.is_empty());
+    }
+
+    #[test]
+    fn report_miss_above_the_stored_limit_computes_live_and_saves_nothing() {
+        let (calls, served) = miss(DEFAULT_TOP_LIMIT + 1, true);
+
+        assert_eq!(served, None);
+        assert!(calls.computed_at.is_empty());
+        assert!(calls.saved.is_empty());
+    }
+
+    #[test]
+    fn report_miss_save_failure_still_serves_the_computed_hotspots() {
+        let served = hotspots_on_miss(
+            &mut (),
+            2,
+            true,
+            |_, _| Ok(ranked_symbols(3)),
+            |_, _| Err(anyhow::anyhow!("snapshot write refused")),
+        )
+        .expect("a failed save never fails the report");
+
+        assert_eq!(
+            served.map(|hotspots| hotspots.high_degree_symbols),
+            Some(ranked_symbols(3).high_degree_symbols[..2].to_vec())
+        );
     }
 
     #[test]

@@ -7,7 +7,9 @@ use crate::visibility::graph_versions::{admitted_namespaces, has_pending_pinned_
 
 #[cfg(test)]
 use super::RELATES_TO_CODE;
-use super::hotspot_snapshot::{SNAPSHOT_FORMAT_VERSION, admitted_digest, read_stored_hotspots};
+use super::hotspot_snapshot::{
+    SNAPSHOT_FORMAT_VERSION, admitted_digest, read_stored_hotspots, report_hotspots_on_miss,
+};
 use super::loading::{CODE_COMMUNITIES_INPUT, load_report_communities, load_report_snapshot};
 use super::render::{RenderMarkdownInput, render_markdown};
 use super::summary::{
@@ -46,7 +48,11 @@ pub fn generate_report_with_options(
             let namespaces = admitted_namespaces(ctx)?;
             let pending = has_pending_pinned_graph_projection(ctx)?;
             let digest = admitted_digest(&namespaces, pending, SNAPSHOT_FORMAT_VERSION);
-            let stored = read_stored_hotspots(client, &ctx.project_id, &digest, options.top_n);
+            let stored = match read_stored_hotspots(client, &ctx.project_id, &digest, options.top_n)
+            {
+                Some(hotspots) => Some(hotspots),
+                None => report_hotspots_on_miss(client, ctx, &namespaces, &digest, options.top_n)?,
+            };
             load_report_snapshot(client, &namespaces, options.top_n, stored)
         },
     );
