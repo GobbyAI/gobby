@@ -870,7 +870,7 @@
     {
       "id": "gobby-decisions-evaluate",
       "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_decisions_tools.py -q",
-      "result": "37 passed. test_evaluate_schema_carries_nested_bounds asserts the registered evaluate input schema: both nested question shapes, maxProperties 64, the key pattern on questions, and minProperties 2 and maxProperties 255 on Choice criteria. The schema was read from the registry in-process, not fetched from a live daemon. Choice and Noul round trips, invalid-request table, unavailable reasons, cooldown sharing, cancellation, registration, and the pipeline step all pass."
+      "result": "46 passed. test_evaluate_schema_carries_nested_bounds asserts the registered evaluate input schema: both nested question shapes, maxProperties 64, the key pattern on questions, and minProperties 2 and maxProperties 255 on Choice criteria. The schema was read from the registry in-process, not fetched from a live daemon. Choice and Noul round trips, invalid-request table, unavailable reasons, cooldown sharing, cancellation, registration, and the pipeline step all pass. Score level bounds (1 and 11 levels), Box image rejections (relative path, unreadable, non-image, oversized, directory, FIFO) and Box on workers-ai all fail with invalid_request before any dial; the FIFO case is bounded by a 10-second timeout."
     }
   ],
   "verified_at": "2026-09-12"

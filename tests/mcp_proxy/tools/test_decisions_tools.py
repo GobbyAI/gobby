@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import math
+import os
 import struct
 import zlib
 from collections.abc import Callable, Mapping
@@ -20,6 +21,7 @@ from gobby.ai import decisions
 from gobby.ai.decisions import ChoiceQuestion, DecisionsUnavailable
 from gobby.config.ai import AIConfig, DecisionsConfig
 from gobby.config.app import DaemonConfig
+from gobby.llm.image_payloads import MAX_IMAGE_BYTES
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.tools.decisions import create_decisions_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -275,6 +277,18 @@ INVALID_REQUESTS = [
     ),
     pytest.param({"questions": {"q": _choice_with({"a": "", "b": "B"})}}, id="choice-empty-text"),
     pytest.param({"questions": {"q": {**NOUL, "criteria": {"a": "b"}}}}, id="noul-with-criteria"),
+    pytest.param(
+        {"questions": {"q": {"type": "score", "instructions": "x", "levels": ["only"]}}},
+        id="score-one-level",
+    ),
+    pytest.param(
+        {
+            "questions": {
+                "q": {"type": "score", "instructions": "x", "levels": [str(n) for n in range(11)]}
+            }
+        },
+        id="score-eleven-levels",
+    ),
     pytest.param({"timeout_seconds": True}, id="timeout-bool"),
     pytest.param({"timeout_seconds": 0}, id="timeout-zero"),
     pytest.param({"timeout_seconds": -1.0}, id="timeout-negative"),
@@ -297,6 +311,66 @@ async def test_evaluate_rejects_invalid_requests_without_dialing(
     assert result["error"].startswith("invalid_request: ")
     assert wire.requests == []
     assert decisions._service_cache is None
+
+
+def _unusable_image(kind: str, tmp_path: Path) -> Path:
+    """Build a Box image path the tool must refuse. A FIFO is created here, never opened."""
+    match kind:
+        case "relative":
+            return Path("lane.png")
+        case "unreadable":
+            return tmp_path / "missing" / "lane.png"
+        case "not-image":
+            path = tmp_path / "lane.txt"
+            path.write_bytes(b"plain text, not a picture")
+            return path
+        case "oversized":
+            path = tmp_path / "huge.png"
+            path.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(MAX_IMAGE_BYTES))
+            return path
+        case "directory":
+            path = tmp_path / "lanes"
+            path.mkdir()
+            return path
+        case "fifo":
+            path = tmp_path / "lanes.fifo"
+            os.mkfifo(path)
+            return path
+        case _:
+            raise AssertionError(kind)
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize(
+    "kind", ["relative", "unreadable", "not-image", "oversized", "directory", "fifo"]
+)
+async def test_evaluate_rejects_unusable_box_images_without_dialing(
+    wire: FakeWire, tmp_path: Path, kind: str
+) -> None:
+    image = _unusable_image(kind, tmp_path)
+
+    result = await _evaluate(_registry(_config()), {"lane": _box(image)})
+
+    assert result["success"] is False
+    assert result["reason"] == "invalid_request"
+    assert result["error"].startswith("invalid_request: ")
+    assert wire.requests == []
+
+
+async def test_evaluate_box_on_workers_ai_fails_before_dialing(
+    wire: FakeWire, tmp_path: Path
+) -> None:
+    image = tmp_path / "lane.png"
+    image.write_bytes(_png())
+
+    config = _config(wire_api="workers-ai", model="clef")
+
+    result = await _evaluate(_registry(config), {"lane": _box(image)})
+
+    assert result["success"] is False
+    assert result["reason"] == "invalid_request"
+    assert result["error"].startswith("invalid_request: ")
+    assert wire.requests == []
 
 
 async def test_evaluate_accepts_boundary_requests(wire: FakeWire) -> None:
@@ -353,6 +427,7 @@ async def test_evaluate_reports_unconfigured_without_building_service(
 
     assert result["success"] is False
     assert result["reason"] == "unconfigured"
+    assert result["detail"] == "decisions api_base and model must both be set"
     assert result["error"].startswith("unconfigured: ")
     assert wire.requests == []
     assert decisions._service_cache is None

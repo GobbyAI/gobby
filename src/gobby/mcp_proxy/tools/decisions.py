@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import base64
 import math
+import os
 import re
+import stat
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -179,15 +181,36 @@ def _score(question: dict[str, Any]) -> ScoreQuestion:
     return ScoreQuestion(instructions=_instructions(question), levels=tuple(levels))
 
 
+def _read_regular_file(path_text: str) -> bytes:
+    """Read at most MAX_IMAGE_BYTES + 1 bytes from a regular file.
+
+    O_NONBLOCK keeps a FIFO or device open from waiting for a writer. fstat on the
+    open descriptor then rejects anything that is not a regular file.
+    """
+    try:
+        fd = os.open(path_text, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError as error:
+        raise _InvalidRequest("image_path must name a readable file") from error
+    try:
+        is_regular = stat.S_ISREG(os.fstat(fd).st_mode)
+    except OSError as error:
+        os.close(fd)
+        raise _InvalidRequest("image_path must name a readable file") from error
+    if not is_regular:
+        os.close(fd)
+        raise _InvalidRequest("image_path must name a regular file")
+    with os.fdopen(fd, "rb") as handle:
+        try:
+            return handle.read(MAX_IMAGE_BYTES + 1)
+        except OSError as error:
+            raise _InvalidRequest("image_path must name a readable file") from error
+
+
 def _box(question: dict[str, Any]) -> BoxQuestion:
     path_text = question.get("image_path")
     if not isinstance(path_text, str) or not Path(path_text).is_absolute():
         raise _InvalidRequest("image_path must be an absolute path")
-    try:
-        with Path(path_text).open("rb") as handle:
-            data = handle.read(MAX_IMAGE_BYTES + 1)
-    except OSError as error:
-        raise _InvalidRequest("image_path must name a readable file") from error
+    data = _read_regular_file(path_text)
     if len(data) > MAX_IMAGE_BYTES:
         raise _InvalidRequest("image exceeds byte limit")
     mime_type: Literal["image/png", "image/jpeg"]
@@ -286,7 +309,7 @@ def create_decisions_registry(
         config = config_resolver()
         decisions = None if config is None else config.ai.decisions
         if decisions is None or decisions.api_base is None or decisions.model is None:
-            return _failure("unconfigured", "decisions api_base is unset")
+            return _failure("unconfigured", "decisions api_base and model must both be set")
         service = get_decision_service(decisions)
         try:
             return await _decide(service, state_map, parsed, timeout)
