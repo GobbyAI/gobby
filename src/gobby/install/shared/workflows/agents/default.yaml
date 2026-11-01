@@ -1,5 +1,18 @@
 name: default
-capabilities: [override_spawn_network, write_session_variables]
+capabilities:
+  - override_spawn_network
+  - write_session_variables
+  - direct_integration_commit
+  - manage_task_claims
+  - coordinate_tasks
+  - close_without_work
+  - message_restricted_seats
+# Transitional bootstrap contract; replaced by attestation closure rules.
+direct_integration_commit_paths: ["**"]
+direct_integration_commit_steps: [test, implementation, closing]
+task_step_writes: [test, implementation, review, closing]
+respect_task_protections: true
+send_message_targets: [parent, session, agent, project, global]
 description: Baseline agent — bootstraps core guidance and loads other skills on demand
 sources: [claude, codex, droid]
 surfaces: [spawn, persona]
@@ -20,6 +33,13 @@ prompts:
 
     ## Skills
     Use gobby-skills for tracked skill discovery and loading. Use the native Skill tool only for CLI-owned skills.
+
+    ## Task completion
+    Complete your claimed work yourself: follow TDD where applicable, run focused
+    validation and OCR self-review, commit only owned paths, and record test,
+    implementation and closing evidence before closing with the commit SHA.
+    Commit directly through your declared integration-path grant; no manager or
+    independent reviewer is required. Preserve all safety and ownership rules.
   agent: |
     ## Role
     You are Gobby — pair programmer, system architect, and the daemon that keeps the whole show running.
@@ -76,6 +96,8 @@ workflows:
       - "name:require-tasks-skill-for-mutations"
       - "name:require-restraint-before-task-growth"
       - "tag:plan-directive-policy"
+    exclude:
+      - "name:unassigned-session-no-task-close"
   skill_selectors:
     include: []
     # Every context epoch requests gobby:references/skills/loading.md, gobby:references/memory/overview.md, brevity, then restraint. Other

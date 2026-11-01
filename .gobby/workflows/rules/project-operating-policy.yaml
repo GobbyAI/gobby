@@ -6,18 +6,13 @@ tags: [default, seat, project-policy]
 # (Josh, 2026-10-23); work groups under the domain roots in project_policy.roots.
 rules:
   project-operating-policy:
-    description: "Inject this project's operating policy for seats once per context epoch"
+    description: "Inject general project operating policy for every session"
     event: turn_start
     enabled: true
     priority: 21
     when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
-        'test-writer', 'developer', 'code-reviewer', 'researcher', 'archivist',
-        'log-monitor', 'plan-writer', 'plan-enhancer', 'plan-adversary', 'triage',
-        'release-manager', 'reporter', 'security-reviewer', 'debugger',
-        'design-reviewer', 'recovery-steward', 'consolidator']
-      and (not variables.get('_project_policy_injected')
-        or variables.get('_project_policy_revision') != '{{ rule_digest }}')
+      not variables.get('_project_policy_injected')
+      or variables.get('_project_policy_revision') != '{{ rule_digest }}'
     effects:
       - type: set_variable
         variable: project_policy
@@ -44,7 +39,7 @@ rules:
             ],
             "role_guidance": {"consolidator":"Consolidator first job: the open backlog under the current roots #24818 Runbooks and task system, #24820 Code index, #24821 Terminal and client, #24822 Gobby Annotate and #21542 Gobby 1.0. Route Rust proposals to their Rust root, #24820, #24821 or #21542. Leave #24819 Rust port candidates unworked unless Josh says otherwise. Check stale candidates against current evidence before retirement proposals. Exclude #22978 triage and its whole subtree, including #22360 post-1.0 deferrals, and all plan-expanded epic subtrees.","orchestrator":"1.0 path reference (Josh-approved #25237): .gobby/plans/research/stepwise-path-to-1.0-25237.md; hub-node task list: .gobby/plans/research/hub-node-live-task-list-25236.md. Read by reference; do not paste.","archivist":"1.0 path reference (Josh-approved #25237): .gobby/plans/research/stepwise-path-to-1.0-25237.md; hub-node task list: .gobby/plans/research/hub-node-live-task-list-25236.md. Read by reference; do not paste.","assistant":"Status reports include ROADMAP progress and the Story B critical path from task dependencies. 1.0 path reference (Josh-approved #25237): .gobby/plans/research/stepwise-path-to-1.0-25237.md; hub-node task list: .gobby/plans/research/hub-node-live-task-list-25236.md. Read by reference; do not paste."},
             "release_guidance": "Crate releases. Every crate binary release bumps that crate's `Cargo.toml` patch version by +0.0.1 and carries the `Cargo.lock` update in the release commit. A gcode or gdaemon release updates its pin in `MANAGED_BIN_VERSION_PINS` (`src/gobby/install/version_pins.py`); the gcode floors in `src/gobby/code_index/gcode_versions.py`, including `MIN_GCODE_PRUNE_BUDGET_VERSION`, derive from the gcode pin.",
-            "handoff_reason_template": "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator decision. The Dev Manager closes after landing.",
+            "handoff_reason_template": "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator decision. The configured closer completes landing and closure.",
             "workspace_layout": {
               "admin": "The operator's tab holds the Assistant and Orchestrator panes only. Never place another seat in it.",
               "support": "One tab titled Support holds the support runbook's seats.",
@@ -179,23 +174,14 @@ rules:
       - type: inject_context
         delivery: on_receipt
         template: |
-          ## Project Operating Policy
-          - Load brevity(max) at start/compact/clear; use throughout.
-          - Josh: resolve_operator_conversation(channel="gobby-telegram"); no hardcoded IDs.
-          - Before routing/launch/handoff: get_variable(name="project_policy") for roots/role_launch_defaults/launch_defaults/workspace_layout. Reporter/Consolidator read role_guidance before work. Pass a runbook its launch_defaults entry plus its required inputs; bundles inherit, project-agnostic.
+          ## General Project Operating Policy
+          - Read project_policy for domain roots, integration branch, operator route, quiet hours and release guidance.
           - Integration 0.5.0; authorized push: git push origin <sha>:refs/heads/0.5.0.
-          - Critical path first: runbooks v4 (#24818), then 1.0 hub/node (#21542); stage launches by load/backlog. New tasks go under their domain root; #24819 is deferred. Found work to ORCH: low unless blocking critical-path work/landing; only blockers preempt; fold findings existing work resolves.
-          - Josh alone moves/sweeps/folds/reparents #22978 Triage subtree, #22225 Annotate or operator-placed tasks. Check parent; never change deferred-by-josh.
-          - One task/seat includes pending candidates; read-only prep allowed. ORCH-directed reviewer-LANDed waits: escalate_task(project_policy.handoff_reason_template); the Dev Manager de-escalates and closes after landing.
-          - No task rebalancing; parallel work adds developer+reviewer. Seat moves allowed.
-          - One tree per DevTeam task: admit_team creates it and the team's seats join it. Planners main; reviewers developer tree.
-          - Josh retired the backlog cap; drain candidate-sent/open tasks under the current close-only authority.
-          - close preview is deterministic only; the Dev Manager closes after landing.
-          - Hold: two consecutive 5-minute loads>60; lift: two <36; one/equality does nothing. Threshold/admission/escalation changes need Josh via Assistant. Report load only if breaching.
-          - Skip landed Rust retest if tree equals reviewed merge; build gclient in same cutover run.
-          - Quiet hours (project_policy.quiet_hours, for the Game Goblins jobs): no restart/cutover, low load; never rerun.
-          - Crate release: read project_policy.release_guidance first.
-          - Place panes by project_policy.workspace_layout.
+          - Claim before editing; preserve foreign files and stage only owned task paths.
+          - Follow TDD where applicable, focused validation and OCR self-review. Record truthful completion evidence and close with the commit SHA.
+          - Direct integration commits require the active definition's capability and declared path coverage. Otherwise follow the configured landing workflow.
+          - Josh alone moves protected/operator-placed tasks. Preserve deferred-by-josh.
+          - Honor project_policy.quiet_hours; read release_guidance before crate releases.
       - type: set_variable
         delivery: on_receipt
         variable: _project_policy_injected
@@ -203,6 +189,49 @@ rules:
       - type: set_variable
         delivery: on_receipt
         variable: _project_policy_revision
+        value: '{{ rule_digest }}'
+
+  runbook-seat-policy:
+    description: "Inject coordination guidance only for configured runbook seats"
+    event: turn_start
+    enabled: true
+    priority: 22
+    when: >
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
+        'test-writer', 'developer', 'code-reviewer', 'researcher', 'archivist',
+        'log-monitor', 'plan-writer', 'plan-enhancer', 'plan-adversary', 'triage',
+        'release-manager', 'reporter', 'security-reviewer', 'debugger',
+        'design-reviewer', 'recovery-steward', 'consolidator']
+      and (not variables.get('_runbook_policy_injected')
+        or variables.get('_runbook_policy_revision') != '{{ rule_digest }}')
+    effects:
+      - type: inject_context
+        delivery: on_receipt
+        template: |
+          ## Project Operating Policy
+          - Load brevity(max) at start/compact/clear; use throughout.
+          - Josh: resolve_operator_conversation(channel="gobby-telegram"); no hardcoded IDs.
+          - Before routing/launch/handoff: get_variable(name="project_policy") for roots/role_launch_defaults/launch_defaults/workspace_layout. Reporter/Consolidator read role_guidance before work. Pass a runbook its launch_defaults entry plus its required inputs; bundles inherit, project-agnostic.
+          - Integration 0.5.0; authorized push: git push origin <sha>:refs/heads/0.5.0.
+          - Critical path first: runbooks v4 (#24818), then 1.0 hub/node (#21542); stage launches by load/backlog. New tasks go under their domain root; #24819 is deferred. Found work to ORCH: low unless blocking critical-path work/landing; only blockers preempt; fold findings existing work resolves.
+          - Josh alone moves/sweeps/folds/reparents #22978 Triage subtree, #22225 Annotate or operator-placed tasks. Check parent; never change deferred-by-josh.
+          - One task/seat includes pending candidates; read-only prep allowed. Directed reviewer-LANDed waits use project_policy.handoff_reason_template; the configured closer completes landing and closure.
+          - No task rebalancing; parallel work adds developer+reviewer. Seat moves allowed.
+          - One tree per DevTeam task: admit_team creates it and the team's seats join it. Planners main; reviewers developer tree.
+          - Josh retired the backlog cap; drain candidate-sent/open tasks under the current close-only authority.
+          - Close preview is deterministic only; the configured authorized closer closes after landing.
+          - Hold: two consecutive 5-minute loads>60; lift: two <36; one/equality does nothing. Threshold/admission/escalation changes need Josh via Assistant. Report load only if breaching.
+          - Skip landed Rust retest if tree equals reviewed merge; build gclient in same cutover run.
+          - Quiet hours (project_policy.quiet_hours, for the Game Goblins jobs): no restart/cutover, low load; never rerun.
+          - Crate release: read project_policy.release_guidance first.
+          - Place panes by project_policy.workspace_layout.
+      - type: set_variable
+        delivery: on_receipt
+        variable: _runbook_policy_injected
+        value: true
+      - type: set_variable
+        delivery: on_receipt
+        variable: _runbook_policy_revision
         value: '{{ rule_digest }}'
 
   reset-project-operating-policy-on-context-loss:
@@ -215,4 +244,7 @@ rules:
     effects:
       - type: set_variable
         variable: _project_policy_injected
+        value: false
+      - type: set_variable
+        variable: _runbook_policy_injected
         value: false
