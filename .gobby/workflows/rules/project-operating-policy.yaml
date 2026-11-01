@@ -19,7 +19,7 @@ rules:
         value:
           {
             "roots": [
-              {"epic": "#24818", "name": "Runbooks and task system", "lang": "Python", "description": "Runbooks v4 (#24797), seat definitions and lifecycle, handoff and coordination, task tools, close invariants, landing and DevTeam worktrees, plus critical-path Python fixes that keep seats and the hub working."},
+              {"epic": "#24818", "name": "Runbooks and task system", "lang": "Python", "description": "Runbooks v5 (devteam pair and epic-devteam, #25451), seat definitions and lifecycle, handoff and coordination, task tools, close invariants, landing and DevTeam worktrees, plus critical-path Python fixes that keep seats and the hub working."},
               {"epic": "#24819", "name": "Rust port candidates", "lang": "Python (deferred)", "description": "Leaves off the critical path. Not worked until the port unless Josh says otherwise."},
               {"epic": "#24820", "name": "Code index", "lang": "Rust", "description": "crates/gcode: indexing, freshness, evidence."},
               {"epic": "#24821", "name": "Terminal and client", "lang": "Rust", "description": "crates/gterminal* and crates/gclient: panes, host lifecycle, client UI, pane restore."},
@@ -167,11 +167,11 @@ rules:
         template: |
           ## General Project Operating Policy
           - Read project_policy for domain roots, integration branch, operator route, quiet hours and release guidance.
-          - Integration 0.5.0; authorized push: git push origin <sha>:refs/heads/0.5.0.
+          - Integration 0.5.0. Push: the operator and sessions running the default agent definition may push. Other seats push only for the exact SHA the operator approves, and only the Orchestrator runs git push origin <sha>:refs/heads/0.5.0.
           - Claim before editing; preserve foreign files and stage only owned task paths.
           - Follow TDD where applicable, focused validation and OCR self-review. Record truthful completion evidence and close with the commit SHA.
           - Direct integration commits require the active definition's capability and declared path coverage. Otherwise follow the configured landing workflow.
-          - Josh alone moves protected/operator-placed tasks. Preserve deferred-by-josh.
+          - The operator alone moves protected/operator-placed tasks. Preserve the deferred-by-josh label.
           - Honor project_policy.quiet_hours; read release_guidance before crate releases.
       - type: set_variable
         delivery: on_receipt
@@ -201,17 +201,17 @@ rules:
         template: |
           ## Project Operating Policy
           - Load brevity(max) at start/compact/clear; use throughout.
-          - Josh: resolve_operator_conversation(channel="gobby-telegram"); no hardcoded IDs.
+          - Operator: resolve_operator_conversation(channel="gobby-telegram"); no hardcoded IDs.
           - Before routing/launch/handoff: get_variable(name="project_policy") for roots/role_launch_defaults/launch_defaults/workspace_layout. Reporter/Consolidator read role_guidance before work. Pass a runbook its launch_defaults entry plus its required inputs; bundles inherit, project-agnostic.
-          - Integration 0.5.0; authorized push: git push origin <sha>:refs/heads/0.5.0.
-          - Critical path first: runbooks v4 (#24818), then 1.0 hub/node (#21542); stage launches by load/backlog. New tasks go under their domain root; #24819 is deferred. Found work to ORCH: low unless blocking critical-path work/landing; only blockers preempt; fold findings existing work resolves.
-          - Josh alone moves/sweeps/folds/reparents #22978 Triage subtree, #22225 Annotate or operator-placed tasks. Check parent; never change deferred-by-josh.
+          - Integration 0.5.0. Push: the operator and sessions running the default agent definition may push. Other seats push only for the exact SHA the operator approves, and only the Orchestrator runs git push origin <sha>:refs/heads/0.5.0.
+          - Critical path first: runbooks v5 (#24818), then 1.0 hub/node (#21542); stage launches by load/backlog. New tasks go under their domain root; #24819 is deferred. Found work to ORCH: low unless blocking critical-path work/landing; only blockers preempt; fold findings existing work resolves.
+          - The operator alone moves/sweeps/folds/reparents #22978 Triage subtree, #22225 Annotate or operator-placed tasks. Check parent; never change deferred-by-josh.
           - One task/seat includes pending candidates; read-only prep allowed. Directed reviewer-LANDed waits use project_policy.handoff_reason_template; the configured closer completes landing and closure.
           - No task rebalancing; parallel work adds developer+reviewer. Seat moves allowed.
           - One tree per DevTeam task: admit_team creates it and the team's seats join it. Planners main; reviewers developer tree.
-          - Josh retired the backlog cap; drain candidate-sent/open tasks under the current close-only authority.
+          - The operator retired the backlog cap; drain candidate-sent/open tasks under the current close-only authority.
           - Close preview is deterministic only; the configured authorized closer closes after landing.
-          - Hold: two consecutive 5-minute loads>60; lift: two <36; one/equality does nothing. Threshold/admission/escalation changes need Josh via Assistant. Report load only if breaching.
+          - Hold: two consecutive 5-minute loads>60; lift: two <36; one/equality does nothing. Threshold/admission/escalation changes need the operator via Assistant. Report load only if breaching.
           - Skip landed Rust retest if tree equals reviewed merge; build gclient in same cutover run.
           - Quiet hours (project_policy.quiet_hours, for the Game Goblins jobs): no restart/cutover, low load; never rerun.
           - Crate release: read project_policy.release_guidance first.
