@@ -388,24 +388,6 @@ pub fn mark_unsynced_vector_sync_attempted(
     .collect()
 }
 
-pub fn mark_project_vectors_synced(
-    conn: &mut impl GenericClient,
-    project_id: &str,
-) -> anyhow::Result<u64> {
-    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
-    let project_id = id_param(project_id)?;
-    Ok(conn.execute(
-        "UPDATE code_indexed_files cif
-         SET vectors_synced = true, vector_sync_attempted_at = NOW()
-         FROM code_indexed_file_states cifs
-         WHERE cifs.machine_id = $1 AND cifs.project_id = $2
-           AND cif.project_id = cifs.project_id
-           AND cif.file_path = cifs.file_path
-           AND cif.content_hash = cifs.content_hash",
-        &[&machine_id, &project_id],
-    )?)
-}
-
 /// Reset vector sync flags for every machine's referenced content rows.
 ///
 /// `vector clear`/`vector rebuild` wipe the shared per-project Qdrant

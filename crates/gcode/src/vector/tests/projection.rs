@@ -2,7 +2,7 @@ use crate::config::{CodeVectorSettings, EmbeddingConfig, QdrantConfig};
 use crate::integration_test_support::http::spawn_http_responses;
 use crate::models::Symbol;
 use crate::vector::code_symbols::{
-    CodeSymbolVectorLifecycle, VECTOR_DISTANCE_COSINE, VectorLifecycleError,
+    CodeSymbolVectorLifecycle, RebuiltSymbol, VECTOR_DISTANCE_COSINE, VectorLifecycleError,
 };
 use serde_json::json;
 
@@ -171,11 +171,12 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
     let cleared = lifecycle.clear_project_vectors().expect("clear");
     let mut embedded = Vec::new();
     let rebuilt = lifecycle
-        .rebuild_symbols(&[symbol("sym-1", "src/lib.rs", None)], &mut |symbol| {
-            embedded.push(symbol.id.clone())
-        })
+        .rebuild_symbols(
+            &[symbol("sym-1", "src/lib.rs", None)],
+            &mut |symbol, outcome| embedded.push((symbol.id.clone(), outcome)),
+        )
         .expect("rebuild");
-    assert_eq!(embedded, ["sym-1"]);
+    assert_eq!(embedded, [("sym-1".to_string(), RebuiltSymbol::Upserted)]);
     let embedding_requests = embedding_handle
         .join()
         .expect("embedding requests")
@@ -314,7 +315,7 @@ fn rebuild_skips_symbols_whose_source_changed_and_upserts_the_rest() {
                 symbol("sym-current", "src/lib.rs", None),
                 symbol("sym-edited", "src/edited.rs", None),
             ],
-            &mut |symbol| ticked.push(symbol.id.clone()),
+            &mut |symbol, outcome| ticked.push((symbol.id.clone(), outcome)),
         )
         .expect("rebuild");
     let embedding_requests = embedding_handle
@@ -326,7 +327,13 @@ fn rebuild_skips_symbols_whose_source_changed_and_upserts_the_rest() {
         .expect("qdrant requests")
         .expect("qdrant server");
 
-    assert_eq!(ticked, ["sym-current", "sym-edited"]);
+    assert_eq!(
+        ticked,
+        [
+            ("sym-current".to_string(), RebuiltSymbol::Upserted),
+            ("sym-edited".to_string(), RebuiltSymbol::Skipped),
+        ]
+    );
     assert_eq!(rebuilt.symbols, 2);
     assert_eq!(rebuilt.vectors_upserted, 1);
     assert!(

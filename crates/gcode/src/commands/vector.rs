@@ -8,8 +8,8 @@ use crate::projection::{
 };
 use crate::vector::code_symbols::{
     self, CodeSymbolVectorLifecycle, CodeSymbolVectorLifecycleAction,
-    CodeSymbolVectorLifecycleOutput, EmbeddingSource, VectorLifecycleError, VectorOrphanCleanup,
-    embedding_source_from_context,
+    CodeSymbolVectorLifecycleOutput, EmbeddingSource, RebuiltSymbol, VectorLifecycleError,
+    VectorOrphanCleanup, embedding_source_from_context,
 };
 use gobby_core::progress::ProgressBar;
 use serde::Serialize;
@@ -233,7 +233,8 @@ pub fn clear(ctx: &Context, drop_collection: bool, format: Format) -> anyhow::Re
 /// Rebuild the project's code-symbol vectors.
 ///
 /// Each file is marked synced once all its symbols are upserted, so a rerun
-/// after an interruption embeds only the files still unsynced. A full run
+/// after an interruption embeds only the files still unsynced. A file with a
+/// skipped symbol stays unsynced, so the next rebuild retries it. A full run
 /// happens with `full`, when every file is already synced, or when the
 /// collection is missing (its synced flags then describe nothing).
 pub fn rebuild(ctx: &Context, full: bool, format: Format) -> anyhow::Result<()> {
@@ -256,25 +257,21 @@ pub fn rebuild(ctx: &Context, full: bool, format: Format) -> anyhow::Result<()> 
             .into_iter()
             .filter(|symbol| attempts.contains_key(&symbol.file_path))
             .collect();
-        let mut remaining: HashMap<String, usize> = HashMap::new();
-        for symbol in &symbols {
-            *remaining.entry(symbol.file_path.clone()).or_default() += 1;
-        }
+        let mut sync = RebuildSync::new(
+            attempts,
+            symbols.iter().map(|symbol| symbol.file_path.as_str()),
+            already_synced,
+        );
         let mut bar = ProgressBar::new(symbols.len(), ctx.quiet);
         bar.draw("embedding");
-        let output = lifecycle.rebuild_symbols(&symbols, &mut |symbol| {
+        let output = lifecycle.rebuild_symbols(&symbols, &mut |symbol, outcome| {
             bar.tick(&symbol.file_path);
-            mark_file_synced_when_done(
-                &mut conn,
-                &ctx.project_id,
-                &attempts,
-                &mut remaining,
-                &symbol.file_path,
-            );
+            sync.symbol_done(&mut conn, &ctx.project_id, &symbol.file_path, outcome);
         });
         bar.finish();
         let mut output = output?;
-        let files_synced = db::mark_project_vectors_synced(&mut conn, &ctx.project_id)? as usize;
+        sync.finish(&mut conn, &ctx.project_id);
+        let files_synced = sync.files_synced;
         if !from_scratch && already_synced > 0 {
             output.summary.push_str(&format!(
                 ", resumed with {already_synced} file(s) already synced (--full re-embeds all)"
@@ -285,41 +282,108 @@ pub fn rebuild(ctx: &Context, full: bool, format: Format) -> anyhow::Result<()> 
     })
 }
 
-/// Count down one upserted symbol of `file_path` and mark the file synced
-/// once its last symbol is in. A failed mark only costs resume progress: the
-/// file is embedded again by the next rebuild.
-fn mark_file_synced_when_done(
+/// A rebuild's per-file sync bookkeeping: each attempted file is marked synced
+/// once its last symbol is upserted, and never when one of its symbols was
+/// skipped.
+pub(crate) struct RebuildSync {
+    attempts: HashMap<String, db::VectorSyncAttempt>,
+    remaining: HashMap<String, usize>,
+    /// Files synced so far, counting those already synced before this run.
+    pub(crate) files_synced: usize,
+}
+
+impl RebuildSync {
+    /// `symbol_files` holds one file path per symbol the rebuild will embed.
+    pub(crate) fn new<'a>(
+        attempts: HashMap<String, db::VectorSyncAttempt>,
+        symbol_files: impl IntoIterator<Item = &'a str>,
+        already_synced: usize,
+    ) -> Self {
+        let mut remaining: HashMap<String, usize> = HashMap::new();
+        for file_path in symbol_files {
+            *remaining.entry(file_path.to_string()).or_default() += 1;
+        }
+        Self {
+            attempts,
+            remaining,
+            files_synced: already_synced,
+        }
+    }
+
+    /// Record one finished symbol, marking its file synced when it completes.
+    pub(crate) fn symbol_done(
+        &mut self,
+        conn: &mut postgres::Client,
+        project_id: &str,
+        file_path: &str,
+        outcome: RebuiltSymbol,
+    ) {
+        if record_symbol_done(&mut self.remaining, file_path, outcome)
+            && mark_file_synced(conn, project_id, &self.attempts, file_path)
+        {
+            self.files_synced += 1;
+        }
+    }
+
+    /// After a successful run, mark the attempted files that had no symbols:
+    /// they have nothing to embed.
+    pub(crate) fn finish(&mut self, conn: &mut postgres::Client, project_id: &str) {
+        for file_path in self.attempts.keys() {
+            if !self.remaining.contains_key(file_path)
+                && mark_file_synced(conn, project_id, &self.attempts, file_path)
+            {
+                self.files_synced += 1;
+            }
+        }
+    }
+}
+
+/// Mark `file_path` synced against this run's attempt token; true when the
+/// mark landed. A lost or failed mark only costs resume progress: the file
+/// is embedded again by the next rebuild.
+fn mark_file_synced(
     conn: &mut postgres::Client,
     project_id: &str,
     attempts: &HashMap<String, db::VectorSyncAttempt>,
-    remaining: &mut HashMap<String, usize>,
     file_path: &str,
-) {
-    if !count_down_file(remaining, file_path) {
-        return;
-    }
+) -> bool {
     let Some(attempt) = attempts.get(file_path) else {
-        return;
+        return false;
     };
-    if let Err(error) = db::mark_vectors_synced(
+    db::mark_vectors_synced(
         conn,
         project_id,
         file_path,
         &attempt.content_hash,
         attempt.attempted_at,
-    ) {
+    )
+    .unwrap_or_else(|error| {
         log::warn!("could not record vector sync progress for {file_path}: {error}");
-    }
+        false
+    })
 }
 
-/// Count down one upserted symbol of `file_path`; true once its last one is in.
-fn count_down_file(remaining: &mut HashMap<String, usize>, file_path: &str) -> bool {
-    match remaining.get_mut(file_path) {
-        Some(left) if *left > 0 => {
+/// Record one finished symbol of `file_path`; true once its last symbol is
+/// upserted. A skipped symbol leaves its file unsynced: the count drops to
+/// zero without completing, so no later symbol can finish the file.
+fn record_symbol_done(
+    remaining: &mut HashMap<String, usize>,
+    file_path: &str,
+    outcome: RebuiltSymbol,
+) -> bool {
+    let Some(left) = remaining.get_mut(file_path) else {
+        return false;
+    };
+    match outcome {
+        RebuiltSymbol::Skipped => {
+            *left = 0;
+            false
+        }
+        RebuiltSymbol::Upserted if *left > 0 => {
             *left -= 1;
             *left == 0
         }
-        _ => false,
+        RebuiltSymbol::Upserted => false,
     }
 }
 
@@ -628,10 +692,27 @@ mod tests {
     fn rebuild_marks_a_file_only_after_its_last_symbol_across_rounds() {
         let mut remaining = HashMap::from([("a.rs".to_string(), 2), ("b.rs".to_string(), 1)]);
 
-        assert!(!count_down_file(&mut remaining, "a.rs"));
-        assert!(count_down_file(&mut remaining, "b.rs"));
-        assert!(count_down_file(&mut remaining, "a.rs"));
-        assert!(!count_down_file(&mut remaining, "a.rs"));
-        assert!(!count_down_file(&mut remaining, "unknown.rs"));
+        let upserted = RebuiltSymbol::Upserted;
+
+        assert!(!record_symbol_done(&mut remaining, "a.rs", upserted));
+        assert!(record_symbol_done(&mut remaining, "b.rs", upserted));
+        assert!(record_symbol_done(&mut remaining, "a.rs", upserted));
+        assert!(!record_symbol_done(&mut remaining, "a.rs", upserted));
+        assert!(!record_symbol_done(&mut remaining, "unknown.rs", upserted));
+    }
+
+    #[test]
+    fn rebuild_never_marks_a_file_with_a_skipped_symbol() {
+        let mut remaining = HashMap::from([("a.rs".to_string(), 2), ("b.rs".to_string(), 2)]);
+        let (upserted, skipped) = (RebuiltSymbol::Upserted, RebuiltSymbol::Skipped);
+
+        // Skip after an upsert, and skip before the last upsert.
+        assert!(!record_symbol_done(&mut remaining, "a.rs", upserted));
+        assert!(!record_symbol_done(&mut remaining, "a.rs", skipped));
+        assert!(!record_symbol_done(&mut remaining, "b.rs", skipped));
+        assert!(!record_symbol_done(&mut remaining, "b.rs", upserted));
+        assert!(!record_symbol_done(&mut remaining, "b.rs", upserted));
+        // A skipped file stays known, so the no-symbol pass leaves it unsynced.
+        assert!(remaining.contains_key("a.rs") && remaining.contains_key("b.rs"));
     }
 }

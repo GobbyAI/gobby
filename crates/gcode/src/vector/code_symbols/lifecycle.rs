@@ -24,6 +24,15 @@ use super::vector_text::vector_text_for_symbol_in;
 const QDRANT_LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(10);
 const VECTOR_SYNC_BATCH_SIZE: usize = gobby_core::qdrant::DEFAULT_UPSERT_BATCH_SIZE;
 
+/// What a rebuild did with one symbol, reported once its round is upserted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RebuiltSymbol {
+    /// Its vector is in the collection.
+    Upserted,
+    /// Its source no longer matches the index, so it has no vector.
+    Skipped,
+}
+
 #[derive(Debug)]
 pub struct CodeSymbolVectorLifecycle {
     project_id: String,
@@ -143,8 +152,8 @@ impl CodeSymbolVectorLifecycle {
         Ok(self.output(CodeSymbolVectorLifecycleAction::Clear, None, 0, 0, deleted))
     }
 
-    /// Rebuild vectors for `symbols`, calling `on_embedded` once per symbol
-    /// after its round is upserted.
+    /// Rebuild vectors for `symbols`, calling `on_done` once per symbol, with
+    /// its outcome, after its round is upserted.
     ///
     /// Each round embeds as many batches in parallel as the embedding backend
     /// allows (`ai.max_concurrency` on the daemon route) and
@@ -154,7 +163,7 @@ impl CodeSymbolVectorLifecycle {
     pub fn rebuild_symbols(
         &mut self,
         symbols: &[Symbol],
-        on_embedded: &mut dyn FnMut(&Symbol),
+        on_done: &mut dyn FnMut(&Symbol, RebuiltSymbol),
     ) -> Result<CodeSymbolVectorLifecycleOutput, VectorLifecycleError> {
         let schema = self.ensure_collection()?;
         let mut vectors_upserted = 0;
@@ -162,6 +171,7 @@ impl CodeSymbolVectorLifecycle {
         let round_size = VECTOR_SYNC_BATCH_SIZE * self.embedding.max_concurrency().max(1);
         for round in symbols.chunks(round_size) {
             let mut batches: Vec<(Vec<&Symbol>, Vec<String>)> = Vec::new();
+            let mut round_skipped: Vec<&Symbol> = Vec::new();
             for batch in round.chunks(VECTOR_SYNC_BATCH_SIZE) {
                 let mut kept = Vec::with_capacity(batch.len());
                 let mut texts = Vec::with_capacity(batch.len());
@@ -171,7 +181,7 @@ impl CodeSymbolVectorLifecycle {
                             kept.push(symbol);
                             texts.push(text);
                         }
-                        Err(_) => skipped += 1,
+                        Err(_) => round_skipped.push(symbol),
                     }
                 }
                 if !kept.is_empty() {
@@ -200,7 +210,14 @@ impl CodeSymbolVectorLifecycle {
                 points.extend(points_from_vectors(kept, vectors?, schema.size)?);
             }
             vectors_upserted += self.upsert_points(points)?;
-            round.iter().for_each(&mut *on_embedded);
+            for (kept, _) in &batches {
+                kept.iter()
+                    .for_each(|symbol| on_done(symbol, RebuiltSymbol::Upserted));
+            }
+            skipped += round_skipped.len();
+            round_skipped
+                .into_iter()
+                .for_each(|symbol| on_done(symbol, RebuiltSymbol::Skipped));
         }
 
         let mut output = self.output(

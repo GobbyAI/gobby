@@ -132,16 +132,19 @@ mod serial_db {
             vector_sync_state(&mut conn, &project_id, rel),
             (false, false)
         );
-        assert_eq!(
-            db::mark_unsynced_vector_sync_attempted(&mut conn, &project_id)
-                .expect("mark project vector attempt")
-                .into_keys()
-                .collect::<Vec<_>>(),
-            vec![rel.to_string()]
-        );
-        assert_eq!(
-            db::mark_project_vectors_synced(&mut conn, &project_id).expect("mark project vectors"),
-            1
+        let attempts = db::mark_unsynced_vector_sync_attempted(&mut conn, &project_id)
+            .expect("mark project vector attempt");
+        assert_eq!(attempts.keys().collect::<Vec<_>>(), vec![rel]);
+        let attempt = &attempts[rel];
+        assert!(
+            db::mark_vectors_synced(
+                &mut conn,
+                &project_id,
+                rel,
+                &attempt.content_hash,
+                attempt.attempted_at,
+            )
+            .expect("mark file vectors synced")
         );
         assert_eq!(vector_sync_state(&mut conn, &project_id, rel), (true, true));
 
@@ -552,6 +555,77 @@ mod serial_db {
             vector_sync_state(&mut conn, &project_id, "src/todo.rs"),
             (true, true)
         );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn rebuild_resume_retries_a_file_with_a_skipped_symbol() {
+        use crate::commands::vector::RebuildSync;
+        use crate::vector::code_symbols::RebuiltSymbol::{Skipped, Upserted};
+
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-vector-skip-resume");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean test project rows");
+        let _cleanup = ProjectCleanup {
+            database_url,
+            project_id: project_id.clone(),
+        };
+        seed_project(&mut conn, &project_id);
+        let machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
+        for rel in ["src/a.rs", "src/b.rs", "src/c.rs", "src/empty.rs"] {
+            let file = indexed_file(&project_id, rel, &format!("{rel}-hash"), 1, 16);
+            api::upsert_file(&mut conn, &file).expect("insert indexed file");
+            api::file_state::upsert_file_state(
+                &mut conn,
+                &machine_id,
+                &file,
+                std::path::Path::new("/tmp/test-view"),
+                api::IndexWriteMode::Overlay,
+            )
+            .expect("insert indexed file state");
+        }
+        let synced =
+            |conn: &mut postgres::Client, rel: &str| vector_sync_state(conn, &project_id, rel).0;
+
+        // First run: a.rs has one symbol skipped (its source was edited), b.rs
+        // completes, and the run is interrupted before c.rs and before the
+        // no-symbol pass.
+        let attempts = db::mark_unsynced_vector_sync_attempted(&mut conn, &project_id)
+            .expect("first attempts");
+        let mut first = RebuildSync::new(
+            attempts,
+            ["src/a.rs", "src/a.rs", "src/b.rs", "src/c.rs"],
+            0,
+        );
+        first.symbol_done(&mut conn, &project_id, "src/a.rs", Upserted);
+        first.symbol_done(&mut conn, &project_id, "src/a.rs", Skipped);
+        first.symbol_done(&mut conn, &project_id, "src/b.rs", Upserted);
+        assert_eq!(first.files_synced, 1);
+        assert!(!synced(&mut conn, "src/a.rs"));
+        assert!(synced(&mut conn, "src/b.rs"));
+        assert!(!synced(&mut conn, "src/c.rs"));
+
+        // The edited source is restored to its indexed bytes, so no refresh
+        // dirties a.rs; the resume must still pick it up.
+        let attempts = db::mark_unsynced_vector_sync_attempted(&mut conn, &project_id)
+            .expect("resume attempts");
+        let mut resumed: Vec<_> = attempts.keys().cloned().collect();
+        resumed.sort();
+        assert_eq!(resumed, ["src/a.rs", "src/c.rs", "src/empty.rs"]);
+
+        let mut second = RebuildSync::new(attempts, ["src/a.rs", "src/a.rs", "src/c.rs"], 1);
+        second.symbol_done(&mut conn, &project_id, "src/a.rs", Upserted);
+        second.symbol_done(&mut conn, &project_id, "src/a.rs", Upserted);
+        second.symbol_done(&mut conn, &project_id, "src/c.rs", Upserted);
+        second.finish(&mut conn, &project_id);
+        assert_eq!(second.files_synced, 4);
+        for rel in ["src/a.rs", "src/b.rs", "src/c.rs", "src/empty.rs"] {
+            assert!(synced(&mut conn, rel), "{rel} synced after resume");
+        }
     }
 }
 
