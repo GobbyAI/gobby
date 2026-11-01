@@ -424,10 +424,13 @@ impl CodeSymbolVectorLifecycle {
                 .iter()
                 .map(|symbol| {
                     vector_text_for_symbol_in(&self.project_root, symbol).map_err(|err| {
-                        VectorLifecycleError::EmbeddingInput(format!(
-                            "symbol {}: {err:#}",
-                            symbol.id
-                        ))
+                        match err.downcast::<VectorLifecycleError>() {
+                            Ok(typed) => typed,
+                            Err(err) => VectorLifecycleError::EmbeddingInput(format!(
+                                "symbol {}: {err:#}",
+                                symbol.id
+                            )),
+                        }
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;

@@ -230,6 +230,54 @@ fn sync_rejects_embedding_vectors_with_wrong_dimension() {
 }
 
 #[test]
+fn sync_file_symbols_defers_source_rewritten_after_indexing() {
+    let root = fixture_source_root();
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "// rewritten after indexing\n",
+    )
+    .expect("rewritten source");
+    let (embedding_url, embedding_handle) = spawn_http_responses(vec![]);
+    let (qdrant_url, qdrant_handle) = spawn_http_responses(vec![(
+        200,
+        json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}}),
+    )]);
+    let mut lifecycle = CodeSymbolVectorLifecycle::new(
+        "project-1".to_string(),
+        QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        EmbeddingConfig {
+            api_base: format!("{embedding_url}/v1"),
+            model: "embed-small".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
+    )
+    .expect("lifecycle")
+    .with_project_root(root.path().to_path_buf());
+
+    let err = lifecycle
+        .sync_file_symbols("src/lib.rs", &[test_symbol(None)])
+        .expect_err("a source rewritten after indexing must defer before embedding");
+    let embedding_requests = embedding_handle.join().expect("embedding requests");
+    let qdrant_requests = qdrant_handle.join().expect("qdrant requests");
+
+    assert_eq!(
+        err,
+        VectorLifecycleError::IndexedSourceChanged {
+            file_path: "src/lib.rs".to_string(),
+        }
+    );
+    assert!(embedding_requests.is_empty());
+    assert_eq!(qdrant_requests.len(), 1);
+    assert!(!qdrant_requests[0].contains("/points"));
+}
+
+#[test]
 fn sync_rejects_embedding_vector_count_mismatch() {
     let root = fixture_source_root();
     let (embedding_url, embedding_handle) = spawn_http_responses(vec![(

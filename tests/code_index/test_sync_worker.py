@@ -262,6 +262,38 @@ def _write_source(root: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_vector_source_changed_skip_keeps_file_pending(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A source changed after indexing defers the file: no ERROR, no synced mark."""
+    _write_source(tmp_path)
+    pending = _indexed_file(vectors_synced=False, graph_synced=True)
+    storage = MagicMock()
+    storage.get_file.return_value = pending
+    skipped: dict[str, Any] = {"success": True, "status": "skipped", "reason": "source_changed"}
+    gateway = RecordingGcodeGateway(result=skipped, vector_result=skipped)
+
+    with caplog.at_level(logging.ERROR):
+        did_work = await _sync_file(
+            storage=storage,
+            gcode_gateway=gateway,
+            config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
+            project_id=PROJECT_ID,
+            root=tmp_path,
+            file=pending,
+            run_db=RecordingRunDb(),
+        )
+
+    assert did_work is True
+    assert caplog.records == []
+    assert gateway.vector_synced_files == [(tmp_path, pending.file_path)]
+    storage.mark_vector_sync_attempted.assert_called_once_with(pending.id)
+    storage.mark_vectors_synced.assert_not_called()
+    storage.requeue_vector_sync.assert_not_called()
+    assert pending.vectors_synced is False
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("store", ["vector", "graph"])
 @pytest.mark.parametrize("superseded", [False, True], ids=["success", "superseded"])
 async def test_native_projection_result_keeps_completion_owned_by_gcode(
