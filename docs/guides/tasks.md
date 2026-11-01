@@ -137,8 +137,8 @@ synthetic escalation nor workflow-variable writes.
 
 ### Close
 
-Finish the task's validation and independent review, commit its files, and
-integrate every task commit. Then preview the close with `preview=true`:
+Finish the task's validation and any required independent review, commit its
+files, and integrate every task commit. Then preview the close with `preview=true`:
 
 ```python
 call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
@@ -192,16 +192,26 @@ notes. After closing, call `gobby-memory:review_task_memories` with the task and
 summary.
 
 The close reasons are `done`, `moot`, `superseded`, and `wont_do`.
-The no-work reasons `moot`, `superseded`, and `wont_do` are Orchestrator-only and allow
-only a commitless close, except that the Consolidator may close `moot` or `superseded`
-for an Orchestrator-directed fold or retirement; it never closes with `done` or `wont_do`.
-A Dev Manager closes with `done` only, and every other seat is refused. A commitless
-no-work close skips the linked-commit and ancestry gates and the
+The active definition's close reasons, task scope and selected rules determine
+who may close. No-work reasons additionally require `close_without_work`, or the
+operator-terminal exemption. Default can write its own required completion
+records and close its task. A commitless no-work close skips the linked-commit
+and ancestry gates and the
 step-record gate; the child-closure and attributed-file gates still apply.
 A no-work close with a linked commit fails the ancestry check, so unlink each candidate
 first with a reason. A `superseded` close names its superseder in `superseded_by`.
 No-work reasons do not waive child closure or attributed-file cleanliness. An epic does
 not receive a separate commit exemption.
+
+For worktree delivery, a task-bound agent or locally owned root session with a
+definition granting `land_tasks` can call `gobby-tasks-ops:land_commit` with the
+task and linked full commit SHA. A caller also granting `direct_integration_commit`
+over every candidate path may land
+self-authored work without general independent review. Default declares these grants.
+Required implementation evidence and task-specific security approvals still apply.
+The service performs the protected update and writes a landing receipt; agents
+do not need a Git-hook override or write access to the main checkout. Call
+`close_task` separately after recording the required completion evidence.
 
 Human operators may disposition an unneeded leaf directly with
 `gobby tasks close '#14390' --reason moot`. The CLI accepts only

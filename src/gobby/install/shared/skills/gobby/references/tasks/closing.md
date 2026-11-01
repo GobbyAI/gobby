@@ -89,11 +89,18 @@ Each step has one writer: `record_test_step`, `record_implementation_step`,
 when its agent definition's `task_step_writes` grants that step, and a review
 approval only from a session that never claimed, implemented or edited the task.
 
-Peer evidence a close depends on is recorded by the peer, not the closer. A
-review LAND is the reviewer's approved `record_review_step` record for the exact
-commit. `land_commit` requires an enabled definition granting `land_tasks` and
-either a run bound to the task or a locally owned root session, and records a
-daemon-attested landing receipt on the task. Nothing else records a close receipt.
+Required peer evidence is recorded by the peer. A review LAND is the reviewer's
+approved `record_review_step` record for the exact commit.
+
+`land_commit` requires an enabled definition granting `land_tasks` and either a
+run bound to the task or a locally owned root session. A definition also granting
+`direct_integration_commit` over every candidate path can land its own work
+without a general independent reviewer. Default declares both permissions.
+Required implementation evidence and task-specific security approvals still apply.
+Link the commit, then call `gobby-tasks-ops:land_commit(task_id, commit_sha)` yourself;
+the tool performs the protected Git update and records its landing receipt.
+Raw checkout-changing Git merges remain guarded. Other landers use the reviewed
+delivery path. A landing receipt does not close the task.
 
 The installed Git hook reads the boolean `allow_direct_integration_commits`
 from `.gobby/project.json` in the integration branch's current commit, beside
