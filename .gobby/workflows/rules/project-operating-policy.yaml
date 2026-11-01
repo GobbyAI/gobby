@@ -30,7 +30,6 @@ rules:
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–05:00 America/Chicago daily; 04:00–06:00 on Mondays",
             "report_cadence_seconds": 1800,
-            "release_cadence_minutes": 120,
             "full_report_minutes": "00-29 UTC",
             "delta_report_minutes": "30-59 UTC",
             "critical_paths": [
