@@ -1,5 +1,6 @@
 use super::serial_db::{
-    FILE, ProjectCleanup, respond, seed_version, unique_project_id, vector_flags,
+    FILE, ProjectCleanup, pinned_fixture, respond, seed_version, unique_project_id, vector_flags,
+    version_hash, version_source,
 };
 use super::*;
 use crate::config::{CodeVectorSettings, EmbeddingConfig, QdrantConfig};
@@ -209,16 +210,15 @@ fn exercise_source_sync(disk_body: Option<&str>, reindex: bool) -> SourceSyncRun
 fn stale_source_is_not_embedded_or_marked_synced() {
     let run = exercise_source_sync(Some(REVISED_BODY), false);
     assert_eq!(
-        (
-            run.inputs.len(),
-            run.upserted,
-            run.first_flags.0,
-            run.first.is_err()
-        ),
-        (0, false, false, true),
-        "invalid source must be rejected without embedding, upsert or synced flag; inputs={:?}, outcome={:?}",
+        (run.inputs.len(), run.upserted, run.first_flags.0),
+        (0, false, false),
+        "rewritten source must not be embedded, upserted or marked synced; inputs={:?}, outcome={:?}",
         run.inputs,
         run.first,
+    );
+    assert_eq!(
+        run.first.expect("rewritten source defers without failing"),
+        ProjectionFileSyncOutcome::SkippedSourceChanged,
     );
 }
 
@@ -288,4 +288,73 @@ fn body_only_reindex_reembeds_source() {
     assert!(!run.inputs[0].contains("after_source_secret"));
     assert!(run.inputs[1].contains(REVISED_BODY));
     assert!(!run.inputs[1].contains(BODY));
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+fn pinned_source_rewritten_after_indexing_defers_without_marking() {
+    let database_url =
+        crate::test_env::postgres_test_database_url("pinned source rewritten after indexing");
+    let mut conn = db::connect_readwrite(&database_url).expect("connect");
+    let (mut ctx, source, _source_cleanup, _overlay_cleanup, root) =
+        pinned_fixture(&mut conn, &database_url);
+    let (url, stop, server) = service();
+    ctx.qdrant = Some(QdrantConfig {
+        url: Some(url.clone()),
+        api_key: None,
+    });
+    ctx.embedding = Some(EmbeddingConfig {
+        api_base: format!("{url}/v1"),
+        model: "embed-small".to_string(),
+        api_key: None,
+        query_prefix: None,
+        timeout_seconds: 10,
+    });
+    ctx.code_vectors = CodeVectorSettings::with_vector_dim(Some(3));
+    std::fs::write(root.path().join(FILE), version_source("rewritten"))
+        .expect("rewrite pinned source");
+    let hash_h = version_hash("h");
+    let mut state = VectorProjectionState {
+        ctx: &ctx,
+        conn,
+        lifecycle: lifecycle(&ctx, &url),
+    };
+    let mut check = db::connect_readwrite(&database_url).expect("check connection");
+
+    let outcome = state.sync_file(FILE);
+    stop.send(()).expect("stop test service");
+    let requests = server.join().expect("test service requests");
+
+    assert!(
+        embedding_inputs(&requests).is_empty(),
+        "rewritten pinned source must not be embedded"
+    );
+    assert!(
+        !requests.iter().any(|request| request.starts_with("PUT ")),
+        "rewritten pinned source must not be upserted"
+    );
+    assert_eq!(
+        outcome.expect("rewritten pinned source defers without failing"),
+        ProjectionFileSyncOutcome::SkippedSourceChanged,
+    );
+    assert_eq!(
+        vector_flags(&mut check, &source, hash_h.as_str()),
+        (false, true),
+        "rewritten pinned source must stay unsynced and unattempted"
+    );
+    let pin = check
+        .query_opt(
+            "SELECT vector_projected FROM code_overlay_pins
+             WHERE overlay_project_id = $1 AND file_path = $2",
+            &[&db::id_param(&ctx.project_id).expect("overlay UUID"), &FILE],
+        )
+        .expect("read current pin");
+    assert!(
+        !pin.is_some_and(|row| row.get::<_, bool>(0)),
+        "rewritten pinned source must not stamp the pin"
+    );
 }

@@ -249,9 +249,10 @@ epics are not complete.
 
 ### Stage 2 — strangler absorption behind the front door (#21544)
 
-Ordered so story B emerges mid-port. S2.7 and S2.11 each split into a node half
-and a hub half (decision 17, amended 2026-10-12): the node halves feed story B
-and wait only on Stage 1. The S2.11 hub half lands late because the rule engine
+Ordered runner-first (operator ruling 2026-11-01, #25460): S2.0 retires the
+Python runner before the route families, and its R0 gates every family. S2.7
+and S2.11 keep their hub halves here; their node halves moved to Stage 4
+(decision 26). The S2.11 hub half lands late because the rule engine
 is entangled with sessions and MCP dispatch. S2.4 splits around S2.5 (Josh,
 2026-10-18): sessions need only S2.4a, and S2.4b's claim and session-bound
 transitions need sessions. Each family lands as its own
@@ -260,6 +261,7 @@ claimed; S2.3 is the template.
 
 | Ref | Family |
 | --- | --- |
+| **S2.0** · #25467 | Retire the Python runner (runner-first): R0 worker boundary through R7 dual-mode smoke (#25351) |
 | **S2.1** · #21557 | `gcore` async Postgres layer — pool vs `spawn_blocking`, the repository seam, grant-role compatibility with `baseline@420` |
 | **S2.2** · #21558 | Native WS transport in `gdaemon` — accept, auth handshake, subscription filter, broadcast envelope |
 | **S2.3** · #21559 | Config, runtime handshake, and grant issuing — the first takeover, and the template for every later one |
@@ -268,15 +270,12 @@ claimed; S2.3 is the template.
 | **S2.5** · #21562 | Sessions and transcripts — including the resumability decision |
 | **S2.4b** · #21560 | Claim and the session-bound transitions behind HTTP; the tasks MCP server moves with S2.12 |
 | **S2.6** · #21563 | Memory and search — repositories, recall injection, dream |
-| **S2.7** · #21564 | Attention, agents, dispatch, and worktrees with machine scoping — where node semantics become HTTP-only; closes with its two halves |
-| **S2.7 node** · #24148 | Node-local agent spawn and worktrees in `gdaemon`, driven by the hub over the node channel |
+| **S2.7** · #21564 | Attention, agents, dispatch, and worktrees with machine scoping — where node semantics become HTTP-only; closes with its hub half |
 | **S2.7 hub** · #24149 | Machine-scoped attention, hub-wide roster, response routing, and the dispatch gate in Rust; replaces S4.2's Python routing |
 | **S2.8** · #21565 | Daemon-side `gterm` adoption and terminal WS |
 | **S2.9** · #21567 | Workflows, rules, pipelines, build, and validation |
 | **S2.10** · #21566 | External-MCP transport multiplexer as a delegated backend |
-| **S2.11** · #21569 | Hook ingress and the node-local envelope ledger; closes with its two halves |
-| **S2.11 node** · #24150 | `gdaemon` node-local envelope ledger that drains the `ghook` spool and forwards each envelope to the hub's `POST /api/hooks/execute` |
-| **S2.11 hub** · #24151 | Hub-side hook ingress and the rule engine in Rust |
+| **S2.11** · #24151 | Hook ingress and the rule engine in Rust (absorbed #21569, 2026-11-01) |
 | **S2.12** · #21570 | MCP front door flip — the last MCP step, including the tasks MCP server |
 | **S2.13** · #21568 | Remaining route families — thirteen children, enumerated now so nothing is discovered late |
 
@@ -288,12 +287,12 @@ dependency-ready work can proceed while Stage 1 is open (decision 21).
 Edges: `S2` ← `S1`; `S2.3` ← `S1.5`, `S2.1`;
 `S2.4` ← `S2.4a`, `S2.4b`; `S2.4a` ← `S2.3`;
 `S2.5` ← `S2.4a`, `S2.2`; `S2.4b` ← `S2.4a`, `S2.5`;
-`S2.6` ← `S2.4a`; `S2.7` ← `S2.7 node`, `S2.7 hub`;
-`S2.7 node` ← `S1.4`; `S2.7 hub` ← `S2.4`, `S1.4`;
+`S2.6` ← `S2.4a`; `S2.7` ← `S2.7 hub`;
+`S2.7 hub` ← `S2.4`, `S1.4`;
 `S2.9` ← `S2.5`, `S2.7`;
-`S2.10` ← `S2.4a`; `S2.11` ← `S2.11 node`, `S2.11 hub`;
-`S2.11 node` ← `S1.4`; `S2.11 hub` ← `S2.5`, `S2.9`, `S2.10`;
-`S2.12` ← `S2.10`, `S2.11`. `S2.13` has no group gate: each family waits only
+`S2.10` ← `S2.4a`; `S2.11` ← `S2.5`, `S2.9`, `S2.10`;
+`S2.12` ← `S2.10`, `S2.11`. Every S2 family and the shared seams #24964,
+#24967 and #24968 ← `S2.0` R0. `S2.13` has no group gate: each family waits only
 on the families it uses (Josh, 2026-10-18). On `S2.4`: #21581 plans, #21584
 source control, #21589 admin. On `S2.2`: #21580 skills, #21583 communications,
 #21585 projects and hub documents, #21588 voice, #21589 admin, #21590 web UI
@@ -314,37 +313,41 @@ The former Stage 0 hardening prerequisite is complete.
 | **S3.4** · #21574 | Merged into S3.2 (decision 15, amended 2026-10-24) | — |
 
 Edges: `S3.1` ← #21334 terminal client, `S1.1`, `S1.3` (the four lifecycle
-verbs), `S2`; `S3.2` ← `S3.1`, `S3.3`, `S2`.
+verbs), `S2`; `S3.2` ← `S3.1`, `S3.3`, `S2`. `S3.1`, `S3.2` ← `S2.0` R7.
 S3.1 starts after Stage 2 (#21544) completes and lands before S3.2 and S3.3
 begin. The naming switch removes Python once S3.3 proves parity and the
 golden corpora verify it.
 
-### Stage 4 — hub and node live, story B (#21546)
+### Stage 4 — hub and node multi-machine control after Stage 3 (#21546)
+
+Still 1.0: gclient on one machine controls several others. The block waits on
+#21574 (S3.2's deletion step).
 
 | Ref | Piece |
 | --- | --- |
 | **S4.1** · #17436 | Node mode: the per-machine daemon that holds no datastore credentials and runs only local duties |
 | **S4.1b** · #21579 | Rust node duties — cross-reference to the S2.7 node half, S2.8's M1 adoption milestone, and the S2.11 node half; closes when a node runs `gdaemon` alone |
-| **S4.2** · #21575 | Hub mode: everything database-backed runs only in `hub` and `standalone`, and the Python hub routes dispatch, roster, and attention responses to remote nodes until the S2.7 hub half redoes that routing in Rust |
+| **S2.7 node** · #24148 | Node-local agent spawn and worktrees in `gdaemon`, driven by the hub over the node channel (moved from Stage 2, decision 26) |
+| **S2.11 node** · #24150 | `gdaemon` node-local envelope ledger that drains the `ghook` spool and forwards each envelope to the hub's `POST /api/hooks/execute` (moved from Stage 2, decision 26) |
+| #23276 | `gcode` index writes from a node through hub HTTP routes, holding #21586 P2-P4 (#24662-#24664) |
+| #24657 | Rust-only node install and enrollment |
+| #25269 | Node-runs native port: reported pane store, remote idle and the run reconciler |
+| **S4.2** · #21575 | Hub mode: everything database-backed runs only in `hub` and `standalone`; routing to remote nodes uses the S2.7 hub half's Rust routing |
 | **S4.3** · #20202 | Remote `gobby` attach — planning waits on #19600 two-machine acceptance |
 | **S4.4** · #17769 | Per-user auth and multi-user; labeled `later` |
 | **S4.5** · #21577 | Configure `gcode` on nodes (closed) |
 | **S4.6** · #19652 | Hub transcript archive research |
-| **S4.7** · #20203 | Hosted terminal-relay privacy stance — `hosted`, off-spine |
+| **S4.7** · #20203 | Hosted terminal-relay privacy stance — `hosted`, off-spine; moved to #24821 Terminal and client (Josh, 2026-11-01) |
 | **S4.8** · #21576 | Move Telegram and comms attachments onto hub `files_home` |
 
-Edges: `S4` ← `S1`; `S4.1b` ← `S2.7 node` #24148, `S2.11 node` #24150,
+Edges: `S4` ← #21574 (S3.2's deletion step); `S4.1b` ← `S2.7 node` #24148, `S2.11 node` #24150,
 S2.8 M1 #23205, #21549 machine-scoped terminals;
 `S4.2` ← `S1.2`, #24090; `S4.4` ← `S1.4`;
 `S4.8` ← #21585 projects and hub documents only (Josh, 2026-10-18).
 
-**Story B is testable when Stage 1, S4.2, and S4.1b close.** S4.2's mode gate
-landed right after S1.2 (#23111), so the first hub-node pair test in S1.4 has a
-node running no maintenance. Story B does not wait on S2.4, S2.5, S2.9, or
-S2.10: those edges stay on the S2.7 and S2.11 hub halves, which are off its
-critical path. Stage 4 as a whole closes with S4.1b. `gcode` on a node writes its
-index through hub HTTP routes owned by whichever Stage 2 family absorbs the
-code-index routes (decision 17).
+**Story B is testable when Stage 3, S4.2 and S4.1b close.** Stage 4 as a whole
+closes with S4.1b. `gcode` on a node writes its index through hub HTTP routes
+that #23276 builds in Stage 4, with #21586 P2-P4 under it (decision 26).
 
 **Node path-scope contract — #20438 (agent-side temp roots).** The S4.1 node
 classifies hook paths on the machine that executes the agent, before forwarding
@@ -594,8 +597,15 @@ separate planning effort before implementation.
     node's validated local roots govern the exemption, including when agent and
     node daemon environments differ. The hub's tempdir never governs a remote
     agent. Client-supplied roots alone carry no exemption authority. The
-    [Stage 4 contract](#stage-4--hub-and-node-live-story-b-21546) records the
+    [Stage 4 contract](#stage-4--hub-and-node-multi-machine-control-after-stage-3-21546) records the
     missing-context behavior, trust boundary, and implementation verification.
+
+26. **Runner-first full Rust port; hub/node after Stage 3** (2026-11-01).
+    Operator ruling via #25460: 1.0 is the full Rust port, and multi-machine
+    control stays in 1.0 after Stage 3. Order: runner retirement (S2.0, R0-R7
+    from #25351), the Stage 2 families, Stage 3, then Stage 4. Amends decision
+    17: the S2.7 and S2.11 node halves (#24148, #24150) move to Stage 4. Port
+    order reference: `.gobby/plans/research/rust-port-order-v2-2026-10-31.md`.
 
 ## References
 

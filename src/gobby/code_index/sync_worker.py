@@ -515,7 +515,7 @@ async def _sync_file(
         if gcode_gateway is not None and armed is not None:
             try:
                 await _run_db(run_db, storage.mark_vector_sync_attempted, current.id)
-                await _sync_vector_file_with_retry(
+                vector_synced = await _sync_vector_file_with_retry(
                     gcode_gateway=gcode_gateway,
                     project_root=root,
                     file=current,
@@ -600,7 +600,11 @@ async def _sync_file(
                 )
             else:
                 _record_breaker_outcomes(armed)
-                await _run_db(run_db, storage.mark_vectors_synced, current.id, current.content_hash)
+                # A skipped file was not embedded; it stays pending for the newer index.
+                if vector_synced:
+                    await _run_db(
+                        run_db, storage.mark_vectors_synced, current.id, current.content_hash
+                    )
                 did_work = True
 
     # Graph sync
@@ -779,9 +783,20 @@ async def _sync_vector_file(
     *,
     timeout: float | None = None,
 ) -> bool:
-    """Delegate one file's vector projection sync to gcode."""
+    """Delegate one file's vector projection sync to gcode.
+
+    Returns False when gcode skipped the file, such as when its source changed
+    after indexing. A skipped file was not embedded, so the caller must not mark it.
+    """
     result = await gcode_gateway.vector_sync_file(project_root, file.file_path, timeout=timeout)
     _require_projection_success(result, "vector")
+    if result.get("status") == "skipped":
+        logger.debug(
+            "Sync worker: vector sync skipped for %s: %s",
+            file.file_path,
+            result.get("reason"),
+        )
+        return False
     return True
 
 

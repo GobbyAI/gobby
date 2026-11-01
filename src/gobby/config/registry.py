@@ -616,7 +616,7 @@ def is_removed_config_store_key(key: str) -> bool:
     )
 
 
-_RESTART_PATHS = frozenset({"cors_origins", "test_mode", "memory.backend"})
+_RESTART_PATHS = frozenset({"cors_origins", "mcp_allowed_hosts", "test_mode", "memory.backend"})
 _RESTART_PREFIXES = (
     "database_concurrency.",
     "databases.",

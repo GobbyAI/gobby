@@ -1,7 +1,9 @@
-"""Epic-mode procedures and the devteam runbook binding (addendum 8.5).
+"""The devteam and epic-devteam runbook topology for the v5 roster.
 
-The epic-mode contract lives in the seat procedures and definitions; the devteam
-runbook binds either an epic or a leaf with one seat catalogue (Decision 15).
+The devteam runbook launches a developer and an independent code reviewer for one
+task, and binds either an epic or a leaf with that one seat catalogue. The
+epic-devteam runbook adds a dev-manager coordinator over a persistent developer
+and reviewer pair. Seat procedures and definitions live in their YAML.
 """
 
 from __future__ import annotations
@@ -110,7 +112,7 @@ def _render(run: Session, step_id: str, context: dict[str, Any]) -> dict[str, An
 async def _dry_run(world: TeamWorld, task: Task) -> tuple[dict[str, Any], dict[str, str]]:
     """Admit ``task`` through the rendered admit step; return its reply and launched seats."""
     run = world.child(task, DEVTEAM)
-    context = _context({"task": task.id, "reviewer_agent": "code-reviewer"})
+    context = _context({"task": task.id})
     arguments = _render(run, "admit", context)
     assert arguments is not None
     with session_context_for_test(run.id):
@@ -165,21 +167,7 @@ async def test_runbook_binds_epic_or_leaf(world: TeamWorld) -> None:
 def _seat_arguments(seat: str, context: dict[str, Any]) -> dict[str, Any]:
     step = next(step for step in DEVTEAM.steps if step.id == seat)
     assert step.mcp is not None and step.mcp.arguments is not None
-    arguments: dict[str, Any] = RENDERER.render_mcp_arguments(
-        step.mcp.arguments, context, drop_none=True
-    )
-    return arguments
-
-
-def _placement_of(seat: str, context: dict[str, Any]) -> dict[str, Any]:
-    """Render only the placement; the seat's other arguments read steps these tests leave out."""
-    step = next(step for step in DEVTEAM.steps if step.id == seat)
-    assert step.mcp is not None and step.mcp.arguments is not None
-    rendered = RENDERER.render_mcp_arguments(
-        {"placement": step.mcp.arguments["placement"]}, context, drop_none=True
-    )
-    placement: dict[str, Any] = rendered["placement"]
-    return placement
+    return RENDERER.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
 
 
 def _placement_context(launch: list[str], tab_exists: bool) -> dict[str, Any]:
@@ -191,6 +179,7 @@ def _placement_context(launch: list[str], tab_exists: bool) -> dict[str, Any]:
         "output": {
             "branch": "epic/25128/main",
             "project_path": "/pilot/checkout",
+            "worktree": "/pilot/checkout/wt-epic-25128-pilot",
             "task_id": None,
             "team": {"team_id": "team-1"},
         }
@@ -204,27 +193,49 @@ def test_seat_tabs_take_the_guards_sequence_title_for_any_task_form(task: str) -
     context = _placement_context(launch=["developer"], tab_exists=False)
     context["inputs"]["task"] = task
     context["steps"]["guard"]["output"]["tab_title"] = "Dev Team - #25128"
-    placement = _placement_of("developer", context)
+    placement = _seat_arguments("developer", context)["placement"]
     assert placement == {"tab": {"workspace": WORKSPACE, "title": "Dev Team - #25128"}}
 
 
-@pytest.mark.parametrize("tab_exists", [False, True])
-def test_developer_opens_the_team_tab_when_none_exists(tab_exists: bool) -> None:
-    """A replacement named by team_id still opens the team tab when that tab is missing."""
+@pytest.mark.parametrize(
+    ("tab_exists", "placement"),
+    [
+        (False, {"tab": {"workspace": WORKSPACE, "title": "Dev Team - #25128"}}),
+        (
+            True,
+            {
+                "split": {
+                    "workspace": WORKSPACE,
+                    "tab_title": "Dev Team - #25128",
+                    "axis": "right",
+                    "title": "Developer",
+                }
+            },
+        ),
+    ],
+    ids=["no-tab-opens-it", "tab-exists-splits-in"],
+)
+def test_developer_opens_the_team_tab_when_none_exists(
+    tab_exists: bool, placement: dict[str, Any]
+) -> None:
+    """A replacement named by team_id: the developer opens the team tab when none exists."""
     context = _placement_context(launch=["developer"], tab_exists=tab_exists)
-    context["steps"]["guard"]["output"]["tab_title"] = "Dev Team - #25128"
-    placement = _placement_of("developer", context)
-    if tab_exists:
-        assert placement == {
-            "split": {
-                "workspace": WORKSPACE,
-                "tab_title": "Dev Team - #25128",
-                "axis": "right",
-                "title": "Developer",
-            }
+    assert _seat_arguments("developer", context)["placement"] == placement
+
+
+def test_reviewer_splits_into_the_team_tab_the_developer_opens() -> None:
+    """The developer opens the team tab first, so the reviewer always splits into it."""
+    context = _placement_context(launch=["developer", "code-reviewer"], tab_exists=False)
+    context["steps"]["developer"] = {"output": {"child_session_id": "child-developer"}}
+    placement = _seat_arguments("reviewer", context)["placement"]
+    assert placement == {
+        "split": {
+            "workspace": WORKSPACE,
+            "tab_title": "Dev Team - #25128",
+            "axis": "right",
+            "title": "Code Reviewer",
         }
-    else:
-        assert placement == {"tab": {"workspace": WORKSPACE, "title": "Dev Team - #25128"}}
+    }
 
 
 def _arrange_steps() -> list[str]:
@@ -247,30 +258,37 @@ def test_devteam_tiles_the_team_tab_after_the_last_seat() -> None:
     assert order.index(arrange[0]) > max(order.index(seat) for seat in seats)
 
 
-@pytest.mark.parametrize(
-    ("launch", "tiled"),
-    [
-        (["developer", "reviewer"], True),  # a fresh team
-        # Tiling needs both seats' panes from this run; a reviewer-only re-run keeps its split.
-        (["reviewer"], False),
-    ],
-    ids=["fresh-team", "reviewer-only-re-run"],
-)
-def test_devteam_tiles_the_team_tab_only_when_both_seats_launch(
-    launch: list[str], tiled: bool
-) -> None:
+def test_devteam_tab_tiles_once_both_seats_are_launched() -> None:
+    """A fresh team launches both seats, and the arrange step tiles their panes."""
     arrange = _arrange_steps()
     assert len(arrange) == 1, arrange
     step = next(step for step in DEVTEAM.steps if step.id == arrange[0])
-    context = _placement_context(launch=launch, tab_exists=True)
-    for seat in launch:
-        context["steps"][seat] = {"output": {"pane_ref": f"pane-{seat}"}}
-    assert RENDERER.should_run_step(step, context) is tiled, launch
-    if tiled:
-        assert step.mcp is not None and step.mcp.arguments is not None
-        arguments = RENDERER.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
-        assert arguments.get("layout") == "tiled", arguments
-        assert "Dev Team - #25128" in str(arguments.get("tab")), arguments
+    context = _placement_context(launch=["developer", "code-reviewer"], tab_exists=True)
+    context["steps"]["developer"] = {"output": {"pane_ref": "pane-developer"}}
+    context["steps"]["reviewer"] = {"output": {"pane_ref": "pane-reviewer"}}
+    assert RENDERER.should_run_step(step, context)
+    assert step.mcp is not None and step.mcp.arguments is not None
+    arguments = RENDERER.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
+    assert arguments == {
+        "workspace": WORKSPACE,
+        "tab": "Dev Team - #25128",
+        "seats": [
+            {"name": "developer", "pane": "pane-developer"},
+            {"name": "code-reviewer", "pane": "pane-reviewer"},
+        ],
+        "rows": 100,
+        "layout": "tiled",
+    }
+
+
+def test_single_seat_rerun_skips_the_tile_step() -> None:
+    """Arrange names both seats' panes from this run's spawn outputs, so one seat skips it."""
+    arrange = _arrange_steps()
+    assert len(arrange) == 1, arrange
+    step = next(step for step in DEVTEAM.steps if step.id == arrange[0])
+    context = _placement_context(launch=["code-reviewer"], tab_exists=True)
+    context["steps"]["reviewer"] = {"output": {"pane_ref": "pane-reviewer"}}
+    assert not RENDERER.should_run_step(step, context)
 
 
 def _pipeline(name: str) -> PipelineDefinition:
@@ -362,3 +380,57 @@ def test_team_planning_tiles_the_policy_tab_its_writer_opens() -> None:
         {"placement": writer.arguments["placement"]}, context, drop_none=True
     )
     assert placement == {"placement": {"tab": {"workspace": "pilot-workspace", "title": title}}}
+
+
+@pytest.mark.parametrize(
+    ("parent_team_id", "gated"),
+    [("epic-team-1", True), (None, False)],
+    ids=["epic-child-pair", "standalone-leaf-pair"],
+)
+def test_developer_prompt_asks_for_the_landing_permit_only_under_an_epic(
+    parent_team_id: str | None, gated: bool
+) -> None:
+    context = _placement_context(launch=["developer", "code-reviewer"], tab_exists=False)
+    context["inputs"]["parent_team_id"] = parent_team_id
+    prompt = _seat_arguments("developer", context)["prompt"]
+    assert ("held clean shared-epic-tree point" in prompt) is gated
+
+
+def _raw_arguments(pipeline: PipelineDefinition, step_id: str) -> dict[str, Any]:
+    step = next(step for step in pipeline.steps if step.id == step_id)
+    assert step.mcp is not None and step.mcp.arguments is not None
+    return step.mcp.arguments
+
+
+def test_epic_devteam_gates_on_an_epic_root_and_binds_the_v5_roster() -> None:
+    pipeline = _pipeline("epic-devteam")
+    steps = {step.id: step for step in pipeline.steps}
+    assert steps["require-epic-root"].condition == (
+        "${{ steps['inspect-root'].output.task_type != 'epic' }}"
+    )
+    assert _raw_arguments(pipeline, "guard")["requested"] == "dev-manager,developer,code-reviewer"
+    agents = {
+        seat: _raw_arguments(pipeline, seat)["agent"]
+        for seat in ("developer", "reviewer", "coordinator")
+    }
+    assert agents == {
+        "developer": "developer",
+        "reviewer": "code-reviewer",
+        "coordinator": "dev-manager",
+    }
+
+
+def test_epic_devteam_keeps_the_coordinator_in_main_and_the_pair_in_the_epic_tree() -> None:
+    pipeline = _pipeline("epic-devteam")
+    admitted_tree = "${{ steps.admit.output.project_path }}"
+    assert _raw_arguments(pipeline, "developer")["project_path"] == admitted_tree
+    assert _raw_arguments(pipeline, "reviewer")["project_path"] == admitted_tree
+    assert _raw_arguments(pipeline, "coordinator")["project_path"] == "${{ inputs.project_path }}"
+    for seat in ("developer", "reviewer", "coordinator"):
+        assert _raw_arguments(pipeline, seat)["claim"] is False
+    assert _raw_arguments(pipeline, "connect")["target_id"] == (
+        "${{ steps.developer.output.child_session_id }}"
+    )
+    assert _raw_arguments(pipeline, "connect-reviewer")["target_id"] == (
+        "${{ steps.reviewer.output.child_session_id }}"
+    )

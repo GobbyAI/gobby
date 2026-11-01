@@ -75,41 +75,9 @@
     "status": "proxied",
     "note": "Python src/gobby/cli/projects.py::show_project; blocked on Rust project/ref resolution and checkout-aware detail rendering. Owner: #21568 Remaining route families."
   },
-  "CLI gobby stages": {
-    "status": "dropped by decision #23341",
-    "note": "Stage dispatch and stage-review surface retired under #23341; no native replacement is required."
-  },
-  "CLI gobby stages defaults": {
-    "status": "dropped by decision #23341",
-    "note": "Stage dispatch and stage-review surface retired under #23341; no native replacement is required."
-  },
-  "CLI gobby stages delete": {
-    "status": "dropped by decision #23341",
-    "note": "Stage dispatch and stage-review surface retired under #23341; no native replacement is required."
-  },
-  "CLI gobby stages list": {
-    "status": "dropped by decision #23341",
-    "note": "Stage dispatch and stage-review surface retired under #23341; no native replacement is required."
-  },
-  "CLI gobby stages restore": {
-    "status": "dropped by decision #23341",
-    "note": "Stage dispatch and stage-review surface retired under #23341; no native replacement is required."
-  },
-  "CLI gobby stages show": {
-    "status": "dropped by decision #23341",
-    "note": "Stage dispatch and stage-review surface retired under #23341; no native replacement is required."
-  },
-  "CLI gobby stages update": {
-    "status": "dropped by decision #23341",
-    "note": "Stage dispatch and stage-review surface retired under #23341; no native replacement is required."
-  },
   "HTTP DELETE /api/projects/{project_id}": {
     "status": "proxied",
     "note": "Python src/gobby/servers/routes/projects.py::delete_project via gdaemon front-door fallback; blocked on a native Rust project deletion route and guards. Owner: #21568 Remaining route families."
-  },
-  "HTTP DELETE /api/stages/registry/{name}": {
-    "status": "dropped by decision #23341",
-    "note": "Stage dispatch and stage-review surface retired under #23341; no native replacement is required."
   },
   "HTTP GET /api/projects": {
     "status": "proxied",
@@ -122,10 +90,6 @@
   "HTTP GET /api/projects/{project_id}/checkouts": {
     "status": "proxied",
     "note": "Python src/gobby/servers/routes/projects.py::get_checkout via gdaemon front-door fallback; blocked on a native Rust machine-scoped checkout lookup route. Owner: #21568 Remaining route families."
-  },
-  "HTTP GET /api/stages/registry": {
-    "status": "dropped by decision #23341",
-    "note": "Stage dispatch and stage-review surface retired under #23341; no native replacement is required."
   },
   "HTTP PATCH /api/projects/{project_id}": {
     "status": "proxied",
@@ -147,17 +111,9 @@
     "status": "proxied",
     "note": "Python src/gobby/servers/routes/projects.py::purge_project via gdaemon front-door fallback; blocked on native Rust project purge and dependent-resource cleanup. Owner: #21568 Remaining route families."
   },
-  "HTTP POST /api/stages/registry/{name}/restore": {
-    "status": "dropped by decision #23341",
-    "note": "Stage dispatch and stage-review surface retired under #23341; no native replacement is required."
-  },
   "HTTP PUT /api/projects/{project_id}": {
     "status": "proxied",
     "note": "Python src/gobby/servers/routes/projects.py::update_project via gdaemon front-door fallback; blocked on native Rust project updates and checkout-scoped approval/validation config writes. Owner: #21568 Remaining route families."
-  },
-  "HTTP PUT /api/stages/registry/{name}": {
-    "status": "dropped by decision #23341",
-    "note": "Stage dispatch and stage-review surface retired under #23341; no native replacement is required."
   },
   "MCP gobby-plans:append_plan_changelog_round": {
     "status": "proxied",

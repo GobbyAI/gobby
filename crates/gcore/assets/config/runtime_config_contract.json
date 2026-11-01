@@ -2841,6 +2841,17 @@
       "visibility": "public"
     },
     {
+      "activation": "restart_required",
+      "default": [],
+      "description": "Extra Host header values accepted on the /mcp HTTP route while the daemon binds loopback, for example 'myhost.tail4125a0.ts.net' behind Tailscale Funnel. Each value must equal the forwarded Host header; append ':*' to accept any port. Bearer auth still applies to every request.",
+      "key": "mcp_allowed_hosts",
+      "machineExport": false,
+      "namespace": "mcp_allowed_hosts",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
       "activation": "live",
       "default": 30.0,
       "description": "Timeout in seconds for establishing connections to MCP servers",

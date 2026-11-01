@@ -76,7 +76,20 @@ pub fn sync_file(
     };
     let mut lifecycle = lifecycle_from_context(ctx)?;
     let symbols = code_symbols::fetch_symbols_for_file(&mut conn, &ctx.project_id, &file_path)?;
-    let output = lifecycle.sync_file_symbols(&file_path, &symbols)?;
+    let output = match lifecycle.sync_file_symbols(&file_path, &symbols) {
+        Ok(output) => output,
+        Err(VectorLifecycleError::IndexedSourceChanged { .. }) => {
+            return print_skipped_sync_file(
+                ctx,
+                &file_path,
+                format,
+                &locks,
+                SyncFileSkip::SourceChanged,
+                None,
+            );
+        }
+        Err(err) => return Err(err.into()),
+    };
     if !db::mark_vectors_synced(
         &mut conn,
         &ctx.project_id,
@@ -106,18 +119,30 @@ fn sync_pinned_vector_file(
     locks: &ProjectFileLockSet,
 ) -> anyhow::Result<()> {
     let mut lifecycle = lifecycle_from_context(ctx)?;
-    let Some(output) =
-        pinned::sync_vector_attempt(conn, &ctx.project_id, &mut lifecycle, file_path, pin)?
-    else {
-        return print_skipped_sync_file(
-            ctx,
-            file_path,
-            format,
-            locks,
-            SyncFileSkip::Superseded,
-            None,
-        );
-    };
+    let output =
+        match pinned::sync_vector_attempt(conn, &ctx.project_id, &mut lifecycle, file_path, pin)? {
+            pinned::PinnedVectorSync::Synced(output) => output,
+            pinned::PinnedVectorSync::Superseded => {
+                return print_skipped_sync_file(
+                    ctx,
+                    file_path,
+                    format,
+                    locks,
+                    SyncFileSkip::Superseded,
+                    None,
+                );
+            }
+            pinned::PinnedVectorSync::SourceChanged => {
+                return print_skipped_sync_file(
+                    ctx,
+                    file_path,
+                    format,
+                    locks,
+                    SyncFileSkip::SourceChanged,
+                    None,
+                );
+            }
+        };
     let report = ProjectionSyncReport::ok(1, output.symbols);
     print_file_lifecycle_output(&output, report, format, locks)
 }
@@ -125,6 +150,7 @@ fn sync_pinned_vector_file(
 enum SyncFileSkip {
     MissingIndexedFile,
     Superseded,
+    SourceChanged,
 }
 
 fn print_skipped_missing_indexed_file(
@@ -161,16 +187,9 @@ fn print_skipped_missing_indexed_file(
     )
 }
 
-fn print_skipped_sync_file(
-    ctx: &Context,
-    file_path: &str,
-    format: Format,
-    locks: &ProjectFileLockSet,
-    skip: SyncFileSkip,
-    error: Option<ProjectionSyncError>,
-) -> anyhow::Result<()> {
-    let collection = code_symbols::collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &ctx.project_id)?;
-    let (reason, summary, text) = match skip {
+/// Returns the wire reason, the summary, and the text line for a skipped sync.
+fn skip_descriptor(skip: SyncFileSkip, file_path: &str) -> (&'static str, &'static str, String) {
+    match skip {
         SyncFileSkip::MissingIndexedFile => (
             "indexed_file_not_found",
             "indexed file not found",
@@ -181,7 +200,24 @@ fn print_skipped_sync_file(
             "superseded by a newer index",
             format!("`{file_path}` was superseded by a newer index"),
         ),
-    };
+        SyncFileSkip::SourceChanged => (
+            "source_changed",
+            "source changed after indexing",
+            format!("`{file_path}` changed after indexing; its newer index re-syncs it"),
+        ),
+    }
+}
+
+fn print_skipped_sync_file(
+    ctx: &Context,
+    file_path: &str,
+    format: Format,
+    locks: &ProjectFileLockSet,
+    skip: SyncFileSkip,
+    error: Option<ProjectionSyncError>,
+) -> anyhow::Result<()> {
+    let collection = code_symbols::collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &ctx.project_id)?;
+    let (reason, summary, text) = skip_descriptor(skip, file_path);
     let degraded = error.is_some();
     let payload = file_lock_payload(
         serde_json::json!({
@@ -699,6 +735,18 @@ mod tests {
         assert!(record_symbol_done(&mut remaining, "a.rs", upserted));
         assert!(!record_symbol_done(&mut remaining, "a.rs", upserted));
         assert!(!record_symbol_done(&mut remaining, "unknown.rs", upserted));
+    }
+
+    #[test]
+    fn source_changed_skip_has_its_own_reason_and_summary() {
+        let (reason, summary, text) = skip_descriptor(SyncFileSkip::SourceChanged, "src/lib.rs");
+
+        assert_eq!(reason, "source_changed");
+        assert_eq!(summary, "source changed after indexing");
+        assert_eq!(
+            text,
+            "`src/lib.rs` changed after indexing; its newer index re-syncs it"
+        );
     }
 
     #[test]
