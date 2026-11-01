@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -139,6 +140,11 @@ def _apply_test_logging_overrides(config_dict: dict[str, Any]) -> None:
         if not isinstance(logging_config, dict):
             raise ValueError("logging config must be a mapping")
         logging_config["dir"] = str(resolved_dir)
+
+
+_MCP_ALLOWED_HOST_PATTERN = re.compile(
+    r"(?:\[[0-9a-f:.]+\]|[a-z0-9-]+(?:\.[a-z0-9-]+)*)(?::(?:[0-9]{1,5}|\*))?"
+)
 
 
 class DaemonConfig(BaseModel):
@@ -500,6 +506,19 @@ class DaemonConfig(BaseModel):
     def get_search_config(self) -> SearchConfig:
         """Get search configuration."""
         return self.search
+
+    @field_validator("mcp_allowed_hosts")
+    @classmethod
+    def validate_mcp_allowed_hosts(cls, values: list[str]) -> list[str]:
+        """Accept only Host header values: no scheme, path, wildcard host, or uppercase."""
+        for value in values:
+            if _MCP_ALLOWED_HOST_PATTERN.fullmatch(value) is None:
+                raise ValueError(
+                    f"mcp_allowed_hosts entry {value!r} must be a lowercase Host header value "
+                    "such as 'myhost.tail4125a0.ts.net' or 'myhost.tail4125a0.ts.net:8443' "
+                    "(no scheme or path); append ':*' to accept any port"
+                )
+        return values
 
     @field_validator("daemon_port")
     @classmethod

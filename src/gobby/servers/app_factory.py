@@ -68,11 +68,28 @@ def _register_mcp_http_route(app: FastAPI, mcp_app: Starlette) -> None:
     app.router.routes.append(Route("/mcp", endpoint=mcp_app, name="mcp", include_in_schema=False))
 
 
+# The MCP SDK's loopback policy (mcp 2.2.0, lowlevel/server.py streamable_http_app), kept
+# here because the SDK applies it only when it receives no explicit transport settings.
+_SDK_LOOPBACK_BIND_HOSTS = ("127.0.0.1", "localhost", "::1")
+_SDK_LOOPBACK_HOSTS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
+_SDK_LOOPBACK_ORIGINS = ("http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*")
+
+
 def _mcp_transport_security(
     bind_host: str, extra_hosts: list[str]
 ) -> TransportSecuritySettings | None:
-    """Return the MCP Host/Origin policy for this bind host (stub: behavior not yet written)."""
-    return None
+    """Return the MCP Host/Origin policy, or None to keep the SDK's unchecked default.
+
+    The SDK checks Host only for a loopback bind; off loopback it already accepts any Host,
+    so the configured hosts apply only where the check runs. Bearer auth runs before it.
+    """
+    if bind_host not in _SDK_LOOPBACK_BIND_HOSTS:
+        return None
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[*_SDK_LOOPBACK_HOSTS, *extra_hosts],
+        allowed_origins=[*_SDK_LOOPBACK_ORIGINS, *(f"https://{host}" for host in extra_hosts)],
+    )
 
 
 def create_app(server: "HTTPServer") -> FastAPI:
@@ -89,7 +106,12 @@ def create_app(server: "HTTPServer") -> FastAPI:
     if server._mcp_server:
         # The SDK enables DNS-rebinding protection only for loopback hosts, so
         # the MCP app must see the same bind host uvicorn serves on.
-        mcp_app = server._mcp_server.streamable_http_app(host=server.bootstrap_config.bind_host)
+        bind_host = server.bootstrap_config.bind_host
+        extra_hosts = server.startup_config.mcp_allowed_hosts if server.startup_config else []
+        mcp_app = server._mcp_server.streamable_http_app(
+            host=bind_host,
+            transport_security=_mcp_transport_security(bind_host, extra_hosts),
+        )
         logger.debug("MCP HTTP app created")
 
     app = FastAPI(

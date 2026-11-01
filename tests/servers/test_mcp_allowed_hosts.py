@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -82,7 +82,7 @@ def _post_initialize(
     *,
     bearer: bool = True,
     origin: str | None = None,
-) -> httpx.Response:
+) -> httpx2.Response:
     services = ServiceContainer(
         database=session_storage.db,
         session_manager=session_storage,
