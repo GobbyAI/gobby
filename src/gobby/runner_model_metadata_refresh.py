@@ -96,7 +96,8 @@ async def replace_model_metadata_async(
     if not rows:
         return 0
 
-    async def work(connection: psycopg.AsyncConnection[Any], cutoff: float) -> int:
+    async def work(connection: psycopg.AsyncConnection[Any], remaining: float) -> int:
+        cutoff = asyncio.get_running_loop().time() + remaining
         return await _replace_rows(connection, cutoff, rows)
 
     return await run_bounded_db(

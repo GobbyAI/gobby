@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, patch
 
 import psycopg
@@ -20,6 +20,9 @@ from gobby.runner_model_metadata_refresh import (
 )
 from gobby.storage.hub.async_ops import BoundedDBTimeoutError
 from gobby.storage.hub.protocol import HubDatabase
+
+if TYPE_CHECKING:
+    from gobby.runner import GobbyRunner
 
 pytestmark = pytest.mark.unit
 
@@ -83,6 +86,7 @@ class _FakePGConn:
 class _FakeConnection:
     def __init__(self, *, block: str | None = None, delay: float = 0.0) -> None:
         self.activity: list[str] = []
+        self.info = SimpleNamespace(transaction_status=psycopg.pq.TransactionStatus.INTRANS)
         self.pgconn = _FakePGConn(self.activity)
         self.block = block
         self.delay = delay
@@ -132,12 +136,12 @@ async def test_replace_uses_bounded_four_statement_contract(
 
     async def bounded(work: Any, **kwargs: object) -> int:
         bounded_args.update(kwargs)
-        return await work(connection, asyncio.get_running_loop().time() + 5.0)
+        return cast(int, await work(connection, 4.0))
 
     monkeypatch.setattr("gobby.runner_model_metadata_refresh.run_bounded_db", bounded)
 
     inserted = await replace_model_metadata_async(
-        SimpleNamespace(conninfo="postgresql://metadata"),
+        cast(HubDatabase, SimpleNamespace(conninfo="postgresql://metadata")),
         [_model()],
     )
 
@@ -218,8 +222,8 @@ async def test_shutdown_cancels_fetch_and_is_idempotent() -> None:
         task = asyncio.create_task(refresh_model_metadata_once(database))
         runner = SimpleNamespace(_model_metadata_refresh_task=task, _wiki_watcher=None)
         await entered.wait()
-        await _cancel_periodic_tasks(runner)
-        await _cancel_periodic_tasks(runner)
+        await _cancel_periodic_tasks(cast("GobbyRunner", runner))
+        await _cancel_periodic_tasks(cast("GobbyRunner", runner))
 
     assert task.cancelled()
 
@@ -232,6 +236,24 @@ def _install_connection(
         return connection
 
     monkeypatch.setattr(psycopg.AsyncConnection, "connect", connect)
+
+
+@pytest.mark.asyncio
+async def test_replace_commits_with_real_bounded_db_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _FakeConnection()
+    _install_connection(monkeypatch, connection)
+
+    inserted = await replace_model_metadata_async(
+        cast(HubDatabase, SimpleNamespace(conninfo="postgresql://metadata")),
+        [_model()],
+    )
+
+    assert inserted == 1
+    assert "DELETE FROM model_metadata" in connection.activity
+    assert any(query.startswith("INSERT INTO model_metadata ") for query in connection.activity)
+    assert connection.activity[-3:] == ["commit", "close", "hard-close"]
 
 
 @pytest.mark.asyncio
@@ -250,7 +272,7 @@ async def test_blocked_db_statements_terminate_without_post_teardown_activity(
     started = time.monotonic()
     with pytest.raises(BoundedDBTimeoutError):
         await replace_model_metadata_async(
-            SimpleNamespace(conninfo="postgresql://metadata"),
+            cast(HubDatabase, SimpleNamespace(conninfo="postgresql://metadata")),
             [_model()],
         )
     assert time.monotonic() - started < 1.5
@@ -272,7 +294,7 @@ async def test_cumulative_delete_insert_deadline_is_end_to_end(
 
     with pytest.raises(BoundedDBTimeoutError):
         await replace_model_metadata_async(
-            SimpleNamespace(conninfo="postgresql://metadata"),
+            cast(HubDatabase, SimpleNamespace(conninfo="postgresql://metadata")),
             [_model()],
         )
 
@@ -306,7 +328,7 @@ async def test_blocked_connect_terminates_without_running_db_work(
 
     with pytest.raises(BoundedDBTimeoutError):
         await replace_model_metadata_async(
-            SimpleNamespace(conninfo="postgresql://metadata"),
+            cast(HubDatabase, SimpleNamespace(conninfo="postgresql://metadata")),
             [_model()],
         )
 
