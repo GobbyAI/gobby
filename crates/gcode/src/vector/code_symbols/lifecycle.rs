@@ -23,8 +23,6 @@ use super::vector_text::vector_text_for_symbol_in;
 
 const QDRANT_LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(10);
 const VECTOR_SYNC_BATCH_SIZE: usize = gobby_core::qdrant::DEFAULT_UPSERT_BATCH_SIZE;
-/// Embedding batches a rebuild keeps in flight at once.
-const EMBED_CONCURRENCY: usize = 4;
 
 #[derive(Debug)]
 pub struct CodeSymbolVectorLifecycle {
@@ -85,6 +83,12 @@ impl CodeSymbolVectorLifecycle {
         }
     }
 
+    /// Whether the project's collection already exists in Qdrant.
+    pub fn collection_exists(&mut self) -> Result<bool, VectorLifecycleError> {
+        self.require_qdrant_boundary()?;
+        Ok(self.get_collection_schema()?.is_some())
+    }
+
     pub fn sync_file_symbols(
         &mut self,
         file_path: &str,
@@ -142,7 +146,8 @@ impl CodeSymbolVectorLifecycle {
     /// Rebuild vectors for `symbols`, calling `on_embedded` once per symbol
     /// after its round is upserted.
     ///
-    /// Each round embeds up to `EMBED_CONCURRENCY` batches in parallel and
+    /// Each round embeds as many batches in parallel as the embedding backend
+    /// allows (`ai.max_concurrency` on the daemon route) and
     /// upserts them before the next round, so an interrupted rebuild keeps
     /// the vectors it finished. A symbol whose file no longer matches the index is
     /// skipped and counted; the next index refresh re-syncs that file.
@@ -154,7 +159,8 @@ impl CodeSymbolVectorLifecycle {
         let schema = self.ensure_collection()?;
         let mut vectors_upserted = 0;
         let mut skipped = 0;
-        for round in symbols.chunks(VECTOR_SYNC_BATCH_SIZE * EMBED_CONCURRENCY) {
+        let round_size = VECTOR_SYNC_BATCH_SIZE * self.embedding.max_concurrency().max(1);
+        for round in symbols.chunks(round_size) {
             let mut batches: Vec<(Vec<&Symbol>, Vec<String>)> = Vec::new();
             for batch in round.chunks(VECTOR_SYNC_BATCH_SIZE) {
                 let mut kept = Vec::with_capacity(batch.len());

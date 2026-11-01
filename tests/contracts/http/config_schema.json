@@ -781,6 +781,16 @@
           "machineExport": false,
           "default": 300
         },
+        "ai.max_concurrency": {
+          "type": "integer",
+          "namespace": "ai.max_concurrency",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 1,
+          "description": "Maximum concurrent AI requests one gcode process sends to the daemon. A gcode vector rebuild runs this many embedding batches in parallel."
+        },
         "ai.model_metadata_aliases": {
           "type": "array",
           "namespace": "ai.model_metadata_aliases",

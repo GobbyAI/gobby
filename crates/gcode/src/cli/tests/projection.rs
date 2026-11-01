@@ -235,7 +235,16 @@ fn parse_projection_lifecycle_commands() {
     assert!(matches!(
         cli.command,
         Command::Vector {
-            command: VectorCommand::Rebuild
+            command: VectorCommand::Rebuild { full: false }
+        }
+    ));
+
+    let cli = Cli::try_parse_from(["gcode", "vector", "rebuild", "--full"])
+        .expect("vector rebuild --full parses");
+    assert!(matches!(
+        cli.command,
+        Command::Vector {
+            command: VectorCommand::Rebuild { full: true }
         }
     ));
 

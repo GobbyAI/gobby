@@ -542,8 +542,13 @@ pub(crate) enum VectorCommand {
         #[arg(long)]
         drop_collection: bool,
     },
-    /// Rebuild the current project's code-symbol vector projection from PostgreSQL facts
-    Rebuild,
+    /// Rebuild the current project's code-symbol vector projection from PostgreSQL facts.
+    /// Resumes an interrupted rebuild by embedding only files not yet synced.
+    Rebuild {
+        /// Re-embed every file, even ones already synced
+        #[arg(long)]
+        full: bool,
+    },
     /// Remove code-symbol vectors for files no longer indexed in PostgreSQL
     CleanupOrphans,
 }

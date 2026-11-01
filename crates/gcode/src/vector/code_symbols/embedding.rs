@@ -67,6 +67,16 @@ impl EmbeddingBackend {
         })
     }
 
+    /// How many embedding requests this backend may run at once: the daemon
+    /// route's `ai.max_concurrency` limiter, or one for a direct endpoint,
+    /// which has no configured limit.
+    pub fn max_concurrency(&self) -> usize {
+        match &self.source {
+            EmbeddingSource::Daemon(context) => usize::from(context.limiter.max_concurrency()),
+            EmbeddingSource::Direct(_) => 1,
+        }
+    }
+
     pub fn embed_text(&self, text: &str) -> Result<Vec<f32>, VectorLifecycleError> {
         let texts = vec![text.to_string()];
         let mut embeddings = self.embed_text_batch(&texts)?;
@@ -491,6 +501,22 @@ mod tests {
             Some(EmbeddingSource::Daemon(_)) => {}
             other => panic!("expected daemon embedding source, got {other:?}"),
         }
+    }
+
+    #[test]
+    #[cfg(feature = "ai")]
+    fn daemon_backend_concurrency_follows_ai_max_concurrency() {
+        let mut source = TestSource::with_values([
+            (ai_keys::EMBEDDINGS_ROUTING, "daemon"),
+            (ai_keys::MAX_CONCURRENCY, "3"),
+        ]);
+        let context = AiContext::resolve(None, &mut source);
+        let source =
+            embedding_source_from_resolved_ai_context(context, None).expect("daemon source");
+
+        let backend = super::EmbeddingBackend::new(source).expect("daemon backend");
+
+        assert_eq!(backend.max_concurrency(), 3);
     }
 
     #[test]

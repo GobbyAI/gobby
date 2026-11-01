@@ -828,6 +828,17 @@
     },
     {
       "activation": "live",
+      "default": 1,
+      "description": "Maximum concurrent AI requests one gcode process sends to the daemon. A gcode vector rebuild runs this many embedding batches in parallel.",
+      "key": "ai.max_concurrency",
+      "machineExport": false,
+      "namespace": "ai.max_concurrency",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": [
         {
           "openrouter_model_id": "anthropic/claude-haiku-4.5",

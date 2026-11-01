@@ -517,6 +517,15 @@ class AIConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    max_concurrency: int = Field(
+        default=1,
+        ge=1,
+        le=255,
+        description=(
+            "Maximum concurrent AI requests one gcode process sends to the daemon. "
+            "A gcode vector rebuild runs this many embedding batches in parallel."
+        ),
+    )
     generation: GenerationConfig = Field(
         default_factory=GenerationConfig,
         description="Text generation configuration.",

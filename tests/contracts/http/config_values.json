@@ -44,6 +44,7 @@
           "mode": "permissive"
         },
         "ai": {
+          "max_concurrency": 1,
           "model_metadata_aliases": [
             {
               "provider": "droid",
@@ -1132,6 +1133,7 @@
           "mode": "permissive"
         },
         "ai": {
+          "max_concurrency": 1,
           "model_metadata_aliases": [
             {
               "provider": "droid",

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::SystemTime;
 
 use anyhow::bail;
@@ -353,22 +354,38 @@ pub fn mark_vectors_synced(
     Ok(succeeded)
 }
 
-pub fn mark_project_vector_sync_attempted(
+/// Mark this machine's not-yet-synced current files as attempted and return
+/// each one's CAS token for [`mark_vectors_synced`]. Already-synced files keep
+/// their flag, which is what lets an interrupted rebuild resume.
+pub fn mark_unsynced_vector_sync_attempted(
     conn: &mut impl GenericClient,
     project_id: &str,
-) -> anyhow::Result<u64> {
+) -> anyhow::Result<HashMap<String, VectorSyncAttempt>> {
     let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
     let project_id = id_param(project_id)?;
-    Ok(conn.execute(
+    conn.query(
         "UPDATE code_indexed_files cif
-         SET vectors_synced = false, vector_sync_attempted_at = NOW()
+         SET vector_sync_attempted_at = NOW()
          FROM code_indexed_file_states cifs
          WHERE cifs.machine_id = $1 AND cifs.project_id = $2
            AND cif.project_id = cifs.project_id
            AND cif.file_path = cifs.file_path
-           AND cif.content_hash = cifs.content_hash",
+           AND cif.content_hash = cifs.content_hash
+           AND NOT cif.vectors_synced
+         RETURNING cif.file_path, cif.content_hash, cif.vector_sync_attempted_at",
         &[&machine_id, &project_id],
-    )?)
+    )?
+    .into_iter()
+    .map(|row| {
+        Ok((
+            row.try_get("file_path")?,
+            VectorSyncAttempt {
+                content_hash: row.try_get("content_hash")?,
+                attempted_at: row.try_get("vector_sync_attempted_at")?,
+            },
+        ))
+    })
+    .collect()
 }
 
 pub fn mark_project_vectors_synced(

@@ -133,9 +133,11 @@ mod serial_db {
             (false, false)
         );
         assert_eq!(
-            db::mark_project_vector_sync_attempted(&mut conn, &project_id)
-                .expect("mark project vector attempt"),
-            1
+            db::mark_unsynced_vector_sync_attempted(&mut conn, &project_id)
+                .expect("mark project vector attempt")
+                .into_keys()
+                .collect::<Vec<_>>(),
+            vec![rel.to_string()]
         );
         assert_eq!(
             db::mark_project_vectors_synced(&mut conn, &project_id).expect("mark project vectors"),
@@ -480,6 +482,76 @@ mod serial_db {
             .expect("count inheritance")
             .get(0);
         assert_eq!(inheritance_count, 1);
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn unsynced_vector_attempt_skips_synced_files_and_returns_cas_tokens() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-vector-resume");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean test project rows");
+        let _cleanup = ProjectCleanup {
+            database_url,
+            project_id: project_id.clone(),
+        };
+        seed_project(&mut conn, &project_id);
+        let machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
+        for rel in ["src/done.rs", "src/todo.rs"] {
+            let file = indexed_file(&project_id, rel, &format!("{rel}-hash"), 1, 16);
+            api::upsert_file(&mut conn, &file).expect("insert indexed file");
+            api::file_state::upsert_file_state(
+                &mut conn,
+                &machine_id,
+                &file,
+                std::path::Path::new("/tmp/test-view"),
+                api::IndexWriteMode::Overlay,
+            )
+            .expect("insert indexed file state");
+        }
+        let done = db::mark_vector_sync_attempted(&mut conn, &project_id, "src/done.rs")
+            .expect("mark done attempt")
+            .expect("live row");
+        assert!(
+            db::mark_vectors_synced(
+                &mut conn,
+                &project_id,
+                "src/done.rs",
+                &done.content_hash,
+                done.attempted_at,
+            )
+            .expect("mark done synced")
+        );
+
+        let attempts = db::mark_unsynced_vector_sync_attempted(&mut conn, &project_id)
+            .expect("mark unsynced attempts");
+
+        assert_eq!(
+            attempts.keys().cloned().collect::<Vec<_>>(),
+            vec!["src/todo.rs".to_string()]
+        );
+        assert_eq!(
+            vector_sync_state(&mut conn, &project_id, "src/done.rs"),
+            (true, true)
+        );
+        let todo = &attempts["src/todo.rs"];
+        assert!(
+            db::mark_vectors_synced(
+                &mut conn,
+                &project_id,
+                "src/todo.rs",
+                &todo.content_hash,
+                todo.attempted_at,
+            )
+            .expect("mark todo synced")
+        );
+        assert_eq!(
+            vector_sync_state(&mut conn, &project_id, "src/todo.rs"),
+            (true, true)
+        );
     }
 }
 

@@ -14,7 +14,7 @@ use crate::vector::code_symbols::{
 use gobby_core::progress::ProgressBar;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write as _;
 use std::path::PathBuf;
 
@@ -230,23 +230,97 @@ pub fn clear(ctx: &Context, drop_collection: bool, format: Format) -> anyhow::Re
     })
 }
 
-pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
+/// Rebuild the project's code-symbol vectors.
+///
+/// Each file is marked synced once all its symbols are upserted, so a rerun
+/// after an interruption embeds only the files still unsynced. A full run
+/// happens with `full`, when every file is already synced, or when the
+/// collection is missing (its synced flags then describe nothing).
+pub fn rebuild(ctx: &Context, full: bool, format: Format) -> anyhow::Result<()> {
     index_lock::with_exclusive_project_lock(ctx, || {
         let mut lifecycle = lifecycle_from_context(ctx)?;
         let mut conn = db::connect_readwrite(&ctx.database_url)?;
         let file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id, &ctx.machine_id)?;
-        db::reset_vectors_sync_for_project(&mut conn, &ctx.project_id)?;
-        db::mark_project_vector_sync_attempted(&mut conn, &ctx.project_id)?;
-        let symbols = code_symbols::fetch_symbols_for_project(&mut conn, &ctx.project_id)?;
+        let mut from_scratch = full || !lifecycle.collection_exists()?;
+        if from_scratch {
+            db::reset_vectors_sync_for_project(&mut conn, &ctx.project_id)?;
+        }
+        let mut attempts = db::mark_unsynced_vector_sync_attempted(&mut conn, &ctx.project_id)?;
+        if attempts.is_empty() && !from_scratch {
+            from_scratch = true;
+            db::reset_vectors_sync_for_project(&mut conn, &ctx.project_id)?;
+            attempts = db::mark_unsynced_vector_sync_attempted(&mut conn, &ctx.project_id)?;
+        }
+        let already_synced = file_paths.len().saturating_sub(attempts.len());
+        let symbols: Vec<_> = code_symbols::fetch_symbols_for_project(&mut conn, &ctx.project_id)?
+            .into_iter()
+            .filter(|symbol| attempts.contains_key(&symbol.file_path))
+            .collect();
+        let mut remaining: HashMap<String, usize> = HashMap::new();
+        for symbol in &symbols {
+            *remaining.entry(symbol.file_path.clone()).or_default() += 1;
+        }
         let mut bar = ProgressBar::new(symbols.len(), ctx.quiet);
         bar.draw("embedding");
-        let output = lifecycle.rebuild_symbols(&symbols, &mut |symbol| bar.tick(&symbol.file_path));
+        let output = lifecycle.rebuild_symbols(&symbols, &mut |symbol| {
+            bar.tick(&symbol.file_path);
+            mark_file_synced_when_done(
+                &mut conn,
+                &ctx.project_id,
+                &attempts,
+                &mut remaining,
+                &symbol.file_path,
+            );
+        });
         bar.finish();
-        let output = output?;
+        let mut output = output?;
         let files_synced = db::mark_project_vectors_synced(&mut conn, &ctx.project_id)? as usize;
+        if !from_scratch && already_synced > 0 {
+            output.summary.push_str(&format!(
+                ", resumed with {already_synced} file(s) already synced (--full re-embeds all)"
+            ));
+        }
         let report = ProjectionSyncReport::ok(files_synced.min(file_paths.len()), output.symbols);
         print_lifecycle_output(&output, report, format)
     })
+}
+
+/// Count down one upserted symbol of `file_path` and mark the file synced
+/// once its last symbol is in. A failed mark only costs resume progress: the
+/// file is embedded again by the next rebuild.
+fn mark_file_synced_when_done(
+    conn: &mut postgres::Client,
+    project_id: &str,
+    attempts: &HashMap<String, db::VectorSyncAttempt>,
+    remaining: &mut HashMap<String, usize>,
+    file_path: &str,
+) {
+    if !count_down_file(remaining, file_path) {
+        return;
+    }
+    let Some(attempt) = attempts.get(file_path) else {
+        return;
+    };
+    if let Err(error) = db::mark_vectors_synced(
+        conn,
+        project_id,
+        file_path,
+        &attempt.content_hash,
+        attempt.attempted_at,
+    ) {
+        log::warn!("could not record vector sync progress for {file_path}: {error}");
+    }
+}
+
+/// Count down one upserted symbol of `file_path`; true once its last one is in.
+fn count_down_file(remaining: &mut HashMap<String, usize>, file_path: &str) -> bool {
+    match remaining.get_mut(file_path) {
+        Some(left) if *left > 0 => {
+            *left -= 1;
+            *left == 0
+        }
+        _ => false,
+    }
 }
 
 pub fn cleanup_orphans(ctx: &Context, format: Format) -> anyhow::Result<()> {
@@ -548,5 +622,16 @@ mod tests {
         let degraded = serde_json::to_value(&degraded).expect("payload serializes");
         assert_eq!(degraded["status"], "degraded");
         assert_eq!(degraded["error"]["kind"], "missing_qdrant_config");
+    }
+
+    #[test]
+    fn rebuild_marks_a_file_only_after_its_last_symbol_across_rounds() {
+        let mut remaining = HashMap::from([("a.rs".to_string(), 2), ("b.rs".to_string(), 1)]);
+
+        assert!(!count_down_file(&mut remaining, "a.rs"));
+        assert!(count_down_file(&mut remaining, "b.rs"));
+        assert!(count_down_file(&mut remaining, "a.rs"));
+        assert!(!count_down_file(&mut remaining, "a.rs"));
+        assert!(!count_down_file(&mut remaining, "unknown.rs"));
     }
 }

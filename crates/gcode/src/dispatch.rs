@@ -534,12 +534,12 @@ fn run() -> anyhow::Result<()> {
                 },
         } => Ok(()),
         Command::Vector {
-            command: VectorCommand::Rebuild,
+            command: VectorCommand::Rebuild { full },
         } => {
             // A vector rebuild embeds the whole index, so it keeps the unbudgeted Project
             // reconcile rather than a deferred read of rows the checkout moved past.
             ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::vector::rebuild(&ctx, format)
+            commands::vector::rebuild(&ctx, full, format)
         }
         Command::Vector {
             command: VectorCommand::CleanupOrphans,
