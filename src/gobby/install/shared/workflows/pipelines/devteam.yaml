@@ -61,7 +61,7 @@ steps:
         report_to: "${{ inputs.report_to }}"
         require_report_to: true
         task: "${{ inputs.task }}"
-        tab_title: Dev Pair
+        tab_title: Dev Team
         seat_models:
           developer: "${{ inputs.developer_model }}"
           code-reviewer: "${{ inputs.reviewer_model }}"
