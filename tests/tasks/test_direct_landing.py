@@ -10,6 +10,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.close_receipts import list_close_receipts
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.landing_case import LandingCase, make_landing_case
+from tests.fixtures.review_approvals import approve_review
 
 pytestmark = pytest.mark.unit
 
@@ -112,3 +113,45 @@ async def test_direct_replay_requires_scope_provenance(case: LandingCase) -> Non
 
     assert result["landed"] is False, result
     assert list_close_receipts(case.db, task.id) == []
+
+
+@pytest.mark.parametrize("implementation", ["missing", "stale"])
+async def test_direct_landing_requires_implementation_at_candidate(
+    case: LandingCase, implementation: str
+) -> None:
+    sha = case.candidate("own-delivery", {"src/owned.py": "implemented = True\n"})
+    task = case.task()
+    if implementation == "stale":
+        case.link(task, case.base)
+        case.implement(task, case.base)
+    case.link(task, sha)
+    grant(case, ["land_tasks", "direct_integration_commit"], ["src/**"])
+
+    result = await case.land(task, sha, caller=case.claimant)
+
+    assert result["landed"] is False, result
+    assert "implementation_approval_missing" in result["blockers"]
+    assert case.git("rev-parse", "trunk") == case.base
+    assert list_close_receipts(case.db, task.id) == []
+
+
+async def test_direct_landing_preserves_required_security_approval(case: LandingCase) -> None:
+    sha = case.candidate("own-delivery", {"src/owned.py": "implemented = True\n"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.implement(task, sha)
+    grant(case, ["land_tasks", "direct_integration_commit"], ["src/**"])
+
+    refused = await case.land(task, sha, caller=case.claimant)
+
+    assert refused["landed"] is False, refused
+    assert refused["blockers"] == ["security_review_missing"]
+    assert case.git("rev-parse", "trunk") == case.base
+    assert list_close_receipts(case.db, task.id) == []
+
+    reviewer = case.security_reviewer()
+    approve_review(case.db, task_id=task.id, reviewer_session_id=reviewer, commit_sha=sha)
+    landed = await case.land(task, sha, caller=case.claimant)
+
+    assert landed["landed"] is True, landed
+    assert case.git("rev-parse", "trunk") == sha

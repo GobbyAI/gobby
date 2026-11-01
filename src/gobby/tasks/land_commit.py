@@ -402,18 +402,25 @@ async def _allows_direct_landing(
 
 
 def _review_blockers(
-    task: Task, records: list[TaskStepRecord], sha: str, caller: str, excluded: set[str]
+    task: Task,
+    records: list[TaskStepRecord],
+    sha: str,
+    caller: str,
+    excluded: set[str],
+    *,
+    require_independent_review: bool = True,
 ) -> list[str]:
     blockers: list[str] = []
-    if any(
-        record.step == "review"
-        and record.epoch == task.review_epoch
-        and record.session_id == caller
-        for record in records
-    ):
-        blockers.append("caller_is_reviewer")
-    if independent_review_approval(task, records, sha, caller) is None:
-        blockers.append("review_approval_missing")
+    if require_independent_review:
+        if any(
+            record.step == "review"
+            and record.epoch == task.review_epoch
+            and record.session_id == caller
+            for record in records
+        ):
+            blockers.append("caller_is_reviewer")
+        if independent_review_approval(task, records, sha, caller) is None:
+            blockers.append("review_approval_missing")
     if task.task_type != "epic":
         implementation = approved_task_step(task, records, "implementation")
         if implementation is None or implementation.commit_sha != sha:
@@ -565,15 +572,19 @@ async def land_candidate(
                 direct_landing = await _allows_direct_landing(
                     db, caller_session_id, main, tip, sha, receipts
                 )
-                if not direct_landing:
-                    if caller_session_id in makers:
-                        blockers.append("caller_is_maker")
-                    excluded = set(makers)
-                    if current_task.claimed_by_session_id:
-                        excluded.add(current_task.claimed_by_session_id)
-                    blockers += _review_blockers(
-                        current_task, records, sha, caller_session_id, excluded
-                    )
+                if not direct_landing and caller_session_id in makers:
+                    blockers.append("caller_is_maker")
+                excluded = set(makers)
+                if current_task.claimed_by_session_id:
+                    excluded.add(current_task.claimed_by_session_id)
+                blockers += _review_blockers(
+                    current_task,
+                    records,
+                    sha,
+                    caller_session_id,
+                    excluded,
+                    require_independent_review=not direct_landing,
+                )
                 if not linked:
                     blockers.append("candidate_not_linked")
                 if await _ancestor(main, sha, tip):

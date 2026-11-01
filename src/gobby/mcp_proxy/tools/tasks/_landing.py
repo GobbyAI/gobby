@@ -130,7 +130,8 @@ def create_landing_registry(
         description=(
             "Land a linked full commit SHA with the land_tasks capability and task-bound "
             "or local-root authority. A direct_integration_commit grant covering every "
-            "candidate path permits self-authored delivery; otherwise independent review "
+            "candidate path permits self-authored delivery while preserving implementation "
+            "evidence and required security approval; otherwise independent review "
             "is required and makers cannot land. A landing freeze refuses. Disjoint integration "
             "changes land as a merge; paths the integration tip also changed and merge "
             "conflicts escalate the task to Triage. Unlanded candidates never block."
