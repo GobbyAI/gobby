@@ -219,11 +219,24 @@ def _incumbent(record: Mapping[str, Any]) -> list[str]:
     return list(record["incumbent"]["verdict"])
 
 
+def _candidate_probabilities(
+    record: Mapping[str, Any], probabilities: Mapping[str, float]
+) -> dict[str, float]:
+    """Key a reply's probabilities by candidate id.
+
+    A tool_rerank record keys its propositions positionally, because candidate ids contain
+    "/" and Decision 8 rejects that in keys; ``candidate_keys`` maps each id to its key. Other
+    records key their propositions by candidate id directly.
+    """
+    keys: Mapping[str, str] = record.get("candidate_keys", {})
+    return {c: probabilities[keys.get(c, c)] for c in record["candidates"]}
+
+
 def _deployed(row: _Row, minimum: float, *, reverse: bool = False) -> list[str]:
     reply = row.reverse if reverse else row.forward
     if reply.probabilities is None:
         return _incumbent(row.record)
-    probabilities = reply.probabilities
+    probabilities = _candidate_probabilities(row.record, reply.probabilities)
     kept = [c for c in row.record["candidates"] if probabilities[c] >= minimum]
     return sorted(kept, key=lambda c: -probabilities[c])
 
@@ -273,7 +286,8 @@ def _tool_metrics(rows: Sequence[_Row], minimum: float) -> dict[str, float | Non
         if probabilities is None:
             continue
         gold = set(row.record["gold_relevant"])
-        pairs.extend((probabilities[c], c in gold) for c in row.record["candidates"])
+        by_candidate = _candidate_probabilities(row.record, probabilities)
+        pairs.extend((by_candidate[c], c in gold) for c in row.record["candidates"])
     empty = [row for row in rows if not row.record["gold_relevant"]]
     metrics: dict[str, float | None] = {
         "recall_at_k": _mean(deployed),

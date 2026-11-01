@@ -82,6 +82,10 @@ class GobbyDaemonTools:
             config = self.resolve_config()
             return config.recommend_tools if config is not None else None
 
+        def resolve_decisions_config() -> Any | None:
+            config = self.resolve_config()
+            return config.ai.decisions if config is not None else None
+
         # Initialize services
         result_offloader = None
         if db is not None:
@@ -125,6 +129,7 @@ class GobbyDaemonTools:
             project_id=None,  # Resolved per-call via get_project_context()
             config_resolver=resolve_recommend_config,
             llm_service_resolver=resolve_llm_service,
+            decisions_resolver=resolve_decisions_config,
         )
 
     def resolve_config(self) -> DaemonConfig | None:

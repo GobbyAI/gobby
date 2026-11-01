@@ -321,6 +321,21 @@ def _tool_dev_only_threshold(ds: Dataset) -> None:
     ds.tool(HOLDOUT, gold=[], incumbent=["a", "b"], forward={"a": 0.12, "b": 0.05})
 
 
+def test_tool_rerank_positional_keys_map_to_candidates() -> None:
+    # tool_rerank records key propositions positionally; candidate ids contain "/".
+    record = {
+        "candidates": ["git/tool_0", "git/tool_1"],
+        "candidate_keys": {"git/tool_0": "c0", "git/tool_1": "c1"},
+        "k": 1,
+        "gold_relevant": ["git/tool_1"],
+        "incumbent": {"status": "ok", "verdict": ["git/tool_0", "git/tool_1"]},
+    }
+    reply = ev._Reply({"c0": 0.2, "c1": 0.9})
+    row = ev._Row(record, reply, reply, (1.0,), 10)
+    assert ev._deployed(row, 0.5) == ["git/tool_1"]
+    assert ev._tool_metrics([row], 0.5)["recall_at_k"] == pytest.approx(1.0)
+
+
 def test_tool_threshold_comes_from_dev_only() -> None:
     report = _evaluate_edge(TOOL, _tool_dev_only_threshold)
     assert report.thresholds["min_probability"] == pytest.approx(0.10)
