@@ -147,6 +147,36 @@ _MCP_ALLOWED_HOST_PATTERN = re.compile(
 )
 
 
+class UiExposureConfig(BaseModel):
+    """Tailscale Serve exposure of the Web UI root (`/`). Off until the operator records it."""
+
+    mode: Literal["off", "tailnet"] = Field(
+        default="off",
+        description="'tailnet' serves the UI on this node's tailnet-only HTTPS port.",
+    )
+    port: int = Field(
+        default=443,
+        ge=1,
+        le=65535,
+        description="HTTPS port for the tailnet-only Web UI. Keep it off the MCP Funnel port.",
+    )
+
+
+class McpExposureConfig(BaseModel):
+    """Tailscale Serve exposure of the /mcp route only. Off until the operator records it."""
+
+    mode: Literal["off", "tailnet", "funnel"] = Field(
+        default="off",
+        description="'tailnet' serves /mcp to the tailnet; 'funnel' also publishes it publicly.",
+    )
+    port: int = Field(
+        default=443,
+        ge=1,
+        le=65535,
+        description="HTTPS port for the /mcp route. Funnel accepts only 443, 8443 or 10000.",
+    )
+
+
 class DaemonConfig(BaseModel):
     """
     Main configuration for Gobby daemon.
@@ -231,6 +261,15 @@ class DaemonConfig(BaseModel):
         "binds loopback, for example 'myhost.tail4125a0.ts.net' behind Tailscale Funnel. Each "
         "value must equal the forwarded Host header; append ':*' to accept any port. Bearer "
         "auth still applies to every request.",
+    )
+    ui_exposure: UiExposureConfig = Field(
+        default_factory=UiExposureConfig,
+        description="Tailnet-only Tailscale Serve exposure of the Web UI. Off by default.",
+    )
+    mcp_exposure: McpExposureConfig = Field(
+        default_factory=McpExposureConfig,
+        description="Path-only /mcp Tailscale Serve exposure, tailnet-only or published with "
+        "Funnel. Off by default; Funnel is never enabled unless the operator records it.",
     )
 
     # Hub connection settings

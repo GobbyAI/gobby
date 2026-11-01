@@ -8,9 +8,10 @@ import subprocess  # nosec B404 # fixed tailscale CLI commands
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
+from gobby.config.app import McpExposureConfig, UiExposureConfig
 from gobby.config.bootstrap import UiExposureMode, load_bootstrap
 from gobby.config.bootstrap_io import bootstrap_path, update_bootstrap_yaml
 from gobby.utils.env import is_test_protect_enabled
@@ -25,12 +26,49 @@ class UiExposeError(RuntimeError):
 
 @dataclass(frozen=True)
 class UiExposeResult:
-    """Current or resulting UI exposure state."""
+    """Current or resulting Tailscale exposure state for the UI or the /mcp route."""
 
-    mode: UiExposureMode | None
+    enabled: bool
     url: str | None = None
     changed: bool = False
     degraded_reason: str | None = None
+    funnel: bool = False
+
+
+def enable_mcp_exposure(
+    daemon_port: int,
+    *,
+    mode: Literal["tailnet", "funnel"],
+    port: int,
+    persist: Callable[[], None] | None = None,
+) -> UiExposeResult:
+    """Shape only: RED-phase stub."""
+    raise NotImplementedError
+
+
+def reconcile_exposures(
+    daemon_port: int,
+    *,
+    ui: UiExposureConfig,
+    mcp: McpExposureConfig,
+) -> list[UiExposeResult]:
+    """Shape only: RED-phase stub."""
+    raise NotImplementedError
+
+
+def get_exposure_status(
+    daemon_port: int,
+    *,
+    ui: UiExposureConfig,
+    mcp: McpExposureConfig,
+) -> tuple[UiExposeResult, UiExposeResult]:
+    """Shape only: RED-phase stub."""
+    raise NotImplementedError
+
+
+def node_dns_name() -> str:
+    """Shape only: RED-phase stub."""
+    raise NotImplementedError
 
 
 @dataclass(frozen=True)
@@ -56,6 +94,8 @@ def enable_tailscale_ui(
     daemon_port: int,
     *,
     config_path: Path | None = None,
+    port: int = 443,
+    persist: Callable[[], None] | None = None,
 ) -> UiExposeResult:
     """Enable and persist the root Tailscale Serve proxy for Gobby."""
     path = config_path or bootstrap_path()
@@ -100,6 +140,8 @@ def disable_tailscale_ui(
     *,
     config_path: Path | None = None,
     forget: bool = False,
+    port: int = 443,
+    persist: Callable[[], None] | None = None,
 ) -> UiExposeResult:
     """Disable the managed root handler, or only forget machine-local intent."""
     path = config_path or bootstrap_path()

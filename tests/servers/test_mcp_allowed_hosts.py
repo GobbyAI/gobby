@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from starlette.requests import HTTPConnection
 
 from gobby.app_context import ServiceContainer
-from gobby.config.app import DaemonConfig
+from gobby.config.app import DaemonConfig, McpExposureConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.app_factory import _mcp_transport_security
 from gobby.servers.auth_service import AuthService
@@ -82,6 +82,7 @@ def _post_initialize(
     *,
     bearer: bool = True,
     origin: str | None = None,
+    exposure: McpExposureConfig | None = None,
 ) -> httpx2.Response:
     services = ServiceContainer(
         database=session_storage.db,
@@ -91,7 +92,10 @@ def _post_initialize(
     )
     server = HTTPServer(
         services=services,
-        startup_config=DaemonConfig(mcp_allowed_hosts=allowed_hosts),
+        startup_config=DaemonConfig(
+            mcp_allowed_hosts=allowed_hosts,
+            mcp_exposure=exposure or McpExposureConfig(),
+        ),
         port=60887,
         test_mode=True,
         bootstrap_config=BootstrapConfig(),
@@ -199,6 +203,34 @@ def test_mcp_allowed_hosts_accepts_host_port_and_port_wildcard_forms() -> None:
     entries = [TAILNET_HOST, f"{TAILNET_HOST}:8443", f"{TAILNET_HOST}:*", "[::1]:8443"]
 
     assert DaemonConfig(mcp_allowed_hosts=entries).mcp_allowed_hosts == entries
+
+
+def test_mcp_exposure_admits_node_dns_name_from_tailscale_status(
+    session_storage: SessionManager,
+) -> None:
+    with patch("gobby.ui_exposure.node_dns_name", return_value="node.example.ts.net"):
+        response = _post_initialize(
+            session_storage,
+            [],
+            "node.example.ts.net",
+            exposure=McpExposureConfig(mode="funnel", port=443),
+        )
+
+    assert response.status_code == 200
+
+
+def test_mcp_exposure_never_admits_a_host_other_than_the_node_name(
+    session_storage: SessionManager,
+) -> None:
+    with patch("gobby.ui_exposure.node_dns_name", return_value="node.example.ts.net"):
+        response = _post_initialize(
+            session_storage,
+            [],
+            "attacker.example.com",
+            exposure=McpExposureConfig(mode="funnel", port=443),
+        )
+
+    assert response.status_code == 421
 
 
 def test_mcp_allowed_hosts_defaults_to_empty() -> None:
