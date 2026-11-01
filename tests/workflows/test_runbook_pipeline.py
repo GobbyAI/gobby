@@ -367,7 +367,8 @@ async def test_devteam_run_completes_when_its_arrange_layout_is_refused(
     assert [spawn["agent"] for spawn in proxy.spawns()] == DEVTEAM_SEATS
     developer, reviewer = proxy.spawns()
     assert developer["task_id"] == "task-1"
-    assert "task_id" not in reviewer
+    assert reviewer["task_id"] == "task-1"
+    assert reviewer["claim"] is False
     assert developer["project_path"] == reviewer["project_path"] == "/tmp/devteam"
     [connect] = [call for call in proxy.calls if call["tool"] == "gobby-agents:send_message"]
     assert connect["arguments"]["target"] == "session"

@@ -99,13 +99,8 @@ async def test_reference_contract_3_2_2(
             assert preview["success"] is True
             assert preview["can_close"] is True
             assert preview["closed"] is False
-            assert [gate["name"] for gate in preview["gates"]] == [
-                "children_closed",
-                "linked_commits",
-                "uncommitted_task_edits",
-                "integration_ancestry",
-                "step_records",
-            ]
+            # Closure gates are declared by policy; preview reports them as blocking reasons.
+            assert preview["blocking_reasons"] == []
             assert not is_task_closed(harness.manager.get_task(harness.task.id))
             closed = await harness.registry.call(
                 "close_task", {"task_id": harness.task.id, "commit_sha": harness.commit_sha}

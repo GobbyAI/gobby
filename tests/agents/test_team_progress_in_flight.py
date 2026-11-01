@@ -3,19 +3,21 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
 from gobby.agents.team_progress import HANDOFF_BOUND_SECONDS, _task_progress
 from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from tests.fixtures.agent_sessions import AgentSessions
 
 pytestmark = pytest.mark.unit
 
 
-def _claimed_past_bound(temp_db, sample_project):
+def _claimed_past_bound(temp_db: HubDatabase, sample_project: dict[str, Any]) -> tuple[str, Task]:
     sessions = AgentSessions(temp_db, sample_project["id"])
     holder = sessions.add("developer")
     manager = LocalTaskManager(temp_db)
@@ -30,7 +32,9 @@ def _claimed_past_bound(temp_db, sample_project):
     return holder, manager.get_task(task.id)
 
 
-def test_seat_mid_turn_with_no_attestation_is_not_idle(temp_db, sample_project) -> None:
+def test_seat_mid_turn_with_no_attestation_is_not_idle(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     holder, task = _claimed_past_bound(temp_db, sample_project)
     TurnLifecycleReducer(SessionManager(temp_db)).begin_turn(holder, TurnEvidence(source="hook"))
 
@@ -40,7 +44,9 @@ def test_seat_mid_turn_with_no_attestation_is_not_idle(temp_db, sample_project) 
     assert "idle_on_open_work" not in progress.flags
 
 
-def test_seat_blocked_on_approval_is_not_masked_as_working(temp_db, sample_project) -> None:
+def test_seat_blocked_on_approval_is_not_masked_as_working(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     holder, task = _claimed_past_bound(temp_db, sample_project)
     lifecycle = TurnLifecycleReducer(SessionManager(temp_db))
     lifecycle.begin_turn(holder, TurnEvidence(source="hook"))
@@ -54,7 +60,9 @@ def test_seat_blocked_on_approval_is_not_masked_as_working(temp_db, sample_proje
     assert "idle_on_open_work" in progress.flags
 
 
-def test_seat_between_turns_with_no_attestation_is_idle(temp_db, sample_project) -> None:
+def test_seat_between_turns_with_no_attestation_is_idle(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     _holder, task = _claimed_past_bound(temp_db, sample_project)
 
     progress = _task_progress(temp_db, task, datetime.now(UTC))

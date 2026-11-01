@@ -118,12 +118,7 @@ async def _dry_run(world: TeamWorld, task: Task) -> tuple[dict[str, Any], dict[s
     assert reply.get("success") is True, reply
     context["steps"]["admit"] = {"output": reply}
     # A fresh team launches every seat; check_runbook_seats reports them as ``launch``.
-    context["steps"]["guard"]["output"]["launch"] = [
-        "dev-manager",
-        "test-writer",
-        "developer",
-        "code-reviewer",
-    ]
+    context["steps"]["guard"]["output"]["launch"] = ["developer", "code-reviewer"]
     seats: dict[str, str] = {}
     for step in DEVTEAM.steps:
         rendered = _render(run, step.id, context)
@@ -164,18 +159,27 @@ async def test_runbook_binds_epic_or_leaf(world: TeamWorld) -> None:
     assert leaf_reply["branch"].startswith(f"task-{leaf.seq_num}-")
     # One runbook, one seat catalogue, whichever task it binds.
     assert epic_seats == leaf_seats
-    assert sorted(epic_seats.values()) == [
-        "code-reviewer",
-        "dev-manager",
-        "developer",
-        "test-writer",
-    ]
+    assert sorted(epic_seats.values()) == ["code-reviewer", "developer"]
 
 
 def _seat_arguments(seat: str, context: dict[str, Any]) -> dict[str, Any]:
     step = next(step for step in DEVTEAM.steps if step.id == seat)
     assert step.mcp is not None and step.mcp.arguments is not None
-    return RENDERER.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
+    arguments: dict[str, Any] = RENDERER.render_mcp_arguments(
+        step.mcp.arguments, context, drop_none=True
+    )
+    return arguments
+
+
+def _placement_of(seat: str, context: dict[str, Any]) -> dict[str, Any]:
+    """Render only the placement; the seat's other arguments read steps these tests leave out."""
+    step = next(step for step in DEVTEAM.steps if step.id == seat)
+    assert step.mcp is not None and step.mcp.arguments is not None
+    rendered = RENDERER.render_mcp_arguments(
+        {"placement": step.mcp.arguments["placement"]}, context, drop_none=True
+    )
+    placement: dict[str, Any] = rendered["placement"]
+    return placement
 
 
 def _placement_context(launch: list[str], tab_exists: bool) -> dict[str, Any]:
@@ -197,45 +201,30 @@ def _placement_context(launch: list[str], tab_exists: bool) -> dict[str, Any]:
 @pytest.mark.parametrize("task", ["#25128", "25128", "00000000-0000-4000-8000-000000025128"])
 def test_seat_tabs_take_the_guards_sequence_title_for_any_task_form(task: str) -> None:
     """Placements read the guard's resolved tab title, so every task form opens 'Dev Team - #25128'."""
-    context = _placement_context(launch=["dev-manager"], tab_exists=False)
+    context = _placement_context(launch=["developer"], tab_exists=False)
     context["inputs"]["task"] = task
     context["steps"]["guard"]["output"]["tab_title"] = "Dev Team - #25128"
-    placement = _seat_arguments("dev-manager", context)["placement"]
+    placement = _placement_of("developer", context)
     assert placement == {"tab": {"workspace": WORKSPACE, "title": "Dev Team - #25128"}}
 
 
 @pytest.mark.parametrize("tab_exists", [False, True])
-def test_manager_opens_the_team_tab_when_none_exists(tab_exists: bool) -> None:
+def test_developer_opens_the_team_tab_when_none_exists(tab_exists: bool) -> None:
     """A replacement named by team_id still opens the team tab when that tab is missing."""
-    context = _placement_context(launch=["dev-manager"], tab_exists=tab_exists)
-    placement = _seat_arguments("dev-manager", context)["placement"]
+    context = _placement_context(launch=["developer"], tab_exists=tab_exists)
+    context["steps"]["guard"]["output"]["tab_title"] = "Dev Team - #25128"
+    placement = _placement_of("developer", context)
     if tab_exists:
         assert placement == {
             "split": {
                 "workspace": WORKSPACE,
                 "tab_title": "Dev Team - #25128",
                 "axis": "right",
-                "title": "Dev Manager",
+                "title": "Developer",
             }
         }
     else:
         assert placement == {"tab": {"workspace": WORKSPACE, "title": "Dev Team - #25128"}}
-
-
-@pytest.mark.parametrize(
-    ("launch", "tab_exists", "splits"),
-    [
-        (["dev-manager", "test-writer"], False, True),  # the manager opens the tab first
-        (["test-writer"], False, False),  # nothing launched in this run opens it
-        (["test-writer"], True, True),  # the team tab exists
-    ],
-)
-def test_seats_open_the_team_tab_only_when_nothing_opens_it(
-    launch: list[str], tab_exists: bool, splits: bool
-) -> None:
-    context = _placement_context(launch=launch, tab_exists=tab_exists)
-    placement = _seat_arguments("test-writer", context)["placement"]
-    assert ("split" in placement) is splits
 
 
 def _arrange_steps() -> list[str]:
@@ -259,25 +248,29 @@ def test_devteam_tiles_the_team_tab_after_the_last_seat() -> None:
 
 
 @pytest.mark.parametrize(
-    "launch",
+    ("launch", "tiled"),
     [
-        ["dev-manager", "test-writer", "developer", "code-reviewer"],  # a fresh team
-        ["code-reviewer"],  # a re-run adds the one missing seat
+        (["developer", "reviewer"], True),  # a fresh team
+        # Tiling needs both seats' panes from this run; a reviewer-only re-run keeps its split.
+        (["reviewer"], False),
     ],
-    ids=["fresh-team", "re-run-adds-a-seat"],
+    ids=["fresh-team", "reviewer-only-re-run"],
 )
-def test_devteam_tab_stays_tiled_after_any_seat_launch(launch: list[str]) -> None:
+def test_devteam_tiles_the_team_tab_only_when_both_seats_launch(
+    launch: list[str], tiled: bool
+) -> None:
     arrange = _arrange_steps()
     assert len(arrange) == 1, arrange
     step = next(step for step in DEVTEAM.steps if step.id == arrange[0])
     context = _placement_context(launch=launch, tab_exists=True)
     for seat in launch:
         context["steps"][seat] = {"output": {"pane_ref": f"pane-{seat}"}}
-    assert RENDERER.should_run_step(step, context), launch
-    assert step.mcp is not None and step.mcp.arguments is not None
-    arguments = RENDERER.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
-    assert arguments.get("layout") == "tiled", arguments
-    assert "Dev Team - #25128" in str(arguments.get("tab")), arguments
+    assert RENDERER.should_run_step(step, context) is tiled, launch
+    if tiled:
+        assert step.mcp is not None and step.mcp.arguments is not None
+        arguments = RENDERER.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
+        assert arguments.get("layout") == "tiled", arguments
+        assert "Dev Team - #25128" in str(arguments.get("tab")), arguments
 
 
 def _pipeline(name: str) -> PipelineDefinition:
