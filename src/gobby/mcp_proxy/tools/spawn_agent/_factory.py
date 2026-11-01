@@ -12,8 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from gobby.agents.team_admission_records import SeatTarget, TeamAdmissionRefused
-from gobby.agents.team_dispatch import dispatch_for_caller, record_dispatch
+from gobby.agents.team_admission_records import SeatTarget
 
 # A module reference: remote_spawn imports this package, so its names may not exist yet.
 from gobby.hub import remote_spawn
@@ -21,7 +20,6 @@ from gobby.hub.machine_routing import RoutedMachine
 from gobby.hub.node_client import NodeCommandError
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.project_context import get_project_context
-from gobby.utils.uuid_validation import parse_uuid_reference
 from gobby.workflows.agent_resolver import AgentResolutionError
 from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -60,8 +58,8 @@ _PROJECT_CONTEXT_ERRORS: tuple[type[Exception], ...] = (
     ValueError,
 )
 _UNRESOLVED_PARENT_PROJECT = "_unresolved_parent_project"
-# Keys a launch may carry in seat_context. team_id is only checked against the caller's scope.
-SEAT_CONTEXT_KEYS = frozenset({"worktree", "first_job", "team_id"})
+# Prompt-only keys a launch may carry in seat_context.
+SEAT_CONTEXT_KEYS = frozenset({"worktree", "first_job"})
 
 
 def _project_id_from_context(ctx: dict[str, Any] | None) -> str | None:
@@ -398,10 +396,8 @@ def create_spawn_agent_registry(
             machine: Machine that runs the agent. Defaults to the caller's machine; another
                 machine routes the run to its node. Refused with ``machine_not_owned`` unless
                 the caller owns that machine.
-            seat_context: Prompt-only launch assignments: worktree and first_job. team_id names
-                the team the seat joins; it must be the caller's own dispatch scope, and the
-                caller's binding still decides that scope. Cannot set workflow controls or
-                runtime identity.
+            seat_context: Prompt-only launch assignments: worktree and first_job.
+                Cannot set workflow controls, team membership or runtime identity.
             title: Automatic session and pane title when no task is claimed. Returns
                 after task close or clear; existing manual titles take precedence.
 
@@ -495,41 +491,6 @@ def create_spawn_agent_registry(
                 return invocation_reply
         elif reserved_run_id is not None:
             return {"success": False, "error": "reserved_run_id requires a pipeline caller"}
-
-        # An epic team's Dev Manager spawns inside its epic scope. A resumed reviewer is checked
-        # against the team's live seats and rebinds; any other resume reuses the seat's recorded
-        # tree, so it takes no scope. Other callers take the path below.
-        dispatch = None
-        if caller_session_id is not None and db is not None:
-            try:
-                dispatch = await asyncio.to_thread(
-                    dispatch_for_caller,
-                    db,
-                    caller_session_id,
-                    agent_body=agent_body,
-                    agent=agent,
-                    task_id=task_id,
-                    checkout_mode=checkout_mode,
-                    branch_name=branch_name,
-                    base_branch=base_branch,
-                    worktree_id=worktree_id,
-                    resume_session_id=resume_session_id,
-                )
-            except TeamAdmissionRefused as exc:
-                return {"success": False, "error": str(exc), "error_code": exc.code}
-        if seat_context is not None and "team_id" in seat_context:
-            # The named team must be the scope the caller's binding resolved to; it never sets it.
-            named_team = parse_uuid_reference(seat_context["team_id"])
-            if dispatch is None or named_team is None or str(named_team) != dispatch.team_id:
-                return {
-                    "success": False,
-                    "error": "seat_context team_id must name the caller's own team",
-                    "error_code": "team_scope",
-                }
-        if dispatch is not None:
-            resolved_parent_session_id = dispatch.parent_session_id
-            branch_name, base_branch = dispatch.branch_name, dispatch.base_branch
-            worktree_id = dispatch.worktree_id
 
         # Compose prompt — hooks inject agent instructions via session_start,
         # so no preamble prepend needed here.
@@ -777,7 +738,6 @@ def create_spawn_agent_registry(
             checkout_mode=checkout_mode,
             branch_name=branch_name,
             base_branch=base_branch,
-            worktree_dir_name=dispatch.worktree_dir_name if dispatch is not None else None,
             clone_id=clone_id,
             worktree_id=worktree_id,
             cleanup_isolation_on_failure=cleanup_isolation_on_failure,
@@ -819,9 +779,6 @@ def create_spawn_agent_registry(
             ),
             project_context_authoritative=project_context_authoritative,
         )
-        if dispatch is not None and db is not None:
-            await asyncio.to_thread(record_dispatch, db, dispatch, result)
-
         return result
 
     return registry

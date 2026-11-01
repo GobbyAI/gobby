@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from pydantic import JsonValue
 
 from gobby.storage.hub.protocol import HubDatabase, TaskLifecycleMutation
 from gobby.storage.tasks._de_escalation import (
@@ -44,7 +45,7 @@ from gobby.storage.tasks._transitions import (
 )
 
 if TYPE_CHECKING:
-    from gobby.workflows.agent_models import AgentDefinitionBody
+    pass
 
 
 class TaskTransitionsMixin:
@@ -187,28 +188,26 @@ class TaskTransitionsMixin:
         self,
         task_id: str,
         reason: str | None = None,
-        force: bool = False,
         closed_in_session_id: str | None = None,
         closed_commit_sha: str | None = None,
         closed_ancestors: list[str] | None = None,
         expected_updated_at: datetime | None = None,
+        expected_closure_revision: str | None = None,
+        closure_facts: dict[str, JsonValue] | None = None,
         closing_note: str | None = None,
-        closer_definition: AgentDefinitionBody | None = None,
-        commit_paths: Sequence[str] = (),
     ) -> Task:
         """Close a task."""
         _close_task(
             self.db,
             task_id=task_id,
             reason=reason,
-            force=force,
             closed_in_session_id=closed_in_session_id,
             closed_commit_sha=closed_commit_sha,
             closed_ancestors=closed_ancestors,
             expected_updated_at=expected_updated_at,
+            expected_closure_revision=expected_closure_revision,
+            closure_facts=closure_facts,
             closing_note=closing_note,
-            closer_definition=closer_definition,
-            commit_paths=commit_paths,
         )
         self._notify_listeners()
         return self.get_task(task_id)
@@ -219,14 +218,13 @@ class TaskTransitionsMixin:
         commit_sha: str,
         *,
         reason: str | None = None,
-        force: bool = False,
         closed_in_session_id: str | None = None,
         cwd: str | Path | None = None,
         expected_updated_at: datetime | None = None,
+        expected_closure_revision: str | None = None,
+        closure_facts: dict[str, JsonValue] | None = None,
         closed_ancestors: list[str] | None = None,
         closing_note: str | None = None,
-        closer_definition: AgentDefinitionBody | None = None,
-        commit_paths: Sequence[str] = (),
     ) -> Task:
         """Link a commit and close the task in one transaction.
 
@@ -239,7 +237,7 @@ class TaskTransitionsMixin:
             raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
         with self.db.transaction_immediate(TaskLifecycleMutation(task_id=task_id)) as conn:
             row = conn.execute(
-                "SELECT closed_at, updated_at, commits FROM tasks WHERE id = %s FOR UPDATE",
+                "SELECT closed_at, updated_at, commits FROM tasks WHERE id = %s FOR NO KEY UPDATE",
                 (task_id,),
             ).fetchone()
             if row is None:
@@ -254,23 +252,31 @@ class TaskTransitionsMixin:
                 for sha in linked
                 if not (sha.startswith(short_sha) or short_sha.startswith(sha))
             ]
-            if not _link_commit(self.db, task_id, short_sha) and linked[-1] in others:
-                # The named commit becomes the tip only when it descends from every
-                # other link, so an older commit never bypasses newer work (#25160).
-                if descends_from_all(short_sha, others, cwd=cwd):
-                    _move_commit_to_tip(self.db, task_id, short_sha)
+            named = [sha for sha in linked if sha not in others]
+            move_to_tip = bool(named and linked[-1] in others) and descends_from_all(
+                short_sha, others, cwd=cwd
+            )
+            proposed = (
+                [*others, *named] if move_to_tip else (linked if named else [*linked, short_sha])
+            )
+            # Evaluate one proposed state before either mutation. The close and
+            # canonical link commit together, so policy never sees a different
+            # task.commits merely because this transaction adds its own link.
             _close_task(
                 self.db,
                 task_id=task_id,
                 reason=reason,
-                force=force,
                 closed_in_session_id=closed_in_session_id,
                 closed_commit_sha=commit_sha,
+                expected_updated_at=expected_updated_at,
+                expected_closure_revision=expected_closure_revision,
+                closure_facts=closure_facts,
+                prospective_commits=proposed,
                 closed_ancestors=closed_ancestors,
                 closing_note=closing_note,
-                closer_definition=closer_definition,
-                commit_paths=commit_paths,
             )
+            if not _link_commit(self.db, task_id, short_sha) and move_to_tip:
+                _move_commit_to_tip(self.db, task_id, short_sha)
         self._notify_listeners()
         return self.get_task(task_id)
 

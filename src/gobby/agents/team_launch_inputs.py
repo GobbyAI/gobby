@@ -16,9 +16,5 @@ def reviewer_refusal(db: HubDatabase, project_id: str | None, reviewer_agent: st
     definition = AgentDefinitionManager(db).get_by_name(reviewer_agent, project_id)
     if definition is None or not definition.enabled:
         return f"reviewer_agent {reviewer_agent} is not an enabled definition"
-    body = AgentDefinitionBody.model_validate(
-        {**definition.definition_json, "name": definition.name}
-    )
-    if "review" not in body.task_step_writes:
-        return f"reviewer_agent {reviewer_agent} lacks the review step grant"
+    AgentDefinitionBody.model_validate({**definition.definition_json, "name": definition.name})
     return None

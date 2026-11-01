@@ -1,18 +1,17 @@
-"""A team manager dispatches leaf developers and reviewers inside its epic (addendum 8.2)."""
+"""Declared coordinator authority and safe task-team worktree adoption."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.agents.runbook_seats import check_runbook_seats
 from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding
 from gobby.agents.team_lifecycle import managed_task_team
-from gobby.mcp_proxy.tools.runbook_seat_tools import runbook_seat_stores
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions import AgentDefinitionManager
@@ -20,9 +19,8 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.storage.workspaces import WorkspaceManager
 from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.utils.machine_id import require_machine_id
+from gobby.tasks.land_commit import land_candidate, task_landing_target
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.worktrees.deletion import (
     DeletionSurface,
@@ -43,22 +41,9 @@ from tests.fixtures.team_case import (
 )
 
 pytestmark = pytest.mark.unit
-
-# make_team_world stubs the definition loader; these tests need the installed definitions.
 _REAL_AGENT_BODY = _factory._load_agent_body
 LEAF_TITLE = "Wire the scroll handler"
-LONG_LEAF_TITLE = "Teach the terminal pane to keep its scroll position across reconnects"
-LONG_LEAF_SLUG = "teach-the-terminal-pane-to-keep-its-scro"
-# Definitions by their step grants; tech-writer grants nothing a team seat writes.
-DEFINITIONS: dict[str, tuple[str, ...]] = {
-    "developer": ("implementation",),
-    "test-writer": ("test",),
-    "fixture-test-writer": ("test",),
-    "code-reviewer": ("review",),
-    "docs-reviewer": ("review",),
-    "research-reviewer": ("review",),
-    "tech-writer": (),
-}
+DEFINITIONS: dict[str, tuple[str, ...]] = {"developer": ("implementation",)}
 
 
 @dataclass
@@ -105,10 +90,11 @@ def world(
     definitions = AgentDefinitionManager(temp_db)
     for name, steps in DEFINITIONS.items():
         definitions.create(name, _body(name, steps), project_id=project_id)
-    # A synthetic Dev Manager carries the team_manager grant and spawn scope under test.
+    # A synthetic coordinator carries the team_manager grant and spawn scope under test.
     manager_body = synthetic_manager_body()
+    manager_body["name"] = "fixture-coordinator"
     manager_body["spawnable_agents"] = list(DEFINITIONS)
-    definitions.create("dev-manager", manager_body, project_id=project_id)
+    definitions.create("fixture-coordinator", manager_body, project_id=project_id)
     return world
 
 
@@ -130,7 +116,7 @@ def _body(name: str, steps: tuple[str, ...]) -> dict[str, Any]:
         "version": "1.0",
         "prompts": {"agent": f"Run the {name} seat."},
         "workflows": {"rule_selectors": {"include": []}},
-        "task_step_writes": list(steps),
+        "task_attestation_writes": list(steps),
     }
 
 
@@ -158,9 +144,9 @@ async def epic_team(
     epic: Task,
     tab_title: str | None = None,
     *,
-    manager_name: str = "dev-manager",
+    manager_name: str = "fixture-coordinator",
 ) -> EpicTeam:
-    """An admitted epic team with its running Dev Manager seat, which never claims."""
+    """An admitted epic team with its running coordinator seat, which never claims."""
     db = world.case.db
     runbook = world.child(epic)
     binding = await world.admit(runbook, epic, tab_title=tab_title or f"Dev Team - #{epic.seq_num}")
@@ -205,56 +191,10 @@ async def test_managed_task_team_uses_declared_manager_policy(
         assert managed is None
 
 
-@pytest.mark.asyncio
-async def test_pod_inherits_declared_manager_with_renamed_catalogue_seats(world: TeamWorld) -> None:
-    epic = new_task(world, TITLE, epic=True)
-    leaf = new_task(world, LEAF_TITLE, parent=epic)
-    team = await epic_team(world, epic)
-    world.finish(team.runbook)
-    pod_run = world.child(leaf, parent=team.manager)
-    pod_title = f"Fixture Pod - #{leaf.seq_num}"
-    pod = await world.admit(pod_run, leaf, parent_team_id=team.binding.team_id, tab_title=pod_title)
-    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "fixture-pod")[0]
-
-    admitted = check_runbook_seats(
-        runbook_seat_stores(world.case.db),
-        caller_session_id=pod_run.id,
-        workspace=workspace.id,
-        requested="fixture-lead,dev-manager",
-        catalogue=[
-            {"name": "fixture-lead", "title": "Lead", "agent": "dev-manager"},
-            {"name": "dev-manager", "title": "Maker", "agent": "developer"},
-        ],
-        skip_live_seats=True,
-        team_id=pod.team_id,
-        tab_title="Fallback title",
-    )
-
-    assert admitted.launch == ("dev-manager",)
-    assert admitted.live["fixture-lead"] == team.manager
-    assert admitted.tab_title == pod_title
-
-
-def reviewer_bindings(team: EpicTeam) -> dict[str, str]:
-    record = team.world.admit_step_output(team.runbook)["team"]
-    return cast(dict[str, str], record.get("reviewers"))
-
-
-def primary_bindings(team: EpicTeam) -> dict[str, str]:
-    record = team.world.admit_step_output(team.runbook)["team"]
-    return cast(dict[str, str], record.get("primaries"))
-
-
-def launched_names(launch: dict[str, Any]) -> set[str]:
-    """Every string, and every path's final name, the spawn passed to the launcher."""
-    values = {value for value in launch.values() if isinstance(value, str)}
-    return values | {Path(value).name for value in values}
-
-
 async def delete_tree(
     world: TeamWorld, worktree_id: str, merged_into: str
 ) -> WorktreeDeletionResult:
-    """The existing deletion path a Dev Manager uses for a finished sub-worktree."""
+    """The existing deletion path a coordinator uses for a finished sub-worktree."""
     db = world.case.db
 
     def git(_tree: Any) -> WorktreeGitManager:
@@ -272,468 +212,6 @@ async def delete_tree(
             task_manager=LocalTaskManager(db),
         ),
     )
-
-
-@pytest.mark.asyncio
-async def test_live_team_epic_survives_its_last_leaf_close(world: TeamWorld) -> None:
-    """A live team's epic stays open when its last leaf closes (Dev Manager ruling).
-
-    The manager holds no claim, so the parent-close cascade has nothing to stop at. The
-    team's live binding must stop it, or closing the last leaf closes the bound epic
-    before the epic tip is landed and its closing record written.
-    """
-    epic = new_task(world, "Keep the bound epic open", epic=True)
-    leaf = new_task(world, "The only leaf", parent=epic)
-    team = await epic_team(world, epic)
-    tasks = LocalTaskManager(world.case.db)
-
-    tasks.close_task(leaf.id, reason="moot", closed_in_session_id=team.manager)
-
-    assert tasks.get_task(leaf.id).closed_at is not None
-    assert tasks.get_task(epic.id).closed_at is None
-
-
-@pytest.mark.asyncio
-async def test_manager_leaf_spawns_scoped(world: TeamWorld) -> None:
-    epic = new_task(world, TITLE, epic=True)
-    leaf = new_task(world, LEAF_TITLE, parent=epic)
-    long_leaf = new_task(world, LONG_LEAF_TITLE, parent=epic)
-    busy = new_task(world, "Already in flight", parent=epic)
-    team = await epic_team(world, epic)
-
-    # A primary works in the epic worktree itself.
-    primary = await team.spawn("developer", task_id=leaf.id, worktree_id=team.binding.worktree_id)
-    assert primary.get("success") is True, primary
-    assert world.launches[-1]["worktree_id"] == team.binding.worktree_id
-    assert world.launches[-1].get("branch_name") is None
-
-    # Parallel leaves need the full pod, never a developer-only sub-worktree.
-    before = len(world.launches)
-    sub = await team.spawn("developer", task_id=long_leaf.id, checkout_mode="worktree")
-    assert sub.get("error_code") == "team_pod_required", sub
-    assert len(world.launches) == before
-
-    pod_run = world.child(long_leaf, parent=team.manager)
-    pod = await world.admit(pod_run, long_leaf, parent_team_id=team.binding.team_id)
-    assert pod.branch == f"epic/{epic.seq_num}/{long_leaf.seq_num}"
-    assert pod.base_branch == team.binding.branch
-    assert tree_of(pod).name == f"wt-epic-{epic.seq_num}-{long_leaf.seq_num}-{LONG_LEAF_SLUG}"
-    assert len(LONG_LEAF_SLUG) == 40
-    assert git_in(tree_of(pod), "rev-parse", "HEAD") == git_in(
-        tree_of(team.binding), "rev-parse", "HEAD"
-    )
-    competing = world.child(long_leaf, parent=team.manager)
-    with pytest.raises(TeamAdmissionRefused) as refused:
-        await world.admit(competing, long_leaf, parent_team_id=team.binding.team_id)
-    assert refused.value.code == "team_exists"
-
-    # Out of scope: another task, a definition without a team grant, an in-flight leaf.
-    outside = new_task(world, "Outside the epic")
-    with pytest.raises(TeamAdmissionRefused) as refused:
-        await world.admit(
-            world.child(outside, parent=team.manager), outside, parent_team_id=team.binding.team_id
-        )
-    assert refused.value.code == "pod_parent_invalid"
-    in_flight_seat = world.case.session("developer", parent=team.runbook.id)
-    LocalTaskManager(world.case.db).claim_task(busy.id, in_flight_seat, force=True)
-    before = len(world.launches)
-    for agent, target in (
-        ("developer", {"task_id": outside.id, "checkout_mode": "worktree"}),
-        ("tech-writer", {"task_id": leaf.id, "checkout_mode": "worktree"}),
-        ("developer", {"task_id": busy.id, "checkout_mode": "worktree"}),
-    ):
-        reply = await team.spawn(agent, **target)
-        assert reply.get("success") is not True, (agent, target, reply)
-    assert len(world.launches) == before
-
-
-@pytest.mark.asyncio
-async def test_manager_names_only_its_own_team_in_seat_context(world: TeamWorld) -> None:
-    epic = new_task(world, TITLE, epic=True)
-    leaf = new_task(world, LEAF_TITLE, parent=epic)
-    team = await epic_team(world, epic)
-    other_epic = new_task(world, "Other epic", epic=True)
-    other_leaf = new_task(world, "Other epic leaf", parent=other_epic)
-    other = await epic_team(world, other_epic)
-    launches = len(world.launches)
-
-    # Another team, a malformed team, and a leaf of another epic are refused unlaunched. These run
-    # before the team's primary exists, so the refusal reason is the naming check itself.
-    refused_team = await team.spawn(
-        "developer", task_id=leaf.id, seat_context={"team_id": other.binding.team_id}
-    )
-    assert refused_team.get("error_code") == "team_scope", refused_team
-    malformed = await team.spawn("developer", task_id=leaf.id, seat_context={"team_id": "x"})
-    assert malformed.get("error_code") == "team_scope", malformed
-    foreign_leaf = await team.spawn(
-        "developer", task_id=other_leaf.id, seat_context={"team_id": other.binding.team_id}
-    )
-    assert foreign_leaf.get("success") is not True, foreign_leaf
-    assert len(world.launches) == launches
-
-    # A seat the team holds no grant for stays refused even when it names the team.
-    out_of_scope = await team.spawn(
-        "tech-writer", task_id=leaf.id, seat_context={"team_id": team.binding.team_id}
-    )
-    assert out_of_scope.get("error_code") == "seat_not_granted", out_of_scope
-    assert len(world.launches) == launches
-
-    # Naming the caller's own team admits the seat into that team's tree, as the procedure says.
-    own = await team.spawn(
-        "developer", task_id=leaf.id, seat_context={"team_id": team.binding.team_id}
-    )
-    assert own.get("success") is True, own
-    assert len(world.launches) == launches + 1
-    assert world.launches[-1]["worktree_id"] == team.binding.worktree_id
-
-    # The admitted run is now the team's primary, so a second fresh seat for the team is refused.
-    second = await team.spawn(
-        "developer", task_id=leaf.id, seat_context={"team_id": team.binding.team_id}
-    )
-    assert second.get("error_code") == "primary_live", second
-    assert len(world.launches) == launches + 1
-
-    # A session that is not the team's manager cannot name the team to spawn into it.
-    developer = world.case.session("developer", parent=team.runbook.id)
-    outsider = await world.direct_spawn(
-        developer,
-        agent="developer",
-        task_id=leaf.id,
-        seat_context={"team_id": team.binding.team_id},
-    )
-    assert outsider.get("success") is not True, outsider
-    assert len(world.launches) == launches + 1
-
-
-@pytest.mark.asyncio
-async def test_one_live_primary_across_implementation_domains(world: TeamWorld) -> None:
-    """Parallel leaves use pods even when their implementation domains differ."""
-    epic = new_task(world, TITLE, epic=True)
-    backend = new_task(world, LEAF_TITLE, parent=epic, domain="backend")
-    second_backend = new_task(world, "Second backend leaf", parent=epic, domain="backend")
-    frontend = new_task(world, "Frontend leaf", parent=epic, domain="frontend")
-    team = await epic_team(world, epic)
-    tree = team.binding.worktree_id
-
-    first = await team.spawn("developer", task_id=backend.id, worktree_id=tree)
-    assert first.get("success") is True, first
-    refused = await team.spawn("developer", task_id=second_backend.id, worktree_id=tree)
-    assert refused.get("error_code") == "primary_live", refused
-    assert primary_bindings(team) == {"backend": first["run_id"]}
-
-    other = await team.spawn("developer", task_id=frontend.id, worktree_id=tree)
-    assert other.get("error_code") == "primary_live", other
-    run = world.child(second_backend, parent=team.manager)
-    pod = await world.admit(run, second_backend, parent_team_id=team.binding.team_id)
-    assert pod.worktree_id != tree
-    assert primary_bindings(team) == {"backend": first["run_id"]}
-
-
-@pytest.mark.asyncio
-async def test_runbook_primary_prevents_extra_domain_primary(world: TeamWorld) -> None:
-    epic = new_task(world, TITLE, epic=True)
-    leaf = new_task(world, "Frontend leaf", parent=epic, domain="frontend")
-    team = await epic_team(world, epic)
-    primary = running_seat(world, team.runbook, "developer")
-    assert primary_bindings(team) == {}
-
-    refused = await team.spawn("developer", task_id=leaf.id, worktree_id=team.binding.worktree_id)
-    assert refused.get("error_code") == "primary_live", refused
-
-    assert primary.agent_run_id is not None
-    world.case.db.execute(
-        "UPDATE agent_runs SET worktree_id = %s WHERE id = %s",
-        (team.binding.worktree_id, primary.agent_run_id),
-    )
-    LocalAgentRunManager(world.case.db).complete(primary.agent_run_id)
-    replacement = await team.spawn(
-        "developer", task_id=leaf.id, worktree_id=team.binding.worktree_id
-    )
-    assert replacement.get("success") is True, replacement
-
-    before = len(world.launches)
-    resumed = await team.spawn("developer", resume_session_id=primary.id)
-    assert resumed.get("error_code") == "primary_live", resumed
-    assert len(world.launches) == before
-
-    LocalAgentRunManager(world.case.db).complete(replacement["run_id"])
-    resumed = await team.spawn("developer", resume_session_id=primary.id)
-    assert resumed.get("success") is True, resumed
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("existing", ["runbook", "runbook_pending", "pending", "running"])
-@pytest.mark.parametrize("agent", ["test-writer", "fixture-test-writer"])
-async def test_one_primary_test_writer(world: TeamWorld, existing: str, agent: str) -> None:
-    epic = new_task(world, TITLE, epic=True)
-    leaf = new_task(world, LEAF_TITLE, parent=epic)
-    team = await epic_team(world, epic)
-    runs = LocalAgentRunManager(world.case.db)
-    if existing == "runbook":
-        seat = running_seat(world, team.runbook, "test-writer")
-        assert seat.agent_run_id is not None
-        run_id = seat.agent_run_id
-    elif existing in {"pending", "runbook_pending"}:
-        run_id = runs.create(
-            parent_session_id=team.runbook.id if existing == "runbook_pending" else team.manager,
-            provider="claude",
-            prompt="Write the primary tests.",
-            agent_name="test-writer",
-            worktree_id=team.binding.worktree_id,
-        ).id
-    else:
-        first = await team.spawn("test-writer", task_id=leaf.id)
-        assert first.get("success") is True, first
-        run_id = first["run_id"]
-    before = len(world.launches)
-
-    refused = await team.spawn(agent, task_id=leaf.id)
-
-    assert refused.get("error_code") == "test_seat_live", refused
-    assert len(world.launches) == before
-    runs.complete(run_id)
-    replacement = await team.spawn(agent, task_id=leaf.id)
-    assert replacement.get("success") is True, replacement
-    assert world.launches[-1]["worktree_id"] == team.binding.worktree_id
-
-
-@pytest.mark.asyncio
-async def test_resumed_primary_test_writer_waits_for_replacement(world: TeamWorld) -> None:
-    epic = new_task(world, TITLE, epic=True)
-    new_task(world, LEAF_TITLE, parent=epic)
-    team = await epic_team(world, epic)
-    seat = running_seat(world, team.runbook, "test-writer")
-    assert seat.agent_run_id is not None
-    runs = LocalAgentRunManager(world.case.db)
-    runs.complete(seat.agent_run_id)
-    replacement = await team.spawn("test-writer")
-    assert replacement.get("success") is True, replacement
-    before = len(world.launches)
-
-    refused = await team.spawn("test-writer", resume_session_id=seat.id)
-
-    assert refused.get("error_code") == "test_seat_live", refused
-    assert len(world.launches) == before
-    runs.complete(replacement["run_id"])
-    resumed = await team.spawn("test-writer", resume_session_id=seat.id)
-    assert resumed.get("success") is True, resumed
-
-
-@pytest.mark.asyncio
-async def test_ended_primary_frees_its_domain_and_no_domain_is_fullstack(
-    world: TeamWorld,
-) -> None:
-    """A leaf without a domain takes the fullstack slot; an ended primary frees its slot."""
-    epic = new_task(world, TITLE, epic=True)
-    undomained = new_task(world, LEAF_TITLE, parent=epic)
-    fullstack = new_task(world, "Fullstack leaf", parent=epic, domain="fullstack")
-    team = await epic_team(world, epic)
-    tree = team.binding.worktree_id
-
-    first = await team.spawn("developer", task_id=undomained.id, worktree_id=tree)
-    assert first.get("success") is True, first
-    refused = await team.spawn("developer", task_id=fullstack.id, worktree_id=tree)
-    assert refused.get("error_code") == "primary_live", refused
-
-    LocalAgentRunManager(world.case.db).complete(first["run_id"])
-    replaced = await team.spawn("developer", task_id=fullstack.id, worktree_id=tree)
-    assert replaced.get("success") is True, replaced
-    assert primary_bindings(team) == {"fullstack": replaced["run_id"]}
-
-
-@pytest.mark.asyncio
-async def test_epic_manager_resumes_its_seat_outside_dispatch(world: TeamWorld) -> None:
-    """A resume names a stored seat and reuses its tree, so dispatch takes no part in it."""
-    db = world.case.db
-    epic = new_task(world, TITLE, epic=True)
-    leaf = new_task(world, LEAF_TITLE, parent=epic)
-    team = await epic_team(world, epic)
-    seat = world.case.session("developer", parent=team.runbook.id)
-    LocalAgentRunManager(db).create(
-        parent_session_id=team.runbook.id,
-        provider="claude",
-        prompt="Implement the leaf.",
-        agent_name="developer",
-        child_session_id=seat,
-        task_id=leaf.id,
-    )
-    SessionVariableManager(db).merge_variables(seat, {"_agent_type": "developer"})
-
-    resumed = await team.spawn("developer", resume_session_id=seat)
-
-    assert resumed.get("success") is True, resumed
-    assert world.launches[-1]["resume_session_id"] == seat
-
-
-def stored_reviewer_seat(world: TeamWorld, team: EpicTeam, agent: str) -> str:
-    """An ended reviewer seat with a stored run, which a resume names."""
-    seat = world.case.session(agent, parent=team.runbook.id)
-    LocalAgentRunManager(world.case.db).create(
-        parent_session_id=team.runbook.id,
-        provider="claude",
-        prompt="Review the team tree.",
-        agent_name=agent,
-        child_session_id=seat,
-    )
-    SessionVariableManager(world.case.db).merge_variables(seat, {"_agent_type": agent})
-    return seat
-
-
-def stored_primary_seat(world: TeamWorld, team: EpicTeam, leaf: Task, tree: str) -> str:
-    """An ended developer seat whose run worked the leaf in the team tree, which a resume names."""
-    seat = world.case.session("developer", parent=team.runbook.id)
-    runs = LocalAgentRunManager(world.case.db)
-    run = runs.create(
-        parent_session_id=team.runbook.id,
-        provider="claude",
-        prompt="Work the leaf.",
-        agent_name="developer",
-        child_session_id=seat,
-        task_id=leaf.id,
-        worktree_id=tree,
-    )
-    runs.start(run.id)
-    runs.complete(run.id)
-    world.case.db.execute("UPDATE sessions SET agent_run_id = %s WHERE id = %s", (run.id, seat))
-    SessionVariableManager(world.case.db).merge_variables(seat, {"_agent_type": "developer"})
-    return seat
-
-
-@pytest.mark.asyncio
-async def test_resumed_reviewer_is_refused_beside_a_live_seat(world: TeamWorld) -> None:
-    """A resume joins the team's one live seat per definition, as a fresh spawn does."""
-    epic = new_task(world, TITLE, epic=True)
-    new_task(world, "Code leaf", parent=epic)
-    team = await epic_team(world, epic)
-    live = await team.spawn("code-reviewer", worktree_id=team.binding.worktree_id)
-    assert live.get("success") is True, live
-    seat = stored_reviewer_seat(world, team, "code-reviewer")
-    before = len(world.launches)
-
-    resumed = await team.spawn("code-reviewer", resume_session_id=seat)
-
-    assert resumed.get("success") is not True, resumed
-    assert resumed.get("error_code") == "reviewer_seat_live"
-    assert len(world.launches) == before
-    assert reviewer_bindings(team) == {"code-reviewer": live["run_id"]}
-
-
-@pytest.mark.asyncio
-async def test_resumed_reviewer_takes_its_definitions_binding(world: TeamWorld) -> None:
-    """A resumed reviewer's new run replaces the ended one in its definition's binding."""
-    epic = new_task(world, TITLE, epic=True)
-    new_task(world, "Code leaf", parent=epic)
-    team = await epic_team(world, epic)
-    fresh = await team.spawn("code-reviewer", worktree_id=team.binding.worktree_id)
-    assert fresh.get("success") is True, fresh
-    LocalAgentRunManager(world.case.db).complete(fresh["run_id"])
-    seat = stored_reviewer_seat(world, team, "code-reviewer")
-
-    resumed = await team.spawn("code-reviewer", resume_session_id=seat)
-
-    assert resumed.get("success") is True, resumed
-    assert reviewer_bindings(team) == {"code-reviewer": resumed["run_id"]}
-
-
-@pytest.mark.asyncio
-async def test_resumed_reviewer_keeps_its_stored_definition(world: TeamWorld) -> None:
-    """A resume may not retype a reviewer seat onto another reviewer definition."""
-    epic = new_task(world, TITLE, epic=True)
-    new_task(world, "Code leaf", parent=epic)
-    team = await epic_team(world, epic)
-    seat = stored_reviewer_seat(world, team, "code-reviewer")
-    before = len(world.launches)
-
-    resumed = await team.spawn("docs-reviewer", resume_session_id=seat)
-
-    assert resumed.get("success") is not True, resumed
-    assert resumed.get("error_code") == "seat_definition_mismatch"
-    assert len(world.launches) == before
-    assert reviewer_bindings(team) == {}
-
-
-@pytest.mark.asyncio
-async def test_resumed_reviewer_cannot_be_retyped_as_a_maker(world: TeamWorld) -> None:
-    """A bound Dev Manager may not resume a reviewer seat as a developer."""
-    epic = new_task(world, TITLE, epic=True)
-    new_task(world, LEAF_TITLE, parent=epic)
-    team = await epic_team(world, epic)
-    seat = stored_reviewer_seat(world, team, "code-reviewer")
-    before = len(world.launches)
-
-    resumed = await team.spawn("developer", resume_session_id=seat)
-
-    assert resumed.get("error_code") == "seat_definition_mismatch", resumed
-    assert len(world.launches) == before
-    assert reviewer_bindings(team) == {}
-    assert primary_bindings(team) == {}
-
-
-@pytest.mark.asyncio
-async def test_resumed_primary_takes_its_domain_slot(world: TeamWorld) -> None:
-    """A resumed primary rebinds its implementation domain when no live primary holds it."""
-    epic = new_task(world, TITLE, epic=True)
-    backend = new_task(world, LEAF_TITLE, parent=epic, domain="backend")
-    team = await epic_team(world, epic)
-    seat = stored_primary_seat(world, team, backend, tree_id_of(team.binding))
-
-    resumed = await team.spawn("developer", resume_session_id=seat)
-
-    assert resumed.get("success") is True, resumed
-    assert primary_bindings(team) == {"backend": resumed["run_id"]}
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("live_domain", ["backend", "frontend"])
-async def test_resumed_primary_refused_beside_a_live_primary(
-    world: TeamWorld, live_domain: str
-) -> None:
-    """A resume cannot add a primary beside a live seat, even across domains."""
-    epic = new_task(world, TITLE, epic=True)
-    backend = new_task(world, LEAF_TITLE, parent=epic, domain="backend")
-    second_backend = new_task(world, "Other leaf", parent=epic, domain=live_domain)
-    team = await epic_team(world, epic)
-    tree = tree_id_of(team.binding)
-    seat = stored_primary_seat(world, team, backend, tree)
-    live = await team.spawn("developer", task_id=second_backend.id, worktree_id=tree)
-    assert live.get("success") is True, live
-    before = len(world.launches)
-
-    resumed = await team.spawn("developer", resume_session_id=seat)
-
-    assert resumed.get("error_code") == "primary_live", resumed
-    assert len(world.launches) == before
-    assert primary_bindings(team) == {live_domain: live["run_id"]}
-
-
-@pytest.mark.asyncio
-async def test_single_team_manager_spawns_no_fresh_seat(world: TeamWorld) -> None:
-    """A single-task team runs the redesign flow: its runbook starts the seats, and its manager
-    only resumes them. A fresh spawn of a seat type the team never ran is refused, never launched;
-    relaunching a lost seat is covered by test_pod_manager_relaunches_a_lost_seat_into_the_pod_tab."""
-    db = world.case.db
-    task = new_task(world, "Single task")
-    runbook = world.child(task)
-    await world.admit(runbook, task)
-    manager = world.case.session("dev-manager", parent=runbook.id)
-    runs = LocalAgentRunManager(db)
-    run = runs.create(
-        parent_session_id=runbook.id,
-        provider="claude",
-        prompt="Manage the task.",
-        agent_name="dev-manager",
-        child_session_id=manager,
-        task_id=task.id,
-    )
-    runs.start(run.id)
-    SessionVariableManager(db).merge_variables(manager, {"_agent_type": "dev-manager"})
-    SessionManager(db).update_terminal_pickup_metadata(manager, agent_run_id=run.id)
-    launches = len(world.launches)
-
-    refused = await world.direct_spawn(manager, agent="developer", task_id=task.id)
-
-    assert refused.get("error_code") == "team_manager_scope", refused
-    assert len(world.launches) == launches
 
 
 @pytest.mark.asyncio
@@ -777,39 +255,6 @@ async def test_merged_leaf_tree_cleanup(world: TeamWorld) -> None:
     assert not refused.success, refused
     assert open_path.exists()
     assert world.case.git("branch", "--list", open_branch) != ""
-
-
-@pytest.mark.asyncio
-async def test_routed_reviewer_bindings(world: TeamWorld) -> None:
-    epic = new_task(world, TITLE, epic=True)
-    new_task(world, "Code leaf", parent=epic)
-    new_task(world, "Guide leaf", parent=epic)
-    new_task(world, "Research leaf", parent=epic)
-    team = await epic_team(world, epic)
-    runs = LocalAgentRunManager(world.case.db)
-    tree = {"worktree_id": team.binding.worktree_id}
-
-    spawned: dict[str, str] = {}
-    for reviewer in ("code-reviewer", "docs-reviewer", "research-reviewer"):
-        reply = await team.spawn(reviewer, **tree)
-        assert reply.get("success") is True, (reviewer, reply)
-        assert world.launches[-1]["worktree_id"] == team.binding.worktree_id
-        spawned[reviewer] = reply["run_id"]
-    assert reviewer_bindings(team) == spawned
-
-    # A second live seat for a bound definition, and a definition without the grant, are refused.
-    before = len(world.launches)
-    for agent in ("docs-reviewer", "tech-writer"):
-        reply = await team.spawn(agent, **tree)
-        assert reply.get("success") is not True, (agent, reply)
-    assert len(world.launches) == before
-    assert reviewer_bindings(team) == spawned
-
-    # An ended reviewer is replaced in its own definition's binding.
-    runs.complete(spawned["docs-reviewer"])
-    replacement = await team.spawn("docs-reviewer", **tree)
-    assert replacement.get("success") is True, replacement
-    assert reviewer_bindings(team) == {**spawned, "docs-reviewer": replacement["run_id"]}
 
 
 def leaf_tree(
@@ -983,3 +428,47 @@ async def test_pod_adopts_its_leaf_tree_once_an_unattached_seat_has_ended(world:
 
     assert pod.worktree_id == first.worktree_id
     assert tree_of(pod) == tree_of(first)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("diverged_parent", [False, True], ids=["fast-forward", "merge"])
+async def test_leaf_lands_into_parent_team_branch(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, diverged_parent: bool
+) -> None:
+    monkeypatch.setattr("gobby.tasks.land_commit._refresh_index", AsyncMock())
+    epic = new_task(world, "Parent integration", epic=True)
+    leaf = new_task(world, "Child delivery", parent=epic)
+    team = await epic_team(world, epic)
+    child = world.child(leaf, parent=team.manager)
+    pod = await world.admit(child, leaf, parent_team_id=team.binding.team_id)
+    pod_tree = tree_of(pod)
+    epic_tree = tree_of(team.binding)
+    if diverged_parent:
+        (epic_tree / "parent.txt").write_text("independent parent work\n")
+        git_in(epic_tree, "add", "parent.txt")
+        git_in(epic_tree, "commit", "-m", f"[gobby-#{epic.seq_num}] feat: advance parent")
+    parent_tip = git_in(epic_tree, "rev-parse", "HEAD")
+    (pod_tree / "delivered.txt").write_text("delivered\n")
+    git_in(pod_tree, "add", "delivered.txt")
+    git_in(pod_tree, "commit", "-m", f"[gobby-#{leaf.seq_num}] feat: deliver child")
+    sha = git_in(pod_tree, "rev-parse", "HEAD")
+    tasks = LocalTaskManager(world.case.db)
+    tasks.link_commit(leaf.id, sha)
+    leaf = tasks.get_task(leaf.id)
+    main_tip = git_in(world.case.repo, "rev-parse", "HEAD")
+
+    assert await task_landing_target(world.case.db, leaf) == (epic_tree, team.binding.branch)
+    result = await land_candidate(
+        world.case.db, task=leaf, caller_session_id=team.manager, commit_sha=sha
+    )
+
+    assert result.get("landed") is True, result
+    landed_tip = git_in(epic_tree, "rev-parse", "HEAD")
+    assert result["mode"] == ("merge" if diverged_parent else "ff")
+    if diverged_parent:
+        assert landed_tip not in {sha, parent_tip}
+        assert git_in(epic_tree, "merge-base", "--is-ancestor", sha, landed_tip) == ""
+        assert git_in(epic_tree, "merge-base", "--is-ancestor", parent_tip, landed_tip) == ""
+    else:
+        assert landed_tip == sha
+    assert git_in(world.case.repo, "rev-parse", "HEAD") == main_tip

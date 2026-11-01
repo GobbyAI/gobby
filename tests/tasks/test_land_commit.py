@@ -11,13 +11,11 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
-from uuid import uuid4
 
 import psycopg
 import pytest
 
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
-from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -27,14 +25,13 @@ from gobby.tasks import land_commit
 from gobby.tasks.close_receipts import LANDING, list_close_receipts
 from gobby.tasks.commits import extract_task_ids_from_message
 from gobby.tasks.landing_policy import write_freeze
-from gobby.tasks.step_records import StepRecordError
 from gobby.utils.daemon_git import GitOk, GitResult, GitTimeout, daemon_git
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import add_claimed_task
 from tests.fixtures.landing_case import LandingCase, make_landing_case
-from tests.fixtures.review_approvals import grant_step_writes, reject_review
+from tests.fixtures.review_approvals import grant_step_writes
 
 pytestmark = pytest.mark.unit
 
@@ -73,280 +70,35 @@ def _intercept_fast_forward(
         yield
 
 
-async def test_stored_legacy_review_receipt_grants_no_landing(case: LandingCase) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "legacy receipt"})
+async def test_unselected_runbook_does_not_gate_landing(case: LandingCase) -> None:
+    """Selected YAML determines required evidence; core retains authority and Git integrity."""
+    sha = case.candidate("self-completion", {"docs/change.md": "self-authored change"})
     task = case.task()
     case.link(task, sha)
-    # A receipt stored before review receipts retired is unreadable history, not approval.
-    legacy = {"commit_sha": sha, "facts": {}, "kind": "independent_review_approval"}
-    case.db.execute(
-        "INSERT INTO task_comments (id, task_id, author, author_type, body) "
-        "VALUES (%s, %s, %s, 'close_receipt', %s)",
-        (str(uuid4()), task.id, case.reviewer, json.dumps({**legacy, "verdict": "LAND"})),
-    )
-    refused = await case.land(task, sha)
-    assert refused["error"] == "review_approval_missing"
-    assert list_close_receipts(case.db, task.id) == []
-    assert case.git("rev-parse", "trunk") == case.base
-
-
-async def test_approved_review_record_at_exact_tip_lands(case: LandingCase) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "reviewed record"})
-    task = case.task()
-    case.link(task, sha)
-    case.approve(task, sha)
-    landed = await case.land(task, sha)
-    assert landed["landed"] is True
-    assert landed["landed_tip"] == sha
+    result = await case.land(task, sha, caller=case.manager_for(task))
+    assert result["landed"] is True
     assert case.git("rev-parse", "trunk") == sha
 
 
 @pytest.mark.parametrize("name", ["researcher", "custom-lander"])
 @pytest.mark.parametrize("granted", [True, False])
-async def test_task_bound_landing_requires_declared_permission(
+async def test_landing_requires_declared_permission(
     case: LandingCase, name: str, granted: bool
 ) -> None:
     sha = case.candidate("lane", {"docs/change.md": "reviewed record"})
     task = case.reviewed(sha)
-    manager = case.manager_for(task)
+    caller = case.session(name)
     grant_step_writes(
-        case.db,
-        manager,
-        case.project_id,
-        name,
-        ("closing",),
+        case.db, caller, case.project_id, name, ("closing",),
         capabilities=("land_tasks",) if granted else (),
     )
-
-    result = await case.land(task, sha, caller=manager)
-
+    result = await case.land(task, sha, caller=caller)
     assert result["landed"] is granted
     if granted:
         assert case.git("rev-parse", "trunk") == sha
     else:
-        assert result["blockers"] == ["caller_not_task_manager"]
+        assert result["blockers"] == ["landing_authority_required"]
         assert case.git("rev-parse", "trunk") == case.base
-
-
-async def test_land_preview_follows_the_approval_not_a_drifted_stored_status(
-    case: LandingCase,
-) -> None:
-    """The land preview reads the approval at the exact tip, not the stored review status."""
-    sha = case.candidate("lane", {"docs/change.md": "drifted copy"})
-    task = case.task()
-    case.link(task, sha)
-    case.approve(task, sha)
-    case.db.execute("UPDATE tasks SET review_status = 'pending' WHERE id = %s", (task.id,))
-    landed = await case.land(task, sha)
-    assert landed["landed"] is True
-    assert case.git("rev-parse", "trunk") == sha
-
-
-@pytest.mark.parametrize("staleness", ["superseded_tip", "prior_epoch"])
-async def test_stale_review_record_refuses_landing(case: LandingCase, staleness: str) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "first"})
-    task = case.task()
-    case.link(task, sha)
-    case.approve(task, sha)
-    if staleness == "superseded_tip":
-        newer = case.candidate("lane-2", {"docs/change.md": "second"}, base=sha)
-        case.db.execute(
-            "UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha, newer]), task.id)
-        )
-    else:
-        # The audited reset (de-escalation) starts a new epoch; earlier records are history.
-        case.db.execute(
-            "UPDATE tasks SET review_epoch = review_epoch + 1 WHERE id = %s", (task.id,)
-        )
-    refused = await case.land(task, sha)
-    assert refused["error"] == "review_approval_missing"
-    assert case.git("rev-parse", "trunk") == case.base
-
-
-@pytest.mark.parametrize("release", ["escalation", "transfer"])
-async def test_former_claimant_cannot_land_its_own_task(case: LandingCase, release: str) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "review me"})
-    task = case.task()
-    case.link(task, sha)
-    manager = LocalTaskManager(case.db)
-    if release == "escalation":
-        manager.escalate_task(task.id, "Handed off: review pending")
-    else:
-        manager.claim_task(task.id, case.delegator, force=True)
-    case.approve(task, sha)
-    refused = await case.land(task, sha, caller=case.manager_for(task, session=case.claimant))
-    assert refused["blockers"] == ["caller_is_maker"]
-    assert case.git("rev-parse", "trunk") == case.base
-    landed = await case.land(task, sha)
-    assert landed["landed"] is True
-    assert case.git("rev-parse", "trunk") == sha
-
-
-async def test_security_review_task_refuses_code_only_approval(case: LandingCase) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "land me"})
-    task = case.task(labels=["security-review"])
-    case.link(task, sha)
-    case.approve(task, sha)
-    refused = await case.land(task, sha)
-    assert refused["landed"] is False
-    assert refused["blockers"] == ["security_review_missing"]
-    assert case.git("rev-parse", "trunk") == case.base
-
-
-@pytest.mark.parametrize("name", ["security-reviewer", "fixture-specialist"])
-@pytest.mark.parametrize("supplemental", [True, False])
-def test_review_classification_comes_from_definition(
-    case: LandingCase, name: str, supplemental: bool
-) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "review me"})
-    task = case.task()
-    case.link(task, sha)
-    reviewer = case.security_reviewer(name, granted=False, supplemental=supplemental)
-    case.approve_as(task, sha, reviewer)
-
-    stored = LocalTaskManager(case.db).get_task(task.id)
-    assert stored.review_status == ("pending" if supplemental else "valid")
-
-
-@pytest.mark.parametrize("name", ["security-reviewer", "fixture-specialist"])
-@pytest.mark.parametrize("granted", [True, False])
-async def test_security_approval_uses_declared_capability(
-    case: LandingCase, name: str, granted: bool
-) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "review me"})
-    task = case.task(labels=["security-review"])
-    case.link(task, sha)
-    case.approve(task, sha)
-    case.approve_as(task, sha, case.security_reviewer(name, granted=granted))
-
-    result = await case.land(task, sha)
-    assert result["landed"] is granted
-    if granted:
-        assert case.git("rev-parse", "trunk") == sha
-    else:
-        assert result["blockers"] == ["security_review_missing"]
-
-
-@pytest.mark.parametrize("name", ["security-reviewer", "fixture-specialist"])
-def test_supplemental_review_requires_running_definition_seat(case: LandingCase, name: str) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "review me"})
-    task = case.task()
-    case.link(task, sha)
-    with pytest.raises(StepRecordError, match="running"):
-        case.approve_as(task, sha, case.security_seat(name, granted=False))
-
-
-async def test_recorded_security_authority_survives_definition_disable(case: LandingCase) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "review me"})
-    task = case.task(labels=["security-review"])
-    case.link(task, sha)
-    case.approve(task, sha)
-    specialist = case.security_reviewer("fixture-specialist")
-    case.approve_as(task, sha, specialist)
-    definitions = AgentDefinitionManager(case.db)
-    definition = definitions.get_by_name("fixture-specialist", case.project_id)
-    assert definition is not None
-    definitions.update(definition.id, enabled=False)
-
-    result = await case.land(task, sha)
-    assert result["landed"] is True
-    assert case.git("rev-parse", "trunk") == sha
-
-
-async def test_security_review_task_lands_with_code_and_security_approvals(
-    case: LandingCase,
-) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "land me"})
-    task = case.task(labels=["security-review"])
-    case.link(task, sha)
-    case.approve(task, sha)
-    case.approve_as(task, sha, case.security_reviewer())
-    landed = await case.land(task, sha)
-    assert landed["landed"] is True
-    assert case.git("rev-parse", "trunk") == sha
-
-
-async def test_security_approval_alone_is_not_the_code_review(case: LandingCase) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "land me"})
-    task = case.task()
-    case.link(task, sha)
-    case.approve_as(task, sha, case.security_reviewer())
-    refused = await case.land(task, sha)
-    assert refused["landed"] is False
-    assert refused["blockers"] == ["review_approval_missing"]
-    assert case.git("rev-parse", "trunk") == case.base
-
-
-async def test_security_approval_after_a_code_bounce_keeps_the_bounce(case: LandingCase) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "land me"})
-    task = case.task(labels=["security-review"])
-    case.link(task, sha)
-    case.reject(task, sha)
-    case.approve_as(task, sha, case.security_reviewer())
-    stored = LocalTaskManager(case.db).get_task(task.id)
-    assert (stored.review_status, stored.review_feedback, stored.review_fail_count) == (
-        "invalid",
-        "BOUNCE: a blocking finding remains.",
-        1,
-    )
-    refused = await case.land(task, sha)
-    assert refused["landed"] is False
-    assert refused["blockers"] == ["review_approval_missing"]
-    assert case.git("rev-parse", "trunk") == case.base
-
-
-async def test_code_reviewer_bounces_a_sha_the_security_reviewer_approved(
-    case: LandingCase,
-) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "land me"})
-    task = case.task(labels=["security-review"])
-    case.link(task, sha)
-    case.approve_as(task, sha, case.security_reviewer())
-    case.reject(task, sha)
-    assert LocalTaskManager(case.db).get_task(task.id).review_status == "invalid"
-    refused = await case.land(task, sha)
-    assert refused["landed"] is False
-    assert refused["blockers"] == ["review_approval_missing"]
-
-
-async def test_security_reviewer_records_only_approvals(case: LandingCase) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "land me"})
-    task = case.task(labels=["security-review"])
-    case.link(task, sha)
-    with pytest.raises(StepRecordError, match="supplemental review records only approvals"):
-        reject_review(
-            case.db, task_id=task.id, reviewer_session_id=case.security_reviewer(), commit_sha=sha
-        )
-    assert LocalTaskManager(case.db).get_task(task.id).review_fail_count == 0
-
-
-async def test_security_approval_needs_a_running_security_reviewer_seat(case: LandingCase) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "land me"})
-    task = case.task(labels=["security-review"])
-    case.link(task, sha)
-    case.approve(task, sha)
-    with pytest.raises(StepRecordError, match="running definition seat"):
-        case.approve_as(task, sha, case.security_seat())
-    refused = await case.land(task, sha)
-    assert refused["landed"] is False
-    assert refused["blockers"] == ["security_review_missing"]
-    assert case.git("rev-parse", "trunk") == case.base
-
-
-async def test_security_approval_from_a_later_claimant_does_not_satisfy(
-    case: LandingCase,
-) -> None:
-    sha = case.candidate("lane", {"docs/change.md": "land me"})
-    task = case.task(labels=["security-review"])
-    case.link(task, sha)
-    case.approve(task, sha)
-    security = case.security_reviewer()
-    case.approve_as(task, sha, security)
-    LocalTaskManager(case.db).claim_task(task.id, security, force=True)
-    refused = await case.land(task, sha)
-    assert refused["landed"] is False
-    assert refused["blockers"] == ["security_review_missing"]
-    assert case.git("rev-parse", "trunk") == case.base
 
 
 @pytest.mark.parametrize(
@@ -401,7 +153,7 @@ async def test_fast_forward_lands_exact_candidate(case: LandingCase) -> None:
     assert result["observed_tip"] == sha
     assert result["activation_class"] == "none"
     assert "project_sync_required" not in result
-    assert result["retest_required"] is False
+    assert "retest_required" not in result
     assert case.git("rev-parse", "trunk") == sha
     assert (case.repo / "docs/change.md").read_text() == "land me"
     lander = case.manager_for(task)
@@ -410,7 +162,7 @@ async def test_fast_forward_lands_exact_candidate(case: LandingCase) -> None:
     assert receipt.commit_sha == sha
     assert receipt.facts["provenance"] == "recorded"
     manager = InterSessionMessageManager(case.db)
-    for recipient in (case.claimant, case.creator, case.delegator):
+    for recipient in (case.creator, case.delegator):
         [message] = manager.get_messages(recipient)
         assert message.from_session == lander
         assert f'Landed #{task.seq_num} "{task.title}" {sha[:10]} on trunk' in message.content
@@ -771,7 +523,7 @@ async def test_already_landed_candidate_records_landing_once(
     assert first["provenance"] == ("reflog" if recovered else "unknown")
     assert first["mode"] == (mode if recovered else "already_landed")
     assert first["activation_class"] == ("none" if recovered else "unknown")
-    assert first["retest_required"] is False
+    assert "retest_required" not in first
     if mode == "merge":
         assert first["merge_commit"] == target
     receipts = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
@@ -901,12 +653,12 @@ async def test_moved_tip_with_disjoint_paths_lands_merge_commit(case: LandingCas
 
     merge = case.git("rev-parse", "trunk")
     assert result["landed"] is True, result
-    assert (result["mode"], result["retest_required"]) == ("merge", False)
+    assert result["mode"] == "merge"
     assert result["landed_tip"] == result["merge_commit"] == merge
     assert "retest_procedure" not in result
     assert case.git("rev-list", "--parents", "-n", "1", merge).split() == [merge, moved, sha]
     assert case.git("log", "-1", "--format=%s", merge) == (
-        f"chore: land reviewed {sha[:10]} for #{task.seq_num}"
+        f"chore: land {sha[:10]} for #{task.seq_num}"
     )
     [receipt] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
     assert (receipt.facts["mode"], receipt.facts["merge_commit"]) == ("merge", merge)
@@ -1010,7 +762,7 @@ async def test_criss_cross_recovery_classifies_only_candidate_contribution(
     assert result["landed"] is True, result
     assert result["provenance"] == "reflog"
     assert result["activation_class"] == "none"
-    assert result["retest_required"] is False
+    assert "retest_required" not in result
     assert result["merge_commit"] == merged
 
 
@@ -1175,7 +927,7 @@ async def test_landing_merge_is_not_task_tagged(case: LandingCase) -> None:
     result = await case.land(task, sha)
 
     message = case.git("log", "-1", "--format=%B", result["merge_commit"])
-    assert message == f"chore: land reviewed {sha[:10]} for #{task.seq_num}"
+    assert message == f"chore: land {sha[:10]} for #{task.seq_num}"
     assert extract_task_ids_from_message(message) == []
 
 
@@ -1218,7 +970,7 @@ async def test_ref_moved_before_failure_reports_landing(case: LandingCase) -> No
     def flaky_create(
         manager: InterSessionMessageManager, from_session: str, to_session: str, content: str
     ) -> object:
-        if to_session == case.claimant:
+        if to_session == case.creator:
             raise psycopg.OperationalError("hub unavailable")
         return original_create(manager, from_session, to_session, content)
 
@@ -1244,7 +996,7 @@ async def test_ref_moved_before_failure_reports_landing(case: LandingCase) -> No
     assert "receipt_id" not in receipt_result
     assert [r for r in list_close_receipts(case.db, receipt_task.id) if r.kind == LANDING] == []
     assert message_result["landed"] is True
-    assert message_result["notification_pending"] == [case.claimant]
+    assert message_result["notification_pending"] == [case.creator]
     assert (advanced_result["landed_tip"], advanced_result["observed_tip"]) == (advanced, ahead)
     assert (late_result["landed"], late_result["landed_tip"], late_result["observed_tip"]) == (
         True,
@@ -1305,12 +1057,12 @@ async def test_project_workflow_sync_landing_and_recovery(
     assert "project_sync_required" not in recovered
     assert recovered["provenance"] == "reflog"
     assert recovered["mode"] == ("merge" if move_tip else "ff")
-    assert recovered["retest_required"] is False
+    assert "retest_required" not in recovered
     assert replay == recovered
     [receipt] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
     assert "project_sync_required" not in receipt.facts
     manager = InterSessionMessageManager(case.db)
-    [message] = manager.get_messages(case.claimant)
+    [message] = manager.get_messages(case.creator)
     assert message.content.endswith(f"activation {expected_class}")
 
 
@@ -1339,7 +1091,7 @@ async def test_exact_landing_recovery_preserves_trailer_when_diff_fails(
     assert recovered["activation_class"] == "restart"
     assert recovered["provenance"] == "reflog"
     assert recovered["mode"] == ("merge" if move_tip else "ff")
-    assert recovered["retest_required"] is False
+    assert "retest_required" not in recovered
     assert "project_sync_required" not in recovered
 
 
@@ -1400,16 +1152,16 @@ async def test_receipt_pending_recovery_preserves_original_lander(
     assert own_pending["receipt_pending"] is True
     assert own_pending["already_landed"] is True
     assert own_pending["landed_by_session_id"] == lander
-    assert own_pending["retest_required"] is False
+    assert "retest_required" not in own_pending
     assert pending["receipt_pending"] is True
     assert pending["already_landed"] is True
     assert pending["landed_by_session_id"] == lander
     assert recovered["already_landed"] is True
     assert recovered["landed_by_session_id"] == lander
-    assert recovered["retest_required"] is False
+    assert "retest_required" not in recovered
     assert replay["landed_by_session_id"] == lander
     assert replay["already_landed"] is True
-    assert replay["retest_required"] is False
+    assert "retest_required" not in replay
     assert replay["receipt_id"] == recovered["receipt_id"]
     [receipt] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
     assert receipt.facts["landed_by_session_id"] == lander
@@ -1458,7 +1210,7 @@ async def test_merge_landing_replay_needs_no_retest(case: LandingCase) -> None:
     assert first["mode"] == "merge"
     assert replay == {**first, "already_landed": True}
     assert first["already_landed"] is False
-    assert replay["retest_required"] is False
+    assert "retest_required" not in replay
     assert "retest_procedure" not in replay
     assert pending["receipt_pending"] is True
     assert (retried["mode"], retried["landed_tip"], retried["activation_class"]) == (
@@ -1466,15 +1218,14 @@ async def test_merge_landing_replay_needs_no_retest(case: LandingCase) -> None:
         pending["landed_tip"],
         pending["activation_class"],
     )
-    assert (retried["provenance"], retried["retest_required"]) == ("reflog", False)
+    assert retried["provenance"] == "reflog"
     assert (merged_b["mode"], merged_b["activation_class"]) == ("merge", "restart")
-    assert (merged_a["mode"], merged_a["retest_required"], merged_a["activation_class"]) == (
+    assert (merged_a["mode"], merged_a["activation_class"]) == (
         "merge",
-        False,
         "ui_build",
     )
     assert merged_a["merge_commit"] == merged_b["merge_commit"]
     assert (landed_ff_b["mode"], landed_ff_a["mode"]) == ("ff", "ff")
-    assert (landed_ff_a["retest_required"], landed_ff_a["activation_class"]) == (False, "ui_build")
+    assert landed_ff_a["activation_class"] == "ui_build"
     assert (landed_foreign_b["mode"], landed_foreign_a["provenance"]) == ("ff", "unknown")
     assert landed_foreign_a["mode"] == "already_landed"

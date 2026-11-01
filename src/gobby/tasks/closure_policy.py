@@ -1,0 +1,117 @@
+"""Pure evaluation of selected YAML rules over one immutable closure snapshot."""
+
+import hashlib
+import json
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
+
+from gobby.storage.definitions.rules import RuleDefinitionRow
+from gobby.tasks.attestations import TaskAttestation
+from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+from gobby.workflows.selectors import resolve_rules_for_agent
+
+
+class ClosureSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    event: Literal["task_close", "task_land"] = "task_close"
+    task: dict[str, JsonValue]
+    caller: dict[str, JsonValue] = Field(default_factory=dict)
+    reason: str = "done"
+    attestations: tuple[TaskAttestation, ...] = ()
+    facts: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ClosureDecision:
+    allowed: bool
+    blockers: tuple[str, ...]
+    policy_revision: str
+    snapshot_revision: str
+
+
+def evaluate_closure_policy(
+    snapshot: ClosureSnapshot, *, agent: AgentDefinitionBody, rules: list[RuleDefinitionRow]
+) -> ClosureDecision:
+    """Use the existing selector and expression engines, without mutable effects.
+
+    Attestation kind/result strings have no built-in meaning. YAML supplies every
+    requirement; this function supplies only snapshot queries and block semantics.
+    """
+    available = [row for row in rules if row.enabled and row.deleted_at is None]
+    selected_names = resolve_rules_for_agent(agent, available)
+    selected = sorted(
+        (
+            row
+            for row in available
+            if row.name in selected_names and row.definition_json.get("event") == snapshot.event
+        ),
+        key=lambda row: (row.priority, row.name, row.id),
+    )
+    policy_data = {
+        "agent": agent.model_dump(mode="json"),
+        "rules": [
+            {
+                "id": row.id,
+                "name": row.name,
+                "priority": row.priority,
+                "definition": row.definition_json,
+            }
+            for row in selected
+        ],
+    }
+    policy_revision = _digest(policy_data)
+    context = snapshot.model_dump(mode="json")
+    all_records = context["attestations"]
+    superseded = {record["supersedes_id"] for record in all_records if record["supersedes_id"]}
+    active = sorted(
+        (record for record in all_records if record["id"] not in superseded),
+        key=lambda record: record["sequence"],
+    )
+    context["all_attestations"] = all_records
+    context["attestations"] = active
+
+    def latest_attestation(kind: str) -> dict[str, Any]:
+        return next((record for record in reversed(active) if record["kind"] == kind), {})
+
+    evaluator = SafeExpressionEvaluator(
+        context,
+        {
+            "latest_attestation": latest_attestation,
+            "any": any,
+            "all": all,
+            "len": len,
+            "str": str,
+            "int": int,
+            "bool": bool,
+        },
+    )
+    blockers = []
+    for row in selected:
+        try:
+            body = RuleDefinitionBody.model_validate(row.definition_json)
+            if any(effect.type != "block" for effect in body.resolved_effects):
+                raise ValueError(f"{snapshot.event} rules may only return block decisions")
+            if body.when is not None and not evaluator.evaluate(body.when):
+                continue
+            for effect in body.resolved_effects:
+                if effect.when is None or evaluator.evaluate(effect.when):
+                    blockers.append(effect.reason or f"Closure blocked by {row.name}")
+        except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+            blockers.append(f"Invalid closure rule {row.name}: {exc}")
+    return ClosureDecision(
+        not blockers,
+        tuple(blockers),
+        policy_revision,
+        _digest({"snapshot": snapshot.model_dump(mode="json"), "policy": policy_revision}),
+    )
+
+
+def _digest(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()

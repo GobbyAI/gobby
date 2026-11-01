@@ -27,7 +27,6 @@ from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.skill_manager import HookSkillManager
 from gobby.hooks.webhooks import WebhookDispatcher
 from gobby.memory.manager import MemoryManager
-from gobby.sessions.mailbox_delivery import WakeDispatcherProtocol
 from gobby.sessions.transcripts import get_parser
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -142,7 +141,6 @@ class HookManagerFactory:
         memory_manager: MemoryManager | None = None,
         terminal_manager: Any | None = None,
         terminal_runtime_registry: Any | None = None,
-        wake_dispatcher: WakeDispatcherProtocol | None = None,
     ) -> HookManagerComponents:
         """Create all HookManager subsystems.
 
@@ -234,7 +232,6 @@ class HookManagerFactory:
             tool_proxy_getter,
             broadcaster,
             loop,
-            wake_dispatcher,
         )
 
         # Initialize webhooks
@@ -615,7 +612,6 @@ class HookManagerFactory:
         tool_proxy_getter: Any | None,
         broadcaster: Any | None,
         daemon_loop: asyncio.AbstractEventLoop | None,
-        wake_dispatcher: WakeDispatcherProtocol | None = None,
     ) -> _WorkflowComponents:
         from gobby.mcp_proxy.metrics_events import MetricsEventStore
         from gobby.skills.materialization import get_skill_script_materializer
@@ -654,7 +650,6 @@ class HookManagerFactory:
                 else None
             ),
             session_manager=storage.session,
-            wake_dispatcher=wake_dispatcher,
         )
 
         pipeline_executor = None

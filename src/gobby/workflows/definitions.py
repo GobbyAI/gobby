@@ -151,6 +151,8 @@ class RuleTriggerEvent(str, Enum):
     DIRECTORY_ADDED = "directory_added"
     STOP_FAILURE = "stop_failure"
     TASK_CREATED = "task_created"
+    TASK_CLOSE = "task_close"
+    TASK_LAND = "task_land"
     TASK_COMPLETED = "task_completed"
     TEAMMATE_IDLE = "teammate_idle"
     INSTRUCTIONS_LOADED = "instructions_loaded"
@@ -193,6 +195,8 @@ class RuleEffect(BaseModel):
 
     # block — prevent the action
     reason: str | None = None
+    # Pure expression over the next tool's event data and current variables.
+    recovery_when: str | None = None
     acknowledge_variable: str | None = None
     tools: list[str] | None = None
     mcp_tools: list[str] | None = None
@@ -263,6 +267,8 @@ class RuleEffect(BaseModel):
 
     @model_validator(mode="after")
     def _validate_required_fields(self) -> RuleEffect:
+        if self.recovery_when is not None and self.type != "block":
+            raise ValueError("recovery_when is only valid on block effects")
         required_fields: dict[str, tuple[str, ...]] = {
             "block": ("reason",),
             "set_variable": ("variable",),
@@ -369,7 +375,7 @@ class RuleEffect(BaseModel):
 
         selector_fields = {"tools", "mcp_tools", "command_pattern", "command_not_pattern"}
         _fields_by_type: dict[str, set[str]] = {
-            "block": {"reason", "acknowledge_variable", *selector_fields},
+            "block": {"reason", "recovery_when", "acknowledge_variable", *selector_fields},
             "set_variable": {"variable", "value", *selector_fields},
             "inject_context": {"template", *selector_fields},
             "set_display_content": {"template", *selector_fields},
@@ -467,6 +473,26 @@ class RuleDefinitionBody(BaseModel):
         if any(effect.type == "proxy_hook" for effect in self.effects):
             if self.event != RuleTriggerEvent.BEFORE_TOOL:
                 raise ValueError("proxy_hook effects are restricted to before_tool rules")
+        if any(effect.recovery_when is not None for effect in self.effects):
+            if self.event != RuleTriggerEvent.BEFORE_TOOL:
+                raise ValueError("recovery_when is restricted to before_tool rules")
+        if self.event in {RuleTriggerEvent.TASK_CLOSE, RuleTriggerEvent.TASK_LAND}:
+            if any(
+                value is not None
+                for value in (self.match, self.tools, self.agent_scope, self.audience)
+            ):
+                raise ValueError(
+                    f"{self.event.value} rules declare applicability in snapshot expressions"
+                )
+            for effect in self.effects:
+                if effect.type != "block" or set(effect.model_dump(exclude_defaults=True)) - {
+                    "type",
+                    "reason",
+                    "when",
+                }:
+                    raise ValueError(
+                        f"{self.event.value} effects allow only block, reason and when"
+                    )
         return self
 
     @property

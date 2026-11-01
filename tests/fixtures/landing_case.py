@@ -19,8 +19,8 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.attestations import AttestationSubmission, EvidenceReference, record_attestation
 from gobby.tasks.land_commit import LandingResult, land_candidate
-from gobby.tasks.step_records import TASK_STEPS, StepSubmission, record_task_step
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.review_approvals import (
@@ -30,43 +30,28 @@ from tests.fixtures.review_approvals import (
     reject_review,
 )
 
-DEV_MANAGER = "fixture-dev-manager"
-ORCHESTRATOR = "orchestrator"
+DEV_MANAGER = "default"
+ORCHESTRATOR = "default"
 SECURITY_REVIEWER = "security-reviewer"
 
 
 def bind_task_manager(
     db: HubDatabase, *, manager: str, parent: str, project_id: str, task: Task
 ) -> None:
-    """Run ``manager`` as a Dev Manager whose active agent run is bound to ``task``."""
+    """Give the fixture's completion caller declarative default authority, without a run binding."""
     grant_step_writes(
-        db,
-        manager,
-        project_id,
-        DEV_MANAGER,
-        ("closing",),
-        capabilities=("manage_task_claims", "land_tasks"),
-        team_manager=True,
-    )
-    LocalAgentRunManager(db).create(
-        parent_session_id=parent,
-        provider="claude",
-        prompt="Land the reviewed task.",
-        agent_name=DEV_MANAGER,
-        child_session_id=manager,
-        task_id=task.id,
+        db, manager, project_id, "default", ("*",),
+        capabilities=("manage_task_claims", "land_tasks", "direct_integration_commit"),
+        integration_paths=("**",),
     )
 
 
 def grant_orchestrator(db: HubDatabase, session_id: str, project_id: str) -> None:
-    """Run a registered root session as the project's Orchestrator, which writes every step."""
+    """Give a registered session the fixture's self-completing default definition."""
     grant_step_writes(
-        db,
-        session_id,
-        project_id,
-        ORCHESTRATOR,
-        TASK_STEPS,
-        capabilities=("coordinate_tasks", "manage_task_claims", "land_tasks", "close_without_work"),
+        db, session_id, project_id, "default", ("*",),
+        capabilities=("coordinate_tasks", "manage_task_claims", "land_tasks", "direct_integration_commit"),
+        integration_paths=("**",),
     )
 
 
@@ -161,20 +146,13 @@ class LandingCase:
         approve_review(self.db, task_id=task.id, reviewer_session_id=reviewer, commit_sha=sha)
 
     def implement(self, task: Task, sha: str) -> None:
-        grant_step_writes(
-            self.db, self.claimant, self.project_id, "fixture-developer", ("implementation",)
-        )
-        record_task_step(
-            self.db,
-            task_id=task.id,
-            session_id=self.claimant,
-            step="implementation",
-            submission=StepSubmission(
-                status="approved",
-                epoch=LocalTaskManager(self.db).get_task(task.id).review_epoch,
-                round_number=1,
-                feedback="Candidate implementation is complete.",
-                commit_sha=sha,
+        grant_orchestrator(self.db, self.claimant, self.project_id)
+        record_attestation(
+            self.db, task_id=task.id, session_id=self.claimant,
+            submission=AttestationSubmission(
+                kind="implementation", result="approved",
+                summary="Candidate implementation is complete.",
+                reference=EvidenceReference(scheme="git", value=sha),
             ),
         )
 
@@ -244,21 +222,15 @@ class LandingCase:
         return self.git("rev-parse", "HEAD")
 
     def manager_for(self, task: Task, session: str | None = None) -> str:
-        """Bind a Dev Manager run to ``task``; the default manager is made once per task."""
-        if session is None and task.id in self.managers:
-            return self.managers[task.id]
-        manager = session or self.session("dev-manager", parent=self.creator)
-        bind_task_manager(
-            self.db, manager=manager, parent=self.creator, project_id=self.project_id, task=task
-        )
-        if session is None:
-            self.managers[task.id] = manager
-        return manager
+        """Use the task author as the default completion caller; no manager run is created."""
+        caller = session or self.claimant
+        grant_orchestrator(self.db, caller, self.project_id)
+        return caller
 
     def orchestrator(self) -> str:
         """The project's root Orchestrator session, which writes every task step."""
         if self.orchestrator_session is None:
-            self.orchestrator_session = self.session("orchestrator")
+            self.orchestrator_session = self.session("default")
             grant_orchestrator(self.db, self.orchestrator_session, self.project_id)
         return self.orchestrator_session
 

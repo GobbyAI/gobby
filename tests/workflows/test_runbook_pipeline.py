@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
@@ -32,6 +34,7 @@ from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline_executor import PipelineExecutor, step_invocation_id
+from gobby.workflows.pipeline_inputs import input_refusal
 from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
@@ -239,7 +242,35 @@ async def test_partial_deploy_relaunches_missing_seat(temp_db: HubDatabase) -> N
     assert relaunch.spawns()[0]["placement"] == {"tab": {"workspace": "ws-1", "title": TAB_TITLE}}
 
 
-DEVTEAM_SEATS = ["dev-manager", "test-writer", "developer", "code-reviewer"]
+DEVTEAM_SEATS = ["developer", "code-reviewer"]
+
+
+async def test_project_defaults_launch_the_bundled_devteam(temp_db: HubDatabase) -> None:
+    project_rule_path = (
+        Path(__file__).resolve().parents[2] / ".gobby/workflows/rules/project-operating-policy.yaml"
+    )
+    policy = yaml.safe_load(project_rule_path.read_text())
+    [policy_effect] = [
+        effect
+        for effect in policy["rules"]["project-operating-policy"]["effects"]
+        if effect.get("variable") == "project_policy"
+    ]
+    defaults = policy_effect["value"]["launch_defaults"]["devteam"]
+    sync_bundled_pipelines(temp_db)
+    pipeline = await PipelineLoader(temp_db).load_pipeline("devteam")
+    assert pipeline is not None
+    inputs = {**defaults, "task": "task-1", "workspace": "devteam", "report_to": "report-session"}
+    assert input_refusal(pipeline, inputs) is None
+    proxy = DevteamProxy()
+    execution = await _executor(temp_db, proxy).execute(
+        pipeline,
+        inputs,
+        PROJECT_ID,
+    )
+    assert execution.status == ExecutionStatus.COMPLETED, execution
+    assert [spawn["agent"] for spawn in proxy.spawns()] == DEVTEAM_SEATS
+
+
 LAYOUT_REFUSED = {
     "success": False,
     "error": "Workspace tools act only for a session or the operator's local token",
@@ -297,6 +328,7 @@ class DevteamProxy(RunbookAgentsProxy):
                 "task_id": arguments["task"],
                 "branch": "task-branch",
                 "project_path": "/tmp/devteam",
+                "worktree": "tree-1",
                 "team": {"team_id": "team-1"},
             }
         if server == "gobby-workspaces":
@@ -326,7 +358,6 @@ async def test_devteam_run_completes_when_its_arrange_layout_is_refused(
         task="task-1",
         workspace="devteam",
         report_to="report-session",
-        reviewer_agent="code-reviewer",
     )
 
     proxy = DevteamProxy()
@@ -334,6 +365,14 @@ async def test_devteam_run_completes_when_its_arrange_layout_is_refused(
 
     assert execution.status == ExecutionStatus.COMPLETED
     assert [spawn["agent"] for spawn in proxy.spawns()] == DEVTEAM_SEATS
+    developer, reviewer = proxy.spawns()
+    assert developer["task_id"] == "task-1"
+    assert "task_id" not in reviewer
+    assert developer["project_path"] == reviewer["project_path"] == "/tmp/devteam"
+    [connect] = [call for call in proxy.calls if call["tool"] == "gobby-agents:send_message"]
+    assert connect["arguments"]["target"] == "session"
+    assert connect["arguments"]["target_id"] in reviewer["prompt"]
+    assert "independent reviewer" in connect["arguments"]["content"]
     manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
     [arrange] = [
         step for step in manager.get_steps_for_execution(execution.id) if step.step_id == "arrange"
@@ -351,7 +390,6 @@ async def test_devteam_arrange_names_the_paneless_seat_it_skipped(temp_db: HubDa
         task="task-1",
         workspace="devteam",
         report_to="report-session",
-        reviewer_agent="code-reviewer",
     )
 
     proxy = DevteamProxy(paneless=frozenset({"developer"}), layout_refused=False)
@@ -361,8 +399,6 @@ async def test_devteam_arrange_names_the_paneless_seat_it_skipped(temp_db: HubDa
     [layout] = [call for call in proxy.calls if call["tool"] == "gobby-workspaces:rebalance_tab"]
     seats = layout["arguments"]["seats"]
     assert [(seat["name"], seat["pane"] is None) for seat in seats] == [
-        ("dev-manager", False),
-        ("test-writer", False),
         ("developer", True),
         ("code-reviewer", False),
     ]
@@ -371,7 +407,7 @@ async def test_devteam_arrange_names_the_paneless_seat_it_skipped(temp_db: HubDa
         step for step in manager.get_steps_for_execution(execution.id) if step.step_id == "arrange"
     ]
     output = json.loads(arrange.output_json or "null")
-    assert output["tiled"] == ["dev-manager", "test-writer", "code-reviewer"]
+    assert output["tiled"] == ["code-reviewer"]
     assert output["skipped"] == [{"seat": "developer", "reason": "pane_missing"}]
 
 

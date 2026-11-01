@@ -8,7 +8,6 @@ from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks._close import close_eligible_parent_chain
 from gobby.storage.tasks._models import UNSET, MaybeUnset, Task
 from gobby.storage.tasks._updates import update_task_metadata as _update_task_metadata
-from gobby.tasks.criteria_text import require_validation_criteria
 from gobby.utils.datetime import utc_now
 
 
@@ -61,24 +60,6 @@ class TaskUpdateMixin:
         Task/session ownership mutations must go through the dedicated task
         transition methods so claim/session state stays coherent.
         """
-        if task_type is not UNSET or validation_criteria is not UNSET:
-            current_task = self.get_task(task_id)
-            effective_task_type = (
-                current_task.task_type if task_type is UNSET else str(task_type or "")
-            )
-            if validation_criteria is UNSET:
-                effective_criteria = current_task.validation_criteria
-            else:
-                effective_criteria = (
-                    validation_criteria if isinstance(validation_criteria, str) else None
-                )
-            effective_criteria = require_validation_criteria(
-                effective_task_type,
-                effective_criteria,
-            )
-            if validation_criteria is not UNSET:
-                validation_criteria = effective_criteria
-
         vacated_parent_id: str | None = None
         with self.db.transaction() as conn:
             moved_from = (

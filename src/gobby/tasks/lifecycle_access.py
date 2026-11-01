@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from gobby.config.tasks import TaskProtectionPolicyConfig, load_project_task_protection_policy
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import require_root
 from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
 from gobby.storage.session_models import Session
@@ -21,13 +20,6 @@ class CrossProjectTaskForbidden(ValueError):
     def __init__(self) -> None:
         # Preserve the not-found contract for refs outside the caller authority.
         super().__init__("task_not_found")
-
-
-def session_grants(db: HubDatabase, session_id: str, step: str) -> bool:
-    """Whether the enabled definition a session runs as grants ``step`` records."""
-    session = SessionManager(db).get(session_id)
-    resolved = session_agent_definition(db, session) if session is not None else None
-    return resolved is not None and step in resolved[0].task_step_writes
 
 
 def task_scope_refusal(task: Task, session_id: str, scope: AgentTaskScope) -> str | None:

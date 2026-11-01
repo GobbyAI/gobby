@@ -47,13 +47,6 @@ def _record_spawn_receipt(
     )
 
 
-def _is_team_manager(agent_body: Any) -> bool:
-    """Whether the spawned definition is a team manager, which never claims its bound task."""
-    if agent_body is None:
-        return False
-    return agent_body.workflows.variables.get("team_manager") is True
-
-
 def _title_auto_claimed_session(session_manager: Any, session_id: str, task: Any) -> None:
     """Apply the task title after spawn-time auto-claiming."""
     try:
@@ -217,18 +210,9 @@ async def finalize_executed_spawn(
         except Exception as e:
             logger.debug("Failed to fire agent_started event for %s: %s", run_id, e)
 
-        # Closing-capable managers need the run's task binding, but must stay out
-        # of claimant history so they can independently land their team's work.
-        if resolved_task_id and task_manager and _is_team_manager(agent_body):
-            logger.info(
-                "Skipping auto-claim for task %s; team managers hold no claim",
-                f"#{task_seq_num}" if task_seq_num else resolved_task_id,
-            )
-        elif (
-            resolved_task_id
-            and task_manager
-            and (agent_body is None or "closing" not in agent_body.task_step_writes)
-        ):
+        # Supplying a task requests its claim. Observers omit task_id; their
+        # pipeline can associate the task in prompts without changing ownership.
+        if resolved_task_id and task_manager:
             try:
                 task_obj = await asyncio.to_thread(task_manager.get_task, resolved_task_id)
                 if not task_obj or not is_task_actionable(task_obj):

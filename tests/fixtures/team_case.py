@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -67,7 +66,7 @@ def synthetic_manager_body() -> dict[str, Any]:
             "rule_selectors": {"include": []},
             "variables": {"team_manager": True},
         },
-        "task_step_writes": ["closing"],
+        "task_attestation_writes": ["closing"],
     }
 
 
@@ -168,8 +167,6 @@ class TeamWorld:
         task: Task,
         team_id: str | None = None,
         *,
-        fresh_reviewer: bool = False,
-        exclude_reviewers: Sequence[str] = (),
         checkout_mode: str = "worktree",
         tab_title: str | None = None,
         parent_team_id: str | None = None,
@@ -182,8 +179,6 @@ class TeamWorld:
             parent_team_id=parent_team_id,
             checkout_mode=checkout_mode,
             tab_title=tab_title,
-            fresh_reviewer=fresh_reviewer,
-            exclude_reviewers=exclude_reviewers,
         )
 
     async def spawn(self, caller: Session, **target: Any) -> dict[str, Any]:

@@ -1,8 +1,8 @@
-"""Team progress: per-task stage spans and the stall flags a Dev Manager or Orchestrator watches.
+"""Team progress: per-task participant spans and observational stall flags.
 
 A span runs from one claim boundary to the next: the first claim, each hand-off, and the close.
-A span's stage is the stage its holder takes, so a hand-off opens the span of the stage its
-recipient writes. The flags name what a monitoring loop must act on; a closed task has none.
+A span labels its holder's declared definition. Evidence kinds do not imply phases.
+A closed task has no stall flags.
 """
 
 from __future__ import annotations
@@ -19,12 +19,11 @@ from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER, SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEvent, TaskLifecycleEventManager
 from gobby.storage.team_records import EPIC_MODE
+from gobby.tasks.attestations import list_attestations
 from gobby.tasks.state_semantics import is_task_closed
-from gobby.tasks.step_records import list_task_step_records
 from gobby.workflows.agent_resolver import session_agent_definition
 
 HANDOFF_BOUND_SECONDS = 900
-STAGES = ("test", "implementation", "review", "closing")
 UNASSIGNED = "unassigned"
 _HANDED_OFF = "claim:handed_off"
 _PENDING = "claim:handoff_pending"
@@ -153,7 +152,7 @@ def _open_flags(
     if holder_id and not holder_live:
         flags.add("holder_not_live")
 
-    records = list_task_step_records(db, task.id)
+    records = list_attestations(db, task.id)
     bound = timedelta(seconds=HANDOFF_BOUND_SECONDS)
     if last is not None and not pending and now - last.created_at > bound:
         recipient = _parties(last)[1]
@@ -189,13 +188,12 @@ def _parties(event: TaskLifecycleEvent) -> tuple[str | None, str | None]:
 
 
 def _stage(db: HubDatabase, session_id: str | None) -> str:
-    """The first stage the session's definition writes, in stage order."""
+    """Label the actual participant without assigning a built-in runbook phase."""
     session: Session | None = SessionManager(db).get(session_id) if session_id else None
     definition = session_agent_definition(db, session) if session is not None else None
     if definition is None:
         return UNASSIGNED
-    writes = definition[0].task_step_writes
-    return next((stage for stage in STAGES if stage in writes), UNASSIGNED)
+    return definition[0].name
 
 
 def _seconds(begin: datetime, finish: datetime) -> float:

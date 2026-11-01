@@ -105,34 +105,24 @@ class ExclusiveFence(Protocol):
 # them first; a bare DELETE of tasks/sessions would otherwise violate the FK.
 _PROJECT_TASKS = "SELECT id FROM tasks WHERE project_id = %s"
 _PROJECT_SESSIONS = "SELECT id FROM sessions WHERE project_id = %s"
-# tasks_require_validation_criteria is NOT VALID: legacy rows without criteria
-# reject any UPDATE, so a detach that must rewrite such a row backfills a
-# placeholder rather than failing the purge.
-_LEGACY_CRITERIA_BACKFILL = (
-    "validation_criteria = CASE"
-    " WHEN task_type = 'epic' OR NULLIF(btrim(validation_criteria), '') IS NOT NULL"
-    " THEN validation_criteria"
-    " ELSE 'Legacy task: validation criteria were not recorded before they became required.'"
-    " END"
-)
 _FOREIGN_REFERENCE_DETACH_STATEMENTS: tuple[tuple[str, int], ...] = (
     (
-        f"UPDATE tasks SET parent_task_id = NULL, {_LEGACY_CRITERIA_BACKFILL}"
+        "UPDATE tasks SET parent_task_id = NULL"
         f" WHERE parent_task_id IN ({_PROJECT_TASKS}) AND project_id <> %s",
         2,
     ),
     (
-        f"UPDATE tasks SET created_in_session_id = NULL, {_LEGACY_CRITERIA_BACKFILL}"
+        "UPDATE tasks SET created_in_session_id = NULL"
         f" WHERE created_in_session_id IN ({_PROJECT_SESSIONS}) AND project_id <> %s",
         2,
     ),
     (
-        f"UPDATE tasks SET closed_in_session_id = NULL, {_LEGACY_CRITERIA_BACKFILL}"
+        "UPDATE tasks SET closed_in_session_id = NULL"
         f" WHERE closed_in_session_id IN ({_PROJECT_SESSIONS}) AND project_id <> %s",
         2,
     ),
     (
-        f"UPDATE tasks SET claimed_by_session_id = NULL, {_LEGACY_CRITERIA_BACKFILL}"
+        "UPDATE tasks SET claimed_by_session_id = NULL"
         f" WHERE claimed_by_session_id IN ({_PROJECT_SESSIONS}) AND project_id <> %s",
         2,
     ),

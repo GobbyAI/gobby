@@ -38,14 +38,14 @@ def _seat_definition(seat: str) -> AgentDefinitionBody:
             prompts={"agent": "Synthetic team manager."},
             model="claude-sonnet-5",
             capabilities=["manage_task_claims", "land_tasks", "accept_resume_retype"],
-            task_step_writes=["closing"],
+            task_attestation_writes=["closing"],
             workflows=make_agent_workflows(variables={"team_manager": True}),
         )
     return make_agent_definition(
         name=seat,
         prompts={"agent": "Synthetic developer."},
         model="claude-sonnet-5",
-        task_step_writes=["implementation"],
+        task_attestation_writes=["implementation"],
     )
 
 
@@ -102,7 +102,7 @@ async def _spawn_task_seat(case: LandingCase, task: Task, mock_runner: MagicMock
 
 
 @pytest.mark.asyncio
-async def test_spawned_manager_is_bound_without_claiming(
+async def test_explicit_spawn_task_is_claimed_despite_closing_grants(
     case: LandingCase, mock_runner: MagicMock
 ) -> None:
     tasks = LocalTaskManager(case.db)
@@ -113,15 +113,12 @@ async def test_spawned_manager_is_bound_without_claiming(
 
     with case.db.transaction() as conn:
         claimants = claimant_sessions(conn, task.id)
-    assert manager not in claimants
-    assert tasks.get_task(task.id).claimed_by_session_id is None
-    tasks.claim_task(task.id, case.claimant)
-    with case.db.transaction() as conn:
-        assert claimant_sessions(conn, task.id) == {case.claimant}
+    assert manager in claimants
+    assert tasks.get_task(task.id).claimed_by_session_id == manager
 
 
 @pytest.mark.asyncio
-async def test_spawned_manager_can_land_independently_approved_candidate(
+async def test_spawned_task_holder_can_land_its_own_candidate(
     case: LandingCase, mock_runner: MagicMock
 ) -> None:
     sha = case.candidate("manager-landing", {"docs/change.md": "reviewed\n"})
@@ -130,10 +127,7 @@ async def test_spawned_manager_can_land_independently_approved_candidate(
         case.project_id, "Manager landing", validation_criteria="Land reviewed SHA"
     )
     manager = await _spawn_task_seat(case, task, mock_runner, "dev-manager")
-    # Simulate the team's claim handoff before its independent code review.
-    tasks.claim_task(task.id, case.claimant, force=True)
     case.link(task, sha)
-    case.approve(task, sha)
     grant_step_writes(
         case.db,
         manager,
@@ -167,7 +161,7 @@ async def test_spawned_developer_still_auto_claims(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("release_claim", [False, True], ids=["current", "former"])
-async def test_manager_that_explicitly_claimed_is_still_refused(
+async def test_current_or_former_claim_does_not_impose_a_runbook_role(
     case: LandingCase, release_claim: bool
 ) -> None:
     sha = case.candidate("claimant-landing", {"docs/change.md": "reviewed\n"})
@@ -178,8 +172,7 @@ async def test_manager_that_explicitly_claimed_is_still_refused(
     case.approve(task, sha)
     manager = case.manager_for(task, session=case.claimant)
 
-    refused = await case.land(LocalTaskManager(case.db).get_task(task.id), sha, caller=manager)
+    landed = await case.land(LocalTaskManager(case.db).get_task(task.id), sha, caller=manager)
 
-    assert refused["landed"] is False
-    assert "caller_is_maker" in refused["blockers"]
-    assert case.git("rev-parse", "trunk") == case.base
+    assert landed["landed"] is True, landed
+    assert case.git("rev-parse", "trunk") == sha

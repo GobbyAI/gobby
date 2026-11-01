@@ -1,0 +1,72 @@
+tags: [task-closure-general]
+
+rules:
+  closure-preserves-attributed-work:
+    description: Every disposition preserves the task's uncommitted attributed files.
+    event: task_close
+    priority: 8
+    when: "facts.get('task_files_clean', True) != True"
+    effects:
+      - type: block
+        reason: Commit or explicitly resolve the task's attributed changes before closing.
+
+  closure-preserves-reserved-ancestors:
+    description: Automatic propagation leaves held, escalated or owned parents for explicit resolution.
+    event: task_close
+    priority: 9
+    when: >-
+      facts.get('closure_intent') == 'ancestor' and
+      (task.get('claimed_by_session_id') or
+       task.get('is_escalated') or task.get('escalated_at') or
+       (task.get('state') or {}).get('hold_state') or
+       any(label in ['needs-decision', 'clean-window', 'needs-planning']
+           for label in (task.get('labels') or [])))
+    effects:
+      - type: block
+        reason: This parent is reserved; its owner must explicitly resolve its claim or hold.
+
+  closure-requires-implementation:
+    description: Completed work carries an implementation attestation, in any domain.
+    event: task_close
+    priority: 10
+    when: >-
+      reason == 'done' and
+      not (facts.get('closure_intent') == 'ancestor' and
+           facts.get('children') and facts.get('children_closed') and
+           not facts.get('claimants')) and
+      latest_attestation('implementation').get('result') != 'approved'
+    effects:
+      - type: block
+        reason: Record an approved implementation attestation describing the completed work.
+
+  closure-requires-closed-children:
+    description: Finish child deliverables before closing their parent.
+    event: task_close
+    priority: 11
+    when: "not facts.get('children_closed', True)"
+    effects:
+      - type: block
+        reason: Close the remaining child tasks before closing this task.
+
+  closure-requires-disposition-evidence:
+    description: No-work closure is an explicit attested disposition.
+    event: task_close
+    priority: 12
+    when: >-
+      reason != 'done' and
+      (latest_attestation('disposition').get('result') != 'approved' or
+       latest_attestation('disposition').get('evidence', {}).get('reason') != reason)
+    effects:
+      - type: block
+        reason: Record an approved disposition attestation with evidence.reason matching the close reason.
+
+  closure-requires-superseding-reference:
+    description: A superseded disposition identifies its replacement.
+    event: task_close
+    priority: 13
+    when: >-
+      reason == 'superseded' and
+      not latest_attestation('disposition').get('reference')
+    effects:
+      - type: block
+        reason: Identify the replacement in the disposition attestation's reference.

@@ -1,0 +1,28 @@
+tags: [closure-authority]
+
+rules:
+  consolidator-close-dispositions:
+    description: This backlog seat retires or folds tasks; it does not attest completed work.
+    event: task_close
+    when: "reason not in ['moot', 'superseded']"
+    effects:
+      - type: block
+        reason: This definition closes only moot or superseded tasks.
+
+  researcher-close-completed-work:
+    description: This research seat closes completed deliverables and leaves retirement to its coordinator.
+    event: task_close
+    when: "reason != 'done'"
+    effects:
+      - type: block
+        reason: This definition closes only completed research deliverables.
+
+  researcher-report-approval:
+    description: Completed research reports require the declared report approval authority.
+    event: task_close
+    when: >-
+      reason == 'done' and
+      'approve_report_review' not in latest_attestation('review').get('agent_capabilities', [])
+    effects:
+      - type: block
+        reason: Obtain an independent report review from an author with report approval authority.

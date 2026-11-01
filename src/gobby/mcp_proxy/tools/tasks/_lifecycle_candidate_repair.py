@@ -9,8 +9,15 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.review_history import ReviewHistory
 from gobby.storage.tasks import TaskNotFoundError
-from gobby.tasks.close_invariants import resolve_commit
+from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.session_context import get_current_session_id
+
+
+async def resolve_commit(repo_path: str, ref: str) -> str | None:
+    result = await daemon_git.run(
+        ("rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"), cwd=repo_path
+    )
+    return result.stdout.strip() if isinstance(result, GitOk) else None
 
 
 def register_closed_candidate_repair(registry: InternalToolRegistry, ctx: RegistryContext) -> None:

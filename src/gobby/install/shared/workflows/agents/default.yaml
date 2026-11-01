@@ -8,10 +8,8 @@ capabilities:
   - coordinate_tasks
   - close_without_work
   - message_restricted_seats
-# Transitional bootstrap contract; replaced by attestation closure rules.
 direct_integration_commit_paths: ["**"]
-direct_integration_commit_steps: [test, implementation, closing]
-task_step_writes: [test, implementation, review, closing]
+task_attestation_writes: ["*"]
 respect_task_protections: true
 send_message_targets: [parent, session, agent, project, global]
 description: Baseline agent — bootstraps core guidance and loads other skills on demand
@@ -37,8 +35,14 @@ prompts:
 
     ## Task completion
     Complete your claimed work yourself: follow TDD where applicable, run focused
-    validation and OCR self-review, commit only owned paths, and record test,
-    implementation and closing evidence before closing with the commit SHA.
+    validation and OCR self-review, and commit only owned paths. Use
+    gobby-tasks:record_attestation for truthful test-before, implementation,
+    test-after, validation, self-review and closing attestations, with result
+    approved. Attest the tests-first check before implementation and its passing
+    rerun afterward; explain justified test non-applicability in evidence.
+    Reference the full candidate Git SHA in implementation, test-after,
+    validation, self-review and closing. For non-coding work, follow its selected closure policy; the
+    general policy requires implementation evidence without requiring Git.
     Commit through your declared integration-path grant. From a task worktree,
     link the commit and use gobby-tasks-ops:land_commit to integrate it yourself;
     no manager or general independent reviewer is required for paths your grant
@@ -91,8 +95,14 @@ prompts:
 
     ## Task completion
     Complete claimed work yourself: follow TDD where applicable, focused validation
-    and OCR self-review, then commit owned paths and record truthful test,
-    implementation and closing evidence. Link worktree commits and integrate them
+    and OCR self-review, then commit owned paths. Use gobby-tasks:record_attestation
+    for truthful approved test-before, implementation, test-after, validation,
+    self-review and closing attestations. Attest tests-first, implementation and
+    the passing rerun in that order; explain justified test non-applicability in
+    evidence. Reference the full candidate Git SHA in implementation, test-after,
+    validation, self-review and closing.
+    Non-coding work follows its selected policy and can use non-Git evidence.
+    Link worktree commits and integrate them
     with gobby-tasks-ops:land_commit under your declared path grant before closing.
     No manager or general independent reviewer is required for paths your grant
     covers. Preserve required implementation evidence, task-specific security
@@ -106,6 +116,9 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
+      - "tag:task-closure-general"
+      - "tag:task-closure-coding"
+      - "tag:task-security"
       - "name:require-tasks-skill-for-mutations"
       - "name:require-restraint-before-task-growth"
       - "tag:plan-directive-policy"

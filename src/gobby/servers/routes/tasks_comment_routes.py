@@ -10,8 +10,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from gobby.storage.tasks._models import TaskNotFoundError
+from gobby.tasks.attestations import AUTHOR_TYPE as ATTESTATION_AUTHOR_TYPE
 from gobby.tasks.close_receipts import CLOSE_RECEIPT_AUTHOR_TYPE
-from gobby.tasks.step_records import STEP_RECORD_AUTHOR_TYPE
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -79,12 +79,15 @@ def register_task_comment_routes(
                 status_code=403,
                 detail="Close receipts cannot be created here; only land_commit records them",
             )
-        if request_data.author_type == STEP_RECORD_AUTHOR_TYPE:
+        if request_data.author_type == ATTESTATION_AUTHOR_TYPE:
             raise HTTPException(
                 status_code=403,
-                detail=(
-                    "Task step records are recorded only through the dedicated record_*_step tools"
-                ),
+                detail="Task attestations are recorded only through record_attestation",
+            )
+        if request_data.author_type == "task_step":
+            raise HTTPException(
+                status_code=403,
+                detail=("Retired task evidence cannot be created through comments"),
             )
         if request_data.author_type == "system" and request_data.author.startswith("migration:"):
             raise HTTPException(
@@ -141,12 +144,14 @@ def register_task_comment_routes(
                 "DELETE FROM task_comments WHERE id = %s AND task_id = %s "
                 "AND author_type IS DISTINCT FROM %s "
                 "AND author_type IS DISTINCT FROM %s "
+                "AND author_type IS DISTINCT FROM %s "
                 "AND (author_type IS DISTINCT FROM %s OR author NOT LIKE %s)",
                 (
                     comment_id,
                     task.id,
                     CLOSE_RECEIPT_AUTHOR_TYPE,
-                    STEP_RECORD_AUTHOR_TYPE,
+                    "task_step",
+                    ATTESTATION_AUTHOR_TYPE,
                     "system",
                     "migration:%",
                 ),
@@ -159,7 +164,9 @@ def register_task_comment_routes(
                 if protected:
                     if protected["author_type"] == CLOSE_RECEIPT_AUTHOR_TYPE:
                         detail = "Close receipts cannot be deleted"
-                    elif protected["author_type"] == STEP_RECORD_AUTHOR_TYPE:
+                    elif protected["author_type"] == ATTESTATION_AUTHOR_TYPE:
+                        detail = "Task attestations cannot be deleted"
+                    elif protected["author_type"] == "task_step":
                         detail = "Task step records cannot be deleted"
                     else:
                         detail = "Migration snapshots cannot be deleted"

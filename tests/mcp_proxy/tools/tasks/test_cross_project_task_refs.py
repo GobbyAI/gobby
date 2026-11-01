@@ -19,7 +19,12 @@ from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.step_records import StepSubmission, list_task_step_records, record_task_step
+from gobby.tasks.attestations import (
+    AttestationSubmission,
+    EvidenceReference,
+    list_attestations,
+    record_attestation,
+)
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.memory_review_conditions import pending_memory_reviews_complete
 from gobby.workflows.state_manager import SessionVariableManager
@@ -59,7 +64,7 @@ class CrossProjectWorld:
 
     def close(self) -> None:
         self.task = self.tasks.close_task(
-            self.task.id, force=True, closed_in_session_id=self.child_id, closed_commit_sha=self.sha
+            self.task.id, closed_in_session_id=self.child_id, closed_commit_sha=self.sha
         )
 
     def ref(self, form: str) -> str:
@@ -145,14 +150,13 @@ async def approve(world: CrossProjectWorld, caller_id: str, ref: str) -> dict[st
     registry = create_task_registry(world.tasks)
     review = {
         "task_id": ref,
-        "status": "approved",
-        "epoch": 1,
-        "round_number": 1,
-        "feedback": "LAND: the documentation commit is reviewed.",
-        "commit_sha": world.sha,
+        "kind": "review",
+        "result": "approved",
+        "summary": "The documentation commit is reviewed.",
+        "reference": {"scheme": "git", "value": world.sha},
     }
     with session_context_for_test(caller_id):
-        return dict(await registry.call("record_review_step", review))
+        return dict(await registry.call("record_attestation", review))
 
 
 def record_implementation(world: CrossProjectWorld) -> None:
@@ -160,17 +164,15 @@ def record_implementation(world: CrossProjectWorld) -> None:
     grant_step_writes(
         world.db, world.child_id, world.task.project_id, "fixture-developer", ("implementation",)
     )
-    record_task_step(
+    record_attestation(
         world.db,
         task_id=world.task.id,
         session_id=world.child_id,
-        step="implementation",
-        submission=StepSubmission(
-            status="approved",
-            epoch=world.tasks.get_task(world.task.id).review_epoch,
-            round_number=1,
-            feedback="Candidate implementation is complete.",
-            commit_sha=world.sha,
+        submission=AttestationSubmission(
+            kind="implementation",
+            result="approved",
+            summary="Candidate implementation is complete.",
+            reference=EvidenceReference(scheme="git", value=world.sha),
         ),
     )
 
@@ -180,8 +182,8 @@ def record_implementation(world: CrossProjectWorld) -> None:
 async def test_land_commit_resolves_child_task_in_other_project(
     world: CrossProjectWorld, form: str
 ) -> None:
-    grant_review_writes(world.db, world.caller_id, world.caller_project_id)
-    approval = await approve(world, world.caller_id, world.ref(form))
+    grant_review_writes(world.db, world.child_id, world.task.project_id)
+    approval = await approve(world, world.child_id, world.ref(form))
     assert "error" not in approval, approval
     assert approval["record"]["task_id"] == world.task.id
     record_implementation(world)
@@ -247,11 +249,11 @@ async def test_review_task_memories_resolves_other_project_task(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("form", ["qualified", "uuid"])
-@pytest.mark.parametrize("tool", ["land_commit", "record_review_step", "review_task_memories"])
+@pytest.mark.parametrize("tool", ["land_commit", "record_attestation", "review_task_memories"])
 async def test_cross_project_ref_without_authority_is_refused(
     world: CrossProjectWorld, form: str, tool: str
 ) -> None:
-    if tool == "record_review_step":
+    if tool == "record_attestation":
         grant_review_writes(world.db, world.stranger_id, world.caller_project_id)
         result = await approve(world, world.stranger_id, world.ref(form))
     elif tool == "land_commit":
@@ -275,9 +277,11 @@ async def test_cross_project_ref_without_authority_is_refused(
                     "session_id": world.stranger_id,
                 },
             )
-    assert result["error"] == "task_not_found"
+    assert "error" in result
+    if tool != "record_attestation":
+        assert result["error"] == "task_not_found"
     assert world.git("rev-parse", "HEAD") == world.base
-    assert list_task_step_records(world.db, world.task.id) == []
+    assert list_attestations(world.db, world.task.id) == []
 
 
 @pytest.mark.asyncio
@@ -307,7 +311,7 @@ async def test_cross_project_review_cannot_impersonate_ancestor(world: CrossProj
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["assistant", "orchestrator", "custom-coordinator"])
-async def test_declared_coordinator_can_approve_other_project(
+async def test_declared_coordinator_cannot_author_other_projects_evidence(
     world: CrossProjectWorld, role: str
 ) -> None:
     caller = world.sessions.get(world.stranger_id)
@@ -317,21 +321,21 @@ async def test_declared_coordinator_can_approve_other_project(
         {
             "prompts": {"agent": "Coordinate the fleet."},
             "capabilities": ["coordinate_tasks"],
-            "task_step_writes": ["review"],
+            "task_attestation_writes": ["review"],
             "workflows": {"rule_selectors": {"include": []}},
         },
         project_id=caller.project_id,
     )
     SessionVariableManager(world.db).set_variable(caller.id, "_agent_type", role)
     approval = await approve(world, caller.id, world.ref("qualified"))
-    assert "error" not in approval, approval
-    assert approval["record"]["task_id"] == world.task.id
-    assert (approval["record"]["step"], approval["record"]["status"]) == ("review", "approved")
-    assert approval["record"]["agent_definition"] == role
+    assert "task project" in approval["error"], approval
+    assert list_attestations(world.db, world.task.id) == []
 
 
 @pytest.mark.asyncio
-async def test_cross_project_land_still_needs_review_approval(world: CrossProjectWorld) -> None:
+async def test_cross_project_land_uses_the_callers_declared_policy(
+    world: CrossProjectWorld,
+) -> None:
     record_implementation(world)
     grant_orchestrator(world.db, world.stranger_id, world.caller_project_id)
     registry = create_task_ops_registry(world.tasks)
@@ -339,8 +343,8 @@ async def test_cross_project_land_still_needs_review_approval(world: CrossProjec
         result = await registry.call(
             "land_commit", {"task_id": world.ref("qualified"), "commit_sha": world.sha}
         )
-    assert result["blockers"] == ["review_approval_missing"]
-    assert world.git("rev-parse", "HEAD") == world.base
+    assert result["landed"] is True, result
+    assert world.git("rev-parse", "HEAD") == world.sha
 
 
 @pytest.mark.asyncio
@@ -362,8 +366,8 @@ async def test_role_name_alone_does_not_grant_cross_project_access(
         )
     SessionVariableManager(world.db).set_variable(caller.id, "_agent_type", "assistant")
     result = await approve(world, caller.id, world.ref("qualified"))
-    assert result["error"] == "task_not_found"
-    assert list_task_step_records(world.db, world.task.id) == []
+    assert "error" in result
+    assert list_attestations(world.db, world.task.id) == []
 
 
 @pytest.mark.asyncio

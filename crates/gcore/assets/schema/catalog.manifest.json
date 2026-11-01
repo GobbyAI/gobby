@@ -7144,7 +7144,7 @@
     },
     {
       "name": "tasks.tasks_closed_reason_check",
-      "definition": "CHECK (closed_at IS NULL OR closed_reason IS NOT NULL AND (closed_reason = ANY (ARRAY['done'::text, 'moot'::text, 'superseded'::text, 'wont_do'::text])))"
+      "definition": "CHECK (closed_at IS NULL OR closed_reason IS NOT NULL AND btrim(closed_reason) <> ''::text AND length(closed_reason) <= 120)"
     },
     {
       "name": "tasks.tasks_created_in_session_id_fkey",
@@ -7189,10 +7189,6 @@
     {
       "name": "tasks.tasks_project_id_fkey",
       "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) DEFERRABLE"
-    },
-    {
-      "name": "tasks.tasks_require_validation_criteria",
-      "definition": "CHECK (task_type = 'epic'::text OR NULLIF(btrim(validation_criteria), ''::text) IS NOT NULL) NOT VALID"
     },
     {
       "name": "tasks.tasks_review_epoch_check",

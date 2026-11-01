@@ -21,7 +21,7 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
     resolve_project_repo_path,
     resolve_task_repo_path,
 )
-from gobby.storage.tasks import Task, TaskNotFoundError
+from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.tasks.commit_order import link_candidate, link_keeping_tip
 from gobby.tasks.commit_ownership import assert_task_commit_paths_available_async
@@ -36,7 +36,6 @@ from gobby.tasks.diff_paging import (
     DiffPage,
     DiffPagingError,
 )
-from gobby.tasks.step_records import current_task_steps, list_task_step_records
 from gobby.utils.daemon_git import normalize_commit_sha
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
@@ -46,39 +45,6 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
 
 __all__ = ["create_commit_registry"]
-
-
-def _is_test_path(path: str) -> bool:
-    """A path under a tests/ directory is test evidence, not production code."""
-    return path.startswith("tests/") or "/tests/" in path
-
-
-def _approved_review_of(task_manager: "LocalTaskManager", task: Task, sha: str) -> bool:
-    """Whether the task's current review round approved this commit, by canonical SHA prefix."""
-    records = list_task_step_records(task_manager.db, task.id)
-    review = current_task_steps(records, task.review_epoch).get("review")
-    return (
-        review is not None
-        and review.status == "approved"
-        and review.commit_sha is not None
-        and review.commit_sha.startswith(sha)
-    )
-
-
-async def _carries_production(commits: list[str], repo_path: str | None) -> bool:
-    """True when any linked commit changes a path outside tests/, each judged alone."""
-    # The tasks package factory composes this registry during initialization.
-    from gobby.mcp_proxy.tools.tasks._task_scope import collect_net_commit_paths_async
-
-    if not commits:
-        return False
-    if repo_path is None:
-        raise ValueError("Repository path is required to classify the remaining commits.")
-    for sha in commits:
-        paths = await collect_net_commit_paths_async([sha], repo_path, candidate=sha)
-        if any(not _is_test_path(path) for path in set(paths.changed) | set(paths.deleted)):
-            return True
-    return False
 
 
 def get_current_project_id() -> str | None:
@@ -210,12 +176,7 @@ def create_commit_registry(
                 repo_path,
                 [normalized],
             )
-            production_changes = any(not _is_test_path(path) for path in changed)
-            test_only = bool(changed) and not production_changes
-            # A test-only commit that a review approved is test-phase evidence, not a candidate.
-            declared = candidate and not (
-                test_only and _approved_review_of(task_manager, current_task, normalized)
-            )
+            declared = candidate
             # Landed history is never a new candidate, and an unproven landing status refuses the
             # candidate before anything persists.
             if declared:
@@ -227,15 +188,6 @@ def create_commit_registry(
                     }
                 if landed:
                     declared = False
-            # Judge the test step before this link can change the evidence it reads.
-            from gobby.tasks.out_of_order_links import (
-                has_approved_test_step,
-                record_out_of_order_link,
-            )
-
-            out_of_order = production_changes and not has_approved_test_step(
-                task_manager.db, current_task
-            )
             task = (
                 await asyncio.to_thread(
                     link_candidate, task_manager, resolved_task_id, normalized, repo_path
@@ -245,17 +197,9 @@ def create_commit_registry(
                     link_keeping_tip, task_manager, resolved_task_id, normalized, repo_path
                 )
             )
-            if out_of_order:
-                record_out_of_order_link(
-                    task_manager.db,
-                    task,
-                    commit_sha=normalized,
-                    session_id=get_current_session_id(),
-                )
             return {
                 "task_id": task.id,
                 "commits": task.commits or [],
-                "production_changes": production_changes,
                 "declared_candidate": normalized if declared else None,
             }
         except (ValueError, RuntimeError) as e:
@@ -325,11 +269,7 @@ def create_commit_registry(
         normalized = await normalize_commit_sha(commit_sha, cwd=repo_path)
         if normalized is None:
             return {"error": f"Invalid or unresolved commit SHA: {commit_sha}"}
-        # Classify what stays linked before the unlink: the step returns to implement
-        # unless a production commit remains.
-        remaining = [sha for sha in (current_task.commits or []) if sha != normalized]
         try:
-            production = await _carries_production(remaining, repo_path)
             task = await unlink_commit_audited(
                 task_manager, current_task, normalized, reason=reason, actor=actor
             )
@@ -338,7 +278,6 @@ def create_commit_registry(
         return {
             "task_id": task.id,
             "commits": task.commits or [],
-            "production_commits_remain": production,
             "unlinked": normalized,
         }
 

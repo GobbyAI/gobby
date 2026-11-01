@@ -12,7 +12,7 @@ import pytest
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 from gobby.mcp_proxy.tools.tasks._close_context import CloseAttributionSnapshot
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
-from gobby.tasks.step_records import StepRequirements
+from gobby.tasks.closure_policy import ClosureDecision
 from gobby.utils.machine_id import require_machine_id
 from tests.mcp_proxy.tools.tasks.test_close_task_flow import _ctx, _task
 
@@ -52,7 +52,9 @@ async def _evaluate(repo: Path, linked: list[str], requested: str | None) -> Clo
         patch.object(
             ctx.session_manager,
             "get",
-            return_value=SimpleNamespace(id="session", machine_id=require_machine_id()),
+            return_value=SimpleNamespace(
+                id="session", machine_id=require_machine_id(), project_id=task.project_id
+            ),
         ),
         patch.object(lifecycle, "resolve_task_repo_path", return_value=str(repo)),
         patch.object(
@@ -61,8 +63,13 @@ async def _evaluate(repo: Path, linked: list[str], requested: str | None) -> Clo
             AsyncMock(return_value=CloseAttributionSnapshot({}, True)),
         ),
         patch.object(lifecycle, "task_landing_target", AsyncMock(return_value=(repo, "0.5.0"))),
+        patch.object(lifecycle, "session_agent_definition", return_value=None),
         patch.object(
-            lifecycle, "step_requirements", AsyncMock(return_value=StepRequirements((), ()))
+            lifecycle,
+            "prepare_closure",
+            return_value=SimpleNamespace(
+                decision=ClosureDecision(True, (), "policy-revision", "snapshot-revision")
+            ),
         ),
     ):
         return await lifecycle._evaluate_close(
@@ -96,7 +103,7 @@ async def test_explicit_candidate_is_appended_once(candidate_repo: tuple[Path, s
     repo, old, tip = candidate_repo
     evaluation = await _evaluate(repo, [old, old], tip[:12])
     assert evaluation.ready
-    assert evaluation.commit_shas == [old, tip]
+    assert evaluation.commit_shas == [old, _git(repo, "rev-parse", "--short", tip)]
     assert evaluation.candidate_commit_sha == tip
 
 
@@ -113,11 +120,12 @@ async def test_invalid_explicit_candidate_does_not_fall_back_to_head(
 
 
 @pytest.mark.asyncio
-async def test_missing_link_is_not_hidden_by_a_valid_explicit_candidate(
+async def test_missing_link_is_observed_with_a_valid_explicit_candidate(
     candidate_repo: tuple[Path, str, str],
 ) -> None:
     repo, _old, tip = candidate_repo
     evaluation = await _evaluate(repo, ["missing-commit"], tip)
-    assert not evaluation.ready
-    assert evaluation.commit_shas == ["missing-commit", tip]
-    assert evaluation.checklist.gates[3].details["unresolved_commits"] == ["missing-commit"]
+    assert evaluation.ready
+    assert evaluation.commit_shas == ["missing-commit", _git(repo, "rev-parse", "--short", tip)]
+    assert evaluation.facts["candidate_covers_linked_commits"] is False
+    assert evaluation.facts["integration_ancestry"] is False

@@ -1236,12 +1236,12 @@ class TestUpdateTaskCommand:
 class TestCloseTaskCommand:
     """Tests for gobby tasks close command."""
 
-    def test_close_task_help_describes_no_work_leaf_disposition(self, runner: CliRunner) -> None:
+    def test_close_task_help_describes_selected_policy(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["tasks", "close", "--help"])
 
         assert result.exit_code == 0
         normalized_output = " ".join(result.output.split())
-        assert "canonical no-work reasons allow direct leaf disposition" in normalized_output
+        assert "selected closure policy" in normalized_output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -1252,18 +1252,20 @@ class TestCloseTaskCommand:
         runner: CliRunner,
         mock_task: MagicMock,
     ) -> None:
-        """Direct CLI close fails closed for non-epic leaves."""
+        """Leaf closure is delegated to the same policy-aware manager as other closes."""
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []  # No children
         mock_manager.close_task.return_value = mock_task
         mock_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["tasks", "close", "gt-abc123"])
+        result = runner.invoke(cli, ["tasks", "close", "gt-abc123", "--reason", "published"])
 
-        assert result.exit_code == 1
-        assert "criterion-to-evidence close_task contract" in result.output
-        mock_manager.close_task.assert_not_called()
+        assert result.exit_code == 0, result.output
+        assert "published" in result.output
+        mock_manager.close_task.assert_called_once_with(
+            mock_task.id, reason="published", closed_ancestors=[]
+        )
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -1320,24 +1322,27 @@ class TestCloseTaskCommand:
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
-    def test_close_task_with_custom_reason_is_rejected(
+    def test_close_task_policy_refusal_is_reported(
         self,
         mock_resolve: MagicMock,
         mock_get_manager: MagicMock,
         runner: CliRunner,
         mock_task: MagicMock,
     ) -> None:
-        """Close reasons are restricted to the canonical enum before any mutation."""
+        """A custom reason is admitted, then the selected policy can refuse it."""
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []
+        mock_manager.close_task.side_effect = ValueError("Closure policy: disposition missing")
         mock_get_manager.return_value = mock_manager
 
         result = runner.invoke(cli, ["tasks", "close", "gt-abc123", "--reason", "paused"])
 
-        assert result.exit_code == 2
-        assert "Invalid value for '--reason'" in result.output
-        mock_manager.close_task.assert_not_called()
+        assert result.exit_code == 1
+        assert "Closure policy: disposition missing" in result.output
+        mock_manager.close_task.assert_called_once_with(
+            mock_task.id, reason="paused", closed_ancestors=[]
+        )
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -1348,7 +1353,7 @@ class TestCloseTaskCommand:
         runner: CliRunner,
         mock_task: MagicMock,
     ) -> None:
-        """Test closing a task with open children fails."""
+        """The manager, rather than a CLI precheck, decides about open children."""
         child_task = MagicMock()
         child_task.id = "gt-child1"
         child_task.title = "Child task"
@@ -1357,6 +1362,7 @@ class TestCloseTaskCommand:
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = [child_task]
+        mock_manager.close_task.side_effect = ValueError("Closure policy: child tasks still open")
         mock_get_manager.return_value = mock_manager
 
         result = runner.invoke(
@@ -1367,6 +1373,9 @@ class TestCloseTaskCommand:
         assert result.exit_code == 1
         assert "Cannot close" in result.output
         assert "child tasks still open" in result.output
+        mock_manager.close_task.assert_called_once_with(
+            mock_task.id, reason="moot", closed_ancestors=[]
+        )
 
     @pytest.mark.parametrize("removed_option", ["--force", "--skip-validation"])
     def test_close_task_rejects_removed_options(

@@ -55,6 +55,11 @@ def export_file_lock(path: Path) -> Iterator[None]:
 
 def atomic_write_text(path: Path, content: str) -> None:
     """Replace a text file atomically after flushing its new contents to disk."""
+    atomic_write_bytes(path, content.encode("utf-8"))
+
+
+def atomic_write_bytes(path: Path, content: bytes) -> None:
+    """Replace a file without interpreting its bytes or line endings."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_path = tempfile.mkstemp(
         dir=os.fspath(path.parent),
@@ -62,7 +67,7 @@ def atomic_write_text(path: Path, content: str) -> None:
         suffix=".tmp",
     )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "wb") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())

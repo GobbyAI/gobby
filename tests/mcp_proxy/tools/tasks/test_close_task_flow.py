@@ -17,11 +17,10 @@ import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import commit_close as _commit_close
-from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CLOSE_GATE_ORDER, CloseEvaluation
+from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as notifications
 from gobby.storage.tasks import Task, TaskHasOpenChildrenError
-from gobby.tasks.close_checklist import CloseChecklist, CloseGateResult
-from gobby.tasks.step_records import StepRequirements
+from gobby.tasks.closure_policy import ClosureDecision
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.agent_definitions import make_agent_definition
 
@@ -68,20 +67,25 @@ def _ready_evaluation(task: Task) -> CloseEvaluation:
         resolved_session_id=task.claimed_by_session_id,
         edit_session_id=task.claimed_by_session_id,
         is_epic=task.task_type == "epic",
-        checklist=CloseChecklist(
-            tuple(
-                CloseGateResult(index, name, "passed", "Passed.")
-                for index, name in CLOSE_GATE_ORDER
-            )
-        ),
+        decision=ClosureDecision(True, (), "policy-revision", "snapshot-revision"),
     )
 
 
 @pytest.fixture(autouse=True)
-def _no_step_policy(monkeypatch: pytest.MonkeyPatch) -> None:
-    """These fakes have no project checkout; step-record policy has its own tests."""
+def _policy_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Policy decisions are exercised separately against isolated PostgreSQL."""
     monkeypatch.setattr(
-        lifecycle, "step_requirements", AsyncMock(return_value=StepRequirements((), ()))
+        lifecycle,
+        "prepare_closure",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            decision=ClosureDecision(True, (), "policy-revision", "snapshot-revision")
+        ),
+    )
+    monkeypatch.setattr(lifecycle, "session_agent_definition", lambda *_args: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "capture_attribution",
+        AsyncMock(return_value=SimpleNamespace(clean_checkouts={}, complete=True)),
     )
 
 
@@ -109,7 +113,8 @@ async def test_close_evaluation_storage_stays_off_the_event_loop(
         ctx, "resolve_session_id", record("resolve_session", "session"), raising=False
     )
     cast(MagicMock, ctx.session_manager).get.side_effect = record(
-        "session", SimpleNamespace(id="session", machine_id=require_machine_id())
+        "session",
+        SimpleNamespace(id="session", machine_id=require_machine_id(), project_id=task.project_id),
     )
     cast(MagicMock, ctx.session_var_manager).get_variables.side_effect = record("variables", {})
     cast(MagicMock, ctx.session_var_manager).get_variable_subset.side_effect = record(
@@ -123,7 +128,11 @@ async def test_close_evaluation_storage_stays_off_the_event_loop(
     monkeypatch.setattr(
         lifecycle, "session_agent_definition", record("definition", (definition, "digest"))
     )
-    monkeypatch.setattr(lifecycle, "session_has_capability_or_operator", record("permission", True))
+    monkeypatch.setattr(
+        lifecycle,
+        "prepare_closure",
+        record("policy", SimpleNamespace(decision=_ready_evaluation(task).decision)),
+    )
     monkeypatch.setattr(lifecycle, "resolve_task_id_for_mcp", record("resolve_task", task.id))
     monkeypatch.setattr(lifecycle, "resolve_task_repo_path", record("repo", "/repo"))
 
@@ -139,13 +148,10 @@ async def test_close_evaluation_storage_stays_off_the_event_loop(
     assert evaluation.ready
     assert set(observed) == {
         "task",
-        "children",
         "resolve_session",
         "session",
-        "closer_role",
         "definition",
-        "permission",
-        "variables",
+        "policy",
         "resolve_task",
         "repo",
     }
@@ -167,8 +173,8 @@ async def test_finalization_rechecks_state_before_writing(
     elif change == "commits":
         fresh.commit_shas = ["new-link"]
     elif change == "dirty":
-        fresh.checklist = CloseChecklist(
-            (CloseGateResult(3, "uncommitted_task_edits", "failed", "src/a.py is dirty"),)
+        fresh.decision = ClosureDecision(
+            False, ("src/a.py is dirty",), "policy-revision", "new-snapshot"
         )
     else:
         fresh.already_closed = True
@@ -183,9 +189,7 @@ async def test_finalization_rechecks_state_before_writing(
         assert result["closed"] is True
     else:
         assert result["closed"] is False
-        assert result["error"] == (
-            "uncommitted_task_edits" if change == "dirty" else "close_state_changed"
-        )
+        assert result["error"] == ("closure_policy" if change == "dirty" else "close_state_changed")
 
 
 @pytest.mark.asyncio
@@ -210,8 +214,9 @@ async def test_a_child_created_during_the_close_window_asks_for_a_retry(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("link_commit", [False, True])
+@pytest.mark.parametrize("reason", ["done", "recipe delivered"])
 async def test_finalization_storage_and_cleanup_stay_off_the_event_loop(
-    monkeypatch: pytest.MonkeyPatch, link_commit: bool
+    monkeypatch: pytest.MonkeyPatch, link_commit: bool, reason: str
 ) -> None:
     task = replace(_task(), task_type="epic", seq_num=4242)
     ancestor = replace(task, id="ancestor", title="Ancestor epic", seq_num=4241)
@@ -254,7 +259,7 @@ async def test_finalization_storage_and_cleanup_stay_off_the_event_loop(
     result = await _commit_close(
         ctx,
         evaluation,
-        reason="done",
+        reason=reason,
         changes_summary="Done",
         commit_sha="abc1234" if link_commit else None,
     )
@@ -279,14 +284,17 @@ async def test_finalization_storage_and_cleanup_stay_off_the_event_loop(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("superseded_by", [None, "", "   "])
-async def test_superseded_close_names_its_superseder(
+async def test_unselected_disposition_adds_no_domain_requirements(
     monkeypatch: pytest.MonkeyPatch, superseded_by: str | None
 ) -> None:
     task = _task()
-    manager = MagicMock()
-    manager.get_task.return_value = task
-    ctx = cast(RegistryContext, SimpleNamespace(task_manager=manager))
+    ctx = _ctx(task)
+    monkeypatch.setattr(ctx, "resolve_session_id", lambda _ref: "caller", raising=False)
+    cast(MagicMock, ctx.session_manager).get.return_value = SimpleNamespace(
+        id="caller", project_id=task.project_id, machine_id=None
+    )
     monkeypatch.setattr(lifecycle, "resolve_task_id_for_mcp", lambda _manager, task_id: task_id)
+    monkeypatch.setattr(lifecycle, "resolve_task_repo_path", lambda **_kwargs: None)
 
     evaluation = await lifecycle._evaluate_close(
         ctx,
@@ -295,10 +303,54 @@ async def test_superseded_close_names_its_superseder(
         commit_sha=None,
         project_path=None,
         superseded_by=superseded_by,
+        closing_session_id="caller",
     )
 
-    assert evaluation.error == "superseded_by_required"
-    assert evaluation.ready is False
+    assert evaluation.ready, evaluation.response(preview=True)
+    assert evaluation.facts["superseded_by"] == superseded_by
+
+
+@pytest.mark.asyncio
+async def test_cleanup_refetches_claims_added_during_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    task = _task()
+    ctx = _ctx(task)
+    evaluation = _ready_evaluation(task)
+    monkeypatch.setattr(lifecycle, "_evaluate_close", AsyncMock(return_value=evaluation))
+    monkeypatch.setattr(close_finalization, "_queue_close_memory_review", lambda *_args: None)
+    monkeypatch.setattr(
+        close_finalization, "notify_parent_on_task_state_change", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "gobby.sessions.title_lifecycle.recompute_automatic_title", lambda *_a: None
+    )
+    variables = cast(MagicMock, ctx.session_var_manager)
+    variables.get_variables.return_value = {
+        "claimed_tasks": {task.id: "#1"},
+        "active_task_id": task.id,
+        "task_edited_files": {task.id: ["src/closed.py"]},
+    }
+
+    def close(*_args: object, **_kwargs: object) -> Task:
+        variables.get_variables.return_value = {
+            "claimed_tasks": {task.id: "#1", "new-task": "#2"},
+            "active_task_id": "new-task",
+            "task_edited_files": {task.id: ["src/closed.py"], "new-task": ["src/new.py"]},
+            "task_edited_file_checkouts": {"new-task": {"/repo": ["src/new.py"]}},
+        }
+        return task
+
+    cast(MagicMock, ctx.task_manager).close_task.side_effect = close
+
+    result = await _commit_close(
+        ctx, evaluation, reason="delivered", changes_summary="Completed", commit_sha=None
+    )
+
+    assert result["closed"] is True
+    updates = variables.merge_variables.call_args.args[1]
+    assert updates["claimed_tasks"] == {"new-task": "#2"}
+    assert updates["active_task_id"] == "new-task"
+    assert updates["task_edited_files"] == {"new-task": ["src/new.py"]}
+    assert updates["task_edited_file_checkouts"] == {"new-task": {"/repo": ["src/new.py"]}}
 
 
 def test_closed_task_cleanup_removes_only_its_edit_entry() -> None:

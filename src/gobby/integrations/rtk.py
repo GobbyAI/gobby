@@ -15,7 +15,6 @@ from pathlib import Path
 from gobby.utils import spawn
 
 RTK_MINIMUM_VERSION = (0, 45, 0)
-RTK_RULE_NAME = "rtk-command-rewrite"
 RTK_VERSION = "0.45.0"
 REWRITE_CONTRACT_MARKER = "Raw command to rewrite"
 

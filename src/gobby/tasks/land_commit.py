@@ -12,13 +12,13 @@ from pathlib import Path
 from typing import TypedDict
 
 import psycopg
+from pydantic import JsonValue
 
 from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.eligibility import overlay_project_id_for_root
 from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.code_index.maintenance_launch import open_launch_async
 from gobby.releases.activation import project_checkout_root
-from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -31,22 +31,22 @@ from gobby.tasks.close_receipts import (
     list_close_receipts,
     record_close_receipt,
 )
+from gobby.tasks.closure_snapshot import prepare_closure
 from gobby.tasks.landing_policy import (
     ACTIVATION_CLASSES,
     classify_paths,
     missing_schema_carriers,
     read_freeze,
 )
-from gobby.tasks.lifecycle_access import is_operator_coordinator
-from gobby.tasks.step_records import (
-    TaskStepRecord,
-    approved_task_step,
-    independent_review_approval,
-    list_task_step_records,
-    maker_sessions,
+from gobby.tasks.lifecycle_access import (
+    CrossProjectTaskForbidden,
+    resolve_lifecycle_task,
+    task_scope_refusal,
 )
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 from gobby.utils.git import git_subprocess_env
+from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.agent_resolver import session_agent_definition
 
 __all__ = ["LandingResult", "land_candidate", "main_checkout_target"]
@@ -63,7 +63,6 @@ _LANDING_ACTION = re.compile(
 )
 _ATTEMPTS = 3
 _LANDING_TIMEOUT = 120.0
-_SECURITY_REVIEW_LABEL = "security-review"
 # Conflicts go to Triage; every other blocker is the caller's to fix.
 _CONFLICTS = frozenset({"base_update_required", "merge_conflict"})
 
@@ -84,7 +83,9 @@ class LandingResult(TypedDict, total=False):
     observed_tip: str
     mode: str
     activation_class: str
-    retest_required: bool
+    admission_basis: str
+    admission_policy_revision: str
+    admission_snapshot_revision: str
     provenance: str
     merge_commit: str
     receipt_id: str
@@ -277,12 +278,14 @@ def _facts_result(sha: str, facts: dict[str, str | int | bool]) -> LandingResult
         "observed_tip": str(facts["observed_tip"]),
         "mode": str(facts["mode"]),
         "activation_class": str(facts["activation_class"]),
-        # A disjoint merge keeps the reviewed tip as an ancestor, so no landing needs a retest.
-        "retest_required": False,
         "provenance": str(facts["provenance"]),
     }
     if "merge_commit" in facts:
         result["merge_commit"] = str(facts["merge_commit"])
+    if "admission_basis" in facts:
+        result["admission_basis"] = str(facts["admission_basis"])
+        result["admission_policy_revision"] = str(facts["admission_policy_revision"])
+        result["admission_snapshot_revision"] = str(facts["admission_snapshot_revision"])
     return result
 
 
@@ -355,39 +358,33 @@ def _refused(refusal: LandingResult, error: str, message: str | None = None) -> 
 
 
 def _manages_task(db: HubDatabase, task: Task, caller_session_id: str) -> bool:
-    """A definition grants landing to the task's bound manager or a local root."""
-    from gobby.agents.team_lifecycle import managed_task_team
-
+    """The installed definition grants landing within its declared task scope."""
     caller = SessionManager(db).get(caller_session_id)
-    if caller is None:
+    if caller is None or caller.machine_id != require_machine_id():
         return False
-    run = LocalAgentRunManager(db).get_by_session(caller.id)
+    try:
+        resolve_lifecycle_task(
+            LocalTaskManager(db),
+            task.id,
+            project_id=caller.project_id,
+            caller_session_id=caller.id,
+            sessions=SessionManager(db),
+        )
+    except CrossProjectTaskForbidden:
+        return False
     definition = session_agent_definition(db, caller)
-    if definition is not None and "land_tasks" in definition[0].capabilities:
-        if (run is not None and run.task_id == task.id) or managed_task_team(
-            db, caller_session_id, task.id
-        ) is not None:
-            return True
-    return is_operator_coordinator(LocalTaskManager(db), caller, capability="land_tasks")
+    if definition is None or "land_tasks" not in definition[0].capabilities:
+        return False
+    return task_scope_refusal(task, caller.id, definition[0].task_land_scope) is None
 
 
-async def _allows_direct_landing(
-    db: HubDatabase,
-    caller_session_id: str,
+async def _candidate_grant_paths(
     main: Path,
     tip: str,
     sha: str,
     receipts: list[CloseReceipt],
-) -> bool:
-    """Apply the same declared path grant used for direct integration commits."""
-    caller = SessionManager(db).get(caller_session_id)
-    resolved = session_agent_definition(db, caller) if caller is not None else None
-    if (
-        resolved is None
-        or "direct_integration_commit" not in resolved[0].capabilities
-        or not resolved[0].direct_integration_commit_paths
-    ):
-        return False
+) -> list[str]:
+    """Pin the candidate's immutable path scope before definition admission."""
     base = await _git(main, "merge-base", tip, sha)
     if base == sha:
         # Recheck the original candidate scope, even when the integration delta
@@ -395,47 +392,9 @@ async def _allows_direct_landing(
         receipt = next((r for r in receipts if r.commit_sha == sha), None)
         original_tip = receipt.facts.get("integration_base") if receipt else None
         if not isinstance(original_tip, str) or not _FULL_SHA.fullmatch(original_tip):
-            return False
+            return []
         base = await _git(main, "merge-base", original_tip, sha)
-    paths = await _paths(main, base, sha)
-    return resolved[0].covers_direct_integration_paths(sorted(paths))
-
-
-def _review_blockers(
-    task: Task,
-    records: list[TaskStepRecord],
-    sha: str,
-    caller: str,
-    excluded: set[str],
-    *,
-    require_independent_review: bool = True,
-) -> list[str]:
-    blockers: list[str] = []
-    if require_independent_review:
-        if any(
-            record.step == "review"
-            and record.epoch == task.review_epoch
-            and record.session_id == caller
-            for record in records
-        ):
-            blockers.append("caller_is_reviewer")
-        if independent_review_approval(task, records, sha, caller) is None:
-            blockers.append("review_approval_missing")
-    if task.task_type != "epic":
-        implementation = approved_task_step(task, records, "implementation")
-        if implementation is None or implementation.commit_sha != sha:
-            blockers.append("implementation_approval_missing")
-    if _SECURITY_REVIEW_LABEL in (task.labels or []) and not any(
-        record.step == "review"
-        and record.status == "approved"
-        and record.epoch == task.review_epoch
-        and record.commit_sha == sha
-        and "approve_security_review" in record.agent_capabilities
-        and record.session_id not in {caller, *excluded}
-        for record in records
-    ):
-        blockers.append("security_review_missing")
-    return blockers
+    return sorted(await _paths(main, base, sha))
 
 
 def _escalate(db: HubDatabase, task: Task, refusal: LandingResult) -> LandingResult:
@@ -537,6 +496,9 @@ async def land_candidate(
     A tip that moved by paths disjoint from the candidate's lands a generated merge;
     paths the tip changed too and merge conflicts escalate the task to Triage.
     A tip that moves during the call is re-read and every policy check repeats.
+    Each attempt admits one coherent task/definition/evidence snapshot. Later
+    policy or evidence changes govern later attempts; receipts retain the exact
+    revisions that authorized the admitted request.
     """
     if not caller_session_id:
         return {"landed": False, "error": "session_required"}
@@ -554,37 +516,62 @@ async def land_candidate(
             if landing_target is None:
                 return {"landed": False, "error": "main_checkout_detached"}
             main, branch = landing_target
-            linked = False
-            for candidate in current_task.commits or []:
-                if await _resolve(main, candidate) == sha:
-                    linked = True
-                    break
             refusal: LandingResult = {"landed": False, "commit_sha": sha}
             for _attempt in range(_ATTEMPTS):
                 # Every attempt re-reads the tip, so a candidate already landed counts.
                 tip = await _tip(main, branch)
                 receipts = list_close_receipts(db, task.id)
-                records = list_task_step_records(db, task.id)
-                makers = maker_sessions(records)
                 blockers: list[str] = []
                 if not _manages_task(db, current_task, caller_session_id):
-                    blockers.append("caller_not_task_manager")
-                direct_landing = await _allows_direct_landing(
-                    db, caller_session_id, main, tip, sha, receipts
-                )
-                if not direct_landing and caller_session_id in makers:
-                    blockers.append("caller_is_maker")
-                excluded = set(makers)
-                if current_task.claimed_by_session_id:
-                    excluded.add(current_task.claimed_by_session_id)
-                blockers += _review_blockers(
-                    current_task,
-                    records,
-                    sha,
-                    caller_session_id,
-                    excluded,
-                    require_independent_review=not direct_landing,
-                )
+                    blockers.append("landing_authority_required")
+                grant_paths = await _candidate_grant_paths(main, tip, sha, receipts)
+                admission: dict[str, str | int | bool] = {}
+                if not blockers:
+
+                    def derive_scope(
+                        _task: Task,
+                        agent: AgentDefinitionBody,
+                        paths: tuple[str, ...] = tuple(grant_paths),
+                    ) -> dict[str, JsonValue]:
+                        return {
+                            "integration_path_grant": agent.covers_direct_integration_paths(paths)
+                        }
+
+                    prepared = prepare_closure(
+                        db,
+                        task_id=task.id,
+                        session_id=caller_session_id,
+                        event="task_land",
+                        facts={
+                            "closure_intent": "landing",
+                            "candidate_commit_sha": sha,
+                            "candidate_paths": list(grant_paths),
+                            "integration_branch": branch,
+                            "integration_base": tip,
+                        },
+                        derive_facts=derive_scope,
+                    )
+                    current_task = prepared.task
+                    if (
+                        "land_tasks" not in prepared.agent.capabilities
+                        or prepared.snapshot.caller.get("machine_id") != require_machine_id()
+                        or task_scope_refusal(
+                            current_task, caller_session_id, prepared.agent.task_land_scope
+                        )
+                        is not None
+                    ):
+                        blockers.append("landing_authority_required")
+                    blockers.extend(prepared.decision.blockers)
+                    admission = {
+                        "admission_basis": "request_snapshot",
+                        "admission_policy_revision": prepared.decision.policy_revision,
+                        "admission_snapshot_revision": prepared.decision.snapshot_revision,
+                    }
+                linked = False
+                for candidate in current_task.commits or []:
+                    if await _resolve(main, candidate) == sha:
+                        linked = True
+                        break
                 if not linked:
                     blockers.append("candidate_not_linked")
                 if await _ancestor(main, sha, tip):
@@ -604,6 +591,7 @@ async def land_candidate(
                             db, current_task, main, _receipt_result(replayed)
                         )
                     facts = await _recover_landing(main, common, branch, tip, sha)
+                    facts.update(admission)
                     recovered = await _record_and_notify(
                         db, current_task, caller_session_id, sha, facts, already_landed=True
                     )
@@ -645,8 +633,7 @@ async def land_candidate(
                     if isinstance(merged, GitFailed):
                         conflict = _refused(refusal, "merge_conflict", merged.stdout)
                         return _escalate(db, current_task, conflict)
-                    delivery = "land" if direct_landing else "land reviewed"
-                    subject = f"chore: {delivery} {sha[:10]} for #{current_task.seq_num}"
+                    subject = f"chore: land {sha[:10]} for #{current_task.seq_num}"
                     target = await _git(
                         main, "commit-tree", tree, "-p", tip, "-p", sha, "-m", subject
                     )
@@ -668,6 +655,7 @@ async def land_candidate(
                 observed_tip = await _tip(main, branch)
                 if await _ancestor(main, target, observed_tip):
                     facts = {
+                        **admission,
                         "branch": branch,
                         "integration_base": tip,
                         "landed_tip": target,

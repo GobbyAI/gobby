@@ -20,8 +20,8 @@ from gobby.cli.installers.git_hooks import GOBBY_HOOK_END, HOOK_TEMPLATES, insta
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.tasks.attestations import AttestationSubmission, EvidenceReference, record_attestation
 from gobby.tasks.land_commit import land_candidate
-from gobby.tasks.step_records import StepSubmission, record_task_step
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.fixtures.landing_case import bind_task_manager
@@ -629,17 +629,15 @@ async def test_land_commit_passes_installed_guard(
     grant_step_writes(
         temp_db, claimant.id, isolated.project.id, "fixture-developer", ("implementation",)
     )
-    record_task_step(
+    record_attestation(
         temp_db,
         task_id=task.id,
         session_id=claimant.id,
-        step="implementation",
-        submission=StepSubmission(
-            status="approved",
-            epoch=task.review_epoch,
-            round_number=1,
-            feedback="Candidate implementation is complete.",
-            commit_sha=sha,
+        submission=AttestationSubmission(
+            kind="implementation",
+            result="approved",
+            summary="Candidate implementation is complete.",
+            reference=EvidenceReference(scheme="git", value=sha),
         ),
     )
     grant_review_writes(temp_db, reviewer.id, isolated.project.id)

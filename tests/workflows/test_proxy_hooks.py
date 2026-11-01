@@ -20,7 +20,7 @@ from gobby.hooks.effect_deadline import (
     BlockingEffectDeadline,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.integrations.rtk import RTK_RULE_NAME, RtkProbe, clear_probe_cache
+from gobby.integrations.rtk import RtkProbe, clear_probe_cache
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -289,7 +289,7 @@ def test_bundled_rtk_rule_syncs_as_disabled_installed_row(
     result = sync_bundled_rules(db, get_bundled_rules_path())
 
     assert result["errors"] == []
-    row = manager.get_by_name(RTK_RULE_NAME, project_id=None)
+    row = manager.get_by_name("rtk-command-rewrite", project_id=None)
     assert row is not None
     assert row.source == "installed"
     assert row.enabled is False
@@ -676,8 +676,9 @@ async def test_final_transform_rechecks_enforcement_gates(
         event: HookEvent,
         session_id: str,
         variables: dict[str, Any],
+        base_merge_write: bool = False,
     ) -> HookResponse | None:
-        del self, session_id, variables
+        del self, session_id, variables, base_merge_write
         tool_input = event.data.get("tool_input")
         command = tool_input.get("command") if isinstance(tool_input, dict) else None
         if command == "rtk git status":
@@ -707,8 +708,9 @@ async def test_stale_rewrite_does_not_leak_into_next_event(
         event: HookEvent,
         session_id: str,
         variables: dict[str, Any],
+        base_merge_write: bool = False,
     ) -> HookResponse | None:
-        del self, session_id, variables
+        del self, session_id, variables, base_merge_write
         tool_input = event.data.get("tool_input")
         command = tool_input.get("command") if isinstance(tool_input, dict) else None
         if command == "rtk git status":

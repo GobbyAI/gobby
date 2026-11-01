@@ -14,14 +14,13 @@ from gobby.agents.team_lifecycle import seat_team
 from gobby.agents.team_teardown import reconcile_team_teardowns
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.agents import AgentRun
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.inter_session_messages import InterSessionMessage
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
-from gobby.workflows.engine.seat_messages import candidate_event
-from gobby.workflows.engine.seat_transitions import _coordinates_holder
 from gobby.worktrees.deletion import WorktreeDeletionResult
-from tests.fixtures.landing_case import bind_task_manager, make_landing_case
+from tests.fixtures.agent_sessions import AgentSessions
+from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.team_case import SLUG, TITLE, TeamWorld, git_in, make_team_world
 
 pytestmark = pytest.mark.unit
@@ -277,8 +276,8 @@ async def test_dispatched_seat_resolves_its_team_and_claims_its_leaf(world: Team
 
 
 @pytest.mark.asyncio
-async def test_epic_dev_manager_releases_its_teams_leaf_claim(world: TeamWorld) -> None:
-    """The Dev Manager bound to an epic releases a team seat's claim on one of its open leaves."""
+async def test_authorized_coordinator_releases_an_epic_leaf_claim(world: TeamWorld) -> None:
+    """A declared claim manager needs no team-manager binding."""
     db = world.case.db
     tasks = LocalTaskManager(db)
     tools = create_task_registry(tasks)
@@ -286,9 +285,8 @@ async def test_epic_dev_manager_releases_its_teams_leaf_claim(world: TeamWorld) 
     leaf = new_task(world, LEAF_TITLE, parent=epic)
     runbook = world.child(epic)
     await world.admit(runbook, epic)
-    manager = world.case.session("dev-manager", parent=runbook.id)
-    bind_task_manager(
-        db, manager=manager, parent=runbook.id, project_id=world.case.project_id, task=epic
+    manager = AgentSessions(db, world.case.project_id).add(
+        "claim-coordinator", capabilities=("manage_task_claims",)
     )
     holder = world.case.session("test-writer", parent=runbook.id)
     with session_context_for_test(holder):
@@ -309,10 +307,10 @@ async def test_epic_dev_manager_releases_its_teams_leaf_claim(world: TeamWorld) 
 
 
 @pytest.mark.asyncio
-async def test_other_teams_dev_manager_cannot_release_an_epic_leaf_claim(
+async def test_scoped_coordinator_cannot_release_an_excluded_epic_leaf_claim(
     world: TeamWorld,
 ) -> None:
-    """A Dev Manager bound to a different epic is refused for a leaf that epic does not own."""
+    """Team presence cannot override a definition's declared claim scope."""
     db = world.case.db
     tasks = LocalTaskManager(db)
     tools = create_task_registry(tasks)
@@ -326,13 +324,10 @@ async def test_other_teams_dev_manager_cannot_release_an_epic_leaf_claim(
     other_epic = new_task(world, "Another team's epic", epic=True)
     other_runbook = world.child(other_epic)
     await world.admit(other_runbook, other_epic)
-    other_manager = world.case.session("dev-manager", parent=other_runbook.id)
-    bind_task_manager(
-        db,
-        manager=other_manager,
-        parent=other_runbook.id,
-        project_id=world.case.project_id,
-        task=other_epic,
+    other_manager = AgentSessions(db, world.case.project_id).add(
+        "docs-claim-coordinator",
+        capabilities=("manage_task_claims",),
+        definition_fields={"task_claim_scope": {"categories": ["docs"]}},
     )
 
     with session_context_for_test(other_manager):
@@ -347,53 +342,6 @@ async def test_other_teams_dev_manager_cannot_release_an_epic_leaf_claim(
     assert tasks.get_task(leaf.id).claimed_by_session_id == holder
 
 
-def _proof_request(line: str, sender: str, recipient: str) -> InterSessionMessage:
-    return InterSessionMessage(
-        id=f"proof-{sender}-{recipient}",
-        from_session=sender,
-        to_session=recipient,
-        content=line,
-        priority="normal",
-        sent_at=datetime.now(UTC),
-    )
-
-
-@pytest.mark.asyncio
-async def test_epic_dev_manager_proof_request_binds_on_its_leaf(world: TeamWorld) -> None:
-    """An epic's Dev Manager may ask a leaf's holder for proof; another team's may not."""
-    db = world.case.db
-    epic = new_task(world, TITLE, epic=True)
-    leaf = new_task(world, LEAF_TITLE, parent=epic)
-    runbook = world.child(epic)
-    await world.admit(runbook, epic)
-    manager = world.case.session("dev-manager", parent=runbook.id)
-    bind_task_manager(
-        db, manager=manager, parent=runbook.id, project_id=world.case.project_id, task=epic
-    )
-    developer = world.case.session("developer", parent=manager)
-    LocalTaskManager(db).claim_task(leaf.id, developer, force=True)
-    line = f"EVENT=PROOF_REQUEST TASK={leaf.id} SHA={'a' * 40} NOTE=evidence"
-
-    event = candidate_event(db, _proof_request(line, manager, developer))
-    assert event is not None
-    assert _coordinates_holder(db, developer, event) is True
-
-    other_epic = new_task(world, "Another team's epic", epic=True)
-    other_runbook = world.child(other_epic)
-    await world.admit(other_runbook, other_epic)
-    other_manager = world.case.session("dev-manager", parent=other_runbook.id)
-    bind_task_manager(
-        db,
-        manager=other_manager,
-        parent=other_runbook.id,
-        project_id=world.case.project_id,
-        task=other_epic,
-    )
-    other = candidate_event(db, _proof_request(line, other_manager, developer))
-    assert other is not None
-    assert _coordinates_holder(db, developer, other) is False
-
-
 @pytest.mark.asyncio
 async def test_topology_and_bound_close_teardown(world: TeamWorld) -> None:
     db = world.case.db
@@ -404,6 +352,21 @@ async def test_topology_and_bound_close_teardown(world: TeamWorld) -> None:
     root_leaf = new_task(world, "Root leaf", parent=epic)
     runbook = world.child(epic)
     team = await world.admit(runbook, epic)
+
+    owner = AgentSessions(db, world.case.project_id).add(
+        "bound-root-owner",
+        definition_fields={"workflows": {"rule_selectors": {"include": ["tag:root-close"]}}},
+    )
+    RuleDefinitionManager(db).create(
+        "explicit-bound-root-close",
+        {
+            "event": "task_close",
+            "when": f"task['id'] == '{epic.id}' and facts.get('closure_intent') == 'ancestor'",
+            "effects": [{"type": "block", "reason": "Close the bound root explicitly."}],
+        },
+        project_id=world.case.project_id,
+        tags=["root-close"],
+    )
 
     deleted: list[TeamBinding] = []
 
@@ -421,15 +384,15 @@ async def test_topology_and_bound_close_teardown(world: TeamWorld) -> None:
         return list(deleted)
 
     # Closing a nested leaf cascades its phase epic closed; neither close tears the team down.
-    tasks.close_task(nested_leaf.id, reason="done")
+    tasks.close_task(nested_leaf.id, reason="done", closed_in_session_id=owner)
     assert tasks.get_task(phase.id).closed_at is not None
     assert await teardown_pass() == []
-    # The live team stops the cascade at the bound epic; the manager never claims it.
-    tasks.close_task(root_leaf.id, reason="done")
+    # Selected policy reserves the bound root for explicit completion.
+    tasks.close_task(root_leaf.id, reason="done", closed_in_session_id=owner)
     assert tasks.get_task(epic.id).closed_at is None
     assert await teardown_pass() == []
     # Closing the bound epic queues exactly one teardown.
-    tasks.close_task(epic.id, reason="done")
+    tasks.close_task(epic.id, reason="done", closed_in_session_id=owner)
     assert [binding.team_id for binding in await teardown_pass()] == [team.team_id]
 
     # A non-epic descendant with open children is neither a container nor a leaf.

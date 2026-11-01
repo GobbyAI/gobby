@@ -1,0 +1,27 @@
+tags: [task-closure-independent-review]
+
+rules:
+  closure-requires-independent-review:
+    description: The paired workflow adds a separate review author; default does not select this policy.
+    event: task_close
+    priority: 30
+    when: &independent_review_required >-
+      reason == 'done' and facts.get('closure_intent', 'explicit') != 'ancestor' and
+      (latest_attestation('review').get('result') != 'approved' or
+       any(latest_attestation('review').get('session_id') == maker.get('session_id')
+           for maker in attestations if maker.get('kind') in ['test-before', 'implementation', 'test-after']) or
+       (facts.get('candidate_commit_sha') and
+        ((latest_attestation('review').get('reference') or {}).get('scheme') != 'git' or
+         (latest_attestation('review').get('reference') or {}).get('value') != facts.get('candidate_commit_sha'))))
+    effects:
+      - type: block
+        reason: Obtain an approved candidate review from an author who did not implement or test the work.
+
+  landing-requires-independent-review:
+    description: The paired workflow requires independent candidate review before delivery.
+    event: task_land
+    priority: 30
+    when: *independent_review_required
+    effects:
+      - type: block
+        reason: Obtain an approved candidate review from an author who did not implement or test the work.

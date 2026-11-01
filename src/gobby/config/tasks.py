@@ -5,7 +5,6 @@ Contains task-related Pydantic config models:
 - PatternCriteriaConfig: Pattern-specific validation criteria templates
 - TaskExpansionConfig: Task breakdown/expansion settings
 - TaskValidationConfig: Task completion validation settings
-- TaskClosePolicyConfig: Project step records required before task close
 - GobbyTasksConfig: Combined gobby-tasks MCP server config
 - WorkflowConfig: Workflow engine configuration
 - WorkflowVariablesConfig: Default values for session workflow variables
@@ -35,8 +34,6 @@ __all__ = [
     "PatternCriteriaConfig",
     "TaskExpansionConfig",
     "TaskValidationConfig",
-    "TaskClosePolicyConfig",
-    "load_project_task_close_policy",
     "TaskProtectionPolicyConfig",
     "load_project_task_protection_policy",
     "GobbyTasksConfig",
@@ -147,9 +144,6 @@ class TaskValidationConfig(FeatureDefaultConfig):
     )
 
 
-TASK_CLOSE_POLICY_KEY = "task_close_policy"
-
-
 class TaskProtectionPolicyConfig(BaseModel):
     """Protected tasks and ancestors for definitions that opt into mutation restrictions."""
 
@@ -177,51 +171,6 @@ def load_project_task_protection_policy(project_path: str) -> TaskProtectionPoli
         )
     except (AttributeError, ValueError) as exc:
         raise ValueError(f"Invalid task_protection_policy in {marker}: {exc}") from exc
-
-
-class TaskClosePolicyConfig(BaseModel):
-    """Approved step records a project requires before its tasks close.
-
-    Epics never need records: their children carry them.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    enforce_step_records: bool = Field(
-        default=False,
-        description="Require approved implementation and closing records for non-epic tasks.",
-    )
-    test_categories: list[str] = Field(
-        default_factory=list,
-        description="Task categories that also need an approved test record.",
-    )
-    review_categories: list[str] = Field(
-        default_factory=lambda: ["code", "docs", "research"],
-        description="Task categories that also need an approved independent review record.",
-    )
-
-    @field_validator("test_categories", "review_categories")
-    @classmethod
-    def validate_categories(cls, value: list[str]) -> list[str]:
-        from gobby.storage.tasks._models import VALID_CATEGORIES
-
-        unknown = sorted(set(value) - VALID_CATEGORIES)
-        if unknown:
-            raise ValueError(f"unknown task category: {', '.join(unknown)}")
-        return value
-
-
-def load_project_task_close_policy(project_path: str) -> TaskClosePolicyConfig:
-    """Read a checkout's `.gobby/project.json` policy; an invalid policy fails closed."""
-    marker = Path(project_path) / ".gobby" / "project.json"
-    try:
-        text = marker.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return TaskClosePolicyConfig()
-    try:
-        return TaskClosePolicyConfig.model_validate(json.loads(text).get(TASK_CLOSE_POLICY_KEY, {}))
-    except (AttributeError, ValueError) as exc:
-        raise ValueError(f"Invalid {TASK_CLOSE_POLICY_KEY} in {marker}: {exc}") from exc
 
 
 class FileExtractionConfig(BaseModel):

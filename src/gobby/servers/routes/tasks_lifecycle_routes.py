@@ -37,11 +37,12 @@ class TaskEscalateRequest(BaseModel):
 class TaskCloseRequest(BaseModel):
     """Request body for closing a task."""
 
-    reason: TaskCloseReason = Field(default="done", description="Canonical closure disposition")
+    reason: TaskCloseReason = Field(
+        default="done", min_length=1, max_length=120, description="Policy-defined closure reason"
+    )
     commit_sha: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] | None = (
         Field(default=None, description="Git commit SHA to link")
     )
-    force: bool = Field(default=False, description="Close even when child tasks remain open")
     session_id: str | None = Field(
         default=None,
         description="Session reference or UUID that closed the task",
@@ -205,7 +206,6 @@ def register_task_lifecycle_routes(
                     resolved_id,
                     body.commit_sha,
                     reason=body.reason,
-                    force=body.force,
                     closed_in_session_id=resolved_session_id,
                     cwd=repo_path,
                 )
@@ -214,7 +214,6 @@ def register_task_lifecycle_routes(
                     server.task_manager.close_task,
                     resolved_id,
                     reason=body.reason,
-                    force=body.force,
                     closed_in_session_id=resolved_session_id,
                 )
             result = closed.to_dict()

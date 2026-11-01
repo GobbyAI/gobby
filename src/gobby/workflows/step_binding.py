@@ -10,7 +10,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.tasks.state_semantics import is_task_claimed_by_session
 from gobby.workflows.agent_models import AgentStepWorkflowBody
-from gobby.workflows.agent_resolver import session_has_capability
 from gobby.workflows.step_instances import (
     AgentStepInstance,
     AgentStepInstanceManager,
@@ -19,19 +18,6 @@ from gobby.workflows.step_instances import (
 from gobby.workflows.task_claim_state import active_task_id_for_edit, resolve_target_task_id
 
 BOUND_TASK_VARIABLE = "assigned_task_id"
-# The bound task's review epoch when its claim was taken; a later reset returns the seat.
-BOUND_REVIEW_EPOCH_VARIABLE = "bound_review_epoch"
-
-
-def _review_epoch_reset(
-    db: HubDatabase, instance: AgentStepInstance, session_variables: dict[str, Any], bound: str
-) -> bool:
-    """Whether the bound task's review epoch moved since the binding captured it."""
-    captured = {**session_variables, **instance.variables}.get(BOUND_REVIEW_EPOCH_VARIABLE)
-    if not isinstance(captured, int):
-        return False
-    task = _read_task(db, bound)
-    return task is not None and task.review_epoch != captured
 
 
 def _binding_step_index(snapshot: AgentStepWorkflowBody) -> int | None:
@@ -78,8 +64,7 @@ def release_lost_binding(
 
     An unchanged held binding costs no task query. A different active selection
     must still be authoritatively owned before it can replace a parked binding.
-    A selected successful claim completion resets even an unchanged binding. A review epoch
-    that moved since the binding rewinds even while the claim is still held. An authoritative
+    A selected successful claim completion resets even an unchanged binding. An authoritative
     check (BEFORE_TOOL) reads the task instead of trusting the projected claim map, which
     another actor's close or release leaves stale until the next reconciliation.
     """
@@ -93,7 +78,6 @@ def release_lost_binding(
     bound = {**session_variables, **instance.variables}.get(BOUND_TASK_VARIABLE)
     if not bound:
         return instance
-    epoch_reset = _review_epoch_reset(db, instance, session_variables, str(bound))
     active = active_task_id_for_edit(session_variables)
     bound_id = resolve_target_task_id(session_variables, bound) or str(bound)
     selected = _read_task(db, active) if active is not None and active != bound_id else None
@@ -101,7 +85,6 @@ def release_lost_binding(
         claimed = None if authoritative else session_variables.get("claimed_tasks")
         if (
             not reset_on_claim
-            and not epoch_reset
             and isinstance(claimed, dict)
             and (bound in claimed or bound in claimed.values())
         ):
@@ -115,7 +98,6 @@ def release_lost_binding(
             return instance
         if (
             not reset_on_claim
-            and not epoch_reset
             and task is not None
             and is_task_claimed_by_session(task, instance.session_id)
         ):
@@ -139,61 +121,3 @@ def reconcile_active_binding(db: HubDatabase, session_id: str, variables: dict[s
     instance = AgentStepInstanceManager(db).get_active_for_session(session_id)
     if instance is not None and instance.enabled and instance.current_step:
         release_lost_binding(db, instance, variables, authoritative=True)
-
-
-def recover_rejected_submission(db: HubDatabase, instance: AgentStepInstance) -> AgentStepInstance:
-    """Recover an opted-in workflow whose candidate was rejected without a message read.
-
-    Review records are authoritative even when a hold delayed the reviewer or its
-    notification. Require evidence from this submission; a previous round must not
-    reopen a freshly resubmitted candidate.
-    """
-    # In-memory checks first: a seat outside submit pays no capability query.
-    if (
-        instance.current_step != "submit"
-        or instance.workflow.get_step("implement") is None
-        or instance.step_entered_at is None
-        or not session_has_capability(db, instance.session_id, "recover_rejected_submission")
-    ):
-        return instance
-    task_id = instance.variables.get(BOUND_TASK_VARIABLE)
-    task = _read_task(db, task_id) if isinstance(task_id, str) else None
-    if (
-        task is None
-        or not is_task_claimed_by_session(task, instance.session_id)
-        or not task.commits
-    ):
-        return instance
-
-    from gobby.agents.team_lifecycle import seat_team
-    from gobby.agents.team_review import seat_team_held
-    from gobby.tasks.step_records import current_task_steps, list_task_step_records
-
-    steps = current_task_steps(list_task_step_records(db, task.id), task.review_epoch)
-    review, implementation = steps.get("review"), steps.get("implementation")
-    if (
-        review is None
-        or review.status != "rejected"
-        or review.updated_at < instance.step_entered_at
-        or implementation is None
-        or implementation.status != "approved"
-        or implementation.session_id != instance.session_id
-        or not review.commit_sha
-        or implementation.commit_sha != review.commit_sha
-        or not review.commit_sha.startswith(task.commits[-1])
-    ):
-        return instance
-    binding = seat_team(db, instance.session_id)
-    if binding is not None and seat_team_held(db, binding):
-        return instance
-
-    recovered = instance.model_copy(deep=True)
-    recovered.variables.update(bounced=True, implementation_complete=False)
-    recovered.current_step = "implement"
-    recovered.step_action_count = 0
-    recovered.step_entered_at = datetime.now(UTC)
-    try:
-        AgentStepInstanceManager(db).save(recovered, if_match=(instance.id, instance.updated_at))
-    except StaleStepInstanceWriteError:
-        return instance
-    return recovered

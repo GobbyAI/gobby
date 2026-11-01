@@ -64,6 +64,13 @@ def epic_names(task: Task) -> tuple[str, str]:
     return f"epic/{task.seq_num}/main", directory
 
 
+def leaf_names(epic: Task, leaf: Task) -> tuple[str, str]:
+    """The branch and worktree directory of a leaf under its admitted epic."""
+    slug = title_slug(leaf.title)
+    directory = f"wt-epic-{epic.seq_num}-{leaf.seq_num}" + (f"-{slug}" if slug else "")
+    return f"epic/{epic.seq_num}/{leaf.seq_num}", directory
+
+
 def open_descendants(db: HubDatabase, task_id: str) -> list[ScopedTask]:
     """Every open task below ``task_id``, at any depth."""
     rows = db.fetchall(

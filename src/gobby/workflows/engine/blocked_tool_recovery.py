@@ -10,14 +10,11 @@ from typing import Any
 
 from gobby.hooks.events import HookEventType
 from gobby.workflows.engine.block_batching import close_response_batch
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 logger = logging.getLogger(__name__)
 
 CONSECUTIVE_TOOL_BLOCK_RULE = "consecutive-tool-block"
-_CODE_INDEX_REMEDIATION_RULES = {
-    "require-code-index-skill",
-    "prefer-gcode-for-source-read",
-}
 _RULE_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]")
 _ACTION_WORD_RE = re.compile(
     r"\b(?:ask|call|claim|clear|continue|create|load|retrieve|retry|run|use)\b",
@@ -121,13 +118,6 @@ def _balanced_call_end(text: str, start: int) -> int | None:
     return None
 
 
-def block_source_for_rule(rule_name: str) -> str:
-    """Map block rule names onto observability source labels."""
-    if rule_name in {"agent-tool-enforcement", "step-tool-enforcement"}:
-        return "step-enforcement"
-    return "rule"
-
-
 def block_reason_signature(rule_name: str, reason: str) -> str:
     digest = hashlib.sha256(reason.encode("utf-8")).hexdigest()[:16]
     return f"{rule_name}:{digest}"
@@ -202,11 +192,13 @@ def remember_blocked_tool_recovery_state(
     tool_name: str,
     rule_name: str,
     reason: str,
+    recovery_conditions: Sequence[str] = (),
 ) -> None:
     """Persist the latest original BEFORE_TOOL block for terminal retry guidance."""
     variables["_last_blocked_tool"] = tool_name
     variables["_last_blocked_rule_name"] = rule_name
     variables["_last_blocked_reason"] = reason
+    variables["_last_blocked_recovery_conditions"] = list(recovery_conditions)
 
 
 def clear_blocked_tool_recovery_state(variables: dict[str, Any]) -> None:
@@ -214,6 +206,7 @@ def clear_blocked_tool_recovery_state(variables: dict[str, Any]) -> None:
     variables["_last_blocked_tool"] = ""
     variables["_last_blocked_rule_name"] = ""
     variables["_last_blocked_reason"] = ""
+    variables["_last_blocked_recovery_conditions"] = []
     close_response_batch(variables)
 
 
@@ -222,10 +215,19 @@ def is_blocked_tool_recovery_remediation(
     event_data: dict[str, Any],
 ) -> bool:
     """Return true when the current tool directly satisfies the last block's remediation."""
-    return (
-        variables.get("_last_blocked_rule_name") in _CODE_INDEX_REMEDIATION_RULES
-        and event_data.get("canonical_code_index_navigation") is True
-    )
+    conditions = variables.get("_last_blocked_recovery_conditions", [])
+    if not isinstance(conditions, list):
+        return False
+    evaluator = SafeExpressionEvaluator({"event": event_data, "variables": variables}, {})
+    for condition in conditions:
+        if not isinstance(condition, str):
+            continue
+        try:
+            if evaluator.evaluate(condition):
+                return True
+        except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+            logger.warning("Invalid blocked-tool recovery condition", exc_info=True)
+    return False
 
 
 def format_consecutive_tool_block_reason(

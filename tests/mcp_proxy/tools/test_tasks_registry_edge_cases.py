@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.tools.tasks import SKIP_REASONS, create_task_registry
+from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.tasks import Task
 from gobby.utils.session_context import session_context_for_test
@@ -18,18 +18,6 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def task_ops_registry(mock_task_manager: Any) -> Any:
     return create_task_ops_registry(mock_task_manager)
-
-
-class TestSkipReasons:
-    """Tests for SKIP_REASONS constant."""
-
-    def test_skip_reasons_contains_expected_values(self) -> None:
-        """SKIP_REASONS are the close reasons that need no commit: every reason but done."""
-        assert SKIP_REASONS == frozenset({"moot", "superseded", "wont_do"})
-
-    def test_skip_reasons_is_frozenset(self) -> None:
-        """Test that SKIP_REASONS is immutable."""
-        assert isinstance(SKIP_REASONS, frozenset)
 
 
 # =============================================================================
@@ -200,7 +188,7 @@ class TestSessionIntegrationTools:
             mock_st_instance = MagicMock()
             linked_at = datetime(2026, 10, 6, tzinfo=UTC)
             task = Task(
-                id="t1",
+                id="00000000-0000-0000-0000-000000000001",
                 project_id="proj-123",
                 title="Linked task",
                 priority=2,

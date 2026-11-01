@@ -16,7 +16,6 @@ from gobby.sync.tasks import (
     TaskRestoreError,
     _compute_path_cache,
 )
-from gobby.tasks.criteria_text import TaskCriteriaError
 from gobby.tasks.state_semantics import is_task_closed
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
@@ -891,7 +890,7 @@ class TestImportEdgeCases:
         task_manager: LocalTaskManager,
         sample_project: dict[str, Any],
     ) -> None:
-        """A null review cannot bypass required task criteria."""
+        """Optional task criteria survive a backup with no review metadata."""
         now = "2023-01-02T00:00:00+00:00"
 
         tasks_data = {
@@ -911,11 +910,11 @@ class TestImportEdgeCases:
         with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(tasks_data) + "\n")
 
-        with pytest.raises(TaskCriteriaError, match="validation_criteria"):
-            backup_manager.restore()
+        backup_manager.restore()
 
-        with pytest.raises(ValueError, match="not found"):
-            task_manager.get_task(_task_id("task-null-validation"))
+        task = task_manager.get_task(_task_id("task-null-validation"))
+        assert task.title == "Task without Validation"
+        assert task.validation_criteria is None
 
     @pytest.mark.integration
     @pytest.mark.parametrize(

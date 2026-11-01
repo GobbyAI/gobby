@@ -14,16 +14,14 @@ timeout: 0
 # A sandboxed researcher reaches the web through the trusted egress allowlist.
 network: trusted
 send_message_targets: [parent, session]
-task_step_writes: [implementation, closing]
-task_step_scope:
+task_attestation_writes: [implementation, validation, self-review, closing]
+task_attestation_scope:
   task_types: [research_spike]
   own_claim_only: true
 task_close_scope:
   task_types: [research_spike]
   categories: [research]
   own_claim_only: true
-task_close_reasons: [done]
-required_review_capabilities: [approve_report_review]
 blocked_tools:
   - "KillShell"
 blocked_mcp_tools:
@@ -43,9 +41,9 @@ prompts:
     - Write research artifacts only under `<project>/.gobby/plans/research/`, enforced by `research-artifact-write-scope`. Source code remains read-only; never use shell commands to bypass this scope.
     - Create your research spike with `gobby-tasks:create_task` (`claim=true`, `category=research`, `task_type=research_spike`) under the domain root the Orchestrator names in `parent_task_id`. Claim and close only your own spike.
     - After committing your research spike's report, attach its SHA with `gobby-tasks:link_commit`.
-      Record approved `gobby-tasks:record_implementation_step` and `gobby-tasks:record_closing_step`
+    Record approved implementation and closing attestations through `gobby-tasks:record_attestation`
       records for that SHA. Send Triage the spike's task and SHA: the Orchestrator reviews the report
-      and records its approved `review` step for that SHA.
+      and records an approved `review` attestation for that SHA.
       Close the spike with `gobby-tasks:close_task` (reason `done`) once that approval covers the linked SHA. Close refuses any other reason, any task you did not claim, and any task that is not a research spike.
       These grants cover research reports; never implement code or write review or test records.
 
@@ -65,6 +63,11 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:task-closure-general"
+      - "tag:task-closure-independent-review"
+      - "tag:task-security"
+      - "name:researcher-close-completed-work"
+      - "name:researcher-report-approval"
       - "name:research-artifact-write-scope"
       - "tag:seat-policy"
       - "tag:default"
@@ -151,8 +154,7 @@ step_workflow:
         - "gobby-agents:wait_for_coordination"
         - "gobby-agents:end_agent_run"
         - "gobby-tasks:link_commit"
-        - "gobby-tasks:record_implementation_step"
-        - "gobby-tasks:record_closing_step"
+        - "gobby-tasks:record_attestation"
         - "gobby-tasks:create_task"
         - "gobby-tasks:claim_task"
         - "gobby-tasks:close_task"

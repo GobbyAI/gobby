@@ -52,7 +52,6 @@ def create_lifespan(
             "message_processor_resolver": lambda: server.message_processor,
             "agent_runner": server.services.agent_runner,
             "completion_registry": server.services.completion_registry,
-            "wake_dispatcher": server.services.wake_dispatcher,
             "config_runtime": server.services.config_runtime,
             "database": server.services.database,
             "session_manager": server.services.session_manager,

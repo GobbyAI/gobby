@@ -10,7 +10,6 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.mcp_proxy.services.result_handling import (
@@ -18,11 +17,9 @@ from gobby.mcp_proxy.services.result_handling import (
     build_before_tool_event,
 )
 from gobby.storage.definitions.agents import AgentDefinitionManager
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -98,18 +95,11 @@ ORCHESTRATOR: dict[str, Any] = {"_agent_type": "orchestrator"}
 
 
 def _load_roles(db: HubDatabase) -> None:
-    manager = RuleDefinitionManager(db)
+    from gobby.workflows.sync_rules import sync_rule_file
+
     for rule_file in sorted(ROLES_DIR.glob("*.yaml")):
-        document = yaml.safe_load(rule_file.read_text())
-        for name, rule_data in document["rules"].items():
-            body_data, metadata = split_rule_definition_data(rule_data)
-            manager.create(
-                name=name,
-                definition_json=RuleDefinitionBody.model_validate(body_data).model_dump_json(),
-                priority=metadata["priority"],
-                enabled=metadata["enabled"],
-                tags=document["tags"],
-            )
+        result = sync_rule_file(db, rule_file)
+        assert result["success"], result["errors"]
     for name in (
         *NON_CLOSERS,
         "researcher",
@@ -508,6 +498,25 @@ def _write(project: Path, file_path: str) -> dict[str, Any]:
         "cwd": str(project),
         "project_path": str(project),
     }
+
+
+@pytest.mark.parametrize(
+    "data,expected",
+    [
+        ({"tool_name": "Edit", "tool_input": {"file_path": "src/example.py"}}, "block"),
+        (_shell("git commit -am 'change implementation'"), "block"),
+        (_shell("uv run ruff format src/"), "block"),
+        (_shell("uv run ruff check src/"), "allow"),
+        (_shell("git diff HEAD"), "allow"),
+        (_proxy_call("gobby-tasks-ops", "land_commit", {"task_id": "#42"}), "allow"),
+    ],
+)
+async def test_selected_review_scope_blocks_repository_mutations_but_allows_validation_and_landing(
+    engine: RuleEngine, data: dict[str, Any], expected: str
+) -> None:
+    _set_policy(engine.db, "independent-auditor", ["name:reviewer-write-scope"], [])
+    response = await _decide(engine, data, {"_agent_type": "independent-auditor"})
+    assert response.decision == expected
 
 
 @pytest.mark.asyncio

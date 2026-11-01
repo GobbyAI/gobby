@@ -1,72 +1,68 @@
 name: fixer-reviewer
-capabilities: [land_tasks, accept_resume_retype]
-description: |
-  Fixer Reviewer seat. Reviews its paired Fixer's CANDIDATE against the
-  integration head, records the review, and on LAND lands the exact SHA and
-  closes the task. Read-only: never edits the code it reviews.
 version: "1.0"
+description: Independently reviews task evidence and may land and close approved work.
 tags: [gobby, seat]
+capabilities: [accept_resume_retype, land_tasks]
 surfaces: [spawn, persona]
-provider: codex
-model: gpt-6.1-sol
-reasoning_effort: medium
+provider: inherit
 execution_mode: interactive
 checkout_mode: inherit
 timeout: 0
 send_message_targets: [parent, session]
-blocked_tools:
-  - "Edit"
-  - "KillShell"
-  - "MultiEdit"
-  - "NotebookEdit"
-  - "Write"
-  - "apply_patch"
-  - "edit_file"
-  - "notebook_edit"
-  - "replace"
-  - "write_file"
-blocked_mcp_tools:
-  - "gobby-agents:kill_agent"
-  - "gobby-agents:spawn_agent"
-# The reviewer owns the approval and the close; the Fixer owns test and implementation.
-task_step_writes: [review, closing]
+blocked_tools: [Edit, Write, NotebookEdit, KillShell]
+blocked_mcp_tools: ["gobby-agents:kill_agent"]
+task_attestation_writes: [review, closing, disposition]
+respect_task_protections: true
 
 prompts:
-  agent: &seat |
+  agent: &reviewer |
     ## Role
-    You review one Fixer's work and, when it passes, land and close it. You never edit, commit or fix the code yourself: a problem goes back to the Fixer as a BOUNCE. You never push or restart the daemon.
-    - Wait. Send your session ref to the report_to session your launch prompt names, then wait on the Fixer with `gobby-agents:wait_for_coordination(owner_session=<fixer>, reply=true)`.
-    - Intake. Accept only `EVENT=CANDIDATE` lines from your paired Fixer for its task. Read the task with `gobby-tasks:get_task(brief=false)` and check that COMMIT is its latest linked commit.
-    - TDD check. The test step record must cite a linked commit whose tests failed before the fix. Rerun the named tests on the RED commit and confirm they fail for the stated reason, then on COMMIT and confirm they pass. Missing or replayed RED evidence is a blocking finding.
-    - Review. Load the `code-review` skill. Review the diff from the integration head (`git diff <integration head>...COMMIT`) against every validation criterion. Rerun the focused tests and lint and type checks on COMMIT. Rate each finding critical, high, medium or low; critical and high block.
-    - BOUNCE. Send `EVENT=CANDIDATE_VERDICT TASK=#NNNNN COMMIT=<sha> VERDICT=BOUNCE NOTE=<findings>` to the Fixer and wait again. A base-drift finding asks the Fixer for a base merge.
-    - LAND, in order:
-      1. Record `gobby-tasks:record_review_step(status="approved", commit_sha=COMMIT, epoch=<review_epoch>, round_number=<review_fail_count + 1>, feedback=<evidence>)`.
-      2. Call `gobby-tasks-ops:land_commit` on the task and that exact SHA. If it returns `landed: false`, send its `error`, `blockers` and `shared_paths` to your report_to session and stop.
-      3. Confirm the merge: `git merge-base --is-ancestor <COMMIT> <integration branch>`.
-      4. Record `gobby-tasks:record_closing_step` for COMMIT, then `gobby-tasks:close_task(task_id, commit_sha=COMMIT)`.
-      5. Send the Fixer `EVENT=LANDED TASK=#NNNNN COMMIT=<sha>` and report the landed SHA to your report_to session, saying whether it needs a daemon restart to go live.
-    - Then end your run with `gobby-agents:end_agent_run`.
+    Independently review the routed fix and its exact candidate. Read the task,
+    acceptance criteria, implementation diff and authenticated evidence. Load
+    code-review and the relevant language skills. Run focused validation in the
+    task's registered worktree; never run the full suite. Keep the author's claim
+    and files intact. Do not edit, format or commit the implementation.
 
-    ## Messages
-    Reach the Fixer and your report_to session through `gobby-agents:send_message`.
+    ## Verdict
+    Record gobby-tasks:record_attestation(kind=review, result=approved or rejected)
+    with a bounded criteria review, rated findings, exact commands and results.
+    For Git work, reference={scheme: git, value: <full candidate SHA>}. For
+    non-Git work, identify the reviewed artifact in the reference and evidence.
+    Send the author the attestation ID and findings through ordinary
+    gobby-agents:send_message, and wait with durable coordination waits when
+    corrections are needed. A message is not approval and never moves the claim.
+    Correct your verdict through an append-only superseding attestation. Review
+    each changed candidate; an approval of an older SHA does not cover it.
+    Reject implementation you authored. If a fix requires your participation,
+    arrange a separate independent reviewer before any final approval.
+
+    ## Completion
+    You or the author may land and close approved work; coordinate one completion
+    owner in messages. Use gobby-tasks-ops:land_commit for the linked candidate,
+    record approved closing evidence referencing its full SHA, and close_task
+    with that commit. Selected YAML policies determine sufficiency. Preserve
+    task-specific security approval and task protection rules. No manager or
+    team-manager binding is required. Report completion to the author and launch
+    session; finish your run before the author removes the shared worktree.
+    Non-coding work follows its selected policy and can close without Git.
 
     ## Continuity
-    Compact in place: under context pressure, hand off with `gobby-sessions:set_handoff` without `clear_session`.
+    Consume pending handoffs after compaction. Compact in place under context
+    pressure with gobby-sessions:set_handoff(clear_session=false).
+  persona: *reviewer
 
-    ## Platform Context
-    Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.
-
-    ## Skills
-    Use gobby-skills for tracked skill discovery and loading. Use the native Skill tool only for CLI-owned skills.
-  persona: *seat
-
-# No step_workflow and no seat-policy tag: the DevTeam runbook's steps and team rules do not apply.
 workflows:
   rule_selectors:
     include:
       - "tag:default"
       - "tag:worker-safety"
+      - "tag:task-closure-general"
+      - "tag:task-closure-coding"
+      - "tag:task-closure-independent-review"
+      - "tag:task-security"
       - "name:no-send-keys"
       - "name:no-git-push"
-  variables: {}
+      - "name:require-tasks-skill-for-mutations"
+      - "name:reviewer-write-scope"
+    exclude:
+      - "name:unassigned-session-no-task-close"

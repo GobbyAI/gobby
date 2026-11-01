@@ -35,9 +35,14 @@ def test_completed_plan_archived(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize(
     ("closure_reason", "expected"),
-    [("moot", [("#201", "closed-moot")]), ("superseded", []), ("wont_do", [])],
+    [
+        ("moot", [("#201", "closed-moot")]),
+        ("superseded", [("#201", "closed-superseded")]),
+        ("wont_do", [("#201", "closed-wont_do")]),
+        ("recipe delivered", [("#201", "closed-recipe delivered")]),
+    ],
 )
-def test_only_done_or_moot_epics_archive_their_plan(
+def test_closed_epics_archive_their_plan_for_any_reason(
     monkeypatch: pytest.MonkeyPatch, closure_reason: str, expected: list[tuple[str, str]]
 ) -> None:
     from gobby.hooks.event_handlers import _plan
@@ -72,6 +77,7 @@ def test_plan_state_archived(monkeypatch: pytest.MonkeyPatch) -> None:
         db=object(),
     )
 
+    assert result is not None
     assert result.state == "archived"
 
 

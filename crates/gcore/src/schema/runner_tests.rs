@@ -1610,7 +1610,8 @@ fn review_epoch_migration_preserves_history_and_resets_open_tasks() -> anyhow::R
 }
 
 #[test]
-fn runbook_migrations_upgrade_legacy_tasks_without_criteria() -> anyhow::Result<()> {
+fn task_policy_migration_preserves_legacy_criteria_and_allows_optional_metadata()
+-> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1663,24 +1664,41 @@ fn runbook_migrations_upgrade_legacy_tasks_without_criteria() -> anyhow::Result<
         assert_eq!(row.get::<_, Option<String>>(2).as_deref(), reason);
         assert_eq!(row.get::<_, String>(3), bucket);
     }
-    let constraint = client.query_one(
-        "SELECT convalidated, pg_get_constraintdef(oid, true) FROM pg_constraint \
+    let constraints = client.query(
+        "SELECT conname FROM pg_constraint \
          WHERE conrelid = 'tasks'::regclass AND conname = 'tasks_require_validation_criteria'",
         &[],
     )?;
-    assert!(!constraint.get::<_, bool>(0));
-    assert_eq!(
-        constraint.get::<_, String>(1),
-        "CHECK (task_type = 'epic'::text OR NULLIF(btrim(validation_criteria), ''::text) \
-         IS NOT NULL) NOT VALID"
-    );
-    let error = client
-        .execute(
-            "INSERT INTO tasks(id, project_id, title, task_type) VALUES ($1, $2, 'new', 'task')",
-            &[&Uuid::new_v4(), &project_id],
-        )
-        .expect_err("new tasks still need criteria");
-    assert_eq!(error.code(), Some(&SqlState::CHECK_VIOLATION));
+    assert!(constraints.is_empty());
+    client.execute(
+        "INSERT INTO tasks(id, project_id, title, task_type) VALUES ($1, $2, 'new', 'task')",
+        &[&Uuid::new_v4(), &project_id],
+    )?;
+    let served_task = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO tasks(id, project_id, title, task_type, closed_at, closed_reason) \
+         VALUES ($1, $2, 'cake served', 'task', now(), 'served')",
+        &[&served_task, &project_id],
+    )?;
+    let reason: String = client
+        .query_one(
+            "SELECT closed_reason FROM tasks WHERE id = $1",
+            &[&served_task],
+        )?
+        .get(0);
+    assert_eq!(reason, "served");
+    for invalid in ["".to_owned(), "  ".to_owned(), "x".repeat(121)] {
+        let error = client
+            .execute(
+                "UPDATE tasks SET closed_reason = $1 WHERE id = $2",
+                &[&invalid, &served_task],
+            )
+            .expect_err("closed tasks require bounded, nonblank reason text");
+        assert_eq!(
+            error.code(),
+            Some(&postgres::error::SqlState::CHECK_VIOLATION)
+        );
+    }
     SchemaRunner::new(&mut client, "public")?.verify()?;
     Ok(())
 }

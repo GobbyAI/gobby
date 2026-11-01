@@ -8,18 +8,17 @@ from uuid import UUID
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock, project_backup_path
 from gobby.sync.task_review_serialization import (
+    deserialize_task_attestations,
     deserialize_task_review,
-    deserialize_task_step_records,
     serialize_task_review,
 )
-from gobby.tasks.criteria_text import require_validation_criteria
+from gobby.tasks.attestations import attestations_by_task, restore_attestations
 from gobby.tasks.state_semantics import (
     serialize_task_state,
     validate_task_close_reason,
     validate_task_hold_state,
     validate_task_state,
 )
-from gobby.tasks.step_records import restore_task_step_records, step_records_by_task
 from gobby.utils.json_helpers import json_dumps
 
 TASK_BACKUP_PAGE_SIZE = 100_000
@@ -199,11 +198,13 @@ def _validate_uuid(value: Any, *, field: str, line_num: int, required: bool = Fa
     if not isinstance(value, str):
         raise TaskRestoreError(f"Task backup line {line_num}: {field} must be a UUID string")
     try:
-        UUID(value)
+        canonical = str(UUID(value))
     except ValueError as exc:
         raise TaskRestoreError(
             f"Task backup line {line_num}: {field} is not a valid UUID: {value}"
         ) from exc
+    if value != canonical:
+        raise TaskRestoreError(f"Task backup line {line_num}: {field} must be a canonical UUID")
 
 
 def _load_task_backup(path: Path) -> list[dict[str, Any]]:
@@ -320,7 +321,12 @@ def _load_task_backup(path: Path) -> list[dict[str, Any]]:
 
         try:
             deserialize_task_review(data.get("review"))
-            deserialize_task_step_records(data.get("review"), task_id=task_id)
+            review = data.get("review")
+            if isinstance(review, dict) and "step_records" in review:
+                raise ValueError(
+                    "Legacy step evidence must be converted before restoring this backup"
+                )
+            deserialize_task_attestations(data.get("attestations"), task_id=task_id)
         except ValueError as exc:
             raise TaskRestoreError(f"Task backup line {line_num}: {exc}") from exc
 
@@ -372,7 +378,7 @@ class TaskBackupManager:
                 offset += len(page)
 
             deps_rows = self.db.fetchall("SELECT task_id, depends_on FROM task_dependencies")
-            step_history = step_records_by_task(self.db)
+            evidence_history = attestations_by_task(self.db)
 
             deps_map: dict[str, list[str]] = {}
             for row in deps_rows:
@@ -405,14 +411,18 @@ class TaskBackupManager:
                     "created_in_session_id": task.created_in_session_id,
                     "claimed_by_session_id": task.claimed_by_session_id,
                     "deps_on": sorted(deps_map.get(task.id, [])),  # Sort deps for stability
-                    # Link order is meaningful: the last commit is the tip step records bind.
+                    # Link order is meaningful: the last commit is the task's tip.
                     "commits": list(dict.fromkeys(task.commits)) if task.commits else [],
                     "closed_at": _normalize_timestamp(task.closed_at),
                     "closed_reason": task.closed_reason,
                     "closed_in_session_id": task.closed_in_session_id,
                     "closed_commit_sha": task.closed_commit_sha,
                     "labels": task.labels if task.labels else None,
-                    "review": serialize_task_review(task, step_history.get(task.id, [])),
+                    "review": serialize_task_review(task),
+                    "attestations": [
+                        record.model_dump(mode="json")
+                        for record in evidence_history.get(task.id, [])
+                    ],
                     # Expansion fields
                     "category": task.category,
                     # External integrations
@@ -457,6 +467,7 @@ class TaskBackupManager:
             # Phase 1: restore task rows with last-write-wins semantics.
             pending_deps: dict[str, list[str]] = {}
             pending_path_rebuilds: list[str] = []
+            handled_evidence: set[str] = set()
 
             with self.db.transaction() as conn:
                 conn.execute("SET CONSTRAINTS ALL DEFERRED")
@@ -496,6 +507,33 @@ class TaskBackupManager:
 
                     # Check against bulk-loaded existing task data
                     existing_row = existing_tasks.get(task_id)
+                    if existing_row is not None:
+                        # Task metadata and its evidence form one restore bundle.
+                        # Never apply a backup's close state over conflicting or
+                        # later local evidence, even if its wall clock is newer.
+                        history = deserialize_task_attestations(
+                            data.get("attestations"), task_id=task_id
+                        )
+                        evidence_state = restore_attestations(conn, task_id, history)
+                        handled_evidence.add(task_id)
+                        # The evidence restore holds this task's row lock. Use
+                        # current local ownership when the backup omits it,
+                        # rather than the potentially stale bulk snapshot.
+                        locked_row = conn.execute(
+                            "SELECT * FROM tasks WHERE id = %s", (task_id,)
+                        ).fetchone()
+                        if locked_row is None:
+                            raise TaskRestoreError(f"Locked task {task_id} disappeared")
+                        existing_row = dict(locked_row)
+                        existing_tasks[task_id] = existing_row
+                        if evidence_state in {"diverged", "ahead"}:
+                            logger.warning(
+                                "Task %s: kept stored task state and %s attestation history",
+                                task_id,
+                                evidence_state,
+                            )
+                            skipped_count += 1
+                            continue
 
                     should_update = False
                     existing_seq_num = None
@@ -547,10 +585,7 @@ class TaskBackupManager:
 
                         review = deserialize_task_review(data.get("review"))
                         task_type = data.get("task_type", "task")
-                        validation_criteria = require_validation_criteria(
-                            task_type,
-                            review["validation_criteria"],
-                        )
+                        validation_criteria = review["validation_criteria"]
 
                         # Handle labels stored as JSON in the hub.
                         labels_raw = data.get("labels")
@@ -742,16 +777,15 @@ class TaskBackupManager:
                             (task_id, depends_on, datetime.now(UTC)),
                         )
 
-                # Phase 4: Append step record history each stored task lacks.
+                # Phase 4: Append evidence history each stored task lacks.
                 for data in records:
-                    history = deserialize_task_step_records(data.get("review"), task_id=data["id"])
-                    if data["id"] in existing_tasks and not restore_task_step_records(
-                        conn, data["id"], history
-                    ):
-                        logger.warning(
-                            "Task %s: kept the stored diverged step record history",
-                            data["id"],
-                        )
+                    if data["id"] in handled_evidence:
+                        continue
+                    history = deserialize_task_attestations(
+                        data.get("attestations"), task_id=data["id"]
+                    )
+                    if data["id"] in existing_tasks:
+                        restore_attestations(conn, data["id"], history)
 
             logger.info(
                 "Restore complete: %s imported, %s updated, %s skipped",

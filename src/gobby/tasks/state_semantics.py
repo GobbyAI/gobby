@@ -11,12 +11,9 @@ TaskState = Literal[
     "open", "in_progress", "blocked", "needs_human", "escalated", "deferred", "closed"
 ]
 TaskHoldState = Literal["needs_human", "deferred"]
-TaskCloseReason = Literal["done", "moot", "superseded", "wont_do"]
+TaskCloseReason = str
 TASK_STATES = frozenset(get_args(TaskState))
 TASK_HOLD_STATES = frozenset(get_args(TaskHoldState))
-TASK_CLOSE_REASONS = frozenset(get_args(TaskCloseReason))
-# No-work closes are Orchestrator overrides: they carry no linked work and record no step records.
-NO_WORK_CLOSE_REASONS = frozenset({"moot", "superseded", "wont_do"})
 
 
 def _read_field(value: Any, *names: str) -> Any:
@@ -43,12 +40,9 @@ def validate_task_state(value: object) -> TaskState:
 
 def validate_task_close_reason(value: object) -> TaskCloseReason:
     """Require a canonical reason; narrative evidence belongs in the close summary."""
-    if not isinstance(value, str) or value not in TASK_CLOSE_REASONS:
-        raise ValueError(
-            f"Unknown task close reason {value!r}; "
-            f"expected one of: {', '.join(sorted(TASK_CLOSE_REASONS))}"
-        )
-    return cast(TaskCloseReason, value)
+    if not isinstance(value, str) or not value.strip() or len(value) > 120:
+        raise ValueError("Task close reason must be nonblank text of at most 120 characters")
+    return value
 
 
 def get_task_hold_state(task: Any) -> TaskHoldState | None:

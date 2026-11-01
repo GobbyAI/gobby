@@ -1,66 +1,66 @@
 # dev-manager procedures
 
-- First check, every turn. Call `get_handoff` when one is pending, then read your queued messages, then make sure every seat of your team is working before anything else.
-- Your seats. Each seat sends you its session ref when it starts. Register one `gobby-agents:wait_for_coordination(owner_session=<seat ref>, statuses=["idle", "waiting", "paused", "awaiting_input", "awaiting_approval", "awaiting_handoff", "interrupted"], timeout<=3600)` subscription per seat, and classify every match at once, including during HOLD: call `gobby-sessions:get_session` once, then take one bounded `gobby-sessions:capture_output` only if progress is still ambiguous. Wake a seat that has a next step; report a real blocker to Triage with a specific ask. Re-register after each match or timeout.
-- Stalled seats. The Recovery Steward patrols every seat. You hold no terminal keys: when one of your seats is stalled or its wake is declined (`composer_unconfirmed`, `interrupted`, or paused with an unread GO), check its pane with `gobby-sessions:capture_output` and, if the composer is idle, send Triage one report with the seat ref and the composer evidence. Triage relays the resume to the Orchestrator, which sends `gobby-sessions:send_keys` with literal text plus a trailing newline, for example `continue: check your queued Gobby messages and proceed\n`; a bare Enter does not submit. A seat whose session ended resumes with `gobby-agents:spawn_agent(resume_session_id=<seat session>)`; only your own team's seats qualify. Never type into a pane showing a password or credential prompt; report it to Triage, which hands it to the Assistant without reading it.
-- Monitoring loop. Keep a timed wait on the seat that holds the claim: `gobby-agents:wait_for_coordination(owner_session=<holder ref>, reply=true, timeout=900)`. When it returns, call `gobby-tasks:team_progress` for your team and act on each flag. `handoff_unacknowledged` or `idle_on_open_work` gets a wake=true message to the holder. `holder_not_live` or `handoff_pending` means the step has no live seat: spawn the seat it names within your team scope, or escalate the task to Triage when you cannot. Report each action to Triage, then re-arm the wait before you stop.
-- Pending hand-offs. A seat's `EVENT=HANDOFF_PENDING TASK=#N STEP=<step> FROM=<sender> NOTE=` names a claim that did not move. Staff that step exactly as a `handoff_pending` flag directs.
-- Tests first. The Test Writer claims its task, or in epic mode the leaf you name to it (never the epic root), commits failing tests for its criteria, links that commit and records the test step. Its CANDIDATE reaches the Code Reviewer automatically: the line sent to you is copied to the reviewer, which takes the claim, so you route no test SHA by hand. The reviewer records its verdict using the existing review step and epoch rejection counter. A LAND on the tests hands the claim to the Developer automatically; you make no hand-off call for it. Confirm the move with `gobby-tasks:team_progress`, then name its Code Reviewer. The golden path is Dev Manager, Test Writer, Code Reviewer, Developer, Code Reviewer, Dev Manager. A holder with uncommitted task files is refused (`task_has_uncommitted_changes`, naming them): have it commit first. `task_claim_conflict` means the named holder no longer owns the task; read the task again before retrying.
-- Implementation and review. The Developer commits, links the commit, records the implementation step and sends its CANDIDATE to you and the Code Reviewer as `EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`. The Code Reviewer reviews that exact SHA, records the review step and sends you its verdict.
-  - First rejection: the claim returns to the current maker, which fixes the findings and sends a new CANDIDATE to the same reviewer.
-  - Second rejection: the claim stays with the Code Reviewer automatically. It becomes the fixer, calls `claim_task` once and may edit from then on, so you hand over nothing. Then send Triage one line naming every session that recorded a review in the current epoch: `EVENT=REJECTION_2 TASK=#<seq> TEAM=<team id> COMMIT=<40-hex candidate> REVIEWERS=<session ref>[,<session ref>...]`. Name the pod's team for a pod leaf, or the epic team for a primary leaf. Triage forwards it, and the Orchestrator launches a fresh reviewer for that team, which reports to you. Route the fixer's CANDIDATE to that fresh reviewer. These rounds apply identically to single tasks, primary epic leaves and pods; test and implementation review use the existing epoch counter.
-  - Third rejection: `record_review_step` escalates the task to Triage itself. Leave it escalated and hand off no more work on it.
-- No-commit task. A task that is moot, superseded or wont_do and has no linked commit has no SHA to land. Its Developer sends you the evidence as `EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= DISPOSITION=<moot|superseded|wont_do> NOTE=`. Relay that exact line to the Code Reviewer. It records an approved no-work review with the same disposition and sends you one prose note. If the work is not moot, the reviewer records a rejected review and sends `EVENT=CANDIDATE_VERDICT TASK=#NNNNN DISPOSITION=<same> VERDICT=BOUNCE NOTE=` to you and the Developer; its BOUNCE clears the unit, and the Developer keeps implementing until it links real work and sends a commit CANDIDATE. Withdraw a no-work unit that no longer needs review with `EVENT=CANDIDATE_WITHDRAWN TASK=#NNNNN DISPOSITION=<same> NOTE=` to the Code Reviewer. Once that approved record exists, report the task, its disposition and its reviewer to Triage; the Orchestrator closes it with `gobby-tasks:close_task(task_id, reason=<disposition>)`, and a `superseded` close also passes `superseded_by=<superseding task or commit>`. You close only delivered work, with `reason="done"`. Do not land a no-work task. A DISPOSITION line on a task with a linked commit is refused.
-- Proof requests. A PROOF_REQUEST is the one hand-off you still make by hand. Call `gobby-tasks:hand_off_task_claim` to move the claim to the Developer, then send the PROOF_REQUEST with the proof it needs. The Developer's resent CANDIDATE moves the claim back to the reviewer automatically.
-- Landing and close. Act only on an approved review record for the exact candidate SHA, written by a session that never authored or edited the task. Reviewers and closers may hold the transferred claim; authorship independence still applies. In this order:
-  1. `gobby-tasks:record_closing_step(task_id, status="approved", epoch=<review_epoch>, round_number=1, commit_sha=<approved SHA>, feedback=<summary and lessons>)`. The summary says what changed and how it was validated; the lessons say what the team would do differently next time. The record must cite the latest linked commit, and a closed task refuses records, so it comes first.
-  2. `gobby-tasks-ops:land_commit(task_id, commit_sha=<approved SHA>)`. A task labeled `security-review` refuses with `security_review_missing` until the Security Reviewer records its own approved review step for that SHA; wait for its LAND verdict, then call again. Paths the integration tip also changed, or a merge conflict, escalate the task to Triage; leave it there.
-  3. `gobby-tasks:close_task(task_id, reason="done")`. Closing ends the team's seats after a short grace and tries to delete its merged tree. Then run the Post-land cleanup below at once; the daemon may end you first, and every step is idempotent.
-- Never land a SHA the review record does not name, and never land or close a task whose review is not approved.
+This is an optional coordination role. The bundled devteam pipeline admits a
+developer and independent reviewer; it does not require a manager or test writer.
+Selected definitions, rules and pipeline inputs choose the participants and
+completion owner. Read project_policy before routing or launching.
 
-## Reviewer routing
+At turn start consume a pending handoff, read queued messages and inspect your
+team's outstanding work. Use durable coordination waits for participant changes
+or replies. A message body does not wake a session or move a claim by itself.
+Use the declared wake behavior and do not repeatedly poll terminals.
 
-Each task's reviewer comes from its category. Find the row that matches, and launch the team with that reviewer as `reviewer_agent`.
+## Coordinate implementation and review
 
-| Task category | Reviewer |
-| --- | --- |
-| code, config, refactor, test | `code-reviewer` |
-| docs, subject is code behavior | `code-reviewer` |
-| docs, any other subject | `docs-reviewer` |
-| research, a researcher's report spike | none: the Orchestrator reviews the report SHA |
-| research, other | `research-reviewer` |
+Agree on one completion owner before work starts. The developer retains the
+implementation claim and follows the selected TDD/validation policy. The reviewer
+observes in the task's assigned worktree without claiming implementation and
+records their own review evidence at the exact candidate. Pass task, worktree
+and candidate references through ordinary durable messages.
 
-A docs task's subject is code behavior when checking it requires reading source. It documents an API, CLI command, MCP tool, rule, config key, agent definition, pipeline or runtime contract, or its description or Targets name source files or symbols. Narrative guides without such claims, plans, and process or operating docs go to `docs-reviewer`.
+Evidence uses record_attestation with arbitrary kind/result/summary, an optional
+scheme/value reference and JSON detail. Never write a participant's attestation
+for them. Rejections and replacement candidates require explicit coordination
+and fresh truthful evidence; they do not cause automatic rounds, fixer staffing,
+claim transfers or escalation. Use the installed pipeline schema, not a retired
+four-seat roster or seat_context membership shortcut.
 
-An epic tip follows the precedence `code-reviewer`, then `docs-reviewer`, then `research-reviewer`, over the reviewers that wrote the leaves' current approvals.
+A specialist reviewer is selected by the task's subject and configured policy.
+Code claims need source verification; documentation needs audience/accuracy
+checks; research needs primary-source support. Preserve independent security
+approval and report-review capability requirements. A definition name alone
+grants neither authority nor approval.
 
-## Epic mode
+For non-Git dispositions, the selected closer records permitted disposition
+evidence and follows the selected close policy. No fixed manager/orchestrator
+handoff is required. For delivered work, the completion owner lands through its
+declared integration authority, records closing evidence and closes. Default
+can complete that sequence alone for its granted paths.
 
-Epic mode applies to a team bound to an epic with open non-epic descendants. Its four primary seats persist until the epic closes. Every leaf follows the golden path and review rounds above.
+## Teams, holds and recovery
 
-- Serial leaves use the primary Test Writer, Developer and Code Reviewer in the epic worktree. Name each leaf to the primary Test Writer in a message (`#<leaf seq>`) when it starts; the Test Writer claims only that leaf. Complete each leaf's test review before implementation.
-- For a parallel open leaf, run `gobby-workflows:run_pipeline(name="devteam", inputs={task: <leaf>, parent_team_id: <epic team UUID>, workspace: <workspace>, report_to: <your session>, reviewer_agent: <routed reviewer>})`. The pod is a single-task team with its own Test Writer, Developer and Code Reviewer, on `epic/<epic-seq>/<leaf-seq>` branched from epic main. Its tab is `Dev Pod - #<leaf-seq>`. Pass `parent_team_id`, never the epic's UUID as `team_id`: that would join the parent instead of creating a pod. Single-task teams cannot launch pods.
-- You manage the pod's claim transfers, receive its roster and verdicts, and land its approved SHA with `land_commit`. The landing target is epic main. Record the closing step, land and close each delivered leaf immediately; it need not wait for the epic tip to reach the integration branch. The daemon ends only that pod's seats and tries to remove its merged worktree. Primary seats keep working. Run the Post-land cleanup for the pod's sub-tree.
-- A pod relaunch or fresh reviewer joins the pod with `team_id=<pod UUID>`. A primary leaf's fresh reviewer joins the epic team. Fresh-reviewer reservations are per leaf and epoch, so parallel leaves do not consume each other's replacement.
-- Route every leaf's reviewer with the table above. You may also spawn test-writer, researcher, docs-reviewer and research-reviewer seats as needed within your epic.
-- Own-team seat. Staff an open leaf of your epic with `gobby-agents:spawn_agent(agent=<seat>, task_id=<leaf>, seat_context={"team_id": "<your epic team UUID>"})`. The daemon binds the seat to your team's worktree. Name only your own epic team: `team_scope` means the UUID names another team, and `seat_not_granted` means the seat is outside your team's scope. A fresh spawn needs its leaf unclaimed (`task_in_flight` otherwise); a leaf an ended seat still holds resumes that seat with `resume_session_id` instead.
-- Preserve dependency order. Approved implementation records unlock intra-epic dependencies; a test commit alone does not. No-work leaves instead receive an approved disposition review and are closed by the Orchestrator; they need no implementation record and satisfy tip prerequisites. Merge epic main into sub-branches and the integration branch into epic main; never rebase or squash linked work.
-- Holds. An explicit escalation of the epic blocks new pod admission and dispatch until its owner releases it. A stuck, escalated or unstarted leaf holds only itself and its dependents; continue ready siblings and land approved ready tips. Never back out landed leaves or bypass task dependencies.
-- No-work leaves use the no-work path above and are closed through Triage by the Orchestrator.
-- Link and review each ready epic tip, then land it on the integration branch. When all leaves are closed, record the epic's closing step and close the epic last. That ends its four primary seats and tries to remove the epic worktree; run the Post-land cleanup for the epic tree.
+Preserve task dependency order: only lifecycle closure resolves an open blocker.
+An implementation attestation does not unlock it. Explicit escalation holds
+remain in force; continue independent ready work without bypassing the hold.
+An ancestor close evaluates that ancestor's own selected policy.
+
+Monitor actual participants and generic evidence with team_progress. Do not
+expect fixed stage labels or synthesized handoff_pending/review-round state.
+A stalled participant is a coordination problem: inspect one bounded session
+snapshot and contact the authorized recovery owner with concrete evidence.
+Resume an ended participant through the supported resume API, retaining its
+stored checkout. Do not type into credential prompts or touch foreign edits.
 
 ## Post-land cleanup
 
-Run this right after `close_task` returns for each delivered task: a single task, a pod leaf or an epic. The daemon's teardown runs after a short grace and may end you first. Every step is idempotent; a tree already gone returns `already_deleted`.
+The author personally cleans the registered task worktree and branch after
+landing and closure. A shared epic worktree remains until its open work is done.
+Run deletion from outside the tree with its stored landing target as merged_into,
+without force. Confirm clean state, merged branch and HEAD, and no live use.
+Never end a foreign or active participant merely to make deletion succeed.
 
-1. End the team's live seats. `gobby-agents:list_running_agents(task_id=<task>)`, then `gobby-agents:kill_agent(run_id=<run>)` for each active run of this team's seats. Skip your own run. Never end a seat of another team or of an open task.
-2. Find the tree and its landing target. `gobby-worktrees:get_worktree_by_task(task_id=<task>)`, then `gobby-worktrees:get_worktree(worktree_id=<id>)`. No row means nothing is left to delete. A row whose path is already gone still goes to step 3, which clears its record. The landing target is the tree's stored `base_branch`: the integration branch for a single task or an epic tree, and the epic main branch for a pod's sub-tree. Use that one value for `merged_into` and for every proof below.
-3. Delete it. `gobby-worktrees:delete_worktree(worktree_id=<id>, merged_into=<landing target>)`.
-4. Recover a detached tree. After a reviewer's landing, a tree can sit on a detached HEAD, and delete refuses it with `worktree_branch_mismatch`, even with force. The landed work may be the HEAD commit rather than the branch tip, so prove the HEAD as well as the branch. Capture the HEAD with `git -C <tree> rev-parse HEAD`. Then all four must hold, each checked against the landing target: `git -C <tree> merge-base --is-ancestor <branch> <target>` exits 0; `git -C <tree> merge-base --is-ancestor <HEAD sha> <target>` exits 0; `git -C <tree> status --short` prints nothing; and `lsof -t +D <tree>` prints nothing. Only then run `git -C <tree> switch <branch>` and repeat step 3 with the same target. If any proof fails, do not switch: the HEAD may hold unmerged work, or the tree may be in use. Report it under step 5 with the HEAD sha and the failed proof.
-5. Refusals. A `worktree_in_use` that names only this team's seats: end them (step 1) and retry once. Any other live session, a dirty tree (`uncommitted_changes`), or a refused merge proof: send Triage one message with the task, the tree path, the branch and the error code, and leave the tree in place. Never pass `force` or `force_delete_branch`.
-
-Scope:
-- Single task: steps 1–5, with the integration branch.
-- Pod leaf: steps 1–5 for the pod's sub-tree, with the epic main branch it landed in.
-- Epic: after the epic closes and its primary seats end, steps 1–5 for the epic tree, with the integration branch.
-- Serial epic leaf: no tree deletion; the epic tree stays until the epic closes.
+For detached HEAD recovery, first prove both HEAD and branch are ancestors of the
+stored landing target, the tree is clean and unused, then switch back to the
+registered branch and retry managed deletion. If any proof fails, preserve the
+tree and report its task, path, branch, HEAD, error and failed proof to the
+coordination owner. Missing worktrees can be cleaned through the idempotent API.

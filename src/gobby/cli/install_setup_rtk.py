@@ -19,14 +19,13 @@ from urllib.error import URLError
 from urllib.request import Request
 
 from gobby.integrations.rtk import (
-    RTK_RULE_NAME,
     RTK_VERSION,
     RtkProbe,
     managed_rtk_path,
     probe_rtk,
     resolve_rtk,
 )
-from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 
 from .install_release import _extract_binary_from_release_archive, _urlopen_https
@@ -450,21 +449,36 @@ def reconcile_direct_artifacts(
     )
 
 
+def _rtk_rules(db: HubDatabase) -> list[RuleDefinitionRow]:
+    """Find global integration declarations by their compiled handler, independent of names."""
+    rows = []
+    for row in RuleDefinitionManager(db).list_effective(None):
+        effects = row.definition_json.get("effects", [])
+        if isinstance(effects, list) and any(
+            isinstance(effect, dict)
+            and effect.get("type") == "proxy_hook"
+            and effect.get("handler") == "rtk"
+            for effect in effects
+        ):
+            rows.append(row)
+    return rows
+
+
 def rule_state(db: HubDatabase) -> bool | None:
-    row = RuleDefinitionManager(db).get_by_name(RTK_RULE_NAME, project_id=None)
-    return row.enabled if row is not None else None
+    rows = _rtk_rules(db)
+    return any(row.enabled for row in rows) if rows else None
 
 
 def set_rule_state(db: HubDatabase, *, enabled: bool) -> bool:
     manager = RuleDefinitionManager(db)
-    row = manager.get_by_name(RTK_RULE_NAME, project_id=None)
-    if row is None:
-        raise RtkInstallError(
-            f"Bundled rule {RTK_RULE_NAME!r} is unavailable; run daemon setup first"
-        )
-    if row.enabled != enabled:
-        row = manager.update(row.id, enabled=enabled)
-    return row.enabled
+    with db.transaction():
+        rows = _rtk_rules(db)
+        if not rows:
+            raise RtkInstallError("No rule declares the RTK proxy handler; run daemon setup first")
+        for row in rows:
+            if row.enabled != enabled:
+                manager.update(row.id, enabled=enabled)
+    return enabled
 
 
 def disable_rule_if_present(db: HubDatabase) -> bool:
@@ -554,8 +568,9 @@ def reconcile_rtk(
         cleanup = reconcile_direct_artifacts(home=home, remove=True)
         for conflict in cleanup.conflicts:
             logger.warning("RTK artifact conflict: %s", conflict)
-        set_rule_state(db, enabled=True)
-    else:
+        if explicit is not None or not no_interactive:
+            set_rule_state(db, enabled=True)
+    elif explicit is not None or not no_interactive:
         disable_rule_if_present(db)
     return get_rtk_status(db, home=home, env=env)
 

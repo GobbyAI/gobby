@@ -27,7 +27,7 @@ def dev_pod_launch_allowed(
 
     ``pod_pipelines`` is the rule's YAML list of pipeline names. A create passes
     ``parent_team_id`` and no ``team_id``; a relaunch passes ``team_id``, optionally with the
-    matching ``parent_team_id``, and may be a fresh reviewer.
+    matching ``parent_team_id``.
     """
     from gobby.agents.team_admission_records import TeamAdmissionRefused
     from gobby.agents.team_lifecycle import pod_parent, pod_relaunch
@@ -52,8 +52,6 @@ def dev_pod_launch_allowed(
         if not isinstance(task_ref, str) or any(
             value is not None and not isinstance(value, str) for value in (team_id, parent_id)
         ):
-            return False
-        if team_id is None and inputs.get("fresh_reviewer"):
             return False
         caller, agent = _spawn_caller(sessions, caller_ref)
         if _running_team_manager_definition(sessions, caller, agent) is None:

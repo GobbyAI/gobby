@@ -29,21 +29,17 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.workflows.base_merge_commits import base_merge_admission
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.engine.seat_messages import candidate_event
-from gobby.workflows.engine.seat_transitions import _candidate_rejection
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
-from tests.fixtures.landing_case import LandingCase, bind_task_manager, make_landing_case
-from tests.fixtures.team_case import make_team_world
+from tests.fixtures.landing_case import LandingCase, make_landing_case
 
 pytestmark = pytest.mark.unit
 
@@ -811,147 +807,6 @@ async def test_conflict_write_overrides_native_block_only_with_scoped_grant(
     assert not SessionVariableManager(temp_db).get_variables(session.id).get("task_claimed")
 
 
-@pytest.mark.parametrize(
-    "condition,allowed",
-    [
-        ("authored-base-merge", True),
-        ("non-merge", False),
-        ("not-latest", False),
-        ("unadmitted-parent", False),
-        ("ungranted", False),
-        ("other-author", False),
-        ("unregistered", False),
-    ],
-)
-async def test_claim_free_base_merge_candidate_binding(
-    seat: tuple[WorkflowHookHandler, Session, Path],
-    temp_db: HubDatabase,
-    condition: str,
-    allowed: bool,
-) -> None:
-    """Reviewer intake admits only the latest linked base merge authored by the granted sender."""
-    handler, session, worktree = seat
-    _seat(temp_db, session, "custom-seat", granted=condition != "ungranted", selectors=GATED_RULES)
-    record = LocalWorktreeManager(temp_db).get_by_path(str(worktree))
-    assert record is not None and record.task_id is not None
-    tasks = LocalTaskManager(temp_db)
-    task = tasks.get_task(record.task_id)
-    assert task.claimed_by_session_id is None
-    if condition == "unadmitted-parent":
-        _git(worktree, "branch", "untrusted", "feature")
-        _git(worktree, "checkout", "untrusted")
-        _commit(worktree, "shared.txt", "untrusted\n", "untrusted change")
-        _git(worktree, "checkout", "task-25385")
-        _conflict_base_merge(worktree, "untrusted")
-        (worktree / "shared.txt").write_text("resolved\n")
-        _git(worktree, "add", "shared.txt")
-    elif condition != "non-merge":
-        _start_conflicting_base_merge(worktree)
-    if condition != "non-merge":
-        # Deliver the real before/after commit events: authorship must come from
-        # the admitted operation, never just the sender's capability or NOTE.
-        author = session
-        if condition == "other-author":
-            author = SessionManager(temp_db).register(
-                external_id="other-merge-author",
-                machine_id=LOCAL_MACHINE_ID,
-                source="claude",
-                project_id=session.project_id,
-            )
-            _seat(temp_db, author, "other-capable-seat", granted=True, selectors=GATED_RULES)
-        await handler._evaluate_rules(_bash_event(author, worktree, "git commit --no-edit"))
-        output = _git(worktree, "commit", "--no-edit")
-        completed = _bash_event(author, worktree, "git commit --no-edit", HookEventType.AFTER_TOOL)
-        completed.data["tool_output"] = output
-        await handler._evaluate_rules(completed)
-    sha = _git(worktree, "rev-parse", "HEAD")
-    tasks.link_commit(task.id, sha)
-    if condition == "not-latest":
-        _commit(worktree, "later.txt", "later\n", "later linked work")
-        tasks.link_commit(task.id, _git(worktree, "rev-parse", "HEAD"))
-    if condition == "unregistered":
-        temp_db.execute("DELETE FROM worktrees WHERE id = %s", (record.id,))
-    reviewer = SessionManager(temp_db).register(
-        external_id="merge-reviewer",
-        machine_id=LOCAL_MACHINE_ID,
-        source="claude",
-        project_id=session.project_id,
-    )
-    message = InterSessionMessageManager(temp_db).create_message(
-        from_session=session.id,
-        to_session=reviewer.id,
-        content=(
-            f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=base-merge WT={worktree} "
-            f"COMMIT={sha} NOTE=base merge"
-        ),
-    )
-    event = candidate_event(temp_db, message)
-    assert event is not None
-    error = _candidate_rejection(temp_db, {}, event, reviewer.id)
-    assert (error is None) == allowed, error
-    assert tasks.get_task(task.id).claimed_by_session_id is None
-
-
-@pytest.mark.parametrize("completion", ["clean", "continue", "continue-c"])
-async def test_clean_base_merge_candidate_binds_after_its_authored_merge(
-    seat: tuple[WorkflowHookHandler, Session, Path],
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    completion: str,
-) -> None:
-    """Clean and conflict-resolved admitted merges bind at reviewer intake."""
-    handler, session, worktree = seat
-    _seat(temp_db, session, "custom-seat", granted=True, selectors=GATED_RULES)
-    # `feature` shares the base but not the task's conflicting shared.txt edit, so the
-    # integration merge below creates a commit with no conflict.
-    _git(worktree, "checkout", "-q", "-b", "clean-task", "feature")
-    _commit(worktree, "task2.txt", "clean task\n", "clean task file")
-    _commit(tmp_path / "main", "clean.txt", "clean\n", "integration clean file")
-    record = LocalWorktreeManager(temp_db).get_by_path(str(worktree))
-    assert record is not None and record.task_id is not None
-    tasks = LocalTaskManager(temp_db)
-    task = tasks.get_task(record.task_id)
-    if completion != "clean":
-        _git(worktree, "checkout", "-q", "task-25385")
-        _start_conflicting_base_merge(worktree)
-        _git(worktree, "config", "core.editor", "true")
-    args = (
-        ["merge", "--no-ff", "--no-edit", "integration"]
-        if completion == "clean"
-        else ["merge", "--continue"]
-    )
-    command = "git " + " ".join(args)
-    event_cwd = worktree
-    if completion == "continue-c":
-        command = f"git -C {worktree} " + " ".join(args)
-        event_cwd = tmp_path / "main"
-    await handler._evaluate_rules(_bash_event(session, event_cwd, command))
-    output = _git(worktree, *args)
-    completed = _bash_event(session, event_cwd, command, HookEventType.AFTER_TOOL)
-    completed.data["tool_output"] = output
-    await handler._evaluate_rules(completed)
-    sha = _git(worktree, "rev-parse", "HEAD")
-    tasks.link_commit(task.id, sha)
-    reviewer = SessionManager(temp_db).register(
-        external_id="merge-reviewer",
-        machine_id=LOCAL_MACHINE_ID,
-        source="claude",
-        project_id=session.project_id,
-    )
-    message = InterSessionMessageManager(temp_db).create_message(
-        from_session=session.id,
-        to_session=reviewer.id,
-        content=(
-            f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=base-merge WT={worktree} "
-            f"COMMIT={sha} NOTE=clean base merge"
-        ),
-    )
-    event = candidate_event(temp_db, message)
-    assert event is not None
-    error = _candidate_rejection(temp_db, {}, event, reviewer.id)
-    assert error is None, error
-
-
 @pytest.mark.parametrize("granted", [True, False], ids=["merge-capability", "no-capability"])
 async def test_team_worktree_scope_is_static_in_srt_launch_policy(
     landing: tuple[LandingCase, WorkflowHookHandler, Session, Path, Task],
@@ -974,18 +829,18 @@ async def test_team_worktree_scope_is_static_in_srt_launch_policy(
     worktree = managed.resolve()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
-    case.manager_for(task, session=session.id)
     registered = LocalWorktreeManager(temp_db).get_by_task(task.id)
     assert registered is not None
-    run = temp_db.execute(
-        "SELECT id FROM agent_runs WHERE child_session_id = %s AND task_id = %s",
-        (session.id, task.id),
-    ).fetchone()
-    assert run is not None
-    temp_db.execute(
-        "UPDATE agent_runs SET worktree_id = %s WHERE id = %s", (registered.id, run["id"])
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=case.creator,
+        child_session_id=session.id,
+        provider="claude",
+        prompt="Exercise declared checkout scope.",
+        agent_name="custom-seat",
+        task_id=task.id,
+        worktree_id=registered.id,
     )
-    temp_db.execute("UPDATE sessions SET agent_run_id = %s WHERE id = %s", (run["id"], session.id))
+    temp_db.execute("UPDATE sessions SET agent_run_id = %s WHERE id = %s", (run.id, session.id))
     assignment = LocalWorktreeManager(temp_db).get_for_session_run(session.id)
     assert assignment is not None and assignment.worktree_path == str(worktree)
     _seat(temp_db, session, "custom-seat", granted=granted, selectors=GATED_RULES)
@@ -1017,134 +872,3 @@ async def test_team_worktree_scope_is_static_in_srt_launch_policy(
     assert (str(worktree) in writes) == granted
     assert str(worktree.parent) not in writes
     assert str(unrelated.resolve()) not in writes
-
-
-@pytest.mark.parametrize(
-    "sender_kind,claim_state,linked",
-    [
-        (sender, claim, linked)
-        for sender in ("team-manager", "root-coordinator")
-        for claim in ("claimed", "released", "never-claimed")
-        for linked in (True, False)
-    ]
-    + [
-        ("unbound-manager", "never-claimed", True),
-        ("other-team-manager", "never-claimed", True),
-        ("team-developer", "never-claimed", True),
-    ],
-)
-async def test_base_merge_candidate_sender_claim_and_link_matrix(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    _local_machine_identity: None,
-    sender_kind: str,
-    claim_state: str,
-    linked: bool,
-) -> None:
-    """A coordinator's authored base merge binds independently of the maker's claim lifecycle."""
-    case = make_landing_case(temp_db, sample_project, tmp_path)
-    case.direct({"shared.txt": "base\n"})
-    world = make_team_world(case, tmp_path, monkeypatch)
-    tasks = LocalTaskManager(temp_db)
-    task = tasks.create_task(
-        case.project_id, "Merge candidate bindings", validation_criteria="Bind."
-    )
-    runbook = world.child(task)
-    binding = await world.admit(runbook, task)
-    assert binding.worktree_path is not None
-    worktree = Path(binding.worktree_path).resolve()
-    handler, root = _register_seat(temp_db, case.project_id)
-
-    if claim_state != "never-claimed":
-        tasks.claim_task(task.id, case.claimant)
-        if claim_state == "released":
-            tasks.release_task_claim(task.id)
-    manager = sender_kind in {"team-manager", "unbound-manager", "other-team-manager"}
-    if sender_kind == "root-coordinator":
-        sender = root
-    else:
-        parent = runbook
-        managed_task = task
-        if sender_kind == "other-team-manager":
-            managed_task = tasks.create_task(
-                case.project_id, "Other team", validation_criteria="Separate team."
-            )
-            parent = world.child(managed_task)
-            await world.admit(parent, managed_task)
-        parent_id = case.creator if sender_kind == "unbound-manager" else parent.id
-        sender_id = case.session(sender_kind, parent=parent_id)
-        if manager and sender_kind != "unbound-manager":
-            bind_task_manager(
-                temp_db,
-                manager=sender_id,
-                parent=parent_id,
-                project_id=case.project_id,
-                task=managed_task,
-            )
-        else:
-            LocalAgentRunManager(temp_db).create(
-                parent_session_id=parent_id,
-                provider="claude",
-                prompt="Candidate sender.",
-                agent_name=sender_kind,
-                child_session_id=sender_id,
-                task_id=task.id if sender_kind == "team-developer" else None,
-            )
-        loaded_sender = SessionManager(temp_db).get(sender_id)
-        assert loaded_sender is not None
-        sender = loaded_sender
-    extra = (
-        ("manage_task_claims",)
-        if manager
-        else (("coordinate_tasks",) if sender_kind == "root-coordinator" else ("implementation",))
-    )
-    _seat(
-        temp_db,
-        sender,
-        f"synthetic-{sender_kind}",
-        granted=sender_kind != "team-developer",
-        selectors=GATED_RULES,
-        extra_capabilities=extra,
-        team_manager=manager,
-    )
-    reviewer_id = case.session("merge-intake-reviewer", parent=runbook.id)
-    LocalAgentRunManager(temp_db).create(
-        parent_session_id=runbook.id,
-        provider="claude",
-        prompt="Review candidate.",
-        agent_name="synthetic-reviewer",
-        child_session_id=reviewer_id,
-        task_id=task.id,
-    )
-
-    case.direct({"shared.txt": "integration edit\n"})
-    _commit(worktree, "shared.txt", "task edit\n", "task edit")
-    _conflict_base_merge(worktree, "trunk")
-    (worktree / "shared.txt").write_text("resolved\n")
-    _git(worktree, "add", "shared.txt")
-    await handler._evaluate_rules(_bash_event(sender, worktree, "git commit --no-edit"))
-    output = _git(worktree, "commit", "--no-edit")
-    completed = _bash_event(sender, worktree, "git commit --no-edit", HookEventType.AFTER_TOOL)
-    completed.data["tool_output"] = output
-    await handler._evaluate_rules(completed)
-    sha = _git(worktree, "rev-parse", "HEAD")
-    if linked:
-        tasks.link_commit(task.id, sha)
-    message = InterSessionMessageManager(temp_db).create_message(
-        from_session=sender.id,
-        to_session=reviewer_id,
-        content=(
-            f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN={binding.team_id} "
-            f"WT={worktree} COMMIT={sha} NOTE=authored base merge"
-        ),
-    )
-    event = candidate_event(temp_db, message)
-    assert event is not None
-    error = _candidate_rejection(temp_db, {}, event, reviewer_id)
-    allowed = linked and sender_kind in {"team-manager", "root-coordinator"}
-    assert (error is None) == allowed, error
-    expected_holder = case.claimant if claim_state == "claimed" else None
-    assert tasks.get_task(task.id).claimed_by_session_id == expected_holder
-    assert sender.id != expected_holder

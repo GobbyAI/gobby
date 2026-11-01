@@ -39,7 +39,6 @@ from gobby.hooks.session_activation import reconcile_session_activation
 from gobby.hooks.session_materialize import activate_deferred_session, has_deferred_help_activation
 from gobby.hooks.session_summary_wiring import build_session_summary_dispatcher
 from gobby.hooks.session_types import HookSessionManager
-from gobby.sessions.mailbox_delivery import WakeDispatcherProtocol
 from gobby.storage.hub.read_scope import hub_read_scope
 from gobby.telemetry.tracing import create_span
 
@@ -75,7 +74,6 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
         memory_manager: "MemoryManager | None" = None,
         terminal_manager: Any | None = None,
         terminal_runtime_registry: Any | None = None,
-        wake_dispatcher: WakeDispatcherProtocol | None = None,
     ) -> None:
         self.daemon_host = daemon_host
         self.daemon_port = daemon_port
@@ -133,7 +131,6 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
             memory_manager=memory_manager,
             terminal_manager=terminal_manager,
             terminal_runtime_registry=terminal_runtime_registry,
-            wake_dispatcher=wake_dispatcher,
         )
 
         # Unpack all subsystems from factory components

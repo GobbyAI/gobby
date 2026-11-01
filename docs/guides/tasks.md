@@ -137,93 +137,65 @@ synthetic escalation nor workflow-variable writes.
 
 ### Close
 
-Finish the task's validation and any required independent review, commit its
-files, and integrate every task commit. Then preview the close with `preview=true`:
+The enabled definition's selected YAML rules and pipelines choose completion
+standards. Code authenticates the caller, preserves evidence and Git integrity,
+evaluates a deterministic snapshot and writes an allowed close atomically.
+
+Use `record_attestation(task_id, kind, result, summary, ...)` for truthful evidence.
+Kinds and results are arbitrary strings. Optional scheme/value references can
+identify a Git SHA or document; JSON evidence can carry criteria and results.
+The server stamps the authenticated session, installed definition and digest,
+capabilities, timestamp and task sequence. `task_attestation_writes` grants kinds
+or `*`; `task_attestation_scope` limits tasks. Correct your own evidence with
+`supersedes_id`, preserving history. Peers author their own attestations.
+
+The bundled general policy requires implementation evidence for delivered work,
+closed children and disposition evidence for other reasons. Coding YAML adds
+ordered `test-before`, `implementation`, `test-after`, `validation`, `self-review`
+and `closing` evidence with approved results, exact candidate references, linked
+commits, clean attributed files and integration ancestry. The paired workflow
+selects independent review. Security-labelled tasks retain separate approval.
+These are YAML standards, not assumptions about all tasks.
+
+Finish the required validation, review and landing, then preview:
 
 ```python
 call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "task_id": "#14390",
-    "commit_sha": "abc1234",
-    "changes_summary": "Refreshed the guide; focused checks pass.",
+    "commit_sha": "<full-candidate-sha>",
+    "changes_summary": "Completed the criteria; focused checks pass.",
     "preview": True,
 })
 ```
 
-After checking task/session/repository authorization, both leaf and epic closes
-evaluate the same five gates:
+Omit Git arguments for non-Git tasks. Preview returns `blocking_reasons`,
+`can_close`, `policy_revision`, `snapshot_revision`, resolved commit identities
+and `closed=false`. Diagnostic responses also expose facts. Preview changes
+neither task state nor links. Resolve refusals, then repeat with `preview=false`.
+Pass `expected_closure_revision` to bind final close to that snapshot. Final
+close evaluates current policy and evidence under locks and links an explicit
+candidate atomically with closure. Concurrent changes can require a new preview.
+Success returns `closed=true`.
 
-| Gate | Requirement |
-| :--- | :--- |
-| `children_closed` | All child tasks are closed. |
-| `linked_commits` | Linked or prospective commits exist, or a canonical no-work reason is supplied. |
-| `uncommitted_task_edits` | Task-attributed paths are clean in every recorded checkout, with complete attribution. |
-| `integration_ancestry` | Every linked or prospective commit resolves and is an ancestor of the authoritative integration branch. |
-| `step_records` | Every step record the project's close policy requires is approved. Implementation, review and closing records cite the latest linked commit; a test record may cite any linked commit. With no linked commit, records carry the no-work disposition. |
+Reasons are nonblank text of at most 120 characters. YAML can restrict them and
+require disposition evidence or replacement references. Scopes and project task
+protections apply to preview and final close. The tool does not parse transcripts,
+score TDD, launch reviewers or invent evidence.
 
-The close policy is the `task_close_policy` key in the primary checkout's
-`.gobby/project.json`. A candidate worktree cannot relax it.
+Default can supply its evidence, land through its integration-path grant and
+close by itself. `gobby-tasks-ops:land_commit` requires enabled `land_tasks`
+authority, local ownership and declared task scope. It evaluates selected
+`task_land` rules, performs the protected Git update and writes a receipt.
+A particular manager, root session or task-bound run is not required.
+Landing does not close the task.
 
-```json
-"task_close_policy": {
-  "enforce_step_records": true,
-  "test_categories": [],
-  "review_categories": ["code", "docs"]
-}
-```
+After closure, review task memories and personally remove the clean, merged
+worktree and branch when no live session or pending proof needs them. Run cleanup
+from outside the worktree; use `gobby-worktrees:delete_worktree` with its ID and
+`merged_into="0.5.0"`, without force. Preserve dirty, unmerged or active trees.
 
-`enforce_step_records` defaults to false, which skips the gate. When it is true,
-every non-epic task needs approved implementation and closing records. Tasks
-whose category is in `test_categories` also need a test record, and tasks whose
-category is in `review_categories` also need an independent review record.
-Epics need no records. A malformed policy refuses the close. The final close
-rechecks the records under the task lock, and `force` never bypasses them.
-
-Preview returns `gates`, `can_close`, `closed=false`, and resolved commit
-identities. It does not modify task state or commit links. Fix failed gates,
-then repeat the call with `preview=false`. Close rechecks current state and
-atomically links the explicit candidate with closure. A successful result has
-`closed=true`. A concurrent state change can require a retry.
-
-The close tool does not launch a reviewer or require transcript-derived test or
-TDD proof. Developers and independent reviewers assess the task's acceptance
-criteria and validation. Follow the task's review, landing, and activation
-workflow before closing; preserve exact commands and results in completion
-notes. After closing, call `gobby-memory:review_task_memories` with the task and
-summary.
-
-The close reasons are `done`, `moot`, `superseded`, and `wont_do`.
-The active definition's close reasons, task scope and selected rules determine
-who may close. No-work reasons additionally require `close_without_work`, or the
-operator-terminal exemption. Default can write its own required completion
-records and close its task. A commitless no-work close skips the linked-commit
-and ancestry gates and the
-step-record gate; the child-closure and attributed-file gates still apply.
-A no-work close with a linked commit fails the ancestry check, so unlink each candidate
-first with a reason. A `superseded` close names its superseder in `superseded_by`.
-No-work reasons do not waive child closure or attributed-file cleanliness. An epic does
-not receive a separate commit exemption.
-
-For worktree delivery, a task-bound agent or locally owned root session with a
-definition granting `land_tasks` can call `gobby-tasks-ops:land_commit` with the
-task and linked full commit SHA. A caller also granting `direct_integration_commit`
-over every candidate path may land
-self-authored work without general independent review. Default declares these grants.
-Required implementation evidence and task-specific security approvals still apply.
-The service performs the protected update and writes a landing receipt; agents
-do not need a Git-hook override or write access to the main checkout. Call
-`close_task` separately after recording the required completion evidence.
-
-After landing and closing, the landing owner removes the task worktree promptly.
-Run cleanup from outside that worktree, after confirming it is clean, merged into
-`0.5.0`, unused by live sessions or processes, and no longer needed for pending proof.
-Call `gobby-worktrees:delete_worktree` with its `worktree_id` and
-`merged_into="0.5.0"`, without force. Preserve dirty, unmerged, deferred, or actively
-used worktrees; never stop a live seat just to make cleanup possible.
-
-Human operators may disposition an unneeded leaf directly with
-`gobby tasks close '#14390' --reason moot`. The CLI accepts only
-the three canonical no-work reasons for direct leaf closure and still refuses a
-task with open children. Agent lifecycle work uses MCP.
+Human operators may use `gobby tasks close '#14390' --reason published`; the CLI
+delegates leaf and parent decisions to the selected policy. Agents use MCP.
 
 ## Dependencies and Ready Work
 
@@ -369,11 +341,11 @@ gobby tasks validation-history '#14390'
 
 Run focused checks appropriate to the change and retain their commands and
 results for independent review. Acceptance criteria are authored task data;
-the close tool enforces the five gates described above. Historical
+selected closure rules evaluate the evidence and facts described above. Historical
 validation records remain readable through `validation-history`.
 
 Closing the last child may auto-close eligible organizational ancestors.
-An explicit close on a claimed parent or epic uses the same gates as a leaf.
+Each ancestor or explicit parent close evaluates its own selected policy.
 
 A closed task takes no new children. `create_task` and
 `update_task(parent_task_id=...)` refuse a closed parent, naming it and
@@ -391,8 +363,8 @@ commit list or file manifest.
 
 Independent reviewers use the linked diff and complete commit/file manifests.
 Follow every `get_task_diff` page, inspect all changed paths, and run relevant
-checks. Review step records and landing receipts record those workflow
-decisions; they are separate from the close tool's gate evaluator.
+checks. Review attestations and landing receipts preserve workflow decisions;
+selected policy determines which approvals are required.
 
 ## CLI Reference
 
@@ -457,13 +429,41 @@ never run automatically during daemon or session startup.
 
 Restore has no MCP tool, and agent shells are refused `gobby tasks restore`. A
 backup line can carry closed state, claims and review history, so only the
-operator restores, from their own shell. Restore still validates every step
-record before it writes anything.
+operator restores, from their own shell. Restore validates the complete attestation
+history, identity, sequence and correction graph before writing. Compatible
+missing suffixes can be restored; divergent or ahead-of-backup evidence skips
+the task bundle atomically, including metadata and dependencies.
 
 The human-friendly task reference is `#N` within a project. Hierarchical task
 paths are dotted `seq_num` chains such as `14370.14390`. MCP tools accept `#N`,
 plain sequence numbers where the project is known, path refs, and UUIDs. The
 CLI additionally accepts unambiguous UUID prefixes.
+
+### One-time evidence cutover
+
+Historical step rows are converted once; there is no parallel legacy runtime.
+Wind down evidence writers, announce the cutover globally, and pause attestation
+writes and task closes. Prove the bootstrap workflow before conversion. Land the
+new source before activating it from the main checkout.
+
+The maintenance adapter uses the existing database without implicitly applying
+migrations. Supply the same project UUID and task-backup path for all actions:
+
+```bash
+uv run python -m gobby.cli.attestation_cutover prepare --project-id <uuid> --backup <private-conversion.json> --task-backup <tasks.jsonl>
+uv run python -m gobby.cli.attestation_cutover apply --project-id <uuid> --backup <private-conversion.json> --task-backup <tasks.jsonl>
+```
+
+`prepare` creates exclusive, owner-only, fsynced snapshots of source rows and
+original JSONL bytes. `apply` validates the target history, converts atomically
+and regenerates JSONL. If export fails after conversion, keep the pause and retry
+`apply`; row conversion is idempotent. Preserve both snapshot files. Inspect the
+installed definitions/rules and prove the activated workflow before resuming.
+
+To roll back before new evidence is written, use the same command with `restore`.
+It restores exact original rows and JSONL bytes, refusing to erase intervening
+evidence. Old-format evidence requires the corresponding old runtime; never
+resume the new runtime against an unconverted backup.
 
 ## Automation Notes
 

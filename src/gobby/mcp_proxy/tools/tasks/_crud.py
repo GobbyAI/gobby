@@ -30,12 +30,10 @@ from gobby.storage.tasks import (
     ParentTaskClosedError,
     TaskNotFoundError,
 )
-from gobby.tasks.acceptance_references import malformed_test_reference_findings
+from gobby.tasks.attestations import list_attestations
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.close_receipts import list_close_receipts
-from gobby.tasks.criteria_text import TaskCriteriaError, require_validation_criteria
 from gobby.tasks.state_semantics import get_claimed_session_id
-from gobby.tasks.step_records import current_task_steps, list_task_step_records
 from gobby.utils.datetime import datetime_to_iso
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 
@@ -43,28 +41,6 @@ logger = logging.getLogger(__name__)
 TASK_CATEGORY_ENUM = tuple(sorted(VALID_CATEGORIES))
 IMPLEMENTATION_DOMAIN_ENUM = tuple(sorted(IMPLEMENTATION_DOMAINS))
 TASK_TYPE_ENUM = TASK_TYPE_CHOICES
-
-
-def _task_invariant_error(
-    task_type: str,
-    category: str | None,
-    validation_criteria: str | None,
-    implementation_domain: str | None,
-    *,
-    supplied_validation_criteria: str | None,
-) -> str | None:
-    """Return the task invariant error for the effective task state."""
-    try:
-        require_validation_criteria(task_type, validation_criteria)
-    except TaskCriteriaError as exc:
-        return str(exc)
-    if supplied_validation_criteria is not None:
-        findings = (*malformed_test_reference_findings(supplied_validation_criteria),)
-        if findings:
-            return "\n".join(findings)
-    if category == "code" and implementation_domain is None:
-        return "Code tasks require implementation_domain ('backend', 'frontend', or 'fullstack')."
-    return None
 
 
 def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
@@ -173,16 +149,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 )
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid parent_task_id: {e}"}
-
-        invariant_error = _task_invariant_error(
-            task_type,
-            category,
-            validation_criteria,
-            implementation_domain,
-            supplied_validation_criteria=validation_criteria,
-        )
-        if invariant_error:
-            return {"error": invariant_error}
 
         claim_warning: str | None = None
         if claim:
@@ -369,7 +335,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
     registry.register(
         name="create_task",
         description="Create a new task in the current project.",
-        brief="Create a new task. Requires: title, session_id, category, validation_criteria (every task_type except 'epic')",
+        brief="Create a new task. Requires: title, category; lifecycle requirements come from selected policy.",
         input_schema={
             "type": "object",
             "properties": {
@@ -415,18 +381,18 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "category": {
                     "type": "string",
-                    "description": "Task domain: 'code' (implementation — also requires implementation_domain), 'config' (configuration files), 'docs' (documentation), 'refactor' (code restructuring, including updating existing tests), 'test' (test-writing), 'research' (investigation), 'planning' (design/architecture), or 'manual' (manual verification). Category does not affect the validation_criteria requirement, which applies to every task_type except 'epic'.",
+                    "description": "Workflow classification for routing and selected policy: code, config, docs, refactor, test, research, planning or manual.",
                     "enum": list(TASK_CATEGORY_ENUM),
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Acceptance criteria for task completion. REQUIRED for every task_type except 'epic' — creation fails without it, whatever the category. Describe what 'done' looks like — validate_task checks the diff against this. Reference named tests as `test: path::test_symbol` and evidence files as `file: path`. A backticked command span is a mandatory exact close command; pipelines, placeholders, redirections, and trailing punctuation are rejected.",
+                    "description": "Optional acceptance criteria. Selected rules decide whether criteria or validation evidence are required for completion.",
                     "default": None,
                 },
                 "implementation_domain": {
                     "type": "string",
                     "enum": list(IMPLEMENTATION_DOMAIN_ENUM),
-                    "description": "Required for category='code'. Routes implementation to backend, frontend, or fullstack developer agents.",
+                    "description": "Optional routing hint for backend, frontend or fullstack implementation.",
                     "default": None,
                 },
                 "claim": {
@@ -498,11 +464,10 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             [receipt.kind, receipt.commit_sha, receipt.recorded_at, receipt.facts]
             for receipt in list_close_receipts(ctx.task_manager.db, resolved_id)
         ]
-        history = list_task_step_records(ctx.task_manager.db, resolved_id)
-        result["step_records"] = {
-            step: record.model_dump(mode="json")
-            for step, record in current_task_steps(history, task.review_epoch).items()
-        }
+        result["attestations"] = [
+            record.model_dump(mode="json")
+            for record in list_attestations(ctx.task_manager.db, resolved_id)
+        ]
 
         return result
 
@@ -571,28 +536,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             )
             if label_error:
                 return {"error": label_error}
-
-        effective_category = category if category is not None else current_task.category
-        effective_task_type = task_type if task_type is not None else current_task.task_type
-        effective_validation_criteria = (
-            validation_criteria
-            if validation_criteria is not None
-            else current_task.validation_criteria
-        )
-        effective_implementation_domain = (
-            implementation_domain
-            if implementation_domain is not None
-            else current_task.implementation_domain
-        )
-        invariant_error = _task_invariant_error(
-            effective_task_type,
-            effective_category,
-            effective_validation_criteria,
-            effective_implementation_domain,
-            supplied_validation_criteria=validation_criteria,
-        )
-        if invariant_error:
-            return {"error": invariant_error}
 
         # Build kwargs only for non-None values to avoid overwriting with NULL
         kwargs: dict[str, Any] = {}
@@ -703,7 +646,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "category": {
                     "type": "string",
-                    "description": "Task domain: 'code' (implementation — also requires implementation_domain), 'config' (configuration files), 'docs' (documentation), 'refactor' (code restructuring, including updating existing tests), 'test' (test-writing), 'research' (investigation), 'planning' (design/architecture), or 'manual' (manual verification). Category does not affect the validation_criteria requirement, which applies to every task_type except 'epic'.",
+                    "description": "Workflow classification used by routing and selected lifecycle policy.",
                     "enum": list(TASK_CATEGORY_ENUM),
                     "default": None,
                 },

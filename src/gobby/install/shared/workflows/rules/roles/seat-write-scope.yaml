@@ -3,6 +3,25 @@ tags: [roles, seat, enforcement, gobby]
 # Writes with no resolvable target path fail closed: both helpers return False
 # for an empty path set.
 rules:
+  reviewer-write-scope:
+    description: Keep independent review read-only while permitting workspace notes and audits.
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >-
+      (event.data.get('canonical_tool_kind') == 'write'
+       or event.data.get('canonical_repo_mutation')
+       or event.data.get('canonical_git_mutation')
+       or event.data.get('canonical_formatter_mutation')
+       or event.data.get('canonical_unresolved_execution'))
+      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
+    effects:
+      - type: block
+        reason: >-
+          Independent review permits repository reads and validation. Put notes in
+          your session workspace and send implementation findings to the author.
+          Integrate approved work through the managed landing tool.
+
   submitted-candidate-write-scope:
     description: "Keep a submitted candidate frozen while allowing reads and audits"
     event: before_tool

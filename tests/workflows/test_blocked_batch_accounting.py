@@ -269,13 +269,14 @@ class TestBlockReasonScoping:
 
     def _install_gate(self, manager: RuleDefinitionManager) -> None:
         manager.create(
-            name="require-python-skill",
+            name="fixture-block-edit",
             definition_json=RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason=self._FULL_REASON)],
             ).model_dump(),
             priority=100,
             enabled=True,
+            tags=["default"],
         )
 
     @pytest.mark.asyncio

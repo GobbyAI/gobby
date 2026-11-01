@@ -2,31 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from pydantic import JsonValue
+
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
-from gobby.storage.tasks._automation import has_hold_label
 from gobby.storage.tasks._models import (
-    Task,
-    TaskHasOpenChildrenError,
     TaskStaleStateError,
-    TaskStepRecordsMissingError,
 )
-from gobby.storage.team_records import live_team_rows_sql
-from gobby.tasks.criteria_text import normalized_validation_criteria
-from gobby.tasks.state_semantics import NO_WORK_CLOSE_REASONS, validate_task_close_reason
+from gobby.tasks.state_semantics import validate_task_close_reason
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
-    from gobby.workflows.agent_models import AgentDefinitionBody
-
-_LEGACY_VALIDATION_CRITERIA = (
-    "Legacy task: validation criteria were not recorded before they became required."
-)
-_TERMINAL_PARENT_CLOSE_REASONS = frozenset({"done", "moot"})
+    pass
 
 
 def _session_exists(
@@ -48,48 +38,40 @@ def _close_task_in_txn(
     commit_sha: str | None = None,
     closed_at: datetime | str | None = None,
     closed_in_session_id: str | None = None,
-    force: bool = False,
     close_ancestors: bool = True,
     closed_ancestors: list[str] | None = None,
     expected_updated_at: datetime | None = None,
+    expected_closure_revision: str | None = None,
+    closure_facts: dict[str, JsonValue] | None = None,
+    prospective_commits: list[str] | None = None,
     closing_note: str | None = None,
-    closer_definition: AgentDefinitionBody | None = None,
-    commit_paths: Sequence[str] = (),
+    closure_intent: str = "explicit",
 ) -> None:
-    """Close a task inside the caller's already-open transaction.
-
-    ``force`` skips only the open-children check; required step records always apply.
-    The closer's direct-commit grant judges them with the same inputs as the close preview.
-    """
+    """Close under the selected policy in the caller's already-open transaction."""
     reason = validate_task_close_reason("done" if reason is None else reason)
 
-    # Hold this row before counting children or reading step records. Creation takes
-    # the same lock on the parent it is attaching to, so the two serialize here;
-    # without it the count runs before the UPDATE acquires any lock, and a child
-    # inserted in that window survives its parent's close (#22570). Step writers take
-    # it too, so the records checked here are the ones the close commits against.
-    row = conn.execute("SELECT * FROM tasks WHERE id = %s FOR UPDATE", (task_id,)).fetchone()
-    if not force:
-        open_children = conn.execute(
-            "SELECT id, title FROM tasks WHERE parent_task_id = %s AND closed_at IS NULL",
-            (task_id,),
-        ).fetchall()
-        if open_children:
-            listed = [f"{child['id']} ({child['title']})" for child in open_children]
-            raise TaskHasOpenChildrenError(task_id, listed)
-    # A no-work close records no step records (gate 5 is skipped), so only done closes check them.
-    if row is not None and row["closed_at"] is None and reason not in NO_WORK_CLOSE_REASONS:
-        # step_records imports this package, so it loads at call time.
-        from gobby.tasks.step_records import task_step_requirements
+    # Serialize policy capture with evidence and explicit parent-attachment locks.
+    # Keys do not change: NO KEY UPDATE permits the FK KEY SHARE locks held by
+    # sibling writers, avoiding a deadlock when their closes cascade to this parent.
+    row = conn.execute("SELECT * FROM tasks WHERE id = %s FOR NO KEY UPDATE", (task_id,)).fetchone()
+    if row is not None and row["closed_at"] is None:
+        from gobby.tasks.closure_snapshot import TaskClosurePolicyError, prepare_closure
 
-        missing = task_step_requirements(
+        prepared = prepare_closure(
             db,
-            Task.from_row(row),
-            closer_definition=closer_definition,
-            commit_paths=commit_paths,
-        ).missing
-        if missing:
-            raise TaskStepRecordsMissingError(task_id, missing)
+            task_id=task_id,
+            session_id=closed_in_session_id,
+            reason=reason,
+            expected_updated_at=expected_updated_at,
+            facts={**(closure_facts or {}), "closure_intent": closure_intent},
+            prospective_commits=prospective_commits,
+        )
+        if expected_closure_revision is not None and (
+            prepared.decision.snapshot_revision != expected_closure_revision
+        ):
+            raise TaskStaleStateError(task_id)
+        if not prepared.decision.allowed:
+            raise TaskClosurePolicyError(task_id, prepared.decision)
 
     now = closed_at or utc_now()
     persisted_session_id = (
@@ -110,12 +92,6 @@ def _close_task_in_txn(
                escalation_reason = NULL,
                is_escalated = FALSE,
                claimed_by_session_id = NULL,
-               validation_criteria = CASE
-                   WHEN task_type = 'epic'
-                        OR NULLIF(btrim(validation_criteria), '') IS NOT NULL
-                   THEN validation_criteria
-                   ELSE %s
-               END,
                updated_at = %s
          WHERE id = %s
            AND closed_at IS NULL
@@ -126,7 +102,6 @@ def _close_task_in_txn(
             reason,
             persisted_session_id,
             commit_sha,
-            _LEGACY_VALIDATION_CRITERIA,
             now,
             task_id,
             expected_updated_at,
@@ -210,72 +185,27 @@ def close_eligible_parent_chain(
     close_reason = validate_task_close_reason("done" if reason is None else reason)
     while parent_id:
         parent = conn.execute(
-            "SELECT * FROM tasks WHERE id = %s FOR UPDATE", (parent_id,)
+            "SELECT * FROM tasks WHERE id = %s FOR NO KEY UPDATE", (parent_id,)
         ).fetchone()
         if parent is None or parent["closed_at"] is not None:
             return
-        if parent["claimed_by_session_id"] is not None:
-            # A claimed ancestor is in-flight work its owner closes through the
-            # leaf gates: linked commit, clean attribution, validation, review.
-            # Closing it here skips every gate and drops the claim — found-work
-            # child #21046 took its worked parent #20969 and epic #20964 that way.
-            return
-        live_team = conn.execute(
-            f"SELECT 1 FROM ({live_team_rows_sql()}) live WHERE live.task_id = %s LIMIT 1",  # nosec B608
-            (parent_id,),
-        ).fetchone()
-        if live_team is not None:
-            # A live team's bound epic closes through its Dev Manager, which lands the epic tip
-            # and writes the closing record. The Dev Manager holds no claim, so the claim check
-            # above never stops the cascade for it.
-            return
-        if (
-            has_hold_label(parent)
-            or parent["hold_state"] is not None
-            or (
-                parent["task_type"] != "epic"
-                and normalized_validation_criteria(parent["validation_criteria"]) is not None
-            )
-        ):
-            # A hold label or state (needs_human, deferred) or parent-owned criteria
-            # are this parent's own close gates: an open owner decision, a clean
-            # window or follow-up date to wait for, a plan still to be written, or
-            # acceptance evidence nobody has verified.
-            # Auto-closing on the last child (#22421) removed such parents from
-            # open lists while that work was unresolved; they close through the
-            # gates that check it.
-            return
-        open_child = conn.execute(
-            """
-            SELECT 1
-              FROM tasks
-             WHERE parent_task_id = %s
-               AND closed_at IS NULL
-             LIMIT 1
-            """,
-            (parent_id,),
-        ).fetchone()
-        if open_child is not None:
-            return
-        # step_records imports this package, so it loads at call time.
-        from gobby.tasks.step_records import task_step_requirements
+        from gobby.tasks.closure_snapshot import TaskClosurePolicyError
 
-        # A parent whose policy requires step records closes through its own gates;
-        # the child's close must not fail on the parent's missing records.
+        # Every ancestor uses the same evaluator as an explicit close. Its own
+        # policy may require evidence or reserve it for a separate close request.
         try:
-            if task_step_requirements(db, Task.from_row(parent)).missing:
-                return
-        except ValueError:
+            _close_task_in_txn(
+                conn,
+                parent_id,
+                db=db,
+                reason=close_reason,
+                closed_at=closed_at,
+                closed_in_session_id=closed_in_session_id,
+                close_ancestors=False,
+                closure_intent="ancestor",
+            )
+        except (TaskClosurePolicyError, TaskStaleStateError):
             return
-        _close_task_in_txn(
-            conn,
-            parent_id,
-            db=db,
-            reason=close_reason,
-            closed_at=closed_at,
-            closed_in_session_id=closed_in_session_id,
-            close_ancestors=False,
-        )
         if closed_ancestors is not None:
             closed_ancestors.append(parent_id)
         _schedule_ancestor_epic_archive(
@@ -303,8 +233,6 @@ def _schedule_ancestor_epic_archive(
     if db is None or task_type != "epic":
         return
     closure_reason = reason.casefold()
-    if closure_reason not in _TERMINAL_PARENT_CLOSE_REASONS:
-        return
     task_ref = f"#{seq_num}" if seq_num else task_id
 
     def _archive() -> None:

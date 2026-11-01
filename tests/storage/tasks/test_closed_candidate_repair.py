@@ -185,10 +185,10 @@ def test_repair_preview_is_read_only_and_apply_is_audited(
     assert _OLD in events[0]["reason"] and _CANDIDATE in events[0]["reason"]
 
 
-def test_repair_preview_reads_the_approval_at_the_closed_tip_not_the_stored_copy(
+def test_retired_step_records_cannot_authorize_archived_marker_repair(
     reviewed_task: tuple[LocalTaskManager, HistoricalCloseReview],
 ) -> None:
-    """The repair preview's VALID gate follows the step approval at the closed tip."""
+    """Historical step records cannot override the marker repair's archived-state check."""
     manager, review = reviewed_task
     manager.db.execute(
         "UPDATE tasks SET review_status = 'pending' WHERE id = %s", (review.task_id,)
@@ -216,17 +216,17 @@ def test_repair_preview_reads_the_approval_at_the_closed_tip_not_the_stored_copy
         ),
     )
 
-    preview = manager.repair_closed_candidate(
-        review.task_id,
-        review_id=review.id,
-        candidate_commit_sha=_CANDIDATE,
-        expected_closed_commit_sha=_OLD,
-        by_session_id=review.caller_session_id,
-        reason=_REASON,
-    )
-
-    assert preview["applied"] is False
-    assert preview["review_status"] == "valid"
+    before = manager.get_task(review.task_id)
+    with pytest.raises(ValueError, match="CLOSED/VALID"):
+        manager.repair_closed_candidate(
+            review.task_id,
+            review_id=review.id,
+            candidate_commit_sha=_CANDIDATE,
+            expected_closed_commit_sha=_OLD,
+            by_session_id=review.caller_session_id,
+            reason=_REASON,
+        )
+    assert manager.get_task(review.task_id) == before
 
 
 def test_audit_failure_rolls_back_the_marker_correction(

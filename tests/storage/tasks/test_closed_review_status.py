@@ -24,11 +24,11 @@ _OTHER = "b" * 40
     [
         pytest.param(_APPROVED, [_APPROVED[:10], _OTHER[:10]], "valid", id="closed-non-tip"),
         pytest.param(_APPROVED, [_OTHER[:10], _APPROVED[:10]], "valid", id="closed-tip"),
-        pytest.param(None, [_APPROVED[:10], _OTHER[:10]], "pending", id="open-stale"),
-        pytest.param(_OTHER, [_OTHER[:10], _APPROVED[:10]], "pending", id="wrong-closure"),
+        pytest.param(None, [_APPROVED[:10], _OTHER[:10]], "valid", id="open-stale"),
+        pytest.param(_OTHER, [_OTHER[:10], _APPROVED[:10]], "valid", id="wrong-closure"),
     ],
 )
-def test_review_status_uses_closed_candidate_only_after_closure(
+def test_task_readers_do_not_interpret_retired_workflow_records(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     reader: str,
@@ -46,7 +46,7 @@ def test_review_status_uses_closed_candidate_only_after_closure(
         manager.link_commit(task.id, commit)
     if closed_sha is not None:
         manager.close_task(task.id, reason="done", closed_commit_sha=closed_sha)
-    # A stored valid value must not hide a stale or mismatched review record.
+    # Old workflow records cannot override stored metadata or recreate a runtime.
     temp_db.execute("UPDATE tasks SET review_status = 'valid' WHERE id = %s", (task.id,))
     review = {
         "step": "review",

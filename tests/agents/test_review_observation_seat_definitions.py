@@ -119,7 +119,7 @@ MALFORMED_SHA_REVIEWER = _seat(
     "code-reviewer",
     VERDICT_STEPS,
     REVIEWER_VARIABLES,
-    task_step_writes=["review"],
+    task_attestation_writes=["review"],
 )
 
 # A log monitor whose report step leaves for tick only on a durable report.
@@ -350,104 +350,64 @@ async def test_reviewer_step_moves_only_on_its_own_transition(
 
 
 @pytest.mark.parametrize(
-    ("content", "succeeded", "expected"),
+    ("content", "succeeded"),
     [
-        pytest.param(
-            "EVENT=CANDIDATE_WITHDRAWN TASK={task} SHA={sha} NOTE=already reviewed elsewhere",
-            True,
-            "await",
-            id="exact-unit-delivered",
-        ),
-        pytest.param(
-            "EVENT=CANDIDATE_WITHDRAWN TASK={task} SHA={sha} NOTE=already reviewed elsewhere",
-            False,
-            "verdict",
-            id="exact-unit-failed-delivery",
-        ),
-        pytest.param(
-            "EVENT=CANDIDATE_WITHDRAWN TASK=#99 NOTE=other candidate",
-            True,
-            "verdict",
-            id="other-task",
-        ),
-        pytest.param(
-            "EVENT=CANDIDATE_WITHDRAWN TASK={task} SHA={other} NOTE=other sha",
-            True,
-            "verdict",
-            id="other-sha",
-        ),
-        pytest.param(
-            "Prose EVENT=CANDIDATE_WITHDRAWN TASK={task} SHA={sha}",
-            True,
-            "verdict",
-            id="prose-prefix",
-        ),
-        pytest.param(
-            "EVENT=PROOF_REQUEST TASK={task} SHA={sha} NOTE=EVENT=CANDIDATE_WITHDRAWN",
-            True,
-            "verdict",
-            id="proof-request-echo",
-        ),
+        ("EVENT=CANDIDATE_WITHDRAWN TASK={task} SHA={sha}", True),
+        ("EVENT=CANDIDATE_WITHDRAWN TASK={task} SHA={sha}", False),
+        ("EVENT=CANDIDATE_WITHDRAWN TASK=#99 NOTE=other candidate", True),
+        ("EVENT=CANDIDATE_WITHDRAWN TASK={task} SHA={other}", True),
+        ("Prose EVENT=CANDIDATE_WITHDRAWN TASK={task} SHA={sha}", True),
+        ("EVENT=PROOF_REQUEST TASK={task} SHA={sha} NOTE=EVENT=CANDIDATE_WITHDRAWN", True),
     ],
 )
-async def test_candidate_withdrawal_exits_only_for_its_own_unit(
+async def test_candidate_withdrawal_text_does_not_reset_declared_state(
     temp_db: PostgresHubDatabase,
     monkeypatch: pytest.MonkeyPatch,
     content: str,
     succeeded: bool,
-    expected: str,
 ) -> None:
     patch_local_machine_id(monkeypatch, "21000000-0000-4000-8000-000000000001")
     run = SeatRun(temp_db, "code-reviewer", definition=MALFORMED_SHA_REVIEWER)
     task = run.task()
-    await run.intake(task)
+    _set_state(
+        run,
+        "verdict",
+        candidate_task=task.id,
+        candidate_sha=SHA,
+        candidate_received=True,
+        verdict_ready=True,
+    )
     text = content.format(task=task.id, sha=SHA, other="b" * 40)
     message = InterSessionMessageManager(temp_db).create_message(COORDINATOR_ID, SESSION_ID, text)
     before = run.vars
-    # A withdrawal is a stored incoming message the seat reads; a failed read must not clear.
+
     await run.call(
         "gobby-agents",
         "get_inter_session_message",
         {"message_id": message.id},
         {"success": succeeded, "message": message.to_dict()},
     )
-    assert run.step == expected
-    if expected == "await":
-        assert run.vars["candidate_task"] is None
-        assert run.vars["candidate_sha"] is None
-        assert run.vars["candidate_received"] is False
-        assert run.vars["verdict_ready"] is False
-    else:
-        assert run.vars == before
+
+    assert run.step == "verdict"
+    assert run.vars == before
 
 
 @pytest.mark.parametrize(
-    ("content", "resets"),
+    "content",
     [
-        ("EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=BOUNCE NOTE=HIGH", True),
-        ("EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND NOTE=approved", False),
-        ("EVENT=CANDIDATE_VERDICT TASK=#43 SHA=abc VERDICT=LAND", False),
-        (f"EVENT=CANDIDATE_VERDICT TASK=#42 SHA={'b' * 40} VERDICT=LAND", False),
-        ("EVENT=LANDED TASK=#42 SHA=abc RECEIPT=r1 RETEST=NOT_REQUIRED", False),
-        ("EVENT=ALREADY_LANDED TASK=#42 SHA=abc RECEIPT=r1 LANDED_BY_SESSION_ID=original", False),
-        ("EVENT=REVIEW_COMPLETE TASK=#42 SHA=abc VERDICT=LAND LANDING=NOT_REQUIRED", False),
-        ("Prose EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND", False),
-        ("EVENT=PROOF_REQUEST TASK=#42 SHA=abc NOTE=EVENT=CANDIDATE_VERDICT VERDICT=LAND", False),
-    ],
-    ids=[
-        "bounce",
-        "land-without-stored-approval",
-        "other-task",
-        "other-sha",
-        "landed",
-        "already-landed",
-        "review-complete",
-        "prose",
-        "note",
+        "EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=BOUNCE NOTE=HIGH",
+        "EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND NOTE=approved",
+        "EVENT=CANDIDATE_VERDICT TASK=#43 SHA=abc VERDICT=LAND",
+        f"EVENT=CANDIDATE_VERDICT TASK=#42 SHA={'b' * 40} VERDICT=LAND",
+        "EVENT=LANDED TASK=#42 SHA=abc RECEIPT=r1 RETEST=NOT_REQUIRED",
+        "EVENT=ALREADY_LANDED TASK=#42 SHA=abc RECEIPT=r1 LANDED_BY_SESSION_ID=original",
+        "EVENT=REVIEW_COMPLETE TASK=#42 SHA=abc VERDICT=LAND LANDING=NOT_REQUIRED",
+        "Prose EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND",
+        "EVENT=PROOF_REQUEST TASK=#42 SHA=abc NOTE=EVENT=CANDIDATE_VERDICT VERDICT=LAND",
     ],
 )
-async def test_candidate_verdict_resets_only_for_its_own_unit(
-    temp_db: PostgresHubDatabase, content: str, resets: bool
+async def test_candidate_verdict_text_does_not_reset_declared_state(
+    temp_db: PostgresHubDatabase, content: str
 ) -> None:
     run = SeatRun(temp_db, "code-reviewer", definition=MALFORMED_SHA_REVIEWER)
     task = run.task()
@@ -460,31 +420,22 @@ async def test_candidate_verdict_resets_only_for_its_own_unit(
         candidate_sha=SHA,
     )
     before = run.vars
+
     await run.send(content.replace("TASK=#42", f"TASK={task.id}").replace("SHA=abc", f"SHA={SHA}"))
-    assert run.step == ("await" if resets else "verdict")
-    if resets:
-        assert {
-            key: run.vars[key]
-            for key in ("candidate_received", "verdict_ready", "candidate_task", "candidate_sha")
-        } == {
-            "candidate_received": False,
-            "verdict_ready": False,
-            "candidate_task": None,
-            "candidate_sha": None,
-        }
-    else:
-        assert run.vars == before
+
+    assert run.step == "verdict"
+    assert run.vars == before
 
 
-@pytest.mark.parametrize("candidate_sha", ["", "abc", "g" * 40, None])
-async def test_land_verdict_rejects_malformed_bound_sha(
+@pytest.mark.parametrize("candidate_sha", ["", "abc", "g" * 40, None, SHA])
+async def test_candidate_message_does_not_mutate_arbitrary_reference_values(
     temp_db: PostgresHubDatabase, candidate_sha: str | None
 ) -> None:
     run = SeatRun(temp_db, "code-reviewer", definition=MALFORMED_SHA_REVIEWER)
     task = run.task()
     instance = run.instances.get_for_session(SESSION_ID)
     assert instance is not None
-    # A corrupt recovered snapshot must never complete the unit.
+    # References are ordinary workflow state; message text cannot complete a unit.
     instance.current_step = "verdict"
     instance.variables.update(
         candidate_received=True,

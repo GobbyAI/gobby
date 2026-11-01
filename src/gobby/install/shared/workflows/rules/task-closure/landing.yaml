@@ -1,0 +1,19 @@
+tags: [task-closure-general]
+
+rules:
+  landing-requires-path-grant-or-independent-review:
+    description: A declared integration path grant permits self-delivery; other delivery needs independent review.
+    event: task_land
+    priority: 30
+    when: >-
+      not facts.get('integration_path_grant', False) and
+      not any(record.get('kind') == 'review' and record.get('result') == 'approved' and
+        record.get('id') == latest_attestation('review').get('id') and
+        (record.get('reference') or {}).get('scheme') == 'git' and
+        (record.get('reference') or {}).get('value') == facts.get('candidate_commit_sha') and
+        all(record.get('session_id') != maker.get('session_id') for maker in attestations
+          if maker.get('kind') in ['test-before', 'implementation', 'test-after'])
+        for record in attestations)
+    effects:
+      - type: block
+        reason: Delivery requires a declared integration path grant or independent review of this candidate.

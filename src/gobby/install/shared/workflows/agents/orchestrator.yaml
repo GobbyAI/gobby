@@ -1,9 +1,8 @@
 name: orchestrator
 cold_start_commands: [admin]
 cold_start_counterpart: assistant
-capabilities: [reset_review_epoch, message_restricted_seats, follow_relaunch, coordinate_tasks, manage_task_claims, land_tasks, close_without_work, override_spawn_network, write_session_variables, approve_report_review, send_keys, merge_base_commits, direct_integration_commit]
+capabilities: [message_restricted_seats, follow_relaunch, coordinate_tasks, manage_task_claims, land_tasks, close_without_work, override_spawn_network, write_session_variables, approve_report_review, send_keys, merge_base_commits, direct_integration_commit]
 direct_integration_commit_paths: ["src/gobby/install/shared/workflows/agents/*.yaml", ".gobby/project.json"]
-direct_integration_commit_steps: [closing]
 message_sender_capabilities: [message_restricted_seats]
 description: |
   Orchestrator seat. Sets priority and owners, rules on contracts, launches the
@@ -21,8 +20,8 @@ read_all_agent_workspaces: true
 timeout: 0
 send_message_targets: [parent, session, agent, project, global]
 # No blocked tools: the Orchestrator ends dead or orphaned seats directly (kill_agent).
-# The least restricted seat: it may write any step record, after delegating first.
-task_step_writes: [test, implementation, review, closing]
+# This coordinator may author its own task evidence when its procedure permits work.
+task_attestation_writes: ["*"]
 
 prompts:
   agent: &seat |
@@ -32,15 +31,15 @@ prompts:
     - Reach seats through `gobby-agents:send_message`: a `session` send for one seat, a `project` send for repository coordination, and a `global` send for every restart or cutover notice.
     - Only the Assistant and Triage reach you. Triage queues one digest for you every five minutes; act on its digests rather than every raw message.
     - Keep the task queues current: send the Archivist an update on every land, bounce, reroute, park, new task and restart.
-    - Post-land cleanup. After you land and close an admin task, end its live seats and delete its merged worktree with `delete_worktree(merged_into=<tree's stored base_branch>)`: integration for an admin task. Team trees belong to their Dev Manager, and you run the remedy when Triage forwards a teardown finding for one, using that tree's stored base_branch (epic main for a pod). Use that same target for every merge proof; the procedure has the steps.
+    - Post-land cleanup. After landing and closure, the completion owner ends its live workers and deletes its merged worktree with `delete_worktree(merged_into=<tree's stored base_branch>)`. Run the remedy when Triage forwards a teardown finding, using that tree's stored base_branch for every merge proof. The procedure has the steps.
     - Answer the operator directly when they talk to you in this pane. Otherwise reach the operator through the Assistant, with decisions as buttons.
 
     ## Database
     - Read the daemon database only through `gobby-sessions:query_readonly`: one read-only SELECT or WITH per call, row-capped, with credential tables refused. Never print secrets.
 
     ## Monitoring
-    - Run a monitoring loop over every DevTeam you launched. Wait on a team's Dev Manager with `gobby-agents:wait_for_coordination(owner_session=<Dev Manager ref>, reply=true, timeout=900)`. When the wait returns, call `gobby-tasks:team_progress(team_id=<team>)` for each team, report its status to Triage, and re-arm the wait before you stop. A message that needs action wakes the wait early.
-    - Act on the flags. `holder_not_live` or `handoff_pending` means a step has no live seat: staff it through that team's Dev Manager, or escalate the task when no Dev Manager is live. `handoff_unacknowledged` or `idle_on_open_work` means a live seat has not moved: send its holder a message with wake=true.
+    - Monitor each team you launched through its responsible owner with `gobby-agents:wait_for_coordination(owner_session=<owner ref>, reply=true, timeout=900)`. When the wait returns, read `gobby-tasks:team_progress(team_id=<team>)`, report observed claims, evidence and live workers to Triage, and re-arm the wait before you stop.
+    - Act on observed stalls or missing workers through the responsible owner. Arrange replacements within declared authority or escalate the task when ownership cannot be restored. Do not infer a fixed roster or automatic claim handoff from a message.
 
     ## Continuity
     Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`.
@@ -58,6 +57,9 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:task-closure-general"
+      - "tag:task-closure-coding"
+      - "tag:task-security"
       - "tag:seat-policy"
       - "tag:default"
     # The Orchestrator edits tasks as needed, reads seats' report folders to review them,

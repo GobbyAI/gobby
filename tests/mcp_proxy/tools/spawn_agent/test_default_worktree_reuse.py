@@ -84,7 +84,7 @@ async def test_default_body_merges_and_binds_reused_worktree(
             name="default",
             prompts=AgentPromptBlocks(agent="Continue development"),
             model="gpt-5.4",
-            task_step_writes=[],
+            task_attestation_writes=[],
         ),
         task_id=task.id,
         task_manager=tasks,

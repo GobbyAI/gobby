@@ -1,11 +1,10 @@
-"""The independent-review portion of a task backup."""
+"""Task evidence serialization and historical review metadata without close authority."""
 
-from collections.abc import Sequence
 from typing import Literal, TypedDict, cast
 from uuid import UUID
 
 from gobby.storage.tasks import Task
-from gobby.tasks.step_records import TaskStepRecord
+from gobby.tasks.attestations import TaskAttestation, validate_attestation_history
 
 ReviewStatus = Literal["pending", "valid", "invalid", "error"]
 
@@ -19,8 +18,8 @@ class RestoredTaskReview(TypedDict):
     validation_override_reason: str | None
 
 
-def serialize_task_review(task: Task, history: Sequence[TaskStepRecord]) -> dict[str, object]:
-    """Preserve the review summary, criteria and the task's step record history."""
+def serialize_task_review(task: Task) -> dict[str, object]:
+    """Preserve historical summary metadata; it carries no attestation or approval."""
     return {
         "status": task.review_status or "pending",
         "feedback": task.review_feedback,
@@ -28,37 +27,24 @@ def serialize_task_review(task: Task, history: Sequence[TaskStepRecord]) -> dict
         "epoch": task.review_epoch,
         "criteria": task.validation_criteria,
         "override_reason": task.validation_override_reason,
-        "step_records": [record.model_dump(mode="json") for record in history],
     }
 
 
-def deserialize_task_step_records(value: object, *, task_id: str) -> list[TaskStepRecord]:
-    """Validate backed-up step history, the only restore input that can carry approval.
-
-    Call after ``deserialize_task_review`` has validated the review object and epoch.
-    """
-    review = value if isinstance(value, dict) else {}
-    entries = review.get("step_records", [])
+def deserialize_task_attestations(value: object, *, task_id: str) -> list[TaskAttestation]:
+    """Validate the complete generic history before any task-backup writes."""
+    entries = [] if value is None else value
     if not isinstance(entries, list):
-        raise ValueError("review.step_records must be a list")
-    epoch = review.get("epoch", 1)
-    history: list[TaskStepRecord] = []
+        raise ValueError("attestations must be a list")
+    history: list[TaskAttestation] = []
     for index, entry in enumerate(entries):
         try:
-            record = TaskStepRecord.model_validate(entry)
+            record = TaskAttestation.model_validate(entry)
             UUID(record.id)
             UUID(record.session_id)
         except ValueError as exc:
-            raise ValueError(f"review.step_records[{index}] is not a step record: {exc}") from exc
-        if record.task_id != task_id:
-            raise ValueError(f"review.step_records[{index}] belongs to another task")
-        if record.epoch > epoch:
-            raise ValueError(f"review.step_records[{index}] is from a later epoch than the task")
-        if history and record.sequence <= history[-1].sequence:
-            raise ValueError("review.step_records sequences must strictly increase")
+            raise ValueError(f"attestations[{index}] is invalid: {exc}") from exc
         history.append(record)
-    if len({record.id for record in history}) != len(history):
-        raise ValueError("review.step_records has duplicate record ids")
+    validate_attestation_history(task_id, history)
     return history
 
 

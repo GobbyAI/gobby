@@ -12,13 +12,13 @@ from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.mcp_proxy.tools.task_dependencies import create_dependency_registry
 from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
 from gobby.mcp_proxy.tools.tasks._affected_files import create_core_affected_files_registry
+from gobby.mcp_proxy.tools.tasks._attestations import create_attestation_registry
 from gobby.mcp_proxy.tools.tasks._backup import create_backup_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._crud import create_crud_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
 from gobby.mcp_proxy.tools.tasks._search import create_search_registry
 from gobby.mcp_proxy.tools.tasks._session import create_session_registry
-from gobby.mcp_proxy.tools.tasks._step_records import create_step_record_registry
 from gobby.mcp_proxy.tools.tasks._team_progress import create_team_progress_registry
 from gobby.storage.tasks import LocalTaskManager
 
@@ -111,7 +111,7 @@ def create_task_registry(
         )
     )
 
-    # Merge role-owned task step record tools.
-    registry.merge_from(create_step_record_registry(ctx))
+    # Merge authenticated generic task evidence tools.
+    registry.merge_from(create_attestation_registry(ctx))
 
     return registry

@@ -26,7 +26,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.assistant_response_matching import ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS
 from gobby.workflows.definitions import RuleDefinitionBody
-from gobby.workflows.engine.blocked_tool_recovery import _CODE_INDEX_REMEDIATION_RULES
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import (
     SafeExpressionEvaluator,
@@ -4416,13 +4415,23 @@ class TestRequireCodeIndexSkillStructure:
             assert "navigation_requires_index(event.data" in body.when
             assert "not variables.get('code_index_preflight_warning')" in body.when
 
-    def test_code_index_recovery_allowlist_names_installed_rules(
+    def test_code_index_rules_declare_navigation_recovery(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _sync_bundled(db)
-        rules = {row.name for row in manager.list_all()}
-
-        assert _CODE_INDEX_REMEDIATION_RULES.issubset(rules)
+        for name in ("require-code-index-skill", "prefer-gcode-for-source-read"):
+            row = manager.get_by_name(name)
+            assert row is not None
+            body = RuleDefinitionBody.model_validate(row.definition_json)
+            condition = next(
+                effect.recovery_when for effect in body.resolved_effects if effect.type == "block"
+            )
+            assert condition is not None
+            for canonical in (False, True):
+                evaluator = SafeExpressionEvaluator(
+                    {"event": {"canonical_code_index_navigation": canonical}}, {}
+                )
+                assert evaluator.evaluate(condition) is canonical
 
 
 class TestCodeIndexNavigationRules:
@@ -5711,11 +5720,17 @@ class TestCodeIndexNavigationRules:
         self, db: HubDatabase, rule_name: str, command: str
     ) -> None:
         _sync_bundled(db)
+        row = RuleDefinitionManager(db).get_by_name(rule_name)
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
         variables = self._variables(loaded=False)
         variables.update(
             {
                 "_last_blocked_tool": "Bash",
                 "_last_blocked_rule_name": rule_name,
+                "_last_blocked_recovery_conditions": [
+                    effect.recovery_when for effect in body.resolved_effects if effect.recovery_when
+                ],
                 "_last_blocked_reason": f"Rule enforced by Gobby: [{rule_name}]\nUse gcode",
                 "consecutive_tool_blocks": 3,
                 "max_consecutive_blocked_tool_attempts": 5,

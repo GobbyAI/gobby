@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -17,19 +17,20 @@ import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finali
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_tool import register_close_task
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.tasks.close_checklist import CloseChecklist
-from gobby.tasks.close_invariants import evaluate_close_invariants
 from gobby.utils.daemon_git import GitFailed, GitOk
 from gobby.utils.daemon_git import daemon_git as daemon_git_client
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_dirty_state import task_dirty_paths_async
+from tests.fixtures.agent_sessions import AgentSessions
 
 pytestmark = pytest.mark.unit
 
@@ -105,12 +106,27 @@ def close_harness(
     manager = LocalTaskManager(temp_db)
     session_manager = SessionManager(temp_db)
     variable_manager = SessionVariableManager(temp_db)
-    session = session_manager.register(
-        external_id="target-close-cleanliness",
-        machine_id=require_machine_id(),
-        source="codex",
+    RuleDefinitionManager(temp_db).create(
+        "require-clean-attribution",
+        {
+            "event": "task_close",
+            "when": "facts.get('task_files_clean') != True",
+            "effects": [
+                {"type": "block", "reason": "Commit task-attributed changes before closing."}
+            ],
+        },
         project_id=sample_git_project["id"],
+        tags=["attributed-cleanliness"],
     )
+    session = session_manager.get(
+        AgentSessions(temp_db, sample_git_project["id"]).add(
+            "cleanliness-author",
+            definition_fields={
+                "workflows": {"rule_selectors": {"include": ["tag:attributed-cleanliness"]}}
+            },
+        )
+    )
+    assert session is not None
     task = manager.create_task(
         project_id=sample_git_project["id"],
         title="Target attributed close cleanliness",
@@ -212,14 +228,15 @@ def _create_foreign_attribution(
 
 @asynccontextmanager
 async def _recorded_clean_proof_paths() -> AsyncIterator[list[frozenset[str]]]:
-    """Record every checkout's attributed path set passed to the invariants."""
+    """Record the path sets whose Git cleanliness is observed."""
     proof_sets: list[frozenset[str]] = []
+    original = task_dirty_paths_async
 
-    async def spy_evaluate(**kwargs: Any) -> CloseChecklist:
-        proof_sets.extend(frozenset(paths) for paths in kwargs["attributed_checkouts"].values())
-        return await evaluate_close_invariants(**kwargs)
+    async def spy_paths(paths: set[str], root: str) -> set[str] | None:
+        proof_sets.append(frozenset(paths))
+        return await original(paths, root)
 
-    with patch.object(lifecycle, "evaluate_close_invariants", spy_evaluate):
+    with patch.object(lifecycle, "task_dirty_paths_async", spy_paths):
         yield proof_sets
 
 
@@ -248,8 +265,8 @@ async def _close_task(
         )
 
 
-def _clean_gate(result: dict[str, Any]) -> dict[str, Any]:
-    return next(gate for gate in result["gates"] if gate["name"] == "uncommitted_task_edits")
+def _clean_facts(result: dict[str, Any]) -> dict[str, Any]:
+    return cast(dict[str, Any], result["facts"])
 
 
 @pytest.mark.asyncio
@@ -275,7 +292,7 @@ async def test_clean_linked_target_closes_amid_unowned_foreign_and_expired_dirt(
     result = await _close_task(close_harness)
 
     assert result["closed"] is True
-    assert _clean_gate(result)["status"] == "passed"
+    assert _clean_facts(result)["task_files_clean"] is True
     assert close_harness.manager.get_task(close_harness.task.id).closed_at is not None
 
 
@@ -318,7 +335,7 @@ async def test_retained_target_path_reedited_by_foreign_task_does_not_block_clos
         result = await _close_task(close_harness)
 
     assert result["closed"] is True
-    assert _clean_gate(result)["status"] == "passed"
+    assert _clean_facts(result)["task_files_clean"] is True
     assert all(path not in proof for proof in proof_sets)
     assert close_harness.manager.get_task(close_harness.task.id).closed_at is not None
 
@@ -355,10 +372,8 @@ async def test_target_path_redirtied_by_owner_blocks_close_despite_foreign_holde
     result = await _close_task(close_harness)
 
     assert result["closed"] is False
-    assert result["error"] == "uncommitted_task_edits"
-    assert _clean_gate(result)["details"]["dirty_checkouts"] == {
-        str(close_harness.repo_path): [path]
-    }
+    assert result["error"] == "closure_policy"
+    assert _clean_facts(result)["dirty_checkouts"] == {str(close_harness.repo_path): [path]}
     assert close_harness.manager.get_task(close_harness.task.id).closed_at is None
 
 
@@ -377,7 +392,7 @@ async def test_stale_clean_foreign_entry_is_checked_without_mutating_its_owner(
         result = await _close_task(close_harness)
 
     assert result["closed"] is True
-    assert _clean_gate(result)["status"] == "passed"
+    assert _clean_facts(result)["task_files_clean"] is True
     assert frozenset({"target.py"}) in proof_sets
     foreign_vars = close_harness.variable_manager.get_variables(foreign_session.id)
     assert "target.py" in foreign_vars["session_dirty_files"]
@@ -400,7 +415,7 @@ async def test_dirty_foreign_entry_stays_dropped_from_clean_proof(
         result = await _close_task(close_harness)
 
     assert result["closed"] is True
-    assert _clean_gate(result)["status"] == "passed"
+    assert _clean_facts(result)["task_files_clean"] is True
     assert frozenset({"target.py"}) not in proof_sets
     foreign_vars = close_harness.variable_manager.get_variables(foreign_session.id)
     assert foreign_vars["task_edited_files"][foreign_task.id] == ["target.py"]
@@ -413,10 +428,8 @@ async def test_target_dirt_blocks_close_evaluation(close_harness: CloseHarness) 
     result = await _close_task(close_harness)
 
     assert result["closed"] is False
-    assert result["error"] == "uncommitted_task_edits"
-    assert _clean_gate(result)["details"]["dirty_checkouts"] == {
-        str(close_harness.repo_path): ["target.py"]
-    }
+    assert result["error"] == "closure_policy"
+    assert _clean_facts(result)["dirty_checkouts"] == {str(close_harness.repo_path): ["target.py"]}
     assert close_harness.manager.get_task(close_harness.task.id).closed_at is None
 
 
@@ -429,10 +442,8 @@ async def test_target_dirt_added_after_preview_blocks_close_finalization(
 
     result = await _close_task(close_harness, before_finalize=dirty_target)
     assert result["closed"] is False
-    assert result["error"] == "uncommitted_task_edits"
-    assert _clean_gate(result)["details"]["dirty_checkouts"] == {
-        str(close_harness.repo_path): ["target.py"]
-    }
+    assert result["error"] == "closure_policy"
+    assert _clean_facts(result)["dirty_checkouts"] == {str(close_harness.repo_path): ["target.py"]}
     assert close_harness.manager.get_task(close_harness.task.id).closed_at is None
 
 
@@ -475,8 +486,8 @@ async def test_unprovable_git_status_fails_close_evaluation(
         result = await _close_task(close_harness)
 
     assert result["closed"] is False
-    assert result["error"] == "uncommitted_task_edits"
-    assert _clean_gate(result)["details"]["unavailable_checkouts"] == [str(close_harness.repo_path)]
+    assert result["error"] == "closure_policy"
+    assert _clean_facts(result)["unavailable_checkouts"] == [str(close_harness.repo_path)]
     status.assert_awaited_once()
     assert close_harness.manager.get_task(close_harness.task.id).closed_at is None
 
@@ -503,8 +514,8 @@ async def test_malformed_git_status_fails_close_finalization(
         result = await _close_task(close_harness)
 
     assert result["closed"] is False
-    assert result["error"] == "uncommitted_task_edits"
-    assert _clean_gate(result)["details"]["unavailable_checkouts"] == [str(close_harness.repo_path)]
+    assert result["error"] == "closure_policy"
+    assert _clean_facts(result)["unavailable_checkouts"] == [str(close_harness.repo_path)]
     assert status.await_count == 2
     assert close_harness.manager.get_task(close_harness.task.id).closed_at is None
 
@@ -521,7 +532,7 @@ async def test_clean_close_clears_attribution_without_validation_override(
     )
     result = await _close_task(close_harness)
     assert result["closed"] is True
-    assert _clean_gate(result)["status"] == "passed"
+    assert _clean_facts(result)["task_files_clean"] is True
     persisted = close_harness.manager.get_task(close_harness.task.id)
     assert persisted.closed_at is not None
     assert persisted.validation_override_reason is None
@@ -575,15 +586,15 @@ async def test_later_live_claim_takes_an_uncommitted_path_from_the_earlier_claim
             project_path=None,
             response_detail="diagnostic",
         )
-    later_gate = _clean_gate(later_evaluation.response(preview=True))
-    assert later_gate["status"] == "failed"
-    assert later_gate["details"]["dirty_checkouts"] == {repo: ["shared.py"]}
-    assert later_gate["message"] == "Commit task-attributed changes before closing."
-    assert "release_task_paths" not in later_gate["message"]
+    later_result = later_evaluation.response(preview=True)
+    assert _clean_facts(later_result)["task_files_clean"] is False
+    assert _clean_facts(later_result)["dirty_checkouts"] == {repo: ["shared.py"]}
+    assert later_result["message"] == "Commit task-attributed changes before closing."
+    assert "release_task_paths" not in later_result["message"]
 
     result = await _close_task(close_harness)
 
-    assert _clean_gate(result)["status"] == "passed"
+    assert _clean_facts(result)["task_files_clean"] is True
     assert result["closed"] is True
 
 
@@ -602,8 +613,8 @@ async def test_vanished_unregistered_checkout_does_not_block_gate_three(
 
     result = await _close_task(close_harness)
 
-    assert _clean_gate(result)["status"] == "passed"
-    assert _clean_gate(result)["details"]["unavailable_checkouts"] == []
+    assert _clean_facts(result)["task_files_clean"] is True
+    assert _clean_facts(result)["unavailable_checkouts"] == []
 
 
 @pytest.mark.asyncio
@@ -624,8 +635,8 @@ async def test_non_git_unregistered_checkout_does_not_block_gate_three(
 
     result = await _close_task(close_harness)
 
-    assert _clean_gate(result)["status"] == "passed"
-    assert _clean_gate(result)["details"]["unavailable_checkouts"] == []
+    assert _clean_facts(result)["task_files_clean"] is True
+    assert _clean_facts(result)["unavailable_checkouts"] == []
 
 
 @pytest.mark.asyncio
@@ -647,8 +658,8 @@ async def test_vanished_registered_worktree_fails_gate_three(
     result = await _close_task(close_harness)
 
     assert result["closed"] is False
-    assert result["error"] == "uncommitted_task_edits"
-    assert _clean_gate(result)["details"]["unavailable_checkouts"] == [str(vanished)]
+    assert result["error"] == "closure_policy"
+    assert _clean_facts(result)["unavailable_checkouts"] == [str(vanished)]
     assert close_harness.manager.get_task(close_harness.task.id).closed_at is None
 
 
@@ -674,6 +685,6 @@ async def test_dirty_registered_worktree_fails_gate_three(
     result = await _close_task(close_harness)
 
     assert result["closed"] is False
-    assert result["error"] == "uncommitted_task_edits"
-    assert _clean_gate(result)["details"]["dirty_checkouts"] == {str(worktree): ["note.py"]}
+    assert result["error"] == "closure_policy"
+    assert _clean_facts(result)["dirty_checkouts"] == {str(worktree): ["note.py"]}
     assert close_harness.manager.get_task(close_harness.task.id).closed_at is None

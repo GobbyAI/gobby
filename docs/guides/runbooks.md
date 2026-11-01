@@ -72,63 +72,53 @@ gaps without duplicating a seat. Relaunch a missing Triage first the same way.
 
 ## Launch a DevTeam
 
-The Orchestrator launches `devteam` once per code task, with `task`,
-`workspace`, `report_to=<Triage ref>` and the project policy's
-`launch_defaults.devteam`. Teams run in parallel as load allows.
+The bundled devteam pipeline launches two seats for one task: a developer and
+an independent code reviewer in the same registered task worktree. Supply task,
+workspace, report_to and the current project_policy.launch_defaults.devteam.
+Its strict input schema accepts provider/model/effort settings for those two
+seats. It has no manager, separate test-writer or fresh-reviewer input.
 
-The `admit_team` step creates the task's branch and worktree from the
-integration branch, both named `task-<seq>-<title-slug>`, and refuses
-`team_exists` while the task already has a live team tree. The Test Writer,
-Developer, Code Reviewer and Dev Manager then open in one tab titled with the
-branch.
+Admission creates or reserves the registered task checkout. The pipeline opens
+the developer with task_id (requesting its claim), and opens the reviewer
+without task_id (observing rather than claiming implementation). Both use the
+admitted project_path and reserved run IDs. It connects them with an ordinary
+durable message and makes a best-effort layout request. Layout refusal does
+not invalidate successful seat admission.
 
 ```mermaid
 sequenceDiagram
-  participant DM as Dev Manager
-  participant TW as Test Writer
   participant Dev as Developer
-  participant CR as Code Reviewer
-  TW->>TW: claim the task
-  TW->>DM: failing tests committed
-  DM->>CR: review the exact test SHA
-  CR->>DM: test review verdict
-  DM->>Dev: hand off the claim
-  Dev->>CR: CANDIDATE with the exact SHA
-  Dev->>DM: CANDIDATE
-  CR->>DM: LAND or BOUNCE
-  DM->>DM: closing record, land, close
+  participant Rev as Reviewer
+  Dev->>Dev: Claim, tests first, implementation, validation
+  Dev->>Rev: Linked candidate and evidence references
+  Rev->>Rev: Independent candidate review and attestation
+  Rev->>Dev: Findings or approval with evidence ID
+  Dev->>Dev: Agreed owner lands and closes under selected policy
+  Dev->>Dev: Author cleans merged worktree
 ```
 
-The Dev Manager moves the task claim between seats with
-`gobby-tasks:hand_off_task_claim`. After an approved review record on the exact
-SHA it writes the closing record, lands that SHA and closes the task. The close
-ends the team: the daemon stops its seats and removes its worktree.
+The developer keeps the implementation claim. Messages do not automatically
+bind candidates, transfer claims, count rejections, assign a fixer or escalate.
+The reviewer records their own exact-reference review; a replacement candidate
+requires fresh evidence. The pair agrees on one completion owner. Either
+definition can land and close when its declared authority and selected policy
+permit it; a manager binding is not required.
 
-A replacement execution for a running team passes `team_id`, the admitting
-execution id, with the same task.
+Selected coding YAML requires TDD, implementation, passing validation,
+OCR self-review, closing evidence and the relevant Git facts. Pair YAML also
+requires independent review, and labelled security work keeps independent
+security approval. Default selects a self-delivery policy and can complete a
+task without the pair. Other domains can select different evidence standards,
+including work with no Git repository.
 
-### Fresh reviewer
+Task dependencies resolve through lifecycle closure, not approved implementation
+records. Preserve explicit holds and live task/worktree ownership. Team
+hierarchy and checkout safety are generic infrastructure, not a required
+four-seat epic roster or synthesized review stage.
 
-After the second rejection the Dev Manager reports
-`EVENT=REJECTION_2 TASK=#<seq> TEAM=<team id> COMMIT=<sha> REVIEWERS=<refs>`,
-and Triage carries the line in its next digest. The Orchestrator relaunches
-`devteam` for that team with `team_id=<TEAM>`, `fresh_reviewer=true`,
-`exclude_reviewers=<REVIEWERS>`, the team's workspace and
-`report_to=<Dev Manager ref>`. Only a fresh Code Reviewer launches, under the
-`fresh_reviewer_*` identity. `admit_team` requires exactly two rejected review
-rounds and the claim already handed to one of the excluded reviewers. When the
-launch fails, the Orchestrator escalates the task rather than substituting
-another reviewer.
-
-### Epic mode
-
-A team bound to an epic runs in epic mode. Its binding is an epic with open non-epic descendants, and each leaf is one of those descendants at any depth. The team's tree is `wt-epic-<seq>-<slug>` on branch `epic/<seq>/main`. Each sub-worktree leaf works on `epic/<seq>/<leaf-seq>` in `wt-epic-<seq>-<leaf-seq>-<slug>`, cut from epic main. The Dev Manager never claims the epic: it lands and closes the epic, and `land_commit` refuses a session that ever claimed the task. Each seat takes the claim on its leaves, and each seat's spawn is scoped by its step grant.
-
-Launch the runbook with `task` set to the epic and `reviewer_agent` set to the precedence winner over the leaves' approvals. The four primary seats persist until the epic closes. Serial leaves use those seats; each parallel leaf gets a Dev Pod, launched by the epic's bound Dev Manager with `run_pipeline(name="devteam", inputs={task: <leaf>, parent_team_id: <epic team UUID>, workspace: <workspace>, report_to: <Dev Manager>, reviewer_agent: <reviewer>})`.
-
-A pod is a single-task team with its own Test Writer, Developer and Code Reviewer in a sub-worktree, sharing the epic's Dev Manager. It opens `Dev Pod - #<leaf>` and follows the same test review, implementation review and rejection rounds as a single task. Rejection two transfers the fix to the reviewer and launches a fresh reviewer; rejection three escalates. Primary epic leaves follow those rounds too. A replacement joins the leaf's pod with its own `team_id`; passing the epic's ID would join the primary team instead.
-
-The Dev Manager lands each approved leaf on the epic branch and closes it immediately. Closing a pod leaf ends its triplet and deletes its worktree using the epic branch as the merge target; primary seats continue. The epic tip is reviewed and landed on the integration branch, and closing the completed epic ends the primary team. Single-task teams cannot launch pods.
+After landing and closure the author personally removes the clean, merged
+registered worktree and branch, using the stored landing target and no force.
+Shared worktrees remain while open work or live participants need them.
 
 ## Launch planning
 

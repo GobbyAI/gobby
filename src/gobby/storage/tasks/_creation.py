@@ -21,7 +21,6 @@ from gobby.storage.tasks._models import (
     validate_implementation_domain,
     validate_task_type,
 )
-from gobby.tasks.criteria_text import require_validation_criteria
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +162,6 @@ def _create_task_in_transaction(
     task_id = ""
 
     task_type = validate_task_type(task_type)
-    validation_criteria = require_validation_criteria(task_type, validation_criteria)
     category = validate_category(category)
     implementation_domain = validate_implementation_domain(implementation_domain)
 

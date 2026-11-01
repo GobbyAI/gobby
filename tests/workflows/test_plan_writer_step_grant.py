@@ -1,9 +1,4 @@
-"""The shipped plan-writer seat records the implementation step for its stamped plan.
-
-A planning task closes only with approved implementation and closing records. The Plan
-Writer records the implementation step for the plan commit it stamps. Closing stays with
-a coordinator, so the Plan Writer's closing record is refused.
-"""
+"""The plan-writer definition limits the evidence its authenticated seat can author."""
 
 from __future__ import annotations
 
@@ -17,13 +12,13 @@ from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.step_records import task_step_requirements
+from gobby.tasks.attestations import list_attestations
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_resolver import session_agent_definition
 from gobby.workflows.state_manager import SessionVariableManager
-from tests.fixtures.agent_definitions import seed_seat
-from tests.tasks.test_close_invariants import _set_close_policy, git
+from tests.fixtures.agent_sessions import AgentSessions
+from tests.fixtures.team_case import git_in as git
 
 pytestmark = pytest.mark.unit
 
@@ -39,7 +34,7 @@ def _register_seat(db: HubDatabase, project_id: str, external_id: str, agent_typ
     return session.id
 
 
-def test_shipped_plan_writer_grants_only_the_implementation_step(
+def test_shipped_plan_writer_grants_only_implementation_evidence(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     sync_bundled_agents(temp_db)
@@ -52,7 +47,7 @@ def test_shipped_plan_writer_grants_only_the_implementation_step(
     assert definition is not None
     body, _digest = definition
     assert body.name == "plan-writer"
-    assert body.task_step_writes == ["implementation"]
+    assert body.task_attestation_writes == ["implementation"]
 
 
 @pytest.mark.asyncio
@@ -61,13 +56,11 @@ async def test_plan_writer_records_implementation_for_its_stamped_plan(
 ) -> None:
     project_id = sample_git_project["id"]
     repo = Path(sample_git_project["repo_path"])
-    _set_close_policy(temp_db, project_id, {"enforce_step_records": True})
     sync_bundled_agents(temp_db)
-    seed_seat(temp_db, "coordinator", task_step_writes=["closing"])
 
     manager = LocalTaskManager(temp_db)
     plan_writer = _register_seat(temp_db, project_id, "pw-stamp", "plan-writer")
-    coordinator = _register_seat(temp_db, project_id, "coord-close", "coordinator")
+    coordinator = AgentSessions(temp_db, project_id).add("fixture-coordinator", ["closing"])
     task = manager.create_task(
         project_id,
         "Plan the migration",
@@ -87,49 +80,50 @@ async def test_plan_writer_records_implementation_for_its_stamped_plan(
     with session_context_for_test(plan_writer):
         linked = await registry.call("link_commit", {"task_id": task.id, "commit_sha": sha})
         assert "error" not in linked, linked
-        task = manager.get_task(task.id)
-        assert task_step_requirements(temp_db, task).missing == ("implementation", "closing")
-
         recorded = await registry.call(
-            "record_implementation_step",
+            "record_attestation",
             {
                 "task_id": task.id,
-                "status": "approved",
-                "epoch": task.review_epoch,
-                "round_number": 1,
-                "feedback": "The stamped plan commit is the implementation.",
-                "commit_sha": sha,
+                "kind": "implementation",
+                "result": "approved",
+                "summary": "The stamped plan commit is the implementation.",
+                "reference": {"scheme": "git", "value": sha},
             },
         )
         assert "error" not in recorded, recorded
 
         refused = await registry.call(
-            "record_closing_step",
+            "record_attestation",
             {
                 "task_id": task.id,
-                "status": "approved",
-                "epoch": task.review_epoch,
-                "round_number": 1,
-                "feedback": "A plan writer closing its own plan.",
-                "commit_sha": sha,
+                "kind": "closing",
+                "result": "approved",
+                "summary": "A plan writer closing its own plan.",
+                "reference": {"scheme": "git", "value": sha},
             },
         )
-        assert refused == {"error": "agent definition plan-writer cannot write the closing step"}
+        assert "error" in refused, refused
+        assert "no writer grant" in refused["error"]
 
-    task = manager.get_task(task.id)
-    assert task_step_requirements(temp_db, task).missing == ("closing",)
+    assert [(record.kind, record.session_id) for record in list_attestations(temp_db, task.id)] == [
+        ("implementation", plan_writer)
+    ]
 
     with session_context_for_test(coordinator):
         closing = await registry.call(
-            "record_closing_step",
+            "record_attestation",
             {
                 "task_id": task.id,
-                "status": "approved",
-                "epoch": task.review_epoch,
-                "round_number": 1,
-                "feedback": "The coordinator's closing step: the plan is stamped.",
-                "commit_sha": sha,
+                "kind": "closing",
+                "result": "approved",
+                "summary": "The coordinator's evidence: the plan is stamped.",
+                "reference": {"scheme": "git", "value": sha},
             },
         )
     assert "error" not in closing, closing
-    assert task_step_requirements(temp_db, manager.get_task(task.id)).missing == ()
+    records = list_attestations(temp_db, task.id)
+    assert [(record.kind, record.session_id) for record in records] == [
+        ("implementation", plan_writer),
+        ("closing", coordinator),
+    ]
+    assert all(record.reference is not None and record.reference.value == sha for record in records)

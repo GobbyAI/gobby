@@ -1,4 +1,4 @@
-"""Review routes by category: research needs review, and admission binds the reviewer (7.2)."""
+"""Team admission binds enabled definitions without interpreting task standards."""
 
 from __future__ import annotations
 
@@ -7,12 +7,10 @@ from typing import Any
 
 import pytest
 
-from gobby.config.tasks import TaskClosePolicyConfig
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.step_records import required_task_steps
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.team_case import TITLE, TeamWorld, make_team_world
@@ -43,7 +41,7 @@ def world(
                 "version": "1.0",
                 "prompts": {"agent": f"Run the {name} seat."},
                 "workflows": {"rule_selectors": {"include": []}},
-                "task_step_writes": grants,
+                "task_attestation_writes": grants,
             },
             project_id=world.case.project_id,
         )
@@ -60,36 +58,29 @@ async def admit(
     return reply
 
 
-def test_research_requires_review_by_default() -> None:
-    policy = TaskClosePolicyConfig(enforce_step_records=True)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("definition", ["developer", "docs-reviewer", "research-reviewer"])
+async def test_enabled_definition_needs_no_hardcoded_review_grant(
+    world: TeamWorld, definition: str
+) -> None:
+    task = world.case.task(TITLE)
+    owner = world.child(task)
 
-    reviewed = {
-        category: "review" in required_task_steps(policy, task_type="task", category=category)
-        for category in ("code", "docs", "research", "config", None)
-    }
-    assert reviewed == {
-        "code": True,
-        "docs": True,
-        "research": True,
-        "config": False,
-        None: False,
-    }
-    research = required_task_steps(policy, task_type="task", category="research")
-    assert {"implementation", "review", "closing"} <= set(research)
+    reply = await admit(world, owner, task, definition)
+
+    assert reply["success"] is True, reply
+    assert world.admit_step_output(owner)["team"]["reviewers"] == {definition: None}
 
 
 async def test_reviewer_agent_admission(world: TeamWorld) -> None:
     task = world.case.task(TITLE)
 
-    # A definition without the review grant is refused before anything is recorded.
+    # Missing definitions are refused before anything is recorded.
     refused = world.child(task)
-    reply = await admit(world, refused, task, "developer")
-    assert reply["success"] is False, reply
-    assert "developer" in reply["error"]
-    assert world.admit_step_output(refused) == {}
     reply = await admit(world, refused, task, "missing-reviewer")
     assert reply["success"] is False, reply
     assert "missing-reviewer" in reply["error"]
+    assert world.admit_step_output(refused) == {}
 
     # A review-grant definition becomes the team's first reviewer binding, with no seat yet.
     owner = world.child(task)

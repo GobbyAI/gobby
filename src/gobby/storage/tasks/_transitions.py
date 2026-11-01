@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
+
+from pydantic import JsonValue
 
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import (
@@ -13,7 +14,6 @@ from gobby.storage.hub.protocol import (
     SessionVariableTransfer,
 )
 from gobby.storage.tasks._close import _close_task_in_txn
-from gobby.storage.tasks._de_escalation import REVIEW_EXHAUSTED, REVIEW_REJECTION_LIMIT
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._models import (
     UNSET,
@@ -33,7 +33,7 @@ from gobby.tasks.state_semantics import is_task_closed
 from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 if TYPE_CHECKING:
-    from gobby.workflows.agent_models import AgentDefinitionBody
+    pass
 
 _MAX_ANCESTOR_DEPTH = 100
 
@@ -401,14 +401,6 @@ def reopen_task(
     has_ownership_metadata = bool(task.claimed_by_session_id)
     if not is_task_closed(task) and not task.is_escalated and not has_ownership_metadata:
         raise ValueError(f"Task {_task_ref(task, task_id)} is already open")
-    # Three rejections stand until the audited reset, so a reopen keeps them escalated.
-    exhausted = task.review_fail_count >= REVIEW_REJECTION_LIMIT
-    if exhausted and task.is_escalated and not is_task_closed(task):
-        raise ValueError(
-            f"Task {_task_ref(task, task_id)} exhausted its review epoch; only the audited "
-            "reset (de_escalate_task by Triage or the operator) reopens review."
-        )
-
     description = task.description
     if reason:
         reopen_note = f"\n\n[Reopened: {reason}]"
@@ -423,8 +415,8 @@ def reopen_task(
         closed_at=None,
         closed_in_session_id=None,
         closed_commit_sha=None,
-        escalated_at=utc_now() if exhausted else None,
-        escalation_reason=REVIEW_EXHAUSTED if exhausted else None,
+        escalated_at=None,
+        escalation_reason=None,
     )
     _reopen_closed_ancestors(db, task_id)
     withdraw_memory_reviews(db, task_id)
@@ -511,14 +503,14 @@ def close_task(
     task_id: str,
     *,
     reason: str | None = None,
-    force: bool = False,
     closed_in_session_id: str | None = None,
     closed_commit_sha: str | None = None,
     closed_ancestors: list[str] | None = None,
     expected_updated_at: datetime | None = None,
+    expected_closure_revision: str | None = None,
+    closure_facts: dict[str, JsonValue] | None = None,
+    prospective_commits: list[str] | None = None,
     closing_note: str | None = None,
-    closer_definition: AgentDefinitionBody | None = None,
-    commit_paths: Sequence[str] = (),
 ) -> Task:
     """Close a task and clear active ownership metadata."""
     collected: list[str] = []
@@ -530,12 +522,12 @@ def close_task(
             reason=reason,
             commit_sha=closed_commit_sha,
             closed_in_session_id=closed_in_session_id,
-            force=force,
             closed_ancestors=collected,
             expected_updated_at=expected_updated_at,
+            expected_closure_revision=expected_closure_revision,
+            closure_facts=closure_facts,
+            prospective_commits=prospective_commits,
             closing_note=closing_note,
-            closer_definition=closer_definition,
-            commit_paths=commit_paths,
         )
     if closed_ancestors is not None:
         closed_ancestors.extend(collected)

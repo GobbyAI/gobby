@@ -6,22 +6,18 @@ binding, and ``team_id`` is that execution's id. Admission runs under
 records the team before it creates the tree, so a re-run of a step that died mid-launch
 adopts its own tree. A retry of the admitting execution returns the same team; a
 replacement execution names the team it joins with ``team_id`` and must match its task.
-A fresh-reviewer execution joins the same way after the second review rejection; the team's
-``admit`` output keeps its id under ``fresh_reviewers`` per review epoch, so that epoch admits
-no other. Seat spawns from a team runbook join the admitted tree and cannot create a branch,
-worktree or clone or carry another task.
+Seat spawns from a team pipeline join the admitted tree and cannot create a branch,
+worktree or clone or carry another task. Review sequencing belongs to pipeline policy.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
 from gobby.agents.team_admission_records import (
-    ENDED_EXECUTIONS,
     TREELESS,
     Caller,
     SeatTarget,
@@ -33,7 +29,6 @@ from gobby.agents.team_admission_records import (
     own_record,
     record_team,
     recorded_team,
-    step_output,
     team_binding,
 )
 from gobby.agents.team_launch_inputs import reviewer_refusal
@@ -48,21 +43,17 @@ from gobby.agents.team_tree_provisioning import (
     live_treeless_team,
     verify_tree,
 )
-from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, LocalAgentRunManager
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.session_models import Session
-from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
-from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
 from gobby.storage.team_records import ADMISSION_STEP, EPIC_MODE
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.tasks.state_semantics import is_task_actionable, is_task_blocked
-from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.uuid_validation import parse_uuid_reference
 from gobby.workflows.definitions import PipelineDefinition
-from gobby.workflows.pipeline_executor import step_invocation_id
 from gobby.workflows.pipeline_state import ExecutionStatus, StepExecution
 
 _PIPELINE_SOURCE = "pipeline"
@@ -79,24 +70,17 @@ async def admit_team(
     task: str,
     team_id: str | None = None,
     parent_team_id: str | None = None,
-    fresh_reviewer: bool = False,
-    exclude_reviewers: Sequence[str] = (),
     reviewer_agent: str | None = None,
     checkout_mode: str = _WORKTREE,
     tab_title: str | None = None,
 ) -> TeamBinding:
     """Admit the caller execution's team for ``task``, or join team ``team_id``.
 
-    A replacement execution joins with ``team_id``. A ``fresh_reviewer`` execution joins only
-    after the second rejection handed the claim to a reviewer, as the epoch's one fresh reviewer.
+    A replacement execution joins with ``team_id``.
     ``checkout_mode="none"`` admits a treeless team: no branch or tree, seats in the main
     checkout. A treeless admission for a task joins the task's live treeless team.
     ``tab_title`` is the resolved tab from the runbook seat guard, fixed on first admission.
     """
-    if fresh_reviewer and team_id is None:
-        raise TeamAdmissionRefused(
-            "fresh_reviewer_team_required", "a fresh reviewer joins an admitted team: pass team_id"
-        )
     if checkout_mode not in (_WORKTREE, TREELESS):
         raise TeamAdmissionRefused(
             "checkout_mode_invalid", f"checkout_mode {checkout_mode} is not worktree or none"
@@ -148,13 +132,6 @@ async def admit_team(
             if checkout_mode == TREELESS:
                 return await create_treeless_team(db, caller, target, reviewer_agent, tab_title)
             return await create_team_tree(db, caller, target, reviewer_agent, tab_title, parent)
-        if fresh_reviewer:
-            if tab_title is not None:
-                _, binding = await asyncio.to_thread(_team, caller, target, team_id)
-                _bound_tab(binding.tab_title, tab_title)
-            await asyncio.to_thread(
-                _reserve_fresh_reviewer, db, caller, target, team_id, exclude_reviewers
-            )
         return await _join(db, caller, target, team_id, reviewer_agent, tab_title)
 
 
@@ -351,7 +328,7 @@ async def _join(
     reviewer_agent: str | None,
     tab_title: str | None,
 ) -> TeamBinding:
-    """A replacement or fresh-reviewer execution joins team ``team_id`` for the same task."""
+    """A replacement execution joins team ``team_id`` for the same task."""
     step, binding = await asyncio.to_thread(_team, caller, task, team_id)
     tab = _bound_tab(binding.tab_title, tab_title)
     _bound_reviewer(binding.reviewers, reviewer_agent, team_id)
@@ -373,87 +350,33 @@ async def _join(
     return binding
 
 
-def _holds_epoch(db: HubDatabase, executions: LocalPipelineExecutionManager, holder: str) -> bool:
-    """Whether a reserved fresh-reviewer execution still holds its epoch's slot.
-
-    An execution still in progress holds it, since its reviewer may not have spawned yet. An
-    ended execution holds it only while its code-reviewer seat runs. A failed pipeline or a
-    refused spawn leaves no active seat, so it frees the slot for a relaunch.
-    """
-    execution = executions.get_execution(holder)
-    if execution is None or execution.status not in ENDED_EXECUTIONS:
-        return True
-    reviewer = LocalAgentRunManager(db).get(step_invocation_id(holder, "code-reviewer"))
-    return reviewer is not None and reviewer.status in ACTIVE_AGENT_RUN_STATUSES
-
-
-def _reserve_fresh_reviewer(
-    db: HubDatabase, caller: Caller, task: Task, team_id: str, exclude_reviewers: Sequence[str]
-) -> None:
-    """Record the caller as the epoch's fresh reviewer once rejection two moved the claim."""
-    step, binding = _team(caller, task, team_id)
-    current = LocalTaskManager(db).get_task(task.id, caller.project_id)
-    epoch = current.review_epoch
-    reviews = [
-        record
-        for record in list_task_step_records(db, task.id)
-        if record.step == "review" and record.epoch == epoch
-    ]
-    rejected = {record.round_number for record in reviews if record.status == "rejected"}
-    if len(rejected) != REVIEW_REJECTION_LIMIT - 1:
-        raise TeamAdmissionRefused(
-            "fresh_reviewer_round",
-            f"task {task.id} has {len(rejected)} rejected review rounds in epoch {epoch}; "
-            f"a fresh reviewer starts at {REVIEW_REJECTION_LIMIT - 1}",
-        )
-    reviewers = {record.session_id for record in reviews}
-    try:
-        excluded = {
-            resolve_session_reference(db, ref, caller.project_id) for ref in exclude_reviewers
-        }
-    except ValueError as exc:
-        raise TeamAdmissionRefused("fresh_reviewer_exclusions", str(exc)) from exc
-    if missing := reviewers - excluded:
-        raise TeamAdmissionRefused(
-            "fresh_reviewer_exclusions",
-            f"exclude_reviewers omits epoch {epoch} reviewers {', '.join(sorted(missing))}",
-        )
-    if current.claimed_by_session_id not in reviewers:
-        raise TeamAdmissionRefused(
-            "fresh_reviewer_claim", f"task {task.id}'s claim has not passed to a reviewer"
-        )
-    reserved = step_output(step).get("fresh_reviewers")
-    reserved = reserved if isinstance(reserved, dict) else {}
-    reservation = f"{task.id}:{epoch}" if binding.mode == EPIC_MODE else str(epoch)
-    holder = reserved.get(reservation)
-    if (
-        holder is not None
-        and holder != caller.execution_id
-        and _holds_epoch(db, caller.executions, str(holder))
-    ):
-        raise TeamAdmissionRefused(
-            "fresh_reviewer_exists",
-            f"execution {holder} is team {team_id}'s epoch {epoch} fresh reviewer",
-        )
-    merge_step_output(
-        caller.executions,
-        step,
-        fresh_reviewers={**reserved, reservation: caller.execution_id},
-    )
-
-
 def task_team(db: HubDatabase, task_id: str) -> TeamBinding | None:
     """The leaf's own team, or its containing epic team for a primary leaf."""
     scoped = live_teams(db, [task_id]).get(task_id) or epic_team_above(db, task_id)
     return team_binding(db, scoped.team_id) if scoped else None
 
 
+def _is_bound_coordinator(db: HubDatabase, caller_id: str, task_id: str) -> bool:
+    """The task-bound caller declares team coordination in its installed definition."""
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+    from gobby.workflows.agent_resolver import session_agent_definition
+
+    caller = SessionManager(db).get(caller_id)
+    run = LocalAgentRunManager(db).get_by_session(caller_id)
+    definition = session_agent_definition(db, caller) if caller is not None else None
+    return (
+        run is not None
+        and run.task_id == task_id
+        and definition is not None
+        and definition[0].workflows.variables.get("team_manager") is True
+    )
+
+
 def managed_task_team(db: HubDatabase, caller_id: str, task_id: str) -> TeamBinding | None:
     """Resolve a manager's own team or one of its leaf pods."""
-    from gobby.agents.team_dispatch import _is_bound_dev_manager
-
     manager = seat_team(db, caller_id)
-    if manager is None or not _is_bound_dev_manager(db, caller_id, manager.task_id):
+    if manager is None or not _is_bound_coordinator(db, caller_id, manager.task_id):
         return None
     if task_id != manager.task_id and (
         manager.mode != EPIC_MODE or open_leaf_below(db, manager.task_id, task_id) is None
@@ -468,8 +391,7 @@ def managed_task_team(db: HubDatabase, caller_id: str, task_id: str) -> TeamBind
 
 
 def _epic_manager(db: HubDatabase, caller_id: str, task_id: str, parent_id: str) -> TeamBinding:
-    """The epic team ``parent_id`` when ``caller_id`` is its bound Dev Manager, for an open leaf."""
-    from gobby.agents.team_dispatch import _is_bound_dev_manager
+    """The parent team when its declared coordinator admits an open descendant."""
     from gobby.agents.team_review import seat_team_held
 
     parent = seat_team(db, caller_id)
@@ -479,11 +401,11 @@ def _epic_manager(db: HubDatabase, caller_id: str, task_id: str, parent_id: str)
         or parent.mode != EPIC_MODE
         or (live := live_teams(db, [parent.task_id]).get(parent.task_id)) is None
         or live.team_id != parent.team_id
-        or not _is_bound_dev_manager(db, caller_id, parent.task_id)
+        or not _is_bound_coordinator(db, caller_id, parent.task_id)
         or open_leaf_below(db, parent.task_id, task_id) is None
     ):
         raise TeamAdmissionRefused(
-            "pod_parent_invalid", "only the epic's Dev Manager admits a leaf pod"
+            "pod_parent_invalid", "only the parent team's declared coordinator admits a leaf team"
         )
     if seat_team_held(db, parent):
         raise TeamAdmissionRefused("team_held", "the epic is held; resume after its hold is lifted")

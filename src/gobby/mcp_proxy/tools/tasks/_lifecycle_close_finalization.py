@@ -1,4 +1,4 @@
-"""Atomic finalization after rechecking the same five close gates."""
+"""Atomic finalization after rechecking the same closure policy snapshot."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_sta
 from gobby.storage.tasks import (
     TaskHasOpenChildrenError,
     TaskStaleStateError,
-    TaskStepRecordsMissingError,
 )
+from gobby.tasks.closure_snapshot import TaskClosurePolicyError
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,14 @@ async def commit_close(
         return evaluation.refuse(
             "close_state_changed", "Linked commits changed; retry close_task."
         ).response(preview=False)
+    if (
+        fresh.decision is None
+        or evaluation.decision is None
+        or fresh.decision.snapshot_revision != evaluation.decision.snapshot_revision
+    ):
+        return fresh.refuse(
+            "close_state_changed", "Evidence or policy changed; retry close_task."
+        ).response(preview=False)
     # The closing record names the superseder in the same transaction as the close.
     closing_note = f"closed as {reason}; superseded by {superseded_by}" if superseded_by else None
     ancestors: list[str] = []
@@ -65,10 +73,10 @@ async def commit_close(
                 closed_in_session_id=fresh.resolved_session_id,
                 cwd=fresh.repo_path,
                 expected_updated_at=task.updated_at,
+                expected_closure_revision=fresh.decision.snapshot_revision,
+                closure_facts=fresh.facts,
                 closed_ancestors=ancestors,
                 closing_note=closing_note,
-                closer_definition=fresh.closer_definition,
-                commit_paths=fresh.commit_paths,
             )
         else:
             await asyncio.to_thread(
@@ -78,15 +86,16 @@ async def commit_close(
                 closed_in_session_id=fresh.resolved_session_id,
                 closed_commit_sha=fresh.candidate_commit_sha,
                 expected_updated_at=task.updated_at,
+                expected_closure_revision=fresh.decision.snapshot_revision,
+                closure_facts=fresh.facts,
                 closed_ancestors=ancestors,
                 closing_note=closing_note,
-                closer_definition=fresh.closer_definition,
-                commit_paths=fresh.commit_paths,
             )
     except (TaskStaleStateError, TaskHasOpenChildrenError) as exc:
         return fresh.refuse("close_state_changed", str(exc)).response(preview=False)
-    except TaskStepRecordsMissingError as exc:
-        return fresh.refuse("step_records", str(exc)).response(preview=False)
+    except TaskClosurePolicyError as exc:
+        fresh.decision = exc.decision
+        return fresh.response(preview=False)
 
     await asyncio.to_thread(
         _queue_close_memory_review, ctx, fresh, task.id, changes_summary, reason, fresh.commit_shas
@@ -98,7 +107,7 @@ async def commit_close(
         notify_parent_on_task_state_change(
             ctx.task_manager.db, summary["id"], "closed", task_ref=summary["ref"]
         )
-    if fresh.is_epic and reason in {"done", "moot"}:
+    if fresh.is_epic:
         from gobby.hooks.event_handlers._plan import on_epic_terminal
 
         await asyncio.to_thread(

@@ -52,18 +52,9 @@ rules:
                 "developer_provider": "claude",
                 "developer_model": "claude-haiku-5-5",
                 "developer_reasoning_effort": "xhigh",
-                "test_writer_provider": "codex",
-                "test_writer_model": "gpt-6.1-sol",
-                "test_writer_reasoning_effort": "medium",
                 "reviewer_provider": "codex",
                 "reviewer_model": "gpt-6.1-sol",
-                "reviewer_reasoning_effort": "medium",
-                "fresh_reviewer_provider": "claude",
-                "fresh_reviewer_model": "claude-opus-5-5",
-                "fresh_reviewer_reasoning_effort": "xhigh",
-                "manager_provider": "claude",
-                "manager_model": "claude-haiku-5-5",
-                "manager_reasoning_effort": "xhigh"
+                "reviewer_reasoning_effort": "medium"
               },
               "support": {
                 "release_manager_provider": "codex",

@@ -185,6 +185,33 @@ def messaging_registry(
 # ═══════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    [
+        "EVENT=CANDIDATE TASK=unclaimed NOTE=ordinary peer discussion",
+        "EVENT=VERDICT TASK=unclaimed VERDICT=APPROVED NOTE=no workflow side effects",
+    ],
+)
+async def test_peer_message_content_has_no_runbook_admission(
+    messaging_registry: InternalToolRegistry,
+    mock_session_manager: MagicMock,
+    mock_message_manager: MagicMock,
+    content: str,
+) -> None:
+    """Runbook-looking prose is stored unchanged through ordinary mailbox admission."""
+    mock_session_manager.get.side_effect = lambda sid: {
+        "s-from": MockSession(id="s-from"),
+        "s-to": MockSession(id="s-to"),
+    }.get(sid)
+    result = await messaging_registry.call(
+        "send_message",
+        {"from_session": "s-from", "target": "session", "target_id": "s-to", "content": content},
+    )
+    assert result["success"] is True, result
+    assert mock_message_manager.create_message.call_args.kwargs["content"] == content
+
+
 class TestSendMessage:
     """send_message resolves explicit targets and auto-writes agent_runs.result."""
 

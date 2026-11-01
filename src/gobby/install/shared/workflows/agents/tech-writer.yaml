@@ -13,6 +13,10 @@ provider: inherit
 checkout_mode: inherit
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
+  - "gobby-tasks:close_task"
+task_attestation_writes: [test-before, implementation, test-after, validation, self-review]
+task_attestation_scope: {own_claim_only: true}
+respect_task_protections: true
 
 prompts:
   persona: |
@@ -34,14 +38,16 @@ prompts:
 
     Handoff:
     Commit the documentation changes, attach the commit with
-    gobby-tasks:link_commit, record gobby-tasks:record_implementation_step for
-    it, then send your parent this envelope on one line, with one token per value
-    except NOTE:
-    EVENT=CANDIDATE TASK=<task-ref> TASK_TITLE=<task-title> RUN=<run-ref> WT=<worktree-ref> COMMIT=<40-hex-sha> NOTE=<changes-summary>
-    The parent lands and closes the task; you never close it.
+    gobby-tasks:link_commit, and record approved implementation, test-after,
+    validation and self-review attestations through gobby-tasks:record_attestation,
+    referencing the full current Git SHA. Record test-before evidence before
+    implementation, with observed RED or a truthful explanation of non-applicability.
+    Include exact validation results and a bounded criteria review. Send the
+    candidate and evidence IDs to your parent in an ordinary message. Coordinate
+    its completion owner; this definition delegates landing and closure.
 
     Boundaries:
-    - Never call close_task. Only the Dev Manager and the Orchestrator close tasks.
+    - This definition delegates close_task to the agreed completion owner.
     - Task transitions flow one way from a leaf: reopen_task and
       de_escalate_task belong to the orchestrator that dispatched you.
     - Work the leaf yourself — spawning agents from a leaf multiplies cost
@@ -147,10 +153,11 @@ step_workflow:
       mcp_error_policy: stay
       description: "Implement, validate, and hand off or close"
       status_message: |
-        Implement the docs leaf. Commit changes, link the commit, record the
-        implementation step, then message the parent with target=parent and
-        EVENT=CANDIDATE TASK=<task-ref> TASK_TITLE=<task-title> RUN=<run-ref> WT=<worktree-ref> COMMIT=<40-hex-sha> NOTE=<changes-summary>
-        The parent closes the task after it lands.
+        Implement the docs leaf. Commit changes, link the commit and record the
+        attestations required by the selected policy. Send the parent an ordinary
+        message with the candidate, evidence IDs and bounded validation summary.
+        Set metadata={task_id: <assigned task UUID>, implementation_complete: true}
+        on that completion handoff. Coordinate the completion owner with the parent.
         Sending the parent a task_blocker message ends this run after delivery;
         the parent respawns you with the answer, reusing the worktree. For a question
         that needs a reply while this run stays alive, use message_type=message; the
@@ -166,7 +173,9 @@ step_workflow:
           tool: send_message
           when: >-
             tool_input.get('target', 'parent') == 'parent'
-            and 'EVENT=CANDIDATE' in (tool_input.get('content') or '')
+            and (tool_input.get('metadata') or {}).get('implementation_complete') is True
+            and (tool_input.get('metadata') or {}).get('task_id') is not None
+            and (tool_input.get('metadata') or {}).get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_uuid'))
           action: set_variable
           variable: implementation_complete
           value: true

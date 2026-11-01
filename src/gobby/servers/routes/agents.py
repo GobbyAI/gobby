@@ -101,7 +101,7 @@ class CreateAgentDefinitionRequest(BaseModel):
     Unknown keys are rejected: a field the agent body does not carry would
     otherwise be dropped silently.
     Lifetime and authority fields (including persistent_workspace,
-    read_all_agent_workspaces and task_step_writes) are operator-configured.
+    read_all_agent_workspaces and task_attestation_writes) are operator-configured.
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -1335,35 +1335,55 @@ class TestComments:
         assert response.json()["detail"] == "Close receipts cannot be deleted"
         assert temp_db.fetchone("SELECT id FROM task_comments WHERE id = %s", (receipt_id,))
 
+    @pytest.mark.parametrize(
+        "author_type,detail",
+        [
+            (
+                "task_step",
+                "Task step records are recorded only through the dedicated record_*_step tools",
+            ),
+            ("task_attestation", "Task attestations are recorded only through record_attestation"),
+        ],
+    )
     def test_create_comment_refuses_task_step_author_type(
-        self, client: TestClient, sample_task: dict[str, Any]
+        self, client: TestClient, sample_task: dict[str, Any], author_type: str, detail: str
     ) -> None:
         response = client.post(
             f"/api/tasks/{sample_task['id']}/comments",
             json={
                 "body": '{"step":"test","status":"approved"}',
                 "author": "sess-1",
-                "author_type": "task_step",
+                "author_type": author_type,
             },
         )
 
         assert response.status_code == 403
-        assert response.json()["detail"] == (
-            "Task step records are recorded only through the dedicated record_*_step tools"
-        )
+        assert response.json()["detail"] == detail
         assert client.get(f"/api/tasks/{sample_task['id']}/comments").json()["total"] == 0
 
+    @pytest.mark.parametrize(
+        "author_type,detail",
+        [
+            ("task_step", "Task step records cannot be deleted"),
+            ("task_attestation", "Task attestations cannot be deleted"),
+        ],
+    )
     def test_delete_comment_refuses_task_step_record(
-        self, client: TestClient, sample_task: dict[str, Any], temp_db: HubDatabase
+        self,
+        client: TestClient,
+        sample_task: dict[str, Any],
+        temp_db: HubDatabase,
+        author_type: str,
+        detail: str,
     ) -> None:
         step_id = self._insert_comment(
-            temp_db, sample_task["id"], '{"step":"test"}', "sess-1", author_type="task_step"
+            temp_db, sample_task["id"], '{"step":"test"}', "sess-1", author_type=author_type
         )
 
         response = client.delete(f"/api/tasks/{sample_task['id']}/comments/{step_id}")
 
         assert response.status_code == 403
-        assert response.json()["detail"] == "Task step records cannot be deleted"
+        assert response.json()["detail"] == detail
         assert temp_db.fetchone("SELECT id FROM task_comments WHERE id = %s", (step_id,))
 
     @pytest.mark.parametrize("author", ["migration:476", "migration:477"])

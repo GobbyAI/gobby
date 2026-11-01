@@ -143,6 +143,7 @@ rules:
       and navigation_requires_index(event.data)
     effects:
       - type: block
+        recovery_when: "event.get('canonical_code_index_navigation') == True"
         reason: '{{ skill_fetch_directive("gobby:references/code-index/overview.md") }} If that call fails, its recorded failure fails this rule open — re-run the search command that was just blocked, not the failing fetch. After loading, reconsider the blocked command using the guidance. Use `gcode` for supported search, navigation, and source retrieval. Use raw tools when `gcode` cannot adequately serve the operation, and state the reason before falling back. The teaching gate resets only after clear or compact. Prefer gcode by query shape: known symbol `gcode search-symbol "name"`; exact identifier `gcode grep -w "identifier" -m 50`; exact literal `gcode grep -F "literal" -m 50`; repository text/docs/config `gcode search-content "text"`; fuzzy code concept `gcode search "concept"` (hybrid symbol search); parser-backed structure `gcode outline path/to/file`; source body `gcode symbol-at path/to/file:line`. After irrelevant or empty results, switch lanes instead of paraphrasing the same search or paging noise. For Markdown headings use `gcode grep ''^#{1,6} '' path/to/file.md -m 200`. Run printed continuation commands exactly.'
 
   prefer-gcode-for-source-read:
@@ -157,6 +158,7 @@ rules:
       and navigation_requires_index(event.data, 'read', broad_only=True)
     effects:
       - type: block
+        recovery_when: "event.get('canonical_code_index_navigation') == True"
         # gcode refuses another linked checkout's file unless --project names it (#22787).
         # The sets follow "Use " so the raw template stays action-first (test_rewrite_rules).
         reason: 'Use {% set hint = event.data.get(''canonical_gcode_project_hint'') %}{% set gcode = ''gcode --project '' ~ (hint | shlex_quote) if hint else ''gcode'' %}`{{ gcode }} outline <file>`, then `{{ gcode }} symbol-at <file>:<line>` for the symbol you need. Reads of 40 lines or fewer stay available. If a gcode call on that file fails, or a standalone `{{ gcode }} outline <file>` finds no symbols, or a standalone `{{ gcode }} symbol-at <file>:<line>` reports no containing symbol, retry this read; it stays allowed for the rest of the turn. A typed gcode outage error opens every read in the checkout for the turn.'

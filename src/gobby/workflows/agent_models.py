@@ -29,7 +29,6 @@ SPAWN_ANY_AGENT = "*"
 DIRECT_INTEGRATION_COMMIT = "direct_integration_commit"
 
 SendMessageTarget = Literal["global", "project", "parent", "session", "agent"]
-TaskStepWrite = Literal["test", "implementation", "review", "closing"]
 
 
 def _parent_only() -> list[SendMessageTarget]:
@@ -94,7 +93,7 @@ class AgentPromptBlocks(BaseModel):
 
 
 class AgentTaskScope(BaseModel):
-    """Optional task constraints for a definition's step writes or closes."""
+    """Optional task constraints for a definition's evidence or lifecycle authority."""
 
     model_config = ConfigDict(extra="forbid")
     task_types: list[StrictStr] | None = None
@@ -212,15 +211,7 @@ class AgentDefinitionBody(BaseModel):
             "holds the direct_integration_commit capability. Empty grants nothing."
         ),
     )
-    direct_integration_commit_steps: list[
-        Literal["test", "implementation", "review", "closing"]
-    ] = Field(
-        default_factory=list,
-        description=(
-            "Step records that replace the policy's required steps for a task whose linked "
-            "commits all touch only direct_integration_commit_paths."
-        ),
-    )
+
     task_categories: list[StrictStr] = Field(
         default_factory=list,
         description="Expansion categories this definition accepts for automatic assignment.",
@@ -240,23 +231,20 @@ class AgentDefinitionBody(BaseModel):
         default_factory=list,
         description="Enabled definitions that must receive the same report to finish a monitor tick.",
     )
-    task_step_writes: list[TaskStepWrite] = Field(
+    task_attestation_writes: list[StrictStr] = Field(
         default_factory=list,
-        description="Task step records this definition may write through dedicated tools.",
+        description="Attestation kinds this definition may author; * grants every kind.",
     )
-    task_step_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)
+    task_attestation_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)
+
     task_close_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)
+    task_land_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)
+    task_claim_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)
     respect_task_protections: StrictBool = Field(
         default=False,
         description="Apply the project's protected-task policy to mutations and their ancestors.",
     )
-    task_close_reasons: list[StrictStr] | None = Field(
-        default=None, description="Allowed close reasons; None leaves reasons unrestricted."
-    )
-    required_review_capabilities: list[StrictStr] = Field(
-        default_factory=list,
-        description="All permissions the approved review must record before this definition closes.",
-    )
+
     supplemental_review: StrictBool = Field(
         default=False,
         description=(

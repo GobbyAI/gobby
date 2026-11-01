@@ -470,12 +470,7 @@ async def spawn_agent_impl(
         parent_session_id=parent_session_id,
         phase_timings_ms=phase_timings_ms,
         worktree_dir_name=worktree_dir_name,
-        preserve_existing_worktree=resume_target is not None
-        or bool(
-            agent_body
-            and agent_body.task_step_writes
-            and "implementation" not in agent_body.task_step_writes
-        ),
+        preserve_existing_worktree=resume_target is not None,
     )
     if droid_mode == "interactive" and effective_provider != "droid":
         return {
@@ -517,7 +512,7 @@ async def spawn_agent_impl(
             return {"success": False, "error": "git_manager is required to reuse a worktree"}
 
         try:
-            # Associated seats join the exact candidate; default/developer seats sync it.
+            # Resume preserves its recorded checkout; explicit reuse syncs its base.
             if spawn_config.preserve_existing_worktree:
                 isolation_ctx, handler = await prepare_resumed_worktree(
                     existing_worktree=existing_worktree,

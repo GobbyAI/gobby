@@ -1,4 +1,4 @@
-"""Approved review step records written through the real role-owned writer."""
+"""Generic review attestations written through the authenticated evidence writer."""
 
 from __future__ import annotations
 
@@ -6,13 +6,11 @@ from collections.abc import Sequence
 
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.step_records import (
-    StepStatus,
-    StepSubmission,
-    TaskStep,
-    TaskStepRecord,
-    record_task_step,
+from gobby.tasks.attestations import (
+    AttestationSubmission,
+    EvidenceReference,
+    TaskAttestation,
+    record_attestation,
 )
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -24,13 +22,14 @@ def grant_step_writes(
     session_id: str,
     project_id: str,
     name: str,
-    steps: Sequence[TaskStep],
+    steps: Sequence[str],
     *,
     capabilities: Sequence[str] = (),
     supplemental_review: bool = False,
     team_manager: bool = False,
+    integration_paths: Sequence[str] = (),
 ) -> None:
-    """Run a registered session as an installed definition that writes ``steps``."""
+    """Run a registered session as an installed definition that writes the supplied arbitrary evidence kinds."""
     definitions = AgentDefinitionManager(db)
     if definitions.get_by_name(name, project_id) is None:
         definitions.create(
@@ -38,14 +37,15 @@ def grant_step_writes(
             {
                 "name": name,
                 "version": "1.0",
-                "prompts": {"agent": "Record the assigned task steps."},
+                "prompts": {"agent": "Record the assigned task evidence."},
                 "workflows": {
                     "rule_selectors": {"include": []},
                     "variables": {"team_manager": team_manager},
                 },
-                "task_step_writes": list(steps),
+                "task_attestation_writes": list(steps),
                 "capabilities": list(capabilities),
                 "supplemental_review": supplemental_review,
+                "direct_integration_commit_paths": list(integration_paths),
             },
             project_id=project_id,
         )
@@ -59,7 +59,7 @@ def grant_review_writes(db: HubDatabase, session_id: str, project_id: str) -> No
 
 def approve_review(
     db: HubDatabase, *, task_id: str, reviewer_session_id: str, commit_sha: str
-) -> TaskStepRecord:
+) -> TaskAttestation:
     """Record a LAND for the task's latest linked commit in its current review round."""
     return _review(
         db,
@@ -73,7 +73,7 @@ def approve_review(
 
 def reject_review(
     db: HubDatabase, *, task_id: str, reviewer_session_id: str, commit_sha: str
-) -> TaskStepRecord:
+) -> TaskAttestation:
     """Record a BOUNCE for the task's latest linked commit in its current review round."""
     return _review(
         db,
@@ -90,21 +90,18 @@ def _review(
     task_id: str,
     reviewer_session_id: str,
     commit_sha: str,
-    status: StepStatus,
+    status: str,
     feedback: str,
-) -> TaskStepRecord:
-    task = LocalTaskManager(db).get_task(task_id)
-    record, _ = record_task_step(
+) -> TaskAttestation:
+    record, _ = record_attestation(
         db,
-        task_id=task.id,
+        task_id=task_id,
         session_id=reviewer_session_id,
-        step="review",
-        submission=StepSubmission(
-            status=status,
-            epoch=task.review_epoch,
-            round_number=task.review_fail_count + 1,
-            feedback=feedback,
-            commit_sha=commit_sha,
+        submission=AttestationSubmission(
+            kind="review",
+            result=status,
+            summary=feedback,
+            reference=EvidenceReference(scheme="git", value=commit_sha),
         ),
     )
     return record

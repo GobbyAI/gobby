@@ -1,8 +1,4 @@
-"""Intra-epic blockers resolve on finished leaves inside an active epic team (addendum 8.3).
-
-Three views must agree on every case: the SQL state projection, hydration's active-blocker
-map, and ``approved_task_step(blocker, records, "implementation")``.
-"""
+"""Only lifecycle closure resolves blockers, regardless of evidence or team membership."""
 
 from __future__ import annotations
 
@@ -19,14 +15,7 @@ from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._blocking import _fetch_active_blocker_map
 from gobby.storage.tasks._queries import projected_task_state_sql
-from gobby.tasks.step_records import (
-    StepStatus,
-    StepSubmission,
-    TaskStep,
-    approved_task_step,
-    list_task_step_records,
-    record_task_step,
-)
+from gobby.tasks.attestations import AttestationSubmission, EvidenceReference, record_attestation
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.review_approvals import grant_step_writes
 from tests.fixtures.team_case import TeamWorld, make_team_world
@@ -55,7 +44,6 @@ def world(
 class Views:
     projected: str
     hydrated: bool
-    finished: bool
 
 
 class Epic:
@@ -97,28 +85,23 @@ class Epic:
     def record(
         self,
         task: Task,
-        step: TaskStep,
-        status: StepStatus,
+        step: str,
+        status: str,
         *,
         sha: str | None = None,
         disposition: str | None = None,
         round_number: int = 1,
     ) -> None:
-        current = self.tasks.get_task(task.id)
-        record_task_step(
+        record_attestation(
             self.db,
             task_id=task.id,
             session_id=self.maker,
-            step=step,
-            submission=StepSubmission.model_validate(
-                {
-                    "status": status,
-                    "epoch": current.review_epoch,
-                    "round_number": round_number,
-                    "feedback": f"{step} {status}",
-                    "commit_sha": sha,
-                    "disposition": disposition,
-                }
+            submission=AttestationSubmission(
+                kind=step,
+                result=status,
+                summary=f"{step} {status}",
+                reference=EvidenceReference(scheme="git", value=sha) if sha else None,
+                evidence={"reason": disposition, "iteration": round_number},
             ),
         )
 
@@ -131,15 +114,10 @@ class Epic:
         hydrated = blocker.id in _fetch_active_blocker_map(self.db, [blocked.id]).get(
             blocked.id, set()
         )
-        current = self.tasks.get_task(blocker.id)
-        finished = approved_task_step(
-            current, list_task_step_records(self.db, blocker.id), "implementation"
-        )
-        return Views(str(row["state"]), hydrated, finished is not None)
+        return Views(str(row["state"]), hydrated)
 
 
-BLOCKED = Views("blocked", True, False)
-UNBLOCKED = Views("open", False, True)
+BLOCKED = Views("blocked", True)
 
 
 async def _admit(world: TeamWorld, epic: Epic) -> None:
@@ -147,7 +125,7 @@ async def _admit(world: TeamWorld, epic: Epic) -> None:
     await world.admit(world.child(epic.task), epic.task)
 
 
-async def test_finished_blocker_unblocks_inside_team(world: TeamWorld) -> None:
+async def test_implementation_evidence_does_not_resolve_open_dependencies(world: TeamWorld) -> None:
     epic = Epic(world, "Parallel leaves feed one dependent")
     first, second, dependent = epic.leaf("First"), epic.leaf("Second"), epic.leaf("Dependent")
     epic.blocks(first, dependent)
@@ -161,18 +139,27 @@ async def test_finished_blocker_unblocks_inside_team(world: TeamWorld) -> None:
 
     epic.link(first, TEST_SHA, IMPL_SHA)
     epic.record(first, "implementation", "approved", sha=IMPL_SHA)
-    # Ruling 4: every parallel blocker finishes before the dependent unblocks, so the
-    # dependent stays blocked by second while first is no longer an active blocker.
-    assert epic.views(first, dependent) == Views("blocked", False, True)
+    # Evidence does not close a dependency; only the task lifecycle resolves it.
+    assert epic.views(first, dependent) == Views("blocked", True)
     assert epic.views(second, dependent) == BLOCKED
 
     epic.link(second, IMPL_SHA)
     epic.record(second, "implementation", "approved", sha=IMPL_SHA)
-    assert epic.views(second, dependent) == UNBLOCKED
+    assert epic.views(second, dependent) == Views("blocked", True)
 
-    # A newer linked commit makes the earlier approval stale, and the dependent blocks again.
+    # New candidate evidence also leaves the dependency unresolved.
     epic.link(first, TEST_SHA, IMPL_SHA, LATER_SHA)
     assert epic.views(first, dependent) == BLOCKED
+
+    # A lifecycle-closed dependency resolves in both projections, regardless of records.
+    epic.db.execute(
+        "UPDATE tasks SET closed_at = now(), closed_reason = 'done' WHERE id = %s", (first.id,)
+    )
+    assert epic.views(first, dependent) == Views("blocked", False)
+    epic.db.execute(
+        "UPDATE tasks SET closed_at = now(), closed_reason = 'done' WHERE id = %s", (second.id,)
+    )
+    assert epic.views(second, dependent) == Views("open", False)
 
 
 async def test_predicate_parity_outside_teams(world: TeamWorld) -> None:
@@ -181,8 +168,8 @@ async def test_predicate_parity_outside_teams(world: TeamWorld) -> None:
     teamless.blocks(blocker, blocked)
     teamless.link(blocker, IMPL_SHA)
     teamless.record(blocker, "implementation", "approved", sha=IMPL_SHA)
-    # Finished, but no active epic team: blocking is unchanged until the blocker closes.
-    assert teamless.views(blocker, blocked) == Views("blocked", True, True)
+    # Evidence without an active team does not close the blocker.
+    assert teamless.views(blocker, blocked) == Views("blocked", True)
 
     teamed = Epic(world, "Team bound")
     inside = teamed.leaf("Inside")
@@ -192,15 +179,15 @@ async def test_predicate_parity_outside_teams(world: TeamWorld) -> None:
     teamed.record(inside, "implementation", "approved", sha=IMPL_SHA)
     # Across epics the team's epic does not hold both tasks, so blocking is unchanged.
     teamed.blocks(inside, blocked)
-    assert teamed.views(inside, blocked) == Views("blocked", True, True)
+    assert teamed.views(inside, blocked) == Views("blocked", True)
     across = teamed.leaf("Depends on another epic")
     teamed.blocks(blocker, across)
-    assert teamed.views(blocker, across) == Views("blocked", True, True)
+    assert teamed.views(blocker, across) == Views("blocked", True)
 
-    # Inside the team both views flip together.
+    # Team membership does not change dependency semantics.
     dependent = teamed.leaf("Dependent inside")
     teamed.blocks(inside, dependent)
-    assert teamed.views(inside, dependent) == UNBLOCKED
+    assert teamed.views(inside, dependent) == Views("blocked", True)
 
 
 async def test_no_work_and_superseded_blockers(world: TeamWorld) -> None:
@@ -212,32 +199,30 @@ async def test_no_work_and_superseded_blockers(world: TeamWorld) -> None:
     await _admit(world, epic)
 
     epic.record(moot, "implementation", "approved", disposition="moot")
-    assert epic.views(moot, docs) == UNBLOCKED
+    assert epic.views(moot, docs) == Views("blocked", True)
 
     epic.link(superseded, IMPL_SHA)
     epic.record(superseded, "implementation", "approved", sha=IMPL_SHA)
-    assert epic.views(superseded, dependent) == UNBLOCKED
-    # The latest implementation record wins, even at the same commit.
+    assert epic.views(superseded, dependent) == Views("blocked", True)
+    # Conflicting results at the same candidate also leave the dependency unresolved.
     epic.record(superseded, "implementation", "rejected", sha=IMPL_SHA, round_number=2)
     assert epic.views(superseded, dependent) == BLOCKED
 
 
-@pytest.mark.parametrize("field", ["epoch", "sequence"])
+@pytest.mark.parametrize("field", ["created_at", "sequence"])
 async def test_malformed_implementation_row_never_finishes_a_blocker(
     world: TeamWorld, field: str
 ) -> None:
-    """A malformed implementation row is no approval, and the team blocker read never raises."""
+    """Dependency projections do not interpret even a malformed evidence row."""
     epic = Epic(world, "Malformed implementation row")
     blocker, dependent = epic.leaf("Blocker"), epic.leaf("Waits on it")
     epic.blocks(blocker, dependent)
     await _admit(world, epic)
     epic.link(blocker, IMPL_SHA)
     body: dict[str, Any] = {
-        "step": "implementation",
-        "status": "approved",
-        "epoch": 1,
-        "round_number": 1,
-        "commit_sha": IMPL_SHA,
+        "kind": "implementation",
+        "result": "approved",
+        "reference": {"scheme": "git", "value": IMPL_SHA},
         "sequence": 1,
         "agent_definition": MAKER,
         "session_id": epic.maker,
@@ -245,7 +230,7 @@ async def test_malformed_implementation_row_never_finishes_a_blocker(
     body[field] = "not-an-integer"
     epic.db.execute(
         "INSERT INTO task_comments (id, task_id, author, author_type, body) "
-        "VALUES (%s, %s, %s, 'task_step', %s)",
+        "VALUES (%s, %s, %s, 'task_attestation', %s)",
         (str(uuid4()), blocker.id, epic.maker, json.dumps(body)),
     )
 

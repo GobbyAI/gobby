@@ -1,4 +1,4 @@
-"""A close that names a linked commit binds the tip-bound steps by history, not link order."""
+"""A selected evidence policy binds the candidate by Git history, not link order."""
 
 from __future__ import annotations
 
@@ -8,8 +8,11 @@ from typing import Any
 
 import pytest
 
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.attestations import AttestationSubmission, EvidenceReference, record_attestation
+from tests.fixtures.agent_sessions import AgentSessions
 
 pytestmark = pytest.mark.unit
 
@@ -34,17 +37,28 @@ class _Close:
         from gobby.mcp_proxy.tools.internal import InternalToolRegistry
         from gobby.mcp_proxy.tools.tasks._context import RegistryContext
         from gobby.mcp_proxy.tools.tasks._lifecycle_close_tool import register_close_task
-        from tests.tasks.test_close_invariants import _set_close_policy
-        from tests.tasks.test_step_records import _Seats
 
         self.db = db
         self.repo = Path(project["repo_path"])
         self.manager = LocalTaskManager(db)
-        _set_close_policy(db, project["id"], {"enforce_step_records": True})
-        seats = _Seats(db, project["id"])
-        self.developer = seats.add("tip-developer", ["implementation"])
-        self.reviewer = seats.add("tip-reviewer", ["review"])
-        self.closer = seats.add("tip-closer", ["closing"])
+        self.rule = RuleDefinitionManager(db).create(
+            "review-the-candidate",
+            {
+                "event": "task_close",
+                "when": "(latest_attestation('review').get('reference') or {}).get('value') "
+                "!= facts.get('candidate_commit_sha') or "
+                "facts.get('candidate_covers_linked_commits') != True",
+                "effects": [{"type": "block", "reason": "Review the current candidate."}],
+            },
+            project_id=project["id"],
+            tags=["tip-review"],
+        )
+        seats = AgentSessions(db, project["id"])
+        self.developer = seats.add(
+            "tip-maker",
+            ["review"],
+            definition_fields={"workflows": {"rule_selectors": {"include": ["tag:tip-review"]}}},
+        )
         task = self.manager.create_task(
             project["id"],
             "Tip by history",
@@ -66,27 +80,17 @@ class _Close:
         self.manager.link_commit(self.task.id, self.short(sha))
 
     def approve_tip(self, sha: str) -> None:
-        from gobby.tasks.step_records import StepSubmission, TaskStep, record_task_step
-
-        steps: list[tuple[str, TaskStep]] = [
-            (self.developer, "implementation"),
-            (self.reviewer, "review"),
-            (self.closer, "closing"),
-        ]
-        for session_id, step in steps:
-            record_task_step(
-                self.db,
-                task_id=self.task.id,
-                session_id=session_id,
-                step=step,
-                submission=StepSubmission(
-                    status="approved",
-                    epoch=1,
-                    round_number=1,
-                    feedback=f"The {step} step is approved.",
-                    commit_sha=sha,
-                ),
-            )
+        record_attestation(
+            self.db,
+            task_id=self.task.id,
+            session_id=self.developer,
+            submission=AttestationSubmission(
+                kind="review",
+                result="approved",
+                summary="Reviewed this exact candidate.",
+                reference=EvidenceReference(scheme="git", value=sha),
+            ),
+        )
 
     async def close(self, sha: str, *, preview: bool = False) -> dict[str, Any]:
         arguments: dict[str, Any] = {"task_id": self.task.id, "commit_sha": sha}
@@ -142,7 +146,7 @@ async def test_older_commit_cannot_bypass_a_newer_linked_descendant(close: _Clos
     refused = await close.close(older)
 
     assert refused.get("closed") is not True, refused
-    assert "step_records" in _failed_gates(refused), refused
+    assert "Review the current candidate." in str(refused), refused
     task = close.fresh()
     assert task.closed_at is None
     assert task.commits == [close.short(older), close.short(newer)]
@@ -150,9 +154,6 @@ async def test_older_commit_cannot_bypass_a_newer_linked_descendant(close: _Clos
 
 def test_persisted_close_keeps_link_order_for_an_older_commit(close: _Close) -> None:
     """The storage close moves a named commit to the tip only when it descends from the rest."""
-    from tests.tasks.test_close_invariants import _set_close_policy
-
-    _set_close_policy(close.db, close.task.project_id, {})
     older = _commit(close.repo, "older")
     close.link(older)
     newer = _commit(close.repo, "newer")

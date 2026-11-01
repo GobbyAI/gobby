@@ -46,6 +46,10 @@ def test_retired_tools_absent_from_enforcement_lists() -> None:
         "inspect_task_path_ownership",
         "record_close_receipt",
         "transfer_task_authority",
+        "record_closing_step",
+        "record_implementation_step",
+        "record_review_step",
+        "record_test_step",
     }
     assert retired.isdisjoint(TASK_MUTATION_TOOLS_BY_SERVER["gobby-tasks"])
     assert retired.isdisjoint(INTERACTIVE_TASK_MUTATIONS)
@@ -74,10 +78,7 @@ INTERACTIVE_TASK_MUTATIONS = (
     "hand_off_task_claim",
     "link_commit",
     "link_task_to_session",
-    "record_closing_step",
-    "record_implementation_step",
-    "record_review_step",
-    "record_test_step",
+    "record_attestation",
     "release_task_claim",
     "remove_dependency",
     "remove_label",

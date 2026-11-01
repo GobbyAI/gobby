@@ -13,9 +13,10 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING
+
+from pydantic import JsonValue
 
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.review_history import read_review_row
@@ -23,16 +24,14 @@ from gobby.storage.tasks._models import (
     Task,
     TaskHasChildrenError,
     TaskHasDependentsError,
-    TaskHasOpenChildrenError,
 )
 from gobby.storage.tasks._read import get_task
-from gobby.storage.tasks._review_status import review_status_sql
 from gobby.storage.tasks._transitions import close_task as _close_task_transition
 from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transition
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
-    from gobby.workflows.agent_models import AgentDefinitionBody
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -93,15 +92,9 @@ def repair_closed_candidate(
         ).fetchone()
         if actor is None or actor["project_id"] != task["project_id"]:
             raise ValueError("Repair requires a registered caller in the task project.")
-        derived = conn.execute(
-            f"SELECT COALESCE({review_status_sql('t')}, t.review_status) AS review_status "  # nosec B608
-            "FROM tasks t WHERE t.id = %s",
-            (task_id,),
-        ).fetchone()
-        derived_status = derived["review_status"] if derived is not None else None
         if (
             task["closed_at"] is None
-            or derived_status != "valid"
+            or task["review_status"] != "valid"
             or task["claimed_by_session_id"] is not None
             or task["is_escalated"]
             or task["merge_in_progress"]
@@ -191,54 +184,29 @@ def close_task(
     db: HubDatabase,
     task_id: str,
     reason: str | None = None,
-    force: bool = False,
     closed_in_session_id: str | None = None,
     closed_commit_sha: str | None = None,
     closed_ancestors: list[str] | None = None,
     expected_updated_at: datetime | None = None,
+    expected_closure_revision: str | None = None,
+    closure_facts: dict[str, JsonValue] | None = None,
+    prospective_commits: list[str] | None = None,
     closing_note: str | None = None,
-    closer_definition: AgentDefinitionBody | None = None,
-    commit_paths: Sequence[str] = (),
 ) -> None:
-    """Close a task.
-
-    Args:
-        db: Database protocol instance
-        task_id: The task ID to close
-        reason: Optional reason for closing
-        force: If True, close even if there are open children (default: False)
-        closed_in_session_id: Session ID where task was closed
-        closed_commit_sha: Git commit SHA at time of closing
-        closer_definition: Closing definition whose direct-commit grant may judge step records
-        commit_paths: Paths the linked commits change, for that grant's coverage
-
-    Raises:
-        ValueError: If task not found or has open children (and force=False)
-    """
-    # Check for open children unless force=True
-    if not force:
-        open_children = db.fetchall(
-            "SELECT id, title FROM tasks WHERE parent_task_id = %s AND closed_at IS NULL",
-            (task_id,),
-        )
-        if open_children:
-            raise TaskHasOpenChildrenError(
-                task_id, [f"{child['id']} ({child['title']})" for child in open_children]
-            )
-
+    """Close under the authenticated caller's selected policy, atomically with its commit."""
     collected: list[str] = [] if closed_ancestors is None else closed_ancestors
     _close_task_transition(
         db,
         task_id,
         reason=reason,
-        force=force,
         closed_in_session_id=closed_in_session_id,
         closed_commit_sha=closed_commit_sha,
         closed_ancestors=collected,
         expected_updated_at=expected_updated_at,
+        expected_closure_revision=expected_closure_revision,
+        closure_facts=closure_facts,
+        prospective_commits=prospective_commits,
         closing_note=closing_note,
-        closer_definition=closer_definition,
-        commit_paths=commit_paths,
     )
 
 

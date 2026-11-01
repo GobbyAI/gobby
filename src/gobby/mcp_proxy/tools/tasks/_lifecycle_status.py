@@ -18,12 +18,10 @@ from gobby.mcp_proxy.tools.tasks._escalation_coordinator import (
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
-from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
 from gobby.tasks.state_semantics import (
     get_claimed_session_id,
     projected_task_state,
 )
-from gobby.workflows.agent_resolver import session_has_capability_or_operator
 
 logger = logging.getLogger(__name__)
 
@@ -258,8 +256,6 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         Clears escalation metadata after human intervention resolves the issue.
         The claimant, task creator, or delegator can resolve escalation without
         releasing the task's claim.
-        Optionally resets the validation failure count and current stage work attempts.
-        Can restore a stopped approved stage from lifecycle history.
 
         Args:
             task_id: Task reference (#N, path, or UUID)
@@ -306,21 +302,6 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
                 projected_state,
             )
 
-        if task.review_fail_count >= REVIEW_REJECTION_LIMIT:
-            # Resetting an exhausted review requires a declared permission or the operator.
-            try:
-                caller = ctx.resolve_session_id(session_id)
-            except ValueError:
-                caller = None
-            if caller is None or not session_has_capability_or_operator(
-                ctx.task_manager.db, caller, "reset_review_epoch"
-            ):
-                return task_error(
-                    f"Task {task_id} exhausted its review epoch; resetting requires the "
-                    "reset_review_epoch capability or the operator's terminal.",
-                    TaskToolErrorCode.REVIEW_RESET_FORBIDDEN,
-                )
-
         try:
             updated = ctx.task_manager.de_escalate_task(
                 resolved_id,
@@ -359,9 +340,8 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
     registry.register(
         name="de_escalate_task",
         description=(
-            "Return an escalated task to ready after human intervention resolves the issue. "
-            "Resetting an exhausted review epoch requires the caller's enabled definition "
-            "to declare reset_review_epoch, or the operator's own terminal."
+            "Clear explicit escalation after its owner or coordinator records the resolution. "
+            "Preserves the claim, task metadata and attestation history."
         ),
         input_schema={
             "type": "object",

@@ -1,0 +1,32 @@
+tags: [task-security]
+
+rules:
+  closure-requires-security-approval:
+    description: Security-labeled work needs an independent authorized approval for the exact candidate.
+    event: task_close
+    priority: 35
+    when: &security_required >-
+      reason == 'done' and 'security-review' in (task.get('labels') or []) and
+      not any(record.get('kind') == 'security-review' and
+        record.get('id') == latest_attestation('security-review').get('id') and
+        record.get('result') == 'approved' and
+        'approve_security_review' in record.get('agent_capabilities', []) and
+        (record.get('reference') or {}).get('scheme') == 'git' and
+        (record.get('reference') or {}).get('value') == facts.get('candidate_commit_sha') and
+        record.get('session_id') not in [caller.get('session_id'), task.get('claimed_by_session_id')] and
+        record.get('session_id') not in facts.get('claimants', []) and
+        all(record.get('session_id') != maker.get('session_id') for maker in attestations
+          if maker.get('kind') in ['test-before', 'implementation', 'test-after'])
+        for record in attestations)
+    effects:
+      - type: block
+        reason: Obtain independent security approval for this exact candidate from an authorized author.
+
+  landing-requires-security-approval:
+    description: Preserve task-specific security approval before integration as well as closure.
+    event: task_land
+    priority: 35
+    when: *security_required
+    effects:
+      - type: block
+        reason: Obtain independent security approval for this exact candidate from an authorized author.

@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from pydantic import JsonValue
+
 from gobby.storage.tasks import Task
-from gobby.tasks.close_checklist import CloseChecklist
-from gobby.tasks.close_invariants import CLOSE_GATE_ORDER as CLOSE_GATE_ORDER
-from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.tasks.closure_policy import ClosureDecision
 
 
 @dataclass
@@ -23,39 +23,40 @@ class CloseEvaluation:
     candidate_commit_sha: str | None = None
     is_epic: bool = False
     already_closed: bool = False
-    closer_definition: AgentDefinitionBody | None = None
-    commit_paths: tuple[str, ...] = ()
-    checklist: CloseChecklist = field(default_factory=lambda: CloseChecklist(()))
+    decision: ClosureDecision | None = None
+    facts: dict[str, JsonValue] = field(default_factory=dict)
     error: str | None = None
     message: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ready(self) -> bool:
-        evaluated = self.already_closed or len(self.checklist.gates) == len(CLOSE_GATE_ORDER)
-        return self.error is None and evaluated and self.checklist.ready
+        return self.error is None and (
+            self.already_closed or (self.decision is not None and self.decision.allowed)
+        )
 
     def refuse(self, error: str, message: str) -> CloseEvaluation:
         self.error, self.message = error, message
         return self
 
     def response(self, *, preview: bool, closed: bool = False) -> dict[str, Any]:
-        failure = self.checklist.first_failure
+        blockers = list(self.decision.blockers) if self.decision else []
         result: dict[str, Any] = {
             "success": self.ready,
             "task_id": self.task_id,
             "preview": preview,
             "can_close": self.ready,
             "closed": closed or (self.already_closed and not preview),
-            "gates": self.checklist.summary(),
+            "blocking_reasons": blockers,
+            "policy_revision": self.decision.policy_revision if self.decision else None,
+            "snapshot_revision": self.decision.snapshot_revision if self.decision else None,
             "commit_shas": self.commit_shas,
             "candidate_commit_sha": self.candidate_commit_sha,
             **self.extra,
         }
-        if self.error or failure:
-            result["error"] = self.error or (failure.name if failure else None)
-            result["message"] = self.message or (failure.message if failure else None)
-            result["blocking_reasons"] = [gate.to_dict() for gate in self.checklist.all_failures]
+        if self.error or blockers:
+            result["error"] = self.error or "closure_policy"
+            result["message"] = self.message or "; ".join(blockers)
         if self.response_detail == "diagnostic":
-            result["gates"] = self.checklist.to_dict()["gates"]
+            result["facts"] = self.facts
         return result

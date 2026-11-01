@@ -33,9 +33,7 @@ from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine._offload import inline_offload_scope, offload, offload_rule_loop
 from gobby.workflows.engine.block_batching import agent_context_key, block_scope
 from gobby.workflows.engine.blocked_tool_recovery import (
-    CONSECUTIVE_TOOL_BLOCK_RULE,
     block_reason_signature,
-    block_source_for_rule,
     clear_blocked_tool_recovery_state,
     ensure_block_reason,
     extract_rule_name,
@@ -96,6 +94,7 @@ class BlockGate:
     condition: Any | None = None
     acknowledge_variable: str | None = None
     delivery: str = "eager"
+    recovery_when: str | None = None
 
 
 class _RuleLoopBridge:
@@ -309,7 +308,7 @@ class EvaluationMixin:
             resolved_rule_name = (
                 rule_name or extract_rule_name(response.reason) or "rule-engine-block"
             )
-            resolved_source = source or block_source_for_rule(resolved_rule_name)
+            resolved_source = source or "rule"
             resolved_fallback = fallback_reason or (
                 f"Rule enforced by Gobby: [{resolved_rule_name}]\n"
                 "Gobby blocked this event without providing a reason. "
@@ -335,10 +334,7 @@ class EvaluationMixin:
                 reason=response.reason,
             )
             gates = block_gates or []
-            if evaluation.is_turn_end and (
-                resolved_rule_name == "require-step-completion"
-                or any(gate.rule_name == "require-step-completion" for gate in gates)
-            ):
+            if evaluation.is_turn_end:
                 context = evaluation.eval_context or {}
                 diagnostic = {
                     "resolved_session_id": evaluation.session_id,
@@ -351,7 +347,7 @@ class EvaluationMixin:
                     "current_step": evaluation.variables.get("current_step"),
                 }
                 logger.info(
-                    "Step completion stop decision: resolved_session_id=%s external_session_id=%s "
+                    "Turn-end block decision: resolved_session_id=%s external_session_id=%s "
                     "has_durable_stop_wait=%s active_coordination_wait_count=%s decision=%s "
                     "current_step=%s",
                     *diagnostic.values(),
@@ -379,12 +375,15 @@ class EvaluationMixin:
                     tool_name=blocked_tool_name,
                 )
             block_state = evaluation.block_state
-            if evaluation.is_before_tool and resolved_rule_name != CONSECUTIVE_TOOL_BLOCK_RULE:
+            if evaluation.is_before_tool and resolved_source != "retry-limit":
                 remember_blocked_tool_recovery_state(
                     block_state,
                     tool_name=blocked_tool_name,
                     rule_name=resolved_rule_name,
                     reason=response.reason,
+                    recovery_conditions=tuple(
+                        gate.recovery_when for gate in gates if gate.recovery_when
+                    ),
                 )
             # Verbose-once: collapse repeat identical blocks within a turn, per
             # agent context so a subagent's first block still reads in full.
@@ -668,6 +667,7 @@ class EvaluationMixin:
                             condition=combined_rule_condition(body.when, effect.when),
                             acknowledge_variable=effect.acknowledge_variable,
                             delivery=effect.delivery,
+                            recovery_when=effect.recovery_when,
                         )
                     )
                     lookahead_blocked = True
@@ -784,6 +784,7 @@ class EvaluationMixin:
                             reason=rendered_block_reason,
                             condition=combined_rule_condition(body.when, deferred_block.when),
                             acknowledge_variable=deferred_block.acknowledge_variable,
+                            recovery_when=deferred_block.recovery_when,
                             delivery=deferred_block.delivery,
                         )
                     )

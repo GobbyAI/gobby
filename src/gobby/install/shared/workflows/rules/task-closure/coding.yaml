@@ -1,0 +1,105 @@
+tags: [task-closure-coding]
+
+rules:
+  coding-closure-requires-evidence:
+    description: The coding example requires TDD, implementation, validation, OCR and a closing review.
+    event: task_close
+    priority: 20
+    when: >-
+      reason == 'done' and task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+      facts.get('closure_intent', 'explicit') != 'ancestor' and
+      any(latest_attestation(kind).get('result') != 'approved'
+          for kind in ['test-before', 'implementation', 'test-after', 'validation', 'self-review', 'closing'])
+    effects:
+      - type: block
+        reason: Record approved test-before, implementation, test-after, validation, self-review and closing attestations. Describe any justified test non-applicability in the evidence.
+
+  coding-closure-requires-tdd-order:
+    description: Tests-first evidence precedes implementation and the passing rerun follows it.
+    event: task_close
+    priority: 21
+    when: &coding_tdd_order >-
+      reason == 'done' and task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+      facts.get('closure_intent', 'explicit') != 'ancestor' and
+      not (latest_attestation('test-before').get('sequence', 0) <
+           latest_attestation('implementation').get('sequence', 0) <
+           latest_attestation('test-after').get('sequence', 0))
+    effects:
+      - type: block
+        reason: Attest the tests-first check, implementation and passing rerun in that order.
+
+  coding-closure-requires-commit:
+    description: Coding deliverables link their completed commit and review that exact candidate.
+    event: task_close
+    priority: 22
+    when: >-
+      reason == 'done' and task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+      facts.get('closure_intent', 'explicit') != 'ancestor' and
+      (not task.get('commits') or
+       not facts.get('candidate_commit_sha') or
+       facts.get('candidate_covers_linked_commits') != True or
+       not any((facts.get('candidate_commit_sha') or '').startswith(commit)
+               for commit in task.get('commits', [])) or
+       (latest_attestation('closing').get('reference') or {}).get('scheme') != 'git' or
+       (latest_attestation('closing').get('reference') or {}).get('value') != facts.get('candidate_commit_sha'))
+    effects:
+      - type: block
+        reason: Link the completed commit and reference that Git commit in the closing attestation.
+
+  coding-closure-requires-clean-landed-work:
+    description: Finish integrating and committing the task's attributed changes.
+    event: task_close
+    priority: 23
+    when: >-
+      reason == 'done' and task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+      facts.get('closure_intent', 'explicit') != 'ancestor' and
+      (facts.get('task_files_clean') != True or facts.get('integration_ancestry') != True or
+       facts.get('attribution_complete') != True)
+    effects:
+      - type: block
+        reason: Commit the task's attributed changes and integrate its linked commits before closing.
+
+  coding-landing-requires-evidence:
+    description: Validate and self-review coding deliverables before integration.
+    event: task_land
+    priority: 20
+    when: >-
+      task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+      any(latest_attestation(kind).get('result') != 'approved'
+          for kind in ['test-before', 'implementation', 'test-after', 'validation', 'self-review'])
+    effects:
+      - type: block
+        reason: Record approved TDD, implementation, validation and OCR self-review attestations before landing.
+
+  coding-landing-requires-tdd-order:
+    description: Coding delivery preserves the declared tests-first sequence.
+    event: task_land
+    priority: 21
+    when: *coding_tdd_order
+    effects:
+      - type: block
+        reason: Attest the tests-first check, implementation and passing rerun in that order.
+
+  coding-closure-requires-candidate-evidence:
+    description: Implementation, passing checks and OCR attest the resolved current candidate.
+    event: task_close
+    priority: 24
+    when: &coding_candidate_evidence >-
+      reason == 'done' and task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+      facts.get('closure_intent', 'explicit') != 'ancestor' and
+      (not facts.get('candidate_commit_sha') or
+       any((latest_attestation(kind).get('reference') or {}).get('scheme') != 'git' or
+           (latest_attestation(kind).get('reference') or {}).get('value') != facts.get('candidate_commit_sha')
+           for kind in ['implementation', 'test-after', 'validation', 'self-review']))
+    effects:
+      - type: block
+        reason: Reference the resolved full Git candidate in implementation, passing-test, validation and OCR attestations.
+
+  coding-landing-requires-candidate-evidence:
+    description: A new delivery candidate needs its own implementation and validation evidence.
+    event: task_land
+    priority: 24
+    when: *coding_candidate_evidence
+    effects:
+      - type: block
+        reason: Reference this full Git candidate in implementation, passing-test, validation and OCR attestations.

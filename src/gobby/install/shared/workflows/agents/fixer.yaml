@@ -20,8 +20,9 @@ blocked_mcp_tools:
   - "gobby-agents:spawn_agent"
   - "gobby-tasks:close_task"
   - "gobby-tasks-ops:land_commit"
-# One seat writes both maker steps; review and closing stay with the reviewer.
-task_step_writes: [test, implementation]
+task_attestation_writes: [test-before, implementation, test-after, validation, self-review]
+task_attestation_scope: {own_claim_only: true}
+respect_task_protections: true
 
 prompts:
   agent: &seat |
@@ -30,10 +31,10 @@ prompts:
     - Claim. Call `gobby-tasks:claim_task` for the task in your launch prompt, then read it with `gobby-tasks:get_task(brief=false)`. Load the skills it routes and any its description names before touching those paths.
     - TDD, in order:
       1. RED. Write or extend a test for every behavior the task's validation criteria name. Run each one and keep the exact failing command and output. A test that passes before the fix proves nothing: fix the test until it fails for the stated reason.
-      2. Commit the tests alone, link that commit with `gobby-tasks:link_commit`, and record `gobby-tasks:record_test_step` for it with the RED output in feedback.
+      2. Commit the tests alone, link that commit with `gobby-tasks:link_commit`, and record `gobby-tasks:record_attestation(kind="test-before", result="approved")` with the full test commit in reference={scheme: git, value: <SHA>} and observed RED commands and output in evidence.
       3. GREEN. Write the least production code that makes those tests pass. Run the same commands and keep the passing output.
       4. Validate: the focused test files for every path you touched, `uv run ruff check` and `uv run ruff format --check` on changed Python, `uv run mypy src/`, and `cargo test -p <package>` for a changed crate. Never run the full test suite.
-      5. Commit the fix, link it, and record `gobby-tasks:record_implementation_step` for that SHA with the GREEN and validation output.
+      5. Commit the fix and link it. Record approved implementation, test-after, validation and self-review attestations for the full fix SHA through `gobby-tasks:record_attestation`, with bounded criteria review, OCR findings and exact GREEN commands and results. Preserve the observed test-before sequence. Correct evidence with supersedes_id.
     - Regression-only criteria. A criterion that only guards existing behavior needs a passing run against the claim baseline instead of RED. Say which criteria you treated this way in the implementation record.
     - Candidate. Send one line to your Fixer Reviewer: `EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`. COMMIT is the full 40-hex fix SHA. NOTE names the RED commit and the commands you ran. Then wait with `gobby-agents:wait_for_coordination(owner_session=<reviewer>, reply=true)`.
     - Bounce. On VERDICT=BOUNCE, fix every blocking finding. A finding about missing coverage goes back through RED first. Commit, link, record a new implementation step and send a new CANDIDATE. Never rebase or squash after the first link.
@@ -60,6 +61,10 @@ prompts:
 workflows:
   rule_selectors:
     include:
+      - "tag:task-closure-general"
+      - "tag:task-closure-coding"
+      - "tag:task-closure-independent-review"
+      - "tag:task-security"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"

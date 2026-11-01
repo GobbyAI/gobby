@@ -25,6 +25,7 @@ from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
@@ -228,6 +229,10 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
 ) -> None:
     caplog.set_level(logging.INFO, logger="gobby.workflows.engine.evaluation")
     sync_bundled_rules(harness.db, get_bundled_rules_path())
+    rules = RuleDefinitionManager(harness.db)
+    original = rules.get_by_name("require-step-completion")
+    assert original is not None
+    rules.create("fixture-finish-workflow", original.definition_json)
     external_id = str(uuid.uuid4())
     harness.db.execute(
         "UPDATE sessions SET external_id = %s WHERE id = %s", (external_id, harness.waiter)
@@ -283,7 +288,7 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
     definition: dict[str, Any] = {
         "name": "coordination-seat",
         "prompts": {"agent": "Wait for the lane manager."},
-        "workflows": {"rule_selectors": {"include": ["require-step-completion"]}},
+        "workflows": {"rule_selectors": {"include": ["fixture-finish-workflow"]}},
     }
     workflow: dict[str, Any] = {
         "variables": {},
@@ -343,7 +348,7 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
     )
     assert held.decision == "allow"
     assert state.get_variables(harness.waiter)["stop_attempts"] == 0
-    assert not [r for r in caplog.records if str(r.msg).startswith("Step completion stop decision")]
+    assert not [r for r in caplog.records if str(r.msg).startswith("Turn-end block decision")]
     if ending == "reply_expiry":
         harness.db.execute(
             "UPDATE coordination_waits SET expires_at = clock_timestamp() WHERE id = %s",
@@ -360,10 +365,8 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
         else await handler.evaluate_async(event)
     )
     assert unheld.decision == "block"
-    assert "[require-step-completion]" in (unheld.reason or "")
-    decisions = [
-        r for r in caplog.records if str(r.msg).startswith("Step completion stop decision")
-    ]
+    assert "[fixture-finish-workflow]" in (unheld.reason or "")
+    decisions = [r for r in caplog.records if str(r.msg).startswith("Turn-end block decision")]
     assert len(decisions) == 1
     diagnostic = decisions[0].__dict__
     assert diagnostic["resolved_session_id"] == harness.waiter
@@ -373,7 +376,7 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
     assert diagnostic["decision"] == "block"
     assert diagnostic["current_step"] == current_step
     assert decisions[0].getMessage() == (
-        f"Step completion stop decision: resolved_session_id={harness.waiter} "
+        f"Turn-end block decision: resolved_session_id={harness.waiter} "
         f"external_session_id={external_id} has_durable_stop_wait=False "
         f"active_coordination_wait_count=0 decision=block current_step={current_step}"
     )

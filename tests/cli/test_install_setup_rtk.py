@@ -31,7 +31,6 @@ from gobby.cli.uninstall import uninstall
 from gobby.hooks.events import SessionSource
 from gobby.integrations import rtk as rtk_module
 from gobby.integrations.rtk import (
-    RTK_RULE_NAME,
     RtkProbe,
     clear_probe_cache,
     platform_paths,
@@ -43,6 +42,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
 pytestmark = pytest.mark.unit
+_FIXTURE_RULE_NAME = "fixture-rtk-transform"
 
 
 @pytest.fixture(autouse=True)
@@ -71,7 +71,7 @@ raise SystemExit(1)
 
 def _ensure_rule(db: HubDatabase, *, enabled: bool = False) -> None:
     manager = RuleDefinitionManager(db)
-    row = manager.get_by_name(RTK_RULE_NAME, project_id=None)
+    row = manager.get_by_name(_FIXTURE_RULE_NAME, project_id=None)
     if row is not None:
         manager.update(row.id, enabled=enabled)
         return
@@ -80,7 +80,7 @@ def _ensure_rule(db: HubDatabase, *, enabled: bool = False) -> None:
         effects=[RuleEffect(type="proxy_hook", handler="rtk")],
     )
     manager.create(
-        name=RTK_RULE_NAME,
+        name=_FIXTURE_RULE_NAME,
         definition_json=body.model_dump_json(),
         priority=90,
         enabled=enabled,
@@ -339,13 +339,81 @@ def test_installed_rule_toggles_and_global_disable(temp_db: HubDatabase) -> None
     manager = RuleDefinitionManager(temp_db)
 
     assert set_rule_state(temp_db, enabled=True) is True
-    enabled_rule = manager.get_by_name(RTK_RULE_NAME)
+    enabled_rule = manager.get_by_name(_FIXTURE_RULE_NAME)
     assert enabled_rule is not None
     assert enabled_rule.enabled is True
     assert disable_rule_if_present(temp_db) is True
-    disabled_rule = manager.get_by_name(RTK_RULE_NAME)
+    disabled_rule = manager.get_by_name(_FIXTURE_RULE_NAME)
     assert disabled_rule is not None
     assert disabled_rule.enabled is False
+
+
+def test_rtk_selection_follows_declared_handler_across_rule_renames(temp_db: HubDatabase) -> None:
+    _ensure_rule(temp_db, enabled=False)
+    manager = RuleDefinitionManager(temp_db)
+    original = manager.get_by_name(_FIXTURE_RULE_NAME)
+    assert original is not None
+    manager.update(original.id, name="fixture-shell-transform")
+    second = manager.create(
+        name="fixture-second-shell-transform",
+        definition_json=original.definition_json,
+        enabled=False,
+    )
+    decoy = manager.create(
+        name=_FIXTURE_RULE_NAME,
+        definition_json={
+            "event": "before_tool",
+            "effects": [{"type": "block", "reason": "Unrelated policy."}],
+        },
+        enabled=False,
+    )
+    assert rule_state(temp_db) is False
+    assert set_rule_state(temp_db, enabled=True) is True
+    assert manager.get(original.id).enabled is True
+    assert manager.get(second.id).enabled is True
+    assert manager.get(decoy.id).enabled is False
+    assert disable_rule_if_present(temp_db) is True
+    assert manager.get(original.id).enabled is False
+    assert manager.get(second.id).enabled is False
+
+
+@pytest.mark.parametrize(
+    "explicit,no_interactive,expected_first,expected_second",
+    [
+        (None, True, True, False),
+        (None, False, True, True),
+        (True, True, True, True),
+        (False, True, False, False),
+    ],
+)
+def test_rtk_reconcile_preserves_mixed_choices_without_new_consent(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    explicit: bool | None,
+    no_interactive: bool,
+    expected_first: bool,
+    expected_second: bool,
+) -> None:
+    _ensure_rule(temp_db, enabled=True)
+    manager = RuleDefinitionManager(temp_db)
+    first = manager.get_by_name(_FIXTURE_RULE_NAME)
+    assert first is not None
+    second = manager.create(
+        "fixture-optional-shell-transform", first.definition_json, enabled=False
+    )
+    binary = tmp_path / "bin" / "rtk"
+    _write_fake_rtk(binary)
+    status = reconcile_rtk(
+        temp_db,
+        explicit,
+        no_interactive=no_interactive,
+        confirm=lambda *args, **kwargs: True,
+        home=tmp_path,
+        env={"PATH": str(binary.parent)},
+    )
+    assert manager.get(first.id).enabled is expected_first
+    assert manager.get(second.id).enabled is expected_second
+    assert status.rule_enabled is (expected_first or expected_second)
 
 
 def test_reconcile_enables_rule_after_cleanup(
@@ -373,7 +441,7 @@ def test_reconcile_enables_rule_after_cleanup(
     )
 
     assert result == expected
-    rule = RuleDefinitionManager(temp_db).get_by_name(RTK_RULE_NAME)
+    rule = RuleDefinitionManager(temp_db).get_by_name(_FIXTURE_RULE_NAME)
     assert rule is not None
     assert rule.enabled is True
 

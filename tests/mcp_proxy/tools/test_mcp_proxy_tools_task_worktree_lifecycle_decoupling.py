@@ -11,7 +11,7 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.step_records import StepRequirements
+from gobby.tasks.closure_policy import ClosureDecision
 from gobby.utils.daemon_git import GitOk
 from gobby.utils.session_context import session_context_for_test
 
@@ -115,8 +115,23 @@ async def test_close_task_does_not_mutate_worktree_status(
             return_value=(Path(TEST_REPO_PATH), "0.5.0"),
         ),
         patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.step_requirements",
-            AsyncMock(return_value=StepRequirements((), ())),
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_closure",
+            return_value=SimpleNamespace(
+                decision=ClosureDecision(True, (), "policy-revision", "snapshot-revision")
+            ),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.session_agent_definition",
+            return_value=None,
+        ),
+        patch("gobby.mcp_proxy.tools.tasks._lifecycle_close.descends_from_all", return_value=True),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.resolve_close_worktree_root_async",
+            AsyncMock(return_value=SimpleNamespace(repo_path=TEST_REPO_PATH)),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.capture_attribution",
+            AsyncMock(return_value=SimpleNamespace(clean_checkouts={}, complete=True)),
         ),
         patch("gobby.hooks.event_handlers._plan.on_epic_terminal"),
     ):
@@ -154,8 +169,6 @@ async def test_close_task_does_not_mutate_worktree_status(
             },
         )
 
-    gates = result.pop("gates")
-    assert gates and all(gate["status"] != "failed" for gate in gates)
     assert result == {
         "success": True,
         "preview": False,
@@ -164,6 +177,9 @@ async def test_close_task_does_not_mutate_worktree_status(
         "task_id": mock_task.id,
         "commit_shas": ["abc123"] if reason == "done" else [],
         "candidate_commit_sha": "abc123" if reason == "done" else None,
+        "blocking_reasons": [],
+        "policy_revision": "policy-revision",
+        "snapshot_revision": "snapshot-revision",
     }
     mock_task_manager.close_task.assert_called_once()
     assert mock_task_manager.close_task.call_args.args == (mock_task.id,)

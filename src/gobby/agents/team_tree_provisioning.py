@@ -73,7 +73,7 @@ async def create_team_tree(
     # generate_branch_name task-<seq>-<title-slug>.
     epic_branch, epic_directory = epic_names(task) if mode == EPIC_MODE else (None, None)
     if parent is not None:
-        from gobby.agents.team_dispatch import leaf_names
+        from gobby.agents.team_scope import leaf_names
 
         await verify_tree(db, parent)
         base_branch = parent.branch

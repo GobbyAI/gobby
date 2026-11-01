@@ -2,65 +2,24 @@ name: devteam
 type: pipeline
 version: "1.0"
 description: |
-  One-task development team. Admits the task's team (its task-titled branch and worktree),
-  then launches the requested seats into that tree, sharing one tab titled 'Dev Team - #<task>'.
-  Seat panes take their agent definition names (docs/contracts/seat-titles.md).
-  Run with task, workspace and report_to; pass the project policy's launch defaults.
-  A replacement execution names the team with team_id. After the second review rejection,
-  fresh_reviewer=true with team_id and exclude_reviewers launches only the fresh code
-  reviewer, under the fresh_reviewer_* identity.
-  Approved seats: dev-manager, test-writer, developer and code-reviewer.
-tags: [runbook]
+  Launch a developer and an independent reviewer for one task in one registered
+  worktree. The developer owns tests and implementation. Either seat may land
+  and close when the selected evidence policy passes. No manager, separate test
+  writer, automatic claim hop or fixed rejection count is involved.
+tags: [runbook, development]
 resume_on_restart: true
-# Flat string inputs only: a nested seat object or an unknown key is refused before admission.
 strict_inputs: true
-
 inputs:
   task:
     type: string
     required: true
-    description: "Task the team is admitted for"
-  team_id:
-    type: string
-    default: null
-    description: "Full UUID of the team's admitting execution; omitted admits a new team"
-  parent_team_id:
-    type: string
-    default: null
-    description: "Epic team UUID; its bound Dev Manager launches a leaf pod with its own team and tree"
   workspace:
     type: string
     required: true
-    description: "Workspace name, UUID or ref for the team's tab"
   report_to:
     type: string
     required: true
-    description: "Live session ref the seats report readiness and blockers to"
-  seats:
-    type: string
-    default: "test-writer,developer,code-reviewer,dev-manager"
-    description: "Comma-separated seat kinds: dev-manager, test-writer, developer, code-reviewer"
-  reviewer_agent:
-    type: string
-    required: true
-    description: "Reviewer agent the code-reviewer seat runs: code-reviewer, docs-reviewer or research-reviewer"
-  fresh_reviewer:
-    type: boolean
-    default: false
-    description: "Launch only the fresh code reviewer for team_id after the second rejection"
-  exclude_reviewers:
-    type: string
-    default: null
-    description: "Comma-separated refs of every session that reviewed in the current epoch"
-  test_writer_provider:
-    type: string
-    default: null
-  test_writer_model:
-    type: string
-    default: null
-  test_writer_reasoning_effort:
-    type: string
-    default: null
+    description: Live session for readiness, completion and blockers.
   developer_provider:
     type: string
     default: null
@@ -79,24 +38,6 @@ inputs:
   reviewer_reasoning_effort:
     type: string
     default: null
-  fresh_reviewer_provider:
-    type: string
-    default: null
-  fresh_reviewer_model:
-    type: string
-    default: null
-  fresh_reviewer_reasoning_effort:
-    type: string
-    default: null
-  manager_provider:
-    type: string
-    default: null
-  manager_model:
-    type: string
-    default: null
-  manager_reasoning_effort:
-    type: string
-    default: null
 
 steps:
   - id: guard
@@ -105,31 +46,21 @@ steps:
       tool: check_runbook_seats
       arguments:
         workspace: "${{ inputs.workspace }}"
-        requested: "${{ 'code-reviewer' if inputs.fresh_reviewer else ('test-writer,developer,code-reviewer' if inputs.parent_team_id else inputs.seats) }}"
+        requested: developer,code-reviewer
         report_to: "${{ inputs.report_to }}"
         require_report_to: true
-        skip_live_seats: "${{ inputs.team_id is not none and not inputs.fresh_reviewer }}"
-        team_id: "${{ inputs.team_id }}"
         task: "${{ inputs.task }}"
-        tab_title: "${{ 'Dev Pod' if inputs.parent_team_id else 'Dev Team' }}"
+        tab_title: Dev Pair
         seat_models:
-          dev-manager: "${{ inputs.manager_model }}"
-          test-writer: "${{ inputs.test_writer_model }}"
           developer: "${{ inputs.developer_model }}"
-          code-reviewer: "${{ inputs.fresh_reviewer_model if inputs.fresh_reviewer else inputs.reviewer_model }}"
+          code-reviewer: "${{ inputs.reviewer_model }}"
         catalogue:
-          - name: dev-manager
-            title: Dev Manager
-            agent: dev-manager
-          - name: test-writer
-            title: Test Writer
-            agent: test-writer
           - name: developer
             title: Developer
             agent: developer
           - name: code-reviewer
             title: Code Reviewer
-            agent: "${{ inputs.reviewer_agent }}"
+            agent: code-reviewer
 
   - id: admit
     mcp:
@@ -138,62 +69,8 @@ steps:
       arguments:
         task: "${{ inputs.task }}"
         tab_title: "${{ steps.guard.output.tab_title }}"
-        team_id: "${{ inputs.team_id }}"
-        fresh_reviewer: "${{ inputs.fresh_reviewer }}"
-        parent_team_id: "${{ inputs.parent_team_id }}"
-        exclude_reviewers: "${{ inputs.exclude_reviewers }}"
-        reviewer_agent: "${{ inputs.reviewer_agent }}"
-
-  - id: dev-manager
-    condition: "${{ not inputs.fresh_reviewer and 'dev-manager' in steps.guard.output.launch }}"
-    mcp:
-      server: gobby-agents
-      tool: spawn_agent
-      arguments:
-        agent: dev-manager
-        provider: "${{ inputs.manager_provider }}"
-        model: "${{ inputs.manager_model }}"
-        reasoning_effort: "${{ inputs.manager_reasoning_effort }}"
-        execution_mode: interactive
-        checkout_mode: none
-        project_path: "${{ steps.admit.output.project_path }}"
-        task_id: "${{ steps.admit.output.task_id }}"
-        reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the dev manager seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. In epic mode, run devteam with parent_team_id for parallel leaf pods; single-task teams cannot launch pods."
-        # The manager opens the team tab when none exists; otherwise it splits that tab.
-        placement: >-
-          ${{ {'split': {'workspace': steps.guard.output.workspace_id,
-          'tab_title': steps.guard.output.tab_title, 'axis': 'right',
-          'title': 'Dev Manager'}} if steps.guard.output.tab_exists else
-          {'tab': {'workspace': steps.guard.output.workspace_id,
-          'title': steps.guard.output.tab_title}} }}
-
-  - id: test-writer
-    condition: "${{ not inputs.fresh_reviewer and 'test-writer' in steps.guard.output.launch }}"
-    mcp:
-      server: gobby-agents
-      tool: spawn_agent
-      arguments:
-        agent: test-writer
-        provider: "${{ inputs.test_writer_provider }}"
-        model: "${{ inputs.test_writer_model }}"
-        reasoning_effort: "${{ inputs.test_writer_reasoning_effort }}"
-        execution_mode: interactive
-        checkout_mode: none
-        project_path: "${{ steps.admit.output.project_path }}"
-        reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the test writer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. ${{ ('Your Dev Manager is session ' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '\").') if ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output)) else (('Your Dev Manager is session ' + inputs.report_to + '.') if inputs.parent_team_id else 'No Dev Manager session ref is known at launch; report to the session named in your launch prompt until your Dev Manager names itself.') }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
-        # A seat opens the team tab only when no earlier launch in this run opens it.
-        placement: >-
-          ${{ {'split': {'workspace': steps.guard.output.workspace_id,
-          'tab_title': steps.guard.output.tab_title, 'axis': 'right',
-          'title': 'Test Writer'}} if steps.guard.output.tab_exists
-          or 'dev-manager' in steps.guard.output.launch else
-          {'tab': {'workspace': steps.guard.output.workspace_id,
-          'title': steps.guard.output.tab_title}} }}
 
   - id: developer
-    condition: "${{ not inputs.fresh_reviewer and 'developer' in steps.guard.output.launch }}"
     mcp:
       server: gobby-agents
       tool: spawn_agent
@@ -205,71 +82,68 @@ steps:
         execution_mode: interactive
         checkout_mode: none
         project_path: "${{ steps.admit.output.project_path }}"
+        task_id: "${{ steps.admit.output.task_id }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the developer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. ${{ ('Your Dev Manager is session ' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '\").') if ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output)) else (('Your Dev Manager is session ' + inputs.report_to + '.') if inputs.parent_team_id else 'No Dev Manager session ref is known at launch; report to the session named in your launch prompt until your Dev Manager names itself.') }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: >-
+          Implement task ${{ inputs.task }} on branch ${{ steps.admit.output.branch }}
+          in registered worktree ${{ steps.admit.output.worktree }} at
+          ${{ steps.admit.output.project_path }}. Own tests, implementation,
+          validation and self-review. The pipeline will send you the independent
+          reviewer's session ID; keep your claim during review. Follow your
+          installed definition and selected evidence policy. Coordinate one
+          landing/closing owner with the reviewer, then personally clean up the
+          merged worktree after the reviewer finishes. Report readiness,
+          completion and blockers to ${{ inputs.report_to }}.
         placement: >-
           ${{ {'split': {'workspace': steps.guard.output.workspace_id,
           'tab_title': steps.guard.output.tab_title, 'axis': 'right',
-          'title': 'Developer'}} if steps.guard.output.tab_exists
-          or 'dev-manager' in steps.guard.output.launch
-          or 'test-writer' in steps.guard.output.launch else
+          'title': 'Developer'}} if steps.guard.output.tab_exists else
           {'tab': {'workspace': steps.guard.output.workspace_id,
           'title': steps.guard.output.tab_title}} }}
 
-  - id: code-reviewer
-    condition: "${{ 'code-reviewer' in steps.guard.output.launch }}"
+  - id: reviewer
     mcp:
       server: gobby-agents
       tool: spawn_agent
       arguments:
-        agent: "${{ inputs.reviewer_agent }}"
-        provider: >-
-          ${{ inputs.fresh_reviewer_provider if inputs.fresh_reviewer
-          else inputs.reviewer_provider }}
-        model: "${{ inputs.fresh_reviewer_model if inputs.fresh_reviewer else inputs.reviewer_model }}"
-        reasoning_effort: >-
-          ${{ inputs.fresh_reviewer_reasoning_effort if inputs.fresh_reviewer
-          else inputs.reviewer_reasoning_effort }}
+        agent: code-reviewer
+        provider: "${{ inputs.reviewer_provider }}"
+        model: "${{ inputs.reviewer_model }}"
+        reasoning_effort: "${{ inputs.reviewer_reasoning_effort }}"
         execution_mode: interactive
         checkout_mode: none
         project_path: "${{ steps.admit.output.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the ${{ 'fresh ' if inputs.fresh_reviewer else '' }}code reviewer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. ${{ ('Your Dev Manager is session ' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '\").') if ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output)) else (('Your Dev Manager is session ' + inputs.report_to + '.') if inputs.parent_team_id else 'No Dev Manager session ref is known at launch; report to the session named in your launch prompt until your Dev Manager names itself.') }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
-        placement: >-
-          ${{ {'split': {'workspace': steps.guard.output.workspace_id,
-          'tab_title': steps.guard.output.tab_title, 'axis': 'right',
-          'title': 'Code Reviewer'}} if steps.guard.output.tab_exists
-          or 'dev-manager' in steps.guard.output.launch
-          or 'test-writer' in steps.guard.output.launch
-          or 'developer' in steps.guard.output.launch else
-          {'tab': {'workspace': steps.guard.output.workspace_id,
-          'title': steps.guard.output.tab_title}} }}
+        prompt: >-
+          Independently review task ${{ inputs.task }} in registered worktree
+          ${{ steps.admit.output.worktree }} at ${{ steps.admit.output.project_path }}.
+          The developer session is ${{ steps.developer.output.child_session_id }}.
+          Send it readiness and receive the exact candidate and evidence through
+          ordinary messages. Keep its claim and files intact. Follow your
+          installed definition and selected evidence policy. You or the author
+          may land and close approved work; agree on one completion owner. Finish
+          your run before the developer removes the shared worktree. Report
+          readiness, completion and blockers to ${{ inputs.report_to }}.
+        placement:
+          split:
+            workspace: "${{ steps.guard.output.workspace_id }}"
+            tab_title: "${{ steps.guard.output.tab_title }}"
+            axis: right
+            title: Code Reviewer
 
-  # Gives the Dev Manager the roster of seats this run launched, with each session ref and run id.
-  # The Dev Manager is live on a fresh-reviewer run, or was spawned above; a run with neither sends nothing.
-  - id: roster
-    condition: >-
-      ${{ (inputs.parent_team_id or 'dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output))
-      and (('test-writer' in steps and steps['test-writer'].output)
-      or ('developer' in steps and steps['developer'].output)
-      or ('code-reviewer' in steps and steps['code-reviewer'].output)) }}
+  - id: connect
     mcp:
       server: gobby-agents
       tool: send_message
       arguments:
         target: session
-        target_id: "${{ inputs.report_to if inputs.parent_team_id else steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id }}"
+        target_id: "${{ steps.developer.output.child_session_id }}"
         content: >-
-          Seat roster for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }}.
-          ${{ ('test-writer: session ' + steps['test-writer'].output.child_session_id + ', run ' + steps['test-writer'].output.run_id + '.') if ('test-writer' in steps and steps['test-writer'].output) else '' }}
-          ${{ ('developer: session ' + steps['developer'].output.child_session_id + ', run ' + steps['developer'].output.run_id + '.') if ('developer' in steps and steps['developer'].output) else '' }}
-          ${{ ('code-reviewer: session ' + steps['code-reviewer'].output.child_session_id + ', run ' + steps['code-reviewer'].output.run_id + '.') if ('code-reviewer' in steps and steps['code-reviewer'].output) else '' }}
-          Reach each seat with gobby-agents:send_message(target="session", target_id=<session>).
+          Your independent reviewer for ${{ inputs.task }} is
+          ${{ steps.reviewer.output.child_session_id }}. Coordinate review,
+          landing, closure and shared-worktree cleanup directly with that session.
 
-  # Tiles the team tab once the launched seats have joined it, on a fresh launch or a re-run.
-  # A refused layout (a resumed run has no request principal) is recorded; the seats stay launched.
   - id: arrange
-    condition: "${{ len(steps.guard.output.launch) > 0 }}"
     mcp:
       server: gobby-workspaces
       tool: rebalance_tab
@@ -277,8 +151,8 @@ steps:
       arguments:
         workspace: "${{ steps.guard.output.workspace_id }}"
         tab: "${{ steps.guard.output.tab_title }}"
-        # A seat's null pane_ref (its pane is gone) is reported as skipped, not tiled.
-        seats: "${{ [{'name': s, 'pane': steps[s].output.pane_ref} for s in steps.guard.output.launch] }}"
-        # Tiled ratios do not depend on the viewport height; rows only has to fit the tiers.
+        seats: >-
+          ${{ [{'name': 'developer', 'pane': steps.developer.output.pane_ref},
+          {'name': 'code-reviewer', 'pane': steps.reviewer.output.pane_ref}] }}
         rows: 100
         layout: tiled

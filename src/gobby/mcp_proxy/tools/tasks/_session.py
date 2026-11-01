@@ -18,7 +18,6 @@ from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._formatters import brief_task_card
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
-from gobby.tasks.lifecycle_access import session_grants
 
 
 def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
@@ -123,29 +122,6 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
             resolved_session_id = ctx.resolve_session_id(effective_session_id)
         except ValueError as e:
             return {"error": f"Invalid session_id '{effective_session_id}': {e}"}
-
-        if action == "reviewing":
-            reviewer = ctx.task_manager.db.fetchone(
-                """SELECT ar.id FROM agent_runs ar
-                JOIN sessions s ON s.id = ar.child_session_id AND s.agent_run_id = ar.id
-                JOIN sessions owner ON owner.id = %s
-                WHERE ar.child_session_id = %s
-                  AND ar.status = 'running' AND s.project_id = %s
-                  AND owner.project_id = s.project_id AND owner.machine_id = s.machine_id
-                LIMIT 1""",
-                (task.claimed_by_session_id, resolved_session_id, task.project_id),
-            )
-            if (
-                resolved_session_id != caller_session_id
-                or task.closed_at is not None
-                or reviewer is None
-                or not session_grants(ctx.task_manager.db, resolved_session_id, "review")
-            ):
-                return task_error(
-                    "Review assignments require the caller's running seat whose definition "
-                    "grants review and an open task claimed on the same project and machine.",
-                    TaskToolErrorCode.TASK_CLAIM_CONFLICT,
-                )
 
         # An explicit session_id naming another session is allowed only for
         # self or the task's agent-run delegation lineage (#20821).

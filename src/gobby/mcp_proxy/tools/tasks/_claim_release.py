@@ -1,24 +1,22 @@
-"""Coordinator release of a named seat's task claim, and the Dev Manager's in-team hand-off."""
+"""Authorized claim release and explicit transfer."""
 
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.agents.team_admission_records import TeamBinding
-from gobby.agents.team_lifecycle import seat_team
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_claim import record_claimant_state
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.hub.protocol import (
     AgentTaskClaimMutation,
-    HubDatabase,
     SessionVariableTransfer,
 )
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.tasks.attributed_roots import is_ignorable_attributed_root
-from gobby.tasks.lifecycle_access import is_operator_coordinator
+from gobby.tasks.lifecycle_access import task_scope_refusal
+from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.agent_resolver import session_agent_definition
 from gobby.workflows.task_claim_state import task_edited_checkout_paths, task_edited_file_set
@@ -31,29 +29,26 @@ _STALE_HOLDER = {
 
 
 def _can_release(ctx: RegistryContext, caller: Session, holder: Session, task_id: str) -> bool:
-    """A declared coordinator, or the task's team manager when the holder is its seat."""
+    """A declared claim coordinator on the same project and machine."""
     if caller.project_id != holder.project_id or caller.machine_id != holder.machine_id:
         return False
-    if is_operator_coordinator(ctx.task_manager, caller, capability="manage_task_claims"):
-        return True
-    team = _managed_team(ctx, caller, task_id)
-    return team is not None and _is_team_seat(ctx.task_manager.db, holder.id, team)
+    return _may_manage_claim(ctx, caller, task_id)
 
 
-def _may_release_own_claim(ctx: RegistryContext, caller: Session, holder: Session) -> bool:
+def _may_release_own_claim(
+    ctx: RegistryContext, caller: Session, holder: Session, task_id: str
+) -> bool:
     """The holder releasing its own claim, when its definition declares release_own_claim."""
-    if caller.id != holder.id:
+    if caller.id != holder.id or caller.machine_id != require_machine_id():
         return False
     definition = session_agent_definition(ctx.task_manager.db, caller)
-    return definition is not None and "release_own_claim" in definition[0].capabilities
-
-
-def _is_team_seat(db: HubDatabase, session_id: str, team: TeamBinding) -> bool:
-    """Whether the session is a seat of ``team``'s task. A relaunch and a fallback launch admit
-    their own team record for the same task, so the task identifies the team, not the record;
-    a seat's admission snapshot can also lag the live team, so the whole binding need not match."""
-    held = seat_team(db, session_id)
-    return held is not None and held.task_id == team.task_id
+    task = ctx.task_manager.get_task(task_id)
+    return (
+        task.project_id == caller.project_id
+        and definition is not None
+        and "release_own_claim" in definition[0].capabilities
+        and task_scope_refusal(task, caller.id, definition[0].task_claim_scope) is None
+    )
 
 
 def _uncommitted_refusal(
@@ -116,11 +111,10 @@ def register_release_task_claim(registry: InternalToolRegistry, ctx: RegistryCon
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
             if holder is None or not (
                 _can_release(ctx, caller, holder, resolved_id)
-                or _may_release_own_claim(ctx, caller, holder)
+                or _may_release_own_claim(ctx, caller, holder, resolved_id)
             ):
                 return {
-                    "error": "Only the Orchestrator, the holder's Dev Manager, or the holder "
-                    "declaring release_own_claim may release a claim",
+                    "error": "Caller lacks authority to release this claim",
                     "error_code": "coordinator_required",
                 }
             db = ctx.task_manager.db
@@ -136,6 +130,14 @@ def register_release_task_claim(registry: InternalToolRegistry, ctx: RegistryCon
                     return {"error": "Task not found", "error_code": "task_not_found"}
                 if row["closed_at"] is not None or str(row["claimed_by_session_id"]) != holder.id:
                     return dict(_STALE_HOLDER)
+                if not (
+                    _can_release(ctx, caller, holder, resolved_id)
+                    or _may_release_own_claim(ctx, caller, holder, resolved_id)
+                ):
+                    return {
+                        "error": "Caller lacks authority to release this claim",
+                        "error_code": "claim_authority_required",
+                    }
                 conn.acquire_additional_lock(SessionVariableTransfer((holder.id,)))
                 refusal = _uncommitted_refusal(ctx, holder, resolved_id)
                 if refusal is not None:
@@ -162,7 +164,7 @@ def register_release_task_claim(registry: InternalToolRegistry, ctx: RegistryCon
     registry.register(
         name="release_task_claim",
         description=(
-            "Orchestrator or the holder's Dev Manager: release a named seat's claim on an open "
+            "Authorized coordinator or holder: release a named seat's claim on an open "
             "task. "
             "Refuses uncommitted task-attributed files, records the actor and reason, "
             "and preserves unrelated task bindings."
@@ -181,19 +183,18 @@ def register_release_task_claim(registry: InternalToolRegistry, ctx: RegistryCon
     register_hand_off_task_claim(registry, ctx)
 
 
-def _managed_team(ctx: RegistryContext, caller: Session, task_id: str) -> TeamBinding | None:
-    """The team the caller manages for ``task_id``: its Dev Manager, bound to the team's task.
-
-    The team's own task and, in epic mode, the open leaves below its epic are managed. The
-    team comes from the caller's runbook execution (``seat_team``), shared by every caller.
-    """
-    db = ctx.task_manager.db
-    from gobby.agents.team_lifecycle import managed_task_team
-
-    definition = session_agent_definition(db, caller)
+def _may_manage_claim(ctx: RegistryContext, caller: Session, task_id: str) -> bool:
+    """The installed definition grants claim coordination for the selected task."""
+    if caller.machine_id != require_machine_id():
+        return False
+    definition = session_agent_definition(ctx.task_manager.db, caller)
     if definition is None or "manage_task_claims" not in definition[0].capabilities:
-        return None
-    return managed_task_team(db, caller.id, task_id)
+        return False
+    task = ctx.task_manager.get_task(task_id)
+    return (
+        task.project_id == caller.project_id
+        and task_scope_refusal(task, caller.id, definition[0].task_claim_scope) is None
+    )
 
 
 @dataclass(frozen=True)
@@ -239,6 +240,19 @@ def transfer_task_claim(
             raise ClaimTransferRefused({"error": "Task not found", "error_code": "task_not_found"})
         if row["closed_at"] is not None or str(row["claimed_by_session_id"]) != holder.id:
             raise ClaimTransferRefused(dict(_STALE_HOLDER))
+        caller = ctx.session_manager.get(actor_id)
+        if (
+            caller is None
+            or not _can_release(ctx, caller, holder, task_id)
+            or recipient.project_id != caller.project_id
+            or recipient.machine_id != caller.machine_id
+        ):
+            raise ClaimTransferRefused(
+                {
+                    "error": "Caller lacks authority to transfer this claim",
+                    "error_code": "claim_authority_required",
+                }
+            )
         if holder.id == recipient.id:
             raise ClaimTransferRefused(
                 {"error": "The recipient already holds the claim", "error_code": "same_seat"}
@@ -274,12 +288,10 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
             if caller is None:
                 return {"error": "Caller not found", "error_code": "session_required"}
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
-            db = ctx.task_manager.db
-            team = _managed_team(ctx, caller, resolved_id)
-            if team is None:
+            if not _may_manage_claim(ctx, caller, resolved_id):
                 return {
-                    "error": "Only the task's Dev Manager may hand off its claim",
-                    "error_code": "team_manager_required",
+                    "error": "Caller lacks authority to hand off this task's claim",
+                    "error_code": "claim_authority_required",
                 }
             holder, recipient = (
                 ctx.session_manager.get(
@@ -290,12 +302,14 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
             if (
                 holder is None
                 or recipient is None
-                or not _is_team_seat(db, holder.id, team)
-                or not _is_team_seat(db, recipient.id, team)
+                or holder.project_id != caller.project_id
+                or recipient.project_id != caller.project_id
+                or holder.machine_id != caller.machine_id
+                or recipient.machine_id != caller.machine_id
             ):
                 return {
-                    "error": "The holder and the recipient must be seats of the task's team",
-                    "error_code": "team_seat_required",
+                    "error": "The holder and recipient must belong to this project and machine",
+                    "error_code": "claim_participant_scope",
                 }
             transfer = transfer_task_claim(
                 ctx,
@@ -324,8 +338,8 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
     registry.register(
         name="hand_off_task_claim",
         description=(
-            "The task's Dev Manager: move the task claim from its holder to another seat of the "
-            "same team, the manual recovery path for a stalled hand-off. The holder must still "
+            "With manage_task_claims and declared task scope, move the claim to a session on the "
+            "same project and local machine. The holder must still "
             "own the task and have no uncommitted task-attributed files; the transfer is atomic "
             "and recorded with the reason."
         ),

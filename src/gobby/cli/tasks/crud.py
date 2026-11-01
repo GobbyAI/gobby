@@ -32,7 +32,7 @@ from gobby.cli.tasks._utils import (
     sort_tasks_for_tree,
 )
 from gobby.cli.utils import resolve_project_ref
-from gobby.tasks.state_semantics import NO_WORK_CLOSE_REASONS, TASK_STATES
+from gobby.tasks.state_semantics import TASK_STATES
 from gobby.utils.project_context import get_project_context
 
 
@@ -269,11 +269,7 @@ def update_task(
     "--reason",
     "-r",
     default="done",
-    type=click.Choice(["done", "moot", "superseded", "wont_do"]),
-    help=(
-        "Reason for closing; canonical no-work reasons allow direct leaf "
-        f"disposition: {', '.join(sorted(NO_WORK_CLOSE_REASONS))}"
-    ),
+    help="Reason for closing, evaluated by the selected closure policy",
 )
 def close_task_cmd(task_ids: tuple[str, ...], reason: str) -> None:
     """Close one or more tasks.
@@ -286,10 +282,8 @@ def close_task_cmd(task_ids: tuple[str, ...], reason: str) -> None:
         gobby tasks close 42 43 44
         gobby tasks close abc123,#45,46
 
-    Structural parents require all children to be closed first and close when they
-    have no remaining open children. Closing the last child auto-closes eligible
-    ancestors. Canonical no-work reasons may disposition non-epic leaves directly;
-    other leaf closures must use the evidence-aware close_task MCP contract.
+    The selected closure policy evaluates every task, including leaves and parents.
+    Closing the last child also evaluates eligible ancestors under their policy.
     """
     close_task_impl(
         services=_services(),

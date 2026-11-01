@@ -368,6 +368,16 @@ class RuleDefinitionManager:
             )
         ]
 
+    def list_effective(self, project_id: str | None) -> list[RuleDefinitionRow]:
+        """Resolve project overrides before callers filter events or enabled state."""
+        by_name: dict[str, RuleDefinitionRow] = {}
+        for row in self.list_all(project_id=project_id):
+            if row.project_id == project_id:
+                by_name[row.name] = row
+            elif row.project_id is None:
+                by_name.setdefault(row.name, row)
+        return sorted(by_name.values(), key=lambda row: (row.priority, row.name, row.id))
+
     def list_by_event(
         self,
         event: str,

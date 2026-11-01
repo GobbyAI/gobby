@@ -13,8 +13,8 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-from tests.tasks.test_close_invariants import git
-from tests.tasks.test_step_records import _Seats
+from tests.fixtures.agent_sessions import AgentSessions
+from tests.tasks.test_close_tip_commit import _git as git
 
 pytestmark = pytest.mark.integration
 
@@ -62,7 +62,7 @@ async def test_direct_integration_rule_requires_capability_and_every_path(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("changed\n")
     git(repo, "add", "--", *paths)
-    session_id = _Seats(temp_db, sample_git_project["id"]).add(
+    session_id = AgentSessions(temp_db, sample_git_project["id"]).add(
         definition_name,
         [],
         capabilities=("direct_integration_commit",) if capability else (),

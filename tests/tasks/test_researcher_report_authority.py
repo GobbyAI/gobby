@@ -1,4 +1,4 @@
-"""Research reports require owner authority and an Orchestrator's report-SHA review."""
+"""Selected research policy requires owner scope and authenticated report approval."""
 
 from __future__ import annotations
 
@@ -12,12 +12,13 @@ from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.step_records import StepSubmission, record_task_step, task_step_requirements
+from gobby.tasks.attestations import AttestationSubmission, EvidenceReference, record_attestation
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import SessionVariableManager
-from tests.tasks.test_close_invariants import _set_close_policy, git
-from tests.tasks.test_step_records import _Seats
+from tests.fixtures.agent_sessions import AgentSessions
+from tests.tasks.test_close_tip_commit import _git as git
+from tests.tasks.test_closure_policy import _bundled_closure_rules
 from tests.workflows.test_seat_rules import _decide, _load_roles, _proxy_call
 
 pytestmark = pytest.mark.unit
@@ -51,22 +52,30 @@ def report(
 ) -> Report:
     project_id = sample_git_project["id"]
     repo = Path(sample_git_project["repo_path"])
-    _set_close_policy(temp_db, project_id, {"enforce_step_records": True})
-    seats = _Seats(temp_db, project_id)
+    _bundled_closure_rules(temp_db)
+    seats = AgentSessions(temp_db, project_id)
     author_name, approver_name = cast(tuple[str, str], request.param)
     researcher = seats.add(
         author_name,
         ["implementation", "closing"],
         capabilities=("close_without_work",),
         definition_fields={
-            "task_step_scope": {"task_types": ["research_spike"], "own_claim_only": True},
+            "task_attestation_scope": {"task_types": ["research_spike"], "own_claim_only": True},
             "task_close_scope": {
                 "task_types": ["research_spike"],
                 "categories": ["research"],
                 "own_claim_only": True,
             },
-            "task_close_reasons": ["done"],
-            "required_review_capabilities": ["approve_report_review"],
+            "workflows": {
+                "rule_selectors": {
+                    "include": [
+                        "tag:task-closure-general",
+                        "tag:task-closure-independent-review",
+                        "name:researcher-close-completed-work",
+                        "name:researcher-report-approval",
+                    ]
+                }
+            },
         },
     )
     orchestrator = seats.add(approver_name, ["review"], capabilities=("approve_report_review",))
@@ -105,41 +114,31 @@ async def _link_and_record_owner_steps(report: Report) -> None:
         )
         assert "error" not in linked, linked
     task = report.manager.get_task(report.task.id)
-    required = task_step_requirements(report.db, task).required
-    assert "review" in required
-    for step in required:
-        if step != "review":
-            record_task_step(
-                report.db,
-                task_id=task.id,
-                session_id=report.researcher,
-                step=step,
-                submission=StepSubmission(
-                    status="approved",
-                    epoch=task.review_epoch,
-                    round_number=1,
-                    commit_sha=report.sha,
-                    feedback="The report is committed and complete.",
-                ),
-            )
+    for kind in ("implementation", "closing"):
+        record_attestation(
+            report.db,
+            task_id=task.id,
+            session_id=report.researcher,
+            submission=AttestationSubmission(
+                kind=kind,
+                result="approved",
+                reference=EvidenceReference(scheme="git", value=report.sha),
+                summary="The report is committed and complete.",
+            ),
+        )
 
 
 def _review(report: Report, *, author: str, status: str = "approved") -> None:
-    submission = StepSubmission.model_validate(
-        {
-            "status": status,
-            "epoch": report.task.review_epoch,
-            "round_number": 1,
-            "commit_sha": report.sha,
-            "feedback": "Reviewed the report and primary evidence.",
-        }
-    )
-    record_task_step(
+    record_attestation(
         report.db,
         task_id=report.task.id,
         session_id=author,
-        step="review",
-        submission=submission,
+        submission=AttestationSubmission(
+            kind="review",
+            result=status,
+            reference=EvidenceReference(scheme="git", value=report.sha),
+            summary="Reviewed the report and primary evidence.",
+        ),
     )
 
 
@@ -235,7 +234,7 @@ async def test_close_uses_enabled_definition_policy_instead_of_author_name(
         definition_json={
             **definition.definition_json,
             "task_close_scope": {},
-            "required_review_capabilities": [],
+            "workflows": {"rule_selectors": {"include": []}},
         },
     )
     report.manager.claim_task(report.task.id, report.peer, force=True)

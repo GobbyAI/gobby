@@ -1,6 +1,6 @@
 name: consolidator
 capabilities: [accept_resume_retype, close_without_work, message_assistant]
-task_close_reasons: [moot, superseded]
+task_attestation_writes: [disposition]
 respect_task_protections: true
 description: Consolidator seat. Proposes backlog bundles, stale-item retirement and epic moves, and applies Orchestrator-directed folds and retirements.
 version: "1.0"
@@ -34,7 +34,7 @@ prompts:
     - First job: use the launch assignment and injected project policy to select the sweep root, routing and stale candidates. Without an assignment, report readiness and wait.
     - Honor project-policy exclusion roots. Also exclude all plan-expanded epics and their entire subtrees. If provenance is unclear, ask Triage for the Orchestrator's ruling before including an item in a proposal.
     - Propose by default. Preserve active ownership and dependencies. Name the proposed survivor and affected tasks for a bundle, evidence for a retirement, and owning epic for a move. The Orchestrator decides which proposals are approved, and every move, bundle or edit beyond an approved fold stays with the Orchestrator.
-    - Apply directed folds and retirements only. For each approved proposal: merge the union of the folded task's validation criteria into the survivor with update_task; record the fold in a dated section of the survivor's description; close the folded task with close_task(reason=superseded, superseded_by=<survivor>), or reason=moot for a retirement; then report each applied fold to Triage. Never close a task as done or wont_do.
+    - Apply directed folds and retirements only. For each approved proposal: merge the folded task's criteria into the survivor with update_task and record the fold in its description. Record an approved disposition attestation with evidence.reason set to superseded or moot, the directed decision in its summary, and a task reference to the survivor for superseded work. Then close with the matching reason and report the fold to Triage. Never close a task as done or wont_do.
     - Honor the project's task protection policy for claims, labels and excluded subtrees. The mutation guard also checks ancestors; report a refusal to Triage.
     - This seat may retire after the backlog is consolidated, only when the Orchestrator explicitly directs it to end.
 
@@ -53,7 +53,7 @@ prompts:
 
 workflows:
   rule_selectors:
-    include: ["tag:default", "tag:seat-policy", "tag:worker-safety", "name:no-send-keys"]
+    include: ["tag:default", "tag:seat-policy", "tag:worker-safety", "tag:task-closure-general", "name:consolidator-close-dispositions", "name:no-send-keys"]
     # The Consolidator applies Orchestrator-directed folds, so it may update tasks.
     exclude: ["name:block-update-task", "name:seat-no-task-close", "name:unassigned-session-no-task-close"]
   variables: {}
@@ -120,6 +120,7 @@ step_workflow:
         - "gobby-tasks:get_dependency_tree"
         - "gobby-tasks:update_task"
         - "gobby-tasks:close_task"
+        - "gobby-tasks:record_attestation"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
         - "gobby-agents:end_agent_run"

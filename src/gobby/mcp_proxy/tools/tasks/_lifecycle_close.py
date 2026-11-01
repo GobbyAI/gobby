@@ -1,9 +1,11 @@
-"""Task-close preconditions and the shared close-gate evaluation."""
+"""Authenticated task-close preview using the same policy as atomic storage close."""
 
 from __future__ import annotations
 
 import asyncio
 from typing import Literal
+
+from pydantic import JsonValue
 
 from gobby.mcp_proxy.tools.task_repo_paths import (
     RepoPathValidationError,
@@ -13,9 +15,6 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
 from gobby.mcp_proxy.tools.tasks._close_context import (
     CloseAttributionLookupError,
     capture_attribution,
-    children,
-    closer_commit_paths,
-    step_requirements,
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
@@ -26,22 +25,19 @@ from gobby.sessions.machine_scope import (
 )
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import TaskNotFoundError
-from gobby.tasks.close_invariants import evaluate_close_invariants
+from gobby.tasks.closure_snapshot import prepare_closure
 from gobby.tasks.land_commit import LandingGitError, task_landing_target
 from gobby.tasks.lifecycle_access import task_protection_refusal, task_scope_refusal
 from gobby.tasks.state_semantics import (
-    NO_WORK_CLOSE_REASONS,
     get_claimed_session_id,
     is_task_closed,
+    validate_task_close_reason,
 )
 from gobby.utils.daemon_git import GitOk, daemon_git
-from gobby.utils.git import descends_from_all
+from gobby.utils.git import descends_from_all, normalize_commit_sha
 from gobby.utils.session_context import get_current_session_id
-from gobby.workflows.agent_resolver import (
-    is_operator_session,
-    session_agent_definition,
-    session_has_capability_or_operator,
-)
+from gobby.workflows.agent_resolver import session_agent_definition
+from gobby.workflows.task_dirty_state import task_dirty_paths_async
 
 
 async def _evaluate_close(
@@ -57,6 +53,10 @@ async def _evaluate_close(
 ) -> CloseEvaluation:
     evaluation = CloseEvaluation(task_id, response_detail=response_detail)
     try:
+        validate_task_close_reason(reason)
+    except ValueError as exc:
+        return evaluation.refuse("invalid_close_reason", str(exc))
+    try:
         resolved_id = await asyncio.to_thread(resolve_task_id_for_mcp, ctx.task_manager, task_id)
         task = await asyncio.to_thread(ctx.task_manager.get_task, resolved_id)
     except (TaskNotFoundError, ValueError) as exc:
@@ -65,65 +65,31 @@ async def _evaluate_close(
         return evaluation.refuse("task_not_found", f"Task {task_id} not found.")
     evaluation.task, evaluation.task_id = task, resolved_id
     evaluation.is_epic = task.task_type == "epic"
-    if reason.casefold() == "superseded" and not (superseded_by or "").strip():
-        return evaluation.refuse(
-            "superseded_by_required",
-            "A superseded close names the superseding task or commit in superseded_by.",
-        )
-    session_ref = closing_session_id or get_current_session_id() or get_claimed_session_id(task)
+    session_ref = closing_session_id or get_current_session_id()
     if not session_ref:
         return evaluation.refuse("no_session_context", "close_task requires an active session.")
     try:
         session_id = await asyncio.to_thread(ctx.resolve_session_id, session_ref)
+        session = await asyncio.to_thread(ctx.session_manager.get, session_id)
+        if session is None or session.project_id != task.project_id:
+            return evaluation.refuse("invalid_session", "Close requires a same-project session.")
+        resolved_definition = await asyncio.to_thread(
+            session_agent_definition, ctx.task_manager.db, session
+        )
     except ValueError as exc:
         return evaluation.refuse("session_resolution_failed", str(exc))
+    definition = resolved_definition[0] if resolved_definition else None
     evaluation.resolved_session_id = session_id
-    # No-work reasons require a declared grant; the unseated operator keeps them too.
-    closer_role = (
-        await asyncio.to_thread(
-            ctx.session_var_manager.get_variable_subset, session_id, ("_agent_type",)
-        )
-    ).get("_agent_type")
-    session = await asyncio.to_thread(ctx.session_manager.get, session_id)
-    if session is None or not session.machine_id:
-        return evaluation.refuse("session_machine_missing", "The close session needs a machine_id.")
-    resolved_definition = await asyncio.to_thread(
-        session_agent_definition, ctx.task_manager.db, session
-    )
-    closer_definition = resolved_definition[0] if resolved_definition else None
-    if reason.casefold() in NO_WORK_CLOSE_REASONS and not await asyncio.to_thread(
-        session_has_capability_or_operator, ctx.task_manager.db, session_id, "close_without_work"
-    ):
-        return evaluation.refuse(
-            "no_work_close_forbidden",
-            f"Closing a task as {reason} requires the close_without_work capability. "
-            "Close with reason done, or send the request to an authorized coordinator.",
-        )
-    if closer_role and closer_definition is None and not is_operator_session(session, closer_role):
-        return evaluation.refuse(
-            "invalid_agent_definition", "Closing requires an enabled, valid active definition."
-        )
-    if closer_definition is not None:
-        reasons = closer_definition.task_close_reasons
-        if reasons is not None and reason.casefold() not in reasons:
-            return evaluation.refuse(
-                "task_close_reason_forbidden", "The definition does not allow this close reason."
-            )
     evaluation.edit_session_id = get_claimed_session_id(task) or session_id
-    try:
-        require_local_session_ownership(session)
-    except RemoteSessionOwnershipError as exc:
-        return evaluation.refuse("remote_session_ownership", str(exc))
     if is_task_closed(task):
         evaluation.already_closed = True
         evaluation.commit_shas = list(task.commits or [])
         evaluation.candidate_commit_sha = task.closed_commit_sha
         return evaluation
-
-    if closer_definition is not None:
-        if refusal := task_scope_refusal(task, session_id, closer_definition.task_close_scope):
+    if definition is not None:
+        if refusal := task_scope_refusal(task, session_id, definition.task_close_scope):
             return evaluation.refuse("task_close_scope_forbidden", refusal)
-        if closer_definition.respect_task_protections:
+        if definition.respect_task_protections:
             try:
                 protected = await asyncio.to_thread(
                     task_protection_refusal, ctx.task_manager, task, session_id
@@ -133,6 +99,8 @@ async def _evaluate_close(
             if protected:
                 return evaluation.refuse("task_protected", protected)
 
+    # Repository state is an optional observation. YAML decides whether it is required.
+    repo = None
     try:
         repo = await asyncio.to_thread(
             resolve_task_repo_path,
@@ -142,7 +110,7 @@ async def _evaluate_close(
             project_path=project_path,
             machine_id=session.machine_id,
         )
-        if project_path is None:
+        if project_path is None and (task.commits or commit_sha):
             root = await resolve_close_worktree_root_async(
                 task_manager=ctx.task_manager,
                 task=task,
@@ -150,16 +118,20 @@ async def _evaluate_close(
             )
             repo = root.repo_path or repo
     except (CheckoutNotFoundError, RepoPathValidationError, ValueError) as exc:
-        return evaluation.refuse("invalid_project_path", str(exc))
-    if repo is None:
-        return evaluation.refuse(
-            "task_repo_path_unavailable", "Register the task repository first."
-        )
+        if project_path is not None or commit_sha is not None:
+            return evaluation.refuse("invalid_project_path", str(exc))
+    if repo is not None:
+        try:
+            require_local_session_ownership(session)
+        except RemoteSessionOwnershipError as exc:
+            return evaluation.refuse("remote_session_ownership", str(exc))
     evaluation.repo_path = repo
     commits = list(dict.fromkeys(task.commits or []))
     if commit_sha is not None:
-        if not commit_sha.strip():
-            return evaluation.refuse("invalid_commit_sha", "commit_sha must not be empty.")
+        if not commit_sha.strip() or repo is None:
+            return evaluation.refuse(
+                "invalid_commit_sha", "A commit link needs a valid repository and SHA."
+            )
         resolved = await daemon_git.run(
             ("rev-parse", "--verify", "--end-of-options", f"{commit_sha}^{{commit}}"),
             cwd=repo,
@@ -167,24 +139,39 @@ async def _evaluate_close(
         if not isinstance(resolved, GitOk):
             return evaluation.refuse("invalid_commit_sha", "commit_sha must resolve to a commit.")
         candidate = resolved.stdout.strip()
+        canonical = await asyncio.to_thread(normalize_commit_sha, candidate, cwd=repo)
+        if canonical is None:
+            return evaluation.refuse("invalid_commit_sha", "commit_sha must resolve to a commit.")
         named = [sha for sha in commits if candidate.startswith(sha) or sha.startswith(candidate)]
         others = [sha for sha in commits if sha not in named]
         if not named:
-            commits.append(candidate)
+            commits.append(canonical)
         elif commits[-1] not in named and await asyncio.to_thread(
             descends_from_all, candidate, others, repo
         ):
-            # A named commit that descends from every other link is the tip, whatever
-            # the link order; an older one never bypasses newer work (#25160).
             commits = [*others, *named]
         evaluation.candidate_commit_sha = candidate
-    elif commits:
+    elif commits and repo is not None:
         resolved = await daemon_git.run(
-            ("rev-parse", "--verify", "--end-of-options", f"{commits[-1]}^{{commit}}"), cwd=repo
+            ("rev-parse", "--verify", "--end-of-options", f"{commits[-1]}^{{commit}}"),
+            cwd=repo,
         )
         if isinstance(resolved, GitOk):
             evaluation.candidate_commit_sha = resolved.stdout.strip()
     evaluation.commit_shas = commits
+    evaluation.facts = {
+        "closure_intent": "explicit",
+        "superseded_by": superseded_by,
+        "repository_available": repo is not None,
+        "commit_shas": list(commits),
+        "candidate_commit_sha": evaluation.candidate_commit_sha,
+        "candidate_covers_linked_commits": False,
+        "attribution_complete": False,
+        "task_files_clean": False,
+        "dirty_checkouts": {},
+        "unavailable_checkouts": [],
+        "integration_ancestry": False,
+    }
     try:
         attribution = await capture_attribution(
             ctx,
@@ -194,38 +181,59 @@ async def _evaluate_close(
             prospective_commit_shas=commits,
             machine_id=session.machine_id,
         )
-    except CloseAttributionLookupError as exc:
-        return evaluation.refuse("session_variable_lookup_failed", str(exc))
-    child_tasks = await asyncio.to_thread(children, ctx, task.id)
+        if attribution.clean_checkouts:
+            try:
+                require_local_session_ownership(session)
+            except RemoteSessionOwnershipError as exc:
+                return evaluation.refuse("remote_session_ownership", str(exc))
+        clean = attribution.complete
+        dirty_checkouts: dict[str, JsonValue] = {}
+        unavailable_checkouts: list[JsonValue] = []
+        for checkout, paths in attribution.clean_checkouts.items():
+            dirty = await task_dirty_paths_async(set(paths), checkout)
+            if dirty is None:
+                unavailable_checkouts.append(checkout)
+                clean = False
+            elif dirty:
+                dirty_checkouts[checkout] = list[JsonValue](sorted(dirty))
+                clean = False
+        evaluation.facts["attribution_complete"] = attribution.complete
+        evaluation.facts["task_files_clean"] = clean
+        evaluation.facts["dirty_checkouts"] = dirty_checkouts
+        evaluation.facts["unavailable_checkouts"] = unavailable_checkouts
+    except CloseAttributionLookupError:
+        pass  # Unknown facts remain false; policy chooses whether to require them.
+    if repo is not None:
+        if evaluation.candidate_commit_sha is not None and commits:
+            evaluation.facts["candidate_covers_linked_commits"] = await asyncio.to_thread(
+                descends_from_all, evaluation.candidate_commit_sha, commits, repo
+            )
+        try:
+            target = await task_landing_target(ctx.task_manager.db, task) if commits else None
+        except (LandingGitError, CheckoutNotFoundError, ValueError):
+            target = None
+        landed = bool(target and commits)
+        if target:
+            for sha in commits:
+                result = await daemon_git.run(
+                    ("merge-base", "--is-ancestor", sha, f"refs/heads/{target[1]}"),
+                    cwd=target[0],
+                )
+                if not isinstance(result, GitOk):
+                    landed = False
+        evaluation.facts["integration_ancestry"] = landed
     try:
-        target = await task_landing_target(ctx.task_manager.db, task) if commits else None
-    except (LandingGitError, CheckoutNotFoundError, ValueError):
-        target = None
-    integration_ref = f"refs/heads/{target[1]}" if target else None
-    try:
-        commit_paths = await closer_commit_paths(
-            commits, closer_definition=closer_definition, repo_path=repo
-        )
-        steps = await step_requirements(
-            ctx,
-            task,
-            commits,
-            closer_definition=closer_definition,
-            commit_paths=commit_paths,
+        prepared = await asyncio.to_thread(
+            prepare_closure,
+            ctx.task_manager.db,
+            task_id=resolved_id,
+            session_id=session_id,
+            reason=reason,
+            facts=evaluation.facts,
+            expected_updated_at=task.updated_at,
+            prospective_commits=commits if commit_sha is not None else None,
         )
     except ValueError as exc:
-        return evaluation.refuse("step_records_unavailable", str(exc))
-    evaluation.closer_definition = closer_definition
-    evaluation.commit_paths = tuple(commit_paths)
-    evaluation.checklist = await evaluate_close_invariants(
-        open_children=[child.id for child in child_tasks if not is_task_closed(child)],
-        commit_shas=commits,
-        reason=reason,
-        attributed_checkouts=attribution.clean_checkouts,
-        integration_repo_path=str(target[0]) if target else None,
-        integration_ref=integration_ref,
-        required_steps=steps.required,
-        missing_steps=steps.missing,
-        attribution_complete=attribution.complete,
-    )
+        return evaluation.refuse("closure_snapshot_unavailable", str(exc))
+    evaluation.decision = prepared.decision
     return evaluation

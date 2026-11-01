@@ -328,10 +328,12 @@ class TestCliCloseCommandWithHashFormat:
 
         with _isolated_cli_runtime():
             result = runner.invoke(cli, ["tasks", "close", "#3"])
-        assert result.exit_code == 1
-        assert "criterion-to-evidence close_task contract" in result.output
+        assert result.exit_code == 0, result.output
+        assert "Closed task" in result.output
         mock_manager.resolve_task_reference.assert_called_once_with("#3", "proj-123")
-        mock_manager.close_task.assert_not_called()
+        mock_manager.close_task.assert_called_once_with(
+            mock_task_with_uuid.id, reason="done", closed_ancestors=[]
+        )
 
 
 @pytest.mark.integration

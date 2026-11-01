@@ -103,10 +103,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "task-<seq>-<title-slug>; it accepts no branch or tree name. A re-run of the same "
             "execution returns the same team. A replacement execution passes team_id, the "
             "admitting execution id, and must name the same task. Refuses team_exists while "
-            "the task has a live team tree. fresh_reviewer=true joins team_id as the review "
-            "epoch's one fresh reviewer; it requires exactly two rejected review rounds, "
-            "exclude_reviewers (comma-separated session refs) naming every session that "
-            "reviewed in the epoch, and the claim already handed to one of them. "
+            "the task has a live team tree. "
             "checkout_mode=none admits a treeless team with no branch or tree; its seats run "
             "in the main checkout, and a re-admit for the task joins it. Returns the "
             "team plus task_id, branch, worktree and project_path for the seat steps. "
@@ -117,8 +114,6 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         task: str,
         team_id: str | None = None,
         parent_team_id: str | None = None,
-        fresh_reviewer: bool = False,
-        exclude_reviewers: str | None = None,
         reviewer_agent: str | None = None,
         checkout_mode: str = "worktree",
         tab_title: str | None = None,
@@ -137,10 +132,6 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 task=task,
                 team_id=team_id,
                 parent_team_id=parent_team_id,
-                fresh_reviewer=fresh_reviewer,
-                exclude_reviewers=[
-                    ref.strip() for ref in (exclude_reviewers or "").split(",") if ref.strip()
-                ],
                 reviewer_agent=reviewer_agent,
                 checkout_mode=checkout_mode,
                 tab_title=tab_title,
