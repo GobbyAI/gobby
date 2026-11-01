@@ -47,6 +47,14 @@ Operator/client `/api/embeddings/status` and `/doctor` expose diagnostics;
 POST `/api/embeddings` generates a batch against the configured capability.
 These are not MCP configuration tools or evidence that a model switch completed.
 
+Call `gobby-decisions:evaluate` from an agent or pipeline step when a decision
+classifier must answer a question the caller weighs. Every question in one call
+shares a single type: `choice`, `noul`, `score` or `box`. The tool answers only
+while the `decide` capability is configured; otherwise it returns a typed
+`reason`, and a pipeline step fails with that reason. `backend_identity` is
+provenance for the caller to weigh, and it is `null` when the backend cannot
+prove the model identity.
+
 If selection fails, inspect served model ids, endpoint reachability and evidence,
 then use the owning diagnostics/recovery path. A runtime grant's availability
 binding governs CLI capability use; enumeration does not override it. See

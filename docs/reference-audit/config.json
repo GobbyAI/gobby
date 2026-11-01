@@ -666,6 +666,20 @@
         "embedding-cli-help"
       ],
       "audience": "operator"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-decisions",
+      "tool": "evaluate",
+      "reference": "src/gobby/install/shared/skills/gobby/references/config/models.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/decisions.py",
+        "symbol": "create_decisions_registry"
+      },
+      "verification": [
+        "gobby-decisions-evaluate"
+      ],
+      "audience": "agent; callers and pipeline steps that weigh a decision"
     }
   ],
   "discrepancies": [
@@ -852,6 +866,11 @@
       "id": "focused-integrated-final",
       "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config tests/skills/test_capability_catalog.py tests/mcp_proxy/tools/test_config_values.py tests/servers/routes/test_config_values_api.py tests/servers/routes/test_config_yaml_replace.py tests/storage/test_revisioned_config_store.py tests/storage/test_task_config_key_migration.py tests/integration/config/test_config_cross_seam.py tests/cli/test_config_writes.py -q --tb=short",
       "result": "1079 passed in 29.58s after final guide/reference edits; subsequent changes update this evidence record only."
+    },
+    {
+      "id": "gobby-decisions-evaluate",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_decisions_tools.py -q",
+      "result": "37 passed. test_evaluate_schema_carries_nested_bounds asserts the registered evaluate input schema: both nested question shapes, maxProperties 64, the key pattern on questions, and minProperties 2 and maxProperties 255 on Choice criteria. The schema was read from the registry in-process, not fetched from a live daemon. Choice and Noul round trips, invalid-request table, unavailable reasons, cooldown sharing, cancellation, registration, and the pipeline step all pass."
     }
   ],
   "verified_at": "2026-09-12"
