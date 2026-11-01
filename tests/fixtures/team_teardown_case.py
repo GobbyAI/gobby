@@ -84,14 +84,14 @@ def seat(
         bind_task_manager(
             db, manager=session, parent=runbook.id, project_id=world.case.project_id, task=manages
         )
-    else:
-        LocalAgentRunManager(db).create(
-            parent_session_id=runbook.id,
-            provider="claude",
-            prompt=f"Run the {role} seat.",
-            agent_name=role,
-            child_session_id=session,
-        )
+    LocalAgentRunManager(db).create(
+        parent_session_id=runbook.id,
+        provider="claude",
+        prompt=f"Run the {role} seat.",
+        agent_name=role,
+        child_session_id=session,
+        task_id=manages.id if manages is not None else None,
+    )
     return session
 
 

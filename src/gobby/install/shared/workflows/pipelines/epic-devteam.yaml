@@ -1,0 +1,213 @@
+name: epic-devteam
+type: pipeline
+version: "1.0"
+description: Persistent epic coordinator and primary pair, with independent parallel leaf pairs.
+tags: [runbook, development]
+resume_on_restart: true
+strict_inputs: true
+inputs:
+  task:
+    type: string
+    required: true
+  workspace:
+    type: string
+    required: true
+  project_path:
+    type: string
+    required: true
+    description: Registered main checkout for the coordinator.
+  report_to:
+    type: string
+    required: true
+  developer_provider:
+    type: string
+    default: null
+  developer_model:
+    type: string
+    default: null
+  developer_reasoning_effort:
+    type: string
+    default: null
+  reviewer_provider:
+    type: string
+    default: null
+  reviewer_model:
+    type: string
+    default: null
+  reviewer_reasoning_effort:
+    type: string
+    default: null
+steps:
+  - id: inspect-root
+    mcp:
+      server: gobby-tasks
+      tool: get_task
+      arguments:
+        task_id: "${{ inputs.task }}"
+  - id: require-epic-root
+    condition: "${{ steps['inspect-root'].output.task_type != 'epic' }}"
+    exec: "false"
+  - id: guard
+    mcp:
+      server: gobby-agents
+      tool: check_runbook_seats
+      arguments:
+        workspace: "${{ inputs.workspace }}"
+        requested: dev-manager,developer,code-reviewer
+        report_to: "${{ inputs.report_to }}"
+        require_report_to: true
+        task: "${{ inputs.task }}"
+        tab_title: Epic DevTeam
+        seat_models:
+          dev-manager: "${{ inputs.reviewer_model }}"
+          developer: "${{ inputs.developer_model }}"
+          code-reviewer: "${{ inputs.reviewer_model }}"
+        catalogue:
+          - name: dev-manager
+            title: Dev Manager
+            agent: dev-manager
+          - name: developer
+            title: Developer
+            agent: developer
+          - name: code-reviewer
+            title: Code Reviewer
+            agent: code-reviewer
+  - id: mark
+    mcp:
+      server: gobby-tasks
+      tool: add_label
+      arguments:
+        task_id: "${{ inputs.task }}"
+        label: epic-devteam
+  - id: admit
+    mcp:
+      server: gobby-agents
+      tool: admit_team
+      arguments:
+        task: "${{ inputs.task }}"
+        tab_title: "${{ steps.guard.output.tab_title }}"
+  - id: developer
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        provider: "${{ inputs.developer_provider }}"
+        model: "${{ inputs.developer_model }}"
+        reasoning_effort: "${{ inputs.developer_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ steps.admit.output.project_path }}"
+        task_id: "${{ steps.admit.output.task_id }}"
+        claim: false
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: >-
+          You are the persistent primary developer for epic ${{ inputs.task }}.
+          Retain registered epic worktree ${{ steps.admit.output.worktree }} at
+          ${{ steps.admit.output.project_path }} through epic completion. Do not claim
+          or implement the epic. Wait for the coordinator to assign one ready leaf;
+          explicitly claim that leaf before editing. Own its TDD, implementation,
+          checks and OCR; send the exact full candidate to the persistent reviewer.
+          Normally land the approved leaf into this epic branch and close it yourself.
+          Report completion and a clean shared-tree point before taking another leaf.
+          Never delete the shared epic tree. Resolve your own merge conflicts.
+          Before acknowledging a child landing clean point, pause this lane and
+          keep the epic worktree untouched until the coordinator explicitly releases
+          the landing permit. Do not start another leaf while that permit is held.
+          On HOLD finish in-flight work but take no new leaf. Report readiness to
+          ${{ inputs.report_to }} until the coordinator names its session.
+        placement: >-
+          ${{ {'split': {'workspace': steps.guard.output.workspace_id,
+          'tab_title': steps.guard.output.tab_title, 'axis': 'right', 'title': 'Developer'}}
+          if steps.guard.output.tab_exists else {'tab': {'workspace':
+          steps.guard.output.workspace_id, 'title': steps.guard.output.tab_title}} }}
+  - id: reviewer
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: code-reviewer
+        provider: "${{ inputs.reviewer_provider }}"
+        model: "${{ inputs.reviewer_model }}"
+        reasoning_effort: "${{ inputs.reviewer_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ steps.admit.output.project_path }}"
+        task_id: "${{ steps.admit.output.task_id }}"
+        claim: false
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: >-
+          You are the persistent independent reviewer for epic ${{ inputs.task }}.
+          The primary developer is ${{ steps.developer.output.child_session_id }}.
+          Independently review each assigned leaf's tests, evidence and exact candidate.
+          Preserve the developer's claim and edits; the developer normally lands and closes.
+          Remain available after leaf closure. Never delete the shared epic worktree.
+          You also conduct final epic review: independently inspect every descendant author,
+          exact candidate and diagnostic closure snapshot; record review with a full Git
+          reference and evidence.subtree_revision from that snapshot. Approve only when
+          independent of every implementation/test author. Reject with concrete findings;
+          the coordinator creates bounded repair leaves and obtains fresh checks and review.
+          Report readiness to ${{ inputs.report_to }} until the coordinator names its session.
+        placement:
+          split:
+            workspace: "${{ steps.guard.output.workspace_id }}"
+            tab_title: "${{ steps.guard.output.tab_title }}"
+            axis: right
+            title: Code Reviewer
+  - id: coordinator
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: dev-manager
+        provider: "${{ inputs.reviewer_provider }}"
+        model: "${{ inputs.reviewer_model }}"
+        reasoning_effort: "${{ inputs.reviewer_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        task_id: "${{ steps.admit.output.task_id }}"
+        claim: false
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: >-
+          Coordinate epic ${{ inputs.task }} as team ${{ steps.admit.output.team.team_id }}.
+          Stay in main at ${{ inputs.project_path }} and edit no implementation code.
+          Your persistent developer is ${{ steps.developer.output.child_session_id }};
+          persistent reviewer is ${{ steps.reviewer.output.child_session_id }}.
+          Shared epic tree: ${{ steps.admit.output.worktree }} at ${{ steps.admit.output.project_path }}.
+          Workspace: ${{ inputs.workspace }}; report to ${{ inputs.report_to }}.
+          Use your installed epic scheduling, integration, repair and completion phases.
+          For ephemeral devteam calls pass these unchanged launch defaults:
+          developer_provider=${{ inputs.developer_provider }}, developer_model=${{ inputs.developer_model }},
+          developer_reasoning_effort=${{ inputs.developer_reasoning_effort }},
+          reviewer_provider=${{ inputs.reviewer_provider }}, reviewer_model=${{ inputs.reviewer_model }},
+          reviewer_reasoning_effort=${{ inputs.reviewer_reasoning_effort }}.
+          Persist these launch assignments and team/seat/tree refs before scheduling;
+          reconcile observed teams, runs, claims and messages after every resume.
+        placement:
+          split:
+            workspace: "${{ steps.guard.output.workspace_id }}"
+            tab_title: "${{ steps.guard.output.tab_title }}"
+            axis: right
+            title: Dev Manager
+  - id: connect
+    mcp:
+      server: gobby-agents
+      tool: send_message
+      arguments:
+        target: session
+        target_id: "${{ steps.developer.output.child_session_id }}"
+        content: >-
+          Your coordinator is ${{ steps.coordinator.output.child_session_id }} and reviewer
+          is ${{ steps.reviewer.output.child_session_id }}. Send readiness and clean-tree
+          completions to the coordinator. Retain this epic worktree through epic completion.
+  - id: connect-reviewer
+    mcp:
+      server: gobby-agents
+      tool: send_message
+      arguments:
+        target: session
+        target_id: "${{ steps.reviewer.output.child_session_id }}"
+        content: >-
+          Your coordinator is ${{ steps.coordinator.output.child_session_id }}.
+          Send readiness, reviews and final-epic review findings to that session.

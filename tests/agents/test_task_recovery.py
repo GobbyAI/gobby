@@ -565,7 +565,7 @@ async def test_terminal_sweep_does_not_revisit_settled_runs(
         ) as merge_vars,
     ):
         assert await handler.recover_tasks_from_terminal_agents() == 0
-        assert list_tasks.call_count == 1
+        list_tasks.assert_called()
         get_task.assert_called()
         assert [call.args[1] for call in merge_vars.call_args_list] == [cancelled_child]
         for spy in (list_tasks, get_task, merge_vars):
@@ -605,9 +605,11 @@ async def test_terminal_sweep_rechecks_run_after_summary(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("assignment", ["none", "epic", "foreign-epic"])
 async def test_claimed_task_lookup_skips_hierarchy_page(
     temp_db: Any,
     sample_project: dict[str, Any],
+    assignment: str,
 ) -> None:
     """A run without task_id finds its claim without the hierarchy ordering (#23783)."""
     child = _register(temp_db, sample_project["id"], "task-recovery-lookup-child")
@@ -619,7 +621,14 @@ async def test_claimed_task_lookup_skips_hierarchy_page(
     )
     task_manager.claim_task(task.id, child)
     handler = TaskRecoveryHandler(task_manager, _RunManager(), _Classifier(), run_db=_run_db)
-    run = _Run("lookup-run", "error", None, child, child)
+    assigned = None
+    foreign = None
+    if assignment != "none":
+        assigned = task_manager.create_task(sample_project["id"], "Assigned epic", task_type="epic")
+        if assignment == "foreign-epic":
+            foreign = _register(temp_db, sample_project["id"], "foreign-epic-owner")
+            task_manager.claim_task(assigned.id, foreign)
+    run = _Run("lookup-run", "error", assigned.id if assigned else None, child, child)
 
     with patch(
         "gobby.storage.tasks._queries._hierarchy_page",
@@ -630,6 +639,8 @@ async def test_claimed_task_lookup_skips_hierarchy_page(
     hierarchy_page.assert_not_called()
     assert resolved is not None
     assert resolved[0] == task.id
+    if assigned:
+        assert task_manager.get_task(assigned.id).claimed_by_session_id == foreign
 
 
 @pytest.mark.asyncio

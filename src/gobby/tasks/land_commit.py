@@ -14,6 +14,7 @@ from typing import TypedDict
 import psycopg
 from pydantic import JsonValue
 
+from gobby.agents.isolation_git_hygiene import blocking_status_lines
 from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.eligibility import overlay_project_id_for_root
 from gobby.code_index.gcode_gateway import GcodeGateway
@@ -375,7 +376,7 @@ def _manages_task(db: HubDatabase, task: Task, caller_session_id: str) -> bool:
     definition = session_agent_definition(db, caller)
     if definition is None or "land_tasks" not in definition[0].capabilities:
         return False
-    return task_scope_refusal(task, caller.id, definition[0].task_land_scope) is None
+    return task_scope_refusal(task, caller.id, definition[0].task_land_scope, db=db) is None
 
 
 async def _candidate_grant_paths(
@@ -548,6 +549,7 @@ async def land_candidate(
                             "candidate_paths": list(grant_paths),
                             "integration_branch": branch,
                             "integration_base": tip,
+                            "candidate_contains_integration_base": await _ancestor(main, tip, sha),
                         },
                         derive_facts=derive_scope,
                     )
@@ -556,7 +558,7 @@ async def land_candidate(
                         "land_tasks" not in prepared.agent.capabilities
                         or prepared.snapshot.caller.get("machine_id") != require_machine_id()
                         or task_scope_refusal(
-                            current_task, caller_session_id, prepared.agent.task_land_scope
+                            current_task, caller_session_id, prepared.agent.task_land_scope, db=db
                         )
                         is not None
                     ):
@@ -625,6 +627,12 @@ async def land_candidate(
                     return refusal
                 if await _branch(main) != branch:
                     return _refused(refusal, "main_checkout_branch_changed")
+                if main.resolve() != repo.resolve():
+                    status = await daemon_git.run(("status", "--porcelain"), cwd=main)
+                    if not isinstance(status, GitOk):
+                        return _refused(refusal, "git_failed", status.stderr)
+                    if blocking_status_lines(status.stdout, main, repo):
+                        return _refused(refusal, "checkout_dirty", status.stdout)
                 # Decision Record item 1: a tip moved by disjoint paths lands a generated
                 # two-parent merge, which neither the ref nor the checkout sees until the
                 # fast-forward below.

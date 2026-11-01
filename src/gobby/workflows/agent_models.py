@@ -99,6 +99,7 @@ class AgentTaskScope(BaseModel):
     task_types: list[StrictStr] | None = None
     categories: list[StrictStr] | None = None
     own_claim_only: StrictBool = False
+    assigned_only: StrictBool = False
 
 
 class AgentDefinitionBody(BaseModel):

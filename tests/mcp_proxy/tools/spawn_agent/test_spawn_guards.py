@@ -220,7 +220,7 @@ async def test_developer_shaped_seat_admits_no_spawns(
     )
     definition = {
         "prompts": {"agent": "Synthetic developer seat."},
-        "task_step_writes": ["implementation"],
+        "task_attestation_writes": ["implementation"],
         "spawnable_agents": [],
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
     }

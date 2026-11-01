@@ -166,7 +166,6 @@ async def _drain_spawn_background_tasks() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("seat", ["dev-manager", "test-writer", "code-reviewer"])
 @pytest.mark.parametrize("dirty", [False, True], ids=["clean", "dirty"])
 @pytest.mark.parametrize("resumed", [False, True], ids=["fresh", "resumed"])
 async def test_devteam_observer_preserves_candidate_checkout(
@@ -175,7 +174,6 @@ async def test_devteam_observer_preserves_candidate_checkout(
     mock_runner: MagicMock,
     agent_body: AgentDefinitionBody,
     checkout: IsolatedCheckoutProject,
-    seat: str,
     dirty: bool,
     resumed: bool,
 ) -> None:
@@ -214,7 +212,7 @@ async def test_devteam_observer_preserves_candidate_checkout(
         tracked.read_text(),
     )
     storage = LocalWorktreeManager(temp_db)
-    storage.create(checkout.project.id, "lane-candidate", str(candidate))
+    tree = storage.create(checkout.project.id, "lane-candidate", str(candidate))
     definition = PipelineDefinition.model_validate(
         yaml.safe_load(
             (
@@ -224,8 +222,8 @@ async def test_devteam_observer_preserves_candidate_checkout(
         )
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
-    inputs.update(task="24797", seats=seat, report_to="gobby#1")
-    step = next(step for step in definition.steps if step.id == seat)
+    inputs.update(task="24797", seats="code-reviewer", report_to="gobby#1")
+    step = next(step for step in definition.steps if step.id == "reviewer")
     assert step.mcp is not None and step.mcp.arguments is not None
     arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
         step.mcp.arguments,
@@ -240,7 +238,7 @@ async def test_devteam_observer_preserves_candidate_checkout(
                     "output": {
                         "workspace_id": "test-workspace",
                         "live": {},
-                        "launch": [seat],
+                        "launch": ["code-reviewer"],
                         "tab_exists": False,
                         "tab_title": "Dev Team - #24797",
                     }
@@ -249,10 +247,12 @@ async def test_devteam_observer_preserves_candidate_checkout(
                     "output": {
                         "branch": "lane-candidate",
                         "project_path": str(candidate),
+                        "worktree": tree.id,
                         "task_id": None,
                         "team": {"team_id": "team-1"},
                     }
                 },
+                "developer": {"output": {"child_session_id": "author-session"}},
             },
         },
         drop_none=True,

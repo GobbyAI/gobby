@@ -52,6 +52,7 @@ class SeatTarget:
     clone_id: str | None = None
     worktree_id: str | None = None
     project_path: str | None = None
+    main_checkout: bool = False
 
 
 class TeamAdmissionRefused(Exception):

@@ -537,6 +537,7 @@ async def test_remote_resume_retype_uses_definition_grant(
         assert _run_count(temp_db) == 0
 
 
+@pytest.mark.parametrize("allow_closed", [False, True])
 async def test_closed_task_spawn_refused(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -545,6 +546,7 @@ async def test_closed_task_spawn_refused(
     node: AsyncMock,
     spawn_registry: Any,
     monkeypatch: pytest.MonkeyPatch,
+    allow_closed: bool,
 ) -> None:
     impl = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(factory, "spawn_agent_impl", impl)
@@ -565,13 +567,20 @@ async def test_closed_task_spawn_refused(
             "parent_session_id": local_parent,
             "task_id": task.id,
             "machine": remote_machine,
+            "allow_closed_task": allow_closed,
+            "provider": "claude",
+            "model": "claude-sonnet-5",
         },
     )
 
-    assert refused["success"] is False
-    node.send.assert_not_awaited()
-    assert _run_count(temp_db) == runs_before
-    assert _row_counts(temp_db)["sessions"] == sessions_before
+    assert refused["success"] is allow_closed, refused
+    if allow_closed:
+        node.send.assert_awaited_once()
+        assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id is None
+    else:
+        node.send.assert_not_awaited()
+        assert _run_count(temp_db) == runs_before
+        assert _row_counts(temp_db)["sessions"] == sessions_before
     impl.assert_not_awaited()
 
 
@@ -604,6 +613,80 @@ async def test_remote_child_binds_run_and_variables(
         result["child_session_id"], ("_agent_type",)
     )
     assert variables == {"_agent_type": "developer"}
+
+
+@pytest.mark.parametrize("claim", [True, False])
+async def test_http_remote_claim_receipt(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_machine: str,
+    node: AsyncMock,
+    runner: MagicMock,
+    claim: bool,
+) -> None:
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(project_id=sample_project["id"], title="HTTP assignment")
+    with _owner_http_client(temp_db, TEST_USER_ID, runner) as client:
+        response = client.post(
+            "/api/agents/spawn",
+            json={
+                "task_id": task.id,
+                "prompt": "Review the task",
+                "machine": remote_machine,
+                "provider": "claude",
+                "model": "claude-sonnet-5",
+                "claim": claim,
+            },
+        )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["success"] is True, result
+    assert tasks.get_task(task.id).claimed_by_session_id == (
+        result["child_session_id"] if claim else None
+    )
+    assert result["claim"] is claim
+
+
+@pytest.mark.parametrize("claim", [True, False])
+@pytest.mark.parametrize("owner", ["unclaimed", "parent", "foreign"])
+async def test_remote_assignment_preserves_claim_mode(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    sessions: ChildSessionManager,
+    runner: MagicMock,
+    claim: bool,
+    owner: str,
+) -> None:
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(project_id=sample_project["id"], title="Remote implementation")
+    previous_owner = None
+    if owner == "parent":
+        previous_owner = remote_parent
+    elif owner == "foreign":
+        previous_owner = _insert_session(temp_db, sample_project["id"], remote_machine)
+    if previous_owner is not None:
+        tasks.claim_task(task.id, session_id=previous_owner)
+
+    result = await spawn_remote_agent(
+        temp_db,
+        routed=_routed(remote_machine),
+        request=_request(remote_parent, sample_project["id"], task_id=task.id, claim=claim),
+        daemon_config=DaemonConfig(),
+        runner=runner,
+        session_manager=sessions,
+        task_manager=tasks,
+    )
+
+    assert result["success"] is True
+    child = result["child_session_id"]
+    expected = child if claim and owner != "foreign" else previous_owner
+    assert tasks.get_task(task.id).claimed_by_session_id == expected
+    run = runner.run_storage.get(result["run_id"])
+    assert run.task_id == task.id
+    assert run.resume_metadata_json["claim"] is claim
 
 
 async def test_reserved_run_id_names_the_run(

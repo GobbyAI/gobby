@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from gobby.config.tasks import TaskProtectionPolicyConfig, load_project_task_protection_policy
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import require_root
 from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
 from gobby.storage.session_models import Session
@@ -22,7 +23,9 @@ class CrossProjectTaskForbidden(ValueError):
         super().__init__("task_not_found")
 
 
-def task_scope_refusal(task: Task, session_id: str, scope: AgentTaskScope) -> str | None:
+def task_scope_refusal(
+    task: Task, session_id: str, scope: AgentTaskScope, *, db: HubDatabase | None = None
+) -> str | None:
     """Explain which declared task constraint excludes the operation, if any."""
     if scope.task_types is not None and task.task_type not in scope.task_types:
         return f"The definition's task scope excludes type {task.task_type}."
@@ -30,6 +33,12 @@ def task_scope_refusal(task: Task, session_id: str, scope: AgentTaskScope) -> st
         return f"The definition's task scope excludes category {task.category}."
     if scope.own_claim_only and task.claimed_by_session_id != session_id:
         return "The definition's task scope requires the caller's own claim."
+    if scope.assigned_only:
+        from gobby.storage.agents import LocalAgentRunManager
+
+        run = LocalAgentRunManager(db).get_by_session(session_id) if db is not None else None
+        if run is None or run.task_id != task.id:
+            return "The definition's task scope requires the caller's authenticated run assignment."
     return None
 
 

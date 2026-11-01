@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from gobby.agents.spawn_in_doubt_owner import release_claim
-from gobby.mcp_proxy.tools.spawn_agent import _implementation
+from gobby.mcp_proxy.tools.spawn_agent import _implementation, _runtime
 from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import cleanup_failed_spawn
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -278,7 +278,7 @@ def _front_door(generation: str | None) -> SimpleNamespace:
 async def test_spawn_is_refused_while_the_native_front_door_is_unbound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_implementation, "get_app_context", lambda: _front_door(None))
+    monkeypatch.setattr(_runtime, "get_app_context", lambda: _front_door(None))
     runner = Mock()
     result = await _implementation.spawn_agent_impl("launch while the front door is down", runner)
     assert result == UNBOUND_FRONT_DOOR
@@ -288,7 +288,7 @@ async def test_spawn_is_refused_while_the_native_front_door_is_unbound(
 def test_front_door_refusal_clears_once_the_publisher_is_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_implementation, "get_app_context", lambda: _front_door(None))
-    assert _implementation._native_front_door_refusal() == UNBOUND_FRONT_DOOR
-    monkeypatch.setattr(_implementation, "get_app_context", lambda: _front_door("gen-1"))
-    assert _implementation._native_front_door_refusal() is None
+    monkeypatch.setattr(_runtime, "get_app_context", lambda: _front_door(None))
+    assert _runtime.native_front_door_refusal() == UNBOUND_FRONT_DOOR
+    monkeypatch.setattr(_runtime, "get_app_context", lambda: _front_door("gen-1"))
+    assert _runtime.native_front_door_refusal() is None

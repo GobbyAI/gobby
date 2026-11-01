@@ -78,13 +78,14 @@ async def test_associated_spawn_preserves_developer_head(
         name=role,
         prompts=AgentPromptBlocks(agent="Observe the candidate"),
         model="gpt-5.4",
-        task_step_writes=["review"] if role == "code-reviewer" else ["test"],
+        task_attestation_writes=["review"] if role == "code-reviewer" else ["test"],
     )
 
     result = await spawn_agent_impl(
         prompt="join",
         runner=runner,
         agent_body=body,
+        claim=False,
         parent_session_id="parent",
         provider="codex",
         worktree_id="worktree" if reuse == "explicit" else None,

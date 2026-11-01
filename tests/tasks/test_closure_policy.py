@@ -271,6 +271,7 @@ def test_bundled_disposition_preserves_attributed_work_safety(
         "needs-decision",
         "clean-window",
         "needs-planning",
+        "epic-devteam",
     ],
 )
 def test_bundled_default_preserves_reserved_ancestors_when_last_child_closes(
@@ -298,7 +299,9 @@ def test_bundled_default_preserves_reserved_ancestors_when_last_child_closes(
     escalated = reservation == "escalated"
     owner = author if reservation == "claim" else None
     labels = (
-        [reservation] if reservation in {"needs-decision", "clean-window", "needs-planning"} else []
+        [reservation]
+        if reservation in {"needs-decision", "clean-window", "needs-planning", "epic-devteam"}
+        else []
     )
     temp_db.execute(
         "UPDATE tasks SET hold_state = %s, follow_up_at = CASE WHEN %s = 'deferred' "

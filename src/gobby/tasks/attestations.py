@@ -236,7 +236,7 @@ def record_attestation(
                     return record, False
         if not ({"*", submission.kind} & set(body.task_attestation_writes)):
             raise AttestationError("definition has no writer grant for this attestation kind")
-        if refusal := task_scope_refusal(task, session_id, body.task_attestation_scope):
+        if refusal := task_scope_refusal(task, session_id, body.task_attestation_scope, db=db):
             raise AttestationError(refusal)
         if task.closed_at is not None:
             raise AttestationError("closed tasks cannot receive new attestations")

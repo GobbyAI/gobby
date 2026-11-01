@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
-from gobby.agents.completion_subscribers import subscribe_agent_completion
 from gobby.agents.external_write_grants import GRANT_KEY, authorize_write_grant
 from gobby.agents.isolation import (
     CloneIsolationHandler,
@@ -29,8 +28,6 @@ from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.agents.worktree_reuse import ReusedWorktreeSyncConflict
-from gobby.app_context import get_app_context
-from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
 from gobby.providers.version_gate import (
     AGY_REVALIDATING_REASON,
     AGY_UNPUBLISHED_REASON,
@@ -75,7 +72,7 @@ from ._resume import (
     resumed_seat_task_id,
 )
 from ._run_lifetime import resolve_run_lifetime
-from ._runtime import build_spawn_context
+from ._runtime import build_spawn_context, native_front_door_refusal
 from ._sandbox_gate import resolve_spawn_sandbox
 from ._spawn_guards import (
     TaskSpawnLease,
@@ -96,22 +93,6 @@ logger = logging.getLogger(__name__)
 _spawn_background_tasks: dict[str, asyncio.Task[None]] = {}
 
 
-def _native_front_door_refusal() -> dict[str, Any] | None:
-    """Refuse a spawn while the native front door has no bound generation.
-
-    An unbound publisher drops lifecycle publishes without error, and raising from one
-    fences the lifecycle registry for good, so admission refuses before any run exists.
-    """
-    server = getattr(get_app_context(), "websocket_server", None)
-    publisher = getattr(server, "native_publisher", None)
-    if publisher is None or publisher.generation is not None:
-        return None
-    return {
-        "success": False,
-        "error": "native WS front door unbound; spawn refused until the publisher rebinds",
-    }
-
-
 async def spawn_agent_impl(
     prompt: str,
     runner: AgentRunner,
@@ -120,6 +101,7 @@ async def spawn_agent_impl(
     task_id: str | None = None,
     task_manager: LocalTaskManager | None = None,
     allow_closed_task: bool = False,
+    claim: bool = True,
     checkout_mode: Literal["none", "worktree", "clone"] | None = None,
     branch_name: str | None = None,
     base_branch: str | None = None,
@@ -162,7 +144,7 @@ async def spawn_agent_impl(
     project_path_explicit: bool = True,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
-    refusal = _native_front_door_refusal()
+    refusal = native_front_door_refusal()
     if refusal is not None:
         return refusal
     spawn_started_at = start_spawn_phase()
@@ -184,6 +166,13 @@ async def spawn_agent_impl(
         except ValueError as exc:
             return {"success": False, "error": str(exc) or type(exc).__name__}
         task_id = task_id or resumed_seat_task_id(task_manager, resume_target, runner.run_storage)
+        previous = (
+            runner.run_storage.get(resume_target.agent_run_id)
+            if resume_target.agent_run_id
+            else None
+        )
+        if previous is not None:
+            claim = claim and (previous.resume_metadata_json or {}).get("claim", True)
         provider, model, reasoning_effort = resume_launch_defaults(
             resume_target, model=model, reasoning_effort=reasoning_effort
         )
@@ -444,6 +433,7 @@ async def spawn_agent_impl(
         task_manager=task_manager,
         project_id=project_id,
         allow_closed_task=allow_closed_task,
+        claim=claim,
         agent_body=agent_body,
         initial_variables=initial_variables,
     )
@@ -470,7 +460,7 @@ async def spawn_agent_impl(
         parent_session_id=parent_session_id,
         phase_timings_ms=phase_timings_ms,
         worktree_dir_name=worktree_dir_name,
-        preserve_existing_worktree=resume_target is not None,
+        preserve_existing_worktree=resume_target is not None or not claim,
     )
     if droid_mode == "interactive" and effective_provider != "droid":
         return {
@@ -668,6 +658,7 @@ async def spawn_agent_impl(
         placement=placement_snapshot(placed.resolved) if placed is not None else None,
     )
 
+    resume_metadata["claim"] = claim
     if write_grant:
         resume_metadata[GRANT_KEY] = write_grant
     if allow_closed_task:
@@ -686,7 +677,7 @@ async def spawn_agent_impl(
 
     task_spawn_lease = TaskSpawnLease(
         db=db,
-        task_id=resolved_task_id,
+        task_id=resolved_task_id if claim else None,
         held_mutex=held_task_mutex,
     )
 
@@ -699,7 +690,7 @@ async def spawn_agent_impl(
     lease_response = await admit_task_spawn(
         task_spawn_lease,
         run_storage=runner.run_storage,
-        task_id=resolved_task_id,
+        task_id=resolved_task_id if claim else None,
         task_ref=task_id,
         cleanup=cleanup_unattached_spawn,
         session_manager=session_manager,
@@ -939,40 +930,16 @@ async def spawn_agent_impl(
             )
 
             if notify_parent_on_completion and completion_registry and parent_session_id:
-                try:
-                    await run_thread_to_completion(
-                        subscribe_agent_completion,
-                        completion_registry=completion_registry,
-                        run_id=run_id,
-                        subscriber_session_id=parent_session_id,
-                        db=db,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to subscribe parent session to agent completion for run %s",
-                        run_id,
-                        exc_info=True,
-                    )
+                await spawn_phase.subscribe_parent(parent_session_id, db)
 
             if placed is not None:
                 return await run_placed_spawn(
                     placed, spawn_phase, worktree_id=isolation_ctx.worktree_id
                 )
-            try:
-                schedule_background_task(
-                    _spawn_background_tasks,
-                    run_id,
-                    spawn_phase.run,
-                    name=f"gobby-agent-spawn-{run_id}",
-                    logger=logger,
-                    description="Agent spawn background task",
-                )
-            except RuntimeError as exc:
-                return await spawn_phase.fail(str(exc) or type(exc).__name__)
-
-            return {
+            response = {
                 "success": True,
                 "status": "starting",
+                "claim": claim,
                 GRANT_KEY: write_grant,
                 **spawn_identity,
                 "child_session_id": prepared_spawn.session_id,
@@ -980,6 +947,7 @@ async def spawn_agent_impl(
                 "clone_id": isolation_ctx.clone_id,
                 "reasoning": reasoning.to_dict(),
             }
+            return await spawn_phase.start_background(_spawn_background_tasks, response)
         except asyncio.CancelledError:
             await run_to_completion(
                 rollback_cancelled_spawn(

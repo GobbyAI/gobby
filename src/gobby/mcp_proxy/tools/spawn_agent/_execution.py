@@ -30,7 +30,12 @@ logger = logging.getLogger(__name__)
 
 
 def _record_spawn_receipt(
-    db: HubDatabase, *, run_id: str, child_session_id: str, parent_session_id: str
+    db: HubDatabase,
+    *,
+    run_id: str,
+    child_session_id: str,
+    parent_session_id: str,
+    claim: bool = True,
 ) -> None:
     """Keep launch identity discoverable even when the caller loses the tool response."""
     InterSessionMessageManager(db).create_message(
@@ -42,7 +47,9 @@ def _record_spawn_receipt(
             f'Use stop_agent(run_id="{run_id}") if this run is no longer wanted.'
         ),
         message_type="agent_started",
-        metadata_json=json.dumps({"run_id": run_id, "child_session_id": child_session_id}),
+        metadata_json=json.dumps(
+            {"run_id": run_id, "child_session_id": child_session_id, "claim": claim}
+        ),
         message_id=str(uuid5(NAMESPACE_URL, f"gobby:agent-started:{parent_session_id}:{run_id}")),
     )
 
@@ -212,7 +219,11 @@ async def finalize_executed_spawn(
 
         # Supplying a task requests its claim. Observers omit task_id; their
         # pipeline can associate the task in prompts without changing ownership.
-        if resolved_task_id and task_manager:
+        if (
+            resolved_task_id
+            and task_manager
+            and (getattr(spawn_request, "resume_metadata_json", None) or {}).get("claim", True)
+        ):
             try:
                 task_obj = await asyncio.to_thread(task_manager.get_task, resolved_task_id)
                 if not task_obj or not is_task_actionable(task_obj):
@@ -378,11 +389,15 @@ async def finalize_executed_spawn(
         terminal=terminal,
         placement=placement,
     )
+    response["claim"] = (getattr(spawn_request, "resume_metadata_json", None) or {}).get(
+        "claim", True
+    )
     await asyncio.to_thread(
         _record_spawn_receipt,
         db,
         run_id=run_id,
         child_session_id=spawn_result.child_session_id,
         parent_session_id=parent_session_id,
+        claim=response["claim"],
     )
     return response

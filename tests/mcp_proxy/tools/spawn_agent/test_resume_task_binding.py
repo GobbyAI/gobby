@@ -22,6 +22,14 @@ from tests.fixtures.agent_definitions import make_agent_definition
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 
+@pytest.mark.asyncio
+async def test_assignment_only_resume_keeps_nonclaiming_mode() -> None:
+    result, prepare = await _resume_seat("task-open", None, previous_claim=False)
+    assert result["success"] is True, result
+    assert prepare.call_args.kwargs["task_id"] == "task-open"
+    assert prepare.call_args.kwargs["resume_metadata_json"]["claim"] is False
+
+
 def _task(task_id: str, seq_num: int, closed_at: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         id=task_id,
@@ -68,7 +76,9 @@ def _previous_run(task_id: str) -> SimpleNamespace:
     )
 
 
-async def _resume_seat(previous_task: str, explicit_task: str | None) -> tuple[dict[str, Any], Any]:
+async def _resume_seat(
+    previous_task: str, explicit_task: str | None, *, previous_claim: bool = True
+) -> tuple[dict[str, Any], Any]:
     """Resume the seat through spawn_agent_impl; return the reply and the resume preparation."""
     target = SimpleNamespace(
         id="existing",
@@ -90,6 +100,7 @@ async def _resume_seat(previous_task: str, explicit_task: str | None) -> tuple[d
     runner.can_spawn.return_value = (True, "Can spawn", 0)
     runner.run_storage.has_active_run_for_task.return_value = False
     previous = _previous_run(previous_task)
+    previous.resume_metadata_json["claim"] = previous_claim
     runner.run_storage.get.side_effect = lambda run_id: previous if run_id == "old-run" else None
     runner.run_storage.get_by_session.return_value = None
     runner.run_storage.list_by_session.return_value = [previous]

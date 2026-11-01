@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -13,6 +13,7 @@ import pytest
 from gobby.agents.team_admission_records import TeamAdmissionRefused, TeamBinding
 from gobby.agents.team_lifecycle import managed_task_team
 from gobby.mcp_proxy.tools.spawn_agent import _factory
+from gobby.mcp_proxy.tools.tasks._factory import create_task_registry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -21,6 +22,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.tasks.land_commit import land_candidate, task_landing_target
+from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.worktrees.deletion import (
     DeletionSurface,
@@ -39,6 +41,7 @@ from tests.fixtures.team_case import (
     running_seat,
     synthetic_manager_body,
 )
+from tests.tasks.test_closure_policy import _bundled_closure_rules
 
 pytestmark = pytest.mark.unit
 _REAL_AGENT_BODY = _factory._load_agent_body
@@ -432,8 +435,9 @@ async def test_pod_adopts_its_leaf_tree_once_an_unattached_seat_has_ended(world:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("diverged_parent", [False, True], ids=["fast-forward", "merge"])
+@pytest.mark.parametrize("dirty_parent", [False, True], ids=["clean", "dirty"])
 async def test_leaf_lands_into_parent_team_branch(
-    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, diverged_parent: bool
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, diverged_parent: bool, dirty_parent: bool
 ) -> None:
     monkeypatch.setattr("gobby.tasks.land_commit._refresh_index", AsyncMock())
     epic = new_task(world, "Parent integration", epic=True)
@@ -458,6 +462,16 @@ async def test_leaf_lands_into_parent_team_branch(
     main_tip = git_in(world.case.repo, "rev-parse", "HEAD")
 
     assert await task_landing_target(world.case.db, leaf) == (epic_tree, team.binding.branch)
+    if dirty_parent:
+        in_flight = epic_tree / "static-in-flight.txt"
+        in_flight.write_text("unfinished static implementation\n")
+        refused = await land_candidate(
+            world.case.db, task=leaf, caller_session_id=team.manager, commit_sha=sha
+        )
+        assert refused.get("error") == "checkout_dirty", refused
+        assert git_in(epic_tree, "rev-parse", "HEAD") == parent_tip
+        assert in_flight.read_text() == "unfinished static implementation\n"
+        in_flight.unlink()
     result = await land_candidate(
         world.case.db, task=leaf, caller_session_id=team.manager, commit_sha=sha
     )
@@ -472,3 +486,152 @@ async def test_leaf_lands_into_parent_team_branch(
     else:
         assert landed_tip == sha
     assert git_in(world.case.repo, "rev-parse", "HEAD") == main_tip
+
+
+@pytest.mark.asyncio
+async def test_multiple_child_deliveries_integrate_and_clean_up(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Marked-root API exercise with parallel trees, rejected review, repair and exact close."""
+    db = world.case.db
+    monkeypatch.setattr("gobby.tasks.land_commit._refresh_index", AsyncMock())
+    tasks = LocalTaskManager(db)
+    tools = create_task_registry(tasks)
+    _bundled_closure_rules(db)
+    body = synthetic_manager_body()
+    body["name"] = "integration-coordinator"
+    body["task_attestation_writes"] = ["*"]
+    body["workflows"]["rule_selectors"] = {"include": ["tag:task-closure-general"]}
+    AgentDefinitionManager(db).create(body["name"], body, project_id=world.case.project_id)
+    epic = new_task(world, "Parallel integration exercise", epic=True)
+    tasks.add_label(epic.id, "epic-devteam")
+    team = await epic_team(world, epic, manager_name=body["name"])
+    leaves = [new_task(world, f"Independent delivery {index}", parent=epic) for index in range(3)]
+    runs = [world.child(leaf, parent=team.manager) for leaf in leaves]
+    assert managed_task_team(db, team.manager, leaves[0].id) is not None
+    pods = [
+        await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+        for run, leaf in zip(runs, leaves, strict=True)
+    ]
+    assert len({pod.worktree_id for pod in pods}) == 3
+    assert all(pod.parent_team_id == team.binding.team_id for pod in pods)
+    epic_tree = tree_of(team.binding)
+    original_main = git_in(world.case.repo, "rev-parse", "HEAD")
+
+    async def call(session: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        with session_context_for_test(session):
+            return cast(dict[str, Any], await tools.call(tool, arguments))
+
+    async def deliver(run: Session, leaf: Task, pod: TeamBinding, index: int) -> None:
+        tree = tree_of(pod)
+        name = f"delivery-{index}.txt"
+        (tree / name).write_text(f"delivery {index}\n")
+        git_in(tree, "add", name)
+        git_in(tree, "commit", "-m", f"[gobby-#{leaf.seq_num}] feat: deliver independent leaf")
+        sha = git_in(tree, "rev-parse", "HEAD")
+        tasks.link_commit(leaf.id, sha)
+        world.case.implement(leaf, sha)
+        world.case.approve(leaf, sha)
+        landed = await land_candidate(
+            db, task=tasks.get_task(leaf.id), caller_session_id=team.manager, commit_sha=sha
+        )
+        assert landed.get("landed") is True, landed
+        closed = await call(
+            team.manager,
+            "close_task",
+            {
+                "task_id": leaf.id,
+                "commit_sha": sha,
+                "project_path": str(tree),
+            },
+        )
+        assert closed["closed"] is True, closed
+        world.finish(run)
+        # The exercise owns this generated untracked launch config; remove it after seats finish.
+        (tree / ".mcp.json").unlink(missing_ok=True)
+        removed = await delete_tree(world, tree_id_of(pod), merged_into=team.binding.branch)
+        assert removed.success, removed
+        assert not tree.exists()
+
+    for index, (run, leaf, pod) in enumerate(zip(runs, leaves, pods, strict=True)):
+        await deliver(run, leaf, pod, index)
+
+    assert git_in(world.case.repo, "rev-parse", "HEAD") == original_main
+    assert all((epic_tree / f"delivery-{index}.txt").is_file() for index in range(3))
+    assert tasks.get_task(epic.id).closed_at is None
+
+    async def integration(review_result: str) -> tuple[str, dict[str, Any]]:
+        sha = git_in(epic_tree, "rev-parse", "HEAD")
+        tasks.link_commit(epic.id, sha)
+        args = {
+            "task_id": epic.id,
+            "commit_sha": sha,
+            "project_path": str(epic_tree),
+            "preview": True,
+            "response_detail": "diagnostic",
+        }
+        preview = await call(team.manager, "close_task", args)
+        revision = preview["facts"]["subtree_revision"]
+        for kind in (
+            "implementation",
+            "integration-validation",
+            "self-review",
+            "review",
+            "closing",
+        ):
+            verdict = await call(
+                world.case.reviewer if kind == "review" else team.manager,
+                "record_attestation",
+                {
+                    "task_id": epic.id,
+                    "kind": kind,
+                    "result": review_result if kind == "review" else "approved",
+                    "summary": "Isolated integration exercise verdict.",
+                    "reference": {"scheme": "git", "value": sha},
+                    "evidence": {"subtree_revision": revision},
+                },
+            )
+            assert verdict.get("record", {}).get("result") == (
+                review_result if kind == "review" else "approved"
+            ), verdict
+        return sha, await call(team.manager, "close_task", args)
+
+    rejected_sha, rejected = await integration("rejected")
+    assert rejected["can_close"] is False
+    repair = new_task(world, "Repair final integration finding", parent=epic)
+    assert all(tasks.get_task(leaf.id).closed_at is not None for leaf in leaves)
+    repair_run = world.child(repair, parent=team.manager)
+    repair_pod = await world.admit(repair_run, repair, parent_team_id=team.binding.team_id)
+    await deliver(repair_run, repair, repair_pod, 3)
+    final_sha, approved = await integration("approved")
+    assert final_sha != rejected_sha
+    assert approved["facts"]["subtree_revision"] != rejected["facts"]["subtree_revision"]
+    landed_epic = await land_candidate(
+        db, task=tasks.get_task(epic.id), caller_session_id=team.manager, commit_sha=final_sha
+    )
+    assert landed_epic.get("landed") is True, landed_epic
+    close_args = {
+        "task_id": epic.id,
+        "commit_sha": final_sha,
+        "project_path": str(epic_tree),
+        "response_detail": "diagnostic",
+    }
+    final_preview = await call(team.manager, "close_task", {**close_args, "preview": True})
+    assert final_preview["can_close"] is True, final_preview
+    closed_epic = await call(
+        team.manager,
+        "close_task",
+        {
+            **close_args,
+            "expected_closure_revision": final_preview["snapshot_revision"],
+        },
+    )
+    assert closed_epic["closed"] is True, closed_epic
+    SessionManager(db).update_status(team.manager, "expired")
+    manager_run = LocalAgentRunManager(db).get_by_session(team.manager)
+    assert manager_run is not None
+    LocalAgentRunManager(db).complete(manager_run.id, result="Integration exercise finished")
+    (epic_tree / ".mcp.json").unlink(missing_ok=True)
+    removed_epic = await delete_tree(world, tree_id_of(team.binding), merged_into="trunk")
+    assert removed_epic.success, removed_epic
+    assert not epic_tree.exists()

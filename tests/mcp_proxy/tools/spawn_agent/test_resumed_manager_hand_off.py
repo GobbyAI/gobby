@@ -55,7 +55,15 @@ class CrashedTeam:
     developer: str
 
 
-def _seat(db: HubDatabase, session_id: str, runbook: str, role: str) -> None:
+def _seat(
+    db: HubDatabase,
+    session_id: str,
+    runbook: str,
+    role: str,
+    *,
+    task_id: str | None = None,
+    claim: bool = True,
+) -> None:
     # A seat resumes only as the definition it was launched with, recorded as its agent type.
     SessionVariableManager(db).set_variable(session_id, "_agent_type", role)
     LocalAgentRunManager(db).create(
@@ -64,6 +72,8 @@ def _seat(db: HubDatabase, session_id: str, runbook: str, role: str) -> None:
         prompt=f"Run the {role} seat.",
         agent_name=role,
         child_session_id=session_id,
+        task_id=task_id,
+        resume_metadata_json={"claim": claim},
     )
 
 
@@ -98,6 +108,7 @@ async def crashed(
     bind_task_manager(
         temp_db, manager=manager, parent=runbook.id, project_id=case.project_id, task=task
     )
+    _seat(temp_db, manager, runbook.id, DEV_MANAGER, task_id=task.id, claim=False)
     writer = case.session("test-writer", parent=runbook.id)
     developer = case.session("developer", parent=runbook.id)
     _seat(temp_db, writer, runbook.id, "test-writer")

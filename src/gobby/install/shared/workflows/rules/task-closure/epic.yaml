@@ -1,0 +1,113 @@
+tags: [task-closure-general]
+
+rules:
+  epic-landing-requires-validated-integration-base:
+    event: task_land
+    priority: 24
+    when: >-
+      'epic-devteam' in (task.get('labels') or []) and
+      facts.get('candidate_contains_integration_base') != True
+    effects:
+      - type: block
+        reason: Merge the current integration branch into the epic, then repeat integration validation and final review for the new candidate.
+
+  epic-completion-marker-requires-epic:
+    event: task_close
+    priority: 24
+    when: &epic_type "'epic-devteam' in (task.get('labels') or []) and task.get('task_type') != 'epic'"
+    effects:
+      - type: block
+        reason: The epic completion marker applies only to an epic root.
+
+  epic-landing-marker-requires-epic:
+    event: task_land
+    priority: 24
+    when: *epic_type
+    effects:
+      - type: block
+        reason: The epic completion marker applies only to an epic root.
+
+  epic-completion-requires-clean-landed-candidate:
+    event: task_close
+    priority: 28
+    when: >-
+      reason == 'done' and 'epic-devteam' in (task.get('labels') or []) and
+      (facts.get('task_files_clean') != True or facts.get('attribution_complete') != True or
+       facts.get('integration_ancestry') != True or not task.get('commits') or
+       facts.get('candidate_covers_linked_commits') != True or
+       not any((facts.get('candidate_commit_sha') or '').startswith(commit)
+               for commit in task.get('commits', [])))
+    effects:
+      - type: block
+        reason: Commit and link the final epic candidate, preserve clean attributed files, and finish integration before closure.
+
+  epic-completion-requires-descendants:
+    description: Admitted epic roots finish every descendant and retain aggregate implementation evidence.
+    event: task_close
+    priority: 25
+    when: &epic_descendants >-
+      reason == 'done' and 'epic-devteam' in (task.get('labels') or []) and
+      (facts.get('descendants_closed') != True or
+       any(not any(record.get('kind') == 'implementation' and record.get('result') == 'approved'
+                   for record in descendant.get('attestations', []))
+           for descendant in facts.get('descendants', [])
+           if not any(child.get('task', {}).get('parent_task_id') == descendant.get('task', {}).get('id')
+                      for child in facts.get('descendants', []))))
+    effects:
+      - type: block
+        reason: Close every descendant and retain approved implementation evidence for every leaf.
+
+  epic-landing-requires-descendants:
+    event: task_land
+    priority: 25
+    when: *epic_descendants
+    effects:
+      - type: block
+        reason: Finish every descendant and its implementation evidence before final epic landing.
+
+  epic-completion-requires-exact-evidence:
+    description: Integration checks and independent approval name this candidate and descendant revision.
+    event: task_close
+    priority: 26
+    when: &epic_evidence >-
+      reason == 'done' and 'epic-devteam' in (task.get('labels') or []) and
+      (not facts.get('candidate_commit_sha') or not facts.get('subtree_revision') or
+       any(latest_attestation(kind).get('result') != 'approved' or
+           (latest_attestation(kind).get('reference') or {}).get('scheme') != 'git' or
+           (latest_attestation(kind).get('reference') or {}).get('value') != facts.get('candidate_commit_sha') or
+           latest_attestation(kind).get('evidence', {}).get('subtree_revision') != facts.get('subtree_revision')
+           for kind in ['implementation', 'integration-validation', 'self-review', 'review', 'closing']))
+    effects:
+      - type: block
+        reason: Record approved implementation, integration-validation, self-review, review and closing for this full Git candidate and subtree_revision.
+
+  epic-landing-requires-exact-evidence:
+    event: task_land
+    priority: 26
+    when: *epic_evidence
+    effects:
+      - type: block
+        reason: Refresh epic integration evidence and final approval for this candidate and subtree_revision.
+
+  epic-completion-requires-independent-author:
+    description: The final reviewer is independent of all implementation authors in the entire epic.
+    event: task_close
+    priority: 27
+    when: &epic_independence >-
+      reason == 'done' and 'epic-devteam' in (task.get('labels') or []) and
+      (any(latest_attestation('review').get('session_id') == record.get('session_id')
+           for descendant in facts.get('descendants', []) for record in descendant.get('attestations', [])
+           if record.get('kind') in ['test-before', 'implementation', 'test-after']) or
+       any(latest_attestation('review').get('session_id') == record.get('session_id')
+           for record in attestations if record.get('kind') in ['implementation', 'self-review']))
+    effects:
+      - type: block
+        reason: Obtain final approval from a reviewer who authored none of this epic's implementation or tests.
+
+  epic-landing-requires-independent-author:
+    event: task_land
+    priority: 27
+    when: *epic_independence
+    effects:
+      - type: block
+        reason: The final epic reviewer must be independent of every descendant implementation author.

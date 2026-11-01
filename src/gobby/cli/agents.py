@@ -173,6 +173,7 @@ def agents() -> None:
 @click.option("--session", "-s", "parent_session_id", required=True, help="Parent session ID")
 @click.option("--workflow", "-w", help="Workflow name to execute")
 @click.option("--task", "-t", help="Task ID or reference")
+@click.option("--claim/--no-claim", default=True, help="Claim the assigned task after launch")
 @click.option("--provider", "-p", default="claude", help="LLM provider (claude, codex, etc.)")
 @click.option("--model", help="Model override")
 @click.option(
@@ -193,6 +194,7 @@ def spawn_agent_cmd(
     parent_session_id: str,
     workflow: str | None,
     task: str | None,
+    claim: bool,
     provider: str,
     model: str | None,
     network: str | None,
@@ -231,6 +233,7 @@ def spawn_agent_cmd(
         "parent_session_id": parent_session_id,
         "provider": provider,
         "timeout": timeout,
+        "claim": claim,
     }
 
     if workflow:

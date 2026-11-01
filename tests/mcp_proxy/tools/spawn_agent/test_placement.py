@@ -30,7 +30,7 @@ from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError
 from gobby.mcp_proxy.services.tool_execution import _inject_agent_parent_session_argument
 from gobby.mcp_proxy.tools.spawn_agent import _implementation as impl
-from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+from gobby.mcp_proxy.tools.spawn_agent import _spawn_phase, create_spawn_agent_registry
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 from gobby.mcp_proxy.tools.spawn_agent._placement import preflight_placement
 from gobby.servers.websocket.models import WebSocketConfig
@@ -1279,7 +1279,7 @@ async def test_messageless_placed_failure_names_exception(
         )
         monkeypatch.setattr(impl, "persist_initial_step_instance_if_resolved", fail)
     else:
-        monkeypatch.setattr(impl, "schedule_background_task", fail)
+        monkeypatch.setattr(_spawn_phase, "schedule_background_task", fail)
 
     result = await _spawn(h, placement, **overrides)
 
@@ -1325,6 +1325,7 @@ async def test_rendered_developer_spawn_with_task_bound_manager(
         "team": binding,
         "task_id": task.id,
         "branch": binding["branch"],
+        "worktree": binding["worktree_id"],
         "project_path": binding["worktree_path"],
     }
     executions.update_step_execution(
@@ -1338,6 +1339,7 @@ async def test_rendered_developer_spawn_with_task_bound_manager(
         prompt="Manage the team",
         agent_name="dev-manager",
         task_id=task.id,
+        resume_metadata_json={"claim": False},
     )
     assert h.runs.start(manager.id) is not None
     assert h.runs.has_active_run_for_task(task.id)
@@ -1376,7 +1378,7 @@ async def test_rendered_developer_spawn_with_task_bound_manager(
         },
         drop_none=True,
     )
-    assert "task_id" not in arguments
+    assert arguments["task_id"] == task.id
     _inject_agent_parent_session_argument("gobby-agents", "spawn_agent", arguments, caller.id)
     with session_context_for_test(caller.id):
         result = await _registry(h, task_manager=tasks).call("spawn_agent", arguments)
@@ -1384,7 +1386,7 @@ async def test_rendered_developer_spawn_with_task_bound_manager(
     assert result["success"] is True, result
     assert len(h.launches) == 1
     spawned = h.runs.get(result["run_id"])
-    assert spawned is not None and spawned.task_id is None
+    assert spawned is not None and spawned.task_id == task.id
     assert spawned.parent_session_id == caller.id
     surviving_manager = h.runs.get(manager.id)
     assert surviving_manager is not None and surviving_manager.status == "running"

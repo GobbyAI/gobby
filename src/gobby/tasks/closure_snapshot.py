@@ -17,6 +17,7 @@ from gobby.storage.tasks import LocalTaskManager, Task, TaskStaleStateError
 from gobby.tasks.attestations import AttestationError, list_attestations
 from gobby.tasks.closure_policy import ClosureDecision, ClosureSnapshot, evaluate_closure_policy
 from gobby.tasks.lifecycle_access import resolve_lifecycle_task
+from gobby.tasks.subtree_snapshot import capture_subtree_facts
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.agent_resolver import (
     is_operator_session,
@@ -159,6 +160,7 @@ def prepare_closure(
                 "closure_intent": "explicit",
                 **(facts or {}),
                 **(derive_facts(task, agent) if derive_facts is not None else {}),
+                **capture_subtree_facts(db, conn, task_id),
                 "children": child_data,
                 "children_closed": all(child["closed"] for child in child_data),
                 "claimants": sorted(claimant_sessions(conn, task_id)),

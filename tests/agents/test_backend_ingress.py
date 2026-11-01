@@ -244,7 +244,10 @@ async def test_all_spawn_request_producers_emit_run_lifetime() -> None:
         scheduled.append(factory)
 
     with (
-        patch(f"{module}.schedule_background_task", side_effect=capture_launch),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_phase.schedule_background_task",
+            side_effect=capture_launch,
+        ),
         patch(
             f"{module}.get_project_context",
             return_value={"id": "proj", "project_path": "/repo"},

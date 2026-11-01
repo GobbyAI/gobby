@@ -313,6 +313,7 @@ def create_spawn_agent_registry(
         agent: str = "default",
         task_id: str | None = None,
         allow_closed_task: bool = False,
+        claim: bool = True,
         # Isolation
         checkout_mode: Literal["none", "worktree", "clone"] | None = None,
         branch_name: str | None = None,
@@ -351,6 +352,7 @@ def create_spawn_agent_registry(
             prompt: Required - what the agent should do
             agent: Agent definition name (defaults to "default")
             task_id: Optional - link to task (supports N, #N, UUID)
+            claim: Claim task ownership after launch; false retains assignment only.
             allow_closed_task: Permit spawning against a closed, non-escalated
                 task for read-only review work (no auto-claim occurs)
             checkout_mode: Checkout mode (none/worktree/clone)
@@ -478,6 +480,8 @@ def create_spawn_agent_registry(
                 project_id=project_id,
                 reserved_run_id=reserved_run_id,
                 target=SeatTarget(
+                    main_checkout=agent_body is not None
+                    and "team_main_checkout" in agent_body.capabilities,
                     task_id=task_id,
                     checkout_mode=checkout_mode,
                     branch_name=branch_name,
@@ -719,6 +723,7 @@ def create_spawn_agent_registry(
                     caller_session_id=caller_session_id,
                     requested_provider=provider,
                     allow_closed_task=allow_closed_task,
+                    claim=claim,
                     extra_write_paths=extra_write_paths,
                     write_paths_reason=write_paths_reason,
                     reserved_run_id=reserved_run_id,
@@ -735,6 +740,7 @@ def create_spawn_agent_registry(
             task_id=task_id,
             task_manager=task_manager,
             allow_closed_task=allow_closed_task,
+            claim=claim,
             checkout_mode=checkout_mode,
             branch_name=branch_name,
             base_branch=base_branch,

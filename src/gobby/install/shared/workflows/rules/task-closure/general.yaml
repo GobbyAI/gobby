@@ -19,7 +19,7 @@ rules:
       (task.get('claimed_by_session_id') or
        task.get('is_escalated') or task.get('escalated_at') or
        (task.get('state') or {}).get('hold_state') or
-       any(label in ['needs-decision', 'clean-window', 'needs-planning']
+       any(label in ['needs-decision', 'clean-window', 'needs-planning', 'epic-devteam']
            for label in (task.get('labels') or [])))
     effects:
       - type: block

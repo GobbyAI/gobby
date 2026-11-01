@@ -66,6 +66,7 @@ class AgentSpawnRequest(ReasoningEffortMixin):
     model_config = ConfigDict(extra="forbid")
 
     task_id: str
+    claim: bool = True
     agent_name: str = "default"
     prompt: str | None = None
     web_chat: bool = False
@@ -88,6 +89,7 @@ class AgentSpawnResponse(BaseModel):
     """Response from agent spawn."""
 
     success: bool
+    claim: bool | None = None
     run_id: str | None = None
     child_session_id: str | None = None
     conversation_id: str | None = None
@@ -277,7 +279,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
             # Update task ownership conservatively.
             try:
-                if is_task_actionable(task):
+                if req.claim and is_task_actionable(task):
                     current_owner = get_claimed_session_id(task)
                     if current_owner and current_owner != conversation_id:
                         logger.info(
@@ -304,6 +306,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
             return AgentSpawnResponse(
                 success=True,
+                claim=req.claim,
                 conversation_id=conversation_id,
                 prompt=prompt,
             )
@@ -424,6 +427,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                     initial_variables=initial_variables,
                     workflow_name=effective_workflow,
                     task_id=req.task_id,
+                    claim=req.claim,
                     requested_provider=req.provider,
                     extra_write_paths=req.extra_write_paths,
                     write_paths_reason=req.write_paths_reason,
@@ -431,15 +435,10 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             )
             if not remote["success"]:
                 return AgentSpawnResponse(**remote)
-            try:
-                await asyncio.to_thread(
-                    task_manager.claim_task, req.task_id, session_id=remote["child_session_id"]
-                )
-            except Exception as e:
-                logger.warning("Failed to update task after spawn: %s", e)
             _broadcast_task_update(server, req.task_id)
             return AgentSpawnResponse(
                 success=True,
+                claim=remote.get("claim", req.claim),
                 run_id=remote["run_id"],
                 child_session_id=remote["child_session_id"],
             )
@@ -465,6 +464,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             agent_body=agent_body,
             agent_lookup_name=req.agent_name,
             task_id=req.task_id,
+            claim=req.claim,
             task_manager=task_manager,
             checkout_mode=req.checkout_mode,
             branch_name=req.branch_name,
@@ -492,17 +492,11 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         )
 
         if result.get("success"):
-            # Update task status
-            try:
-                child_sid = result.get("child_session_id", "")
-                await asyncio.to_thread(task_manager.claim_task, req.task_id, session_id=child_sid)
-            except Exception as e:
-                logger.warning("Failed to update task after spawn: %s", e)
-
             _broadcast_task_update(server, req.task_id)
 
             return AgentSpawnResponse(
                 success=True,
+                claim=result.get("claim", req.claim),
                 run_id=result.get("run_id"),
                 child_session_id=result.get("child_session_id"),
                 checkout_mode=result.get("checkout_mode"),

@@ -168,6 +168,12 @@ async def spawn_remote_route(
             return spawn_refusal("resume_refused", str(exc))
         inherited = resumed_seat_task_id(task_manager, resume_target, runner.run_storage)
         request = replace(request, task_id=request.task_id or inherited)
+        previous = runner.run_storage.get(resume_target.agent_run_id)
+        if previous is not None:
+            request = replace(
+                request,
+                claim=request.claim and (previous.resume_metadata_json or {}).get("claim", True),
+            )
 
     provider, model, reasoning_effort = request.provider, request.model, request.reasoning_effort
     if resume_target is not None:
@@ -201,6 +207,7 @@ async def spawn_remote_route(
         task_manager=task_manager,
         project_id=request.project_id,
         allow_closed_task=request.allow_closed_task,
+        claim=request.claim,
         agent_body=request.agent_body,
         initial_variables=request.initial_variables,
     )
@@ -235,7 +242,7 @@ async def spawn_remote_route(
         execution_mode=run_lifetime.execution_mode,
         idle_ttl_seconds=run_lifetime.idle_ttl_seconds,
     )
-    lease = TaskSpawnLease(db=db, task_id=request.task_id)
+    lease = TaskSpawnLease(db=db, task_id=request.task_id if request.claim else None)
     async with reserve_agent_slot(
         db=db, project_id=request.project_id, project_path=routed.checkout_root or ""
     ) as slot:

@@ -150,6 +150,7 @@ async def resolve_spawn_task_context(
     allow_closed_task: bool,
     agent_body: AgentDefinitionBody | None,
     initial_variables: dict[str, Any] | None,
+    claim: bool = True,
 ) -> SpawnTaskContext:
     """Resolve task ownership, admission, metadata, and task-specific prompt policy."""
     resolved_task_id: str | None = None
@@ -216,7 +217,8 @@ async def resolve_spawn_task_context(
             )
 
     task_will_be_owned_by_child = bool(
-        resolved_task_id
+        claim
+        and resolved_task_id
         and resolved_task is not None
         and is_task_actionable(resolved_task)
         and claimed_session_id is None
@@ -400,6 +402,9 @@ def active_task_spawn_blocker(
         active_runs = [active_run] if active_run is not None else []
 
     for active_run in active_runs:
+        metadata = getattr(active_run, "resume_metadata_json", None)
+        if isinstance(metadata, Mapping) and metadata.get("claim") is False:
+            continue
         if (
             exclude_child_session_id is not None
             and getattr(active_run, "child_session_id", None) == exclude_child_session_id

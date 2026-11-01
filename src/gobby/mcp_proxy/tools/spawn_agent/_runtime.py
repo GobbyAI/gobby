@@ -10,6 +10,7 @@ from gobby.agents.isolation import IsolationContext, SpawnConfig
 from gobby.agents.reasoning import SpawnReasoningResolution
 from gobby.agents.resume_metadata import build_resume_metadata
 from gobby.agents.sandbox import SandboxConfig
+from gobby.app_context import get_app_context
 from gobby.llm.context_windows import reconcile_observed_model
 
 if TYPE_CHECKING:
@@ -17,6 +18,18 @@ if TYPE_CHECKING:
     from gobby.providers.capabilities.local_context_config import LocalContextRoute
 
 logger = logging.getLogger(__name__)
+
+
+def native_front_door_refusal() -> dict[str, Any] | None:
+    """Refuse admission before creating a run while the native publisher is unbound."""
+    server = getattr(get_app_context(), "websocket_server", None)
+    publisher = getattr(server, "native_publisher", None)
+    if publisher is None or publisher.generation is not None:
+        return None
+    return {
+        "success": False,
+        "error": "native WS front door unbound; spawn refused until the publisher rebinds",
+    }
 
 
 async def build_spawn_context(

@@ -49,7 +49,9 @@ def _seat_definition(seat: str) -> AgentDefinitionBody:
     )
 
 
-async def _spawn_task_seat(case: LandingCase, task: Task, mock_runner: MagicMock, seat: str) -> str:
+async def _spawn_task_seat(
+    case: LandingCase, task: Task, mock_runner: MagicMock, seat: str, *, claim: bool = True
+) -> str:
     body = _seat_definition(seat)
     # The spawned session's authority is read from the installed row, not the patched body.
     AgentDefinitionManager(case.db).create(
@@ -89,6 +91,7 @@ async def _spawn_task_seat(case: LandingCase, task: Task, mock_runner: MagicMock
                 "prompt": "Run the assigned task.",
                 "parent_session_id": case.creator,
                 "task_id": task.id,
+                "claim": claim,
                 "checkout_mode": "none",
             },
         )
@@ -98,6 +101,7 @@ async def _spawn_task_seat(case: LandingCase, task: Task, mock_runner: MagicMock
     assert run is not None
     assert run.task_id == task.id
     assert run.child_session_id is not None
+    assert (run.resume_metadata_json or {})["claim"] is claim
     return run.child_session_id
 
 
@@ -176,3 +180,20 @@ async def test_current_or_former_claim_does_not_impose_a_runbook_role(
 
     assert landed["landed"] is True, landed
     assert case.git("rev-parse", "trunk") == sha
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owned", [False, True])
+async def test_assignment_without_claim_preserves_ownership(
+    case: LandingCase, mock_runner: MagicMock, owned: bool
+) -> None:
+    tasks = LocalTaskManager(case.db)
+    task = tasks.create_task(
+        case.project_id, "Assigned observer", validation_criteria="Preserve ownership"
+    )
+    if owned:
+        tasks.claim_task(task.id, session_id=case.creator)
+    child = await _spawn_task_seat(case, task, mock_runner, "code-reviewer", claim=False)
+    assert tasks.get_task(task.id).claimed_by_session_id == (case.creator if owned else None)
+    with case.db.transaction() as conn:
+        assert child not in claimant_sessions(conn, task.id)

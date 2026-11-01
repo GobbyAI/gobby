@@ -41,8 +41,10 @@ from gobby.storage.agents import TERMINAL_AGENT_RUN_STATUSES
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions._constants import TURN_ENDED_SESSION_STATUSES
+from gobby.storage.tasks import LocalTaskManager, TaskAlreadyClaimedError
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.terminals import TerminalManager
+from gobby.tasks.state_semantics import is_task_actionable
 from gobby.utils.git import run_to_completion
 from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -77,6 +79,7 @@ class RemoteSpawnRequest:
     caller_session_id: str | None = None
     requested_provider: str | None = None
     allow_closed_task: bool = False
+    claim: bool = True
     extra_write_paths: list[str] | None = None
     write_paths_reason: str | None = None
     reserved_run_id: str | None = None
@@ -102,7 +105,7 @@ def _refusal(error_code: str, message: str, **extra: Any) -> dict[str, Any]:
 
 def _resume_metadata(request: RemoteSpawnRequest, resume_target: Session | None) -> dict[str, Any]:
     """The run's durable launch metadata, as the local path records it."""
-    metadata: dict[str, Any] = {}
+    metadata: dict[str, Any] = {"claim": request.claim}
     if request.execution_mode is not None:
         metadata["execution_mode"] = request.execution_mode
     if request.idle_ttl_seconds is not None:
@@ -405,6 +408,20 @@ async def spawn_remote_agent(
                     tmux_config=daemon_config.tmux,
                 )
                 client = node_command_client()
+                if request.task_id and metadata.get("claim", True):
+                    try:
+                        claims = task_manager or LocalTaskManager(db)
+                        assigned = await asyncio.to_thread(claims.get_task, request.task_id)
+                        if is_task_actionable(assigned):
+                            await asyncio.to_thread(
+                                claims.claim_task_for_agent,
+                                request.task_id,
+                                child_session_id,
+                                expected_owner=request.parent_session_id,
+                            )
+                    except TaskAlreadyClaimedError:
+                        # A foreign owner retains the claim, including a racing claim.
+                        pass
             except Exception as exc:
                 return await _settle_unlaunched(
                     db,
@@ -463,4 +480,5 @@ async def spawn_remote_agent(
         "status": "pending",
         "child_session_id": child_session_id,
         "terminal_id": terminal_id,
+        "claim": metadata.get("claim", True),
     }

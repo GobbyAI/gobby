@@ -117,7 +117,13 @@ class TaskRecoveryHandler:
         task_id = db_run.task_id
         owner_session_id = db_run.child_session_id
 
-        if not task_id and owner_session_id:
+        if task_id:
+            assigned = await self._run_db(self._task_manager.get_task, task_id)
+            if assigned and is_task_actively_claimed(assigned, owner_session_id):
+                return task_id, assigned
+
+        task_id = None
+        if owner_session_id:
             # Any one claim will do; an explicit sort skips the hierarchy page.
             tasks = await self._run_db(
                 self._task_manager.list_tasks,

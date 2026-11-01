@@ -87,7 +87,9 @@ async def _evaluate_close(
         evaluation.candidate_commit_sha = task.closed_commit_sha
         return evaluation
     if definition is not None:
-        if refusal := task_scope_refusal(task, session_id, definition.task_close_scope):
+        if refusal := task_scope_refusal(
+            task, session_id, definition.task_close_scope, db=ctx.task_manager.db
+        ):
             return evaluation.refuse("task_close_scope_forbidden", refusal)
         if definition.respect_task_protections:
             try:
@@ -236,4 +238,5 @@ async def _evaluate_close(
     except ValueError as exc:
         return evaluation.refuse("closure_snapshot_unavailable", str(exc))
     evaluation.decision = prepared.decision
+    evaluation.facts = prepared.snapshot.facts
     return evaluation

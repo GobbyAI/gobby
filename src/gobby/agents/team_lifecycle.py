@@ -158,6 +158,17 @@ def check_team_spawn(db: HubDatabase, caller: Session, target: SeatTarget) -> No
         raise TeamAdmissionRefused(
             "team_task_mismatch", f"team {binding.team_id} is bound to task {binding.task_id}"
         )
+    if target.main_checkout:
+        from gobby.storage.project_checkouts import require_root
+
+        main = require_root(db, binding.project_id, caller.machine_id)
+        if (
+            target.worktree_id is not None
+            or target.project_path is None
+            or (Path(target.project_path).resolve() != Path(main).resolve())
+        ):
+            raise TeamAdmissionRefused("team_tree_mismatch", "this seat must use the main checkout")
+        return
     if target.worktree_id is None and target.project_path is None:
         raise TeamAdmissionRefused(
             "team_tree_required",

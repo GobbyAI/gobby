@@ -81,6 +81,7 @@ def _spawn_success(run_storage: LocalAgentRunManager, delay: float = 0.0) -> Asy
             child_session_id=child_session_id,
             run_id=request.agent_run_id,
             task_id=request.task_id,
+            resume_metadata_json=request.resume_metadata_json,
         )
         if delay:
             await asyncio.sleep(delay)
@@ -250,7 +251,7 @@ async def test_auto_claimed_task_titles_child_session(
             reasoning=MagicMock(),
         )
 
-        assert result == {"success": True}
+        assert result == {"success": True, "claim": True}
         update_title.assert_called_once_with(
             session_manager,
             child_session_id,
@@ -289,7 +290,7 @@ async def test_auto_claimed_task_titles_child_session(
             reasoning=MagicMock(),
         )
 
-        assert result == {"success": True}
+        assert result == {"success": True, "claim": True}
         task_manager.claim_task.assert_not_called()
         update_title.assert_not_called()
 
@@ -379,7 +380,7 @@ async def test_auto_claim_survives_runner_without_session_manager(
             reasoning=MagicMock(),
         )
 
-    assert result == {"success": True, "status": "starting"}
+    assert result == {"success": True, "status": "starting", "claim": True}
     task_manager.claim_task.assert_called_once_with(task_id, session_id=child_session_id)
     task_manager.release_task_claim.assert_not_called()
     update_title.assert_called_once_with(session_manager, child_session_id, claimed_task)
@@ -390,11 +391,7 @@ async def test_auto_claim_survives_runner_without_session_manager(
 async def test_team_manager_spawn_takes_no_task_claim(
     isolation_context: IsolationContext,
 ) -> None:
-    """A team manager spawned on its task never claims it (Dev Manager ruling).
-
-    The manager lands and closes its team's task, and land_commit refuses a session
-    that ever claimed the task. Its seats take the claim on their leaves instead.
-    """
+    """Explicit assignment-only spawning leaves task ownership untouched."""
     from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
 
     parent_session_id = "21000000-0000-4000-8000-000000000001"
@@ -447,7 +444,9 @@ async def test_team_manager_spawn_takes_no_task_claim(
             run_id="run-team-manager-no-claim",
             session_manager=session_manager,
             spawn_result=spawn_result,
-            spawn_request=None,
+            spawn_request=SimpleNamespace(
+                resume_metadata_json={"claim": False}, code_index_preflight_warning=None
+            ),
             isolation_ctx=isolation_context,
             effective_checkout_mode="worktree",
             base_commit_sha=None,
@@ -466,7 +465,7 @@ async def test_team_manager_spawn_takes_no_task_claim(
             reasoning=MagicMock(),
         )
 
-    assert result == {"success": True, "status": "starting"}
+    assert result == {"success": True, "status": "starting", "claim": False}
     start_run.assert_awaited_once()
     assert start_run.await_args is not None
     assert start_run.await_args.kwargs["child_session_id"] == child_session_id
@@ -1144,11 +1143,11 @@ class TestSpawnAgentPreRegistration:
                 },
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.subscribe_agent_completion",
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_phase.subscribe_agent_completion",
                 side_effect=record_subscription,
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.schedule_background_task",
+                "gobby.mcp_proxy.tools.spawn_agent._spawn_phase.schedule_background_task",
                 side_effect=record_schedule,
             ),
         ):

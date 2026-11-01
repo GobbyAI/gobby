@@ -7,6 +7,7 @@ rules:
     priority: 20
     when: >-
       reason == 'done' and task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+      'epic-devteam' not in (task.get('labels') or []) and
       facts.get('closure_intent', 'explicit') != 'ancestor' and
       any(latest_attestation(kind).get('result') != 'approved'
           for kind in ['test-before', 'implementation', 'test-after', 'validation', 'self-review', 'closing'])
@@ -20,6 +21,7 @@ rules:
     priority: 21
     when: &coding_tdd_order >-
       reason == 'done' and task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+      'epic-devteam' not in (task.get('labels') or []) and
       facts.get('closure_intent', 'explicit') != 'ancestor' and
       not (latest_attestation('test-before').get('sequence', 0) <
            latest_attestation('implementation').get('sequence', 0) <
@@ -34,6 +36,7 @@ rules:
     priority: 22
     when: >-
       reason == 'done' and task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+      'epic-devteam' not in (task.get('labels') or []) and
       facts.get('closure_intent', 'explicit') != 'ancestor' and
       (not task.get('commits') or
        not facts.get('candidate_commit_sha') or
@@ -52,6 +55,7 @@ rules:
     priority: 23
     when: >-
       reason == 'done' and task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+      'epic-devteam' not in (task.get('labels') or []) and
       facts.get('closure_intent', 'explicit') != 'ancestor' and
       (facts.get('task_files_clean') != True or facts.get('integration_ancestry') != True or
        facts.get('attribution_complete') != True)
@@ -65,6 +69,7 @@ rules:
     priority: 20
     when: >-
       task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+      'epic-devteam' not in (task.get('labels') or []) and
       any(latest_attestation(kind).get('result') != 'approved'
           for kind in ['test-before', 'implementation', 'test-after', 'validation', 'self-review'])
     effects:
@@ -86,6 +91,7 @@ rules:
     priority: 24
     when: &coding_candidate_evidence >-
       reason == 'done' and task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+      'epic-devteam' not in (task.get('labels') or []) and
       facts.get('closure_intent', 'explicit') != 'ancestor' and
       (not facts.get('candidate_commit_sha') or
        any((latest_attestation(kind).get('reference') or {}).get('scheme') != 'git' or

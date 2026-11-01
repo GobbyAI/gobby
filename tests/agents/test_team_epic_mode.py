@@ -104,7 +104,7 @@ async def test_epic_admission_names_and_mode(world: TeamWorld) -> None:
     assert tree_of(bare_team).name == f"wt-epic-{bare.seq_num}"
     assert bare_team.branch == f"epic/{bare.seq_num}/main"
 
-    # A leaf under an unadmitted epic, and an epic with no open descendants, stay single-task.
+    # A leaf under an unadmitted epic stays single-task; empty epics retain epic identity.
     other = new_task(world, "Another epic", epic=True)
     leaf = new_task(world, LEAF_TITLE, parent=other)
     leaf_run = world.child(leaf)
@@ -114,8 +114,8 @@ async def test_epic_admission_names_and_mode(world: TeamWorld) -> None:
     empty = new_task(world, "An empty epic", epic=True)
     empty_run = world.child(empty)
     empty_team = await world.admit(empty_run, empty)
-    assert empty_team.branch == f"task-{empty.seq_num}-an-empty-epic"
-    assert team_record(world, empty_run)["mode"] == "single"
+    assert empty_team.branch == f"epic/{empty.seq_num}/main"
+    assert team_record(world, empty_run)["mode"] == "epic"
 
 
 def test_spawn_default_branch_name_is_unchanged() -> None:
@@ -156,16 +156,19 @@ async def test_overlapping_admissions_refused(world: TeamWorld) -> None:
         assert refusal.code == "team_overlap"
         assert epic_team.team_id in str(refusal)
 
-    # A descendant claimed by a session outside the admitting team blocks the epic.
+    # A foreign claim remains untouched while the epic admits ready sibling work.
     third = new_task(world, "Third epic", epic=True)
     claimed = new_task(world, LEAF_TITLE, parent=third)
     LocalTaskManager(world.case.db).claim_task(claimed.id, world.case.claimant, force=True)
-    refusal = await refused(world, world.child(third), third)
-    assert refusal.code == "team_descendant_claimed"
-    assert claimed.id in str(refusal)
+    third_team = await world.admit(world.child(third), third)
+    assert (
+        LocalTaskManager(world.case.db).get_task(claimed.id).claimed_by_session_id
+        == world.case.claimant
+    )
 
-    # Refusals created nothing: only the two admitted teams own trees.
-    assert sorted(world.tree_ids()) == sorted([tree_id_of(leaf_team), tree_id_of(epic_team)])
+    assert sorted(world.tree_ids()) == sorted(
+        [tree_id_of(leaf_team), tree_id_of(epic_team), tree_id_of(third_team)]
+    )
 
 
 @pytest.mark.asyncio
@@ -395,13 +398,11 @@ async def test_topology_and_bound_close_teardown(world: TeamWorld) -> None:
     tasks.close_task(epic.id, reason="done", closed_in_session_id=owner)
     assert [binding.team_id for binding in await teardown_pass()] == [team.team_id]
 
-    # A non-epic descendant with open children is neither a container nor a leaf.
+    # Non-epic containers are valid traversal nodes, with implementation leaves beneath them.
     bad = new_task(world, "Malformed epic", epic=True)
     parent_leaf = new_task(world, "Parent leaf", parent=bad)
     new_task(world, "Child of a leaf", parent=parent_leaf)
     bad_run = world.child(bad)
-    refusal = await refused(world, bad_run, bad)
-    assert refusal.code == "team_epic_topology"
-    assert parent_leaf.id in str(refusal)
-    assert world.admit_step_output(bad_run) == {}
-    assert world.tree_ids() == [team.worktree_id]
+    nested_team = await world.admit(bad_run, bad)
+    assert team_record(world, bad_run)["mode"] == "epic"
+    assert sorted(world.tree_ids()) == sorted([tree_id_of(team), tree_id_of(nested_team)])

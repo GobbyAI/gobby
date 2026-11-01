@@ -47,7 +47,10 @@ def _may_release_own_claim(
         task.project_id == caller.project_id
         and definition is not None
         and "release_own_claim" in definition[0].capabilities
-        and task_scope_refusal(task, caller.id, definition[0].task_claim_scope) is None
+        and task_scope_refusal(
+            task, caller.id, definition[0].task_claim_scope, db=ctx.task_manager.db
+        )
+        is None
     )
 
 
@@ -193,7 +196,10 @@ def _may_manage_claim(ctx: RegistryContext, caller: Session, task_id: str) -> bo
     task = ctx.task_manager.get_task(task_id)
     return (
         task.project_id == caller.project_id
-        and task_scope_refusal(task, caller.id, definition[0].task_claim_scope) is None
+        and task_scope_refusal(
+            task, caller.id, definition[0].task_claim_scope, db=ctx.task_manager.db
+        )
+        is None
     )
 
 

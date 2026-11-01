@@ -100,6 +100,8 @@ def open_descendants(db: HubDatabase, task_id: str) -> list[ScopedTask]:
 
 def open_leaf_below(db: HubDatabase, epic_id: str, task_id: str) -> ScopedTask | None:
     """The open, non-epic task ``task_id`` below ``epic_id``, or None."""
+    if db.fetchone("SELECT id FROM tasks WHERE parent_task_id = %s LIMIT 1", (task_id,)):
+        return None
     return next(
         (
             task
@@ -171,23 +173,7 @@ def admission_mode(db: HubDatabase, task: Task) -> str:
             "team_overlap",
             f"task {team.task_id} under epic {task.id} has live team {team.team_id}",
         )
-    for descendant in descendants:
-        if descendant.claimed_by_session_id:
-            raise ScopeRefused(
-                "team_descendant_claimed",
-                f"task {descendant.id} under epic {task.id} is claimed; release it first",
-            )
-    parents = {d.parent_task_id for d in descendants}
-    for descendant in descendants:
-        if descendant.task_type != EPIC_TASK_TYPE and descendant.id in parents:
-            raise ScopeRefused(
-                "team_epic_topology",
-                f"task {descendant.id} under epic {task.id} is not a leaf: it has open "
-                "children; the Orchestrator places found-work leaves under an epic",
-            )
-    if any(d.task_type != EPIC_TASK_TYPE for d in descendants):
-        return EPIC_MODE
-    return SINGLE_MODE
+    return EPIC_MODE
 
 
 def epic_team_above(db: HubDatabase, task_id: str) -> ScopeTeam | None:

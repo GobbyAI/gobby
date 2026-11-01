@@ -107,7 +107,8 @@ async def test_pair_admission_supplies_both_seats_one_checkout_and_one_claim(
 
     admitted = context["steps"]["admit"]["output"]
     assert developer["task_id"] == task.id
-    assert "task_id" not in reviewer
+    assert reviewer["task_id"] == task.id
+    assert reviewer["claim"] is False
     assert developer["project_path"] == reviewer["project_path"] == admitted["project_path"]
     assert Path(admitted["project_path"]).is_dir()
     assert developer["checkout_mode"] == reviewer["checkout_mode"] == "none"

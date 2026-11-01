@@ -8,11 +8,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.agents.completion_subscribers import subscribe_agent_completion
+from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
 from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import (
     SpawnCleanupOnce,
     cleanup_failed_spawn,
     remember_spawn_pid,
 )
+from gobby.utils.git import run_thread_to_completion
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,40 @@ class SpawnPhase:
     spawn_identity: dict[str, Any]
     reasoning: Any
     cleanup_once: SpawnCleanupOnce
+
+    async def subscribe_parent(self, session_id: str, db: Any) -> None:
+        """Keep completion subscription failures separate from launch admission."""
+        try:
+            await run_thread_to_completion(
+                subscribe_agent_completion,
+                completion_registry=self.completion_registry,
+                run_id=self.run_id,
+                subscriber_session_id=session_id,
+                db=db,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to subscribe parent session to agent completion for run %s",
+                self.run_id,
+                exc_info=True,
+            )
+
+    async def start_background(
+        self, tasks: dict[str, asyncio.Task[None]], response: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Schedule this phase, cleaning a failed scheduling attempt through its owner."""
+        try:
+            schedule_background_task(
+                tasks,
+                self.run_id,
+                self.run,
+                name=f"gobby-agent-spawn-{self.run_id}",
+                logger=logger,
+                description="Agent spawn background task",
+            )
+        except RuntimeError as exc:
+            return await self.fail(str(exc) or type(exc).__name__)
+        return response
 
     async def fail(self, error: str, *, infrastructure: bool = False) -> dict[str, Any]:
         if infrastructure:

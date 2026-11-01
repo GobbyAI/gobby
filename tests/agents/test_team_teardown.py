@@ -63,6 +63,18 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("granted", [False, True])
+async def test_team_main_checkout_grant(world: TeamWorld, granted: bool) -> None:
+    team = await admitted_team(world, "Coordinator checkout")
+    target = SeatTarget(project_path=str(world.case.repo), main_checkout=granted)
+    if granted:
+        check_team_spawn(world.case.db, team.runbook, target)
+    else:
+        with pytest.raises(TeamAdmissionRefused, match="works in"):
+            check_team_spawn(world.case.db, team.runbook, target)
+
+
 @pytest.fixture
 def world(
     temp_db: HubDatabase,
@@ -133,7 +145,7 @@ def seat_run(db: HubDatabase, team: Team, index: int) -> AgentRun:
 
 
 def park(db: HubDatabase, team: Team, index: int) -> AgentRun:
-    """A daemon stop parked ``team.seats[index]``: run cancelled, process gone, session paused."""
+    """A daemon stop parked ``team.seats[index]``: run cancelled, process gone, session idle."""
     session = team.seats[index]
     runs = LocalAgentRunManager(db)
     run = seat_run(db, team, index)
@@ -142,7 +154,7 @@ def park(db: HubDatabase, team: Team, index: int) -> AgentRun:
     runs.merge_resume_metadata(run.id, {"provider_native_session_id": f"native-{index}"})
     parked = runs.cancel(run.id, terminal_reason="daemon_stop")
     assert parked is not None and (parked.status, parked.pid) == ("cancelled", None)
-    assert session_status(db, session) == "paused"
+    assert session_status(db, session) == "idle"
     return parked
 
 
@@ -480,7 +492,7 @@ async def test_teardown_does_not_escalate_when_every_seat_ended_cooperatively(
         assert runs.start(run.id) is not None
         assert runs.complete(run.id, result="Seat ended.") is not None
     assert {session_status(db, s) for s in team.seats if s != team.seats[1]} == {"expired"}
-    assert session_status(db, team.seats[1]) == "paused"
+    assert session_status(db, team.seats[1]) == "idle"
     seat_row = SessionManager(db).get(team.seats[1])
     assert seat_row is not None and seat_row.agent_run_id == stale.id
     closed = close(world, team, land(world, team, "cooperative.py"))
@@ -517,7 +529,7 @@ async def test_recovery_does_not_relaunch_a_torn_down_seat(
 
     assert resumed == 1
     assert [call.args[0].id for call in resume.await_args_list] == [parked.id]
-    assert session_status(db, waiting.seats[1]) == "paused", "the open team's seat still waits"
+    assert session_status(db, waiting.seats[1]) == "idle", "the open team's seat still waits"
 
 
 @pytest.mark.asyncio
@@ -664,7 +676,7 @@ async def test_treeless_team_closes_its_seats_without_deleting_a_tree(
     runbook = world.child(task)
     binding = await world.admit(runbook, task, checkout_mode="none")
     world.finish(runbook)
-    researcher = seat(world, runbook, binding, "researcher")
+    researcher = seat(world, runbook, binding, "researcher", manages=task)
     team = Team(task, runbook, binding, [researcher])
     closed = close(world, team, commit(team, "report.md"))
     deleted: list[TeamBinding] = []
