@@ -119,18 +119,30 @@ fn sync_pinned_vector_file(
     locks: &ProjectFileLockSet,
 ) -> anyhow::Result<()> {
     let mut lifecycle = lifecycle_from_context(ctx)?;
-    let Some(output) =
-        pinned::sync_vector_attempt(conn, &ctx.project_id, &mut lifecycle, file_path, pin)?
-    else {
-        return print_skipped_sync_file(
-            ctx,
-            file_path,
-            format,
-            locks,
-            SyncFileSkip::Superseded,
-            None,
-        );
-    };
+    let output =
+        match pinned::sync_vector_attempt(conn, &ctx.project_id, &mut lifecycle, file_path, pin)? {
+            pinned::PinnedVectorSync::Synced(output) => output,
+            pinned::PinnedVectorSync::Superseded => {
+                return print_skipped_sync_file(
+                    ctx,
+                    file_path,
+                    format,
+                    locks,
+                    SyncFileSkip::Superseded,
+                    None,
+                );
+            }
+            pinned::PinnedVectorSync::SourceChanged => {
+                return print_skipped_sync_file(
+                    ctx,
+                    file_path,
+                    format,
+                    locks,
+                    SyncFileSkip::SourceChanged,
+                    None,
+                );
+            }
+        };
     let report = ProjectionSyncReport::ok(1, output.symbols);
     print_file_lifecycle_output(&output, report, format, locks)
 }
