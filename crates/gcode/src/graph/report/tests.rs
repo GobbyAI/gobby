@@ -1088,9 +1088,10 @@ mod hotspot_snapshot_contract {
 
     use super::super::DEFAULT_TOP_LIMIT;
     use super::super::hotspot_snapshot::{
-        SNAPSHOT_FORMAT_VERSION, StoredSnapshot, admitted_digest, decode_payload, encode_payload,
-        hotspots_on_miss, invalidate_after_write, invalidate_snapshots_query,
-        refresh_failure_degradation, stored_hotspots_for,
+        SNAPSHOT_FORMAT_VERSION, StoredSnapshot, admitted_digest, commit_snapshot_query,
+        decode_payload, encode_payload, hotspots_on_miss, invalidate_after_write,
+        invalidate_snapshots_query, refresh_failure_degradation, reserve_snapshot_query,
+        snapshot_nonce, stored_hotspots_for,
     };
     use super::super::types::{GraphHotspot, GraphReportHotspots};
 
@@ -1211,6 +1212,62 @@ mod hotspot_snapshot_contract {
         assert!(query.contains("DELETE s"), "{query}");
         assert!(query.contains("$project IN s.namespaces"), "{query}");
         assert_eq!(params.get("project").map(String::as_str), Some("source-1"));
+    }
+
+    #[test]
+    fn reservation_names_the_namespaces_and_holds_no_servable_snapshot() {
+        let namespaces = [
+            namespace("overlay-1", &[], &[]),
+            namespace("source-1", &[], &[]),
+        ];
+
+        let reserve = reserve_snapshot_query("overlay-1", &namespaces, "nonce-a").unwrap();
+
+        assert!(reserve.cypher.starts_with("MERGE"), "{}", reserve.cypher);
+        assert!(
+            reserve.cypher.contains("s.nonce = $nonce"),
+            "{}",
+            reserve.cypher
+        );
+        assert!(
+            reserve.cypher.contains("s.namespaces = $namespaces"),
+            "{}",
+            reserve.cypher
+        );
+        assert!(
+            reserve.cypher.contains("s.payload = NULL"),
+            "{}",
+            reserve.cypher
+        );
+        assert!(
+            reserve.cypher.contains("s.digest = NULL"),
+            "{}",
+            reserve.cypher
+        );
+        assert_eq!(reserve.params["nonce"], "'nonce-a'");
+        assert_eq!(reserve.params["namespaces"], "['overlay-1', 'source-1']");
+    }
+
+    #[test]
+    fn commit_writes_only_into_its_own_surviving_reservation() {
+        let commit =
+            commit_snapshot_query("overlay-1", "digest-a", "nonce-a", &ranked_symbols(1)).unwrap();
+
+        assert!(commit.cypher.starts_with("MATCH"), "{}", commit.cypher);
+        assert!(!commit.cypher.contains("MERGE"), "{}", commit.cypher);
+        assert!(commit.cypher.contains("nonce: $nonce"), "{}", commit.cypher);
+        assert!(
+            commit.cypher.contains("s.payload = $payload"),
+            "{}",
+            commit.cypher
+        );
+        assert_eq!(commit.params["nonce"], "'nonce-a'");
+        assert_eq!(commit.params["digest"], "'digest-a'");
+    }
+
+    #[test]
+    fn snapshot_nonces_differ_per_reservation() {
+        assert_ne!(snapshot_nonce(), snapshot_nonce());
     }
 
     #[test]

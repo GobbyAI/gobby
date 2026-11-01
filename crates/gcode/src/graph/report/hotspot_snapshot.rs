@@ -8,9 +8,13 @@
 //! next report; without that authority it computes the same stages live.
 //!
 //! Writers invalidate every snapshot whose namespaces include the written project,
-//! so a stale digest is never served.
+//! so a stale digest is never served. A save first reserves the node with a fresh
+//! nonce and commits only into that reservation, so a write that lands mid-compute
+//! deletes the reservation and the stale result is dropped.
 
 use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context as _;
 use gobby_core::degradation::ServiceState;
@@ -198,9 +202,7 @@ pub(crate) fn read_stored_hotspots(
 /// lacks write authority, or `top_n` asks for more rows than a snapshot stores.
 /// Otherwise the stages run once at `DEFAULT_TOP_LIMIT`, the full result is saved,
 /// and a copy truncated to `top_n` is served. A failed save only logs, symmetric
-/// with a failed snapshot read. Like `refresh_after_index`, the save is not fenced
-/// against a graph write that lands mid-compute; that writer's invalidation runs
-/// first, so its change shows up after the next write or index.
+/// with a failed snapshot read.
 pub(crate) fn hotspots_on_miss<T>(
     state: &mut T,
     top_n: usize,
@@ -232,12 +234,22 @@ pub(crate) fn report_hotspots_on_miss(
         log::warn!("hotspot snapshot write authority check failed; computing live: {error:#}");
         false
     });
+    let nonce = snapshot_nonce();
     hotspots_on_miss(
         client,
         top_n,
         may_save,
-        |client, limit| load_stored_hotspot_inputs(client, namespaces, limit),
-        |client, hotspots| write_snapshot(client, &ctx.project_id, namespaces, digest, hotspots),
+        |client, limit| {
+            // A failed reservation leaves nothing for the commit to match, so the
+            // report still computes and the save drops.
+            if let Err(error) = reserve_snapshot(client, &ctx.project_id, namespaces, &nonce) {
+                log::warn!(
+                    "hotspot snapshot reservation failed; computing without a save: {error:#}"
+                );
+            }
+            load_stored_hotspot_inputs(client, namespaces, limit)
+        },
+        |client, hotspots| commit_snapshot(client, &ctx.project_id, digest, &nonce, hotspots),
     )
 }
 
@@ -267,8 +279,10 @@ fn refresh_snapshot(client: &mut GraphClient, ctx: &Context) -> anyhow::Result<(
     if stored_hotspots_for(stored.as_ref(), &digest, DEFAULT_TOP_LIMIT).is_some() {
         return Ok(());
     }
+    let nonce = snapshot_nonce();
+    reserve_snapshot(client, &ctx.project_id, &namespaces, &nonce)?;
     let hotspots = load_stored_hotspot_inputs(client, &namespaces, DEFAULT_TOP_LIMIT)?;
-    write_snapshot(client, &ctx.project_id, &namespaces, &digest, &hotspots)
+    commit_snapshot(client, &ctx.project_id, &digest, &nonce, &hotspots)
 }
 
 fn read_snapshot(
@@ -297,28 +311,68 @@ fn row_snapshot(row: &Row) -> Option<StoredSnapshot> {
     })
 }
 
-fn write_snapshot(
-    client: &mut GraphClient,
+/// A fresh token for one snapshot reservation. The process id, wall clock and a
+/// per-process counter keep concurrent reservations apart.
+pub(crate) fn snapshot_nonce() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let count = NEXT.fetch_add(1, Ordering::Relaxed);
+    format!("{}-{nanos}-{count}", std::process::id())
+}
+
+/// Cypher that claims the snapshot node before a compute. It names the namespaces,
+/// so a writer's invalidation deletes it, and clears the payload and digest, so no
+/// report serves it while the compute runs.
+pub(crate) fn reserve_snapshot_query(
     snapshot_project: &str,
     namespaces: &[AdmittedNamespace],
-    digest: &str,
-    hotspots: &GraphReportHotspots,
-) -> anyhow::Result<()> {
+    nonce: &str,
+) -> anyhow::Result<TypedQuery> {
     let namespace_ids = namespaces
         .iter()
         .map(|namespace| TypedValue::String(namespace.project_id.clone()))
         .collect();
-    let query = TypedQuery::with_params(
+    Ok(TypedQuery::with_params(
         format!(
             "MERGE (s:{SNAPSHOT_LABEL} {{snapshot_project: $snapshot_project}})
-             SET s.format = $format, s.top_n = $top_n, s.digest = $digest,
-                 s.payload = $payload, s.namespaces = $namespaces"
+             SET s.nonce = $nonce, s.namespaces = $namespaces,
+                 s.payload = NULL, s.digest = NULL"
         ),
         [
             (
                 "snapshot_project",
                 TypedValue::String(snapshot_project.to_string()),
             ),
+            ("nonce", TypedValue::String(nonce.to_string())),
+            ("namespaces", TypedValue::List(namespace_ids)),
+        ],
+    )?)
+}
+
+/// Cypher that fills the reservation holding `nonce`. When a graph write deleted
+/// the reservation mid-compute, or a later reservation replaced it, nothing matches
+/// and the computed snapshot is dropped.
+pub(crate) fn commit_snapshot_query(
+    snapshot_project: &str,
+    digest: &str,
+    nonce: &str,
+    hotspots: &GraphReportHotspots,
+) -> anyhow::Result<TypedQuery> {
+    Ok(TypedQuery::with_params(
+        format!(
+            "MATCH (s:{SNAPSHOT_LABEL} {{snapshot_project: $snapshot_project, nonce: $nonce}})
+             SET s.format = $format, s.top_n = $top_n, s.digest = $digest,
+                 s.payload = $payload
+             RETURN count(s) AS saved"
+        ),
+        [
+            (
+                "snapshot_project",
+                TypedValue::String(snapshot_project.to_string()),
+            ),
+            ("nonce", TypedValue::String(nonce.to_string())),
             (
                 "format",
                 TypedValue::Integer(i64::from(SNAPSHOT_FORMAT_VERSION)),
@@ -329,10 +383,40 @@ fn write_snapshot(
             ),
             ("digest", TypedValue::String(digest.to_string())),
             ("payload", TypedValue::String(encode_payload(hotspots))),
-            ("namespaces", TypedValue::List(namespace_ids)),
         ],
-    )?;
-    let TypedQuery { cypher, params } = query;
-    client.query(&cypher, Some(params))?;
+    )?)
+}
+
+fn reserve_snapshot(
+    client: &mut GraphClient,
+    snapshot_project: &str,
+    namespaces: &[AdmittedNamespace],
+    nonce: &str,
+) -> anyhow::Result<()> {
+    let TypedQuery { cypher, params } =
+        reserve_snapshot_query(snapshot_project, namespaces, nonce)?;
+    client
+        .query(&cypher, Some(params))
+        .context("reserve graph hotspot snapshot")?;
+    Ok(())
+}
+
+fn commit_snapshot(
+    client: &mut GraphClient,
+    snapshot_project: &str,
+    digest: &str,
+    nonce: &str,
+    hotspots: &GraphReportHotspots,
+) -> anyhow::Result<()> {
+    let TypedQuery { cypher, params } =
+        commit_snapshot_query(snapshot_project, digest, nonce, hotspots)?;
+    let rows = client
+        .query(&cypher, Some(params))
+        .context("save graph hotspot snapshot")?;
+    if rows.first().and_then(|row| row_usize(row, &["saved"])) != Some(1) {
+        log::debug!(
+            "hotspot snapshot for {snapshot_project} dropped: a graph write or newer reservation replaced it mid-compute"
+        );
+    }
     Ok(())
 }
