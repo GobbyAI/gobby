@@ -173,3 +173,69 @@ def test_yielded_unknown_cell_survives_compaction_and_still_fails_closed(
     event, response = _hook(event_handlers, tmp_path, records)
     assert response.decision == "block", current_tool_cwd(event.data)
     assert "cannot prove its working directory" in (response.reason or "")
+
+
+TASK_COMMAND = (
+    "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test "
+    "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_team_epic_runbook.py -v"
+)
+LOOP_CELLS = {
+    "for_loop": (
+        'for (const i of [1]) { text(await tools.exec_command({cmd:"uv run pytest",'
+        'workdir:"/elsewhere"})); }'
+    ),
+    "map_loop": (
+        '[1].map(() => text(await tools.exec_command({cmd:"uv run pytest",workdir:"/elsewhere"})));'
+    ),
+    "promise_all": (
+        'await Promise.all([tools.exec_command({cmd:"uv run pytest",workdir:"/elsewhere"})]);'
+    ),
+    # A call repeated inside a template interpolation is invisible to a code-only view, which
+    # sees only the outer call. The map must stay visible to the scaffold scan.
+    "hidden_call_under_map": (
+        '`${[1, 2].map(() => tools.exec_command({cmd:"uv run pytest",workdir:"/elsewhere"}))}`;'
+        ' text(await tools.exec_command({cmd:"uv run pytest",workdir:"/elsewhere"}));'
+    ),
+}
+
+
+def _contract_cell(command: str, workdir: Path | str) -> str:
+    """One exec_command with literal cmd and workdir, plus the output-budget keys."""
+    return (
+        f"text(await tools.exec_command({{cmd:{json.dumps(command)},"
+        f"workdir:{json.dumps(str(workdir))},max_output_tokens:3000,yield_time_ms:1000}}));"
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "segment"),
+    [
+        (TASK_COMMAND, "task-25455-update-testteamepicrunbookpy-for-the-v5"),
+        (TASK_COMMAND, "task-do-review"),
+        (TASK_COMMAND, "task-while-review"),
+        ("for f in tests/a.py; do uv run pytest $f; done", "task"),
+    ],
+)
+def test_contract_cell_proves_cwd_when_loop_words_are_literal_data(
+    event_handlers: EventHandlers, tmp_path: Path, command: str, segment: str
+) -> None:
+    """Loop words in a literal workdir or command are data, not a repeated exec_command."""
+    workdir = tmp_path / segment
+    records = [_call("contract", _contract_cell(command, workdir))]
+    event, response = _hook(event_handlers, tmp_path, records, command=command)
+    assert response.decision == "allow", response.reason
+    assert current_tool_cwd(event.data) == workdir
+
+
+@pytest.mark.parametrize("name", list(LOOP_CELLS))
+def test_loop_in_cell_code_still_fails_closed(
+    event_handlers: EventHandlers, tmp_path: Path, name: str
+) -> None:
+    workdir = tmp_path / "task"
+    records = [
+        _call("loop", LOOP_CELLS[name]),
+        _call("pytest", _contract_cell(TASK_COMMAND, workdir)),
+    ]
+    event, response = _hook(event_handlers, tmp_path, records, command=TASK_COMMAND)
+    assert response.decision == "block", current_tool_cwd(event.data)
+    assert "cannot prove its working directory" in (response.reason or "")

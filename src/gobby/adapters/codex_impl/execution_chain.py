@@ -41,6 +41,10 @@ _EXEC_COMMAND_LITERAL_RE = re.compile(
     r'(?:^|[{,])\s*(?:cmd|"cmd")\s*:\s*("(?:\\.|[^"\\])*")',
     re.DOTALL,
 )
+_EXEC_WORKDIR_LITERAL_RE = re.compile(
+    r'(?:^|[{,])\s*(?:workdir|"workdir")\s*:\s*("(?:\\.|[^"\\])*")',
+    re.DOTALL,
+)
 _EXEC_RESULT_CALL_RE = re.compile(r"\btools\.(?:exec_command|write_stdin)\s*\(")
 _AWAITED_TOOL_RESULT_RE = re.compile(r"await\s+tools\.[$\w]+\s*\(")
 _TOOL_RESULT_BINDING_RE = re.compile(
@@ -78,6 +82,10 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
     if len(matches) != 1:
         return None
     scaffold = arguments.replace(matches[0], '""', 1)
+    # The literal workdir is data too, so a path such as task-for-x is not a loop.
+    workdirs = _EXEC_WORKDIR_LITERAL_RE.findall(call)
+    if len(workdirs) == 1:
+        scaffold = scaffold.replace(workdirs[0], '""', 1)
     if _REPEATED_EXEC_SCAFFOLD_RE.search(scaffold):
         return None
     try:
