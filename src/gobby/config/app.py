@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -141,6 +142,11 @@ def _apply_test_logging_overrides(config_dict: dict[str, Any]) -> None:
         logging_config["dir"] = str(resolved_dir)
 
 
+_MCP_ALLOWED_HOST_PATTERN = re.compile(
+    r"(?:\[[0-9a-f:.]+\]|[a-z0-9-]+(?:\.[a-z0-9-]+)*)(?::(?:[0-9]{1,5}|\*))?"
+)
+
+
 class DaemonConfig(BaseModel):
     """
     Main configuration for Gobby daemon.
@@ -218,6 +224,13 @@ class DaemonConfig(BaseModel):
         default_factory=lambda: ["http://localhost:*", "https://localhost:*"],
         description="Allowed CORS origins. Defaults to localhost only. "
         "Add your Tailscale hostname (e.g., 'https://myhost.tail*.ts.net') for remote access.",
+    )
+    mcp_allowed_hosts: list[str] = Field(
+        default_factory=list,
+        description="Extra Host header values accepted on the /mcp HTTP route while the daemon "
+        "binds loopback, for example 'myhost.tail4125a0.ts.net' behind Tailscale Funnel. Each "
+        "value must equal the forwarded Host header; append ':*' to accept any port. Bearer "
+        "auth still applies to every request.",
     )
 
     # Hub connection settings
@@ -493,6 +506,19 @@ class DaemonConfig(BaseModel):
     def get_search_config(self) -> SearchConfig:
         """Get search configuration."""
         return self.search
+
+    @field_validator("mcp_allowed_hosts")
+    @classmethod
+    def validate_mcp_allowed_hosts(cls, values: list[str]) -> list[str]:
+        """Accept only Host header values: no scheme, path, wildcard host, or uppercase."""
+        for value in values:
+            if _MCP_ALLOWED_HOST_PATTERN.fullmatch(value) is None:
+                raise ValueError(
+                    f"mcp_allowed_hosts entry {value!r} must be a lowercase Host header value "
+                    "such as 'myhost.tail4125a0.ts.net' or 'myhost.tail4125a0.ts.net:8443' "
+                    "(no scheme or path); append ':*' to accept any port"
+                )
+        return values
 
     @field_validator("daemon_port")
     @classmethod
