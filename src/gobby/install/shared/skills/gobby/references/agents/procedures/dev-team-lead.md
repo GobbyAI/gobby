@@ -2,7 +2,8 @@
 
 Lead one task or epic with the developer and independent reviewer. Stay in the
 main checkout. Read project_policy, task.validation_criteria and the exact diff.
-Observe actual claims, teams and evidence with team_progress after every resume.
+Observe actual claims, teams and evidence with gobby-tasks:team_progress after every
+resume; read a team's admitted binding with gobby-tasks:get_team.
 Use durable wait_for_coordination subscriptions; re-arm after interim replies.
 
 ## Claims and evidence
@@ -75,6 +76,6 @@ with the same target. If any proof fails, preserve the tree and report the block
 Report task, SHA, checks and cleanup to report_to/Triage. Route genuine blockers
 through Triage, preserving holds and dependencies.
 
-_Version: 2.2.0_
+_Version: 2.2.1_
 
 _Last verified: 2026-11-01_

@@ -15,6 +15,7 @@ import yaml
 
 from gobby.adapters.capabilities import GROK_MODEL_REASON_WINDOW_CHARS
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.skills.formatting import SKILL_BLOCK_ATOMICITY_NOTICE
 from gobby.storage.agents import LocalAgentRunManager
@@ -112,6 +113,125 @@ async def test_researcher_title_and_report_writes_follow_step_and_path_scope(
                 assert "research-artifact-write-scope" in (response.reason or "")
     current = instance_mgr.get_for_session(SESSION_ID)
     assert current is not None and current.current_step == step
+
+
+@pytest.mark.asyncio
+async def test_team_lead_writes_only_its_workspace_folders(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    tmp_path: Path,
+) -> None:
+    install = Path(__file__).parents[2] / "src/gobby/install/shared/workflows"
+    lead = yaml.safe_load((install / "agents/dev-team-lead.yaml").read_text())
+    scope_bundle = yaml.safe_load((install / "rules/roles/seat-write-scope.yaml").read_text())
+    project = tmp_path / "project"
+    session_dir = tmp_path / "workspace" / "dev-team-lead" / "session-1"
+    epic_dir = tmp_path / "workspace" / "epics" / "epic-1"
+    definition: dict[str, Any] = {
+        "name": "dev-team-lead",
+        "blocked_tools": lead["blocked_tools"],
+        "blocked_mcp_tools": [],
+        "workflows": {"rule_selectors": {"include": ["name:team-lead-write-scope"]}},
+        "steps": [{"name": "schedule"}],
+    }
+    variables = {
+        "_agent_blocked_tools": lead["blocked_tools"],
+        "_agent_blocked_mcp_tools": [],
+        "_agent_type": "dev-team-lead",
+        "_agent_workspace_dir": str(session_dir),
+        "_agent_workspace_epic_dir": str(epic_dir),
+    }
+    _setup_step_workflow(
+        db, manager, instance_mgr, current_step="schedule", workflow_data=definition
+    )
+    scope_rule = scope_bundle["rules"]["team-lead-write-scope"]
+    RuleDefinitionManager(db).create(
+        name="team-lead-write-scope",
+        definition_json={key: scope_rule[key] for key in ("event", "when", "effects")},
+        tags=scope_bundle["tags"],
+    )
+    cases = (
+        ("Write", session_dir / "state.json", True),
+        ("Write", epic_dir / "state.json", True),
+        ("Write", project / "src" / "app.py", False),
+        ("Edit", epic_dir / "state.json", False),
+    )
+    for tool, path, allowed in cases:
+        response = await engine.evaluate(
+            _make_event(
+                data={
+                    "tool_name": tool,
+                    "tool_input": {"file_path": str(path)},
+                    "canonical_tool_kind": "write",
+                    "canonical_file_paths": [str(path)],
+                    "project_path": str(project),
+                    "cwd": str(project),
+                }
+            ),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+        assert (response.decision != "block") is allowed, (tool, path, response)
+        if tool == "Write" and not allowed:
+            assert "team-lead-write-scope" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_pod_launch_refusal_is_the_seat_block_reason(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    """A refused pod launch tells the seat why, through the rule's rendered block reason."""
+    from gobby.storage.sessions import SessionManager
+    from gobby.workflows.condition_helpers_pods import dev_pod_launch_refusal
+
+    install = Path(__file__).parents[2] / "src/gobby/install/shared/workflows"
+    policy = yaml.safe_load((install / "rules/roles/seat-spawn-policy.yaml").read_text())
+    rule = policy["rules"]["seat-no-pipeline-launch"]
+    definition: dict[str, Any] = {
+        "name": "fixture-triage",
+        "blocked_tools": [],
+        "blocked_mcp_tools": [],
+        "workflows": {"rule_selectors": {"include": ["name:seat-no-pipeline-launch"]}},
+        "steps": [{"name": "wait"}],
+    }
+    _setup_step_workflow(db, manager, instance_mgr, current_step="wait", workflow_data=definition)
+    RuleDefinitionManager(db).create(
+        name="seat-no-pipeline-launch",
+        definition_json={key: rule[key] for key in ("event", "when", "effects")},
+        tags=policy["tags"],
+    )
+    arguments = {"name": "dev-team", "inputs": {"task": "#1", "parent_team_id": "team-1"}}
+    refusal = dev_pod_launch_refusal(
+        SessionManager(db), SESSION_ID, "run_pipeline", arguments, ["dev-team"]
+    )
+    assert refusal is not None
+
+    data: dict[str, Any] = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-workflows",
+            "tool_name": "run_pipeline",
+            "arguments": arguments,
+        },
+    }
+    normalize_tool_fields(data)
+    response = await engine.evaluate(
+        _make_event(data=data, metadata={"_platform_session_id": SESSION_ID}),
+        session_id=SESSION_ID,
+        variables={
+            "_agent_type": "fixture-triage",
+            "_agent_blocked_tools": [],
+            "_agent_blocked_mcp_tools": [],
+        },
+    )
+
+    assert response.decision == "block"
+    assert refusal in (response.reason or "")
 
 
 @pytest.mark.asyncio

@@ -836,7 +836,7 @@ async def test_dev_pod_launch_requires_its_running_epic_manager_and_own_leaf(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from gobby.workflows.condition_helpers_pods import dev_pod_launch_allowed
+    from gobby.workflows.condition_helpers_pods import dev_pod_launch_refusal
 
     world = make_team_world(
         make_landing_case(temp_db, sample_project, tmp_path), tmp_path, monkeypatch
@@ -865,17 +865,77 @@ async def test_dev_pod_launch_requires_its_running_epic_manager_and_own_leaf(
             "name": "fixture-pod",
             "inputs": {"task": task.id, "parent_team_id": team.team_id},
         }
-        assert (
-            dev_pod_launch_allowed(sessions, manager.id, "run_pipeline", arguments, ["fixture-pod"])
-            is allowed
+        refusal = dev_pod_launch_refusal(
+            sessions, manager.id, "run_pipeline", arguments, ["fixture-pod"]
         )
-    assert not dev_pod_launch_allowed(
-        sessions,
-        world.case.creator,
-        "run_pipeline",
-        {"name": "fixture-pod", "inputs": {"task": leaf.id, "parent_team_id": team.team_id}},
-        ["fixture-pod"],
+        assert (refusal is None) is allowed, refusal
+    assert (
+        dev_pod_launch_refusal(
+            sessions,
+            world.case.creator,
+            "run_pipeline",
+            {"name": "fixture-pod", "inputs": {"task": leaf.id, "parent_team_id": team.team_id}},
+            ["fixture-pod"],
+        )
+        is not None
     )
+
+
+@pytest.mark.asyncio
+async def test_dev_pod_refusal_names_the_reason_it_refuses(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.agents.team_admission_records import TeamAdmissionRefused
+    from gobby.agents.team_lifecycle import pod_parent
+    from gobby.workflows.condition_helpers_pods import dev_pod_launch_refusal
+
+    world = make_team_world(
+        make_landing_case(temp_db, sample_project, tmp_path), tmp_path, monkeypatch
+    )
+    tasks = LocalTaskManager(temp_db)
+    epic = tasks.create_task(sample_project["id"], "Synthetic epic", task_type="epic")
+    leaf = tasks.create_task(sample_project["id"], "Own leaf", parent_task_id=epic.id)
+    foreign = tasks.create_task(sample_project["id"], "Unrelated leaf")
+    runbook = world.child(epic)
+    team = await world.admit(runbook, epic)
+    seed_seat(
+        temp_db,
+        "fixture-coordinator",
+        workflows={"rule_selectors": {"include": []}, "variables": {"team_manager": True}},
+    )
+    manager = running_seat(world, runbook, "fixture-coordinator")
+    temp_db.execute(
+        "UPDATE agent_runs SET task_id = %s WHERE id = %s", (epic.id, manager.agent_run_id)
+    )
+    sessions = SessionManager(temp_db)
+    foreign_launch = {
+        "name": "fixture-pod",
+        "inputs": {"task": foreign.id, "parent_team_id": team.team_id},
+    }
+    leaf_launch = {
+        "name": "fixture-pod",
+        "inputs": {"task": leaf.id, "parent_team_id": team.team_id},
+    }
+
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        pod_parent(temp_db, manager.id, foreign.id, team.team_id)
+    refusal = dev_pod_launch_refusal(
+        sessions, manager.id, "run_pipeline", foreign_launch, ["fixture-pod"]
+    )
+    assert refusal is not None
+    assert refused.value.code in refusal and str(refused.value) in refusal
+
+    assert (
+        dev_pod_launch_refusal(sessions, manager.id, "run_pipeline", leaf_launch, ["fixture-pod"])
+        is None
+    )
+    other = dev_pod_launch_refusal(
+        sessions, world.case.creator, "run_pipeline", leaf_launch, ["fixture-pod"]
+    )
+    assert other is not None and "team manager" in other
 
 
 # Refused resumes: (target seat, resume, requested agent, the manager's team_manager value).

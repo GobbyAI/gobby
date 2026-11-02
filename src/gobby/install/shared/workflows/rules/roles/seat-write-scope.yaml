@@ -1,4 +1,4 @@
-version: "2.0.0"
+version: "2.1.0"
 tags: [roles, seat, enforcement, gobby]
 
 # Writes with no resolvable target path fail closed: both helpers return False
@@ -96,3 +96,19 @@ rules:
           `<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md`, or its `.tmp.<pid>.<12 lowercase hex>`
           staging sibling, or files in its agent workspace folder (named in your Agent
           Workspace section). Name the target with a literal absolute path.
+
+  team-lead-write-scope:
+    description: "Keep the Dev Team Lead's file writes in its session and epic workspace folders"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      event.data.get('canonical_tool_kind') == 'write'
+      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
+    effects:
+      - type: block
+        reason: >-
+          The Dev Team Lead writes only under its agent workspace folders (session and
+          epic, named in your Agent Workspace section). Implementation belongs to the
+          developers' task worktrees; the main checkout stays read-only to you. Name the
+          target with a literal path inside one of them.

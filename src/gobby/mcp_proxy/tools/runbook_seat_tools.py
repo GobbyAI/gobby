@@ -105,9 +105,10 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
     @registry.tool(
         name="admit_team",
         description=(
-            "Admit a single-use team for one open task. Call it from a team runbook's "
-            "'admit' pipeline mcp step. Under the project landing lock it creates the task's "
-            "branch and worktree from the integration branch, both named "
+            "Admit a single-use team for one open task. Call it only from a team pipeline's "
+            "'admit' mcp step; launch the team with run_pipeline, since a direct call is "
+            "refused with team_caller_invalid. Under the project landing lock it creates the "
+            "task's branch and worktree from the integration branch, both named "
             "task-<seq>-<title-slug>; it accepts no branch or tree name. A re-run of the same "
             "execution returns the same team. A replacement execution passes team_id, the "
             "admitting execution id, and must name the same task. Refuses team_exists while "
