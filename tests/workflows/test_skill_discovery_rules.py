@@ -27,6 +27,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.workflows.assistant_response_matching import ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.evaluation_context import freeze_evaluation_value
 from gobby.workflows.safe_evaluator import (
     SafeExpressionEvaluator,
     build_condition_helpers,
@@ -3353,13 +3354,16 @@ class TestCodeReviewFreshnessConditions:
         foreign_landing_merge: bool = False,
     ) -> bool:
         tool_input = {"command": command}
+        # The engine hands rules read-only event inputs; mirror that shape.
         context = {
             "variables": variables or {},
             "event": SimpleNamespace(
-                data={"tool_name": "Bash", "tool_input": tool_input},
-                metadata={} if is_failure is None else {"is_failure": is_failure},
+                data=freeze_evaluation_value({"tool_name": "Bash", "tool_input": tool_input}),
+                metadata=freeze_evaluation_value(
+                    {} if is_failure is None else {"is_failure": is_failure}
+                ),
             ),
-            "tool_input": tool_input,
+            "tool_input": freeze_evaluation_value(tool_input),
             "source": "interactive",
             "commit_has_reviewable_paths": commit_has_reviewable_paths,
             "foreign_landing_merge": foreign_landing_merge,

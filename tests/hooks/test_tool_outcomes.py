@@ -10,8 +10,10 @@ from mcp.types import CallToolResult, TextContent
 from gobby.hooks.tool_outcomes import (
     ToolOutcomeStatus,
     classify_raw_tool_result,
+    hook_event_tool_outcome,
     normalize_tool_outcome,
 )
+from gobby.workflows.evaluation_context import freeze_evaluation_value
 
 pytestmark = pytest.mark.unit
 
@@ -280,3 +282,17 @@ def test_top_level_success_false_fails_a_raw_result(output: dict[str, object]) -
         ToolOutcomeStatus.FAILED,
         "raw_result.success",
     )
+
+
+@pytest.mark.parametrize(("is_failure", "expected"), [(False, True), (True, False)])
+def test_hook_event_outcome_reads_read_only_rule_inputs(is_failure: bool, expected: bool) -> None:
+    """Rule evaluation passes frozen event inputs; reading the outcome must not write them."""
+    data = freeze_evaluation_value(
+        {"tool_name": "Bash", "tool_response": {"stdout": "ok", "stderr": ""}}
+    )
+    metadata = freeze_evaluation_value({"is_failure": is_failure})
+
+    outcome = hook_event_tool_outcome(data, metadata)
+
+    assert outcome.succeeded is expected
+    assert "tool_outcome" not in data

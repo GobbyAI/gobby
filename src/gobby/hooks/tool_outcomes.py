@@ -484,11 +484,13 @@ def hook_event_tool_outcome(data: object, metadata: object) -> ToolOutcome:
     A provider failure is authoritative. Provider success proves transport
     completion; Gobby MCP payload failure can still make the semantic call fail.
     Other result-body signals, including stale ``is_error``, remain subordinate.
+    Reading an outcome never mutates the event: rule evaluation passes read-only
+    event data, so normalization runs on a detached copy.
     """
     is_failure = metadata.get("is_failure") if isinstance(metadata, Mapping) else None
     explicit_success = not is_failure if isinstance(is_failure, bool) else None
     return normalize_tool_outcome(
-        data if isinstance(data, dict) else {},
+        dict(data) if isinstance(data, Mapping) else {},
         explicit_success=explicit_success,
         provenance="hook_event.metadata.is_failure" if explicit_success is not None else None,
     )
