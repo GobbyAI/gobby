@@ -425,6 +425,8 @@ class HTTPServer:
             config_manager=services.mcp_db_manager,
             semantic_search=semantic_search,
             fallback_resolver=fallback_resolver,
+            mcp_manager_resolver=resolve_mcp_manager,
+            internal_manager_resolver=lambda: self._internal_manager,
             hook_manager_resolver=lambda: self._hook_manager,
         )
         self._mcp_server = create_mcp_server(self._tools_handler)
