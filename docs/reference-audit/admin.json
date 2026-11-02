@@ -745,6 +745,36 @@
     },
     {
       "surface": "cli",
+      "command": "gobby ui mcp-expose",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": {
+        "path": "src/gobby/cli/ui.py",
+        "symbol": "ui_mcp_expose"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby ui mcp-unexpose",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": {
+        "path": "src/gobby/cli/ui.py",
+        "symbol": "ui_mcp_unexpose"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
       "command": "gobby ui start",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
       "implementation": {
