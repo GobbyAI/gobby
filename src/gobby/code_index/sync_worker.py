@@ -78,7 +78,8 @@ class _MissingProject:
 
 
 def _file_needs_graph_sync(file: IndexedFile) -> bool:
-    return file.symbol_count > 0 and file.language.lower() in _GRAPH_SYNC_LANGUAGES
+    # gcode decides whether a graph-language file has facts, so symbol_count is not checked.
+    return file.language.lower() in _GRAPH_SYNC_LANGUAGES
 
 
 def _is_transient_vector_error(error: Exception) -> bool:
@@ -515,7 +516,7 @@ async def _sync_file(
         if gcode_gateway is not None and armed is not None:
             try:
                 await _run_db(run_db, storage.mark_vector_sync_attempted, current.id)
-                vector_synced = await _sync_vector_file_with_retry(
+                await _sync_vector_file_with_retry(
                     gcode_gateway=gcode_gateway,
                     project_root=root,
                     file=current,
@@ -600,11 +601,7 @@ async def _sync_file(
                 )
             else:
                 _record_breaker_outcomes(armed)
-                # A skipped file was not embedded; it stays pending for the newer index.
-                if vector_synced:
-                    await _run_db(
-                        run_db, storage.mark_vectors_synced, current.id, current.content_hash
-                    )
+                # Native CAS owns completion; a superseded skip stays pending.
                 did_work = True
 
     # Graph sync
@@ -612,16 +609,14 @@ async def _sync_file(
         if gcode_gateway is not None:
             try:
                 if not _file_needs_graph_sync(current):
-                    await _run_db(
-                        run_db, storage.mark_graph_synced, current.id, current.content_hash
-                    )
+                    await _run_db(run_db, storage.mark_graph_synced, current)
                     did_work = True
                 else:
                     armed = _arm_breakers(gateway_breaker)
                     if armed is not None:
                         try:
                             await _run_db(run_db, storage.mark_graph_sync_attempted, current.id)
-                            graph_synced = await _sync_graph_file_with_retry(
+                            await _sync_graph_file_with_retry(
                                 gcode_gateway=gcode_gateway,
                                 project_root=root,
                                 file=current,
@@ -695,14 +690,8 @@ async def _sync_file(
                             )
                         else:
                             _record_breaker_outcomes(armed)
-                            if graph_synced:
-                                await _run_db(
-                                    run_db,
-                                    storage.mark_graph_synced,
-                                    current.id,
-                                    current.content_hash,
-                                )
-                                did_work = True
+                            # Native CAS owns completion; a superseded skip stays pending.
+                            did_work = True
             except Exception as e:
                 logger.exception(
                     "Sync worker: graph sync failed for %s: %s",
