@@ -238,7 +238,9 @@ def record_attestation(
         if not ({"*", submission.kind} & set(body.task_attestation_writes)):
             raise AttestationError("definition has no writer grant for this attestation kind")
         kind = body.task_attestation_kinds.get(submission.kind)
-        if body.task_attestation_kinds and kind is None:
+        if kind is None and (
+            body.task_attestation_kinds or "*" not in body.task_attestation_writes
+        ):
             raise AttestationError("attestation kind is not declared by this definition")
         if kind is not None and submission.result not in kind.allowed_results:
             raise AttestationError(

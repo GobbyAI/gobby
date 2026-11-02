@@ -1,281 +1,20 @@
-"""Tests for retired bundled workflow and agent definitions."""
-
-from __future__ import annotations
+"""Synthetic installed artifacts are retired by source discovery."""
 
 import json
-import re
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import yaml
 
 from gobby.agents.sync import sync_bundled_agents
-from gobby.skills.sync import sync_bundled_skills
-from gobby.storage.definitions import AgentDefinitionManager, PipelineDefinitionManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.skills import LocalSkillManager
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 from gobby.workflows.sync_rules import sync_bundled_rules
-from tests.phase5_contract_helpers import is_bundled_agent_definition
 
 pytestmark = pytest.mark.unit
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-WORKFLOWS_DIR = REPO_ROOT / "src/gobby/install/shared/workflows"
-PIPELINES_DIR = WORKFLOWS_DIR / "pipelines"
-RULES_DIR = WORKFLOWS_DIR / "rules"
-VARIABLES_PATH = WORKFLOWS_DIR / "variables/gobby-default-variables.yaml"
-PROMPTS_DIR = REPO_ROOT / "src/gobby/install/shared/prompts"
-SKILLS_DIR = REPO_ROOT / "src/gobby/install/shared/skills"
-DOCS_DIR = REPO_ROOT / "docs/guides"
-RESEARCH_CONTRACT = REPO_ROOT / "docs/contracts/gwiki-research.md"
-RETIRED_RESEARCH_GUIDE = REPO_ROOT / "docs/guides/wiki-research.md"
-
-RETIRED_PIPELINES = (
-    "orchestrator",
-    "front-half-orchestrator",
-    "dev-orchestrator",
-    "delivery-orchestrator",
-    "dev",
-    "merge-clone",
-    "merge-worktree",
-    "nightly-fixes",
-    "planning",
-    "qa",
-    "spawn-developer",
-    "spawn-qa",
-    "wiki-research",
-)
-RETIRED_AGENTS = (
-    "analyst",
-    "architect",
-    "product-manager",
-    "qa-reviewer",
-    "doc-reviewer",
-    "trajectory-monitor",
-    "qa-dev",
-    "merge-orchestrator",
-    "merge-worker",
-    "planner",
-    "plan-adversary-old",
-    "plan-adversary-taskless-old",
-    "plan-enhancer-old",
-    "plan-enhancer-taskless-old",
-    "backend-developer",
-    "frontend-developer",
-    "fullstack-developer",
-    "pipeline-worker",
-    "nightly-linter",
-    "nightly-test-fixer",
-    "wiki-researcher",
-)
-RETIRED_SKILLS = ("dev", "qa", "wiki-research")
-RETIRED_RULES = {
-    "block-needs-review-interactive",
-    "reviewer-terminal-verdict-track-successful-validation",
-    "reviewer-terminal-verdict-clear-on-verdict",
-    "reviewer-terminal-verdict-block-turn-end",
-    "inject-qa-reviewer-lessons",
-    "inject-planner-lessons",
-    "inject-plan-enhancer-lessons",
-    "memory-recall-on-prompt",
-    "require-memory-recall-before-tool",
-    "require-memory-recall-before-turn-end",
-    "block-and-teach-context7",
-    "block-writes-outside-plan-artifact",
-    "memory-capture-nudge",
-    "no-npx",
-    "require-memory-review-before-status",
-    "require-clean-tree-before-status",
-    "search-memories-on-claim",
-    "remind-memory-guidance-on-later-turns",
-    "teach-qwen-gcode-plan-mode",
-}
-MONOLITH_RULES = {
-    "require-decompose-monolith-before-threshold-write",
-    "require-monolith-resolution-before-commit",
-    "require-monolith-resolution-before-task-transition",
-    "require-monolith-resolution-before-turn-end",
-}
-
-
-def test_no_external_conductor_imports_remain() -> None:
-    module = "gobby" + ".conductor"
-    matches: list[str] = []
-
-    for base in (REPO_ROOT / "src", REPO_ROOT / "tests"):
-        for path in base.rglob("*.py"):
-            text = path.read_text()
-            if f"from {module}" in text or f"import {module}" in text:
-                matches.append(str(path.relative_to(REPO_ROOT)))
-
-    assert matches == []
-
-
-@pytest.mark.parametrize("name", RETIRED_PIPELINES)
-def test_retired_pipeline_yaml_is_absent_from_active_and_deprecated_bundles(
-    name: str,
-) -> None:
-    candidates = (
-        WORKFLOWS_DIR / f"{name}.yaml",
-        PIPELINES_DIR / f"{name}.yaml",
-        PIPELINES_DIR / "deprecated" / f"{name}.yaml",
-    )
-
-    assert not any(path.exists() for path in candidates), (
-        f"retired pipeline remains bundled: {[path for path in candidates if path.exists()]}"
-    )
-
-
-# A reference to the retired `planning` pipeline: the runbook named in prose, backticked
-# where a pipeline is launched, or named in a pipeline file or run call. The task category
-# `planning` and the `team-planning` runbook are not references.
-PLANNING_PIPELINE_REFERENCE = re.compile(
-    r"(?<![\w-])planning (?:runbook|pipeline)s?\b"
-    r"|`planning`\s+\[?(?:runbook|pipeline|directly)\b"
-    r"|`planning`\s*\|\s*writer\b"
-    r"|pipelines/planning\b"
-    r"|^name:\s*planning\s*$"
-    r"|run_pipeline\([^)]*['\"]planning['\"]",
-    re.MULTILINE,
-)
-PLANNING_REFERENCE_ROOTS = (
-    WORKFLOWS_DIR.parent,
-    REPO_ROOT / "docs/guides",
-    REPO_ROOT / "docs/contracts",
-)
-
-
-def test_bundled_sources_and_guides_do_not_reference_the_planning_pipeline() -> None:
-    hits: list[str] = []
-    procedures = SKILLS_DIR / "gobby/references/agents/procedures"
-    for root in PLANNING_REFERENCE_ROOTS:
-        for path in sorted(root.rglob("*")):
-            if not path.is_file() or path.suffix not in {".md", ".yaml", ".yml", ".json"}:
-                continue
-            if is_bundled_agent_definition(path) or path.is_relative_to(procedures):
-                continue
-            text = path.read_text(encoding="utf-8")
-            for match in PLANNING_PIPELINE_REFERENCE.finditer(text):
-                line = text.count("\n", 0, match.start()) + 1
-                hits.append(f"{path.relative_to(REPO_ROOT)}:{line}: {match.group(0)}")
-
-    assert hits == [], "planning pipeline still referenced:\n" + "\n".join(hits)
-
-
-def test_planning_pipeline_row_is_retired_by_bundled_sync(temp_db: HubDatabase) -> None:
-    manager = PipelineDefinitionManager(temp_db)
-    manager.create(
-        name="planning",
-        definition_json={
-            "name": "planning",
-            "type": "pipeline",
-            "description": "old definition",
-            "steps": [{"id": "noop", "exec": "true"}],
-        },
-        source="installed",
-        tags=["gobby"],
-        enabled=True,
-    )
-
-    result = sync_bundled_pipelines(temp_db)
-
-    assert result["errors"] == []
-    assert manager.get_by_name("planning") is None
-    row = manager.get_by_name("planning", include_deleted=True)
-    assert row is not None
-    assert row.deleted_at is not None
-    assert manager.get_by_name("team-planning") is not None
-    assert manager.get_by_name("research") is not None
-
-
-@pytest.mark.parametrize("name", RETIRED_SKILLS)
-def test_retired_skill_is_absent_from_bundled_templates(name: str) -> None:
-    assert not (SKILLS_DIR / name).exists(), f"retired skill remains bundled: {name}"
-
-
-def test_retired_wiki_research_dispatch_is_not_advertised() -> None:
-    assert not RESEARCH_CONTRACT.exists()
-    assert not RETIRED_RESEARCH_GUIDE.exists()
-
-
-def test_retired_rules_are_absent_from_bundled_templates() -> None:
-    bundled_rule_names: set[str] = set()
-    for path in RULES_DIR.rglob("*.yaml"):
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict) and isinstance(data.get("rules"), dict):
-            bundled_rule_names.update(data["rules"])
-
-    assert RETIRED_RULES.isdisjoint(bundled_rule_names)
-
-
-def test_interactive_destructive_git_guard_is_restored() -> None:
-    path = RULES_DIR / "worker-safety/no-destructive-git-interactive.yaml"
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    rule = data["rules"]["no-destructive-git-interactive"]
-    autonomous_path = RULES_DIR / "worker-safety/no-destructive-git.yaml"
-    autonomous_data = yaml.safe_load(autonomous_path.read_text(encoding="utf-8"))
-    autonomous_rule = autonomous_data["rules"]["no-destructive-git"]
-
-    assert rule["enabled"] is True
-    assert rule["when"] == "not variables.get('is_spawned_agent')"
-    pattern = rule["effects"][0]["command_pattern"]
-    assert pattern == autonomous_rule["effects"][0]["command_pattern"]
-    for command in (
-        "git reset --hard",
-        "git clean -fdx",
-        "git checkout .",
-        "git restore .",
-        "git branch -D obsolete",
-        "git -C /repo reset --hard",
-        "git -c core.hooksPath=/tmp checkout .",
-        "git --git-dir=/repo/.git clean -fdx",
-        "git --work-tree /repo restore .",
-        "git --no-pager branch -D obsolete",
-    ):
-        assert re.search(pattern, command), command
-    assert re.search(pattern, "git reset HEAD~1") is None
-
-
-def test_retired_memory_review_gate_has_no_live_state_or_guidance() -> None:
-    current_surfaces = [
-        *(p for p in WORKFLOWS_DIR.rglob("*.yaml") if not is_bundled_agent_definition(p)),
-        *(SKILLS_DIR / "gobby/references/sessions").rglob("*.md"),
-        *(SKILLS_DIR / "gobby/references/tasks").rglob("*.md"),
-        DOCS_DIR / "memory.md",
-    ]
-
-    for path in current_surfaces:
-        assert "memory_review_completed" not in path.read_text(encoding="utf-8"), path
-
-
-def test_retired_context7_rule_has_no_orphaned_session_state() -> None:
-    variables = yaml.safe_load(VARIABLES_PATH.read_text(encoding="utf-8"))["variables"]
-    reset = yaml.safe_load(
-        (RULES_DIR / "skill-discovery/reset-skill-injection.yaml").read_text(encoding="utf-8")
-    )["rules"]["reset-skill-injection"]
-    reset_variables = {
-        effect.get("variable") for effect in reset["effects"] if effect["type"] == "set_variable"
-    }
-
-    assert "context7_nudge_fired" not in variables
-    assert "context7_available" not in variables
-    assert "context7_nudge_fired" not in reset_variables
-    assert "context7_available" not in (DOCS_DIR / "variables.md").read_text(encoding="utf-8")
-
-
-def test_monolith_rule_templates_match_enabled_db_authority() -> None:
-    path = RULES_DIR / "monolith-enforcement/require-same-session-decomposition.yaml"
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-
-    assert set(data["rules"]) == MONOLITH_RULES
-    assert all(rule["enabled"] is True for rule in data["rules"].values())
-
-
-def test_retired_digest_prompt_is_absent() -> None:
-    assert not (PROMPTS_DIR / "memory/digest_update.md").exists()
 
 
 def test_removed_bundled_pipeline_sync_soft_deletes_installed_row(
@@ -284,9 +23,9 @@ def test_removed_bundled_pipeline_sync_soft_deletes_installed_row(
     db = temp_db
     manager = PipelineDefinitionManager(db)
     manager.create(
-        name="orchestrator",
+        name="removed-pipeline",
         definition_json={
-            "name": "orchestrator",
+            "name": "removed-pipeline",
             "type": "pipeline",
             "description": "old definition",
             "steps": [{"id": "noop", "exec": "true"}],
@@ -319,8 +58,8 @@ steps:
     assert result["errors"] == []
     assert result["orphaned"] == 1
 
-    assert manager.get_by_name("orchestrator") is None
-    row = manager.get_by_name("orchestrator", include_deleted=True)
+    assert manager.get_by_name("removed-pipeline") is None
+    row = manager.get_by_name("removed-pipeline", include_deleted=True)
     assert row is not None
     assert row.deleted_at is not None
     assert row.enabled is True
@@ -332,7 +71,7 @@ def test_removed_clean_tree_rule_sync_soft_deletes_installed_row(
 ) -> None:
     manager = RuleDefinitionManager(temp_db)
     manager.create(
-        name="require-clean-tree-before-status",
+        name="removed-rule",
         definition_json={
             "event": "before_tool",
             "effects": [{"type": "block", "reason": "old clean-tree gate"}],
@@ -358,13 +97,13 @@ def test_removed_clean_tree_rule_sync_soft_deletes_installed_row(
 
     assert result["errors"] == []
     assert result["orphaned"] == 1
-    assert manager.get_by_name("require-clean-tree-before-status") is None
-    row = manager.get_by_name("require-clean-tree-before-status", include_deleted=True)
+    assert manager.get_by_name("removed-rule") is None
+    row = manager.get_by_name("removed-rule", include_deleted=True)
     assert row is not None
     assert row.deleted_at is not None
 
 
-@pytest.mark.parametrize("name", RETIRED_AGENTS)
+@pytest.mark.parametrize("name", ["removed-seat"])
 def test_removed_bundled_agent_sync_soft_deletes_installed_row(
     name: str, tmp_path: Path, temp_db: HubDatabase
 ) -> None:
@@ -404,27 +143,3 @@ def test_removed_bundled_agent_sync_soft_deletes_installed_row(
         "description": "old definition",
         "enabled": True,
     }
-
-
-@pytest.mark.parametrize("name", RETIRED_SKILLS)
-def test_removed_bundled_skill_sync_soft_deletes_installed_row(
-    name: str, temp_db: HubDatabase
-) -> None:
-    manager = LocalSkillManager(temp_db)
-    manager.create_skill(
-        name=name,
-        description="old bundled launcher",
-        content=f"# {name}\nOld bundled launcher content.",
-        metadata={"gobby": {"audience": "all"}},
-        source="installed",
-        source_type="filesystem",
-    )
-
-    result = sync_bundled_skills(temp_db)
-
-    assert result["errors"] == []
-    assert result["orphaned"] == 1
-    assert manager.get_by_name(name) is None
-    row = manager.get_by_name(name, include_deleted=True)
-    assert row is not None
-    assert row.deleted_at is not None

@@ -1,6 +1,6 @@
-name: devteam
+name: dev-team
 type: pipeline
-version: 2.0.0
+version: 3.0.0
 description: 'One DevTeam for a task or epic: developer, independent reviewer and dev-team-lead.'
 tags:
 - runbook

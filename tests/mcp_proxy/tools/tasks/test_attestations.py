@@ -72,6 +72,7 @@ async def test_non_git_close_preview_and_final_use_selected_attestation_policy(
     author = _Seats(temp_db, sample_project["id"]).add(
         "cake-maker",
         [],
+        results=["pass"],
         definition_fields={
             "task_attestation_writes": ["baked"],
             "workflows": {"rule_selectors": {"include": ["tag:cake-close"]}},
@@ -129,7 +130,10 @@ async def test_close_refuses_a_callers_stale_preview_revision(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     author = _Seats(temp_db, sample_project["id"]).add(
-        "preview-owner", [], definition_fields={"task_attestation_writes": ["checkpoint"]}
+        "preview-owner",
+        [],
+        results=["pass"],
+        definition_fields={"task_attestation_writes": ["checkpoint"]},
     )
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(

@@ -400,7 +400,7 @@ class _AgentRunQueryMixin:
         """List all currently running agent runs."""
         return self._fetch_runs_with_live_stats(
             "WHERE ar.status = 'running'",
-            order_by="ORDER BY ar.started_at ASC",
+            order_by="ORDER BY ar.started_at ASC, ar.id ASC",
             limit=limit,
         )
 
@@ -453,7 +453,7 @@ class _AgentRunQueryMixin:
         return self._fetch_runs_with_live_stats(
             where_clause,
             params,
-            order_by="ORDER BY ar.started_at ASC",
+            order_by="ORDER BY ar.started_at ASC, ar.id ASC",
             limit=limit,
             offset=offset,
         )

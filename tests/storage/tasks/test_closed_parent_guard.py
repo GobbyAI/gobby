@@ -15,21 +15,46 @@ from typing import Any
 
 import pytest
 
+from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase, TaskSeqAllocation
 from gobby.storage.tasks import (
     LocalTaskManager,
     ParentTaskClosedError,
     TaskClosedError,
-    TaskHasOpenChildrenError,
 )
 from gobby.storage.tasks._close import _close_task_in_txn
 from gobby.storage.tasks._creation import _create_task_in_transaction
+from gobby.tasks.closure_snapshot import TaskClosurePolicyError
 
 pytestmark = pytest.mark.unit
 
 CRITERIA = "Test task completion is observable."
 BLOCKED_FOR_SECONDS = 1.0
 JOIN_TIMEOUT_SECONDS = 10.0
+
+
+@pytest.fixture(autouse=True)
+def selected_child_policy(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
+    name = "synthetic-open-child-guard"
+    RuleDefinitionManager(temp_db).create(
+        name,
+        {
+            "event": "task_close",
+            "when": "not facts.get('children_closed', True)",
+            "effects": [{"type": "block", "reason": name}],
+        },
+        project_id=sample_project["id"],
+    )
+    AgentDefinitionManager(temp_db).create(
+        "default",
+        {
+            "name": "default",
+            "prompts": {"agent": "Exercise concurrent child attachment."},
+            "workflows": {"rule_selectors": {"include": [name]}},
+        },
+        project_id=sample_project["id"],
+    )
 
 
 def _open_parent(manager: LocalTaskManager, project_id: str) -> Any:
@@ -333,7 +358,7 @@ def test_close_waits_for_a_concurrent_child_insert_and_is_refused(
 
         release_create.set()
         creator.result(timeout=JOIN_TIMEOUT_SECONDS)
-        with pytest.raises(TaskHasOpenChildrenError):
+        with pytest.raises(TaskClosurePolicyError, match="synthetic-open-child-guard"):
             closer.result(timeout=JOIN_TIMEOUT_SECONDS)
 
     assert manager.get_task(parent.id).closed_at is None

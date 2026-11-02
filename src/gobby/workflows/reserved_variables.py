@@ -16,6 +16,8 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         # Names the session's agent definition, which selects its rules and
         # send_message target modes; only spawn and persona application set it.
         "_agent_type",
+        # An installed policy projection; session writes cannot alter authority.
+        "project_policy",
         AUTHORED_MERGES_VARIABLE,
         "_block_reasons_shown",
         HANDOFF_TURN_END_PENDING_VARIABLE,

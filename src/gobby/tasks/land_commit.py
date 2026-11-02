@@ -379,21 +379,24 @@ def _manages_task(db: HubDatabase, task: Task, caller_session_id: str) -> bool:
     return task_scope_refusal(task, caller.id, definition[0].task_land_scope, db=db) is None
 
 
-async def _candidate_grant_paths(
+async def candidate_scope_paths(
     main: Path,
     tip: str,
     sha: str,
     receipts: list[CloseReceipt],
-) -> list[str]:
+) -> list[str] | None:
     """Pin the candidate's immutable path scope before definition admission."""
     base = await _git(main, "merge-base", tip, sha)
     if base == sha:
         # Recheck the original candidate scope, even when the integration delta
         # is now empty. Missing scope provenance cannot authorize a direct replay.
-        receipt = next((r for r in receipts if r.commit_sha == sha), None)
+        receipt = next(
+            (r for r in receipts if r.commit_sha == sha or r.facts.get("landed_tip") == sha), None
+        )
         original_tip = receipt.facts.get("integration_base") if receipt else None
         if not isinstance(original_tip, str) or not _FULL_SHA.fullmatch(original_tip):
-            return []
+            return None
+        sha = receipt.commit_sha if receipt else sha
         base = await _git(main, "merge-base", original_tip, sha)
     return sorted(await _paths(main, base, sha))
 
@@ -525,14 +528,14 @@ async def land_candidate(
                 blockers: list[str] = []
                 if not _manages_task(db, current_task, caller_session_id):
                     blockers.append("landing_authority_required")
-                grant_paths = await _candidate_grant_paths(main, tip, sha, receipts)
+                grant_paths = await candidate_scope_paths(main, tip, sha, receipts)
                 admission: dict[str, str | int | bool] = {}
                 if not blockers:
 
                     def derive_scope(
                         _task: Task,
                         agent: AgentDefinitionBody,
-                        paths: tuple[str, ...] = tuple(grant_paths),
+                        paths: tuple[str, ...] = tuple(grant_paths or ()),
                     ) -> dict[str, JsonValue]:
                         return {
                             "integration_path_grant": agent.covers_direct_integration_paths(paths)
@@ -546,7 +549,8 @@ async def land_candidate(
                         facts={
                             "closure_intent": "landing",
                             "candidate_commit_sha": sha,
-                            "candidate_paths": list(grant_paths),
+                            "candidate_paths": list(grant_paths or ()),
+                            "candidate_paths_available": grant_paths is not None,
                             "integration_branch": branch,
                             "integration_base": tip,
                             "candidate_contains_integration_base": await _ancestor(main, tip, sha),

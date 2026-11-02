@@ -1,4 +1,4 @@
-version: "2.0.0"
+version: "2.1.0"
 tags: [task-closure-general]
 
 rules:
@@ -88,7 +88,11 @@ rules:
       (not facts.get('candidate_commit_sha') or not facts.get('subtree_revision') or
        any(latest_attestation(kind).get('result') != 'approved' or
            (latest_attestation(kind).get('reference') or {}).get('scheme') != 'git' or
-           (latest_attestation(kind).get('reference') or {}).get('value') != facts.get('candidate_commit_sha') or
+           ((latest_attestation(kind).get('reference') or {}).get('value') != facts.get('candidate_commit_sha') and
+            (kind != 'independent-review' or not any(
+              receipt.get('commit_sha') == (latest_attestation(kind).get('reference') or {}).get('value') and
+              receipt.get('facts', {}).get('landed_tip') == facts.get('candidate_commit_sha')
+              for receipt in facts.get('landing_receipts', [])))) or
            latest_attestation(kind).get('evidence', {}).get('subtree_revision') != facts.get('subtree_revision')
            for kind in ['validation', 'independent-review']))
     effects:

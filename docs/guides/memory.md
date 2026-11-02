@@ -338,7 +338,7 @@ minting a key; reuse an existing equivalent check. Identity is
 
 Reviewer-miss proof supplies all `participating_section_ids`, the earlier and
 approval evidence IDs, and missed completed-round count; every participating
-section must remain hash-unchanged. Fixer-induced-defect proof supplies all
+section must remain hash-unchanged. Cross-section proof supplies all
 `causal_section_ids`, causal finding, introduced round, and causal/approval
 evidence IDs; every causal section must have changed. Evidence services compare
 immutable manifests. Unknown IDs, empty required sets, or partial proof fail.

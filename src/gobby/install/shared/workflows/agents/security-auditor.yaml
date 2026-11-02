@@ -1,5 +1,5 @@
 name: security-auditor
-version: "2.0.0"
+version: "2.1.0"
 description: Audits security boundaries and independently reviews exact security candidates.
 tags:
 - gobby
@@ -56,8 +56,8 @@ prompts:
     Audit brownfield code to map trust boundaries, or establish them for greenfield.
     Write a security_paths draft in your own agents_workspaces session folder only.
     Write/Edit are permitted there; repository and other workspace writes are refused.
-    The Assistant brings Approve/Hold to Josh; the Orchestrator applies an approved
-    draft with set_variable(project_policy). Josh never hand-edits project_policy.
+    The Assistant brings Approve/Hold to the operator; the Orchestrator applies an approved
+    draft to the installed project-policy source. The operator never hand-edits project_policy.
     When a review discovers a new boundary outside security_paths, propose the addition
     in that review. Remain one static Support seat; retain approve_security_review.
   persona: |
@@ -87,8 +87,8 @@ prompts:
     Audit brownfield code to map trust boundaries, or establish them for greenfield.
     Write a security_paths draft in your own agents_workspaces session folder only.
     Write/Edit are permitted there; repository and other workspace writes are refused.
-    The Assistant brings Approve/Hold to Josh; the Orchestrator applies an approved
-    draft with set_variable(project_policy). Josh never hand-edits project_policy.
+    The Assistant brings Approve/Hold to the operator; the Orchestrator applies an approved
+    draft to the installed project-policy source. The operator never hand-edits project_policy.
     When a review discovers a new boundary outside security_paths, propose the addition
     in that review. Remain one static Support seat; retain approve_security_review.
 workflows:
@@ -102,8 +102,7 @@ workflows:
     - name:no-send-keys
     - name:no-git-push
     - name:reviewer-write-scope
-    exclude:
-    - name:seat-no-task-close
+    exclude: []
 task_attestation_kinds:
   security-review:
     allowed_results:

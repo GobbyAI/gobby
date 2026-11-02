@@ -19,11 +19,54 @@ from gobby.agents.sync import get_bundled_agents_path
 from gobby.cli.agents_steps import check_agent
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.definitions import (
+    AgentDefinitionBody,
+    RuleDefinitionBody,
+    split_rule_definition_data,
+)
+from gobby.workflows.pipeline_models import PipelineDefinition
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
+from gobby.workflows.sync_rules import get_bundled_rules_path
 
 pytestmark = pytest.mark.unit
 
 BUNDLED_AGENT_YAMLS = sorted(get_bundled_agents_path().rglob("*.yaml"))
+
+
+@pytest.mark.parametrize(
+    "path", sorted(get_bundled_pipelines_path().glob("*.yaml")), ids=lambda path: path.stem
+)
+def test_discovered_pipeline_yaml_parses(path: Path) -> None:
+    pipeline = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
+    assert pipeline.name
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        path
+        for path in sorted(get_bundled_rules_path().rglob("*.yaml"))
+        if not {"deprecated", "_deprecated"}.intersection(path.parts)
+    ],
+    ids=lambda path: path.stem,
+)
+def test_discovered_rule_yaml_and_expressions_parse(path: Path) -> None:
+    document = yaml.safe_load(path.read_text())
+    for definition in document.get("rules", {}).values():
+        definition = dict(definition)
+        if "effect" in definition:
+            effect = definition.pop("effect")
+            definition.setdefault("effects", [effect])
+        body, _ = split_rule_definition_data(definition)
+        rule = RuleDefinitionBody.model_validate(body)
+        assert rule.event
+        for expression in [rule.when, *(effect.when for effect in rule.resolved_effects)]:
+            if expression is not None:
+                parsed = SafeExpressionEvaluator._parse_normalized_expr(
+                    SafeExpressionEvaluator._normalize_expr(expression)
+                )
+                assert parsed.body is not None
 
 
 def _validate_agent_definition(path: Path) -> AgentDefinitionBody:

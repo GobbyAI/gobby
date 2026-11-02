@@ -6,7 +6,6 @@ from typing import Any, cast
 
 import pytest
 
-from gobby.agents.sync import sync_bundled_agents
 from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.scheduler.executor import CronExecutor
@@ -60,11 +59,10 @@ class MessagingProxy:
 
 @pytest.fixture
 def proxy(temp_db: HubDatabase, session_manager: SessionManager) -> MessagingProxy:
-    sync_bundled_agents(temp_db)
     return MessagingProxy(temp_db, session_manager)
 
 
-@pytest.mark.parametrize("recipient_role", ["assistant", "archivist", "orchestrator"])
+@pytest.mark.parametrize("recipient_role", ["restricted-a", "restricted-b"])
 async def test_pipeline_mcp_send_admits_restricted_recipient(
     proxy: MessagingProxy,
     session_manager: SessionManager,
@@ -73,7 +71,13 @@ async def test_pipeline_mcp_send_admits_restricted_recipient(
 ) -> None:
     project = sample_project["id"]
     caller = _seat(session_manager, project, "pipeline-execution", "automation-without-caps")
-    recipient = _seat(session_manager, project, "recipient", recipient_role)
+    recipient = _seat(
+        session_manager,
+        project,
+        "recipient",
+        recipient_role,
+        required_senders=("receive-restricted",),
+    )
     step = PipelineStep(
         id="notify",
         mcp=MCPStepConfig(
@@ -109,7 +113,7 @@ async def test_pipeline_mcp_send_admits_restricted_recipient(
     assert outside["error_code"] == REFUSED
 
 
-@pytest.mark.parametrize("recipient_role", ["assistant", "archivist", "orchestrator"])
+@pytest.mark.parametrize("recipient_role", ["restricted-a", "restricted-b"])
 async def test_cron_handler_send_admits_restricted_recipient(
     temp_db: HubDatabase,
     proxy: MessagingProxy,
@@ -119,7 +123,13 @@ async def test_cron_handler_send_admits_restricted_recipient(
 ) -> None:
     project = sample_project["id"]
     caller = _seat(session_manager, project, "cron-execution", "automation-without-caps")
-    recipient = _seat(session_manager, project, "recipient", recipient_role)
+    recipient = _seat(
+        session_manager,
+        project,
+        "recipient",
+        recipient_role,
+        required_senders=("receive-restricted",),
+    )
     storage = CronJobStorage(temp_db)
     job = storage.create_job(
         project_id=project,
@@ -170,7 +180,13 @@ async def test_agent_session_remains_subject_to_recipient_admission(
         "worker-without-caps",
         parent=parent if pipeline_child else None,
     )
-    recipient = _seat(session_manager, project, "recipient", "assistant")
+    recipient = _seat(
+        session_manager,
+        project,
+        "recipient",
+        "restricted-recipient",
+        required_senders=("receive-restricted",),
+    )
 
     with session_context_for_test(caller):
         result = await proxy.registry.call(
@@ -206,7 +222,13 @@ async def test_agent_cannot_spoof_daemon_via_from_session(
         "worker-without-caps",
         parent=parent if spawned else None,
     )
-    recipient = _seat(session_manager, project, "recipient", "assistant")
+    recipient = _seat(
+        session_manager,
+        project,
+        "recipient",
+        "restricted-recipient",
+        required_senders=("receive-restricted",),
+    )
 
     with session_context_for_test(caller):
         result = await proxy.registry.call(

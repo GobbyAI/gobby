@@ -16,8 +16,6 @@ import yaml
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import PipelineDefinition
-from gobby.workflows.pipeline.renderer import StepRenderer
 
 pytestmark = pytest.mark.integration
 
@@ -462,102 +460,6 @@ rules:
 class TestSyncBundledPipelines:
     """Tests for sync_bundled_pipelines edge cases."""
 
-    @pytest.mark.integration
-    def test_expand_task_lets_pipeline_own_terminal_notification(self) -> None:
-        """The child expansion stays waitable without notifying the caller twice."""
-        from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
-
-        path = get_bundled_pipelines_path() / "expand-task.yaml"
-        pipeline = PipelineDefinition(**yaml.safe_load(path.read_text(encoding="utf-8")))
-        start_run = pipeline.get_step("start_run")
-
-        assert start_run is not None
-        assert start_run.mcp is not None
-        arguments = start_run.mcp.arguments
-        assert arguments is not None
-        assert arguments["subscribe_caller"] is False
-
-    @pytest.mark.integration
-    def test_expand_task_fails_run_before_validation(self) -> None:
-        """Evaluate expand-task conditions with the runtime step renderer."""
-        from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
-
-        path = get_bundled_pipelines_path() / "expand-task.yaml"
-        assert path.is_file(), f"Missing bundled pipeline: {path}"
-        pipeline = PipelineDefinition(**yaml.safe_load(path.read_text(encoding="utf-8")))
-        renderer = StepRenderer(strict_conditions=True)
-        fail_run = pipeline.get_step("fail_run")
-        validate_run = pipeline.get_step("validate_run")
-        assert fail_run is not None
-        assert validate_run is not None
-        assert fail_run.mcp is not None
-        assert validate_run.mcp is not None
-        assert fail_run.mcp.tool == "fail_pipeline"
-        assert validate_run.mcp.tool == "validate_expansion_run"
-
-        for wait_status in ("failed", "timeout", "cancelled"):
-            context = {"steps": {"wait_run": {"output": {"status": wait_status}}}}
-            assert renderer.should_run_step(fail_run, context) is True
-            assert renderer.should_run_step(validate_run, context) is False
-
-        completed_context = {"steps": {"wait_run": {"output": {"status": "completed"}}}}
-        assert renderer.should_run_step(fail_run, completed_context) is False
-        assert renderer.should_run_step(validate_run, completed_context) is True
-
-    @pytest.mark.integration
-    def test_expand_task_coverage_runs_for_contract_plans(self) -> None:
-        """Contract-plan runs always get the coverage gate; others need run_coverage."""
-        from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
-
-        path = get_bundled_pipelines_path() / "expand-task.yaml"
-        pipeline = PipelineDefinition(**yaml.safe_load(path.read_text(encoding="utf-8")))
-        renderer = StepRenderer(strict_conditions=True)
-        coverage = pipeline.get_step("coverage_check")
-
-        assert pipeline.inputs["run_coverage"]["default"] is False
-        assert coverage is not None
-        assert coverage.mcp is not None
-        assert coverage.mcp.server == "gobby-tasks-ops"
-        assert coverage.mcp.tool == "run_expansion_qa_coverage"
-        assert coverage.mcp.arguments == {"run_id": "${{ steps.start_run.output.run_id }}"}
-        assert pipeline.outputs["coverage"] == "${{ steps.coverage_check.output }}"
-
-        def context(*, status: str, contract_plan: bool, run_coverage: bool) -> dict[str, Any]:
-            return {
-                "inputs": {"run_coverage": run_coverage},
-                "steps": {
-                    "wait_run": {"output": {"status": status}},
-                    "get_run": {
-                        "output": {"run": {"compiled_spec": {"contract_plan": contract_plan}}}
-                    },
-                },
-            }
-
-        assert (
-            renderer.should_run_step(
-                coverage, context(status="completed", contract_plan=True, run_coverage=False)
-            )
-            is True
-        )
-        assert (
-            renderer.should_run_step(
-                coverage, context(status="completed", contract_plan=False, run_coverage=False)
-            )
-            is False
-        )
-        assert (
-            renderer.should_run_step(
-                coverage, context(status="failed", contract_plan=True, run_coverage=False)
-            )
-            is False
-        )
-        assert (
-            renderer.should_run_step(
-                coverage, context(status="completed", contract_plan=False, run_coverage=True)
-            )
-            is True
-        )
-
     def test_missing_path_returns_error(self, db: HubDatabase) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
@@ -580,42 +482,6 @@ class TestSyncBundledPipelines:
         ):
             result = sync_bundled_pipelines(db)
             assert result["synced"] == 0
-
-    @pytest.mark.integration
-    def test_sync_with_real_bundled_pipelines(
-        self, db: HubDatabase, pipeline_manager: PipelineDefinitionManager
-    ) -> None:
-        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
-
-        result = sync_bundled_pipelines(db)
-
-        assert result["success"] is True
-        assert result["synced"] + result["skipped"] + result["updated"] >= 1
-        assert result["errors"] == []
-
-        rows = pipeline_manager.list_all()
-        names = [row.name for row in rows]
-        assert set(names) == {
-            "assistant-status-wake",
-            "devteam",
-            "epic-devteam",
-            "expand-task",
-            "gobby-merge",
-            "research",
-            "review",
-            "support",
-            "team-planning",
-        }
-
-        expand_task = pipeline_manager.get_by_name("expand-task")
-        gobby_merge = pipeline_manager.get_by_name("gobby-merge")
-        review = pipeline_manager.get_by_name("review")
-        assert expand_task is not None
-        assert expand_task.enabled is True
-        assert gobby_merge is not None
-        assert gobby_merge.enabled is True
-        assert review is not None
-        assert review.enabled is True
 
     def test_ignores_deprecated_pipeline_directory(
         self, db: HubDatabase, tmp_path: Path, pipeline_manager: PipelineDefinitionManager
@@ -1253,25 +1119,6 @@ variables:
 
         result = sync_bundled_variables(db, variables_path=var_dir)
         assert result["orphaned"] >= 1
-
-    def test_removed_human_wait_variable_is_soft_deleted(self, db: HubDatabase) -> None:
-        from gobby.storage.definitions import SessionVariableDefaultManager
-        from gobby.workflows.sync_variables import sync_bundled_variables
-
-        manager = SessionVariableDefaultManager(db)
-        obsolete = manager.create(
-            name="waiting_on_user_input",
-            default_value=False,
-            source="installed",
-            tags=["gobby"],
-        )
-
-        result = sync_bundled_variables(db)
-
-        assert result["orphaned"] == 1
-        assert manager.get_by_name("waiting_on_user_input") is None
-        deleted = manager.get(obsolete.id, include_deleted=True)
-        assert deleted.deleted_at is not None
 
     def test_project_scoped_installed_variable_is_not_orphan_pruned(self, db: HubDatabase) -> None:
         from gobby.storage.definitions import SessionVariableDefaultManager

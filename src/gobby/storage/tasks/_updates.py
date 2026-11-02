@@ -160,7 +160,11 @@ def update_task(
         params.append(validate_category(cast(str | None, category)))
     if validation_criteria is not UNSET:
         updates.append("validation_criteria = %s")
-        params.append(validation_criteria)
+        params.append(
+            validation_criteria.strip()
+            if isinstance(validation_criteria, str)
+            else validation_criteria
+        )
     if review_fail_count is not UNSET:
         updates.append("review_fail_count = %s")
         params.append(review_fail_count)
@@ -253,6 +257,16 @@ def update_task(
     sql = f"UPDATE tasks SET {', '.join(updates)} WHERE {where_clause}"  # nosec B608
 
     with db.transaction() as conn:
+        if labels is not UNSET or remove_labels:
+            from gobby.storage.tasks._label_policy import authorize_label_removal
+
+            authorize_label_removal(
+                db,
+                conn,
+                task_id,
+                labels=cast(list[str] | None, labels) or [] if labels is not UNSET else None,
+                remove_labels=remove_labels,
+            )
         if parent_task_id is not UNSET:
             _validate_parent_task_id_update(conn, task_id, cast(str | None, parent_task_id))
         cursor = conn.execute(sql, tuple(params))

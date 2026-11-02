@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
@@ -28,6 +28,36 @@ from gobby.workflows.agent_resolver import (
 from gobby.workflows.state_manager import SessionVariableManager
 
 _JSON_OBJECT = TypeAdapter(dict[str, Any])
+_JSON_POLICY = TypeAdapter(dict[str, JsonValue])
+
+
+def installed_project_policy(rules: list[RuleDefinitionRow]) -> dict[str, JsonValue] | None:
+    """Read a single authoritative policy value from enabled installed effects.
+
+    Session variables are projections controlled by hook delivery timing. They
+    cannot authorize security decisions. Conflicting writers fail closed.
+    """
+    policies = [
+        effect.get("value")
+        for rule in rules
+        if rule.enabled
+        for effect in rule.definition_json.get("effects", [])
+        if isinstance(effect, dict)
+        and effect.get("type") == "set_variable"
+        and effect.get("variable") == "project_policy"
+    ]
+    if not policies or any(not isinstance(value, dict) for value in policies):
+        return None
+    if any(value != policies[0] for value in policies):
+        return None
+    try:
+        policy = _JSON_POLICY.validate_python(policies[0])
+    except ValidationError:
+        return None
+    paths = policy.get("security_paths", [])
+    if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
+        return None
+    return policy
 
 
 @dataclass(frozen=True)
@@ -144,6 +174,8 @@ def prepare_closure(
         task_data = _JSON_OBJECT.dump_python(task.to_dict(), mode="json")
         if prospective_commits is not None:
             task_data["commits"] = list(prospective_commits)
+        rules = RuleDefinitionManager(db).list_effective(task.project_id)
+        project_policy = installed_project_policy(rules)
         snapshot = ClosureSnapshot(
             event=event,
             task=task_data,
@@ -165,13 +197,8 @@ def prepare_closure(
                 "children": child_data,
                 "children_closed": all(child["closed"] for child in child_data),
                 "claimants": sorted(claimant_sessions(conn, task_id)),
-                "project_policy": (
-                    SessionVariableManager(db)
-                    .get_variable_subset(session_id, ("project_policy",))
-                    .get("project_policy", {})
-                    if session_id
-                    else {}
-                ),
+                "project_policy": project_policy or {},
+                "project_policy_available": project_policy is not None,
                 "landing_receipts": [
                     {
                         "commit_sha": receipt.commit_sha,
@@ -182,6 +209,5 @@ def prepare_closure(
                 ],
             },
         )
-        rules = RuleDefinitionManager(db).list_effective(task.project_id)
         decision = evaluate_closure_policy(snapshot, agent=agent, rules=rules)
         return PreparedClosure(task, agent, snapshot, decision)

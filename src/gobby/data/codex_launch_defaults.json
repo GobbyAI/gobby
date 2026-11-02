@@ -1,6 +1,6 @@
 {
   "launch_defaults": {
-    "devteam": {
+  "dev-team": {
       "developer_provider": "claude",
       "developer_model": "claude-haiku-5-5",
       "developer_reasoning_effort": "xhigh",

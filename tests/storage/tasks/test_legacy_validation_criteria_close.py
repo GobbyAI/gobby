@@ -1,4 +1,4 @@
-"""Regression coverage for closing legacy tasks without validation criteria."""
+"""Closure preserves optional criteria without fabricating historical placeholders."""
 
 from __future__ import annotations
 
@@ -10,19 +10,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 
 pytestmark = pytest.mark.unit
-
-LEGACY_VALIDATION_CRITERIA = (
-    "Legacy task: validation criteria were not recorded before they became required."
-)
-
-_ADD_VALIDATION_CRITERIA_CONSTRAINT = """
-    ALTER TABLE tasks
-        ADD CONSTRAINT tasks_require_validation_criteria
-        CHECK (
-            task_type = 'epic'
-            OR NULLIF(btrim(validation_criteria), '') IS NOT NULL
-        ) NOT VALID
-"""
 
 
 def _manager(temp_db: HubDatabase) -> LocalTaskManager:
@@ -49,14 +36,10 @@ def _make_legacy(
     *,
     validation_criteria: str | None = None,
 ) -> None:
-    db.execute("ALTER TABLE tasks DROP CONSTRAINT tasks_require_validation_criteria")
-    try:
-        db.execute(
-            "UPDATE tasks SET validation_criteria = %s WHERE id = %s",
-            (validation_criteria, task_id),
-        )
-    finally:
-        db.execute(_ADD_VALIDATION_CRITERIA_CONSTRAINT)
+    db.execute(
+        "UPDATE tasks SET validation_criteria = %s WHERE id = %s",
+        (validation_criteria, task_id),
+    )
 
 
 def test_legacy_leaf_closes_as_obsolete(
@@ -71,7 +54,7 @@ def test_legacy_leaf_closes_as_obsolete(
 
     assert closed.closed_at is not None
     assert closed.closed_reason == "moot"
-    assert closed.validation_criteria == LEGACY_VALIDATION_CRITERIA
+    assert closed.validation_criteria is None
 
 
 def test_close_preserves_existing_validation_criteria(
@@ -108,4 +91,4 @@ def test_legacy_non_epic_ancestor_auto_closes(
     assert closed_parent is not None
     assert closed_parent.closed_at is not None
     assert closed_parent.closed_reason == "moot"
-    assert closed_parent.validation_criteria == LEGACY_VALIDATION_CRITERIA
+    assert closed_parent.validation_criteria is None

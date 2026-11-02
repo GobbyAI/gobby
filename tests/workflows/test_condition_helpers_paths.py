@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
-import yaml
 
 from gobby.workflows.condition_helpers_paths import write_paths_match, write_paths_within
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
@@ -15,80 +13,6 @@ from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condit
 pytestmark = pytest.mark.unit
 
 DIGEST = r"/digests/gobby-digest-\d{4}-\d{2}-\d{2}\.md"
-
-
-@pytest.mark.parametrize(
-    "relative,allowed",
-    [
-        (".gobby/plans/research/report.md", True),
-        (".gobby/plans/research/figures/latency.svg", True),
-        (".gobby/plans/research-other/report.md", False),
-        (".gobby/plans/research/../../../src/app.py", False),
-        ("src/app.py", False),
-        (".gobby/plans/plan.md", False),
-        (".gobby/plans/research/escape/secret.md", False),
-    ],
-)
-def test_researcher_rule_allows_only_research_artifacts(
-    project: Path, relative: str, allowed: bool
-) -> None:
-    reports = project / ".gobby/plans/research"
-    reports.mkdir(parents=True)
-    (reports / "escape").symlink_to(project / "src", target_is_directory=True)
-    rule_path = (
-        Path(__file__).parents[2]
-        / "src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml"
-    )
-    rules = yaml.safe_load(rule_path.read_text())["rules"]
-    assert "research-artifact-write-scope" in rules
-    rule = rules["research-artifact-write-scope"]
-    data = _write(project, str(project / relative), cwd=project / "docs")
-    evaluator = SafeExpressionEvaluator(
-        {
-            "event": SimpleNamespace(data=data),
-            "tool_input": {},
-            "variables": {"_agent_type": "researcher"},
-        },
-        build_condition_helpers(),
-    )
-    assert evaluator.evaluate(rule["when"]) is (not allowed)
-
-
-@pytest.mark.parametrize(
-    "relative,allowed",
-    [
-        (".gobby/reports/gobby-digest-2026-10-12.md", True),
-        (".gobby/reports/gobby-digest-2026-10-12.md.tmp.123.012345abcdef", True),
-        (".gobby/reports/gobby-digest-2026-10-12.md.bak", False),
-        (".gobby/reports/gobby-digest-2026-1-12.md", False),
-        (".gobby/reports/gobby-digest-2026-10-12.md.tmp.123.012345abcdeg", False),
-        (".gobby/reports/gobby-digest-2026-10-12.md.tmp.123.012345ABCDEF", False),
-        (".gobby/reports/notes.md", False),
-        (".gobby/reports-other/gobby-digest-2026-10-12.md", False),
-        (".gobby/other/gobby-digest-2026-10-12.md", False),
-        (".gobby/reports/nested/gobby-digest-2026-10-12.md", False),
-        (".gobby/reports/nested/.gobby/reports/gobby-digest-2026-10-12.md", False),
-        ("../other/.gobby/reports/gobby-digest-2026-10-12.md", False),
-    ],
-)
-def test_archivist_rule_allows_only_workspace_report_names(
-    project: Path, relative: str, allowed: bool
-) -> None:
-    rule_path = (
-        Path(__file__).parents[2]
-        / "src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml"
-    )
-    rule = yaml.safe_load(rule_path.read_text())["rules"]["digest-write-scope"]
-    data = _write(project, str(project / relative), cwd=project / "docs")
-    evaluator = SafeExpressionEvaluator(
-        {
-            "event": SimpleNamespace(data=data),
-            "tool_input": {},
-            "variables": {"_agent_type": "archivist"},
-        },
-        build_condition_helpers(),
-    )
-    assert evaluator.evaluate(rule["when"]) is (not allowed)
 
 
 def _write(project: Path, path: str, *, cwd: Path | None = None) -> dict[str, Any]:

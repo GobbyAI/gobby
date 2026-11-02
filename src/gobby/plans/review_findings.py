@@ -34,14 +34,13 @@ _REQUIRED_STRING_FIELDS = (
     "fix",
     "prevention",
 )
-_OPTIONAL_STRING_FIELDS = ("principle", "root_cause", "causal_finding_id")
-_SECTION_SET_FIELDS = ("participating_section_ids", "causal_section_ids")
+_OPTIONAL_STRING_FIELDS = ("principle", "root_cause")
+_SECTION_SET_FIELDS = ("participating_section_ids",)
 _ALLOWED_FIELDS = frozenset(
     {
         *_REQUIRED_STRING_FIELDS,
         *_OPTIONAL_STRING_FIELDS,
         *_SECTION_SET_FIELDS,
-        "introduced_in_round",
         "repairs",
     }
 )
@@ -115,15 +114,6 @@ def _validate_finding(
             section_ids=section_ids,
         )
 
-    causal_fields = {"introduced_in_round", "causal_finding_id", "causal_section_ids"}
-    supplied_causal_fields = causal_fields.intersection(raw)
-    if supplied_causal_fields and supplied_causal_fields != causal_fields:
-        missing = sorted(causal_fields - supplied_causal_fields)
-        raise _invalid(f"{prefix} has incomplete causal evidence: {', '.join(missing)}")
-    if supplied_causal_fields:
-        introduced = raw["introduced_in_round"]
-        if not isinstance(introduced, int) or isinstance(introduced, bool) or introduced < 1:
-            raise _invalid(f"{prefix}.introduced_in_round must be a positive integer")
     return raw
 
 

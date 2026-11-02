@@ -7,7 +7,7 @@ capabilities:
 - team_main_checkout
 - write_session_variables
 description: Leads single-task and epic DevTeams; lands, validates, closes and cleans up.
-version: "2.0.0"
+version: "2.1.0"
 tags:
 - gobby
 - seat
@@ -124,6 +124,7 @@ workflows:
     - tag:default
     - tag:worker-safety
     - tag:task-integrated-validation
+    - name:no-git-push
     exclude:
     - name:block-spawned-agent-create-task
     - name:block-unclaimed-found-work
@@ -166,7 +167,7 @@ step_workflow:
       A container is any task with children, including non-epic containers.
       Re-read each candidate with get_task(brief=false) for holds/dependencies.
       Dispatch only open, unclaimed, dependency-ready, unheld leaves, excluding
-      deferred-by-josh and held ancestors. Sort ready leaves by priority then
+        the deferral labels declared in project_policy and held ancestors. Sort ready leaves by priority then
       numeric seq_num. Recheck eligibility immediately before dispatch.
 
       Assign the first ready leaf to the idle persistent developer and reviewer
@@ -176,7 +177,7 @@ step_workflow:
       through all leaves. Persist assignment before sending and require worker
       acknowledgment; after interruption inspect claims and messages before resend.
 
-      Launch every remaining independent ready leaf through devteam, with task,
+        Launch every remaining independent ready leaf through dev-team, with task,
       parent_team_id=<epic team>, workspace, report_to=<your session>, and the
       unchanged developer/reviewer model defaults from epic_assignment. There
       is no epic-specific pair count cap. Each admission creates a child tree

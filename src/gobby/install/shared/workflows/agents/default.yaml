@@ -1,4 +1,4 @@
-version: "1.1.0"
+version: "2.0.0"
 name: default
 capabilities:
   - override_spawn_network
@@ -19,54 +19,6 @@ surfaces: [spawn, persona]
 provider: inherit
 timeout: 0
 spawnable_agents: ["*"]
-
-task_attestation_kinds:
-  test-before:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Describe the observed failing test before implementation, or justify non-applicability.
-  implementation:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Describe the change and reference its exact full candidate SHA.
-  test-after:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Describe the passing rerun and exact command on the full candidate SHA.
-  self-review:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Describe OCR self-review, findings and their resolution on the exact candidate.
-  independent-review:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Independently assess the exact candidate and criteria; record rated findings.
-  validation:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Give stage and criteria [{criterion, met, how}] against task.validation_criteria; validate
-      the integrated SHA after land.
-  closing:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Review every criterion and reference the full integrated SHA after validation.
-  security-review:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Independently inspect trust boundaries and approve or reject the exact full SHA.
-  disposition:
-    allowed_results:
-    - approved
-    - rejected
-    guidance: Explain the no-work close reason and any replacement reference.
 
 prompts:
   persona: |

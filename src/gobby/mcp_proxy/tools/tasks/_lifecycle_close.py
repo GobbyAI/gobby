@@ -25,8 +25,9 @@ from gobby.sessions.machine_scope import (
 )
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.close_receipts import list_close_receipts
 from gobby.tasks.closure_snapshot import prepare_closure
-from gobby.tasks.land_commit import LandingGitError, task_landing_target
+from gobby.tasks.land_commit import LandingGitError, candidate_scope_paths, task_landing_target
 from gobby.tasks.lifecycle_access import task_protection_refusal, task_scope_refusal
 from gobby.tasks.state_semantics import (
     get_claimed_session_id,
@@ -173,6 +174,8 @@ async def _evaluate_close(
         "dirty_checkouts": {},
         "unavailable_checkouts": [],
         "integration_ancestry": False,
+        "candidate_paths": [],
+        "candidate_paths_available": False,
     }
     try:
         attribution = await capture_attribution(
@@ -216,6 +219,20 @@ async def _evaluate_close(
             target = None
         landed = bool(target and commits)
         if target:
+            if evaluation.candidate_commit_sha is not None:
+                tip = await daemon_git.run(("rev-parse", f"refs/heads/{target[1]}"), cwd=target[0])
+                if isinstance(tip, GitOk):
+                    try:
+                        candidate_paths = await candidate_scope_paths(
+                            target[0],
+                            tip.stdout.strip(),
+                            evaluation.candidate_commit_sha,
+                            list_close_receipts(ctx.task_manager.db, task.id),
+                        )
+                    except LandingGitError:
+                        candidate_paths = None
+                    evaluation.facts["candidate_paths"] = list(candidate_paths or [])
+                    evaluation.facts["candidate_paths_available"] = candidate_paths is not None
             for sha in commits:
                 result = await daemon_git.run(
                     ("merge-base", "--is-ancestor", sha, f"refs/heads/{target[1]}"),

@@ -27,7 +27,9 @@ pytestmark = pytest.mark.unit
 def test_concurrent_attestations_keep_one_ordered_history(
     temp_db: HubDatabase, sample_project: dict[str, Any], same_key: bool
 ) -> None:
-    author = _Seats(temp_db, sample_project["id"]).add("concurrent-author", ["observation"])
+    author = _Seats(temp_db, sample_project["id"]).add(
+        "concurrent-author", ["observation"], results=["recorded"]
+    )
     task = LocalTaskManager(temp_db).create_task(sample_project["id"], "Record observations")
     barrier = Barrier(4)
 
@@ -139,7 +141,7 @@ def test_restore_rejects_invalid_history_before_appending_anything(
 def test_idempotent_replay_distinguishes_json_boolean_from_number(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
-    author = _Seats(temp_db, sample_project["id"]).add("json-author", ["check"])
+    author = _Seats(temp_db, sample_project["id"]).add("json-author", ["check"], results=["pass"])
     task = LocalTaskManager(temp_db).create_task(
         sample_project["id"], "Exact JSON", validation_criteria="Preserve evidence types."
     )
@@ -294,7 +296,10 @@ def test_attestation_scope_is_independent_of_retired_step_permissions(
 ) -> None:
     seats = _Seats(temp_db, sample_project["id"])
     author = seats.add(
-        "cake-inspector", ["taste"], definition_fields={"task_attestation_scope": scope}
+        "cake-inspector",
+        ["taste"],
+        results=["pass"],
+        definition_fields={"task_attestation_scope": scope},
     )
     task = LocalTaskManager(temp_db).create_task(
         title="Inspect cake", project_id=sample_project["id"], validation_criteria="Balanced taste."
@@ -314,7 +319,10 @@ def test_writer_grants_and_idempotency_are_integrity_checks(
 ) -> None:
     seats = _Seats(temp_db, sample_project["id"])
     author = seats.add(
-        "limited-author", [], definition_fields={"task_attestation_writes": ["taste"]}
+        "limited-author",
+        [],
+        results=["pass"],
+        definition_fields={"task_attestation_writes": ["taste"]},
     )
     task = LocalTaskManager(temp_db).create_task(
         title="Taste cake",

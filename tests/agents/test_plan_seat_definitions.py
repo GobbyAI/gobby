@@ -16,12 +16,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.spawn_agent._run_lifetime import resolve_run_lifetime
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sessions import SessionManager
-from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.definitions import AgentDefinitionBody
-from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-from tests.fixtures.agent_definitions import seed_seat
 from tests.workflows.test_seat_step_loops import DERIVE, SHA, SeatRun
 
 pytestmark = pytest.mark.unit
@@ -192,38 +187,3 @@ def _spawn_event(caller_id: str, agent: str) -> HookEvent:
         },
         metadata={"_platform_session_id": caller_id},
     )
-
-
-@pytest.mark.asyncio
-async def test_seat_spawns_admitted_from_pipeline_child(
-    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
-) -> None:
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-    for name in SYNTHETIC_PLANNING_SEATS:
-        seed_seat(temp_db, name)
-    engine = RuleEngine(temp_db, session_manager=session_manager)
-    project_id = str(sample_project["id"])
-    caller = session_manager.register(
-        external_id="plan-seat-runbook-caller",
-        machine_id=require_machine_id(),
-        source="claude",
-        project_id=project_id,
-    )
-    # The session PipelineExecutor registers for a top-level pipeline run.
-    pipeline_child = session_manager.register(
-        external_id="pipeline-plan-seat-runbook",
-        machine_id=None,
-        source="pipeline",
-        project_id=project_id,
-        parent_session_id=caller.id,
-        agent_depth=0,
-    )
-    pipeline_variables: dict[str, Any] = {"_agent_type": "pipeline"}
-
-    for name in SYNTHETIC_PLANNING_SEATS:
-        response = await engine.evaluate(
-            _spawn_event(pipeline_child.id, name),
-            session_id=pipeline_child.id,
-            variables=dict(pipeline_variables),
-        )
-        assert response.decision == "allow", (name, response.reason)

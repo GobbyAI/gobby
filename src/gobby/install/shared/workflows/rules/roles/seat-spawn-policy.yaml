@@ -1,4 +1,4 @@
-version: "1.0.1"
+version: "1.1.0"
 tags: [roles, seat, enforcement, gobby, seat-policy]
 
 # Definitions select this policy group and exclude the permissions they grant.
@@ -42,11 +42,11 @@ rules:
       and (tool_input.get('tool_name') == 'run_pipeline'
         or str(tool_input.get('tool_name') or '').startswith('pipeline:'))
       and not dev_pod_launch_allowed(event.metadata.get('_platform_session_id'),
-        tool_input.get('tool_name'), tool_input, ['devteam'])
+        tool_input.get('tool_name'), tool_input, ['dev-team'])
     effects:
       - type: block
         reason: >-
-          Epic Dev Team Leads may run devteam for their own pods: a leaf with parent_team_id,
+          Epic Dev Team Leads may run dev-team for their own pods: a leaf with parent_team_id,
           or a relaunch with team_id. Otherwise only the Orchestrator launches pipelines, and
           the Assistant while the Orchestrator is down: a pipeline's steps run outside seat
           rules. Runbooks launch from the operator's surfaces or the Orchestrator; send the

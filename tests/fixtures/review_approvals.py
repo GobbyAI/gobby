@@ -43,6 +43,14 @@ def grant_step_writes(
                     "variables": {"team_manager": team_manager},
                 },
                 "task_attestation_writes": list(steps),
+                "task_attestation_kinds": {
+                    kind: {
+                        "allowed_results": ["approved", "rejected"],
+                        "guidance": "Record the observed result.",
+                    }
+                    for kind in steps
+                    if kind != "*"
+                },
                 "capabilities": list(capabilities),
                 "supplemental_review": supplemental_review,
                 "direct_integration_commit_paths": list(integration_paths),

@@ -54,7 +54,7 @@ async def test_explicit_claim_transfer_reports_identity_activity_and_stalls(
 ) -> None:
     sessions = AgentSessions(temp_db, sample_project["id"])
     owner = sessions.add("baker", capabilities=("manage_task_claims",))
-    recipient = sessions.add("taster", ["taste-check"])
+    recipient = sessions.add("taster", ["taste-check"], results=["balanced"])
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(sample_project["id"], "Bake and taste a cake")
     manager.claim_task(task.id, owner)

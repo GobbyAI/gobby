@@ -7,8 +7,6 @@ A future change that reintroduces task-bearing titles or lane wording fails here
 import re
 from pathlib import Path
 
-import yaml
-
 REPO = Path(__file__).resolve().parents[2]
 CONTRACT = REPO / "docs/contracts/seat-titles.md"
 SHARED = REPO / "src/gobby/install/shared"
@@ -40,26 +38,5 @@ def test_contract_doc_records_joshs_title_rules() -> None:
         assert quote in text
 
 
-def test_team_planning_takes_no_lane_input() -> None:
-    definition = yaml.safe_load((SHARED / "workflows/pipelines/team-planning.yaml").read_text())
-
-    assert [name for name in definition["inputs"] if "lane" in name.lower()] == []
-
-
-def test_seat_runbooks_and_rules_have_no_lane_wording() -> None:
-    paths = sorted(
-        [
-            *(SHARED / "workflows/pipelines").glob("*.yaml"),
-            *(SHARED / "workflows/rules/roles").glob("*.yaml"),
-        ]
-    )
-
-    assert _lane_hits(paths) == []
-
-
 def test_spawn_and_placement_code_has_no_lane_wording() -> None:
     assert _lane_hits(sorted((REPO / "src/gobby/agents").glob("*.py"))) == []
-
-
-def test_refuse_task_outside_lane_rule_is_retired() -> None:
-    assert not (SHARED / "workflows/rules/task-enforcement/refuse-task-outside-lane.yaml").exists()

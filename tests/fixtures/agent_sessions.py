@@ -21,6 +21,7 @@ class AgentSessions:
         definition: str,
         writes: Sequence[str] = (),
         *,
+        results: Sequence[str] = ("approved", "rejected"),
         capabilities: tuple[str, ...] = (),
         definition_fields: dict[str, Any] | None = None,
     ) -> str:
@@ -34,6 +35,14 @@ class AgentSessions:
                     "prompts": {"agent": "Complete the assigned task."},
                     "workflows": {"rule_selectors": {"include": []}},
                     "task_attestation_writes": list(writes),
+                    "task_attestation_kinds": {
+                        kind: {
+                            "allowed_results": list(results),
+                            "guidance": "Report the observed result.",
+                        }
+                        for kind in (definition_fields or {}).get("task_attestation_writes", writes)
+                        if kind != "*"
+                    },
                     "capabilities": list(capabilities),
                     **(definition_fields or {}),
                 },

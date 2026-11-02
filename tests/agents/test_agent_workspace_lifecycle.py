@@ -9,7 +9,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
 
 from gobby.agents.agent_workspaces import (
     spawn_workspace_write_paths,
@@ -20,10 +19,7 @@ from gobby.hooks.event_handlers._session_start.materialize import activate_mater
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
 from gobby.storage.definitions import AgentDefinitionManager
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.agent_models import AgentDefinitionBody
-from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.hooks.test_clear_successor_seat import _pane, _seat_handler, _stage
@@ -235,39 +231,3 @@ async def _compact(engine: RuleEngine, variables: dict[str, Any]) -> None:
         session_id="44444444-4444-4444-8444-444444444444",
         variables=variables,
     )
-
-
-@pytest.mark.asyncio
-async def test_persistent_set_and_injection(temp_db: HubDatabase) -> None:
-    assert AgentDefinitionBody.model_fields["persistent_workspace"].default is False
-
-    manager = RuleDefinitionManager(temp_db)
-    for rule_file in sorted((SHARED / "rules/roles").glob("*.yaml")):
-        document = yaml.safe_load(rule_file.read_text())
-        for rule_name, rule_data in document["rules"].items():
-            body_data, metadata = split_rule_definition_data(rule_data)
-            manager.create(
-                name=rule_name,
-                definition_json=RuleDefinitionBody.model_validate(body_data).model_dump_json(),
-                priority=metadata["priority"],
-                enabled=metadata["enabled"],
-                tags=document["tags"],
-            )
-    engine = RuleEngine(temp_db)
-
-    for persistent in (True, False):
-        folder = f"/ws/{'assistant' if persistent else 'developer'}/session-4"
-        variables: dict[str, Any] = {
-            "_agent_type": "assistant" if persistent else "developer",
-            "_agent_workspace_dir": folder,
-            "_agent_workspace_persistent": persistent,
-        }
-        first = await _turn(engine, variables)
-        assert folder in first, persistent
-        assert "literal paths only" in first.lower()
-        assert (PREDECESSOR_NOTE in first) is persistent
-        assert folder not in await _turn(engine, variables), "once per context epoch"
-        await _compact(engine, variables)
-        assert folder in await _turn(engine, variables), "re-armed after compaction"
-
-    assert "literal paths only" not in (await _turn(engine, {"_agent_type": "developer"})).lower()

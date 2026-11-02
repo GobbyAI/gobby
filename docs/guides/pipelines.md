@@ -408,7 +408,7 @@ definition is not installed or is disabled; and any failed or truncated lookup.
 It checks no slot capacity and no pane title. The same runbook may run at once
 on other machines, in other workspaces and for other projects, and a second
 launch in the same place starts once the first execution has ended. A runbook
-launched with a `task` input, such as `devteam`, refuses only another launch
+launched with a `task` input, such as `dev-team`, refuses only another launch
 for the same task, so teams for different tasks launch in parallel.
 
 **Seats.** Each seat is one `mcp` step that calls `gobby-agents:spawn_agent`

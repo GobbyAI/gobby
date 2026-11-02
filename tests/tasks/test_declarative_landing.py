@@ -121,6 +121,7 @@ async def test_landing_receipt_records_the_request_admission_snapshot(
     caller = AgentSessions(temp_db, case.project_id).add(
         "delivery-author",
         ["permission"],
+        results=["granted", "rejected"],
         capabilities=("land_tasks",),
         definition_fields={"workflows": {"rule_selectors": {"include": ["tag:delivery"]}}},
     )
@@ -237,6 +238,7 @@ async def test_landing_obeys_selected_evidence_policy(
     caller = AgentSessions(temp_db, case.project_id).add(
         "delivery-author",
         ["release-permission"],
+        results=["granted", "rejected"],
         capabilities=("land_tasks",),
         definition_fields={"workflows": {"rule_selectors": {"include": ["tag:delivery"]}}},
     )

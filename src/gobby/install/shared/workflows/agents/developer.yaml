@@ -1,5 +1,5 @@
 name: developer
-version: "2.0.0"
+version: "2.0.1"
 description: Implements and tests a task; the daemon hands its claim to independent review.
 tags:
 - gobby
@@ -118,6 +118,7 @@ task_attestation_kinds:
     - approved
     - rejected
     guidance: Describe the observed failing test before implementation, or justify non-applicability.
+      Omit the Git reference for this pre-implementation evidence; later kinds name the final candidate.
   implementation:
     allowed_results:
     - approved
@@ -137,5 +138,5 @@ task_attestation_kinds:
     allowed_results:
     - approved
     - rejected
-    guidance: Give stage and criteria [{criterion, met, how}] against task.validation_criteria; validate
-      the integrated SHA after land.
+    guidance: Give stage implement and criteria [{criterion, met, how}] against task.validation_criteria
+      on the implementation candidate before handing it to the reviewer.

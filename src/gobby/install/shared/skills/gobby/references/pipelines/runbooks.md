@@ -20,7 +20,7 @@ definition's `cold_start_commands` activate it and reuse or open its declared
 | Runbook | Seats | Required inputs |
 | --- | --- | --- |
 | `support` | release-manager, triage, archivist, recovery-steward, consolidator, security-auditor | `workspace`, `project_path`, `report_to` |
-| `devteam` | developer, code-reviewer, dev-team-lead | `task`, `workspace`, `report_to` |
+| `dev-team` | developer, code-reviewer, dev-team-lead | `task`, `workspace`, `report_to` |
 | `team-planning` | plan-writer, plan-adversary, plan-enhancer | `task`, `workspace`, `project_path`, `report_to` |
 
 ## Support
@@ -35,8 +35,8 @@ spawns the monitors on the operator's go; neither runbook launches them.
 
 ## DevTeam
 
-Run the single devteam pipeline for either a task or epic with task, workspace,
-report_to and project_policy.launch_defaults.devteam. It launches developer,
+Run the single dev-team pipeline for either a task or epic with task, workspace,
+report_to and project_policy.launch_defaults['dev-team']. It launches developer,
 code-reviewer and dev-team-lead in Dev Team - #N. The pair uses the registered
 task tree; the lead stays in main. admit_team chooses single-task or epic mode.
 The bundled file is dev-team.yaml; there is no separate epic pipeline.
@@ -101,6 +101,6 @@ not reach seats once the pipeline child has ended.
 Guides: [runbooks](../../../../../../../../docs/guides/runbooks.md) and
 [pipelines](../../../../../../../../docs/guides/pipelines.md#runbooks).
 
-_Version: 2.0.0_
+_Version: 2.1.0_
 
-_Last verified: 2026-10-23_
+_Last verified: 2026-11-01_

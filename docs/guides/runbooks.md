@@ -72,8 +72,8 @@ gaps without duplicating a seat. Relaunch a missing Triage first the same way.
 
 ## Launch a DevTeam
 
-Run the single devteam pipeline for either a task or epic with task, workspace,
-report_to and project_policy.launch_defaults.devteam. It launches developer,
+Run the single dev-team pipeline for either a task or epic with task, workspace,
+report_to and project_policy.launch_defaults['dev-team']. It launches developer,
 code-reviewer and dev-team-lead in Dev Team - #N. The pair uses the registered
 task tree; the lead stays in main. admit_team chooses single-task or epic mode.
 The bundled file is dev-team.yaml; there is no separate epic pipeline.

@@ -252,6 +252,9 @@ def remove_label(db: HubDatabase, task_id: str, label: str) -> Task:
     """Remove a label from a task if present."""
     get_task(db, task_id)  # Validate identity without reading mutation state.
     with db.transaction() as conn:
+        from gobby.storage.tasks._label_policy import authorize_label_removal
+
+        authorize_label_removal(db, conn, task_id, remove_labels=[label])
         conn.execute(
             """
             UPDATE tasks

@@ -5,7 +5,7 @@
 - Delegate as much as possible: you are the final gate who orders the teams.
 - Admin and Support. The operator opens the Assistant and Orchestrator panes in one tab with `/gobby admin` (`$gobby admin` in Codex), which makes the typing pane the Orchestrator and opens the Assistant beside it; `/gobby assistant` does the same from the Assistant's side. A live counterpart is reused, never opened twice. Launch the Support seats (Release Manager, Triage, Archivist, Security Auditor, Recovery Steward and Consolidator) with the `support` runbook, passing `workspace`, `project_path` and the project policy's `launch_defaults.support`. Only Triage can message you, so launch it first with `seats=triage` and `report_to=<your session ref>`. Once it reports its ref, run `support` again with `report_to=<Triage ref>` for the other seats. A re-run launches only the missing seats; relaunch a missing Triage first the same way. The monitors are in neither runbook: spawn the Log Monitor and Metrics Monitor with `gobby-agents:spawn_agent` in the main checkout, only on the operator's go, and name the Triage and Assistant refs (plus the Log Monitor ref for the Metrics Monitor) in the prompt.
 - Never wait on Triage. Triage wakes you with each digest and forward. When you have nothing to act on, send Triage a check-in asking for pending work, and act on its reply; never end a turn on a `wait_for_coordination` reply wait on Triage.
-- DevTeams. Use the unified devteam pipeline for a task or epic: developer, code-reviewer and dev-team-lead. Pass task, workspace, report_to=<Triage ref> and its declared provider/model/effort defaults. The daemon moves claims through pipeline claim_flow on attestations. The lead checks security, lands, validates the integrated SHA after land, closes and cleans up after seats end. Developers never land, merge, close or delete worktrees.
+- DevTeams. Use the unified dev-team pipeline for a task or epic: developer, code-reviewer and dev-team-lead. Pass task, workspace, report_to=<Triage ref> and its declared provider/model/effort defaults. The daemon moves claims through pipeline claim_flow on attestations. The lead checks security, lands, validates the integrated SHA after land, closes and cleans up after seats end. Developers never land, merge, close or delete worktrees.
 - Monitoring. Wait on each responsible owner with a status wait (`wait_for_coordination` with `statuses`), never `reply=true`: DevTeam seats cannot reply to you. Their progress reaches you as Triage digests. `team_progress` reports actual participants and evidence activity. Staff missing participants or resolve explicit blockers through declared authority. Candidate and verdict text does not move claims or attest completion; the lead owns DevTeam completion.
 - Research. Choose the configured research workflow and inspect its current input schema. A report author records implementation evidence; the independently authorized reviewer records a review against the exact artifact or commit reference. The selected definitions and policy determine who may close and which attestations are required. Keep research seats in the main checkout unless they are associated with a developer task.
 - Disposition closes. An authorized closer records a truthful disposition attestation with the chosen reason and supporting evidence. For superseded work, include the replacement reference. Preserve linked work and provenance. Preview the selected policy, then close once its requirements pass; reasons have no built-in role ownership.
@@ -34,7 +34,7 @@
 ## Reviewer selection
 
 Choose review requirements in the task's installed definitions, rules and pipeline.
-The bundled `devteam` explicitly pairs `developer` with `code-reviewer`; it does
+The bundled `dev-team` explicitly pairs `developer` with `code-reviewer`; it does
 not accept a routed reviewer definition or legacy manager/fresh-reviewer inputs.
 Use a configured workflow whose declarations suit documentation or research.
 Code does not route or grant authority by those definition names.
@@ -47,11 +47,12 @@ A researcher's report spike need not launch a DevTeam. Check the report against 
 
 The static Support security-auditor drafts security_paths from a brownfield audit
 or greenfield boundary design, and proposes additions found during reviews.
-The Assistant brings Approve/Hold to Josh. On approval, apply the draft to
-project_policy with set_variable. Josh never hand-edits it. Only the operator or
+The Assistant brings Approve/Hold to the operator. On approval, apply the draft to
+the installed project-policy source; its rules refresh the project_policy projection.
+The operator never hand-edits it. Only the operator or
 the Orchestrator's declared remove_security_review_label authority removes the label.
 Filers label obvious trust-boundary tasks; leads inspect every candidate diff.
 
-_Version: 2.0.0_
+_Version: 2.1.0_
 
 _Last verified: 2026-11-01_

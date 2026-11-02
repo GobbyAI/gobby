@@ -25,6 +25,27 @@ from tests.fixtures.agent_sessions import AgentSessions
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("wildcard", [False, True])
+def test_explicit_writer_requires_kind_metadata_but_wildcard_remains_open(
+    temp_db: HubDatabase, sample_project: dict[str, Any], wildcard: bool
+) -> None:
+    actor = AgentSessions(temp_db, sample_project["id"]).add(
+        "free-writer",
+        ["*" if wildcard else "taste"],
+        definition_fields={"task_attestation_kinds": {}},
+    )
+    task = LocalTaskManager(temp_db).create_task(sample_project["id"], "Check a taste")
+    submission = AttestationSubmission(kind="taste", result="custom", summary="Observed.")
+    if wildcard:
+        record, created = record_attestation(
+            temp_db, task_id=task.id, session_id=actor, submission=submission
+        )
+        assert created and record.result == "custom"
+    else:
+        with pytest.raises(AttestationError, match="not declared"):
+            record_attestation(temp_db, task_id=task.id, session_id=actor, submission=submission)
+
+
 def test_kind_results_return_declared_guidance(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
@@ -56,6 +77,7 @@ def _exercise_claim_flow(
     sample_project: dict[str, Any],
     recipient_state: str,
     tied_timestamps: bool,
+    scenario: str = "ordinary",
 ) -> tuple[str, str]:
     project = sample_project["id"]
     tasks = LocalTaskManager(temp_db)
@@ -125,6 +147,33 @@ def _exercise_claim_flow(
         )
     tasks.claim_task(task.id, maker)
 
+    if scenario == "readmitted":
+        temp_db.execute(
+            "INSERT INTO task_comments (id, task_id, author, author_type, body) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (
+                str(UUID(int=99)),
+                task.id,
+                maker,
+                "task_claim_flow",
+                json.dumps({"team_id": "old-team", "stage": "validate", "after_sequence": 999}),
+            ),
+        )
+    if scenario == "future-ambiguous":
+        from gobby.storage.agents import LocalAgentRunManager
+
+        seats.next_seq = parent.seq_num or seats.next_seq
+        extra = seats.add("host", ["checks", "closing"])
+        temp_db.execute(
+            "UPDATE sessions SET parent_session_id = %s WHERE id = %s", (parent.id, extra)
+        )
+        runs = LocalAgentRunManager(temp_db)
+        for child in (lead, extra):
+            run = runs.create(
+                parent.id, "codex", "Serve", agent_name="host", child_session_id=child
+            )
+            runs.start(run.id)
+
     if recipient_state != "original":
         temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (reviewer,))
     if recipient_state == "replacement":
@@ -150,7 +199,7 @@ def _exercise_claim_flow(
                 kind=kind,
                 result=result,
                 summary="Checked the cake.",
-                reference={"scheme": "recipe", "value": "v1"},
+                reference=None if kind == "recipe" else {"scheme": "recipe", "value": "v1"},
                 evidence={
                     "stage": "test",
                     "criteria": [{"criterion": "Balanced taste", "met": True, "how": "Tasted"}],
@@ -175,6 +224,8 @@ def _exercise_claim_flow(
         return task.id, maker
     attest(maker, "checks")
     assert tasks.get_task(task.id).claimed_by_session_id == reviewer
+    if scenario == "future-ambiguous":
+        return task.id, reviewer
     attest(reviewer, "verdict", "rejected")
     assert tasks.get_task(task.id).claimed_by_session_id == maker
     attest(maker, "recipe")
@@ -193,6 +244,14 @@ def _exercise_claim_flow(
     attest(reviewer, "checks")
     assert tasks.get_task(task.id).claimed_by_session_id == lead
     return task.id, lead
+
+
+@pytest.mark.parametrize("scenario", ["readmitted", "future-ambiguous"])
+def test_claim_flow_only_considers_current_team_and_needed_seats(
+    temp_db: HubDatabase, sample_project: dict[str, Any], scenario: str
+) -> None:
+    task_id, holder = _exercise_claim_flow(temp_db, sample_project, "original", False, scenario)
+    assert LocalTaskManager(temp_db).get_task(task_id).claimed_by_session_id == holder
 
 
 @pytest.mark.parametrize("recipient_state", ["original", "replacement", "missing"])

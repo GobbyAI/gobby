@@ -251,18 +251,16 @@ class TestDeleteTaskGuard:
 
 class TestLinkTaskToSessionGuard:
     @pytest.mark.parametrize(
-        ("live_reviewer", "closed", "other_session", "allowed"),
+        ("closed", "other_session", "allowed"),
         [
-            (True, False, False, True),
-            (False, False, False, False),
-            (True, True, False, False),
-            (True, False, True, False),
+            (False, False, True),
+            (True, False, True),
+            (False, True, False),
         ],
     )
-    def test_reviewing_requires_the_callers_live_seat_on_an_open_claimed_task(
+    def test_reviewing_link_is_self_scoped_without_foreign_delegation(
         self,
         task_manager: MagicMock,
-        live_reviewer: bool,
         closed: bool,
         other_session: bool,
         allowed: bool,
@@ -270,14 +268,8 @@ class TestLinkTaskToSessionGuard:
         task_manager.get_task.return_value = _task(
             OWNER_SESSION, closed_at=datetime.now(UTC) if closed else None
         )
-        task_manager.db.fetchone.return_value = {"id": "reviewer-run"} if live_reviewer else None
         with ExitStack() as stack:
             tool, writer = _build_link_task_to_session(task_manager, stack)
-            # The mocked db returns the reviewer row for every fetchone, including the
-            # grant lookup's session query, so stub the grant to test the live-seat rule.
-            stack.enter_context(
-                patch("gobby.mcp_proxy.tools.tasks._session.session_grants", return_value=True)
-            )
             with session_context_for_test(CALLER_SESSION):
                 result = tool(
                     task_id=TASK_UUID,

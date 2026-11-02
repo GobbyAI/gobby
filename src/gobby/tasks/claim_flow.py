@@ -45,53 +45,56 @@ def advance_claim_flow(
 
         if team.mode != "epic" or open_leaf_below(db, team.task_id, task.id) is None:
             raise ValueError("claim flow does not cover this task")
-    sessions: dict[str, str] = {}
     session_store = SessionManager(db)
     author = session_store.get(record.session_id)
     if author is None:
         raise ValueError("claim flow author session is missing")
-    runs = LocalAgentRunManager(db).list_active_for_machine(author.machine_id, limit=1001)
-    if len(runs) > 1000:
-        raise ValueError("claim flow live seat lookup exceeded its bound")
-    seat_steps = {step.id: step for step in definition.steps}
-    steps = {step.step_id: step for step in executions.get_steps_for_execution(team.team_id)}
-    for name, stage in definition.claim_flow.items():
-        step = steps.get(stage.seat)
-        output = json.loads(step.output_json) if step and step.output_json else {}
-        if child := output.get("child_session_id"):
-            sessions[name] = child
-        # Relaunches join the same admission; their active runs replace ended step outputs.
-        seat_step = seat_steps[stage.seat]
-        agent = (seat_step.mcp.arguments or {}).get("agent") if seat_step.mcp else None
-        live = set()
-        for run in runs:
-            if not agent or run.agent_name != agent or not run.child_session_id:
-                continue
-            child_session = session_store.get(run.child_session_id)
-            if (
-                child_session is None
-                or child_session.project_id != task.project_id
-                or child_session.status not in LIVE_SESSION_STATUSES
-            ):
-                continue
-            child_team = seat_team(db, child_session.id)
-            if child_team is not None and child_team.team_id == team.team_id:
-                live.add(child_session.id)
-        if len(live) > 1:
-            raise ValueError(f"claim flow stage {name!r} has ambiguous live pipeline seats")
-        if live:
-            sessions[name] = live.pop()
     prior = conn.execute(
         "SELECT body FROM task_comments WHERE task_id = %s AND author_type = %s "
+        "AND body::jsonb ->> 'team_id' = %s "
         "ORDER BY (body::jsonb ->> 'after_sequence')::bigint DESC LIMIT 1",
-        (task.id, "task_claim_flow"),
+        (task.id, "task_claim_flow", team.team_id),
     ).fetchone()
     state = json.loads(prior["body"]) if prior else {}
     name = state.get("stage") or next(iter(definition.claim_flow))
-    if state and state.get("team_id") != team.team_id:
-        raise ValueError("claim flow belongs to a different team")
     stage = definition.claim_flow[name]
-    if sessions.get(name) != record.session_id:
+    seat_steps = {step.id: step for step in definition.steps}
+    steps = {step.step_id: step for step in executions.get_steps_for_execution(team.team_id)}
+
+    def stage_session(stage_name: str) -> str | None:
+        seat = definition.claim_flow[stage_name].seat
+        step = steps.get(seat)
+        output = json.loads(step.output_json) if step and step.output_json else {}
+        child = output.get("child_session_id")
+        # Relaunches join the same admission; their active runs replace ended step outputs.
+        seat_step = seat_steps[seat]
+        agent = (seat_step.mcp.arguments or {}).get("agent") if seat_step.mcp else None
+        live: set[str] = set()
+        runs = LocalAgentRunManager(db)
+        offset = 0
+        while agent:
+            page = runs.list_active_for_machine(author.machine_id, limit=100, offset=offset)
+            for run in page:
+                if run.agent_name != agent or not run.child_session_id:
+                    continue
+                child_session = session_store.get(run.child_session_id)
+                if (
+                    child_session is None
+                    or child_session.project_id != task.project_id
+                    or child_session.status not in LIVE_SESSION_STATUSES
+                ):
+                    continue
+                child_team = seat_team(db, child_session.id)
+                if child_team is not None and child_team.team_id == team.team_id:
+                    live.add(child_session.id)
+            if len(page) < 100:
+                break
+            offset += len(page)
+        if len(live) > 1:
+            raise ValueError(f"claim flow stage {stage_name!r} has ambiguous live pipeline seats")
+        return next(iter(live)) if live else child
+
+    if stage_session(name) != record.session_id:
         return
     superseded = {item.supersedes_id for item in records if item.supersedes_id}
     active = {
@@ -113,7 +116,7 @@ def advance_claim_flow(
         target = stage.next
     if target is None:
         return
-    recipient_id = sessions.get(target)
+    recipient_id = stage_session(target)
     recipient = session_store.get(recipient_id) if recipient_id else None
     if (
         recipient is None

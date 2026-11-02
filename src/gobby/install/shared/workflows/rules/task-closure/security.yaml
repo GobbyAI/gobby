@@ -1,7 +1,27 @@
-version: "2.0.0"
+version: "2.1.0"
 tags: [task-security]
 
 rules:
+  closure-requires-security-policy-provenance:
+    event: task_close
+    priority: 36
+    when: &security_provenance >-
+      reason == 'done' and
+      (facts.get('project_policy_available') != True or
+       ((facts.get('candidate_commit_sha') or 'security-review' in (task.get('labels') or [])) and
+        facts.get('candidate_paths_available') != True))
+    effects:
+      - type: block
+        reason: Security admission requires an installed project policy and proven candidate paths.
+
+  landing-requires-security-policy-provenance:
+    event: task_land
+    priority: 36
+    when: *security_provenance
+    effects:
+      - type: block
+        reason: Security admission requires an installed project policy and proven candidate paths.
+
   closure-requires-security-approval:
     description: Security-labeled work needs an independent authorized approval for the exact candidate.
     event: task_close
@@ -16,7 +36,10 @@ rules:
         record.get('result') == 'approved' and
         'approve_security_review' in record.get('agent_capabilities', []) and
         (record.get('reference') or {}).get('scheme') == 'git' and
-        (record.get('reference') or {}).get('value') == facts.get('candidate_commit_sha') and
+        ((record.get('reference') or {}).get('value') == facts.get('candidate_commit_sha') or
+         any(receipt.get('commit_sha') == (record.get('reference') or {}).get('value') and
+             receipt.get('facts', {}).get('landed_tip') == facts.get('candidate_commit_sha')
+             for receipt in facts.get('landing_receipts', []))) and
         record.get('session_id') not in [caller.get('session_id'), task.get('claimed_by_session_id')] and
         record.get('session_id') not in facts.get('claimants', []) and
         all(record.get('session_id') != maker.get('session_id') for maker in attestations

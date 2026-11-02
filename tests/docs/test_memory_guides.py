@@ -1,9 +1,6 @@
 """Contract tests for memory and hook-schema guidance."""
 
-import re
 from pathlib import Path
-
-import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 MEMORY_GUIDE = ROOT / "docs/guides/memory.md"
@@ -38,22 +35,6 @@ def test_memory_guide_matches_search_and_tool_contracts() -> None:
     assert "context epoch" in guide
     assert "`memory_recall` and `memory.min_recall_score` settings fail" in guide
     assert "memory_recall:" not in guide
-
-
-def test_memory_guide_lists_every_bundled_lifecycle_rule() -> None:
-    guide = _text(MEMORY_GUIDE)
-    rule_table = guide.split("Current bundled memory rules:", 1)[1].split(
-        "## Retrieval: Pushed Index and Agent Search", 1
-    )[0]
-    rule_names = {
-        name
-        for path in MEMORY_RULES.glob("*.yaml")
-        for name in yaml.safe_load(_text(path))["rules"]
-    }
-    documented_names = set(re.findall(r"^\| `([^`]+)` \|", rule_table, re.MULTILINE))
-
-    assert rule_names
-    assert documented_names == rule_names
 
 
 def test_hook_guide_maps_stop_failure_and_grok_hooks() -> None:

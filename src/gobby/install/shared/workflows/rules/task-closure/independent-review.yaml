@@ -1,4 +1,4 @@
-version: "2.0.0"
+version: "2.1.0"
 tags: [task-closure-independent-review]
 
 rules:
@@ -13,7 +13,10 @@ rules:
            for maker in attestations if maker.get('kind') in ['test-before', 'implementation', 'test-after']) or
        (facts.get('candidate_commit_sha') and
         ((latest_attestation('independent-review').get('reference') or {}).get('scheme') != 'git' or
-         (latest_attestation('independent-review').get('reference') or {}).get('value') != facts.get('candidate_commit_sha'))))
+         ((latest_attestation('independent-review').get('reference') or {}).get('value') != facts.get('candidate_commit_sha') and
+          not any(receipt.get('commit_sha') == (latest_attestation('independent-review').get('reference') or {}).get('value') and
+                  receipt.get('facts', {}).get('landed_tip') == facts.get('candidate_commit_sha')
+                  for receipt in facts.get('landing_receipts', []))))))
     effects:
       - type: block
         reason: Obtain an approved candidate review from an author who did not implement or test the work.

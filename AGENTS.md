@@ -101,7 +101,7 @@ how the system behaves so you can work with it instead of being surprised by it.
     the daemon and the operator's own unspawned terminal are exempt. Refused direct
     sends return `message_recipient_not_allowed`, and fanout withholds that recipient.
     The bundled Orchestrator requires `message_restricted_seats`; other seats report
-    to Triage or their Dev Manager. Triage sends to the Orchestrator with `wake=true`.
+    to Triage or their Dev Team Lead. Triage sends to the Orchestrator with `wake=true`.
     Omitted `wake` follows the same direct-target default for every definition.
 13. A denied call is about that call, never a standing policy. Approval prompts
     do not always name the tool being invoked, so a rejection can mean "not that,

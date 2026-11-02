@@ -16,6 +16,55 @@ from tests.fixtures.agent_sessions import AgentSessions as _Seats
 pytestmark = pytest.mark.unit
 
 
+def test_snapshot_uses_installed_policy_instead_of_caller_variables(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    project = sample_project["id"]
+    author = _Seats(temp_db, project).add("policy-reader", [])
+    task = LocalTaskManager(temp_db).create_task(project, "Map protected paths")
+    SessionVariableManager(temp_db).set_variable(author, "project_policy", {})
+    policy = {"security_paths": ["src/locks/"]}
+    definitions = RuleDefinitionManager(temp_db)
+    definitions.create(
+        "arbitrary-installed-policy",
+        {
+            "event": "session_start",
+            "effects": [{"type": "set_variable", "variable": "project_policy", "value": policy}],
+        },
+        project_id=project,
+    )
+    prepared = prepare_closure(temp_db, task_id=task.id, session_id=author)
+    assert prepared.snapshot.facts["project_policy"] == policy
+    assert prepared.snapshot.facts["project_policy_available"] is True
+    assert prepared.snapshot.facts["landing_receipts"] == []
+
+
+def test_missing_installed_policy_is_observable_to_selected_policy(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    project = sample_project["id"]
+    author = _Seats(temp_db, project).add(
+        "policy-reader",
+        [],
+        definition_fields={"workflows": {"rule_selectors": {"include": ["policy-required"]}}},
+    )
+    task = LocalTaskManager(temp_db).create_task(project, "Map protected paths")
+    RuleDefinitionManager(temp_db).create(
+        "policy-required",
+        {
+            "event": "task_close",
+            "when": "not facts.get('project_policy_available')",
+            "effects": [{"type": "block", "reason": "Installed policy unavailable"}],
+        },
+        project_id=project,
+    )
+    prepared = prepare_closure(temp_db, task_id=task.id, session_id=author)
+    assert not prepared.decision.allowed
+    assert prepared.snapshot.facts["project_policy_available"] is False
+
+
 def test_snapshot_tracks_policy_and_evidence_without_a_repository(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:

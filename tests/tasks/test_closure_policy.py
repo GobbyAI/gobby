@@ -18,6 +18,110 @@ pytestmark = pytest.mark.unit
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
+@pytest.mark.parametrize(
+    ("paths", "patterns", "matched"),
+    [
+        (["src/auth.py"], ["src/auth.py"], True),
+        (["src/auth/login.py"], ["src/auth/"], True),
+        (["src/auth/login.py"], ["src/**/*.py"], True),
+        (["src/author.py"], ["src/auth"], False),
+        (["src/auth.py"], [], False),
+        ([], ["**"], False),
+    ],
+)
+def test_path_fact_matching_uses_exact_directory_and_glob_boundaries(
+    paths: list[str], patterns: list[str], matched: bool
+) -> None:
+    snapshot = ClosureSnapshot(
+        task={"id": "task"},
+        facts={
+            "candidate_paths": paths,
+            "project_policy": {"security_paths": patterns},
+        },
+    )
+    decision = evaluate_closure_policy(
+        snapshot,
+        agent=_agent(),
+        rules=[
+            _rule(
+                "protected-path",
+                "paths_match(facts.get('candidate_paths'), "
+                "facts.get('project_policy').get('security_paths'))",
+            )
+        ],
+    )
+    assert decision.allowed is not matched
+
+
+@pytest.mark.parametrize(
+    ("value", "allowed"),
+    [
+        ("2026-01-01T01:00:00+01:00", True),
+        ("malformed", False),
+    ],
+)
+def test_timestamp_facts_normalize_offsets_and_fail_closed(value: str, allowed: bool) -> None:
+    snapshot = ClosureSnapshot(task={"id": "task"}, facts={"value": value})
+    decision = evaluate_closure_policy(
+        snapshot,
+        agent=_agent(),
+        rules=[
+            _rule(
+                "same-instant",
+                "timestamp(facts.get('value')) != timestamp('2026-01-01T00:00:00Z')",
+            )
+        ],
+    )
+    assert decision.allowed is allowed
+
+
+@pytest.mark.parametrize(
+    ("reviewed", "validated", "after", "allowed"),
+    [
+        ("source", "merged", True, True),
+        ("foreign", "merged", True, False),
+        ("source", "source", True, False),
+        ("source", "merged", False, False),
+    ],
+)
+def test_receipt_facts_bind_source_approval_and_integrated_validation(
+    reviewed: str, validated: str, after: bool, allowed: bool
+) -> None:
+    snapshot = ClosureSnapshot(
+        task={"id": "task"},
+        attestations=(
+            _record("approval", "critic", 1, reference={"scheme": "git", "value": reviewed}),
+            _record(
+                "checks",
+                "host",
+                2,
+                reference={"scheme": "git", "value": validated},
+                created_at="2026-01-01T00:00:02Z" if after else "2025-12-31T23:59:59Z",
+            ),
+        ),
+        facts={
+            "candidate_commit_sha": "merged",
+            "landing_receipts": [
+                {
+                    "commit_sha": "source",
+                    "facts": {"landed_tip": "merged"},
+                    "recorded_at": "2026-01-01T00:00:01Z",
+                }
+            ],
+        },
+    )
+    rule = _rule(
+        "receipt-bound-evidence",
+        "not any("
+        "receipt.get('commit_sha') == latest_attestation('approval').get('reference').get('value') and "
+        "receipt.get('facts').get('landed_tip') == facts.get('candidate_commit_sha') and "
+        "latest_attestation('checks').get('reference').get('value') == facts.get('candidate_commit_sha') and "
+        "timestamp(latest_attestation('checks').get('created_at')) > timestamp(receipt.get('recorded_at')) "
+        "for receipt in facts.get('landing_receipts'))",
+    )
+    assert evaluate_closure_policy(snapshot, agent=_agent(), rules=[rule]).allowed is allowed
+
+
 def _rule(
     name: str, when: str, *, tags: list[str] | None = None, event: str = "task_close"
 ) -> RuleDefinitionRow:

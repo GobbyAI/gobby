@@ -1,5 +1,5 @@
 name: code-reviewer
-version: "2.0.0"
+version: "2.0.1"
 description: Independently reviews the exact candidate and validates its task criteria.
 tags:
 - gobby
@@ -108,5 +108,5 @@ task_attestation_kinds:
     allowed_results:
     - approved
     - rejected
-    guidance: Give stage and criteria [{criterion, met, how}] against task.validation_criteria; validate
-      the integrated SHA after land.
+    guidance: Give stage review and criteria [{criterion, met, how}] against task.validation_criteria
+      on the reviewed candidate before handing it to the lead.
