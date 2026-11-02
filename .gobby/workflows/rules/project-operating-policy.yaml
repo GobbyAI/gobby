@@ -56,7 +56,17 @@ rules:
               "src/gobby/sessions/processor_stats.py",
               "src/gobby/communications/manager.py",
               "src/gobby/communications/outbound.py",
-              "src/gobby/storage/communications.py"
+              "src/gobby/storage/communications.py",
+              "src/gobby/adapters/codex_impl/cell_shell_reach.py",
+              "src/gobby/adapters/codex_impl/execution_chain.py",
+              "src/gobby/adapters/codex_impl/hooks_adapter.py",
+              "src/gobby/adapters/codex_impl/literal_shell_calls.py",
+              "src/gobby/communications/transcript_order.py",
+              "src/gobby/communications/inbound.py",
+              "src/gobby/communications/group_policy.py",
+              "src/gobby/communications/adapters/telegram.py",
+              "src/gobby/communications/adapters/telegram_inbound.py",
+              "crates/gcore/assets/schema/migrations/487_comms_message_destination_key.sql"
             ],
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–05:00 America/Chicago daily; 04:00–06:00 on Mondays",
