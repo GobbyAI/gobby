@@ -1328,6 +1328,26 @@ def test_explicit_regex_option_keeps_first_file_operand(
     assert agent_workspace_read_violation(None, data, data["tool_input"], variables, None)
 
 
+def test_reported_project_grep_is_allowed_from_checkout(root: Path, tmp_path: Path) -> None:
+    # The reported command, verbatim, run from the project checkout. Its leading cd narrows
+    # the plan read to the project; nothing it resolves is a foreign seat folder.
+    variables = _seat(root / PROJECT, "developer", 12)
+    checkout = tmp_path / "gobby"
+    checkout.mkdir()
+    command = (
+        r"cd /Users/josh/Projects/gobby && grep -n -E "
+        r"'^#{1,4} |^`kind:|^\*\*(Plan ID|Granularity|Acceptance)|^Targets:|"
+        r"^Consumers unchanged:' .gobby/plans/task-25460.md | head -120"
+    )
+    data = {
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+        "cwd": str(checkout),
+        "project_path": str(checkout),
+    }
+    assert not agent_workspace_read_violation(None, data, data["tool_input"], variables, None)
+
+
 @pytest.mark.parametrize("hook_cwd", ["definition", "root"])
 def test_leading_cd_anchors_relative_reads_to_its_target(
     root: Path, tmp_path: Path, hook_cwd: str
@@ -1462,6 +1482,14 @@ def test_skipped_piped_or_dynamic_cd_keeps_foreign_reads_refused(
         "noglob source ./lib.sh; cat session-99/notes.md",
         "nocorrect . ./lib.sh; cat session-99/notes.md",
         "- source ./lib.sh; cat session-99/notes.md",
+        "if false; then true; cd {checkout}; fi; cat ../session-99/notes.md",
+        "while false; do true; cd {checkout}; done; cat ../session-99/notes.md",
+        "until true; do true; cd {checkout}; done; cat ../session-99/notes.md",
+        "for f in a; do true; cd {checkout}; done; cat ../session-99/notes.md",
+        "case x in x) true; cd {checkout};; esac; cat ../session-99/notes.md",
+        "f() {{ true; cd {checkout}; }}; cat ../session-99/notes.md",
+        'echo ";" cd /tmp; cat ../session-99/notes.md',
+        "cd /tmp < /nonexistent-25578; cat ../session-99/notes.md",
     ],
 )
 def test_widened_cwd_forms_keep_foreign_reads_refused(

@@ -247,9 +247,6 @@ def _anchored(words: list[str], directory: Path | None, moved: bool) -> list[str
 # A place the shell may be in: a directory, and whether a literal `cd` put the shell there.
 # None is a place a dynamic `cd` reached, whose directory cannot be resolved.
 _Place = tuple[Path | None, bool] | None
-# A `cd` after one of these, or first in the command, runs unconditionally. Any other `cd` may
-# be skipped, fail, or run in a pipeline, so it only adds its target to the places.
-_CD_CERTAIN = frozenset({";", "\n"})
 # Marks a read through a place that cannot be resolved. The caller refuses it.
 _UNKNOWN_CWD = "\0unknown-cwd"
 
@@ -305,8 +302,8 @@ def _cd_anchored_words(
     """Read words anchored to every place the shell may be in when each operand runs.
 
     `places` is where the shell may be before the command; its hook cwd is `base`. A `cd`,
-    `pushd` or `popd` adds its target to those places, and replaces them only when it runs
-    unconditionally at a command start. A subshell restores the places at `)`, and a brace
+    `pushd` or `popd` adds its target to those places. Only a leading `cd` whose segment ends
+    at `&&`, `;` or a newline replaces them. A subshell restores the places at `)`, and a brace
     group keeps the places before it at `}`. A `CDPATH` in the command makes every target
     dynamic, and a `case` pattern's `)` keeps the places before it, since it is not a close.
     """
@@ -336,8 +333,9 @@ def _cd_anchored_words(
             else:
                 target = raw
             after = index + 2 if consumed else index + 1
-            piped = after < len(tokens) and tokens[after] in {"|", "|&", "&"}
-            certain = name == "cd" and not piped and (index == 0 or previous in _CD_CERTAIN)
+            # Only a leading `cd` whose segment ends at `&&`, `;` or a newline may narrow.
+            ends_segment = after == len(tokens) or tokens[after] in {"&&", ";", "\n"}
+            certain = name == "cd" and index == 0 and consumed and ends_segment
             places = _cd_places(target, places, certain)
         elif token not in _SHELL_SEPARATORS:
             words.extend(_place_words(token, places))
