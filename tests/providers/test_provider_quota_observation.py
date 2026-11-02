@@ -11,6 +11,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from gobby.providers.capacity_service import ProviderCapacityService
 from gobby.providers.codex_rate_limits import observation_from_rate_limits
 from gobby.providers.quota_observations import PANE_HINT_LIMIT, decode_quota_details
@@ -54,6 +56,15 @@ _CODEX_REACHED: Mapping[str, object] = {
     "secondary": None,
     "rate_limit_reached_type": "rate_limit_reached",
 }
+# recorded: RateLimitReachedType variants from the Codex core protocol enum
+# (codex-rs/protocol/src/protocol.rs, snake_case); the same names appear in codex-cli 0.166.0.
+_RECORDED_REACHED_TYPES: tuple[str, ...] = (
+    "rate_limit_reached",
+    "workspace_owner_credits_depleted",
+    "workspace_member_credits_depleted",
+    "workspace_owner_usage_limit_reached",
+    "workspace_member_usage_limit_reached",
+)
 # synthetic: no window and no reached flag, so nothing is verified.
 _CODEX_NO_SIGNAL: Mapping[str, object] = {
     "limit_id": "codex",
@@ -790,3 +801,21 @@ def test_unverified_reached_code_and_overflowing_reset_are_ignored() -> None:
     )
     (edge_component,) = normalize_reporter_snapshot(edge).components
     assert edge_component.resets_at is None
+
+
+@pytest.mark.parametrize("reached", _RECORDED_REACHED_TYPES)
+def test_recorded_reached_type_is_exhausted_without_windows(reached: str) -> None:
+    # Every recorded RateLimitReachedType value is a verified hard limit with no window.
+    payload: Mapping[str, object] = {
+        "limit_id": "codex",
+        "primary": None,
+        "secondary": None,
+        "rate_limit_reached_type": reached,
+    }
+    observation = observation_from_rate_limits(
+        payload, source_observed_at=_T0, occurrence=f"reached-{reached}", source_key="s"
+    )
+    assert observation is not None
+    (component,) = observation.components
+    assert component.state == "exhausted"
+    assert component.window is None

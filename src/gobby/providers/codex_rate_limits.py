@@ -18,8 +18,16 @@ _DEFAULT_LIMIT_ID = "codex"
 _WEEKLY_MINUTES = 10080
 _FIVE_HOUR_MINUTES = 300
 _PERCENT_LIMIT = 100.0
-# Reached types the Codex contract is verified to emit; any other value is unverified.
-_VERIFIED_REACHED_TYPES = frozenset({"rate_limit_reached"})
+# RateLimitReachedType values from the Codex core protocol; any other value is unverified.
+_VERIFIED_REACHED_TYPES = frozenset(
+    {
+        "rate_limit_reached",
+        "workspace_owner_credits_depleted",
+        "workspace_member_credits_depleted",
+        "workspace_owner_usage_limit_reached",
+        "workspace_member_usage_limit_reached",
+    }
+)
 
 
 def observation_from_rate_limits(
