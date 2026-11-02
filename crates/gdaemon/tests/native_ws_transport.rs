@@ -1795,3 +1795,56 @@ async fn browser_attach_receives_only_its_session_frames() {
         Vec::<Message>::new()
     );
 }
+
+/// The publisher gives up after two seconds (`native_publish.py`). A publish
+/// body is parsed on the runtime worker before its handler yields, so a bind
+/// that arrives with it cannot answer until the whole parse returns. A bind
+/// does 4 KiB of work; the budget covers scheduling jitter, and a max publish
+/// parse takes about 616 ms in this debug build.
+#[tokio::test]
+async fn bind_answers_within_the_publisher_deadline_during_a_max_publish() {
+    const PUBLISHER_DEADLINE: Duration = Duration::from_secs(2);
+    const BIND_BUDGET: Duration = Duration::from_millis(250);
+    let mut h = Harness::start().await;
+    h.bind().await;
+
+    // One batch at MAX_QUEUED_BYTES: 1024 frames of exactly max_message_size.
+    let ops = json!([{
+        "op": "publish",
+        "filter": {"type": "task_event"},
+        "frames": vec!["x".repeat(MAX_MESSAGE as usize); 1024],
+    }]);
+    let body = json!({"generation": h.generation, "ops": ops}).to_string();
+    let native = h.native.clone();
+    let token = h.token.clone();
+
+    let started = Instant::now();
+    let publish = tokio::spawn({
+        let (native, token) = (native.clone(), token.clone());
+        async move {
+            let request = private_request(PUBLISH, Some(SECRET), Some(&token), body);
+            call(&native, request, LOOPBACK).await.0
+        }
+    });
+    // Let the publish start first, as a concurrent request would.
+    tokio::task::yield_now().await;
+    let probe = private_request(BIND, Some(SECRET), Some(&token), "{not json");
+    let (probe_status, _) = call(&native, probe, LOOPBACK).await;
+    let probe_elapsed = started.elapsed();
+    assert_eq!(probe_status, StatusCode::BAD_REQUEST, "bind probe");
+    assert!(
+        probe_elapsed < BIND_BUDGET,
+        "bind answered after {probe_elapsed:?} behind a max publish"
+    );
+    assert!(
+        probe_elapsed < PUBLISHER_DEADLINE,
+        "bind missed the publisher deadline behind a max publish"
+    );
+
+    let publish_status = within("max publish", publish).await.expect("publish task");
+    assert_eq!(
+        publish_status,
+        StatusCode::NO_CONTENT,
+        "publish at max batch"
+    );
+}

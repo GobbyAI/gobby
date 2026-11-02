@@ -88,7 +88,15 @@ async fn publish(
         Ok(body) => body,
         Err(refusal) => return refusal,
     };
-    let Some(request) = parse_object::<PublishRequest>(&body) else {
+    // The parse scales with the body, so it runs on the blocking pool. Parsed
+    // on the worker, it holds that worker for the whole body and delays every
+    // request that arrives with it.
+    let parsed =
+        match tokio::task::spawn_blocking(move || parse_object::<PublishRequest>(&body)).await {
+            Ok(parsed) => parsed,
+            Err(_) => return status_only(StatusCode::INTERNAL_SERVER_ERROR),
+        };
+    let Some(request) = parsed else {
         return status_only(StatusCode::BAD_REQUEST);
     };
     // A stale generation has no bound of its own; the commit refuses it with 409.
