@@ -5,6 +5,31 @@ Load before authoring `gobby-sessions:set_handoff` or cooperative
 Fetch the applicable schemas. Load this exact reference completely before
 authoring the handoff; loading the router alone does not satisfy its gate.
 
+## Handoff, standing directives, and memory
+
+Keep three stores separate. Write each seat's content only to the store it belongs in.
+
+- Handoff: this seat's ephemeral work in progress, consumed once. It holds current
+  state, next steps and pending replies owed, recent decisions and problems relevant
+  to the next few hours, and a pointer to `standing-directives.md`, never a copy of it.
+- `standing-directives.md`: a persistent seat's scratchpad in its agent workspace
+  session folder, durable until each directive is done or withdrawn. It holds operator
+  directives with triggers (after X lands, launch Y), holds and their release
+  conditions, and operator standing rules specific to this seat. Each entry carries its
+  date, source, trigger, status (waiting, fired or done) and done time.
+- Memory: shared by all agents and durable. It holds project facts, observed runtime
+  behavior, preferences that apply to every seat, and decision rationale written for
+  future sessions to match. It never holds one seat's instructions, task progress or
+  temporary state.
+
+Gray area: an operator preference starts in `standing-directives.md` and moves to
+memory only when the operator says it applies to everyone. Project-wide rules go in
+`project_policy`.
+
+A persistent seat re-reads `standing-directives.md` after every compaction and every
+coordination digest, checks it on every status report, and lists its path in the
+handoff's `references` as a pointer.
+
 ## Shared budget and content
 
 All sections together must fit 10,000 JSON-escaped characters, measured as
@@ -28,6 +53,7 @@ from the current context epoch. Do not copy previous handoffs, logs, or complete
   No general lesson or improvement proposal is required.
 - `notes`: other necessary live working context.
 - `references`: sources needed to locate durable decisions, evidence, or working notes.
+  A persistent seat lists its `standing-directives.md` path here as a pointer.
 - `found_work`: findings this epoch placed on the found-work ladder, as
   `{finding, disposition, ref}` entries. `fixed` refs the `#N` task this session or
   a spawned descendant claimed or closed; `escalated` refs the active owner session
@@ -59,6 +85,8 @@ actions inline. Never keep working notes in the checkout, `.gobby/` included: an
 untracked note there is an attributed edit that blocks task close.
 Refresh the file's current state;
 never append epoch histories or move discarded history and reflections into it.
+This file holds live detail for the current epoch only. It is not
+`standing-directives.md`, which persists across epochs.
 Prepare notes while writes are permitted, before hard context-pressure gates block
 them. If permissions prevent preserving necessary context, surface the conflict
 before compaction; do not bypass permissions or silently truncate content.
@@ -108,4 +136,6 @@ failed recovery marker.
 
 Guide: [Creating and reading handoffs](../../../../../../../../docs/guides/sessions.md#creating-and-reading-handoffs).
 
-_Last verified: 2026-09-18_
+_Version: 1.1.0_
+
+_Last verified: 2026-11-02_
