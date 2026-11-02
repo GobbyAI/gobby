@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
@@ -16,7 +17,9 @@ from starlette.websockets import WebSocket
 
 import gobby.runner_backend as runner_backend
 import gobby.servers.websocket.native_publish as native_publish
+import gobby.terminals.ws_protocol as ws_protocol
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.servers.websocket.broadcast import BroadcastMixin
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.native_bridge import NativeBridgeAdapter, add_server_subscriptions
 from gobby.servers.websocket.native_publish import (
@@ -27,6 +30,11 @@ from gobby.servers.websocket.proxy_relay import ProxyHub
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.session_control import SessionControlMixin
 from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.ws_protocol import (
+    TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES,
+    canonical_json,
+    fragment_event,
+)
 from gobby.utils.json_helpers import json_dumps
 
 pytestmark = pytest.mark.unit
@@ -37,6 +45,9 @@ BASE_URL = "http://127.0.0.1:60887"
 GEN1 = f"{1:032x}"
 GEN2 = f"{2:032x}"
 CONFIG = WebSocketConfig(max_message_size=4096, ping_interval=7, ping_timeout=3)
+# gdaemon's PUBLISH_LIMIT: a publish body over this is refused with 413.
+DAEMON_PUBLISH_LIMIT = 16 * 1024 * 1024
+WORKSPACE_ROUTING_FIELDS = ("type", "kind", "workspace_id", "project_id", "seq", "timestamp")
 
 
 @pytest.mark.parametrize("stage", ["bind", "rebind"])
@@ -157,6 +168,93 @@ def test_publish_op_bytes_match_the_generic_encoder() -> None:
     assert native_publish._publish_op(json_dumps(message), literals) == json_dumps(op).encode()
 
 
+def test_fragment_event_encodes_a_bounded_multiple_of_its_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fragmenting a cap-sized event encodes a bounded multiple of its bytes.
+
+    The count comes from canonical_json calls, so the bound holds at any host load.
+    """
+    empty = len(canonical_json(_workspace_event("")))
+    raw = canonical_json(
+        _workspace_event("x" * (TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES - empty))
+    )
+    encoded: list[int] = []
+    real = ws_protocol.canonical_json
+
+    def counting(message: Any) -> bytes:
+        data = real(message)
+        encoded.append(len(data))
+        return data
+
+    monkeypatch.setattr(ws_protocol, "canonical_json", counting)
+    frames = fragment_event(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=raw,
+    )
+    assert len(frames) > 2
+    assert sum(encoded) <= 4 * len(raw)
+
+
+class _Host(BroadcastMixin):
+    """A broadcaster whose only sink is the native publisher."""
+
+    def __init__(self, publisher: NativePublisher) -> None:
+        self.clients: dict[Any, dict[str, Any]] = {}
+        self.native_publisher = publisher
+
+
+def _workspace_event(scrollback: str) -> dict[str, Any]:
+    """A workspace_event shaped as broadcast_workspace_event builds it, rows included."""
+    return {
+        "type": "workspace_event",
+        "kind": "pane.added",
+        "workspace_id": "ws-1",
+        "project_id": "proj-1",
+        "seq": 42,
+        "timestamp": "2026-11-02T00:00:00+00:00",
+        "workspace": None,
+        "tabs": [{"id": "tab-1", "project_id": "proj-1"}],
+        "panes": [{"id": "pane-1", "tab_id": "tab-1", "scrollback": scrollback}],
+    }
+
+
+async def test_workspace_event_at_the_fragment_cap_publishes_bounded_ops(
+    supervisor_token: str,
+) -> None:
+    """A fragmented workspace event at the cap stays under the daemon bound.
+
+    Every op's filter holds the routing fields alone. The rows travel only in the
+    fragments, which arrive in order and reassemble to the event's own bytes.
+    """
+    empty = len(canonical_json(_workspace_event("")))
+    message = _workspace_event("x" * (TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES - empty))
+    raw = canonical_json(message)
+    assert len(raw) == TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES
+    daemon = _Daemon()
+    daemon.publish_limit = DAEMON_PUBLISH_LIMIT
+    publisher = _publisher(daemon)
+    host = _Host(publisher)
+    try:
+        await publisher.start()
+        await asyncio.wait_for(host._publish_workspace_event(message), 5.0)
+    finally:
+        await publisher.stop()
+
+    assert max(daemon.body_sizes) <= DAEMON_PUBLISH_LIMIT
+    assert len(daemon.binds) == 1
+    ops = daemon.ops(GEN1)
+    route = {field: message[field] for field in WORKSPACE_ROUTING_FIELDS}
+    assert [op["filter"] for op in ops] == [route] * len(ops)
+    fragments = [json.loads(payload) for op in ops for payload in op["frames"]]
+    assert len(fragments) > 2
+    assert [fragment["fragment_index"] for fragment in fragments] == list(range(len(fragments)))
+    assert b"".join(base64.b64decode(fragment["payload"]) for fragment in fragments) == raw
+
+
 class _Daemon:
     """gdaemon's private bind and publish endpoints, with a gate to stall the sender."""
 
@@ -167,6 +265,7 @@ class _Daemon:
         self.bind_times: list[float] = []
         self.requests: list[dict[str, Any]] = []
         self.body_sizes: list[int] = []
+        self.publish_limit: int | None = None
         self.publish_headers: list[httpx.Headers] = []
         self.received = asyncio.Event()
         self.gate: asyncio.Event | None = None
@@ -188,6 +287,8 @@ class _Daemon:
         index = len(self.requests)
         self.requests.append(json.loads(request.content))
         self.body_sizes.append(len(request.content))
+        if self.publish_limit is not None and len(request.content) > self.publish_limit:
+            return httpx.Response(413)
         self.publish_headers.append(request.headers)
         self.in_flight += 1
         self.max_in_flight = max(self.max_in_flight, self.in_flight)

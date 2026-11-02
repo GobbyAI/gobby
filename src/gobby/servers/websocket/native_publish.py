@@ -163,7 +163,8 @@ class NativePublisher:
     def publish(
         self, message: dict[str, Any], frames: Sequence[dict[str, Any]] = ()
     ) -> asyncio.Future[None]:
-        # Frames are encoded exactly as BroadcastMixin.broadcast encodes them.
+        # Frames are encoded exactly as BroadcastMixin.broadcast encodes them. The filter
+        # repeats in every op this call splits into, so callers pass routing fields only.
         payloads = [json_dumps(frame) for frame in frames] or [json_dumps(message)]
         filter_json = json_dumps(message)
         futures = [

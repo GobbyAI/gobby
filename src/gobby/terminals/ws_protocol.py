@@ -126,9 +126,15 @@ def _greedy_chunks(
 ) -> list[bytes]:
     chunks: list[bytes] = []
     offset = 0
+    # A wrapped fragment holds its base64 payload, so a take above this bound never fits.
+    # Halving down to the bound first skips those probes, which would each encode the
+    # whole remainder, and keeps the same halving sequence.
+    bound = TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES // 4 * 3
     while offset < len(complete_json):
         remaining = len(complete_json) - offset
         take = remaining
+        while take > bound:
+            take //= 2
         while take > 0:
             chunk = complete_json[offset : offset + take]
             probe = _fragment_dict(
