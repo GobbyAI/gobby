@@ -452,9 +452,9 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 486,
-        filename: "486_comms_message_destination_key.sql",
-        checksum: "1e898da4b4e8ce5f59a0be683687fff4abb34a121d7e2945e0bef18e70971068",
-        sql: include_str!("../../assets/schema/migrations/486_comms_message_destination_key.sql"),
+        filename: "486_inter_session_attachments.sql",
+        checksum: "8cb4c6d9209e594405b0e3359a3287c71c31e5477c612cd5cf7335d5694269a3",
+        sql: include_str!("../../assets/schema/migrations/486_inter_session_attachments.sql"),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.

@@ -17,6 +17,15 @@ Memory is for facts, preferences, relationships, and finalized rationale that
 would take meaningful work to rediscover in an unrelated future session. Write
 the rationale as the `when:` clause a future session would match.
 
+Memory is shared by every agent. Never one seat's instructions, task progress or
+temporary state. Those belong in the seat's handoff, which is ephemeral and consumed
+once, or in its `standing-directives.md` in the agent workspace session folder, which
+lasts until each directive is done or withdrawn. Project-wide rules belong in
+`project_policy`.
+
+Gray area: an operator preference starts in the seat's `standing-directives.md` and
+moves here only when the operator says it applies to everyone.
+
 Discover tool names with `list_tools` only when unknown; fetch a known tool's
 schema before its first unleased call. Pass caller identity through the proxy's
 outer `session_id`. Schemas own parameters; guidance does not authorize unrelated
@@ -43,4 +52,6 @@ concluding that knowledge is absent.
 
 Guide: [Memory system](../../../../../../../../docs/guides/memory.md).
 
-_Last verified: 2026-09-18_
+_Version: 1.1.0_
+
+_Last verified: 2026-11-02_

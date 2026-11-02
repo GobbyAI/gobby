@@ -1957,6 +1957,34 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
+      "name": "inter_session_attachments.content",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "inter_session_attachments.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|clock_timestamp()|NEVER"
+    },
+    {
+      "name": "inter_session_attachments.filename",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "inter_session_attachments.media_type",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "inter_session_attachments.message_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "inter_session_attachments.sha256",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "inter_session_attachments.size_bytes",
+      "definition": "integer|int4|NO||NEVER"
+    },
+    {
       "name": "inter_session_messages.content",
       "definition": "text|text|NO||NEVER"
     },
@@ -6239,6 +6267,34 @@
       "definition": "PRIMARY KEY (integration_key)"
     },
     {
+      "name": "inter_session_attachments.inter_session_attachments_check",
+      "definition": "CHECK (size_bytes = octet_length(content))"
+    },
+    {
+      "name": "inter_session_attachments.inter_session_attachments_content_check",
+      "definition": "CHECK (octet_length(content) <= 262144)"
+    },
+    {
+      "name": "inter_session_attachments.inter_session_attachments_filename_check",
+      "definition": "CHECK (btrim(filename) <> ''::text AND length(filename) <= 255 AND filename !~ '[/\\\\[:cntrl:]]'::text)"
+    },
+    {
+      "name": "inter_session_attachments.inter_session_attachments_media_type_check",
+      "definition": "CHECK (media_type = ANY (ARRAY['text/plain'::text, 'text/markdown'::text]))"
+    },
+    {
+      "name": "inter_session_attachments.inter_session_attachments_message_id_fkey",
+      "definition": "FOREIGN KEY (message_id) REFERENCES inter_session_messages(id) ON DELETE CASCADE"
+    },
+    {
+      "name": "inter_session_attachments.inter_session_attachments_pkey",
+      "definition": "PRIMARY KEY (message_id)"
+    },
+    {
+      "name": "inter_session_attachments.inter_session_attachments_sha256_check",
+      "definition": "CHECK (sha256 ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
       "name": "inter_session_messages.inter_session_messages_from_session_fkey",
       "definition": "FOREIGN KEY (from_session) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
     },
@@ -9033,6 +9089,10 @@
     {
       "name": "integration_workspace_mutex_pkey",
       "definition": "CREATE UNIQUE INDEX integration_workspace_mutex_pkey ON $schema.integration_workspace_mutex USING btree (integration_key)"
+    },
+    {
+      "name": "inter_session_attachments_pkey",
+      "definition": "CREATE UNIQUE INDEX inter_session_attachments_pkey ON $schema.inter_session_attachments USING btree (message_id)"
     },
     {
       "name": "inter_session_messages_pkey",

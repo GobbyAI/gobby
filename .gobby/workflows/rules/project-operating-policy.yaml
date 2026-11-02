@@ -42,7 +42,8 @@ rules:
               "src/gobby/servers/auth_service.py",
               "src/gobby/servers/middleware/auth.py",
               "src/gobby/servers/routes/mcp/endpoints/request_context.py",
-              "src/gobby/servers/routes/mcp/endpoints/execution.py"
+              "src/gobby/servers/routes/mcp/endpoints/execution.py",
+              "crates/gdaemon/src/websocket/**"
             ],
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–05:00 America/Chicago daily; 04:00–06:00 on Mondays",

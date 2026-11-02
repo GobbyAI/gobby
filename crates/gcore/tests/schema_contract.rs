@@ -21,15 +21,15 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.latest_asset.version, 486);
     assert_eq!(
         identity.latest_asset.filename,
-        "486_comms_message_destination_key.sql"
+        "486_inter_session_attachments.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,
-        "1e898da4b4e8ce5f59a0be683687fff4abb34a121d7e2945e0bef18e70971068"
+        "8cb4c6d9209e594405b0e3359a3287c71c31e5477c612cd5cf7335d5694269a3"
     );
     assert_eq!(
         identity.root_hash,
-        "d9e56edd3f610919e6d783c4096fdf7f1901b647da22beb101c5c49583858d53"
+        "263908fffc94f7549290e452b636c53be609849693d172356b386f1e6e53d4f4"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();

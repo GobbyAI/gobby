@@ -2484,7 +2484,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-core"
-version = "0.10.22"
+version = "0.10.21"
 dependencies = [
  "anyhow",
  "axum",
@@ -2522,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.124"
+version = "0.4.125"
 dependencies = [
  "anyhow",
  "assert_cmd",
