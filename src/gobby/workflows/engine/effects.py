@@ -22,7 +22,7 @@ from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.command_matching import command_patterns_match
 from gobby.workflows.engine.mcp_injections import CachedMcpInjectionMixin
 from gobby.workflows.engine.run_command_effects import RunCommandEffectsMixin
-from gobby.workflows.reserved_variables import write_rule_variable
+from gobby.workflows.reserved_variables import rule_variable_is_writable, write_rule_variable
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 logger = logging.getLogger(__name__)
@@ -451,7 +451,7 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
         staged: dict[str, Any] | None = None,
     ) -> bool:
         """Apply a set_variable effect, handling expressions."""
-        if effect.variable is None:
+        if effect.variable is None or not rule_variable_is_writable(effect.variable, row):
             return False
         value = effect.value
 

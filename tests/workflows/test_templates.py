@@ -1,6 +1,5 @@
 import pytest
 from jinja2 import (
-    Environment,
     FileSystemLoader,
     StrictUndefined,
     TemplateNotFound,
@@ -8,7 +7,7 @@ from jinja2 import (
     UndefinedError,
 )
 from jinja2.exceptions import SecurityError
-from jinja2.sandbox import SandboxedEnvironment
+from jinja2.sandbox import ImmutableSandboxedEnvironment, SandboxedEnvironment
 
 from gobby.workflows.templates import TemplateEngine
 
@@ -28,7 +27,7 @@ class TestTemplateEngine:
         template_dir = tmp_path / "templates"
         template_dir.mkdir()
         engine = TemplateEngine(template_dirs=[str(template_dir)])
-        assert type(engine.file_env) is Environment
+        assert isinstance(engine.file_env, ImmutableSandboxedEnvironment)
         assert isinstance(engine.file_env.loader, FileSystemLoader)
         assert str(template_dir) in engine.file_env.loader.searchpath
 

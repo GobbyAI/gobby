@@ -83,6 +83,19 @@ def is_internal_rule(row: "RuleDefinitionRow") -> bool:
     )
 
 
+def rule_variable_is_writable(name: str, row: "RuleDefinitionRow | None") -> bool:
+    """Admit a target before evaluating its value or changing session state."""
+    if is_reserved_workflow_variable(name) and not (
+        row is not None
+        and (is_internal_rule(row) or (name == "project_policy" and row.source == "installed"))
+    ):
+        logging.getLogger(__name__).warning(
+            "Rule effect cannot write runtime-managed variable %r", name
+        )
+        return False
+    return True
+
+
 def write_rule_variable(
     variables: dict[str, Any],
     name: str,
@@ -93,13 +106,7 @@ def write_rule_variable(
     staged: dict[str, Any] | None = None,
 ) -> bool:
     """Admit every rule-originated variable write before mutation or receipt staging."""
-    if is_reserved_workflow_variable(name) and not (
-        row is not None
-        and (is_internal_rule(row) or (name == "project_policy" and row.source == "installed"))
-    ):
-        logging.getLogger(__name__).warning(
-            "Rule effect cannot write runtime-managed variable %r", name
-        )
+    if not rule_variable_is_writable(name, row):
         return False
     variables[name] = value
     if delivery == "on_receipt" and staged is not None:

@@ -24,6 +24,10 @@ from gobby.workflows.assistant_response_matching import (
     assistant_response_text,
     first_response_match,
 )
+from gobby.workflows.evaluation_context import (
+    mutable_evaluation_result,
+    snapshot_evaluation_context,
+)
 
 __all__ = [
     "LazyBool",
@@ -97,7 +101,7 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
     def __init__(
         self, context: dict[str, Any], allowed_funcs: dict[str, Callable[..., Any]]
     ) -> None:
-        self.context = context
+        self.context = snapshot_evaluation_context(context)
         self.allowed_funcs = allowed_funcs
 
     @staticmethod
@@ -159,7 +163,7 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
         """Evaluate expression and return the raw value (not coerced to bool)."""
         try:
             tree = self._parse_normalized_expr(self._normalize_expr(expr))
-            return self.visit(tree.body)
+            return mutable_evaluation_result(self.visit(tree.body))
         except (DatabaseOperationDeadlineExceeded, QueryCanceled):
             raise
         except Exception as e:

@@ -3,11 +3,12 @@ import re
 import shlex
 from typing import Any, Protocol, runtime_checkable
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined, Undefined, select_autoescape
-from jinja2.sandbox import SandboxedEnvironment
+from jinja2 import FileSystemLoader, StrictUndefined, Undefined, select_autoescape
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 from psycopg.errors import QueryCanceled
 
 from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
+from gobby.workflows.evaluation_context import snapshot_evaluation_context
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,23 @@ def _shlex_quote(value: str) -> str:
     return shlex.quote(str(value))
 
 
+def create_workflow_template_environment(
+    template_dirs: list[str] | None = None, *, strict_undefined: bool = False
+) -> ImmutableSandboxedEnvironment:
+    """Construct the single immutable sandbox used by every workflow render site."""
+    env = ImmutableSandboxedEnvironment(
+        loader=FileSystemLoader(template_dirs) if template_dirs else None,
+        autoescape=select_autoescape(["html", "xml"], default_for_string=False),
+        undefined=StrictUndefined if strict_undefined else Undefined,
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+    env.filters["regex_search"] = _regex_search
+    env.filters["regex_replace"] = _regex_replace
+    env.filters["shlex_quote"] = _shlex_quote
+    return env
+
+
 class TemplateEngine:
     """
     Engine for rendering Jinja2 templates in workflows.
@@ -71,30 +89,11 @@ class TemplateEngine:
         *,
         strict_undefined: bool = True,
     ):
-        if template_dirs:
-            loader = FileSystemLoader(template_dirs)
-        else:
-            loader = None
-
-        self.env = SandboxedEnvironment(
-            loader=loader,
-            # Disable autoescape for inline templates (default_for_string=False)
-            # We generate markdown, not HTML - escaping breaks apostrophes etc.
-            autoescape=select_autoescape(["html", "xml"], default_for_string=False),
-            undefined=StrictUndefined if strict_undefined else Undefined,
-            trim_blocks=True,
-            lstrip_blocks=True,
+        self.env = create_workflow_template_environment(
+            template_dirs,
+            strict_undefined=strict_undefined,
         )
-        self.file_env = Environment(
-            loader=loader,
-            autoescape=select_autoescape(["html", "xml"], default_for_string=False),
-            trim_blocks=True,
-            lstrip_blocks=True,
-        )
-        for env in (self.env, self.file_env):
-            env.filters["regex_search"] = _regex_search
-            env.filters["regex_replace"] = _regex_replace
-            env.filters["shlex_quote"] = _shlex_quote
+        self.file_env = create_workflow_template_environment(template_dirs)
 
     def render(self, template_str: str, context: dict[str, Any]) -> str:
         """
@@ -102,7 +101,7 @@ class TemplateEngine:
         """
         try:
             template = self.env.from_string(template_str)
-            return str(template.render(**context))
+            return str(template.render(**snapshot_evaluation_context(context)))
         except (DatabaseOperationDeadlineExceeded, QueryCanceled):
             raise
         except Exception as e:
@@ -118,7 +117,7 @@ class TemplateEngine:
         """
         try:
             template = self.file_env.get_template(template_name)
-            return str(template.render(**context))
+            return str(template.render(**snapshot_evaluation_context(context)))
         except (DatabaseOperationDeadlineExceeded, QueryCanceled):
             raise
         except Exception as e:
