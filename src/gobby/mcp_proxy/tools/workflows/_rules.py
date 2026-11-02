@@ -11,6 +11,7 @@ import json
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -18,6 +19,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from gobby.storage.definitions import preserve_bundled_tag
+from gobby.storage.definitions._shared import DefinitionNameConflictError, DefinitionNotFoundError
 from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
 from gobby.workflows.delivery_disposition import (
@@ -27,18 +29,40 @@ from gobby.workflows.delivery_disposition import (
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 
 logger = logging.getLogger(__name__)
+_operator_rule_changes: ContextVar[bool] = ContextVar("operator_rule_changes", default=False)
+
+
+class ReservedRuleMutationError(ValueError):
+    """An author attempted to alter runtime-owned variable authority."""
+
+
+@contextmanager
+def operator_rule_changes() -> Iterator[None]:
+    """Used only after HTTP authentication proves an operator principal."""
+    token = _operator_rule_changes.set(True)
+    try:
+        yield
+    finally:
+        _operator_rule_changes.reset(token)
 
 
 def _reserved_writer_error(definition: dict[str, Any]) -> str | None:
     """Reject authored effects that write runtime-owned variables after normalization."""
-    body = RuleDefinitionBody.model_validate(definition)
-    for effect in body.effects or []:
-        if (
-            effect.type == "set_variable"
-            and effect.variable is not None
-            and is_reserved_workflow_variable(effect.variable)
-        ):
-            return f"Rule effects cannot write reserved workflow variable {effect.variable!r}"
+    if _operator_rule_changes.get():
+        return None
+    effects = definition.get("effects") or [definition.get("effect")]
+    if not isinstance(effects, list):
+        return None
+    for effect in effects:
+        if not isinstance(effect, dict):
+            continue
+        variable = None
+        if effect.get("type") == "set_variable":
+            variable = effect.get("variable")
+        elif effect.get("type") == "mcp_call" and effect.get("inject_result"):
+            variable = effect.get("success_variable")
+        if isinstance(variable, str) and is_reserved_workflow_variable(variable):
+            return f"Rule effects cannot write reserved workflow variable {variable!r}"
     return None
 
 
@@ -59,17 +83,44 @@ def _rule_body(row: RuleDefinitionRow) -> dict[str, Any]:
 def _reserved_rule_mutation_error(row: RuleDefinitionRow) -> str | None:
     """MCP authors cannot remove or alter an existing runtime-owned writer either."""
     try:
-        return _reserved_writer_error(_rule_body(row))
-    except (json.JSONDecodeError, TypeError, ValidationError) as exc:
-        return f"Invalid stored rule definition: {exc}"
+        body = row.definition_json
+        if not isinstance(body, dict):
+            body = json.loads(body)
+        return _reserved_writer_error(body) if isinstance(body, dict) else None
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 @contextmanager
-def _locked_rule(manager: RuleDefinitionManager, definition_id: str) -> Iterator[RuleDefinitionRow]:
+def _locked_rule(
+    manager: RuleDefinitionManager, definition_id: str
+) -> Iterator[RuleDefinitionRow | None]:
     """Refresh admission under the row lock retained by nested manager mutations."""
     with manager.db.transaction() as conn:
-        conn.execute("SELECT id FROM rule_definitions WHERE id = %s FOR UPDATE", (definition_id,))
-        yield manager.get(definition_id)
+        record = conn.execute(
+            "SELECT * FROM rule_definitions WHERE id = %s AND deleted_at IS NULL FOR UPDATE",
+            (definition_id,),
+        ).fetchone()
+        yield RuleDefinitionRow.from_row(record) if record is not None else None
+
+
+def update_rule_fields(
+    manager: RuleDefinitionManager, definition_id: str, fields: dict[str, Any]
+) -> RuleDefinitionRow:
+    """Shared HTTP/MCP boundary: admit the fresh row and incoming body under lock."""
+    with _locked_rule(manager, definition_id) as row:
+        if row is None:
+            raise DefinitionNotFoundError(f"Rule '{definition_id}' not found")
+        if error := _reserved_rule_mutation_error(row):
+            raise ReservedRuleMutationError(error)
+        if "definition_json" in fields:
+            body = fields["definition_json"]
+            if isinstance(body, str):
+                body = json.loads(body)
+            if error := _reserved_writer_error(body):
+                raise ReservedRuleMutationError(error)
+        preserve_bundled_tag(row.tags, fields)
+        return manager.update(row.id, **fields)
 
 
 def _export_row(row: RuleDefinitionRow) -> Any:
@@ -147,10 +198,15 @@ def _rule_detail(row: RuleDefinitionRow) -> dict[str, Any]:
     }
 
 
-def _rule_or_parse_error(row: RuleDefinitionRow) -> dict[str, Any]:
+def _rule_or_parse_error(row: RuleDefinitionRow, *, allow_metadata: bool = False) -> dict[str, Any]:
     try:
         return {"success": True, "rule": _rule_detail(row)}
     except (json.JSONDecodeError, TypeError) as exc:
+        if allow_metadata:
+            return {
+                "success": True,
+                "rule": {"id": row.id, "name": row.name, "enabled": row.enabled},
+            }
         logger.warning("Rule '%s' has an invalid stored definition: %s", row.name, exc)
         return {
             "success": False,
@@ -250,12 +306,14 @@ def toggle_rule(
         return {"success": False, "error": f"Rule '{name}' not found"}
 
     with _locked_rule(def_manager, row.id) as row:
+        if row is None:
+            return {"success": False, "error": f"Rule '{name}' not found"}
         if reserved_error := _reserved_rule_mutation_error(row):
             return {"success": False, "error": reserved_error}
         updated = def_manager.update(row.id, enabled=enabled)
     logger.info("Toggled rule '%s' enabled=%s", name, enabled)
 
-    return _rule_or_parse_error(updated)
+    return _rule_or_parse_error(updated, allow_metadata=True)
 
 
 def update_rule(
@@ -328,11 +386,10 @@ def update_rule(
     if not fields:
         return {"success": False, "error": "No fields to update"}
 
-    with _locked_rule(def_manager, row.id) as row:
-        if reserved_error := _reserved_rule_mutation_error(row):
-            return {"success": False, "error": reserved_error}
-        preserve_bundled_tag(row.tags, fields)
-        updated = def_manager.update(row.id, **fields)
+    try:
+        updated = update_rule_fields(def_manager, row.id, fields)
+    except (DefinitionNotFoundError, ReservedRuleMutationError) as exc:
+        return {"success": False, "error": str(exc)}
     logger.info("Updated rule '%s' (fields=%s)", name, list(fields))
 
     try:
@@ -348,7 +405,7 @@ def update_rule(
     except Exception as e:
         logger.warning("Failed to auto-export updated rule '%s': %s", name, e)
 
-    return _rule_or_parse_error(updated)
+    return _rule_or_parse_error(updated, allow_metadata=True)
 
 
 def create_rule(
@@ -397,21 +454,20 @@ def create_rule(
             }
         return {"success": False, "error": f"Rule '{name}' already exists"}
 
-    deleted_row = def_manager.get_by_name(name, include_deleted=True)
-    if deleted_row is not None and deleted_row.deleted_at is not None:
-        def_manager.hard_delete(deleted_row.id)
-
     tags = definition.get("tags") or ["user"]
 
     # The DB row owns an MCP-created rule; its YAML is only an export, so user
     # template sync must never refresh or prune it.
-    row = def_manager.create(
-        name=name,
-        definition_json=definition,
-        enabled=True,
-        source="custom",
-        tags=tags,
-    )
+    try:
+        row = def_manager.create(
+            name=name,
+            definition_json=definition,
+            enabled=True,
+            source="custom",
+            tags=tags,
+        )
+    except DefinitionNameConflictError as exc:
+        return {"success": False, "error": str(exc)}
     logger.info("Created rule '%s' (id=%s)", name, row.id)
 
     # Auto-export to YAML for persistence
@@ -460,6 +516,8 @@ def delete_rule(
         return {"success": False, "error": f"Rule '{name}' not found"}
 
     with _locked_rule(def_manager, row.id) as row:
+        if row is None:
+            return {"success": False, "error": f"Rule '{name}' not found"}
         if reserved_error := _reserved_rule_mutation_error(row):
             return {"success": False, "error": reserved_error}
         if "gobby" in (row.tags or []) and not force:

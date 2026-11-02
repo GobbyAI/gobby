@@ -31,6 +31,83 @@ from tests.servers.conftest import StubConfigRuntime, create_http_server
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("authenticated_http_requests")]
 
 
+@pytest.mark.parametrize("operator", [False, True])
+@pytest.mark.parametrize("operation", ["update", "bulk-toggle", "toggle", "delete"])
+def test_reserved_writer_routes_use_authenticated_operator_identity(
+    client: TestClient,
+    def_manager: RuleDefinitionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    operator: bool,
+    operation: str,
+) -> None:
+    from gobby.servers.auth_service import AuthService
+    from gobby.utils.local_token import AgentApiTokenClaims
+
+    claims = AgentApiTokenClaims(
+        "synthetic-session", "synthetic-project", "synthetic-machine", 1, 9999999999
+    )
+    monkeypatch.setattr(AuthService, "break_glass_admits", lambda _self, _request: operator)
+    monkeypatch.setattr(
+        AuthService, "_verified_agent_claims_for_token", lambda _self, _request, _token: claims
+    )
+    body = {
+        "event": "turn_start",
+        "effects": [
+            {
+                "type": "set_variable",
+                "variable": "project_policy",
+                "value": {"security_paths": ["src/**"]},
+            }
+        ],
+    }
+    row = def_manager.create(
+        name="synthetic-protected-policy", definition_json=body, source="installed"
+    )
+    headers = {"Authorization": "Bearer synthetic-agent-token"}
+    if operation == "update":
+        response = client.put(
+            f"/api/rules/{row.name}",
+            headers=headers,
+            json={
+                "definition": {
+                    "event": "turn_start",
+                    "effects": [{"type": "set_variable", "variable": "ordinary", "value": 1}],
+                }
+            },
+        )
+    elif operation == "bulk-toggle":
+        response = client.put(
+            "/api/rules/bulk-toggle",
+            headers=headers,
+            json={"source": "installed", "enabled": False},
+        )
+    elif operation == "toggle":
+        response = client.put(
+            f"/api/rules/{row.name}/toggle", headers=headers, json={"enabled": False}
+        )
+    else:
+        response = client.delete(f"/api/rules/{row.name}", headers=headers)
+    if operator:
+        assert response.status_code == 200, response.text
+    elif operation == "bulk-toggle":
+        assert response.status_code == 200
+        assert response.json()["partial"] is True
+        assert response.json()["count"] == 0
+    else:
+        assert response.status_code == 403, response.text
+    current = def_manager.get(row.id, include_deleted=True)
+    if not operator:
+        assert current.definition_json == row.definition_json
+        assert current.enabled is True
+        assert current.deleted_at is None
+    elif operation in {"bulk-toggle", "toggle"}:
+        assert current.enabled is False
+    elif operation == "delete":
+        assert current.deleted_at is not None
+    else:
+        assert current.definition_json != row.definition_json
+
+
 @pytest.fixture
 def db(hub_db: HubDatabase) -> HubDatabase:
     return hub_db

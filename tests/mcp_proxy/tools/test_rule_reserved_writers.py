@@ -151,3 +151,97 @@ def test_rule_mutation_rechecks_writer_installed_after_initial_lookup(
     assert current.enabled is True
     assert current.deleted_at is None
     assert get_rule(manager, name)["rule"]["effects"] == protected["effects"]
+
+
+def test_create_reuses_deleted_name_without_destroying_tombstone(temp_db: HubDatabase) -> None:
+    manager = RuleDefinitionManager(temp_db)
+    body = {
+        "event": "turn_start",
+        "effects": [{"type": "set_variable", "variable": "ordinary", "value": 1}],
+    }
+    old = manager.create(name="synthetic-reused", definition_json=body, source="custom")
+    manager.delete(old.id)
+    assert create_rule(manager, old.name, body)["success"] is True
+    assert manager.get(old.id, include_deleted=True).deleted_at is not None
+
+
+@pytest.mark.parametrize("operation", ["update", "toggle", "delete"])
+def test_disappeared_rule_returns_not_found(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    manager = RuleDefinitionManager(temp_db)
+    body = {
+        "event": "turn_start",
+        "effects": [{"type": "set_variable", "variable": "ordinary", "value": 1}],
+    }
+    row = manager.create(name="synthetic-vanished", definition_json=body, source="custom")
+    lookup = manager.get_by_name
+
+    def raced_lookup(ref: str, **kwargs: Any) -> RuleDefinitionRow | None:
+        stale = lookup(ref, **kwargs)
+        manager.delete(row.id)
+        return stale
+
+    monkeypatch.setattr(manager, "get_by_name", raced_lookup)
+    if operation == "update":
+        result = update_rule(manager, row.name, enabled=False)
+    elif operation == "toggle":
+        result = toggle_rule(manager, row.name, False)
+    else:
+        result = delete_rule(manager, row.name, force=True)
+    assert result["success"] is False
+    assert "not found" in result["error"].lower()
+
+
+@pytest.mark.parametrize("operation", ["create", "update"])
+def test_mcp_result_cannot_write_reserved_variable(temp_db: HubDatabase, operation: str) -> None:
+    manager = RuleDefinitionManager(temp_db)
+    name = "synthetic-result-writer"
+    body = {
+        "event": "turn_start",
+        "effects": [
+            {
+                "type": "mcp_call",
+                "server": "synthetic",
+                "tool": "read",
+                "inject_result": True,
+                "success_variable": "project_policy",
+            }
+        ],
+    }
+    if operation == "create":
+        result = create_rule(manager, name, body)
+    else:
+        manager.create(
+            name=name,
+            definition_json={
+                "event": "turn_start",
+                "effects": [{"type": "set_variable", "variable": "ordinary", "value": 1}],
+            },
+        )
+        result = update_rule(manager, name, definition=body)
+    assert result["success"] is False
+    assert "reserved" in result["error"].lower()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"not": "a-rule"}, {"event": "turn_start", "effect": {"type": "block", "reason": "legacy"}}],
+)
+@pytest.mark.parametrize("operation", ["disable", "delete"])
+def test_invalid_or_legacy_rule_remains_disableable_and_deletable(
+    temp_db: HubDatabase, body: dict[str, Any], operation: str
+) -> None:
+    manager = RuleDefinitionManager(temp_db)
+    row = manager.create(name="synthetic-repairable", definition_json=body, source="custom")
+    result = (
+        toggle_rule(manager, row.name, False)
+        if operation == "disable"
+        else delete_rule(manager, row.name)
+    )
+    assert result["success"] is True
+    current = manager.get(row.id, include_deleted=True)
+    if operation == "disable":
+        assert current.enabled is False
+    else:
+        assert current.deleted_at is not None

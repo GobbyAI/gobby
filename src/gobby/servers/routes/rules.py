@@ -7,19 +7,24 @@ Wraps RuleDefinitionManager with rule-specific filtering and validation.
 
 import json
 import logging
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field, ValidationError
 
 from gobby.mcp_proxy.tools.workflows._rules import (
+    ReservedRuleMutationError,
     create_rule,
     delete_rule,
     get_rule,
     list_rules,
+    operator_rule_changes,
     toggle_rule,
+    update_rule_fields,
 )
 from gobby.servers.routes.configuration_context import require_config_snapshot
+from gobby.storage.definitions._shared import DefinitionNotFoundError
 from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.delivery_disposition import (
     DispositionAmbiguousError,
@@ -229,19 +234,39 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
     # -----------------------------------------------------------------
 
     @router.put("/bulk-toggle")
-    async def bulk_toggle_rules(request: BulkToggleRequest) -> dict[str, Any]:
+    async def bulk_toggle_rules(
+        request: BulkToggleRequest, http_request: Request
+    ) -> dict[str, Any]:
         """Toggle all rules matching a source filter."""
         if request.source not in ("installed", "project"):
             raise HTTPException(status_code=400, detail="source must be 'installed' or 'project'")
         try:
             manager = _get_manager()
+            principal = await server.run_db(server.auth_service.request_principal, http_request)
             rows = await server.run_db(manager.list_all, include_deleted=False)
             count = 0
             failures: list[dict[str, str]] = []
             for row in rows:
                 if row.source == request.source:
                     try:
-                        await server.run_db(manager.update, row.id, enabled=request.enabled)
+                        with operator_rule_changes() if principal is None else nullcontext():
+                            result = await server.run_db(
+                                toggle_rule,
+                                manager,
+                                name=row.name,
+                                enabled=request.enabled,
+                                project_id=row.project_id,
+                            )
+                        if not result["success"]:
+                            failures.append(
+                                {
+                                    "rule_id": row.id,
+                                    "rule_name": row.name,
+                                    "source": row.source,
+                                    "error": result["error"],
+                                }
+                            )
+                            continue
                     except Exception as e:
                         logger.warning(
                             "Failed to bulk-toggle rule",
@@ -298,6 +323,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
     async def update_rule_endpoint(
         name: str,
         request: RuleUpdateRequest,
+        http_request: Request,
         project_id: str | None = Query(None, description=_PROJECT_SCOPE_HELP),
     ) -> dict[str, Any]:
         """Update rule fields."""
@@ -351,7 +377,13 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=400, detail="No fields to update")
 
         try:
-            updated = await server.run_db(manager.update, row.id, **fields)
+            principal = await server.run_db(server.auth_service.request_principal, http_request)
+            with operator_rule_changes() if principal is None else nullcontext():
+                updated = await server.run_db(update_rule_fields, manager, row.id, fields)
+        except ReservedRuleMutationError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except DefinitionNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.exception(
                 "Failed to update rule %s (%s): %s",
@@ -396,20 +428,23 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
     @router.delete("/{name}")
     async def delete_rule_endpoint(
         name: str,
+        http_request: Request,
         force: bool = Query(False, description="Override bundled protection"),
         project_id: str | None = Query(None, description=_PROJECT_SCOPE_HELP),
     ) -> dict[str, Any]:
         """Soft-delete a rule. Bundled rules are protected unless force=True."""
         manager = _get_manager()
-        result = await server.run_db(
-            delete_rule, manager, name=name, force=force, project_id=project_id
-        )
+        principal = await server.run_db(server.auth_service.request_principal, http_request)
+        with operator_rule_changes() if principal is None else nullcontext():
+            result = await server.run_db(
+                delete_rule, manager, name=name, force=force, project_id=project_id
+            )
 
         if not result["success"]:
             error = result["error"]
             if "not found" in error.lower():
                 raise HTTPException(status_code=404, detail=error)
-            if "bundled" in error.lower():
+            if "bundled" in error.lower() or "reserved" in error.lower():
                 raise HTTPException(status_code=403, detail=error)
             raise HTTPException(status_code=400, detail=error)
 
@@ -423,16 +458,23 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
     async def toggle_rule_endpoint(
         name: str,
         request: RuleToggleRequest,
+        http_request: Request,
         project_id: str | None = Query(None, description=_PROJECT_SCOPE_HELP),
     ) -> dict[str, Any]:
         """Toggle a rule's enabled state."""
         manager = _get_manager()
-        result = await server.run_db(
-            toggle_rule, manager, name=name, enabled=request.enabled, project_id=project_id
-        )
+        principal = await server.run_db(server.auth_service.request_principal, http_request)
+        with operator_rule_changes() if principal is None else nullcontext():
+            result = await server.run_db(
+                toggle_rule, manager, name=name, enabled=request.enabled, project_id=project_id
+            )
 
         if not result["success"]:
-            raise HTTPException(status_code=404, detail=result["error"])
+            error = result["error"]
+            status = (
+                403 if "reserved" in error.lower() else 404 if "not found" in error.lower() else 400
+            )
+            raise HTTPException(status_code=status, detail=error)
 
         return {"status": "success", "rule": result["rule"]}
 
