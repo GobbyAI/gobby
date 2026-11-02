@@ -191,6 +191,13 @@ class ProcessorHost(Protocol):
         complete: bool,
     ) -> None: ...
 
+    async def _mirror_text_blocks(
+        self,
+        session_id: str,
+        message_id: str,
+        texts: list[str],
+    ) -> None: ...
+
     def _revive_expired_terminal_session(self, session_id: str) -> None: ...
 
     async def _render_and_broadcast_messages(

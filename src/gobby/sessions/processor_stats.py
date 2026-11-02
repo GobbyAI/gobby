@@ -57,26 +57,24 @@ class ProcessorStatsMixin:
         complete: bool,
     ) -> None:
         if complete and rendered.get("role") == "assistant" and self.communications_manager:
-            blocks = rendered.get("content_blocks", [])
-            text = "\n\n".join(
+            texts = [
                 block["content"]
-                for block in blocks
+                for block in rendered.get("content_blocks", [])
                 if isinstance(block, dict)
                 and block.get("type") == "text"
                 and isinstance(block.get("content"), str)
-            )
+                and block["content"].strip()
+            ]
             message_id = rendered.get("id")
             eligible = self._mirror_eligible_ids.get(session_id, set())
             if (
-                text.strip()
+                texts
                 and isinstance(message_id, str)
                 and message_id
                 and (session_id not in self._mirror_start_offsets or message_id in eligible)
             ):
                 try:
-                    await self.communications_manager.mirror_session_message(
-                        session_id, message_id, text
-                    )
+                    await self._mirror_text_blocks(session_id, message_id, texts)
                 except Exception:
                     # The durable delivery ledger retries independently. A
                     # failed mirror must not suppress stats or websocket events.
@@ -94,6 +92,32 @@ class ProcessorStatsMixin:
                 "complete": complete,
             }
         )
+
+    async def _mirror_text_blocks(
+        self: ProcessorHost,
+        session_id: str,
+        message_id: str,
+        texts: list[str],
+    ) -> None:
+        """Mirror each text block of a completed turn in order, one outbound row each.
+
+        The final block keeps the turn's message id, so its ledger row marks the
+        whole turn as delivered. A single-block turn keeps its id unchanged. Every
+        block is attempted, and the first failure is re-raised after the rest.
+        """
+        manager = self.communications_manager
+        if manager is None:
+            return
+        last = len(texts) - 1
+        first_error: Exception | None = None
+        for index, text in enumerate(texts):
+            key = message_id if index == last else f"{message_id}#{index}"
+            try:
+                await manager.mirror_session_message(session_id, key, text)
+            except Exception as exc:
+                first_error = first_error or exc
+        if first_error is not None:
+            raise first_error
 
     def _accumulate_stats(
         self: ProcessorHost, session_id: str, records: Sequence[StatsRecord]
