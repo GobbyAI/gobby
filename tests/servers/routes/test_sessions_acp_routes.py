@@ -53,6 +53,7 @@ class _Session:
     machine_id: str = MACHINE
     workspace_path: str | None = "/tmp/acp-workspace"
     workspace_generation: int = 1
+    parent_session_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,9 +69,24 @@ class _Session:
         }
 
 
+class _LineageDB:
+    """Answers the parent-lineage lookup that nearest_live_parent_ids runs."""
+
+    def __init__(self, rows: dict[str, _Session]) -> None:
+        self._rows = rows
+
+    def fetchall(self, _sql: str, params: tuple[str, ...]) -> list[dict[str, Any]]:
+        return [
+            {"id": row.id, "parent_session_id": row.parent_session_id, "status": row.status}
+            for row in self._rows.values()
+            if row.id in params
+        ]
+
+
 class _SM:
     def __init__(self, rows: list[_Session] | None = None) -> None:
         self.rows = {row.id: row for row in (rows or [])}
+        self.db = _LineageDB(self.rows)
         self.events: list[tuple[str, str]] = []
         self.delete_error: Exception | None = None
 
@@ -428,3 +444,30 @@ def test_list_sessions_acp_block_includes_additional_directories() -> None:
 
     block = resp.json()["sessions"][0]["acp"]
     assert block["additional_directories"] == ["/extra"]
+
+
+def test_list_sessions_renders_child_under_nearest_live_ancestor() -> None:
+    root = _Session(id="s-root", external_id="root", source="claude", session_type="terminal")
+    ended = _Session(
+        id="s-ended",
+        external_id="ended",
+        source="claude",
+        session_type="terminal",
+        status="deleted",
+        parent_session_id="s-root",
+    )
+    child = _Session(
+        id="s-child",
+        external_id="child",
+        source="claude",
+        session_type="terminal",
+        parent_session_id="s-ended",
+    )
+    client = _client(_SM([root, ended, child]), None)
+
+    resp = client.get("/api/sessions")
+
+    assert resp.status_code == 200
+    by_id = {s["id"]: s for s in resp.json()["sessions"]}
+    # Stored lineage is s-ended; the listing renders the child under the live s-root.
+    assert by_id["s-child"]["parent_session_id"] == "s-root"

@@ -48,7 +48,7 @@ def test_pending_pull_marker_cannot_be_cleared_or_forged(value: Any) -> None:
     finally:
         reset_session_context(token)
     assert result["success"] is False
-    assert "managed by the workflow runtime" in result["error"]
+    assert "handoff_pull_pending" in result["error"]
     variables.set_variable.assert_not_called()
 
 
@@ -126,6 +126,8 @@ def test_context_injection_waits_for_pull(temp_db: HubDatabase, rule_name: str) 
     evaluator = SafeExpressionEvaluator(context={"variables": variables}, allowed_funcs={})
     assert evaluator.evaluate(body.when) is False
     variables.pop("handoff_pull_pending")
+    # The evaluator snapshots its context at construction, so rebuild it to see the pop.
+    evaluator = SafeExpressionEvaluator(context={"variables": variables}, allowed_funcs={})
     assert evaluator.evaluate(body.when) is True
 
 
