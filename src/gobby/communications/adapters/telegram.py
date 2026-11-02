@@ -922,6 +922,11 @@ class TelegramAdapter(BaseChannelAdapter):
                 self._pending_update_ids.append(update_id)
             msg_list = self.parse_webhook(update, {})
             if not msg_list and isinstance(update_id, int):
+                logger.warning(
+                    "Telegram update %s parsed to no message (keys: %s); acknowledged",
+                    update_id,
+                    sorted(update),
+                )
                 self._acknowledged_update_ids.add(update_id)
             messages.extend(msg_list)
 

@@ -103,7 +103,11 @@ OPERATOR_TOOLS = {
 ARGUMENTLESS_PROXY_TOOLS = frozenset({"gobby-sessions:get_handoff"})
 
 
-MESSAGE_DELIVERY_TOOLS = {"get_inter_session_message", "get_inter_session_messages"}
+MESSAGE_DELIVERY_TOOLS = {
+    "get_inter_session_message",
+    "get_inter_session_messages",
+    "get_attachment",
+}
 
 
 # The Gobby MCP proxy's native tool surface. Claude Code exposes these as

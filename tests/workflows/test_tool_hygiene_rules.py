@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from gobby.cli.installers.shared import sync_bundled_content_to_db
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -68,6 +69,16 @@ class TestToolHygieneSync:
         assert "block-escaped-quotes" not in rule_names
         assert "require-uv" in rule_names
         assert CLAUDE_MEMORY_RULES.issubset(rule_names)
+
+    def test_bundled_rule_sync_runs_to_completion_without_errors(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """The CLI's bundled rule sync runs against the isolated hub with no errors."""
+        result = sync_bundled_content_to_db(db, only={"rules"})
+
+        assert result["errors"] == []
+        assert result["total_synced"] > 0
+        assert manager.get_by_name(SEND_MESSAGE_MODES) is not None
 
     def test_all_rules_have_group(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """All tool-hygiene rules should have group='tool-hygiene'."""
@@ -496,15 +507,15 @@ class TestBlockWebChatSendKeys:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("tool", list(TERMINAL_TOOL_ARGUMENTS))
     @pytest.mark.parametrize(
-        ("session_type", "expected_decision"),
-        [("web_chat", "block"), ("terminal", "allow")],
+        ("session_type", "web_chat_blocks"),
+        [("web_chat", True), ("terminal", False)],
     )
     async def test_rule_applies_only_to_web_chat(
         self,
         db: HubDatabase,
         tool: str,
         session_type: str,
-        expected_decision: str,
+        web_chat_blocks: bool,
     ) -> None:
         _sync_bundled(db)
         data: dict[str, object] = {
@@ -527,10 +538,11 @@ class TestBlockWebChatSendKeys:
 
         response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
 
-        assert response.decision == expected_decision
-        if expected_decision == "block":
-            assert response.reason is not None
-            assert "block-web-chat-send-keys" in response.reason
+        # A terminal send_keys may still be refused by no-send-keys, which governs it
+        # there. This test asserts only the web-chat rule.
+        assert ("block-web-chat-send-keys" in (response.reason or "")) is web_chat_blocks
+        if web_chat_blocks:
+            assert response.decision == "block"
 
 
 CROSS_PROJECT_SEND_KEYS = "block-cross-project-send-keys"
@@ -693,10 +705,13 @@ class TestBlockCrossProjectSendKeys:
 
 SEND_MESSAGE_MODES = "scope-spawned-agent-send-message"
 ALL_MODES = ("parent", "session", "agent", "project", "global", "build")
+SEND_TOOLS = ("send_message", "send_attachment")
 
 
-def _send_message_event(caller_id: str, target: str | None) -> HookEvent:
-    """The before_tool event the MCP proxy builds for one send_message dispatch."""
+def _send_message_event(
+    caller_id: str, target: str | None, tool: str = "send_message"
+) -> HookEvent:
+    """The before_tool event the MCP proxy builds for one send_message or send_attachment call."""
     arguments: dict[str, Any] = {"content": "status"}
     if target is not None:
         arguments["target"] = target
@@ -704,7 +719,7 @@ def _send_message_event(caller_id: str, target: str | None) -> HookEvent:
         "tool_name": "mcp__gobby__call_tool",
         "tool_input": {
             "server_name": "gobby-agents",
-            "tool_name": "send_message",
+            "tool_name": tool,
             "arguments": arguments,
         },
     }
@@ -764,10 +779,13 @@ class TestScopeSpawnedAgentSendMessage:
         caller: Session,
         agent_type: str | None,
         target: str | None,
+        tool: str = "send_message",
     ) -> tuple[str, str | None]:
         variables = {} if agent_type is None else {"_agent_type": agent_type}
         response = await RuleEngine(db, session_manager=session_manager).evaluate(
-            _send_message_event(caller.id, target), session_id=caller.id, variables=variables
+            _send_message_event(caller.id, target, tool),
+            session_id=caller.id,
+            variables=variables,
         )
         return response.decision, response.reason
 
@@ -782,9 +800,10 @@ class TestScopeSpawnedAgentSendMessage:
         assert "default" in (row.tags or [])
         effect = RuleDefinitionBody.model_validate(row.definition_json).resolved_effects[0]
         assert effect.type == "block"
-        assert effect.mcp_tools == ["gobby-agents:send_message"]
+        assert effect.mcp_tools == ["gobby-agents:send_message", "gobby-agents:send_attachment"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", SEND_TOOLS)
     @pytest.mark.parametrize(
         ("target", "expected"),
         [("parent", "allow"), ("session", "allow"), ("project", "block"), ("global", "block")],
@@ -794,6 +813,7 @@ class TestScopeSpawnedAgentSendMessage:
         db: HubDatabase,
         session_manager: SessionManager,
         sessions: dict[str, Session],
+        tool: str,
         target: str,
         expected: str,
     ) -> None:
@@ -809,40 +829,46 @@ class TestScopeSpawnedAgentSendMessage:
             name=agent_type, definition_json=body.model_dump(), source="custom"
         )
 
-        decision, _ = await self._decide(db, session_manager, sessions["child"], agent_type, target)
+        decision, _ = await self._decide(
+            db, session_manager, sessions["child"], agent_type, target, tool
+        )
 
         assert decision == expected
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", SEND_TOOLS)
     @pytest.mark.parametrize("target", [None, "parent"])
     async def test_undeclared_agent_reaches_its_parent(
         self,
         db: HubDatabase,
         session_manager: SessionManager,
         sessions: dict[str, Session],
+        tool: str,
         target: str | None,
     ) -> None:
         _sync_bundled(db)
 
         decision, _ = await self._decide(
-            db, session_manager, sessions["child"], "quiet-worker", target
+            db, session_manager, sessions["child"], "quiet-worker", target, tool
         )
 
         assert decision == "allow"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", SEND_TOOLS)
     @pytest.mark.parametrize("target", ["session", "agent", "project", "global", "build"])
     async def test_undeclared_agent_is_refused_every_other_mode(
         self,
         db: HubDatabase,
         session_manager: SessionManager,
         sessions: dict[str, Session],
+        tool: str,
         target: str,
     ) -> None:
         _sync_bundled(db)
 
         decision, reason = await self._decide(
-            db, session_manager, sessions["child"], "quiet-worker", target
+            db, session_manager, sessions["child"], "quiet-worker", target, tool
         )
 
         assert decision == "block"
@@ -850,6 +876,7 @@ class TestScopeSpawnedAgentSendMessage:
         assert SEND_MESSAGE_MODES in reason
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool", SEND_TOOLS)
     @pytest.mark.parametrize(
         ("target", "expected_decision"),
         [("parent", "allow"), ("project", "allow"), ("global", "block"), ("session", "block")],
@@ -859,13 +886,14 @@ class TestScopeSpawnedAgentSendMessage:
         db: HubDatabase,
         session_manager: SessionManager,
         sessions: dict[str, Session],
+        tool: str,
         target: str,
         expected_decision: str,
     ) -> None:
         _sync_bundled(db)
 
         decision, _ = await self._decide(
-            db, session_manager, sessions["child"], "announcer", target
+            db, session_manager, sessions["child"], "announcer", target, tool
         )
 
         assert decision == expected_decision

@@ -1,8 +1,9 @@
+version: "1.1.0"
 tags: [tool-hygiene, enforcement, gobby, default]
 
 rules:
   scope-spawned-agent-send-message:
-    description: "Limit a spawned agent's send_message to the target modes its agent definition declares"
+    description: "Limit a spawned agent's send_message and send_attachment to the target modes its agent definition declares"
     event: before_tool
     enabled: true
     priority: 10
@@ -10,13 +11,13 @@ rules:
     # can only refuse send_message.
     when: >
       tool_input.get('server_name') == 'gobby-agents'
-      and tool_input.get('tool_name') == 'send_message'
+      and tool_input.get('tool_name') in ['send_message', 'send_attachment']
       and not send_message_target_allowed(
         event.metadata.get('_platform_session_id'),
         variables.get('_agent_type'), tool_input.get('target'))
     effects:
       - type: block
-        mcp_tools: ["gobby-agents:send_message"]
+        mcp_tools: ["gobby-agents:send_message", "gobby-agents:send_attachment"]
         reason: >-
-          A spawned agent may use only the send_message targets its agent definition
-          lists in send_message_targets; the default is target='parent'.
+          A spawned agent may use only the send_message and send_attachment targets its
+          agent definition lists in send_message_targets; the default is target='parent'.

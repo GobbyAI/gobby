@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from collections.abc import Mapping
@@ -16,6 +17,8 @@ from gobby.communications.telegram_callbacks import (
 )
 from gobby.communications.telegram_stickers import telegram_sticker_attachments
 from gobby.prompts.rendering import log_invisible_counts, strip_invisible_unicode
+
+logger = logging.getLogger(__name__)
 
 
 def _mentions_telegram_bot(
@@ -261,6 +264,31 @@ def _telegram_reaction_count_message(payload: Mapping[str, Any]) -> CommsMessage
     )
 
 
+_TELEGRAM_CONTENT_KINDS = (
+    "photo",
+    "document",
+    "voice",
+    "video",
+    "animation",
+    "audio",
+    "video_note",
+    "sticker",
+    "location",
+    "venue",
+    "contact",
+    "poll",
+    "dice",
+    "game",
+    "story",
+    "invoice",
+)
+
+
+def _unsupported_telegram_kinds(msg_data: Mapping[str, Any]) -> list[str]:
+    kinds = [kind for kind in _TELEGRAM_CONTENT_KINDS if kind in msg_data]
+    return kinds or ["message"]
+
+
 def parse_telegram_update(
     payload: dict[str, Any] | bytes,
     *,
@@ -302,11 +330,7 @@ def parse_telegram_update(
     caption = raw_caption if isinstance(raw_caption, str) else ""
     raw_sticker = msg_data.get("sticker")
     sticker = telegram_sticker_attachments(msg_data)
-    if raw_sticker is not None and sticker is None:
-        return []
     attachment = _telegram_media_attachment(msg_data) if sticker is None else None
-    if not text and attachment is None and sticker is None:
-        return []
 
     chat = msg_data.get("chat")
     if not isinstance(chat, Mapping):
@@ -319,12 +343,17 @@ def parse_telegram_update(
     )
     # Direct operator messages are trusted; forwarded content and group messages are not.
     if conversation_type != "private" or msg_data.get("forward_origin"):
+        had_text = bool(text)
         text, text_counts = strip_invisible_unicode(text)
         caption, caption_counts = strip_invisible_unicode(caption)
         text_counts.add(caption_counts)
         log_invisible_counts(text_counts, "Telegram untrusted inbound")
-        if not text and attachment is None and sticker is None:
+        if had_text and not text and attachment is None and sticker is None:
+            # Invisible-only text from an untrusted source is discarded by policy.
             return []
+    unsupported = (raw_sticker is not None and sticker is None) or (
+        not text and attachment is None and sticker is None
+    )
     raw_msg_id = msg_data.get("message_id")
     message_id = str(raw_msg_id) if raw_msg_id is not None else ""
     platform_thread_id = _message_thread_id(msg_data)
@@ -335,12 +364,11 @@ def parse_telegram_update(
     raw_user_id = from_user.get("id")
     user_id = str(raw_user_id) if raw_user_id is not None else ""
     username = from_user.get("username")
-    if not user_id:
-        return []
 
     metadata = {
         "chat_id": chat_id,
         "platform_channel_id": chat_id,
+        "platform_destination": chat_id,
         "conversation_type": conversation_type,
         "mentioned": _mentions_telegram_bot(
             text if text else caption,
@@ -371,16 +399,29 @@ def parse_telegram_update(
         metadata["telegram_sticker"] = sticker_metadata
         metadata["voice_note"] = False
 
+    content = text if text else caption
+    content_type = "attachment" if attachment is not None or sticker is not None else "text"
+    if unsupported:
+        # Recorded rather than dropped: the row goes through admission like any inbound message.
+        kinds = _unsupported_telegram_kinds(msg_data)
+        metadata["telegram_unsupported_kinds"] = kinds
+        content = f"[Unsupported Telegram message: {', '.join(kinds)}]"
+        content_type = "unsupported"
+        logger.warning(
+            "Telegram update %s has no supported content (%s); recorded as unsupported",
+            payload_dict.get("update_id"),
+            ", ".join(kinds),
+        )
     return [
         CommsMessage(
             id=str(uuid.uuid4()),
             channel_id="",  # Will be set by the orchestrator
             direction="inbound",
-            content=text if text else caption,
-            content_type="attachment" if attachment is not None or sticker is not None else "text",
+            content=content,
+            content_type=content_type,
             platform_message_id=message_id,
             platform_thread_id=platform_thread_id,
-            identity_id=user_id,
+            identity_id=user_id or None,
             metadata_json=metadata,
             created_at=datetime.now(UTC),
         )

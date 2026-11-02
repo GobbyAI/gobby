@@ -4,6 +4,8 @@ Provides P2P messaging and command coordination between sessions:
 - send_message: target-based messaging; session targets accept UUID, #N, or <project>#N
 - get_inter_session_message: Retrieve one complete message for a participant
 - get_inter_session_messages: Read-only query of message history
+- send_attachment: send_message with one stored document attached
+- get_attachment: read a message's attached document, for its sender or recipient only
 """
 
 from __future__ import annotations
@@ -13,6 +15,12 @@ import logging
 from collections.abc import Callable, Coroutine, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
+from gobby.storage.inter_session_attachments import (
+    MAX_ATTACHMENT_BYTES,
+    AttachmentDraft,
+    AttachmentError,
+    InterSessionAttachmentManager,
+)
 from gobby.storage.inter_session_messages import normalize_message_direction
 from gobby.storage.sessions import system_session_id
 from gobby.utils.datetime import utc_now
@@ -93,6 +101,8 @@ def add_messaging_tools(
             Called with (msg_type=, event=, **kwargs) on successful operations.
     """
 
+    attachment_manager = InterSessionAttachmentManager(db)
+
     def _resolve(ref: str) -> str:
         """Resolve session reference to UUID."""
         return session_manager.resolve_session_reference(
@@ -164,6 +174,34 @@ def add_messaging_tools(
         message_type: str = "message",
         metadata: dict[str, Any] | None = None,
         brief: bool = True,
+    ) -> dict[str, Any]:
+        return await _deliver(
+            target=target,
+            content=content,
+            target_id=target_id,
+            from_session=from_session,
+            project_id=project_id,
+            priority=priority,
+            wake=wake,
+            message_type=message_type,
+            metadata=metadata,
+            brief=brief,
+            attachment=None,
+        )
+
+    async def _deliver(
+        *,
+        target: str | None,
+        content: str,
+        target_id: str | None,
+        from_session: str | None,
+        project_id: str | None,
+        priority: str,
+        wake: bool | None,
+        message_type: str,
+        metadata: dict[str, Any] | None,
+        brief: bool,
+        attachment: AttachmentDraft | None,
     ) -> dict[str, Any]:
         try:
             from gobby.utils.session_context import get_current_session_id, is_daemon_execution
@@ -298,6 +336,7 @@ def add_messaging_tools(
                 message_type=message_type,
                 metadata=metadata,
                 project_id=project_id,
+                attachment=attachment,
             )
             msg = send_result.messages[0] if len(send_result.messages) == 1 else None
 
@@ -356,6 +395,8 @@ def add_messaging_tools(
             response["failed_ws_broadcasts"] = failed_ws_broadcasts
             response["success"] = send_result.success
             response["message"] = msg.to_dict() if msg is not None else None
+            if attachment is not None:
+                response["attachment"] = attachment.summary()
             if not brief or not send_result.success:
                 return response
 
@@ -385,6 +426,8 @@ def add_messaging_tools(
                 ),
                 "message_ids": send_result.message_ids,
             }
+            if attachment is not None:
+                brief_response["attachment"] = attachment.summary()
             if send_result.target_id is not None:
                 brief_response["target_id"] = send_result.target_id
             if send_result.broadcast_id is not None:
@@ -406,6 +449,88 @@ def add_messaging_tools(
             return {"success": False, "error": str(e)}
 
     # ── get_inter_session_message ──────────────────────────────────
+
+    @registry.tool(
+        name="send_attachment",
+        description=(
+            "Send a message with one document attached. The message follows send_message "
+            "for target, wake, and fanout; each recipient of a project or global send gets "
+            "its own copy. document is the complete UTF-8 text, filename names it, and "
+            "media_type is text/plain or text/markdown. The daemon stores the document in the "
+            "database with its byte size and SHA-256 digest. A document over "
+            f"{MAX_ATTACHMENT_BYTES} bytes is refused with attachment_too_large and nothing is "
+            "stored. Only the sender and that message's recipient can read the document, with "
+            "get_attachment."
+        ),
+    )
+    async def send_attachment(
+        target: Literal["global", "project", "parent", "session", "agent"] | None = None,
+        content: str = "",
+        filename: str = "",
+        document: str = "",
+        media_type: str = "text/markdown",
+        target_id: str | None = None,
+        from_session: str | None = None,
+        *,
+        project_id: str | None = None,
+        priority: str = "normal",
+        wake: bool | None = None,
+        message_type: str = "message",
+        metadata: dict[str, Any] | None = None,
+        brief: bool = True,
+    ) -> dict[str, Any]:
+        try:
+            attachment = AttachmentDraft.build(
+                filename=filename, media_type=media_type, content=document
+            )
+        except AttachmentError as e:
+            return {"success": False, "error": str(e), "error_code": e.code}
+        return await _deliver(
+            target=target,
+            content=content,
+            target_id=target_id,
+            from_session=from_session,
+            project_id=project_id,
+            priority=priority,
+            wake=wake,
+            message_type=message_type,
+            metadata=metadata,
+            brief=brief,
+            attachment=attachment,
+        )
+
+    @registry.tool(
+        name="get_attachment",
+        read_only=True,
+        description=(
+            "Retrieve the document attached to one inter-session message by message ID. "
+            "Only the message's sender or recipient can read it. Anyone else gets "
+            "attachment_not_found, the same response as a message with no attachment."
+        ),
+    )
+    def get_attachment(message_id: str) -> dict[str, Any]:
+        try:
+            from gobby.utils.session_context import get_current_session_id
+
+            caller_session_id = get_current_session_id()
+            if not caller_session_id:
+                return {
+                    "success": False,
+                    "error": "No calling session is available for attachment retrieval.",
+                    "error_code": "missing_session_context",
+                }
+            stored = attachment_manager.get_for_caller(message_id, _resolve(caller_session_id))
+            if stored is None:
+                return {
+                    "success": False,
+                    "error": "No attachment for that message ID is readable by this session.",
+                    "error_code": "attachment_not_found",
+                }
+            return {"success": True, "attachment": stored.to_dict()}
+
+        except Exception as e:
+            logger.error("get_attachment failed: %s", e)
+            return {"success": False, "error": str(e)}
 
     @registry.tool(
         name="get_inter_session_message",
@@ -440,10 +565,14 @@ def add_messaging_tools(
                     "error": "Only the message sender or recipient may retrieve it.",
                     "error_code": "message_access_denied",
                 }
-            return {
+            payload: dict[str, Any] = {
                 "success": True,
                 "message": _message_delivery_payload(message),
             }
+            attachment = attachment_manager.get_summary(message.id)
+            if attachment is not None:
+                payload["attachment"] = attachment
+            return payload
 
         except Exception as e:
             logger.error("get_inter_session_message failed: %s", e)
