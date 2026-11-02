@@ -1,6 +1,6 @@
 name: team-planning
 type: pipeline
-version: "2.1.0"
+version: "2.2.0"
 description: |
   Planning runbook: launches the plan writer, plan enhancer and plan adversary seats into one
   'Team Planning - #<task>' tab in the shared checkout. Each seat runs its own agent definition, and
@@ -42,8 +42,8 @@ inputs:
     description: "Shared project checkout; no worktree is created"
   seats:
     type: string
-    default: plan-writer
-    description: "Comma-separated missing seats: plan-writer, plan-adversary, plan-enhancer"
+    default: plan-writer,plan-adversary,plan-enhancer
+    description: "Comma-separated seats to launch: plan-writer, plan-adversary, plan-enhancer; omit to launch all three"
   report_to:
     type: string
     required: true

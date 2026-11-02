@@ -29,6 +29,15 @@ def test_writerless_planning_requires_its_registered_plan() -> None:
     assert "plan-writer" in required and "not in" in required
 
 
+def test_omitted_seats_launch_every_planning_seat() -> None:
+    pipeline = _yaml("pipelines/team-planning.yaml")
+    guard = next(s for s in pipeline["steps"] if s["id"] == "guard")
+    catalogue = [entry["name"] for entry in guard["mcp"]["arguments"]["catalogue"]]
+    default = pipeline["inputs"]["seats"]["default"]
+
+    assert sorted(default.split(",")) == sorted(catalogue), default
+
+
 def test_enhancer_waits_on_every_live_planning_seat() -> None:
     prompt = str(_yaml("agents/plan-enhancer.yaml")["prompts"]["agent"])
     wait = prompt[prompt.index("For standing coordination") : prompt.index("Boundaries:")]

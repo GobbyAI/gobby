@@ -8,7 +8,7 @@ capabilities:
 - write_session_variables
 description: Leads single-task and epic DevTeams, including every leaf team of its epic; lands,
   validates, closes and cleans up.
-version: "3.0.0"
+version: "3.1.0"
 tags:
 - gobby
 - seat
@@ -42,12 +42,10 @@ blocked_tools:
 - KillShell
 - MultiEdit
 - NotebookEdit
-- Write
 - apply_patch
 - edit_file
 - notebook_edit
 - replace
-- write_file
 task_attestation_writes:
 - validation
 - closing
@@ -79,7 +77,7 @@ prompts:
     the current preview revision. Preserve task protection and security requirements.
 
     ## Coordination
-    Monitor team_progress and real claims. Register
+    Monitor gobby-tasks:team_progress and real claims. Register
     wait_for_coordination(owner_session=<seat>, reply=true, timeout=900) for replies;
     re-arm event-driven waits. Send readiness/blockers to report_to/Triage; obey HOLD/GO.
     After closure request cooperative seat completion, verify no live use and delete
@@ -111,7 +109,7 @@ prompts:
     the current preview revision. Preserve task protection and security requirements.
 
     ## Coordination
-    Monitor team_progress and real claims. Register
+    Monitor gobby-tasks:team_progress and real claims. Register
     wait_for_coordination(owner_session=<seat>, reply=true, timeout=900) for replies;
     re-arm event-driven waits. Send readiness/blockers to report_to/Triage; obey HOLD/GO.
     After closure request cooperative seat completion, verify no live use and delete
@@ -132,6 +130,7 @@ workflows:
     - tag:worker-safety
     - tag:task-integrated-validation
     - name:no-git-push
+    - name:team-lead-write-scope
     exclude:
     - name:block-spawned-agent-create-task
     - name:block-unclaimed-found-work
@@ -156,13 +155,17 @@ step_workflow:
     mcp_error_policy: stay
     description: Reconcile and staff ready epic leaves
     status_message: |
-      Follow the epic launch assignment. Persist epic_assignment (team, root,
-      workspace, static developer/reviewer, epic worktree, report target and
-      unchanged model defaults) with set_variable(scope="step"). You stay in
+      Single-task team (mode single): persist no epic_assignment and dispatch no
+      leaves. Set phase=wait; claim_flow delivers the reviewed candidate, then
+      integration and completion.
+
+      Epic team (mode epic): follow the epic launch assignment. Persist epic_assignment
+      (team, root, workspace, static developer/reviewer, epic worktree, report target
+      and unchanged model defaults) with set_variable(scope="step"). You stay in
       main and edit no implementation code. The epic assignment is not a claim.
       For ordinary non-epic coordination follow the launch prompt and procedure.
 
-      Before dispatch and after every resume/event, read team_progress and
+      Before dispatch and after every resume/event, read gobby-tasks:team_progress and
       reconcile real task claims, task sessions, live agent runs, existing child
       teams, pending pipeline executions and durable messages. Persist observed
       leaf_assignments; observations override stale local intent. A partial
@@ -208,8 +211,6 @@ step_workflow:
       and dependents; ready siblings continue and completed children stay closed.
       On HOLD start no new work. Persist phase=wait when work remains; use
       phase=integration only after all descendants are closed and cleanup is safe.
-
-      For a single task, wait for claim_flow to deliver its reviewed candidate, then use integration and completion.
     transitions:
     - to: wait
       when: vars.phase == 'wait'
