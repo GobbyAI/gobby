@@ -68,3 +68,5 @@ def test_mcp_tools_guide_lists_gobby_decisions_registry_row() -> None:
     rows = _table_rows_with(mcp_tools, "`gobby-decisions`")
     assert rows, "mcp-tools.md has no internal registry row for gobby-decisions"
     assert "evaluate" in rows[0]
+    for question_type in ("Choice", "Noul", "Score", "Box"):
+        assert question_type in rows[0], f"gobby-decisions row omits {question_type}"
