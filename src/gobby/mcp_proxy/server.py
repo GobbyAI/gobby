@@ -415,12 +415,17 @@ class GobbyDaemonTools:
             server_name, tool_name, project_id=self._caller_project_ref()
         )
         if result.get("success") is True and isinstance(result.get("tool"), dict):
-            record_schema_shown(
-                self.tool_proxy,
-                get_current_session_id(),
-                server_name=server_name,
-                tool_name=tool_name,
-            )
+            try:
+                record_schema_shown(
+                    self.tool_proxy,
+                    session_id or get_current_session_id(),
+                    server_name=server_name,
+                    tool_name=tool_name,
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "Schema lease not recorded for %s:%s: %s", server_name, tool_name, exc
+                )
         return result
 
     async def read_mcp_resource(self, server_name: str, resource_uri: str) -> Any:
