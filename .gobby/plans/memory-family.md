@@ -3130,3 +3130,16 @@ production cutover or task expansion have been performed during planning.
   (#25253), and the AI plan's 7.4 calls the seam's `promote` and `discard`
   (#21587). Awaiting adversarial review by gobby#19107; no consensus
   claimed.
+- 2026-11-01 — Plan Writer gobby#19105 and Plan Adversary gobby#19107
+  reached consensus on the narrative at
+  `f30566820666c606a6d4d94d127bfd099c0455d6`. MEM-REV-01: 3.1.6 covers
+  entity-vector staging failure and recovery; a wrong-dimension vector
+  fails `rebuild`, a fence-rejected project is skipped, a promote or
+  discard failing after any effect returns the error so the switch cannot
+  complete, a retry converges, and repeated calls are idempotent. The
+  Adversary dismissed its R0 root-ordering check (Decision 13: #21563's
+  `blocked_by` edge on #25468 plus the parent-chain readiness rule hold
+  every leaf) and its cross-plan ownership check. The Orchestrator accepted
+  the 3.1 seam extension and owns routing the AI 7.4 caller amendment and
+  tests to #21587 and the sessions `record_memory_review` export to #25253.
+  No governing decision remains open.
