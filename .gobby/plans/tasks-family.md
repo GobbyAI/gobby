@@ -1324,9 +1324,11 @@ Takeover (D6, Q8): a claim over a live owner succeeds only on a recorded ground.
 `src/gobby/storage/tasks/_owner_shield.py::OWNER_MAY_RESUME_GUARD_SQL` predicate
 (not in a live status, no fresh compact-continue marker, no contested terminal
 expiry, no operator claim hold); native reuses that predicate's SQL text.
-`delegated` is the agent-run lineage, `coordinator` a caller declaring
-`manage_task_claims` within its `task_claim_scope` (2.1's claim manager), and
-`operator` an HTTP claim. Without a ground, `force=True` is refused with
+`delegated` is the agent-run lineage. `coordinator` is either of 2.1's
+relationships, as Q8 admits: the coordinator (a local root session declaring
+`coordinate_tasks`) or the claim manager (`manage_task_claims` within
+`task_claim_scope`); the evidence names the capability that admitted it.
+`operator` is a claim from 2.1's `Operator` principal. Without a ground, `force=True` is refused with
 `TASK_CLAIM_CONFLICT` and the sanctioned-path message, under
 `tasks.mcp-claim-task.takeover-grounds`. The ground is written per 2.1.
 
@@ -1349,7 +1351,7 @@ duplicate the seam.
 
 **Acceptance:**
 - 3.5.1 - Claim, release, hand-off, delegation and session links match 0.3's rows and refusals, and claims return the assignment target. test: `crates/gtasks/tests/claim.rs::claim_lifecycle_matches_python`.
-- 3.5.2 - Takeover of a live claim succeeds only on `owner_dead`, `delegated`, `coordinator` or `operator`, records the ground, and otherwise refuses with no write. test: `crates/gtasks/tests/claim.rs::takeover_requires_recorded_ground`.
+- 3.5.2 - Takeover of a live claim succeeds only on `owner_dead`, `delegated`, `coordinator` or `operator`, records the ground and its evidence, and otherwise refuses with no write. The `coordinator` cases are a local root declaring only `coordinate_tasks` (admitted), a `manage_task_claims` caller inside its `task_claim_scope` (admitted) and outside it (refused), and a spawned or other-machine caller declaring only `coordinate_tasks` (refused). test: `crates/gtasks/tests/claim.rs::takeover_requires_recorded_ground`.
 - 3.5.3 - Claim and release update the five session variables and memory-review queue in the task's transaction, and a failure rolls back both. test: `crates/gtasks/tests/claim.rs::session_variables_commit_with_claims`.
 - 3.5.4 - Release, hand-off and transfer keep Python's dirty-file refusal, holder and recipient checks, and the `manage_task_claims`, `task_claim_scope` and `release_own_claim` rules, and a refused transfer moves nothing. test: `crates/gtasks/tests/claim.rs::release_rules_match_python`.
 
@@ -1385,6 +1387,7 @@ Planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-tasks --test status`.
 Targets:
 - `crates/gtasks/src/close.rs`
 - `crates/gtasks/src/closure.rs`
+- `crates/gtasks/src/landing_target.rs`
 - `crates/gtasks/src/plan_archive.rs`
 - `crates/gtasks/src/lib.rs` — edit the file created by 1.1
 - `crates/gtasks/tests/close.rs`
@@ -1432,12 +1435,25 @@ through the closing transaction, as `PreparedClosure` holds them in Python.
 `superseded_by`, `repository_available`, `commit_shas`, `candidate_commit_sha`,
 `candidate_covers_linked_commits`, `attribution_complete`, `task_files_clean`,
 `dirty_checkouts`, `unavailable_checkouts` and `integration_ancestry` (through
-3.10's landing target and a merge-base check). Attribution ports
+the landing target below and a merge-base check). Attribution ports
 `src/gobby/mcp_proxy/tools/tasks/_close_context.py::capture_attribution`
 (`task_edited_file_set`, `task_live_checkout_files`, git committable paths and
 foreign-owned dirty paths) over 1.3's git port; an attribution lookup failure
 leaves those facts false, as Python does. The preview ports
 `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_preview.py::CloseEvaluation`.
+
+`landing_target.rs` ports `src/gobby/tasks/land_commit.py::task_landing_target`
+and `main_checkout_target`, reading teams through
+`src/gobby/agents/team_lifecycle.py::task_team` and
+`src/gobby/agents/team_admission_records.py::team_binding` the way 3.5 ports the
+epic-team seat read. A task on a pod lands in its parent team's binding, and a
+pod whose parent team has no binding is refused. A leaf of an epic team, other
+than the epic's own task, lands in that team. Either team target is its
+worktree and branch, refused when the worktree is missing or on another
+branch. Any other task lands on the main checkout's branch from the
+project's registered checkout, with no target when that checkout is detached.
+Close turns a refusal or a missing target into `integration_ancestry` false, as
+`_lifecycle_close.py` does; 3.10 reuses the same read for landing.
 
 Finalization ports `src/gobby/storage/tasks/_close.py::_close_task_in_txn`: the
 decision must be allowed, `expected_closure_revision` must equal the decision's
@@ -1493,11 +1509,20 @@ Proof is snapshot parity plus a scripted decision (C1): tests bind a scripted
 `ClosurePolicy` that returns 0.3's recorded Python `ClosureDecision` for each
 vector, and assert that the native snapshot equals 0.3's recorded Python
 `ClosureSnapshot`. #24151 proves the evaluator's decision parity.
+Lock lifetime is proven apart from parity, because a frozen-instant snapshot
+cannot show that the locks survive evaluation through the write. Those tests
+open independent connections to the test hub and pause the scripted policy
+inside `evaluate`. While it is paused, each concurrent writer either waits for
+the close to commit or makes the close stale, and no close commits on an
+obsolete allowed decision. The writers are an attestation append, a child
+attachment and an agent or rule definition write. The scripted port is the only
+test seam.
 Planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-tasks --test close`.
 
 **Granularity:** The refusals, snapshot, decision and finalization form one
 close state machine around one port; repair and archival are its after-close
-edges and share its fixtures. Eight items prove that one machine.
+edges, the landing target feeds one of its facts, and all share its fixtures.
+Twelve items prove that one machine.
 
 **Acceptance:**
 - 3.7.1 - Every pre-policy refusal matches 0.3's result in `_evaluate_close` order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close_refusals_match_python`.
@@ -1508,6 +1533,10 @@ edges and share its fixtures. Eight items prove that one machine.
 - 3.7.4 - Closing an epic as done or moot archives its linked plan after commit, rolls back on failure and is a no-op without a plan. test: `crates/gtasks/tests/close.rs::epic_close_archives_plan`.
 - 3.7.6 - Native archival matches `archive_plan`: nested paths map below `completed/`, the coverage manifest is removed except for strategy plans, a repeated archive changes nothing, a missing source, a source outside the project root or an existing destination refuses with no move and no row write, and the epic close still succeeds. test: `crates/gtasks/tests/close.rs::plan_archive_matches_python`.
 - 3.7.5 - A session on another machine is still refused with Python's remote-session error. test: `crates/gtasks/tests/close.rs::remote_session_close_refused_locally`.
+- 3.7.9 - The landing target matches `task_landing_target` for a pod task, an epic-team leaf, the epic's own task and a top-level task, returns none for a detached main checkout, refuses an unbound pod parent and a missing or re-branched team worktree, and close records `integration_ancestry` false for each refusal or missing target. test: `crates/gtasks/tests/close.rs::landing_target_matches_python`.
+- 3.7.10 - While the scripted policy is paused in `evaluate`, a concurrent attestation append, child attachment, and agent or rule definition write on independent connections each wait for the close to commit or make it stale, and no close commits on an obsolete allowed decision. test: `crates/gtasks/tests/close.rs::close_locks_hold_through_write`.
+- 3.7.11 - A close whose child set is incomplete under `FOR SHARE SKIP LOCKED` refuses as stale with no write, and two sibling leaves closing concurrently under one parent both commit without deadlock. test: `crates/gtasks/tests/close.rs::incomplete_children_refuse_stale`.
+- 3.7.12 - An ancestor whose `ancestor`-intent decision is blocked or stale stays open while the leaf's close commits, as `_close_task_in_txn` catches `TaskClosurePolicyError` and `TaskStaleStateError` for ancestors. test: `crates/gtasks/tests/close.rs::blocked_ancestor_keeps_leaf_closed`.
 
 ### 3.8 Node checkout git evidence
 `kind: deferred`
@@ -1626,7 +1655,7 @@ Targets:
 `src/gobby/tasks/land_commit.py::land_candidate`. Its order, which native keeps:
 refuse a missing session (`session_required`) and a non-full SHA; resolve the
 candidate; take `MainCheckoutLanding` (`main_checkout_landing:{project_id}`,
-priority 25); resolve the target through `task_landing_target` (an epic team's
+priority 25); resolve the target through 3.7's `landing_target.rs` (an epic team's
 worktree and branch for a team leaf, otherwise `main_checkout_target`, refusing
 `main_checkout_detached` when none exists); then, for up to three attempts,
 re-read the tip and receipts and check the lander relationship
@@ -1658,9 +1687,8 @@ native inserts the same rows. Security approval is a `security-review`
 attestation with result `approved` whose author declares
 `approve_security_review` and whose git reference is the candidate SHA, which
 the `security` rule file requires through the port; native carries no
-security-specific code. The team-target read ports `task_team` and
-`team_binding` the way 3.5 ports the epic-team seat read. Git writes run in the
-hub-local process at the target path.
+security-specific code. The team-target read is 3.7's; 3.10 adds no second
+port of it. Git writes run in the hub-local process at the target path.
 Planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-tasks --test landing`.
 
 **Acceptance:**
@@ -2047,8 +2075,14 @@ agent run, machine, intent, origin). `ToolRegistry::new` refuses a duplicate
 server name. gtasks publishes two families: `gobby-tasks` (35 tools, 5.1 to 5.3)
 and `gobby-tasks-ops` (11 tools, 5.4). `team_progress` is not among them; it is
 re-homed to #21567 (D1). `mcp/mod.rs` assembles both servers and
-holds the shared argument decoding (Absent, Clear, Set) and 2.1's principal
-mapping (`Session` with session context, `Anonymous` without). Names,
+holds the shared argument decoding (Absent, Clear, Set). Every handler resolves
+its caller with 2.1's resolver in `crates/gtasks/src/principal.rs`, unchanged,
+and reads only `ToolContext`: `Session` when it carries a `session_id`;
+otherwise `Operator` only when its `principal` is the operator principal the
+gateway projected from the front door's verified `x-gobby-key-id`
+(`crates/gruntime/src/lib.rs::Caller::Operator`); otherwise `Anonymous`. A
+missing or unverified principal never elevates, and tool arguments never set
+the principal. 5.2 to 5.5 use the same resolver. Names,
 descriptions, briefs, input schemas, definition hashes and read-only
 classification match 0.3's MCP vectors; schemas normalize to JSON-object
 equality with Python. Errors go through #24970's MCP adapter. An unexpected
@@ -2072,8 +2106,9 @@ Planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-tasks --test mcp_reads` 
 `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-core --test mcp_contract` (the whole
 target, never a name filter).
 
-**Granularity:** Eleven tool items, a catalog item and a safe-error item exercise
-one descriptor adapter; each behaviour's state machine lives in P1.
+**Granularity:** Eleven tool items, a catalog item, a safe-error item and a
+principal item exercise one descriptor adapter; each behaviour's state machine
+lives in P1.
 
 **Acceptance:**
 - 5.1.1 - `check_dependency_cycles` matches 0.3's results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
@@ -2090,6 +2125,7 @@ one descriptor adapter; each behaviour's state machine lives in P1.
 - 5.1.12 - The eleven tools' catalog entries, schemas, definition hashes, classifications and validation failures match 0.3, and malformed arguments make no service call. test: `crates/gtasks/tests/mcp_reads.rs::read_catalog_matches_python`.
 - 5.1.13 - Each of the eleven tools returns the safe internal message under its own redaction entry, and deliberate errors keep ordinary parity. test: `crates/gtasks/tests/mcp_reads.rs::read_internal_errors_are_safe`.
 - 5.1.14 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 5.1.15 - Handlers resolve callers through 2.1's resolver: a context with a `session_id` is `Session` even when it also carries a principal, a sessionless context with the verified operator principal is `Operator`, and a sessionless context with no principal or an unverified one, or with principal-like tool arguments, is `Anonymous` and never `Operator`. test: `crates/gtasks/tests/mcp_reads.rs::read_tools_resolve_principals`.
 
 ### 5.2 gobby-tasks lifecycle descriptors [category: code] (depends: 5.1)
 `kind: deliverable`
@@ -2231,7 +2267,8 @@ arguments are the CLI verb's options without any path: project scope for
 `doctor_tasks`, `get_task_stats` and `restore_tasks`, and `task_id` for
 `get_validation_history`. Results carry the service's data, and the CLI
 renders them. `restore_tasks` reads only the hub's default backup path. 2.1's
-rows admit only `Operator`, so a session or anonymous call is refused as
+rows admit only `Operator`, which 5.1's resolver yields for a sessionless call
+carrying the verified operator principal, so a session or anonymous call is refused as
 `forbidden` before any read or write. They are native extensions with no
 Python counterpart. Their parity is to the 3.11 services' data, which 3.11
 already proves against Python, and 6.1 registers their native-extension
@@ -2520,3 +2557,5 @@ Planned cargo runs use nextest. The prior M1 is stale and is withdrawn in the
 next commit. No consensus is claimed.
 
 2026-11-01 — Withdrew the stale `## M1 Task Manifest` (it named the now-deferred 3.8 and pre-revision bytes). The Plan Adversary re-derives M1 after consensus.
+
+2026-11-01 — Plan Adversary findings ADV-S1 to ADV-S4 on f98d5b8bf9fc490f1f463112555919b5850ceb88 accepted. 5.1 now calls 2.1's principal resolver unchanged, so a sessionless call with the verified operator principal is `Operator`, and 5.1.15 tests the three paths. 3.5's `coordinator` ground admits both of 2.1's relationships (`coordinate_tasks` local root or `manage_task_claims` within scope), and 3.5.2 lists the cases. 3.7 now owns `landing_target.rs`, which 3.10 reuses, removing the 3.7-before-3.10 ordering gap (3.7.9). 3.7.10 to 3.7.12 prove the close locks hold through evaluation and write, the `SKIP LOCKED` stale refusal and the blocked-ancestor case. No consensus is claimed.
