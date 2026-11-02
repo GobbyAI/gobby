@@ -89,7 +89,7 @@ def _advance(server: str, tool: str) -> dict[str, str]:
 _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
     "code-reviewer": {
         "name": "code-reviewer",
-        "task_attestation_writes": ["review"],
+        "task_attestation_writes": ["independent-review"],
         "prompts": {"agent": "Synthetic code-reviewer seat."},
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         "step_workflow": {
@@ -508,7 +508,7 @@ class SeatRun:
                 "prompts": {"agent": "Coordinate the seat protocol."},
                 "workflows": {"rule_selectors": {"include": []}},
                 "capabilities": ["manage_task_claims"],
-                "task_attestation_writes": ["review"],
+                "task_attestation_writes": ["independent-review"],
             },
             project_id=project_id,
         )

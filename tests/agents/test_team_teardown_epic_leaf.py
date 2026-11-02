@@ -40,7 +40,7 @@ pytestmark = pytest.mark.unit
 TITLE = "Scroll and type during daemon outage window"
 LEAF_TITLE = "Wire the scroll handler"
 NESTED_TITLE = "Scroll state for the nested epic"
-# seated_team launches [dev-manager, test-writer, developer, code-reviewer] in the epic tree.
+# seated_team launches [dev-team-lead, test-writer, developer, code-reviewer] in the epic tree.
 PRIMARY_DEVELOPER = 2
 
 
@@ -51,6 +51,28 @@ def world(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> TeamWorld:
+    from gobby.storage.definitions.agents import AgentDefinitionManager
+    from gobby.storage.definitions.rules import RuleDefinitionManager
+
+    # Aggregate cleanup is explicit in this synthetic team's policy.
+    RuleDefinitionManager(temp_db).create(
+        name="fixture-explicit-aggregate-close",
+        project_id=sample_project["id"],
+        definition_json={
+            "event": "task_close",
+            "when": "facts.get('closure_intent') == 'ancestor'",
+            "effects": [{"type": "block", "reason": "Finish the aggregate explicitly."}],
+        },
+    )
+    AgentDefinitionManager(temp_db).create(
+        "default",
+        {
+            "name": "default",
+            "prompts": {"agent": "Exercise team cleanup."},
+            "workflows": {"rule_selectors": {"include": ["fixture-explicit-aggregate-close"]}},
+        },
+        project_id=sample_project["id"],
+    )
     return make_team_world(
         make_landing_case(temp_db, sample_project, tmp_path), tmp_path, monkeypatch
     )
@@ -99,7 +121,7 @@ def sub_tree(world: TeamWorld, team: Team, leaf: Task) -> SubTree:
 
 
 def close_leaf(world: TeamWorld, leaf: Task, sha: str) -> Task:
-    """A task's committed close, as the Dev Manager records it."""
+    """A task's committed close, as the Dev Team Lead records it."""
     db = world.case.db
     db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha]), leaf.id))
     LocalTaskManager(db).close_task(leaf.id, reason="done", closed_commit_sha=sha)

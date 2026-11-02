@@ -1,3 +1,4 @@
+version: "2.0.0"
 tags: [task-closure-general]
 
 rules:
@@ -19,6 +20,7 @@ rules:
       (task.get('claimed_by_session_id') or
        task.get('is_escalated') or task.get('escalated_at') or
        (task.get('state') or {}).get('hold_state') or
+       (task.get('task_type') != 'epic' and task.get('validation_criteria')) or
        any(label in ['needs-decision', 'clean-window', 'needs-planning', 'epic-devteam']
            for label in (task.get('labels') or [])))
     effects:
@@ -31,6 +33,7 @@ rules:
     priority: 10
     when: >-
       reason == 'done' and
+      'epic-devteam' not in (task.get('labels') or []) and
       not (facts.get('closure_intent') == 'ancestor' and
            facts.get('children') and facts.get('children_closed') and
            not facts.get('claimants')) and

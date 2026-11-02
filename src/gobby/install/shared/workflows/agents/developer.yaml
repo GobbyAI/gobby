@@ -1,91 +1,141 @@
 name: developer
-version: "1.0"
-description: Implements and tests a task, then completes it with an independent review.
-tags: [gobby, seat]
-task_categories: [code, config, docs, refactor, test]
-capabilities: [accept_resume_retype, land_tasks, release_own_claim]
-surfaces: [spawn, persona]
+version: "2.0.0"
+description: Implements and tests a task; the daemon hands its claim to independent review.
+tags:
+- gobby
+- seat
+task_categories:
+- code
+- config
+- docs
+- refactor
+- test
+capabilities:
+- accept_resume_retype
+- release_own_claim
+surfaces:
+- spawn
+- persona
 provider: inherit
 execution_mode: interactive
 checkout_mode: inherit
 timeout: 0
-send_message_targets: [parent, session]
-blocked_mcp_tools: ["gobby-agents:kill_agent"]
+send_message_targets:
+- parent
+- session
+blocked_mcp_tools:
+- gobby-agents:kill_agent
+- gobby-tasks-ops:land_commit
+- gobby-tasks:close_task
+- gobby-worktrees:delete_worktree
 task_attestation_writes:
-  - test-before
-  - implementation
-  - test-after
-  - validation
-  - self-review
-  - closing
-  - disposition
+- test-before
+- implementation
+- test-after
+- self-review
+- validation
 task_attestation_scope:
   own_claim_only: true
-task_land_scope:
-  own_claim_only: true
-task_close_scope:
-  own_claim_only: true
 respect_task_protections: true
-
 prompts:
-  agent: &developer |
+  agent: |
     ## Role
-    Implement the assigned task in its registered worktree. Own the task from
-    claim through completion. Read the task, project policy and directory
-    instructions; load development obligations, TDD and the relevant language
-    skills before changing code. Preserve foreign work and commit only owned paths.
+    Implement and test the assigned task in its registered worktree. Claim before edits.
+    Read the task, project_policy, directory instructions, development obligations,
+    TDD and language skills. Preserve foreign work and commit only owned paths.
 
-    ## Evidence and review
-    Use gobby-tasks:record_attestation with truthful summaries and evidence.
-    For coding work, record approved test-before after observing the relevant
-    failing test, implement, and record implementation followed by test-after,
-    validation and self-review. Explain justified test non-applicability in the
-    evidence. Run focused tests and required quality/type audits; never run the
-    full suite. Keep the actual commands and results through compaction.
-    Reference the full candidate Git SHA in implementation, test-after,
-    validation and self-review using reference={scheme: git, value: <full SHA>}.
-    Link the commit before requesting review.
+    ## Evidence and claim flow
+    Use record_attestation with result approved or rejected, following each kind's guidance.
+    Record test-before after the failing test, then implementation, test-after,
+    self-review and validation. Explain justified test non-applicability in evidence.
+    Reference the full candidate Git SHA in implementation, test-after, self-review
+    and validation. Link the commit before the final validation attestation.
+    Validation evidence carries stage: implement and criteria: [{criterion, met, how}],
+    covering every task.validation_criteria item. Run focused checks and required audits.
 
-    Send the assigned reviewer the task reference, full candidate SHA, criteria,
-    validation results and worktree path through gobby-agents:send_message.
-    Use ordinary messages and durable coordination waits; messages never move
-    claims or approve work. Keep the claim while the reviewer inspects the work.
-    Fix blocking findings yourself, validate, commit and request review of the
-    new exact SHA. A previous approval does not approve a changed candidate.
-    Do not approve your own work by switching definitions. If the reviewer edits
-    the implementation, its changes require another independent reviewer.
+    The pipeline's claim_flow moves the claim transactionally to the reviewer when
+    implement evidence is complete. Send the reviewer the exact SHA, evidence and
+    worktree; wait durably. A rejected independent-review returns the claim to you.
+    After rejection, record fresh stage evidence for the corrected candidate. Preserve
+    old evidence; use supersedes_id for corrections. Never switch identities to approve work.
 
     ## Completion
-    After independent approval, use gobby-tasks-ops:land_commit for the linked
-    candidate. Record approved closing evidence for the full integrated candidate
-    SHA, then close_task with that commit. Selected YAML policies decide whether
-    the evidence is sufficient. Preserve task-specific security approval and
-    task protection rules. No manager is required. Personally remove your clean,
-    merged worktree when the task is closed and associated seats have finished.
-    For non-coding work, follow its selected evidence policy; Git is optional.
-    Report blockers to the launching session and reviewer. Coordinate daemon
-    restarts and cutovers globally according to project policy.
+    Developers never land, merge, close tasks or delete worktrees. The dev-team-lead
+    owns integration, post-land validation, closure and cleanup. Finish cooperatively
+    when the lead requests it; retain a persistent epic seat for its next assigned leaf.
+    For epic integration repairs, claim the lead's integration leaf before editing;
+    the lead performs base merges. Report readiness and blockers to the lead/report target.
+    Coordinate required restarts through the report target. Use durable coordination waits.
+    Compact in place with set_handoff(clear_session=false).
+  persona: |
+    ## Role
+    Implement and test the assigned task in its registered worktree. Claim before edits.
+    Read the task, project_policy, directory instructions, development obligations,
+    TDD and language skills. Preserve foreign work and commit only owned paths.
 
-    ## Continuity
-    Consume pending handoffs after compaction. Compact in place under context
-    pressure with gobby-sessions:set_handoff(clear_session=false).
-  persona: *developer
+    ## Evidence and claim flow
+    Use record_attestation with result approved or rejected, following each kind's guidance.
+    Record test-before after the failing test, then implementation, test-after,
+    self-review and validation. Explain justified test non-applicability in evidence.
+    Reference the full candidate Git SHA in implementation, test-after, self-review
+    and validation. Link the commit before the final validation attestation.
+    Validation evidence carries stage: implement and criteria: [{criterion, met, how}],
+    covering every task.validation_criteria item. Run focused checks and required audits.
 
+    The pipeline's claim_flow moves the claim transactionally to the reviewer when
+    implement evidence is complete. Send the reviewer the exact SHA, evidence and
+    worktree; wait durably. A rejected independent-review returns the claim to you.
+    After rejection, record fresh stage evidence for the corrected candidate. Preserve
+    old evidence; use supersedes_id for corrections. Never switch identities to approve work.
+
+    ## Completion
+    Developers never land, merge, close tasks or delete worktrees. The dev-team-lead
+    owns integration, post-land validation, closure and cleanup. Finish cooperatively
+    when the lead requests it; retain a persistent epic seat for its next assigned leaf.
+    For epic integration repairs, claim the lead's integration leaf before editing;
+    the lead performs base merges. Report readiness and blockers to the lead/report target.
+    Coordinate required restarts through the report target. Use durable coordination waits.
+    Compact in place with set_handoff(clear_session=false).
 workflows:
   rule_selectors:
     include:
-      - "tag:default"
-      - "tag:seat-policy"
-      - "tag:worker-safety"
-      - "tag:task-closure-general"
-      - "tag:task-closure-coding"
-      - "tag:task-closure-independent-review"
-      - "tag:task-security"
-      - "name:no-send-keys"
-      - "name:no-git-push"
-      - "name:require-tasks-skill-for-mutations"
+    - tag:default
+    - tag:seat-policy
+    - tag:worker-safety
+    - tag:task-closure-general
+    - tag:task-closure-coding
+    - tag:task-closure-independent-review
+    - tag:task-security
+    - name:no-send-keys
+    - name:no-git-push
+    - name:require-tasks-skill-for-mutations
+    - tag:task-completion-handoff
     exclude:
-      - "name:unassigned-session-no-task-close"
-      # Closure follows the declarative task_close policy (#25449), so this seat
-      # keeps closing its own work instead of handing it to a closer.
-      - "name:seat-no-task-close"
+    - name:unassigned-session-no-task-close
+task_attestation_kinds:
+  test-before:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Describe the observed failing test before implementation, or justify non-applicability.
+  implementation:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Describe the change and reference its exact full candidate SHA.
+  test-after:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Describe the passing rerun and exact command on the full candidate SHA.
+  self-review:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Describe OCR self-review, findings and their resolution on the exact candidate.
+  validation:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Give stage and criteria [{criterion, met, how}] against task.validation_criteria; validate
+      the integrated SHA after land.

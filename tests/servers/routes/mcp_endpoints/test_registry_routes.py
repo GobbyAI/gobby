@@ -12,10 +12,11 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from gobby.mcp_proxy.client_manager import server_registry as server_registry_mod
+from gobby.config.persistence import DEFAULT_EMBEDDING_DIM
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.mcp_proxy.schema_hash import SchemaHashManager, compute_schema_hash
-from gobby.mcp_proxy.semantic_search import DEFAULT_EMBEDDING_DIM, SemanticToolSearch
+from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 from gobby.servers.routes.mcp.tools import create_mcp_router

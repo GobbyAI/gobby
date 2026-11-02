@@ -35,8 +35,8 @@ which reasons need disposition evidence, references or other requirements.
 
 ## Evidence and policy
 
-Evidence kinds and results are arbitrary strings. The engine does not interpret
-an `implementation`, `test`, `review` or `closing` record as special authority.
+Kinds declare allowed_results and guidance in task_attestation_kinds. The server refuses other results with that guidance. The engine does not interpret
+an `implementation`, `test`, `independent-review` or `closing` record as special authority.
 The selected `task_close` and `task_land` rules inspect the task, authenticated
 caller, repository facts and append-only attestation history. Rules can require
 ordered records, exact references, approved results, independent authors or
@@ -56,9 +56,7 @@ or correction can revoke approval for a subsequent landing or close attempt.
 These are YAML policies, not task-engine assumptions about all tasks.
 
 Default can supply its own required evidence, land through its path grant and
-close without a manager or a general independent reviewer. Developer/reviewer
-pairs agree on one completion owner using ordinary messaging; their definitions
-and selected rules determine authority. A definition's `task_close_scope` and
+close without a manager or a general independent reviewer. The DevTeam lead owns landing, post-land validation, closure and cleanup; developers and reviewers hand completion to it through the pipeline claim_flow. A definition's `task_close_scope` and
 `task_land_scope` constrain task access. `respect_task_protections` preserves the
 project's protected labels, subtrees and foreign claims. Preview applies the
 same access checks as final close and changes nothing.
@@ -84,3 +82,19 @@ cutover globally, honor quiet hours, proceed, and report DAEMON BACK when health
 Separately coordinate operations that can kill agent panes.
 
 Guide: [Close](../../../../../../../../docs/guides/tasks.md#close).
+
+## DevTeam validation
+
+The daemon moves claims in record_attestation's transaction from the pipeline's
+implement stage to review, back on rejected independent-review, then to validate.
+One validation kind carries stage and criteria [{criterion, met, how}], judged
+against task.validation_criteria. The lead validates the integrated SHA after
+landing before recording closing. Superseded records remain in all_attestations;
+policy reads the active set. Developers never land, merge, close or delete trees.
+Security paths force approval at land even without a label. Filers label obvious
+trust-boundary work; leads inspect the diff and add security-review when needed.
+Only the operator or authorized policy owner removes that label.
+
+_Version: 2.0.0_
+
+_Last verified: 2026-11-01_

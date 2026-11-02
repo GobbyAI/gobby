@@ -1,4 +1,4 @@
-"""send_message refuses consumed seat envelopes that the receiver cannot read."""
+"""Messages are opaque coordination text; attestations own task transitions."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import pytest
 
 from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.workflows.engine.seat_messages import _CANDIDATE_GRAMMAR, _COORDINATION_GRAMMAR
 
 pytestmark = pytest.mark.unit
 
@@ -71,11 +70,13 @@ def message_manager() -> MagicMock:
 def registry(
     session_manager: MagicMock, message_manager: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> InternalToolRegistry:
+    from gobby.agents.team_communications import RecipientPolicy
+
+    # Admission is exercised separately; this test owns opaque content transport.
     monkeypatch.setattr(
-        "gobby.workflows.engine.seat_messages.SessionManager",
-        MagicMock(return_value=session_manager),
+        "gobby.sessions.mailbox.recipient_policy",
+        lambda *_args: RecipientPolicy(frozenset()),
     )
-    monkeypatch.setattr("gobby.workflows.engine.seat_messages.LocalTaskManager", MagicMock())
     registry = InternalToolRegistry(name="gobby-agents", description="Agent messaging v2")
     add_messaging_tools(
         registry=registry,
@@ -89,8 +90,9 @@ def registry(
 def _stored_content(message_manager: MagicMock) -> str:
     call = message_manager.create_message.call_args
     assert call is not None
-    values = [*call.args, *call.kwargs.values()]
-    return next(value for value in values if isinstance(value, str) and "EVENT=" in value)
+    content = call.kwargs["content"]
+    assert isinstance(content, str)
+    return content
 
 
 async def _send(registry: InternalToolRegistry, content: str) -> dict[str, Any]:
@@ -107,256 +109,23 @@ async def _send(registry: InternalToolRegistry, content: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_candidate_with_spaced_run_is_refused_and_nothing_is_stored(
-    registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    result = await _send(registry, f"EVENT=CANDIDATE TASK=#7 RUN=green pass WT=tree COMMIT={SHA}")
-
-    assert result["success"] is False
-    assert result["error_code"] == "protocol_line_rejected"
-    assert result["field"] == "RUN"
-    assert "RUN" in result["error"]
-    assert "TASK_TITLE RUN WT COMMIT|DISPOSITION NOTE" in result["error"]
-    message_manager.create_message.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_retired_landing_report_sends_unchanged(
-    registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    content = f"EVENT=LANDED TASK=#7 TASK_TITLE=Seat proofs SHA={SHA} RECEIPT=r NOTE=landed"
-
-    result = await _send(registry, content)
-
-    assert result["success"] is True
-    assert _stored_content(message_manager) == content
-
-
-@pytest.mark.asyncio
-async def test_well_formed_candidate_sends_unchanged(
-    registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    content = f"LANE=1 EVENT=CANDIDATE TASK=#7 TASK_TITLE=Seat proofs RUN=run WT=tree COMMIT={SHA} NOTE=ready"
-
-    result = await _send(registry, content)
-
-    assert result["success"] is True
-    message_manager.create_message.assert_called_once()
-    assert _stored_content(message_manager) == content
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("prefix", ["", "LANE=1 ", "LANE= "])
-@pytest.mark.parametrize("event", ["CANDIDATE_UPDATE", "CANDIDATE_VERDICT_EXTRA", "CANDIDATE_"])
-async def test_unknown_candidate_event_reports_binding_error_without_storing(
-    prefix: str, event: str, registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    result = await _send(registry, f"{prefix}EVENT={event} TASK=#7 COMMIT={SHA}")
-
-    assert result.get("candidate_binding_error") == _CANDIDATE_GRAMMAR
-    assert result["error"] == _CANDIDATE_GRAMMAR
-    assert result["error_code"] == "candidate_binding_error"
-    assert result["success"] is False
-    message_manager.create_message.assert_not_called()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "event", ["CANDIDATE_VERDICT", "CANDIDATE_RESUMED", "CANDIDATE_PARKED", "CANDIDATE_WITHDRAWN"]
-)
-async def test_known_candidate_events_send_unchanged(
-    event: str, registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    verdict = " VERDICT=LAND" if event == "CANDIDATE_VERDICT" else ""
-    if event == "CANDIDATE_PARKED":
-        verdict = " REASON=approval"
-    content = f"EVENT={event} TASK=#7 SHA={SHA}{verdict} NOTE=unchanged"
-
-    result = await _send(registry, content)
-
-    assert result["success"] is True
-    assert "candidate_binding_error" not in result
-    assert _stored_content(message_manager) == content
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("event", ["CANDIDATE_WITHDRAWN", "CANDIDATE_RESUMED", "CANDIDATE_PARKED"])
-async def test_malformed_coordination_send_reports_event_grammar(
-    event: str, registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    result = await _send(registry, f"EVENT={event} TASK=#7 SHA=abc1234 NOTE=x")
-
-    assert result["success"] is False
-    assert f"EVENT={event}" in result["error"]
-    assert "COMMIT=" not in result["error"]
-    message_manager.create_message.assert_not_called()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("reason", ["", " REASON=later", " NOTE=x REASON=approval"])
-async def test_parked_send_refuses_missing_or_invalid_reason(
-    reason: str, registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    result = await _send(registry, f"EVENT=CANDIDATE_PARKED TASK=#7 SHA={SHA}{reason} NOTE=x")
-
-    assert result["success"] is False
-    assert result["error_code"] == "candidate_binding_error"
-    assert result["error"] == _COORDINATION_GRAMMAR["CANDIDATE_PARKED"]
-    message_manager.create_message.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_malformed_candidate_reports_binding_error_without_storing(
-    registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    result = await _send(registry, f"EVENT=CANDIDATE TASK=#7 COMMIT={SHA}")
-
-    assert result.get("candidate_binding_error") == _CANDIDATE_GRAMMAR
-    assert result["success"] is False
-    message_manager.create_message.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_non_consumed_event_with_free_text_is_unaffected(
-    registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    content = f"EVENT=LAND_PENDING TASK=#7 SHA={SHA} TASK_TITLE=t NOTE=receipt pending now"
-
-    result = await _send(registry, content)
-
-    assert result["success"] is True
-    message_manager.create_message.assert_called_once()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("prefix", ["LANE= ", "LANE=2 "])
-async def test_lane_prefixed_candidate_with_spaced_run_is_refused(
-    prefix: str, registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    result = await _send(
-        registry, f"{prefix}EVENT=CANDIDATE TASK=#7 RUN=green pass WT=tree COMMIT={SHA}"
-    )
-
-    assert result["success"] is False
-    assert result["error_code"] == "protocol_line_rejected"
-    assert result["field"] == "RUN"
-    message_manager.create_message.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_empty_lane_candidate_sends_unchanged(
-    registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    content = (
-        f"LANE= EVENT=CANDIDATE TASK=#7 TASK_TITLE=Seat proofs RUN=run WT=tree "
-        f"COMMIT={SHA} NOTE=ready"
-    )
-
-    result = await _send(registry, content)
-
-    assert result["success"] is True
-    assert _stored_content(message_manager) == content
-
-
-@pytest.mark.asyncio
-async def test_well_formed_withdrawal_sends_unchanged(
-    registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    content = f"EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA} NOTE=reassigned"
-
-    result = await _send(registry, content)
-
-    assert result["success"] is True
-    assert _stored_content(message_manager) == content
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "content",
     [
-        "EVENT=CANDIDATE_WITHDRAWN TASK=#7 DISPOSITION=moot NOTE=reassigned",
-        "EVENT=CANDIDATE_VERDICT TASK=#7 DISPOSITION=moot VERDICT=BOUNCE NOTE=not moot",
+        f"EVENT=CANDIDATE TASK=#7 RUN=green pass WT=tree COMMIT={SHA}",
+        "EVENT=CANDIDATE TASK=#7 COMMIT=invalid",
+        "EVENT=LAND TASK=#7 NOTE=free text",
+        "EVENT=BOUNCE TASK=#7",
+        "EVENT=PARKED TASK=#7",
+        "EVENT=PROOF_REQUEST TASK=#7",
+        "LANE= EVENT=CANDIDATE TASK=#7",
+        "Ordinary coordination with no protocol envelope.",
     ],
 )
-async def test_well_formed_no_work_coordination_sends_unchanged(
-    content: str, registry: InternalToolRegistry, message_manager: MagicMock
+async def test_message_content_is_stored_without_protocol_interpretation(
+    registry: InternalToolRegistry, message_manager: MagicMock, content: str
 ) -> None:
     result = await _send(registry, content)
-
-    assert result["success"] is True
-    assert _stored_content(message_manager) == content
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("content", "field", "canonical"),
-    [
-        (
-            f"EVENT=CANDIDATE_VERDICT TASK=#7 SHA={SHA} DISPOSITION=moot VERDICT=BOUNCE",
-            "SHA",
-            "SHA|DISPOSITION VERDICT TASK_TITLE NOTE",
-        ),
-        (
-            "EVENT=CANDIDATE_VERDICT TASK=#7 DISPOSITION=moot VERDICT=LAND",
-            "VERDICT",
-            "SHA|DISPOSITION VERDICT TASK_TITLE NOTE",
-        ),
-        (
-            "EVENT=CANDIDATE_WITHDRAWN TASK=#7 DISPOSITION=bogus",
-            "DISPOSITION",
-            "SHA|DISPOSITION NOTE",
-        ),
-    ],
-)
-async def test_malformed_no_work_coordination_is_refused_and_nothing_is_stored(
-    content: str,
-    field: str,
-    canonical: str,
-    registry: InternalToolRegistry,
-    message_manager: MagicMock,
-) -> None:
-    result = await _send(registry, content)
-
-    assert result["success"] is False
-    assert result["error_code"] == "protocol_line_rejected"
-    assert result["field"] == field
-    assert result["canonical_order"] == canonical
-    message_manager.create_message.assert_not_called()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("content", "field", "canonical"),
-    [
-        (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA}ab NOTE=prove it", "SHA", "SHA NOTE"),
-        ("EVENT=PROOF_REQUEST TASK=#7 NOTE=prove it now", "SHA", "SHA NOTE"),
-    ],
-)
-async def test_malformed_proof_lines_are_refused_and_nothing_is_stored(
-    content: str,
-    field: str,
-    canonical: str,
-    registry: InternalToolRegistry,
-    message_manager: MagicMock,
-) -> None:
-    result = await _send(registry, content)
-
-    assert result["success"] is False
-    assert result["error_code"] == "protocol_line_rejected"
-    assert result["field"] == field
-    assert result["canonical_order"] == canonical
-    assert field in result["error"]
-    assert canonical in result["error"]
-    message_manager.create_message.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_well_formed_proof_request_sends_unchanged(
-    registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    content = f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA} NOTE=rerun the focused tests"
-
-    result = await _send(registry, content)
-
-    assert result["success"] is True
+    assert result["success"] is True, result
+    message_manager.create_message.assert_called_once()
     assert _stored_content(message_manager) == content

@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import Task
+from gobby.tasks.claim_flow import advance_claim_flow
 from gobby.tasks.lifecycle_access import task_scope_refusal
 from gobby.utils.datetime import utc_now
 from gobby.workflows.agent_resolver import session_agent_definition
@@ -236,6 +237,14 @@ def record_attestation(
                     return record, False
         if not ({"*", submission.kind} & set(body.task_attestation_writes)):
             raise AttestationError("definition has no writer grant for this attestation kind")
+        kind = body.task_attestation_kinds.get(submission.kind)
+        if body.task_attestation_kinds and kind is None:
+            raise AttestationError("attestation kind is not declared by this definition")
+        if kind is not None and submission.result not in kind.allowed_results:
+            raise AttestationError(
+                f"Invalid result {submission.result!r} for {submission.kind}; "
+                f"allowed results: {', '.join(kind.allowed_results)}. {kind.guidance}"
+            )
         if refusal := task_scope_refusal(task, session_id, body.task_attestation_scope, db=db):
             raise AttestationError(refusal)
         if task.closed_at is not None:
@@ -266,4 +275,5 @@ def record_attestation(
             (record.id, task_id, session_id, AUTHOR_TYPE, record.model_dump_json()),
         )
         conn.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (now, task_id))
+        advance_claim_flow(db, conn, task, record, [*records, record])
     return record, True

@@ -5,7 +5,7 @@ description: |
   Documentation implementation agent for docs-category lifecycle development
   leaves. Owns docs changes and release-note style writing work.
 
-version: "1.1"
+version: "1.2.0"
 enabled: true
 priority: 30
 surfaces: [spawn, persona]
@@ -17,6 +17,34 @@ blocked_mcp_tools:
 task_attestation_writes: [test-before, implementation, test-after, validation, self-review]
 task_attestation_scope: {own_claim_only: true}
 respect_task_protections: true
+
+task_attestation_kinds:
+  test-before:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Describe the observed failing test before implementation, or justify non-applicability.
+  implementation:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Describe the change and reference its exact full candidate SHA.
+  test-after:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Describe the passing rerun and exact command on the full candidate SHA.
+  validation:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Give stage and criteria [{criterion, met, how}] against task.validation_criteria; validate
+      the integrated SHA after land.
+  self-review:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Describe OCR self-review, findings and their resolution on the exact candidate.
 
 prompts:
   persona: |

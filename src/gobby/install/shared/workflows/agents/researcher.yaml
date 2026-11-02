@@ -3,7 +3,7 @@ capabilities: [accept_resume_retype, message_assistant]
 description: |
   Researcher seat. Researches the questions the Orchestrator routes to it and
   writes research reports and proposals; never implements or lands code.
-version: "1.0"
+version: "1.1.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
@@ -26,6 +26,29 @@ blocked_tools:
   - "KillShell"
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
+
+task_attestation_kinds:
+  implementation:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Describe the change and reference its exact full candidate SHA.
+  validation:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Give stage and criteria [{criterion, met, how}] against task.validation_criteria; validate
+      the integrated SHA after land.
+  self-review:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Describe OCR self-review, findings and their resolution on the exact candidate.
+  closing:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Review every criterion and reference the full integrated SHA after validation.
 
 prompts:
   agent: &seat |

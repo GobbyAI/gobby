@@ -531,7 +531,7 @@ def _pipeline_ancestor(sessions: SessionManager, session_id: str) -> Session | N
 def seat_team(db: HubDatabase, session_id: str) -> TeamBinding | None:
     """The admitted team whose runbook launched this seat, or None outside any team.
 
-    A leaf developer is spawned by its Dev Manager, so the walk climbs the parent chain to the
+    A leaf developer is spawned by its Dev Team Lead, so the walk climbs the parent chain to the
     nearest pipeline session, which must be a team runbook. The chain is bounded by the agent
     depth limit.
     """

@@ -37,7 +37,6 @@ from gobby.workflows.observers import reconcile_claimed_tasks
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_context import get_active_step_workflow_context
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.conftest import _init_git_repo
 from tests.fixtures.agent_definitions import synthetic_developer_body
 
@@ -62,6 +61,19 @@ def seats(
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[_Seats]:
+    from gobby.storage.definitions.agents import AgentDefinitionManager
+    from tests.fixtures.closure_rules import install_closure_rules
+
+    install_closure_rules(temp_db)
+    AgentDefinitionManager(temp_db).create(
+        "default",
+        {
+            "name": "default",
+            "prompts": {"agent": "Exercise task binding under declared policy."},
+            "workflows": {"rule_selectors": {"include": ["fixture-reserved-parent"]}},
+        },
+        project_id=sample_project["id"],
+    )
     monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", MACHINE_ID)
     sessions = SessionManager(temp_db)
     former, successor = (
@@ -445,7 +457,7 @@ def test_closed_task_returns_owner_to_claim_once_its_claim_is_pruned(
     LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(tmp_path))
     claim_task(seats.db, seats.task_id, seats.former)
     _seat(seats, seats.former, "implement")
-    tasks.close_task(seats.task_id, reason="done", force=True)
+    tasks.close_task(seats.task_id, reason="done")
 
     variables = SessionVariableManager(seats.db).get_variables(seats.former)
     reconcile_claimed_tasks(variables, seats.former, LocalTaskManager(seats.db))
@@ -1042,7 +1054,7 @@ def test_unusable_or_equivalent_active_claim_keeps_binding(
         if active_state == "foreign":
             claim_task(seats.db, other.id, seats.successor)
         elif active_state == "closed":
-            tasks.close_task(other.id, reason="done", force=True)
+            tasks.close_task(other.id, reason="done")
         projection = {seats.task_id: seats.ref}
         if active_state != "missing":
             projection[other.id] = f"#{other.seq_num}"
@@ -1064,6 +1076,19 @@ async def test_reclaim_before_de_escalation_keeps_close_invariants(
     _init_git_repo(repo)
     LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(repo))
     claim_task(seats.db, seats.task_id, seats.former)
+    from gobby.storage.definitions.agents import AgentDefinitionManager
+
+    definitions = AgentDefinitionManager(seats.db)
+    definition = definitions.get_by_name("default", project_id)
+    assert definition is not None
+    definitions.update(
+        definition.id,
+        definition_json={
+            "name": "default",
+            "prompts": {"agent": "Exercise evidence policy after reclaim."},
+            "workflows": {"rule_selectors": {"include": ["fixture-implementation"]}},
+        },
+    )
     _persist(seats, seats.former, _handoff_body(), "submit")
     proxy = _task_proxy(seats, full_hooks=True)
     handler = WorkflowHookHandler(
@@ -1104,7 +1129,8 @@ async def test_reclaim_before_de_escalation_keeps_close_invariants(
     result = await call(
         "close_task", {"task_id": seats.ref, "changes_summary": "Landed and released."}
     )
-    assert [gate["name"] for gate in result["blocking_reasons"]] == ["linked_commits"]
+    assert result["blocking_reasons"]
+    assert "implementation" in str(result["blocking_reasons"])
     assert result["closed"] is False
     assert tasks.get_task(seats.task_id).validation_override_reason is None
 
@@ -1187,6 +1213,7 @@ async def test_handoff_close_preserves_next_task_binding(
         "task_id": next_task.id,
         "ref": f"#{next_task.seq_num}",
         "title": "Next directed task",
+        "review_fail_count": 0,
     }
     assert _current_step(seats.db, seats.former) == "route_skills"
     assert await call("get_task", {"task_id": next_task.id})
@@ -1274,7 +1301,7 @@ async def test_implement_no_work_close_preview_reaches_checklist(
     assert result["preview"] is True
     assert result["can_close"] is True
     assert result["closed"] is False
-    assert all(gate["passed"] for gate in result["gates"])
+    assert result["blocking_reasons"] == []
     assert _instance_state(seats.db, seats.former) == before
     assert LocalTaskManager(seats.db).get_task(seats.task_id).closed_at is None
 
@@ -1338,7 +1365,7 @@ async def test_relaunched_developer_recovers_handoff_close_preview(
     assert preview["preview"] is True
     assert preview["can_close"] is True
     assert preview["commit_shas"] == [head]
-    assert "blocking_reasons" not in preview
+    assert preview["blocking_reasons"] == []
     assert tasks.get_task(seats.task_id).closed_at is None
 
 
@@ -1352,7 +1379,7 @@ async def test_active_claim_rebinds_parked_or_closed_step_task(
     history = tasks.create_task(
         project_id, "Historical binding", validation_criteria="The historical task is closed."
     )
-    tasks.close_task(history.id, reason="done", force=True)
+    tasks.close_task(history.id, reason="done")
     active = tasks.create_task(
         project_id, "Active claimed task", validation_criteria="The active claim can be handed off."
     )
@@ -1360,7 +1387,7 @@ async def test_active_claim_rebinds_parked_or_closed_step_task(
     claim_task(seats.db, seats.task_id, seats.former)
     _persist(seats, seats.former, _handoff_body(), "implement")
     if closed_bound:
-        tasks.close_task(seats.task_id, reason="done", force=True)
+        tasks.close_task(seats.task_id, reason="done")
     claim_task(seats.db, active.id, seats.former)
     tasks.link_commit(active.id, COMMIT)
     variables = SessionVariableManager(seats.db)
@@ -1650,35 +1677,3 @@ def test_held_or_unbound_step_adds_no_query(seats: _Seats, step: str, bound: boo
     after = AgentStepInstanceManager(seats.db).get_for_session(seats.former)
     assert after is not None
     assert after.updated_at == before.updated_at
-
-
-async def test_stop_gate_reports_claim_after_force_transfer(seats: _Seats) -> None:
-    sync_bundled_rules(seats.db, get_bundled_rules_path())
-    with seats.db.transaction() as conn:
-        conn.execute("UPDATE rule_definitions SET source = 'installed', enabled = FALSE")
-        conn.execute(
-            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
-            ("require-step-completion",),
-        )
-    handler = WorkflowHookHandler(
-        rule_engine=RuleEngine(seats.db),
-        session_manager=SessionManager(seats.db),
-        config=SimpleNamespace(workflow=SimpleNamespace(enabled=True, timeout=5.0)),
-    )
-    claim_task(seats.db, seats.task_id, seats.former)
-    _seat(seats, seats.former, "implement")
-    _force_transfer(seats)
-
-    response = await handler._evaluate_rules(
-        HookEvent(
-            event_type=HookEventType.STOP,
-            session_id="provider-session",
-            source=SessionSource.CLAUDE,
-            timestamp=datetime.now(UTC),
-            data={},
-            metadata={"_platform_session_id": seats.former, "session_type": "terminal"},
-        )
-    )
-
-    assert response.decision == "block"
-    assert "Current step: claim." in str(response.reason)

@@ -4,6 +4,7 @@ Provides core task operations: create, get, update, list, and tree building.
 """
 
 import logging
+from contextlib import nullcontext
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -16,7 +17,10 @@ from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._formatters import (
     brief_task_card,
 )
-from gobby.mcp_proxy.tools.tasks._live_session_label import live_session_label_change_error
+from gobby.mcp_proxy.tools.tasks._live_session_label import (
+    live_session_label_change_error,
+    task_label_transaction,
+)
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import (
     targets_not_found_for_request,
@@ -520,96 +524,99 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except ValueError as e:
             return {"error": str(e)}
 
-        current_task = ctx.task_manager.get_task(resolved_id)
-        if current_task is None:
-            return {"error": f"Task {task_id} not found"}
-        fold_error = task_mutation_error(ctx.task_manager, current_task)
-        if fold_error:
-            return {"error": fold_error}
-        if escalation_reason is not None and not current_task.is_escalated:
-            return {"error": "Cannot update escalation_reason for a task that is not escalated."}
-        if labels is not None:
-            label_error = live_session_label_change_error(
-                ctx,
-                getattr(current_task, "labels", ()),
-                labels,
-            )
-            if label_error:
-                return {"error": label_error}
-
-        # Build kwargs only for non-None values to avoid overwriting with NULL
-        kwargs: dict[str, Any] = {}
-        if title is not None:
-            kwargs["title"] = title
-        if description is not None:
-            kwargs["description"] = description
-        if priority is not None:
-            kwargs["priority"] = priority
-        if labels is not None:
-            kwargs["labels"] = labels
-        if validation_criteria is not None:
-            kwargs["validation_criteria"] = validation_criteria
-        if parent_task_id is not None:
-            # Empty string means "clear parent" - convert to None for storage layer
-            # Also resolve parent_task_id if it's a reference format
-            if parent_task_id:
-                try:
-                    resolved_parent = resolve_task_id_for_mcp(ctx.task_manager, parent_task_id)
-                    kwargs["parent_task_id"] = resolved_parent
-                except (TaskNotFoundError, ValueError) as e:
-                    logger.warning("Invalid parent_task_id '%s': %s", parent_task_id, e)
-                    return {"error": f"Invalid parent_task_id '{parent_task_id}': {e}"}
-                new_parent = ctx.task_manager.get_task(resolved_parent)
-                parent_error = (
-                    task_mutation_error(ctx.task_manager, new_parent) if new_parent else None
+        with task_label_transaction(ctx, resolved_id) if labels is not None else nullcontext():
+            current_task = ctx.task_manager.get_task(resolved_id)
+            if current_task is None:
+                return {"error": f"Task {task_id} not found"}
+            fold_error = task_mutation_error(ctx.task_manager, current_task)
+            if fold_error:
+                return {"error": fold_error}
+            if escalation_reason is not None and not current_task.is_escalated:
+                return {
+                    "error": "Cannot update escalation_reason for a task that is not escalated."
+                }
+            if labels is not None:
+                label_error = live_session_label_change_error(
+                    ctx,
+                    getattr(current_task, "labels", ()),
+                    labels,
                 )
-                if parent_error:
-                    return {"error": parent_error}
-            else:
-                kwargs["parent_task_id"] = None
-        if category is not None:
-            kwargs["category"] = category
-        if task_type is not None:
-            kwargs["task_type"] = task_type
-        if start_date is not None:
-            kwargs["start_date"] = start_date
-        if due_date is not None:
-            kwargs["due_date"] = due_date
-        if assigned_agent is not None:
-            kwargs["assigned_agent"] = assigned_agent
-        if implementation_domain is not None:
-            kwargs["implementation_domain"] = implementation_domain
-        if additional_skills is not None:
-            kwargs["additional_skills"] = additional_skills
-        if affected_files is not None:
-            kwargs["affected_files"] = affected_files
-        if escalation_reason is not None:
-            kwargs["escalation_reason"] = escalation_reason
+                if label_error:
+                    return {"error": label_error}
 
-        target_check: list[str] = []
-        if description is not None or affected_files is not None:
-            from gobby.utils.session_context import get_current_session_id
+            # Build kwargs only for non-None values to avoid overwriting with NULL
+            kwargs: dict[str, Any] = {}
+            if title is not None:
+                kwargs["title"] = title
+            if description is not None:
+                kwargs["description"] = description
+            if priority is not None:
+                kwargs["priority"] = priority
+            if labels is not None:
+                kwargs["labels"] = labels
+            if validation_criteria is not None:
+                kwargs["validation_criteria"] = validation_criteria
+            if parent_task_id is not None:
+                # Empty string means "clear parent" - convert to None for storage layer
+                # Also resolve parent_task_id if it's a reference format
+                if parent_task_id:
+                    try:
+                        resolved_parent = resolve_task_id_for_mcp(ctx.task_manager, parent_task_id)
+                        kwargs["parent_task_id"] = resolved_parent
+                    except (TaskNotFoundError, ValueError) as e:
+                        logger.warning("Invalid parent_task_id '%s': %s", parent_task_id, e)
+                        return {"error": f"Invalid parent_task_id '{parent_task_id}': {e}"}
+                    new_parent = ctx.task_manager.get_task(resolved_parent)
+                    parent_error = (
+                        task_mutation_error(ctx.task_manager, new_parent) if new_parent else None
+                    )
+                    if parent_error:
+                        return {"error": parent_error}
+                else:
+                    kwargs["parent_task_id"] = None
+            if category is not None:
+                kwargs["category"] = category
+            if task_type is not None:
+                kwargs["task_type"] = task_type
+            if start_date is not None:
+                kwargs["start_date"] = start_date
+            if due_date is not None:
+                kwargs["due_date"] = due_date
+            if assigned_agent is not None:
+                kwargs["assigned_agent"] = assigned_agent
+            if implementation_domain is not None:
+                kwargs["implementation_domain"] = implementation_domain
+            if additional_skills is not None:
+                kwargs["additional_skills"] = additional_skills
+            if affected_files is not None:
+                kwargs["affected_files"] = affected_files
+            if escalation_reason is not None:
+                kwargs["escalation_reason"] = escalation_reason
 
-            checked = targets_not_found_for_request(
-                ctx,
-                project_id=current_task.project_id,
-                session_id=get_claimed_session_id(current_task) or get_current_session_id(),
-                description=description,
-                affected_files=affected_files,
-            )
-            if isinstance(checked, dict):
-                return checked
-            target_check = checked
-        try:
-            task = ctx.task_manager.update_task(resolved_id, **kwargs)
-        except ValueError as e:
-            return {"error": str(e)}
-        if not task:
-            return {"error": f"Task {task_id} not found"}
-        result: dict[str, Any] = {}
-        if target_check:
-            result["targets_not_found"] = target_check
-        return result
+            target_check: list[str] = []
+            if description is not None or affected_files is not None:
+                from gobby.utils.session_context import get_current_session_id
+
+                checked = targets_not_found_for_request(
+                    ctx,
+                    project_id=current_task.project_id,
+                    session_id=get_claimed_session_id(current_task) or get_current_session_id(),
+                    description=description,
+                    affected_files=affected_files,
+                )
+                if isinstance(checked, dict):
+                    return checked
+                target_check = checked
+            try:
+                task = ctx.task_manager.update_task(resolved_id, **kwargs)
+            except ValueError as e:
+                return {"error": str(e)}
+            if not task:
+                return {"error": f"Task {task_id} not found"}
+            result: dict[str, Any] = {}
+            if target_check:
+                result["targets_not_found"] = target_check
+            return result
 
     registry.register(
         name="update_task",

@@ -78,9 +78,9 @@ def _set_state(run: SeatRun, step: str, **variables: Any) -> None:
     run.instances.save(instance)
 
 
-# A synthetic claim-gated fixer. Only the claim hand-off transition is under test.
-CLAIM_GATED_FIXER = _seat(
-    "claim-fixer",
+# A synthetic claim-gated worker. Only the claim hand-off transition is under test.
+CLAIM_GATED_WORKER = _seat(
+    "claim-worker",
     [
         {
             "name": "await",
@@ -119,7 +119,7 @@ MALFORMED_SHA_REVIEWER = _seat(
     "code-reviewer",
     VERDICT_STEPS,
     REVIEWER_VARIABLES,
-    task_attestation_writes=["review"],
+    task_attestation_writes=["independent-review"],
 )
 
 # A log monitor whose report step leaves for tick only on a durable report.
@@ -272,7 +272,7 @@ async def test_load_step_refuses_serve_calls_and_serve_step_admits_its_handoff(
 async def test_edit_tools_admitted_only_after_a_claim_hands_the_seat_to_fix(
     temp_db: PostgresHubDatabase,
 ) -> None:
-    run = SeatRun(temp_db, "claim-fixer", definition=CLAIM_GATED_FIXER)
+    run = SeatRun(temp_db, "claim-worker", definition=CLAIM_GATED_WORKER)
     assert not await run.admits_native("Edit", EDIT)
     task = run.task()
     await run.call("gobby-tasks", "claim_task", {"task_id": task.id}, {"success": True})

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class WebhookEndpoint(BaseModel):
@@ -116,6 +116,18 @@ class PipelineStep(BaseModel):
         return self
 
 
+class ClaimStage(BaseModel):
+    """Evidence required from a seat identified by its pipeline step ID."""
+
+    model_config = ConfigDict(extra="forbid")
+    seat: str = Field(min_length=1)
+    done_when: list[str] = Field(default_factory=list)
+    next: str | None = None
+    on_rejected: str | None = None
+    approved_result: str = "approved"
+    rejected_result: str = "rejected"
+
+
 class PipelineDefinition(BaseModel):
     """Definition for a pipeline workflow with typed data flow between steps.
 
@@ -153,6 +165,7 @@ class PipelineDefinition(BaseModel):
 
     # Pipeline steps
     steps: list[PipelineStep] = Field(default_factory=list)
+    claim_flow: dict[str, ClaimStage] = Field(default_factory=dict)
 
     # Webhook notifications
     webhooks: WebhookConfig | None = None
@@ -179,6 +192,13 @@ class PipelineDefinition(BaseModel):
         """Require every pipeline definition to include executable steps."""
         if not self.steps and not self.deprecated:
             raise ValueError("Pipeline requires at least one step")
+        seats = {step.id for step in self.steps}
+        for stage in self.claim_flow.values():
+            if stage.seat not in seats:
+                raise ValueError(f"Claim flow seat {stage.seat!r} is not a pipeline step")
+            for target in (stage.next, stage.on_rejected):
+                if target is not None and target not in self.claim_flow:
+                    raise ValueError(f"Unknown claim flow stage {target!r}")
         return self
 
     def get_step(self, step_id: str) -> PipelineStep | None:

@@ -1,3 +1,4 @@
+version: "2.0.0"
 tags: [task-security]
 
 rules:
@@ -6,7 +7,10 @@ rules:
     event: task_close
     priority: 35
     when: &security_required >-
-      reason == 'done' and 'security-review' in (task.get('labels') or []) and
+      reason == 'done' and
+      ('security-review' in (task.get('labels') or []) or
+       paths_match(facts.get('candidate_paths', []),
+                   facts.get('project_policy', {}).get('security_paths', []))) and
       not any(record.get('kind') == 'security-review' and
         record.get('id') == latest_attestation('security-review').get('id') and
         record.get('result') == 'approved' and

@@ -12,9 +12,13 @@ from typing import Any
 
 import pytest
 import yaml
+from click.testing import CliRunner
 from pydantic import ValidationError
 
 from gobby.agents.sync import get_bundled_agents_path
+from gobby.cli.agents_steps import check_agent
+from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
@@ -35,6 +39,23 @@ def test_bundled_agent_yaml_is_valid_agent_definition(path: Path) -> None:
     definition = _validate_agent_definition(path)
 
     assert definition.name, f"{path.name} parsed without a name"
+
+
+@pytest.mark.parametrize("path", BUNDLED_AGENT_YAMLS, ids=lambda path: path.name)
+def test_agents_check_reports_valid_for_every_bundled_definition(
+    path: Path, temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = _validate_agent_definition(path)
+    AgentDefinitionManager(temp_db).upsert_from_sync(
+        body.name,
+        body.model_dump(mode="json"),
+        body.step_workflow.model_dump(mode="json") if body.step_workflow else None,
+    )
+    monkeypatch.setattr("gobby.cli.agents_steps.require_cli_database", lambda: temp_db)
+    monkeypatch.setattr("gobby.cli.agents_steps.get_project_context", lambda **kwargs: None)
+    result = CliRunner().invoke(check_agent, [body.name])
+    assert result.exit_code == 0, result.output
+    assert "VALID" in result.output, result.output
 
 
 def test_synthetic_definition_with_invalid_field_is_rejected(tmp_path: Path) -> None:

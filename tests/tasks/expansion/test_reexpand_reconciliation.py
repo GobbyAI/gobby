@@ -154,7 +154,7 @@ def test_reexpand_preserves_closed_leaf_reuses_open_leaf_and_adds_new_section(
     )
     kept_id = _task_id(applied, "leaf-11")
     reused_id = _task_id(applied, "leaf-12")
-    service.task_manager.close_task_with_commit(kept_id, COMMIT, reason="done", force=True)
+    service.task_manager.close_task_with_commit(kept_id, COMMIT, reason="done")
 
     amended = _spec(
         [
@@ -336,7 +336,7 @@ Add the new section.
         _save_run(service, parent, sample_project, first).id, session_id=None
     )
     kept_id = _task_id(applied, "leaf-11")
-    kept = service.task_manager.close_task_with_commit(kept_id, COMMIT, reason="done", force=True)
+    kept = service.task_manager.close_task_with_commit(kept_id, COMMIT, reason="done")
     amended = _spec(
         [
             _leaf("again-11", "1.1", "Hub-node contract", "Touches src/keep.py."),
@@ -597,7 +597,7 @@ def test_reexpand_skips_outgoing_edges_on_protected_leaves(
     closed_id = _task_id(applied, "leaf-11")
     claimed_id = _task_id(applied, "leaf-12")
     committed_id = _task_id(applied, "leaf-13")
-    service.task_manager.close_task_with_commit(closed_id, COMMIT, reason="done", force=True)
+    service.task_manager.close_task_with_commit(closed_id, COMMIT, reason="done")
     service.task_manager.claim_task(claimed_id, session.id)
     service.task_manager.link_commit(committed_id, COMMIT)
     amended = _spec(
@@ -663,7 +663,7 @@ def test_reexpand_reopens_closed_phase_for_a_new_section(
         _save_run(service, parent, sample_project, first).id, session_id=None
     )
     delivered_id = _task_id(applied, "leaf-11")
-    service.task_manager.close_task_with_commit(delivered_id, COMMIT, reason="done", force=True)
+    service.task_manager.close_task_with_commit(delivered_id, COMMIT, reason="done")
     checkpoints = applied.checkpoints
     assert isinstance(checkpoints, dict)
     phase_map = checkpoints["phase_parent_map"]
@@ -953,7 +953,7 @@ def test_reexpand_close_of_removed_leaf_does_not_deadlock_on_root(
     )
     kept_id = _task_id(applied, "leaf-a")
     removed_id = _task_id(applied, "leaf-c")
-    service.task_manager.close_task_with_commit(kept_id, COMMIT, reason="done", force=True)
+    service.task_manager.close_task_with_commit(kept_id, COMMIT, reason="done")
     assert applied.checkpoints is not None
     phase_map = applied.checkpoints["phase_parent_map"]
     assert isinstance(phase_map, dict)

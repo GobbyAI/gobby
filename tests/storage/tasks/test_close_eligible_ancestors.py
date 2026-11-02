@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -15,6 +16,7 @@ from gobby.storage.tasks._automation import HOLD_LABELS
 from gobby.storage.tasks._close import close_eligible_parent_chain
 from gobby.storage.tasks._transitions import claim_task
 from gobby.utils.machine_id import get_machine_id
+from tests.fixtures.closure_rules import install_closure_rules
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
@@ -73,19 +75,23 @@ def test_childless_epic_closes_without_ledger(temp_db: HubDatabase, tmp_path: Pa
     assert closed.closed_at is not None
 
 
-def test_force_close_auto_closes_parent_without_open_siblings(
+def test_explicit_close_refuses_open_children_then_cascades(
     temp_db: HubDatabase, tmp_path: Path
 ) -> None:
     manager, project_id = _manager(temp_db, tmp_path)
     grand = _create(manager, project_id, "Grand", task_type="epic")
     parent = _create(manager, project_id, "Parent", task_type="epic", parent_task_id=grand.id)
-    _create(manager, project_id, "Still open", parent_task_id=parent.id)
+    child = _create(manager, project_id, "Still open", parent_task_id=parent.id)
 
     closed_ancestors: list[str] = []
-    manager.close_task(parent.id, force=True, closed_ancestors=closed_ancestors)
+    from gobby.tasks.closure_snapshot import TaskClosurePolicyError
+
+    with pytest.raises(TaskClosurePolicyError, match="fixture-open-children"):
+        manager.close_task(parent.id)
+    manager.close_task(child.id, closed_ancestors=closed_ancestors)
 
     assert not _open(manager, parent.id)
-    assert closed_ancestors == [grand.id]
+    assert closed_ancestors == [parent.id, grand.id]
     assert not _open(manager, grand.id)
 
 
@@ -93,6 +99,23 @@ def _manager(temp_db: HubDatabase, tmp_path: Path) -> tuple[LocalTaskManager, st
     # Close reads the step-record policy from the project's primary checkout.
     isolated = install_isolated_checkout_project(
         temp_db, tmp_path / "ancestor-close", name="ancestor-close", machine_id=get_machine_id()
+    )
+    install_closure_rules(temp_db)
+    AgentDefinitionManager(temp_db).create(
+        "default",
+        {
+            "name": "default",
+            "prompts": {"agent": "Exercise ancestor propagation."},
+            "workflows": {
+                "rule_selectors": {
+                    "include": [
+                        "fixture-reserved-parent",
+                        "fixture-open-children",
+                    ]
+                }
+            },
+        },
+        project_id=isolated.project.id,
     )
     return LocalTaskManager(temp_db), isolated.project.id
 

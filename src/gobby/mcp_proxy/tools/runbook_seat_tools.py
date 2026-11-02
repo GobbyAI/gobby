@@ -14,9 +14,11 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.storage.project_checkouts import require_root
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.workspaces import WorkspaceManager
+from gobby.utils.machine_id import require_machine_id
 
 
 def runbook_seat_stores(db: HubDatabase) -> RunbookSeatStores:
@@ -153,4 +155,5 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "branch": team.branch,
             "worktree": team.worktree_id,
             "project_path": team.worktree_path,
+            "main_project_path": require_root(ctx.db, team.project_id, require_machine_id()),
         }

@@ -160,7 +160,7 @@ async def test_interactive_grok_seat_registers_a_coordination_wait() -> None:
     registry, _ctx = _registry_for_run(
         SimpleNamespace(
             provider="grok",
-            agent_name="security-reviewer",
+            agent_name="security-auditor",
             resume_metadata_json={"execution_mode": "interactive", "provider_cli_mode": "terminal"},
         )
     )
@@ -182,7 +182,7 @@ async def test_grok_interactive_intent_without_recorded_terminal_launch_refuses_
     registry, _ctx = _registry_for_run(
         SimpleNamespace(
             provider="grok",
-            agent_name="security-reviewer",
+            agent_name="security-auditor",
             resume_metadata_json={"execution_mode": "interactive"},
         )
     )

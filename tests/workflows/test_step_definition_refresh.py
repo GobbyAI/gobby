@@ -135,7 +135,7 @@ def _reviewer_definition() -> AgentDefinitionBody:
     return AgentDefinitionBody.model_validate(
         {
             "name": "code-reviewer",
-            "task_step_writes": ["review"],
+            "task_step_writes": ["independent-review"],
             "prompts": {"agent": "Synthetic reviewer seat."},
             "workflows": {"rule_selectors": {"include": []}},
             "step_workflow": {

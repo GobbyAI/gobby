@@ -42,7 +42,9 @@ async def _link_plainly(case: LandingCase, task_id: str, sha: str) -> dict[str, 
         registry = create_commit_registry(
             LocalTaskManager(case.db), session_manager=SessionManager(case.db)
         )
-        return await registry.call("link_commit", {"task_id": task_id, "commit_sha": sha})
+        result = await registry.call("link_commit", {"task_id": task_id, "commit_sha": sha})
+        assert isinstance(result, dict)
+        return result
 
 
 async def test_plain_link_of_an_ancestor_keeps_the_declared_candidate_tip(

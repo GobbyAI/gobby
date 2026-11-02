@@ -45,7 +45,7 @@ class _Close:
             "review-the-candidate",
             {
                 "event": "task_close",
-                "when": "(latest_attestation('review').get('reference') or {}).get('value') "
+                "when": "(latest_attestation('independent-review').get('reference') or {}).get('value') "
                 "!= facts.get('candidate_commit_sha') or "
                 "facts.get('candidate_covers_linked_commits') != True",
                 "effects": [{"type": "block", "reason": "Review the current candidate."}],
@@ -56,7 +56,7 @@ class _Close:
         seats = AgentSessions(db, project["id"])
         self.developer = seats.add(
             "tip-maker",
-            ["review"],
+            ["independent-review"],
             definition_fields={"workflows": {"rule_selectors": {"include": ["tag:tip-review"]}}},
         )
         task = self.manager.create_task(
@@ -85,7 +85,7 @@ class _Close:
             task_id=self.task.id,
             session_id=self.developer,
             submission=AttestationSubmission(
-                kind="review",
+                kind="independent-review",
                 result="approved",
                 summary="Reviewed this exact candidate.",
                 reference=EvidenceReference(scheme="git", value=sha),

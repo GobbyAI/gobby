@@ -258,7 +258,7 @@ async def test_planning_child_of_epic_is_claimable_by_non_team_session(world: Te
 
 @pytest.mark.asyncio
 async def test_dispatched_seat_resolves_its_team_and_claims_its_leaf(world: TeamWorld) -> None:
-    """A seat the Dev Manager spawns sits under that manager, and the manager under the runbook."""
+    """A seat the Dev Team Lead spawns sits under that manager, and the manager under the runbook."""
     db = world.case.db
     tasks = LocalTaskManager(db)
     tools = create_task_registry(tasks)
@@ -266,7 +266,7 @@ async def test_dispatched_seat_resolves_its_team_and_claims_its_leaf(world: Team
     leaf = new_task(world, LEAF_TITLE, parent=epic)
     runbook = world.child(epic)
     team = await world.admit(runbook, epic)
-    manager = world.case.session("dev-manager", parent=runbook.id)
+    manager = world.case.session("dev-team-lead", parent=runbook.id)
     seat = world.case.session("developer", parent=manager)
 
     binding = seat_team(db, seat)

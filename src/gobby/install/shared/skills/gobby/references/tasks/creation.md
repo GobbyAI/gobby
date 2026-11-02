@@ -89,7 +89,7 @@ Source: `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::release_task_claim`.
 
 ## Hand off a claim within a team
 
-The task's Dev Manager calls
+The task's Dev Team Lead calls
 `gobby-tasks:hand_off_task_claim(task_id, holder_session_ref, recipient_session_ref, reason)`
 to move the task claim from one seat of its team to another. Discover the schema
 first. The caller needs an active agent run bound to the task, a definition that
@@ -121,5 +121,7 @@ is destructive: inspect children and dependency consequences and honor the
 requested scope. Use closing guidance for no-work dispositions.
 
 Guide: [Create and Claim](../../../../../../../../docs/guides/tasks.md#create-and-claim).
+
+_Version: 1.0.1_
 
 _Last verified: 2026-10-23_

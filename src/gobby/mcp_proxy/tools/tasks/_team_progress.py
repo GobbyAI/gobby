@@ -1,4 +1,4 @@
-"""The team_progress tool: stage spans and stall flags for a Dev Manager or Orchestrator."""
+"""The team_progress tool: stage spans and stall flags for a Dev Team Lead or Orchestrator."""
 
 from __future__ import annotations
 

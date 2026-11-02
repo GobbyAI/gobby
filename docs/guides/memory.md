@@ -320,8 +320,7 @@ actually proves the outcome. A guardrail target is metadata and causes no task
 or repository mutation. Retire an injected obsolete pattern only with nonempty
 verification evidence and caller identity.
 
-Plan-domain lessons use closed classes `reviewer-miss` and
-`fixer-induced-defect`. Call `list_check_keys` for the target plan class before
+Plan-domain lessons use `reviewer-miss`. Call `list_check_keys` for the target plan class before
 minting a key; reuse an existing equivalent check. Identity is
 `plan-review:<lesson_type>:<adversary-category>:<check_key>`, with explicit
 `check_key`, `guardrail_target=checklist`, and

@@ -1,3 +1,4 @@
+version: "2.0.0"
 tags: [task-closure-coding]
 
 rules:
@@ -95,7 +96,11 @@ rules:
       facts.get('closure_intent', 'explicit') != 'ancestor' and
       (not facts.get('candidate_commit_sha') or
        any((latest_attestation(kind).get('reference') or {}).get('scheme') != 'git' or
-           (latest_attestation(kind).get('reference') or {}).get('value') != facts.get('candidate_commit_sha')
+           ((latest_attestation(kind).get('reference') or {}).get('value') != facts.get('candidate_commit_sha') and
+            not (event == 'task_close' and kind != 'validation' and
+                 any(receipt.get('commit_sha') == (latest_attestation(kind).get('reference') or {}).get('value') and
+                     receipt.get('facts', {}).get('landed_tip') == facts.get('candidate_commit_sha')
+                     for receipt in facts.get('landing_receipts', []))))
            for kind in ['implementation', 'test-after', 'validation', 'self-review']))
     effects:
       - type: block

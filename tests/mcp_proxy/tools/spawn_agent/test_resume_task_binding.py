@@ -55,9 +55,9 @@ TASKS = {
 
 @pytest.fixture(autouse=True)
 def stored_agent_type() -> Iterator[None]:
-    """Every resume target is a stored 'dev-manager' seat."""
+    """Every resume target is a stored 'dev-team-lead' seat."""
     with patch.object(resume, "SessionVariableManager") as manager:
-        manager.return_value.get_variable_subset.return_value = {"_agent_type": "dev-manager"}
+        manager.return_value.get_variable_subset.return_value = {"_agent_type": "dev-team-lead"}
         yield
 
 
@@ -66,7 +66,7 @@ def _previous_run(task_id: str) -> SimpleNamespace:
     return SimpleNamespace(
         id="old-run",
         status="cancelled",
-        agent_name="dev-manager",
+        agent_name="dev-team-lead",
         task_id=task_id,
         child_session_id="existing",
         parent_session_id="old-parent",
@@ -145,7 +145,7 @@ async def _resume_seat(
             resume_session_id="gobby#123",
             reserved_run_id="new-run",
             agent_body=make_agent_definition(
-                name="dev-manager", prompts={"agent": "Continue"}, model="claude-sonnet-5"
+                name="dev-team-lead", prompts={"agent": "Continue"}, model="claude-sonnet-5"
             ),
             db=MagicMock(),
         )

@@ -150,7 +150,7 @@ async def test_domain_and_check_key_tags(
 @pytest.mark.parametrize(
     ("namespace", "source_kind", "lesson_types"),
     [
-        ("plan-review", "plan_review", ("reviewer-miss", "fixer-induced-defect")),
+        ("plan-review", "plan_review", ("reviewer-miss", "cross-section")),
         ("epic-qa", "qa_rejection", ("qa-miss", "validation-miss")),
     ],
 )

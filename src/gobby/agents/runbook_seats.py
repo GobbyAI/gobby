@@ -103,7 +103,7 @@ def check_runbook_seats(
     seat whose agent already has an active run on this machine with a live session in this
     project. ``live`` maps each such seat to that session. With ``team_id``, ``live`` covers
     every catalogue seat whose agent runs for that team, whether requested or not, so a fresh
-    reviewer's request still reports its team's live Dev Manager; only runs admitted to that team
+    reviewer's request still reports its team's live Dev Team Lead; only runs admitted to that team
     count. ``tab_title`` names the runbook tab; with ``task`` it becomes ``<tab_title> - #<seq>``.
     ``tab_exists`` says whether the workspace has that tab; two such tabs refuse.
     ``seat_models`` maps each seat to the model its launch takes; with it, a launching seat that

@@ -430,7 +430,7 @@ def test_reset_preserves_started_generated_task(
         )
         service.task_manager.claim_task(leaf.id, session.id)
     elif protected_state == "closed":
-        service.task_manager.close_task(leaf.id, force=True)
+        service.task_manager.close_task(leaf.id)
     else:
         temp_db.execute("UPDATE tasks SET commits = %s WHERE id = %s", ('["abc123"]', leaf.id))
     run = service.run_manager.create(
@@ -576,7 +576,7 @@ def test_apply_ignores_closed_obsolete_historical_output(
     first = _save_run(service, parent, sample_project, spec)
     applied = service.apply_run(first.id, session_id=None)
     for task_id in applied.created_task_ids:
-        service.task_manager.close_task(task_id, reason="moot", force=True)
+        service.task_manager.close_task(task_id, reason="moot")
     second_spec = {
         **spec,
         "tasks": [{**spec["tasks"][0], "id": "leaf-2"}],

@@ -23,8 +23,8 @@ from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.agent_definitions import make_agent_definition
-from tests.workflows.test_spawn_scope_rules import _define_agent, _Teams
-from tests.workflows.test_spawn_scope_rules import teams as teams_fixture
+from tests.fixtures.team_spawn_scope import _define_agent, _Teams
+from tests.fixtures.team_spawn_scope import teams as teams_fixture
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
@@ -35,7 +35,7 @@ SEAT_TYPE = "developer"
 
 
 def _manager_run(h: _Teams) -> MagicMock:
-    """The Dev Manager's own running run, bound to the task it coordinates."""
+    """The Dev Team Lead's own running run, bound to the task it coordinates."""
     assert h.manager.agent_run_id is not None
     run = LocalAgentRunManager(h.db).get(h.manager.agent_run_id)
     assert run is not None
@@ -111,7 +111,7 @@ async def _spawn(
 ) -> tuple[dict[str, Any], AsyncMock]:
     """Run spawn_agent through the registry as ``caller``; return the reply and the launch."""
     _define_agent(
-        h.db, "dev-manager", None, variables={"team_manager": True}, resumable=(SEAT_TYPE,)
+        h.db, "dev-team-lead", None, variables={"team_manager": True}, resumable=(SEAT_TYPE,)
     )
     if resume_session_id is not None:
         _expire_seat(h)

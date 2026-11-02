@@ -43,12 +43,17 @@ def capture_subtree_facts(db: HubDatabase, conn: Transaction, task_id: str) -> d
     descendants: list[JsonValue] = []
     for row in rows:
         task = Task.from_row(row)
+        records = list_attestations(db, task.id)
+        superseded = {record.supersedes_id for record in records if record.supersedes_id}
         descendants.append(
             {
                 "task": _JSON_OBJECT.dump_python(task.to_dict(), mode="json"),
                 "attestations": [
-                    record.model_dump(mode="json") for record in list_attestations(db, task.id)
+                    record.model_dump(mode="json")
+                    for record in records
+                    if record.id not in superseded
                 ],
+                "all_attestations": [record.model_dump(mode="json") for record in records],
             }
         )
     revision = hashlib.sha256(

@@ -45,7 +45,7 @@ def test_recompute_automatic_title_falls_back_to_provisional_after_close(
     claimed = update_title_for_claim(session_manager, session.id, task)
     assert claimed is not None and claimed.title_source == "task"
 
-    task_manager.close_task(task.id, force=True, closed_in_session_id=session.id)
+    task_manager.close_task(task.id,  closed_in_session_id=session.id)
     recomputed = recompute_automatic_title(session_manager, session.id)
 
     assert recomputed.title == f"test-project#{session.seq_num}: Codex"
@@ -64,10 +64,10 @@ def test_recompute_automatic_title_returns_to_the_applied_definition_title(
 
     session = _session(session_manager, sample_project["id"], "definition-after-close")
     SessionVariableManager(session_manager.db).merge_variables(
-        session.id, {DEFINITION_TITLE_VARIABLE: "Dev Manager"}
+        session.id, {DEFINITION_TITLE_VARIABLE: "Dev Team Lead"}
     )
     seated = recompute_automatic_title(session_manager, session.id)
-    assert seated.title == "Dev Manager" and seated.title_source == "definition"
+    assert seated.title == "Dev Team Lead" and seated.title_source == "definition"
 
     task_manager = LocalTaskManager(session_manager.db)
     task = task_manager.create_task(
@@ -78,13 +78,13 @@ def test_recompute_automatic_title_returns_to_the_applied_definition_title(
     )
     claimed = update_title_for_claim(session_manager, session.id, task)
     assert claimed is not None
-    assert claimed.title == "Dev Manager"
+    assert claimed.title == "Dev Team Lead"
     assert claimed.title_source == "definition"
 
-    task_manager.close_task(task.id, force=True, closed_in_session_id=session.id)
+    task_manager.close_task(task.id,  closed_in_session_id=session.id)
     recomputed = recompute_automatic_title(session_manager, session.id)
 
-    assert recomputed.title == "Dev Manager"
+    assert recomputed.title == "Dev Team Lead"
     assert recomputed.title_source == "definition"
 
     SessionVariableManager(session_manager.db).merge_variables(

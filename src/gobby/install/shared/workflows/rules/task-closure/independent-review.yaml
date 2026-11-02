@@ -1,3 +1,4 @@
+version: "2.0.0"
 tags: [task-closure-independent-review]
 
 rules:
@@ -7,12 +8,12 @@ rules:
     priority: 30
     when: &independent_review_required >-
       reason == 'done' and facts.get('closure_intent', 'explicit') != 'ancestor' and
-      (latest_attestation('review').get('result') != 'approved' or
-       any(latest_attestation('review').get('session_id') == maker.get('session_id')
+      (latest_attestation('independent-review').get('result') != 'approved' or
+       any(latest_attestation('independent-review').get('session_id') == maker.get('session_id')
            for maker in attestations if maker.get('kind') in ['test-before', 'implementation', 'test-after']) or
        (facts.get('candidate_commit_sha') and
-        ((latest_attestation('review').get('reference') or {}).get('scheme') != 'git' or
-         (latest_attestation('review').get('reference') or {}).get('value') != facts.get('candidate_commit_sha'))))
+        ((latest_attestation('independent-review').get('reference') or {}).get('scheme') != 'git' or
+         (latest_attestation('independent-review').get('reference') or {}).get('value') != facts.get('candidate_commit_sha'))))
     effects:
       - type: block
         reason: Obtain an approved candidate review from an author who did not implement or test the work.

@@ -78,7 +78,7 @@ async def test_associated_spawn_preserves_developer_head(
         name=role,
         prompts=AgentPromptBlocks(agent="Observe the candidate"),
         model="gpt-5.4",
-        task_attestation_writes=["review"] if role == "code-reviewer" else ["test"],
+        task_attestation_writes=["independent-review"] if role == "code-reviewer" else ["test"],
     )
 
     result = await spawn_agent_impl(

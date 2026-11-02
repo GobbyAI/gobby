@@ -30,9 +30,9 @@ from tests.fixtures.review_approvals import (
     reject_review,
 )
 
-DEV_MANAGER = "default"
+DEV_TEAM_LEAD = "default"
 ORCHESTRATOR = "default"
-SECURITY_REVIEWER = "security-reviewer"
+SECURITY_AUDITOR = "security-auditor"
 
 
 def bind_task_manager(
@@ -162,32 +162,32 @@ class LandingCase:
 
     def security_seat(
         self,
-        name: str = SECURITY_REVIEWER,
+        name: str = SECURITY_AUDITOR,
         *,
         granted: bool = True,
         supplemental: bool = True,
     ) -> str:
-        """A session running as the installed security-reviewer definition, with no agent run."""
+        """A session running as the installed security-auditor definition, with no agent run."""
         session = self.session(name, parent=self.creator)
         grant_step_writes(
             self.db,
             session,
             self.project_id,
             name,
-            ("review",),
+            ("independent-review", "security-review"),
             capabilities=("approve_security_review",) if granted else (),
             supplemental_review=supplemental,
         )
         return session
 
-    def security_reviewer(
+    def security_auditor(
         self,
-        name: str = SECURITY_REVIEWER,
+        name: str = SECURITY_AUDITOR,
         *,
         granted: bool = True,
         supplemental: bool = True,
     ) -> str:
-        """A running Security Reviewer seat: its definition plus a running agent run."""
+        """A running Security Auditor seat: its definition plus a running agent run."""
         session = self.security_seat(name, granted=granted, supplemental=supplemental)
         runs = LocalAgentRunManager(self.db)
         run = runs.create(

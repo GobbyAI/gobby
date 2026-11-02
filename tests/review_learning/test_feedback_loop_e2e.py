@@ -91,7 +91,7 @@ async def test_per_class_recording_is_memory_only() -> None:
     service = _service(memory_manager, task_manager)
     class_cases = [
         ("plan-review", "plan_review", "plan-adversary-reviewer", "reviewer-miss"),
-        ("plan-review", "plan_review", "plan-adversary-fixer", "fixer-induced-defect"),
+        ("plan-review", "plan_review", "plan-writer", "cross-section"),
         ("epic-qa", "qa_rejection", "epic-qa-reviewer", "qa-miss"),
         ("epic-qa", "qa_rejection", "epic-validation-reviewer", "validation-miss"),
     ]
@@ -154,7 +154,7 @@ async def test_per_class_recording_is_memory_only() -> None:
 
     assert set(recording_results) == {
         "reviewer-miss",
-        "fixer-induced-defect",
+        "cross-section",
         "qa-miss",
         "validation-miss",
         "recurring-validation-failure",

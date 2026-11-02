@@ -1,7 +1,7 @@
 """Lesson normalization, tagging, and markdown rendering.
 
 Reserved canonical ``lesson_type`` values are ``reviewer-miss``,
-``fixer-induced-defect``, ``recurring-validation-failure``, ``qa-miss``, and
+``recurring-validation-failure``, ``qa-miss``, and
 ``validation-miss``. Other values remain valid for existing and future
 single-class recorders.
 """

@@ -1,3 +1,4 @@
+version: "1.0.1"
 tags: [roles, seat, enforcement, gobby, seat-policy]
 
 # Closing definitions exclude this blocker and declare close reasons/scopes in
@@ -14,9 +15,9 @@ rules:
       - type: block
         mcp_tools: ["gobby-tasks:close_task"]
         reason: >-
-          Only the Dev Manager and the Orchestrator close tasks. A researcher closes only
+          Only the Dev Team Lead and the Orchestrator close tasks. A researcher closes only
           its own research spike, as done, after the Orchestrator's review of its report SHA.
           The Consolidator closes a task only as moot or superseded, when the Orchestrator
-          directs an approved fold or retirement. Your seat hands its work to the Dev Manager:
+          directs an approved fold or retirement. Your seat hands its work to the Dev Team Lead:
           send a CANDIDATE with the linked commit and the tests you ran, or a DISPOSITION for a
           task with no work. Check gates first with close_task(preview=true).

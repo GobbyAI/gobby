@@ -3,6 +3,8 @@
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import PurePosixPath
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
@@ -88,6 +90,8 @@ def evaluate_closure_policy(
             "str": str,
             "int": int,
             "bool": bool,
+            "paths_match": paths_match,
+            "timestamp": lambda value: datetime.fromisoformat(value).timestamp(),
         },
     )
     blockers = []
@@ -108,6 +112,17 @@ def evaluate_closure_policy(
         tuple(blockers),
         policy_revision,
         _digest({"snapshot": snapshot.model_dump(mode="json"), "policy": policy_revision}),
+    )
+
+
+def paths_match(paths: list[str], patterns: list[str]) -> bool:
+    """Match changed repository paths against directory prefixes or path globs."""
+    return any(
+        path == pattern.rstrip("/")
+        or path.startswith(pattern.rstrip("/") + "/")
+        or PurePosixPath(path).full_match(pattern)
+        for path in paths
+        for pattern in patterns
     )
 
 

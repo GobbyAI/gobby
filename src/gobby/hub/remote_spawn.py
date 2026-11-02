@@ -1,6 +1,6 @@
 """Remote spawn: a run for another machine is prepared on the hub and launched by its node.
 
-Trust boundary (Security Reviewer scope):
+Trust boundary (Security Auditor scope):
 - The origin machine is derived from the authenticated caller, never from the request body.
 - Ownership of the target machine is checked before any row is written or any command is sent.
 - The hub issues no managed credential and writes no prompt file, env, or directory for a remote run.

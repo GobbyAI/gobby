@@ -38,7 +38,7 @@ flowchart LR
   A <--> O[Orchestrator]
   T[Triage] -- digest --> O
   S[Support seats] --> T
-  DM[Dev Manager] --> T
+  DM[Dev Team Lead] --> T
   Team[DevTeam seats] --> DM
 ```
 
@@ -46,7 +46,7 @@ Only the Assistant and Triage message the Orchestrator. The daemon refuses any
 other seat's direct send with `message_recipient_not_allowed`, and project or
 global fanout withholds the Orchestrator. Triage sends one queued digest every
 five minutes, and forwards a blocker that stops a team, or anything from the
-operator, at once. DevTeam seats report to their Dev Manager, which reports to
+operator, at once. DevTeam seats report to their Dev Team Lead, which reports to
 Triage. See [agents](agents.md#seats) for each seat's role.
 
 ## Launch Support
@@ -72,53 +72,34 @@ gaps without duplicating a seat. Relaunch a missing Triage first the same way.
 
 ## Launch a DevTeam
 
-The bundled devteam pipeline launches two seats for one task: a developer and
-an independent code reviewer in the same registered task worktree. Supply task,
-workspace, report_to and the current project_policy.launch_defaults.devteam.
-Its strict input schema accepts provider/model/effort settings for those two
-seats. It has no manager, separate test-writer or fresh-reviewer input.
+Run the single devteam pipeline for either a task or epic with task, workspace,
+report_to and project_policy.launch_defaults.devteam. It launches developer,
+code-reviewer and dev-team-lead in Dev Team - #N. The pair uses the registered
+task tree; the lead stays in main. admit_team chooses single-task or epic mode.
+The bundled file is dev-team.yaml; there is no separate epic pipeline.
 
-Admission creates or reserves the registered task checkout. The pipeline opens
-the developer with task_id (requesting its claim), and opens the reviewer
-without task_id (observing rather than claiming implementation). Both use the
-admitted project_path and reserved run IDs. It connects them with an ordinary
-durable message and makes a best-effort layout request. Layout refusal does
-not invalidate successful seat admission.
+claim_flow is declared in the pipeline and applied atomically by record_attestation:
+implement requires test-before, implementation, test-after, self-review and
+validation; review requires independent-review and validation; a rejection returns
+the claim to implement; completed review moves it to the lead's validate stage.
+Each stage validates against task.validation_criteria with stage and a per-criterion
+[{criterion, met, how}] list. Results follow each kind's allowed_results and guidance.
 
-```mermaid
-sequenceDiagram
-  participant Dev as Developer
-  participant Rev as Reviewer
-  Dev->>Dev: Claim, tests first, implementation, validation
-  Dev->>Rev: Linked candidate and evidence references
-  Rev->>Rev: Independent candidate review and attestation
-  Rev->>Dev: Findings or approval with evidence ID
-  Dev->>Dev: Agreed owner lands and closes under selected policy
-  Dev->>Dev: Author cleans merged worktree
-```
+The lead checks attestations and security, lands, validates the integrated SHA
+after landing, records closing and closes. Developers and reviewers never land,
+merge, close or delete worktrees. The lead deletes only clean merged worktrees
+after associated seats end, without force. Superseded evidence remains in history.
 
-The developer keeps the implementation claim. Messages do not automatically
-bind candidates, transfer claims, count rejections, assign a fixer or escalate.
-The reviewer records their own exact-reference review; a replacement candidate
-requires fresh evidence. The pair agrees on one completion owner. Either
-definition can land and close when its declared authority and selected policy
-permit it; a manager binding is not required.
+For an epic retain the primary pair and shared tree; the lead schedules ready
+leaves and parallel child teams through the same pipeline using parent_team_id.
+Child leads land into epic main under clean-tree coordination. The lead's named
+integration-leaf step provides a claimable task for implementation repairs and
+final integration checks; the lead performs base merges. Final review is independent
+of all descendant code/test authors and binds the candidate and subtree_revision.
 
-Selected coding YAML requires TDD, implementation, passing validation,
-OCR self-review, closing evidence and the relevant Git facts. Pair YAML also
-requires independent review, and labelled security work keeps independent
-security approval. Default selects a self-delivery policy and can complete a
-task without the pair. Other domains can select different evidence standards,
-including work with no Git repository.
-
-Task dependencies resolve through lifecycle closure, not approved implementation
-records. Preserve explicit holds and live task/worktree ownership. Team
-hierarchy and checkout safety are generic infrastructure, not a required
-four-seat epic roster or synthesized review stage.
-
-After landing and closure the author personally removes the clean, merged
-registered worktree and branch, using the stored landing target and no force.
-Shared worktrees remain while open work or live participants need them.
+Relaunch missing seats with seats and team_id, the original admission execution,
+preserving the task, tree and provider/model/effort defaults. Never duplicate a live
+team. Report through the configured report target and use durable waits.
 
 ## Launch planning
 

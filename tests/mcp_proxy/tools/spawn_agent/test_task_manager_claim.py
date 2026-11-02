@@ -32,7 +32,7 @@ def case(temp_db: HubDatabase, sample_project: dict[str, object], tmp_path: Path
 
 def _seat_definition(seat: str) -> AgentDefinitionBody:
     """A team manager closes without claiming; a developer implements and auto-claims."""
-    if seat == "dev-manager":
+    if seat == "dev-team-lead":
         return make_agent_definition(
             name=seat,
             prompts={"agent": "Synthetic team manager."},
@@ -113,7 +113,7 @@ async def test_explicit_spawn_task_is_claimed_despite_closing_grants(
     task = tasks.create_task(
         case.project_id, "Manager binding", validation_criteria="Stay independent"
     )
-    manager = await _spawn_task_seat(case, task, mock_runner, "dev-manager")
+    manager = await _spawn_task_seat(case, task, mock_runner, "dev-team-lead")
 
     with case.db.transaction() as conn:
         claimants = claimant_sessions(conn, task.id)
@@ -130,13 +130,13 @@ async def test_spawned_task_holder_can_land_its_own_candidate(
     task = tasks.create_task(
         case.project_id, "Manager landing", validation_criteria="Land reviewed SHA"
     )
-    manager = await _spawn_task_seat(case, task, mock_runner, "dev-manager")
+    manager = await _spawn_task_seat(case, task, mock_runner, "dev-team-lead")
     case.link(task, sha)
     grant_step_writes(
         case.db,
         manager,
         case.project_id,
-        "dev-manager",
+        "dev-team-lead",
         ("closing",),
         capabilities=("land_tasks",),
     )

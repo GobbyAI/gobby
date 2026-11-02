@@ -29,9 +29,9 @@ def world(
         make_landing_case(temp_db, sample_project, tmp_path), tmp_path, monkeypatch
     )
     for name, grants in (
-        ("code-reviewer", ["review"]),
-        ("docs-reviewer", ["review"]),
-        ("research-reviewer", ["review"]),
+        ("code-reviewer", ["independent-review"]),
+        ("docs-reviewer", ["independent-review"]),
+        ("research-reviewer", ["independent-review"]),
         ("developer", ["implementation"]),
     ):
         AgentDefinitionManager(temp_db).create(

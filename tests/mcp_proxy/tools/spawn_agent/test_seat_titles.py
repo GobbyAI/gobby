@@ -1,7 +1,7 @@
 """Caller-supplied titles never replace a defined seat's pane or session title.
 
 Contract: docs/contracts/seat-titles.md, rule 1 and the spawn_agent caller rule. A
-seat's title is its agent definition display name (dev-manager -> Dev Manager), whether
+seat's title is its agent definition display name (dev-team-lead -> Dev Team Lead), whether
 or not the caller passes a title.
 """
 
@@ -17,14 +17,13 @@ from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import get_machine_id
 
-PIPELINES = Path(__file__).resolve().parents[4] / "src/gobby/install/shared/workflows/pipelines"
-
 
 async def _spawn_developer(
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     title: str | None,
+    project_path: Path,
 ) -> Any:
     from gobby.workflows.agent_models import (
         AgentDefinitionBody,
@@ -75,7 +74,7 @@ async def _spawn_developer(
         "agent": "developer",
         "execution_mode": "interactive",
         "checkout_mode": "none",
-        "project_path": str(PIPELINES),
+        "project_path": str(project_path),
     }
     if title is not None:
         arguments["title"] = title
@@ -91,12 +90,14 @@ async def test_caller_title_does_not_replace_a_defined_seat_title(
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     child = await _spawn_developer(
         session_manager,
         sample_project,
         monkeypatch,
         title="Caller Slug Developer",
+        project_path=tmp_path,
     )
 
     assert child.title == "Developer"
@@ -108,8 +109,11 @@ async def test_defined_seat_without_caller_title_takes_its_definition_name(
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    child = await _spawn_developer(session_manager, sample_project, monkeypatch, title=None)
+    child = await _spawn_developer(
+        session_manager, sample_project, monkeypatch, title=None, project_path=tmp_path
+    )
 
     assert child.title == "Developer"
     assert child.title_source == "definition"

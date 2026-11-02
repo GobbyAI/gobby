@@ -132,7 +132,7 @@
       "verification": [
         "source-audit"
       ],
-      "audience": "agent; a Dev Manager or Orchestrator reads its team's progress",
+      "audience": "agent; a Dev Team Lead or Orchestrator reads its team's progress",
       "server": "gobby-tasks",
       "tool": "team_progress"
     },

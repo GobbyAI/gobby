@@ -1,4 +1,4 @@
-"""The task's Dev Manager lands an independently reviewed candidate into its main checkout."""
+"""The task's Dev Team Lead lands an independently reviewed candidate into its main checkout."""
 
 from __future__ import annotations
 

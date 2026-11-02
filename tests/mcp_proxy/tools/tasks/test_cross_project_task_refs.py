@@ -150,7 +150,7 @@ async def approve(world: CrossProjectWorld, caller_id: str, ref: str) -> dict[st
     registry = create_task_registry(world.tasks)
     review = {
         "task_id": ref,
-        "kind": "review",
+        "kind": "independent-review",
         "result": "approved",
         "summary": "The documentation commit is reviewed.",
         "reference": {"scheme": "git", "value": world.sha},
@@ -321,7 +321,7 @@ async def test_declared_coordinator_cannot_author_other_projects_evidence(
         {
             "prompts": {"agent": "Coordinate the fleet."},
             "capabilities": ["coordinate_tasks"],
-            "task_attestation_writes": ["review"],
+            "task_attestation_writes": ["independent-review"],
             "workflows": {"rule_selectors": {"include": []}},
         },
         project_id=caller.project_id,

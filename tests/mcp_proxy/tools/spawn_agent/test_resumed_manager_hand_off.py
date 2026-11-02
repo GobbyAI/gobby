@@ -31,7 +31,7 @@ from gobby.workflows.agent_models import (
 )
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.landing_case import (
-    DEV_MANAGER,
+    DEV_TEAM_LEAD,
     LandingCase,
     bind_task_manager,
     make_landing_case,
@@ -104,11 +104,11 @@ async def crashed(
     task = case.task("Resumed manager hand-off")
     runbook = world.child(task)
     team = await world.admit(runbook, task)
-    manager = case.session("dev-manager", parent=runbook.id)
+    manager = case.session("dev-team-lead", parent=runbook.id)
     bind_task_manager(
         temp_db, manager=manager, parent=runbook.id, project_id=case.project_id, task=task
     )
-    _seat(temp_db, manager, runbook.id, DEV_MANAGER, task_id=task.id, claim=False)
+    _seat(temp_db, manager, runbook.id, DEV_TEAM_LEAD, task_id=task.id, claim=False)
     writer = case.session("test-writer", parent=runbook.id)
     developer = case.session("developer", parent=runbook.id)
     _seat(temp_db, writer, runbook.id, "test-writer")
@@ -186,9 +186,9 @@ async def test_seat_resumed_past_32_runs_keeps_its_team(crashed: CrashedTeam) ->
 
 
 @pytest.mark.asyncio
-async def test_resumed_dev_manager_hands_off_to_a_resumed_seat(crashed: CrashedTeam) -> None:
+async def test_resumed_dev_team_lead_hands_off_to_a_resumed_seat(crashed: CrashedTeam) -> None:
     db = crashed.case.db
-    for seat, agent_name in ((crashed.manager, DEV_MANAGER), (crashed.developer, "developer")):
+    for seat, agent_name in ((crashed.manager, DEV_TEAM_LEAD), (crashed.developer, "developer")):
         resumed = await _resume(crashed, seat, agent_name)
         assert resumed["success"] is True, resumed
     successor = LocalAgentRunManager(db).get_by_session(crashed.manager)

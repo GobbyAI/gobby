@@ -1,6 +1,20 @@
+version: "2.0.0"
 tags: [task-closure-general]
 
 rules:
+  epic-completion-requires-closing-review:
+    event: task_close
+    priority: 29
+    when: >-
+      reason == 'done' and 'epic-devteam' in (task.get('labels') or []) and
+      (latest_attestation('closing').get('result') != 'approved' or
+       (latest_attestation('closing').get('reference') or {}).get('scheme') != 'git' or
+       (latest_attestation('closing').get('reference') or {}).get('value') != facts.get('candidate_commit_sha') or
+       latest_attestation('closing').get('evidence', {}).get('subtree_revision') != facts.get('subtree_revision'))
+    effects:
+      - type: block
+        reason: Record closing review of the integrated epic SHA and current subtree_revision after validation.
+
   epic-landing-requires-validated-integration-base:
     event: task_land
     priority: 24
@@ -76,10 +90,10 @@ rules:
            (latest_attestation(kind).get('reference') or {}).get('scheme') != 'git' or
            (latest_attestation(kind).get('reference') or {}).get('value') != facts.get('candidate_commit_sha') or
            latest_attestation(kind).get('evidence', {}).get('subtree_revision') != facts.get('subtree_revision')
-           for kind in ['implementation', 'integration-validation', 'self-review', 'review', 'closing']))
+           for kind in ['validation', 'independent-review']))
     effects:
       - type: block
-        reason: Record approved implementation, integration-validation, self-review, review and closing for this full Git candidate and subtree_revision.
+        reason: Record approved validation and independent-review for this full Git candidate and subtree_revision.
 
   epic-landing-requires-exact-evidence:
     event: task_land
@@ -95,11 +109,12 @@ rules:
     priority: 27
     when: &epic_independence >-
       reason == 'done' and 'epic-devteam' in (task.get('labels') or []) and
-      (any(latest_attestation('review').get('session_id') == record.get('session_id')
-           for descendant in facts.get('descendants', []) for record in descendant.get('attestations', [])
+      (any(latest_attestation('independent-review').get('session_id') == record.get('session_id')
+           for descendant in facts.get('descendants', [])
+           for record in descendant.get('all_attestations', descendant.get('attestations', []))
            if record.get('kind') in ['test-before', 'implementation', 'test-after']) or
-       any(latest_attestation('review').get('session_id') == record.get('session_id')
-           for record in attestations if record.get('kind') in ['implementation', 'self-review']))
+       any(latest_attestation('independent-review').get('session_id') == record.get('session_id')
+           for record in all_attestations if record.get('kind') in ['implementation', 'self-review']))
     effects:
       - type: block
         reason: Obtain final approval from a reviewer who authored none of this epic's implementation or tests.

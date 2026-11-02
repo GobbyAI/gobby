@@ -8,9 +8,10 @@ import pytest
 from mcp.types import ListToolsResult, Tool
 
 from gobby.ai.embeddings import EmbeddingService
+from gobby.config.persistence import DEFAULT_EMBEDDING_DIM
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPServerConfig
-from gobby.mcp_proxy.semantic_search import DEFAULT_EMBEDDING_DIM, SemanticToolSearch
+from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager

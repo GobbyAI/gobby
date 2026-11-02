@@ -80,12 +80,37 @@ def test_descendant_evidence_revision(temp_db: HubDatabase, sample_project: dict
     assert after.snapshot.facts["subtree_revision"] != facts["subtree_revision"]
     assert after.decision.snapshot_revision != before.decision.snapshot_revision
     assert prepare_closure(temp_db, task_id=root.id, session_id=author) == after
+    replacement, _ = record_attestation(
+        temp_db,
+        task_id=leaf.id,
+        session_id=author,
+        submission=AttestationSubmission(
+            kind="arbitrary-kind",
+            result="rejected",
+            summary="Corrected evidence",
+            supersedes_id=record.id,
+        ),
+    )
+    corrected = prepare_closure(temp_db, task_id=root.id, session_id=author)
+    corrected_facts = cast(dict[str, Any], corrected.snapshot.facts)
+    corrected_leaf = next(
+        item for item in corrected_facts["descendants"] if item["task"]["id"] == leaf.id
+    )
+    assert [item["id"] for item in corrected_leaf["attestations"]] == [replacement.id]
+    assert [item["id"] for item in corrected_leaf["all_attestations"]] == [
+        record.id,
+        replacement.id,
+    ]
+    assert corrected_facts["subtree_revision"] != after_facts["subtree_revision"]
+    after = corrected
     # Root review evidence must not invalidate the descendant revision it approves.
     record_attestation(
         temp_db,
         task_id=root.id,
         session_id=author,
-        submission=AttestationSubmission(kind="review", result="approved", summary="Reviewed"),
+        submission=AttestationSubmission(
+            kind="independent-review", result="approved", summary="Reviewed"
+        ),
     )
     reviewed = prepare_closure(temp_db, task_id=root.id, session_id=author)
     assert reviewed.snapshot.facts["subtree_revision"] == after.snapshot.facts["subtree_revision"]

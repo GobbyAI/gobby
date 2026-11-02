@@ -1,0 +1,260 @@
+name: devteam
+type: pipeline
+version: 2.0.0
+description: 'One DevTeam for a task or epic: developer, independent reviewer and dev-team-lead.'
+tags:
+- runbook
+- development
+resume_on_restart: true
+strict_inputs: true
+inputs:
+  parent_team_id:
+    type: string
+    default: null
+  team_id:
+    type: string
+    default: null
+  seats:
+    type: string
+    default: developer,code-reviewer,dev-team-lead
+  task:
+    type: string
+    required: true
+  workspace:
+    type: string
+    required: true
+  report_to:
+    type: string
+    required: true
+    description: Live session for readiness, completion and blockers.
+  developer_provider:
+    type: string
+    default: null
+  developer_model:
+    type: string
+    default: null
+  developer_reasoning_effort:
+    type: string
+    default: null
+  reviewer_provider:
+    type: string
+    default: null
+  reviewer_model:
+    type: string
+    default: null
+  reviewer_reasoning_effort:
+    type: string
+    default: null
+  lead_provider:
+    type: string
+    default: null
+  lead_model:
+    type: string
+    default: null
+  lead_reasoning_effort:
+    type: string
+    default: null
+steps:
+- id: inspect-task
+  mcp:
+    server: gobby-tasks
+    tool: get_task
+    arguments:
+      task_id: ${{ inputs.task }}
+- id: guard
+  mcp:
+    server: gobby-agents
+    tool: check_runbook_seats
+    arguments:
+      workspace: ${{ inputs.workspace }}
+      requested: ${{ inputs.seats }}
+      team_id: ${{ inputs.team_id }}
+      skip_live_seats: ${{ inputs.team_id is not none }}
+      report_to: ${{ inputs.report_to }}
+      require_report_to: true
+      task: ${{ inputs.task }}
+      tab_title: Dev Team
+      seat_models:
+        developer: ${{ inputs.developer_model }}
+        code-reviewer: ${{ inputs.reviewer_model }}
+        dev-team-lead: ${{ inputs.lead_model or inputs.reviewer_model }}
+      catalogue:
+      - name: developer
+        title: Developer
+        agent: developer
+      - name: code-reviewer
+        title: Code Reviewer
+        agent: code-reviewer
+      - name: dev-team-lead
+        title: Dev Team Lead
+        agent: dev-team-lead
+- id: mark-epic
+  condition: ${{ steps['inspect-task'].output.task_type == 'epic' }}
+  mcp:
+    server: gobby-tasks
+    tool: add_label
+    arguments:
+      task_id: ${{ inputs.task }}
+      label: epic-devteam
+- id: admit
+  mcp:
+    server: gobby-agents
+    tool: admit_team
+    arguments:
+      task: ${{ inputs.task }}
+      tab_title: ${{ steps.guard.output.tab_title }}
+      parent_team_id: ${{ inputs.parent_team_id }}
+      team_id: ${{ inputs.team_id }}
+- id: developer
+  condition: ${{ 'developer' in steps.guard.output.launch }}
+  mcp:
+    server: gobby-agents
+    tool: spawn_agent
+    arguments:
+      agent: developer
+      provider: ${{ inputs.developer_provider }}
+      model: ${{ inputs.developer_model }}
+      reasoning_effort: ${{ inputs.developer_reasoning_effort }}
+      execution_mode: interactive
+      checkout_mode: none
+      project_path: ${{ steps.admit.output.project_path }}
+      task_id: ${{ steps.admit.output.task_id }}
+      reserved_run_id: ${{ invocation_id }}
+      prompt: |
+        Implement ${{ inputs.task }} in ${{ steps.admit.output.project_path }}.
+        Team ${{ steps.admit.output.team.team_id }}, tree ${{ steps.admit.output.worktree }}.
+        ${{ 'For this epic, retain this shared tree and wait for the lead to assign a ready leaf; claim that leaf before edits.' if steps.admit.output.team.mode == 'epic' else 'Claim this task before editing.' }}
+        Own TDD, implementation, self-review and validation. The daemon moves the claim
+        through claim_flow. Developers never land, merge, close or delete worktrees.
+        The lead owns completion and cleanup; report readiness to ${{ inputs.report_to }}
+        until the pipeline connects your seats. Follow installed definitions and evidence guidance.
+        Report 'activation needs restart' to the lead/report target when needed;
+        never run gobby restart or cutover yourself.
+      placement: '${{ {''split'': {''workspace'': steps.guard.output.workspace_id, ''tab_title'': steps.guard.output.tab_title,
+        ''axis'': ''right'', ''title'': ''Developer''}} if steps.guard.output.tab_exists else {''tab'':
+        {''workspace'': steps.guard.output.workspace_id, ''title'': steps.guard.output.tab_title}} }}'
+      claim: ${{ steps['inspect-task'].output.task_type != 'epic' }}
+- id: reviewer
+  condition: ${{ 'code-reviewer' in steps.guard.output.launch }}
+  mcp:
+    server: gobby-agents
+    tool: spawn_agent
+    arguments:
+      agent: code-reviewer
+      task_id: ${{ steps.admit.output.task_id }}
+      claim: false
+      provider: ${{ inputs.reviewer_provider }}
+      model: ${{ inputs.reviewer_model }}
+      reasoning_effort: ${{ inputs.reviewer_reasoning_effort }}
+      execution_mode: interactive
+      checkout_mode: none
+      project_path: ${{ steps.admit.output.project_path }}
+      reserved_run_id: ${{ invocation_id }}
+      prompt: |
+        Independently review ${{ inputs.task }} in ${{ steps.admit.output.project_path }}.
+        Developer: ${{ steps.developer.output.child_session_id if steps.developer.output else steps.guard.output.live.get('developer') }}.
+        The daemon delivers the claim after implement completes. Record independent-review
+        and validation for each exact candidate and criterion. Rejection returns the claim;
+        approval plus review validation moves it to the lead. Never land, merge, close or
+        delete worktrees. Retain a persistent epic seat for later leaves and final review.
+        Report readiness to ${{ inputs.report_to }} until the lead connects.
+        Report 'activation needs restart' to the lead/report target when needed;
+        never run gobby restart or cutover yourself.
+      placement: '${{ {''split'': {''workspace'': steps.guard.output.workspace_id, ''tab_title'': steps.guard.output.tab_title,
+        ''axis'': ''right'', ''title'': ''Code Reviewer''}} if steps.guard.output.tab_exists or steps.developer.output
+        else {''tab'': {''workspace'': steps.guard.output.workspace_id, ''title'': steps.guard.output.tab_title}}
+        }}'
+- id: lead
+  condition: ${{ 'dev-team-lead' in steps.guard.output.launch }}
+  mcp:
+    server: gobby-agents
+    tool: spawn_agent
+    arguments:
+      agent: dev-team-lead
+      task_id: ${{ steps.admit.output.task_id }}
+      claim: false
+      provider: ${{ inputs.lead_provider or inputs.reviewer_provider }}
+      model: ${{ inputs.lead_model or inputs.reviewer_model }}
+      reasoning_effort: ${{ inputs.lead_reasoning_effort or inputs.reviewer_reasoning_effort }}
+      execution_mode: interactive
+      checkout_mode: none
+      project_path: ${{ steps.admit.output.main_project_path }}
+      reserved_run_id: ${{ invocation_id }}
+      placement: >-
+        ${{ {'split': {'workspace': steps.guard.output.workspace_id,
+        'tab_title': steps.guard.output.tab_title, 'axis': 'right', 'title': 'Dev Team Lead'}}
+        if steps.guard.output.tab_exists or steps.developer.output or steps.reviewer.output
+        else {'tab': {'workspace': steps.guard.output.workspace_id,
+        'title': steps.guard.output.tab_title}} }}
+      prompt: |
+        Lead ${{ inputs.task }} as team ${{ steps.admit.output.team.team_id }}.
+        Stay in main at ${{ steps.admit.output.main_project_path }}; edit no implementation.
+        Tree: ${{ steps.admit.output.project_path }}, mode: ${{ steps.admit.output.team.mode }}.
+        Developer: ${{ steps.developer.output.child_session_id if steps.developer.output else steps.guard.output.live.get('developer') }}.
+        Reviewer: ${{ steps.reviewer.output.child_session_id if steps.reviewer.output else steps.guard.output.live.get('code-reviewer') }}.
+        Workspace: ${{ inputs.workspace }}; report_to: ${{ inputs.report_to }}.
+        Use claim_flow, check attestations/security, land, validate the integrated SHA,
+        close and clean up after seats finish. For epics, schedule persistent and parallel
+        leaf teams; name an integration leaf before developer implementation repairs.
+        Preserve developer/reviewer/lead provider, model and reasoning defaults from this launch.
+- id: connect
+  condition: ${{ steps.developer.output or steps.guard.output.live.get('developer') }}
+  mcp:
+    server: gobby-agents
+    tool: send_message
+    arguments:
+      target: session
+      target_id: ${{ steps.developer.output.child_session_id if steps.developer.output else steps.guard.output.live.get('developer')
+        }}
+      content: |
+        Reviewer: ${{ steps.reviewer.output.child_session_id if steps.reviewer.output else steps.guard.output.live.get('code-reviewer') }}.
+        Lead: ${{ steps.lead.output.child_session_id if steps.lead.output else steps.guard.output.live.get('dev-team-lead') }}.
+        The daemon moves claims from evidence; send the exact candidate and findings to
+        the next seat. The lead owns landing, post-land validation, closure and cleanup.
+- id: arrange
+  condition: ${{ steps.developer.output and steps.reviewer.output and steps.lead.output }}
+  mcp:
+    server: gobby-workspaces
+    tool: rebalance_tab
+    on_refused: record
+    arguments:
+      workspace: ${{ steps.guard.output.workspace_id }}
+      tab: ${{ steps.guard.output.tab_title }}
+      seats: '${{ [{''name'': ''developer'', ''pane'': steps.developer.output.pane_ref}, {''name'': ''code-reviewer'',
+        ''pane'': steps.reviewer.output.pane_ref}, {''name'': ''dev-team-lead'', ''pane'': steps.lead.output.pane_ref}]
+        }}'
+      rows: 100
+      layout: tiled
+- id: connect-reviewer
+  condition: ${{ steps.reviewer.output or steps.guard.output.live.get('code-reviewer') }}
+  mcp:
+    server: gobby-agents
+    tool: send_message
+    arguments:
+      target: session
+      target_id: ${{ steps.reviewer.output.child_session_id if steps.reviewer.output else steps.guard.output.live.get('code-reviewer')
+        }}
+      content: 'Lead: ${{ steps.lead.output.child_session_id if steps.lead.output else steps.guard.output.live.get(''dev-team-lead'')
+        }}. Send findings and completed review evidence there; the lead owns completion.'
+claim_flow:
+  implement:
+    seat: developer
+    done_when:
+    - test-before
+    - implementation
+    - test-after
+    - self-review
+    - validation
+    next: review
+  review:
+    seat: reviewer
+    done_when:
+    - independent-review
+    - validation
+    next: validate
+    on_rejected: implement
+  validate:
+    seat: lead
+    done_when:
+    - validation
+    - closing

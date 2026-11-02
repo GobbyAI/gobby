@@ -31,7 +31,7 @@ async def test_workspace_scan_keeps_calling_loop_responsive(
     returned = threading.Event()
     real_filter = agent_workspaces._eligible_paths
 
-    def blocked_filter(root: Path, paths: list[str]) -> list[str]:
+    def blocked_filter(root: Path, paths: list[str]) -> tuple[list[str], list[str]]:
         entered.set()
         release.wait(timeout=2)
         try:

@@ -1,5 +1,5 @@
 name: test-writer
-version: "1.0"
+version: "1.1.0"
 description: Writes focused failing tests and records test evidence for the assigned task.
 tags: [gobby, seat]
 capabilities: [accept_resume_retype, release_own_claim]
@@ -13,6 +13,24 @@ blocked_mcp_tools: ["gobby-agents:kill_agent"]
 task_attestation_writes: [test-before, test-after, validation]
 task_attestation_scope: {own_claim_only: true}
 respect_task_protections: true
+
+task_attestation_kinds:
+  test-before:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Describe the observed failing test before implementation, or justify non-applicability.
+  test-after:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Describe the passing rerun and exact command on the full candidate SHA.
+  validation:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Give stage and criteria [{criterion, met, how}] against task.validation_criteria; validate
+      the integrated SHA after land.
 
 prompts:
   agent: &tester |

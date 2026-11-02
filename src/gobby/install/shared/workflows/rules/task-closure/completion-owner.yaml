@@ -1,0 +1,16 @@
+version: "1.0.0"
+tags: [task-completion-handoff]
+
+rules:
+  completion-handoff-no-land:
+    event: task_land
+    priority: 1
+    effects:
+      - type: block
+        reason: Hand this candidate to the lead; this seat cannot land work.
+  completion-handoff-no-close:
+    event: task_close
+    priority: 1
+    effects:
+      - type: block
+        reason: Hand this task to the lead; this seat cannot close work.

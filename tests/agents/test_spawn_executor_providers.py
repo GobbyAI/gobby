@@ -81,7 +81,7 @@ async def test_grok_spawn_preserves_standing_seat_lifetime(
     request = replace(
         request,
         provider="grok",
-        agent_name="security-reviewer",
+        agent_name="security-auditor",
         model="grok-4.7",
         effective_reasoning_effort="xhigh",
         session_manager=MagicMock(),

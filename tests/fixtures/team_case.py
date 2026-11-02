@@ -38,9 +38,9 @@ from tests.fixtures.postgres import TEST_USER_ID
 
 
 def synthetic_manager_body() -> dict[str, Any]:
-    """A synthetic team manager: the grants and spawn scope of the bundled dev-manager.yaml."""
+    """A synthetic team manager: the grants and spawn scope of the bundled dev-team-lead.yaml."""
     return {
-        "name": "dev-manager",
+        "name": "dev-team-lead",
         "version": "1.0",
         "capabilities": ["manage_task_claims", "land_tasks", "accept_resume_retype"],
         "surfaces": ["spawn"],
@@ -61,7 +61,7 @@ def synthetic_manager_body() -> dict[str, Any]:
             "research-reviewer",
             "researcher",
         ],
-        "prompts": {"agent": "Run the dev-manager seat."},
+        "prompts": {"agent": "Run the dev-team-lead seat."},
         "workflows": {
             "rule_selectors": {"include": []},
             "variables": {"team_manager": True},

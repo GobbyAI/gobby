@@ -1,3 +1,4 @@
+version: "1.0.1"
 tags: [roles, seat, enforcement, gobby, default]
 
 # query_readonly reads the daemon database. The operator ruled that only the
@@ -15,5 +16,5 @@ rules:
         mcp_tools: ["gobby-sessions:query_readonly"]
         reason: >-
           query_readonly is available only to the Assistant and the Orchestrator.
-          Send the database need to Triage or your Dev Manager through
+          Send the database need to Triage or your Dev Team Lead through
           gobby-agents:send_message.

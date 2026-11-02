@@ -66,7 +66,7 @@ def roles(sessions: _Sessions) -> dict[str, str]:
     return {
         "creator": sessions.add("Program Director"),
         "claimant": sessions.add("Lane seat"),
-        "lander": sessions.add("Dev Manager"),
+        "lander": sessions.add("Dev Team Lead"),
         "bystander": sessions.add("Other lane"),
     }
 

@@ -9,10 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.mcp_proxy.client_manager import tool_inventory
+from gobby.config.persistence import DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL
 from gobby.mcp_proxy.models import MCPError, MCPServerConfig
 from gobby.mcp_proxy.semantic_search import (
-    DEFAULT_EMBEDDING_DIM,
-    DEFAULT_EMBEDDING_MODEL,
     SearchResult,
     SemanticToolSearch,
     _build_tool_text,

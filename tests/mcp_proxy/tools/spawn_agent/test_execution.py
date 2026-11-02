@@ -412,8 +412,8 @@ async def test_team_manager_spawn_takes_no_task_claim(
         pid=None,
         error=None,
     )
-    # The shipped Dev Manager definition sets team_manager; only its variables matter here.
-    dev_manager_body = SimpleNamespace(
+    # The shipped Dev Team Lead definition sets team_manager; only its variables matter here.
+    dev_team_lead_body = SimpleNamespace(
         workflows=SimpleNamespace(variables={"team_manager": True}),
         step_workflow=None,
     )
@@ -460,7 +460,7 @@ async def test_team_manager_spawn_takes_no_task_claim(
             resolved_task_id=task_id,
             task_seq_num=24824,
             db=None,
-            agent_body=dev_manager_body,
+            agent_body=dev_team_lead_body,
             effective_initial_variables={},
             reasoning=MagicMock(),
         )

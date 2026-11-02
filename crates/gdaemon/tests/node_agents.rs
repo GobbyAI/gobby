@@ -8,12 +8,12 @@ mod fake_gterm;
 mod fd_constructor_tests;
 #[path = "node_support/fd_hygiene.rs"]
 mod fd_hygiene;
-#[path = "node_support/fixer_regressions.rs"]
-mod fixer_regressions;
 #[path = "node_support/launch_tests.rs"]
 mod launch_tests;
 #[path = "node_support/report_tests.rs"]
 mod report_tests;
+#[path = "node_support/runtime_regressions.rs"]
+mod runtime_regressions;
 #[path = "node_support/workspace_fixtures.rs"]
 mod workspace_fixtures;
 

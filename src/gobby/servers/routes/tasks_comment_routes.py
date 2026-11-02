@@ -74,6 +74,8 @@ def register_task_comment_routes(
     @router.post("/{task_id}/comments")
     async def create_comment(task_id: str, request_data: TaskCommentCreateRequest) -> Any:
         """Add a comment to a task."""
+        if request_data.author_type == "task_claim_flow":
+            raise HTTPException(status_code=403, detail="Claim flow records are daemon-owned")
         if request_data.author_type == CLOSE_RECEIPT_AUTHOR_TYPE:
             raise HTTPException(
                 status_code=403,
@@ -145,6 +147,7 @@ def register_task_comment_routes(
                 "AND author_type IS DISTINCT FROM %s "
                 "AND author_type IS DISTINCT FROM %s "
                 "AND author_type IS DISTINCT FROM %s "
+                "AND author_type IS DISTINCT FROM %s "
                 "AND (author_type IS DISTINCT FROM %s OR author NOT LIKE %s)",
                 (
                     comment_id,
@@ -152,6 +155,7 @@ def register_task_comment_routes(
                     CLOSE_RECEIPT_AUTHOR_TYPE,
                     "task_step",
                     ATTESTATION_AUTHOR_TYPE,
+                    "task_claim_flow",
                     "system",
                     "migration:%",
                 ),
@@ -168,6 +172,8 @@ def register_task_comment_routes(
                         detail = "Task attestations cannot be deleted"
                     elif protected["author_type"] == "task_step":
                         detail = "Task step records cannot be deleted"
+                    elif protected["author_type"] == "task_claim_flow":
+                        detail = "Claim flow records cannot be deleted"
                     else:
                         detail = "Migration snapshots cannot be deleted"
                     raise HTTPException(status_code=403, detail=detail)

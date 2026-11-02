@@ -216,11 +216,11 @@ checks. The current bundled catalogue is:
 | --- | --- |
 | `assistant` | Runs in an operator-opened pane. Communicates with the operator and coordinates decisions; never spawned |
 | `orchestrator` | Runs in an operator-opened pane. Assigns and coordinates repository work; never spawned |
-| `dev-manager` | Runs one task's DevTeam: moves the claim through the review loop, keeps its seats working, then lands and closes the task |
+| `dev-team-lead` | Leads a task or epic; checks security, lands, validates the integrated SHA, closes and cleans up |
 | `test-writer` | Commits a DevTeam task's failing tests before implementation and records the test step |
-| `developer` | Implements one DevTeam task against the Test Writer's failing tests and sends its CANDIDATE to the Dev Manager and Code Reviewer |
-| `code-reviewer` | Reviews the exact candidate SHA and gives LAND or BOUNCE; after a second rejection it becomes the task's fixer |
-| `security-reviewer` | Reviews candidates for security and gives LAND or BOUNCE beside the code reviewer |
+| `developer` | Owns tests-first implementation for one DevTeam task and sends its CANDIDATE to the Dev Team Lead and Code Reviewer |
+| `code-reviewer` | Independently reviews and validates the exact candidate; claim_flow hands approved work to the lead |
+| `security-auditor` | Reviews candidate security, audits trust boundaries, and drafts security_paths for operator approval via Assistant and Orchestrator application |
 | `design-reviewer` | Reviews UI candidates against the design contract and accessibility, and gives LAND or BOUNCE |
 | `debugger` | Tests one bug hypothesis and reports CONFIRMED, REFUTED or INCONCLUSIVE with its evidence |
 | `release-manager` | Rebuilds and promotes the Rust binaries whose crates changed; the Orchestrator owns every daemon restart and activation |
@@ -249,7 +249,7 @@ Shared seat guidance is injected by the `inject-seat-common` rule in the `roles`
 rule group. The `no-send-keys` rule (default tag, so every bundled definition
 selects it) withholds `send_keys` from every definition except the Orchestrator
 and Assistant, which carry the `send_keys` capability. It does not withhold
-`capture_output`. Dev Managers, the Recovery Steward and Triage report stalled
+`capture_output`. Dev Team Leads, the Recovery Steward and Triage report stalled
 seats to Triage, which relays each resume to the Orchestrator. Spawn and
 pipeline-launch restrictions prevent seats from bypassing their assigned role.
 Definitions declare tool blocks; path-aware rules constrain seats with bounded

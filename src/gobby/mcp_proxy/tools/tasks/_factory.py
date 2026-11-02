@@ -74,7 +74,7 @@ def create_task_registry(
     # Merge session tools
     registry.merge_from(create_session_registry(ctx))
 
-    # Merge team progress reads for Dev Managers and the Orchestrator
+    # Merge team progress reads for Dev Team Leads and the Orchestrator
     registry.merge_from(create_team_progress_registry(ctx))
 
     # Merge search tools (search_tasks only; reindex_tasks is in gobby-tasks-ops)

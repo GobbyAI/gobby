@@ -54,7 +54,7 @@ def grant_step_writes(
 
 def grant_review_writes(db: HubDatabase, session_id: str, project_id: str) -> None:
     """Give a registered session an installed definition that writes the review step."""
-    grant_step_writes(db, session_id, project_id, REVIEW_WRITER, ("review",))
+    grant_step_writes(db, session_id, project_id, REVIEW_WRITER, ("independent-review",))
 
 
 def approve_review(
@@ -98,7 +98,7 @@ def _review(
         task_id=task_id,
         session_id=reviewer_session_id,
         submission=AttestationSubmission(
-            kind="review",
+            kind="independent-review",
             result=status,
             summary=feedback,
             reference=EvidenceReference(scheme="git", value=commit_sha),

@@ -643,7 +643,7 @@ class TestExecuteMCPStep:
         mock_proxy = AsyncMock()
         mock_proxy.call_tool = AsyncMock(return_value=reply)
         step = PipelineStep(
-            id="dev-manager", mcp=MCPStepConfig(server="gobby-agents", tool="spawn_agent")
+            id="dev-team-lead", mcp=MCPStepConfig(server="gobby-agents", tool="spawn_agent")
         )
 
         with pytest.raises(RuntimeError) as failed:

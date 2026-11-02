@@ -1,0 +1,20 @@
+version: "1.0.0"
+tags: [task-integrated-validation]
+
+rules:
+  closure-requires-validation-after-land:
+    event: task_close
+    priority: 29
+    when: >-
+      reason == 'done' and
+      (latest_attestation('validation').get('result') != 'approved' or
+       latest_attestation('validation').get('evidence', {}).get('stage') != 'validate' or
+       not any(
+         receipt.get('facts', {}).get('landed_tip', receipt.get('commit_sha')) == facts.get('candidate_commit_sha') and
+         (latest_attestation('validation').get('reference') or {}).get('scheme') == 'git' and
+         (latest_attestation('validation').get('reference') or {}).get('value') == facts.get('candidate_commit_sha') and
+         timestamp(latest_attestation('validation').get('created_at')) > timestamp(receipt.get('recorded_at'))
+         for receipt in facts.get('landing_receipts', [])))
+    effects:
+      - type: block
+        reason: Validate the integrated SHA after landing, then record approved validation with stage validate and a per-criterion review.

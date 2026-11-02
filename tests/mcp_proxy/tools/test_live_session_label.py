@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from threading import Event
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, patch
@@ -13,11 +16,55 @@ import pytest
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._live_session_label import live_session_label_change_error
-from gobby.storage.tasks import Task
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager, Task
 
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
+
+
+@pytest.mark.parametrize("tool", ["update_task", "remove_label"])
+def test_concurrent_security_label_addition_survives_authorized_snapshot(
+    temp_db: HubDatabase, sample_project: dict[str, str], tool: str
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(sample_project["id"], "Concurrent label change")
+    registry = create_task_registry(manager)
+    checked, writer_done = Event(), Event()
+
+    def guard(
+        ctx: RegistryContext, before: Iterable[str] | None, after: Iterable[str] | None
+    ) -> str | None:
+        error = live_session_label_change_error(ctx, before, after)
+        checked.set()
+        writer_done.wait(timeout=1)
+        return error
+
+    def add_security() -> None:
+        assert checked.wait(timeout=5)
+        manager.add_label(task.id, "security-review")
+        writer_done.set()
+
+    module = "_crud" if tool == "update_task" else "_lifecycle_labels"
+    arguments: dict[str, object] = {"task_id": task.id}
+    if tool == "update_task":
+        arguments["labels"] = []
+    else:
+        arguments["label"] = "security-review"
+    with (
+        patch(f"gobby.mcp_proxy.tools.tasks.{module}.live_session_label_change_error", guard),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._context.get_project_context",
+            return_value={"id": sample_project["id"]},
+        ),
+        ThreadPoolExecutor(max_workers=2) as pool,
+    ):
+        mutation = pool.submit(registry.call_sync, tool, arguments)
+        addition = pool.submit(add_security)
+        mutation.result(timeout=10)
+        addition.result(timeout=10)
+    assert "security-review" in (manager.get_task(task.id).labels or [])
 
 
 def _context(
@@ -30,6 +77,7 @@ def _context(
     ctx = cast(
         RegistryContext,
         SimpleNamespace(
+            task_manager=SimpleNamespace(db=MagicMock()),
             resolve_session_id=MagicMock(return_value=SESSION_ID),
             session_manager=SimpleNamespace(
                 get=MagicMock(
@@ -54,6 +102,58 @@ def _context(
         ),
     )
     return ctx
+
+
+@pytest.mark.parametrize("authority", ["operator", "capability", "reviewer"])
+def test_security_label_removal_requires_explicit_authority(authority: str) -> None:
+    from gobby.workflows.agent_models import AgentDefinitionBody
+
+    definition = AgentDefinitionBody(
+        name="arbitrary-seat",
+        prompts={"agent": "Review"},
+        workflows={"rule_selectors": {"include": []}},
+        capabilities=["remove_security_review_label"] if authority == "capability" else [],
+    )
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.tasks._live_session_label.session_agent_definition",
+            return_value=(definition, None),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._live_session_label.is_operator_session",
+            return_value=authority == "operator",
+        ),
+    ):
+        error = live_session_label_change_error(
+            _context(), ["security-review"], [], session_id=SESSION_ID
+        )
+    assert (error is None) is (authority != "reviewer")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["update_task", "remove_label"])
+async def test_security_label_removal_entry_points_require_identity(
+    mock_task_manager: MagicMock, sample_task: Task, tool: str
+) -> None:
+    mock_task_manager.get_task.return_value = replace(sample_task, labels=["security-review"])
+    registry = create_task_registry(mock_task_manager)
+    arguments: dict[str, object] = {
+        "task_id": SESSION_ID,
+        **({"labels": []} if tool == "update_task" else {"label": "security-review"}),
+    }
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.tasks._context.get_project_context",
+            return_value={"id": sample_task.project_id},
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._live_session_label.get_current_session_id",
+            return_value=None,
+        ),
+    ):
+        result = await registry.call(tool, arguments)
+    assert "authenticated operator" in result["error"]
+    getattr(mock_task_manager, tool).assert_not_called()
 
 
 def test_authorizes_root_terminal_with_live_work_reference() -> None:

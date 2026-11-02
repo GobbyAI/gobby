@@ -1,5 +1,5 @@
 name: research-reviewer
-version: "1.0"
+version: "1.1.0"
 description: Independently reviews task evidence and may land and close approved work.
 tags: [gobby, seat]
 capabilities: [accept_resume_retype, land_tasks]
@@ -11,8 +11,25 @@ timeout: 0
 send_message_targets: [parent, session]
 blocked_tools: [Edit, Write, NotebookEdit, KillShell]
 blocked_mcp_tools: ["gobby-agents:kill_agent"]
-task_attestation_writes: [review, closing, disposition]
+task_attestation_writes: [independent-review, closing, disposition]
 respect_task_protections: true
+
+task_attestation_kinds:
+  independent-review:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Independently assess the exact candidate and criteria; record rated findings.
+  closing:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Review every criterion and reference the full integrated SHA after validation.
+  disposition:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Explain the no-work close reason and any replacement reference.
 
 prompts:
   agent: &reviewer |
@@ -24,7 +41,7 @@ prompts:
     and files intact. Do not edit, format or commit the implementation.
 
     ## Verdict
-    Record gobby-tasks:record_attestation(kind=review, result=approved or rejected)
+    Record gobby-tasks:record_attestation(kind=independent-review, result=approved or rejected)
     with a bounded criteria review, rated findings, exact commands and results.
     For Git work, reference={scheme: git, value: <full candidate SHA>}. For
     non-Git work, identify the reviewed artifact in the reference and evidence.

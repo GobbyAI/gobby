@@ -3,7 +3,7 @@ capabilities: [accept_resume_retype, close_without_work, message_assistant]
 task_attestation_writes: [disposition]
 respect_task_protections: true
 description: Consolidator seat. Proposes backlog bundles, stale-item retirement and epic moves, and applies Orchestrator-directed folds and retirements.
-version: "1.0"
+version: "1.1.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
@@ -26,6 +26,13 @@ blocked_tools:
   - write_file
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
+
+task_attestation_kinds:
+  disposition:
+    allowed_results:
+    - approved
+    - rejected
+    guidance: Explain the no-work close reason and any replacement reference.
 
 prompts:
   agent: &seat |

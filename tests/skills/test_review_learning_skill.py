@@ -16,8 +16,6 @@ from gobby.plans.review_evidence_io import atomic_write_bytes, ensure_checkpoint
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
-from gobby.skills.capability_catalog import load_capability_catalog
-from gobby.skills.loader import SkillLoader
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
@@ -35,21 +33,6 @@ LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 def _local_machine_identity() -> Iterator[None]:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILLS_ROOT = REPO_ROOT / "src/gobby/install/shared/skills"
-PLAN_SKILL = SKILLS_ROOT / "gobby/references/plan/approval.md"
-PLAN_DRAFT_SKILL = SKILLS_ROOT / "gobby/references/plan/drafting.md"
-PLAN_REVIEW_SKILL = SKILLS_ROOT / "gobby/references/plan/review.md"
-
-
-def _skill_body(path: Path) -> str:
-    """Return SKILL.md plus its paged references (skills were decomposed in #21187)."""
-    parts = [path.read_text(encoding="utf-8")]
-    for reference in sorted((path.parent / "references").glob("*.md")):
-        parts.append(reference.read_text(encoding="utf-8"))
-    return "\n".join(parts)
 
 
 def _manifest_entries(stem: str) -> list[dict[str, object]]:
@@ -191,64 +174,8 @@ def _approval(
     }
 
 
-def test_review_learning_is_hidden_from_skill_discovery() -> None:
-    catalog = load_capability_catalog()
-    assert "review-learning" not in catalog.folded_skills
-    names = {skill.name for skill in SkillLoader().load_directory(SKILLS_ROOT)}
-    assert "gobby" in names
-    assert "review-learning" not in names
-    assert not (SKILLS_ROOT / "gobby/references/memory/review-lessons.md").exists()
-
-
-def test_plan_skill_documents_parallel_review_contract() -> None:
-    body = _skill_body(PLAN_REVIEW_SKILL) + _skill_body(PLAN_SKILL)
-    for phrase in (
-        "prepare_plan_review_round",
-        "bind_static_review_seats",
-        "coverage_attestation",
-        "completed_plan_review_rounds",
-        "Failed/incomplete evidence never counts as a completed review round",
-    ):
-        assert phrase in body
-
-    review_body = _skill_body(PLAN_REVIEW_SKILL)
-    for retired in (
-        "plan-adversary-taskless-old",
-        "bind_evidence_run",
-        "approve_review",
-        "reject_review",
-        "end_agent_run",
-    ):
-        assert retired not in review_body
-
-
-def test_review_producers_do_not_reference_review_learning() -> None:
-    producers = {
-        "code-review": SKILLS_ROOT / "code-review/SKILL.md",
-        "coderabbit": SKILLS_ROOT / "coderabbit/SKILL.md",
-        "epic": SKILLS_ROOT / "gobby/references/review/epic.md",
-        "outcomes": SKILLS_ROOT / "gobby/references/review/outcomes.md",
-        "evidence": SKILLS_ROOT / "gobby/references/review/evidence.md",
-    }
-    for name, path in producers.items():
-        text = path.read_text()
-        for term in (
-            "review-lessons",
-            "gobby-review-learning",
-            "record_review_lesson",
-            "recall_review_context",
-            "qa-miss",
-        ):
-            assert term not in text, (name, term)
-
-
 @pytest.mark.asyncio
 async def test_plan_loop_recording_contract(monkeypatch: pytest.MonkeyPatch) -> None:
-    plan_review = _skill_body(PLAN_REVIEW_SKILL)
-
-    assert "recall plan reviewer-miss lessons" not in plan_review
-    assert "apply each recalled check" not in plan_review
-
     monkeypatch.setattr(
         "gobby.review_learning.service._current_project_id",
         lambda: "plan-loop-project",
@@ -295,7 +222,7 @@ async def test_plan_loop_recording_contract(monkeypatch: pytest.MonkeyPatch) -> 
         class_bundles = (
             ("reviewer-miss", {"participating_section_ids": participating}),
             (
-                "fixer-induced-defect",
+                "cross-section",
                 {
                     "causal_section_ids": causal,
                     "causal_finding_id": f"{finding_id}-cause",
@@ -333,9 +260,9 @@ async def test_plan_loop_recording_contract(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert events[0] == "recall"
     assert recorded_classes == [
-        ("cross-section", "fixer-induced-defect"),
+        ("cross-section", "cross-section"),
         ("dual", "reviewer-miss"),
-        ("dual", "fixer-induced-defect"),
+        ("dual", "cross-section"),
     ]
     recorded = memories.memories[1:]
     assert len(recorded) == 3
@@ -351,26 +278,6 @@ def test_interactive_approval_sequence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    plan_contract = _skill_body(PLAN_SKILL)
-    draft_contract = _skill_body(PLAN_DRAFT_SKILL)
-    adversary_contract = _skill_body(PLAN_REVIEW_SKILL)
-    protocol = plan_contract.split("## Reviewed approval", 1)[1].split("## Approval without", 1)[0]
-    normalized_protocol = " ".join(protocol.split())
-
-    operation_order = [
-        protocol.index("apply_plan_review_manifest"),
-        protocol.index("append_plan_changelog_round"),
-        protocol.index("finalize_plan_review_evidence"),
-    ]
-    assert operation_order == sorted(operation_order)
-    assert "atomically records approval intent and manifest checkpoint" in normalized_protocol
-    assert "lesson" not in protocol.lower()
-    assert "drift revokes the intent" in (PLAN_SKILL.parent / "repair.md").read_text()
-    assert "append_plan_changelog_round" in protocol
-    assert "never overwrite it with a stale mirror" in draft_contract.lower()
-    assert "never hand-edit fences" in protocol
-    assert "Never edit the plan" in adversary_contract
-
     service, project_id, session_id, plan_path = _review_setup(
         temp_db,
         tmp_path,

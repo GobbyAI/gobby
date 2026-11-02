@@ -1,3 +1,4 @@
+version: "1.0.1"
 tags: [roles, seat, enforcement, gobby, seat-policy]
 
 # Definitions select this policy group and exclude the permissions they grant.
@@ -11,7 +12,7 @@ rules:
     # never covers them (Josh, 2026-10-21). A team manager (its definition sets the
     # `team_manager` variable) spawns and resumes its team's seats, so this rule
     # exempts its spawn_agent calls. Spawn admission bounds them: an epic team's
-    # Dev Manager takes only its epic's leaves, reviewers and the team tree.
+    # Dev Team Lead takes only its epic's leaves, reviewers and the team tree.
     when: >
       not (
         variables.get('team_manager')
@@ -45,7 +46,7 @@ rules:
     effects:
       - type: block
         reason: >-
-          Epic Dev Managers may run devteam for their own pods: a leaf with parent_team_id,
+          Epic Dev Team Leads may run devteam for their own pods: a leaf with parent_team_id,
           or a relaunch with team_id. Otherwise only the Orchestrator launches pipelines, and
           the Assistant while the Orchestrator is down: a pipeline's steps run outside seat
           rules. Runbooks launch from the operator's surfaces or the Orchestrator; send the

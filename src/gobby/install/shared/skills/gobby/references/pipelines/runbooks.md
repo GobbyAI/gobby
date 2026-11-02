@@ -19,8 +19,8 @@ definition's `cold_start_commands` activate it and reuse or open its declared
 
 | Runbook | Seats | Required inputs |
 | --- | --- | --- |
-| `support` | release-manager, triage, archivist, recovery-steward, consolidator | `workspace`, `project_path`, `report_to` |
-| `devteam` | test-writer, developer, code-reviewer, dev-manager | `task`, `workspace`, `report_to` |
+| `support` | release-manager, triage, archivist, recovery-steward, consolidator, security-auditor | `workspace`, `project_path`, `report_to` |
+| `devteam` | developer, code-reviewer, dev-team-lead | `task`, `workspace`, `report_to` |
 | `team-planning` | plan-writer, plan-adversary, plan-enhancer | `task`, `workspace`, `project_path`, `report_to` |
 
 ## Support
@@ -35,34 +35,34 @@ spawns the monitors on the operator's go; neither runbook launches them.
 
 ## DevTeam
 
-Run `devteam` once per task with `report_to=<Triage ref>`. Its `admit_team` step
-creates the task's branch and worktree, both `task-<seq>-<title-slug>`, under the
-landing lock and refuses `team_exists` while the task has a live team tree. The
-seats then open in one tab titled with the branch. The Dev Manager hands the
-claim between seats, lands the approved SHA and closes the task; the close ends
-the seats and removes the worktree.
+Run the single devteam pipeline for either a task or epic with task, workspace,
+report_to and project_policy.launch_defaults.devteam. It launches developer,
+code-reviewer and dev-team-lead in Dev Team - #N. The pair uses the registered
+task tree; the lead stays in main. admit_team chooses single-task or epic mode.
+The bundled file is dev-team.yaml; there is no separate epic pipeline.
 
-A replacement execution passes `team_id`, the admitting execution id, and the
-same task. After the second rejection the Dev Manager's
-`EVENT=REJECTION_2 TASK=#<seq> TEAM=<team id> COMMIT=<sha> REVIEWERS=<refs>`
-line reaches the Orchestrator through Triage. Relaunch with `team_id=<TEAM>`,
-`fresh_reviewer=true`, `exclude_reviewers=<REVIEWERS>` and
-`report_to=<Dev Manager ref>`; only a fresh code reviewer launches, under the
-`fresh_reviewer_*` identity.
+claim_flow is declared in the pipeline and applied atomically by record_attestation:
+implement requires test-before, implementation, test-after, self-review and
+validation; review requires independent-review and validation; a rejection returns
+the claim to implement; completed review moves it to the lead's validate stage.
+Each stage validates against task.validation_criteria with stage and a per-criterion
+[{criterion, met, how}] list. Results follow each kind's allowed_results and guidance.
 
-For an epic, the four primary seats persist until the epic closes. Its bound Dev
-Manager may launch `devteam` for an open parallel leaf with
-`parent_team_id=<epic team UUID>` and `report_to=<Dev Manager ref>`. This creates a
-single-task Dev Pod with its own Test Writer, Developer and Code Reviewer on a
-sub-branch of epic main, in `Dev Pod - #<leaf>`. Do not pass the epic as `team_id`:
-that joins the primary team instead. Single-task teams cannot launch pods.
+The lead checks attestations and security, lands, validates the integrated SHA
+after landing, records closing and closes. Developers and reviewers never land,
+merge, close or delete worktrees. The lead deletes only clean merged worktrees
+after associated seats end, without force. Superseded evidence remains in history.
 
-Every leaf follows Dev Manager, Test Writer, Code Reviewer, Developer, Code
-Reviewer, Dev Manager, using the existing single-task review rounds. A pod's
-fresh reviewer joins its own `team_id`; a primary leaf's joins the epic team.
-The Dev Manager lands a leaf on epic main and closes it immediately. The daemon
-ends that pod's seats and removes its worktree; the epic's primary seats persist.
-The epic tip lands on the integration branch before the epic itself closes.
+For an epic retain the primary pair and shared tree; the lead schedules ready
+leaves and parallel child teams through the same pipeline using parent_team_id.
+Child leads land into epic main under clean-tree coordination. The lead's named
+integration-leaf step provides a claimable task for implementation repairs and
+final integration checks; the lead performs base merges. Final review is independent
+of all descendant code/test authors and binds the candidate and subtree_revision.
+
+Relaunch missing seats with seats and team_id, the original admission execution,
+preserving the task, tree and provider/model/effort defaults. Never duplicate a live
+team. Report through the configured report target and use durable waits.
 
 ## Planning
 
@@ -100,5 +100,7 @@ not reach seats once the pipeline child has ended.
 
 Guides: [runbooks](../../../../../../../../docs/guides/runbooks.md) and
 [pipelines](../../../../../../../../docs/guides/pipelines.md#runbooks).
+
+_Version: 2.0.0_
 
 _Last verified: 2026-10-23_

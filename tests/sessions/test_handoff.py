@@ -54,6 +54,7 @@ from gobby.sessions.title_lifecycle import (
     update_title_for_claim,
 )
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
@@ -312,6 +313,18 @@ async def _submit_fixed_feedback(
     owner_session_id: str,
 ) -> dict[str, Any]:
     task_manager = LocalTaskManager(manager.db)
+    AgentDefinitionManager(manager.db).create(
+        "feedback-closer",
+        {
+            "name": "feedback-closer",
+            "prompts": {"agent": "Complete feedback ownership fixtures."},
+            "workflows": {"rule_selectors": {"include": []}},
+        },
+        project_id=reporter.project_id,
+    )
+    SessionVariableManager(manager.db).set_variable(
+        owner_session_id, "_agent_type", "feedback-closer"
+    )
     task = task_manager.create_task(
         project_id=reporter.project_id,
         title="Fix feedback ownership test defect",
@@ -320,7 +333,6 @@ async def _submit_fixed_feedback(
     )
     task = task_manager.close_task(
         task.id,
-        force=True,
         closed_in_session_id=owner_session_id,
     )
     assert task.seq_num is not None

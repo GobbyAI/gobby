@@ -89,7 +89,7 @@
       "verification": [
         "coordinator-claim-release"
       ],
-      "audience": "Orchestrator or the task's Dev Manager for a seat of its team; same project and machine"
+      "audience": "Orchestrator or the task's Dev Team Lead for a seat of its team; same project and machine"
     },
     {
       "surface": "mcp",
@@ -103,7 +103,7 @@
       "verification": [
         "team-claim-handoff"
       ],
-      "audience": "The task's bound Dev Manager; holder and recipient are seats of the same team"
+      "audience": "The task's bound Dev Team Lead; holder and recipient are seats of the same team"
     },
     {
       "surface": "mcp",

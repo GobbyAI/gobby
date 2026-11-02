@@ -15,6 +15,7 @@ from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskStaleStateError
 from gobby.tasks.attestations import AttestationError, list_attestations
+from gobby.tasks.close_receipts import list_close_receipts
 from gobby.tasks.closure_policy import ClosureDecision, ClosureSnapshot, evaluate_closure_policy
 from gobby.tasks.lifecycle_access import resolve_lifecycle_task
 from gobby.tasks.subtree_snapshot import capture_subtree_facts
@@ -164,6 +165,21 @@ def prepare_closure(
                 "children": child_data,
                 "children_closed": all(child["closed"] for child in child_data),
                 "claimants": sorted(claimant_sessions(conn, task_id)),
+                "project_policy": (
+                    SessionVariableManager(db)
+                    .get_variable_subset(session_id, ("project_policy",))
+                    .get("project_policy", {})
+                    if session_id
+                    else {}
+                ),
+                "landing_receipts": [
+                    {
+                        "commit_sha": receipt.commit_sha,
+                        "recorded_at": receipt.recorded_at,
+                        "facts": receipt.facts,
+                    }
+                    for receipt in list_close_receipts(db, task_id)
+                ],
             },
         )
         rules = RuleDefinitionManager(db).list_effective(task.project_id)

@@ -63,7 +63,7 @@ def test_agent_tree_uses_nearest_live_ancestor(
     seat_ids: dict[str, str] = {}
     for name, parent_id in [
         ("support-seat", pipeline.id),
-        ("dev-manager", pipeline.id),
+        ("dev-team-lead", pipeline.id),
         ("direct-seat", orchestrator.id),
     ]:
         seat = sessions.register(
@@ -87,11 +87,11 @@ def test_agent_tree_uses_nearest_live_ancestor(
         machine_id=machine_id,
         source="claude",
         project_id=project_id,
-        parent_session_id=seat_ids["dev-manager"],
+        parent_session_id=seat_ids["dev-team-lead"],
         agent_depth=2,
     )
     runs.create(
-        parent_session_id=seat_ids["dev-manager"],
+        parent_session_id=seat_ids["dev-team-lead"],
         child_session_id=developer.id,
         provider="claude",
         agent_name="developer",
@@ -114,9 +114,9 @@ def test_agent_tree_uses_nearest_live_ancestor(
     assert response.status_code == 200, response.text
     rows = {row[identity]: row for row in response.json()[collection]}
     assert rows[seat_ids["direct-seat"]]["parent_session_id"] == orchestrator.id
-    assert rows[developer.id]["parent_session_id"] == seat_ids["dev-manager"]
+    assert rows[developer.id]["parent_session_id"] == seat_ids["dev-team-lead"]
     expected_parent = orchestrator.id if pipeline_status == "deleted" else pipeline.id
-    for name in ("support-seat", "dev-manager"):
+    for name in ("support-seat", "dev-team-lead"):
         assert rows[seat_ids[name]]["parent_session_id"] == expected_parent, (
             f"{name} must stay under its nearest live ancestor after the runbook ends"
         )

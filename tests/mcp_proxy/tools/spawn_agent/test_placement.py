@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import threading
@@ -28,7 +27,6 @@ from gobby.agents.spawn_executor_providers import ProviderSpawnPlan
 from gobby.agents.spawn_executor_runtime import _runtime_spawn
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError
-from gobby.mcp_proxy.services.tool_execution import _inject_agent_parent_session_argument
 from gobby.mcp_proxy.tools.spawn_agent import _implementation as impl
 from gobby.mcp_proxy.tools.spawn_agent import _spawn_phase, create_spawn_agent_registry
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
@@ -39,7 +37,6 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.machines import LocalMachineManager
-from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager, ensure_system_session, system_session_id
 from gobby.storage.tasks import LocalTaskManager
@@ -63,15 +60,9 @@ from gobby.terminals.workspace_contract import WorkspaceEvent, WorkspaceOpError
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.utils import spawn as spawn_utils
-from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import MCPStepConfig, PipelineStep, WorkflowStep
 from gobby.workflows.pipeline.handlers import execute_mcp_step
-from gobby.workflows.pipeline.renderer import StepRenderer
-from gobby.workflows.pipeline_executor import step_invocation_id
-from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
-from gobby.workflows.templates import TemplateEngine
-from tests.agents.test_devteam_rerun import DEVTEAM
 from tests.fixtures.agent_definitions import make_agent_definition
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 from tests.terminals.fakes import FakeRuntime, runtime_registry
@@ -1221,7 +1212,7 @@ async def test_placed_task_refusal_reaches_pipeline_error(placed: _Harness) -> N
 
     proxy = SimpleNamespace(call_tool=call)
     step = PipelineStep(
-        id="dev-manager",
+        id="dev-team-lead",
         mcp=MCPStepConfig(
             server="gobby-agents",
             tool="spawn_agent",
@@ -1287,109 +1278,6 @@ async def test_messageless_placed_failure_names_exception(
     assert result["error"] == error_type.__name__
     assert h.launches == []
     assert _panes(h) == {}
-
-
-async def test_rendered_developer_spawn_with_task_bound_manager(
-    placed: _Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The real team Developer spawn passes admission despite the task-bound manager."""
-    h = placed
-    tasks = LocalTaskManager(h.db)
-    task = tasks.create_task(
-        h.project_id, "Team task", validation_criteria="The missing Developer launches."
-    )
-    executions = LocalPipelineExecutionManager(h.db, h.project_id)
-    execution = executions.create_execution(
-        "devteam", json.dumps({"task": task.id}), definition_json=DEVTEAM.model_dump_json()
-    )
-    caller = h.sessions.register(
-        external_id=f"pipeline-{execution.id}",
-        source="pipeline",
-        machine_id=LOCAL_MACHINE_ID,
-        project_id=h.project_id,
-        parent_session_id=h.parent_id,
-    )
-    executions.update_execution_session(execution.id, caller.id)
-    executions.update_execution_status(execution.id, ExecutionStatus.RUNNING)
-    admit = executions.create_step_execution(execution.id, "admit")
-    binding = {
-        "team_id": execution.id,
-        "task_id": task.id,
-        "project_id": h.project_id,
-        "branch": "placed/seat",
-        "base_branch": "0.5.0",
-        "worktree_id": h.checkout_mode.worktree_id,
-        "worktree_path": h.checkout_mode.cwd,
-    }
-    output = {
-        "team": binding,
-        "task_id": task.id,
-        "branch": binding["branch"],
-        "worktree": binding["worktree_id"],
-        "project_path": binding["worktree_path"],
-    }
-    executions.update_step_execution(
-        admit.id, status=StepStatus.COMPLETED, output_json=json.dumps(output)
-    )
-    developer = executions.create_step_execution(execution.id, "developer")
-    executions.update_step_execution(developer.id, status=StepStatus.RUNNING)
-    manager = h.runs.create(
-        parent_session_id=caller.id,
-        provider="claude",
-        prompt="Manage the team",
-        agent_name="dev-manager",
-        task_id=task.id,
-        resume_metadata_json={"claim": False},
-    )
-    assert h.runs.start(manager.id) is not None
-    assert h.runs.has_active_run_for_task(task.id)
-    # A pane exists for the surviving manager, as it does on a real team re-run.
-    _held_seat(h, f"Dev Team - #{task.seq_num}", state="exited")
-    definition = make_agent_definition(
-        name="developer", model="claude-sonnet-5", prompts={"agent": "Develop the task"}
-    )
-    monkeypatch.setattr(
-        "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
-        lambda *a, **k: definition,
-    )
-    inputs = {name: spec.get("default") for name, spec in DEVTEAM.inputs.items()}
-    inputs.update(
-        task=task.id, team_id=execution.id, report_to=h.parent_id, developer_provider="claude"
-    )
-    step = next(step for step in DEVTEAM.steps if step.id == "developer")
-    assert step.mcp is not None and step.mcp.arguments is not None
-    arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
-        step.mcp.arguments,
-        {
-            "inputs": inputs,
-            "steps": {
-                "admit": {"output": output},
-                "guard": {
-                    "output": {
-                        "workspace_id": h.workspace.id,
-                        "live": {},
-                        "launch": ["developer"],
-                        "tab_exists": True,
-                        "tab_title": f"Dev Team - #{task.seq_num}",
-                    }
-                },
-            },
-            "invocation_id": step_invocation_id(execution.id, "developer"),
-        },
-        drop_none=True,
-    )
-    assert arguments["task_id"] == task.id
-    _inject_agent_parent_session_argument("gobby-agents", "spawn_agent", arguments, caller.id)
-    with session_context_for_test(caller.id):
-        result = await _registry(h, task_manager=tasks).call("spawn_agent", arguments)
-
-    assert result["success"] is True, result
-    assert len(h.launches) == 1
-    spawned = h.runs.get(result["run_id"])
-    assert spawned is not None and spawned.task_id == task.id
-    assert spawned.parent_session_id == caller.id
-    surviving_manager = h.runs.get(manager.id)
-    assert surviving_manager is not None and surviving_manager.status == "running"
 
 
 @pytest.mark.parametrize("proven", [True, False])

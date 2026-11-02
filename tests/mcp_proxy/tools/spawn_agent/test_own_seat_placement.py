@@ -32,8 +32,8 @@ from tests.terminals.test_workspace_agent_panes import (
     _workspace,
 )
 from tests.terminals.test_workspace_agent_panes import harness as workspace_fixture
-from tests.workflows.test_spawn_scope_rules import _define_agent, _Teams
-from tests.workflows.test_spawn_scope_rules import teams as teams_fixture
+from tests.fixtures.team_spawn_scope import _define_agent, _Teams
+from tests.fixtures.team_spawn_scope import teams as teams_fixture
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 harness = workspace_fixture
@@ -62,7 +62,7 @@ async def test_placed_resume_is_admitted_only_for_the_team_managers_own_seat(
     h = harness
     workspace = _workspace(h)
     _define_agent(
-        h.db, "dev-manager", None, variables={"team_manager": True}, resumable=("developer",)
+        h.db, "dev-team-lead", None, variables={"team_manager": True}, resumable=("developer",)
     )
     placement = {"tab": {"workspace": workspace.id, "title": "seat"}}
 
@@ -124,7 +124,7 @@ async def test_epic_manager_places_its_fresh_seat_into_its_own_team_tab(
     world: TeamWorld,
     placed_harness: spawn_placement._Harness,
 ) -> None:
-    """An epic Dev Manager's fresh seat resolves into its own team tab, and no other tab."""
+    """An epic Dev Team Lead's fresh seat resolves into its own team tab, and no other tab."""
     epic = new_task(world, TITLE, epic=True)
     other = new_task(world, "Another team's epic", epic=True)
     new_task(world, LEAF_TITLE, parent=epic)
@@ -170,7 +170,7 @@ async def test_epic_manager_fresh_seat_stays_refused_outside_its_team(
     placed_harness: spawn_placement._Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Another team's tab and an operator tab stay refused for an autonomous Dev Manager."""
+    """Another team's tab and an operator tab stay refused for an autonomous Dev Team Lead."""
     _restore_real_spawn(monkeypatch)
     epic = new_task(world, TITLE, epic=True)
     leaf = new_task(world, LEAF_TITLE, parent=epic)
@@ -211,7 +211,7 @@ async def test_epic_manager_spawn_seats_its_developer_in_its_own_team_tab(
     placed_harness: spawn_placement._Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A real spawn_agent from an epic Dev Manager lands its developer in its own team tab."""
+    """A real spawn_agent from an epic Dev Team Lead lands its developer in its own team tab."""
     _restore_real_spawn(monkeypatch)
     epic = new_task(world, TITLE, epic=True)
     leaf = new_task(world, LEAF_TITLE, parent=epic)

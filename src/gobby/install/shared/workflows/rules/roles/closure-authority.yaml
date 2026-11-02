@@ -1,3 +1,4 @@
+version: "2.0.0"
 tags: [closure-authority]
 
 rules:
@@ -22,7 +23,7 @@ rules:
     event: task_close
     when: >-
       reason == 'done' and
-      'approve_report_review' not in latest_attestation('review').get('agent_capabilities', [])
+      'approve_report_review' not in latest_attestation('independent-review').get('agent_capabilities', [])
     effects:
       - type: block
         reason: Obtain an independent report review from an author with report approval authority.

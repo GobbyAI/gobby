@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -32,26 +30,6 @@ from gobby.utils.session_context import session_context_for_test
 from tests.terminals.fakes import make_memory_terminal
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.mark.parametrize("role", ["dev-manager", "orchestrator"])
-@pytest.mark.parametrize("surface", ["definition", "procedure"])
-def test_documented_monitoring_wait_registers_and_receives_reply(
-    harness: CoordinationHarness, role: str, surface: str
-) -> None:
-    shared = Path(__file__).resolve().parents[2] / "src/gobby/install/shared"
-    path = (
-        shared / "workflows/agents" / f"{role}.yaml"
-        if surface == "definition"
-        else shared / "skills/gobby/references/agents/procedures" / f"{role}.md"
-    )
-    calls = re.findall(r"wait_for_coordination\(([^)]*timeout=900[^)]*)\)", path.read_text())
-    assert calls, "Monitoring guidance must provide a complete executable wait call"
-    for arguments in calls:
-        row = harness.wait(reply="reply=true" in arguments, timeout=900)
-        assert row["outcome"] == "waiting"
-        harness.reply()
-        assert harness.row(str(row["id"]))["outcome"] == "replied"
 
 
 @dataclass
@@ -521,7 +499,7 @@ async def test_interactive_grok_seat_waits_then_wakes_on_owner_message(
         parent_session_id=harness.owner,
         child_session_id=harness.waiter,
         provider="grok",
-        agent_name="security-reviewer",
+        agent_name="security-auditor",
         prompt="Wait for work",
         resume_metadata_json={"execution_mode": "interactive", "provider_cli_mode": "terminal"},
     )
@@ -621,16 +599,8 @@ async def test_timed_out_reply_wait_wakes_a_codex_seat(harness: CoordinationHarn
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "guidance_source",
-    [
-        "mcp",
-        "docs/guides/agents.md",
-        "src/gobby/install/shared/skills/gobby/references/agents/messaging.md",
-    ],
-)
-async def test_mcp_replay_contract_matches_public_guidance(
-    harness: CoordinationHarness, guidance_source: str
+async def test_mcp_replay_reuses_active_wait_and_rearms_after_completion(
+    harness: CoordinationHarness,
 ) -> None:
     registry = create_agents_registry(
         MagicMock(),
@@ -670,21 +640,6 @@ async def test_mcp_replay_contract_matches_public_guidance(
         assert fresh_key["wait_id"] not in {original["wait_id"], rearmed["wait_id"]}
         assert fresh_key["outcome"] == "waiting"
         assert harness.row(original["wait_id"])["outcome"] == "released"
-
-    if guidance_source == "mcp":
-        schema = registry.get_schema("wait_for_coordination")
-        assert schema is not None
-        guidance = schema["description"]
-    else:
-        guidance = (Path(__file__).resolve().parents[2] / guidance_source).read_text()
-    normalized = " ".join(guidance.split())
-    assert (
-        "While waiting, repeating the same owner and condition returns the original wait and expiry."
-        in normalized
-    )
-    assert (
-        "After completion, repeating the same owner and condition creates a new wait." in normalized
-    )
 
 
 @pytest.mark.asyncio

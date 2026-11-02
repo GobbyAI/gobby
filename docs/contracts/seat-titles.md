@@ -21,7 +21,7 @@ Recorded verbatim:
 1. **Seat pane and session title.** A seat launched from an agent definition
    takes that definition's display name as both its pane title and its session
    title, exactly. The display name is the definition name with hyphens turned
-   into spaces and each word title-cased: `dev-manager` shows as `Dev Manager`.
+   into spaces and each word title-cased: `dev-team-lead` shows as `Dev Team Lead`.
    Such a title carries no task reference, slug, role suffix, counter, or
    caller-supplied text.
 2. **Session title precedence.** A manual title beats the definition title. The

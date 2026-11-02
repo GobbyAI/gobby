@@ -34,7 +34,7 @@ def test_task_state_in_projects_closed_and_escalated(
     manager = _manager(temp_db)
     closed = _task(manager, sample_project)
     escalated = _task(manager, sample_project)
-    manager.close_task(closed.id, force=True)
+    manager.close_task(closed.id)
     manager.escalate_task(escalated.id, reason="blocked")
 
     assert task_state_in(manager, closed.id, "closed") is True

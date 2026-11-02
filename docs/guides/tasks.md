@@ -128,7 +128,7 @@ validation again after changes and provide the results for independent review.
 
 Select the still-owned task with `claim_task`; a resumed or repeated claim binds
 the developer workflow to that task. The developer implements and submits its
-candidate, and its Dev Manager coordinates review, landing and closure. A matching
+candidate, and its Dev Team Lead coordinates review, landing and closure. A matching
 rejected review returns the selected task to implementation. Read-only audits remain
 available in submit; edits and Git mutations wait for implementation.
 

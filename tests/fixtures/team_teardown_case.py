@@ -96,7 +96,7 @@ def seat(
 
 
 def dispatched_seat(world: TeamWorld, team: Team, tree: str) -> str:
-    """A seat the Dev Manager dispatched into ``tree``, a child of its session, not the runbook's."""
+    """A seat the Dev Team Lead dispatched into ``tree``, a child of its session, not the runbook's."""
     db = world.case.db
     manager = team.seats[0]
     session = world.case.session("developer", parent=manager)
@@ -121,7 +121,7 @@ async def seated_team(world: TeamWorld, task: Task, runbook: Session) -> Team:
     """Admit ``runbook``'s team for ``task``, then launch all four seats in its tree."""
     binding = await world.admit(runbook, task)
     world.finish(runbook)
-    manager = seat(world, runbook, binding, "dev-manager", manages=task)
+    manager = seat(world, runbook, binding, "dev-team-lead", manages=task)
     seats = [manager, *(seat(world, runbook, binding, role) for role in ROLES)]
     return Team(task, runbook, binding, seats)
 

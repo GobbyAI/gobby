@@ -205,7 +205,7 @@ class TestIsTaskComplete:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
 
-        closed = manager.close_task(task.id, force=True)
+        closed = manager.close_task(task.id)
 
         assert not hasattr(closed, "status")
         assert is_task_complete(closed) is True
@@ -285,7 +285,7 @@ class TestAllTasksHaveDurableStopWait:
 
         assert all_tasks_have_durable_stop_wait(manager, task.id) is True
 
-        manager.close_task(blocker.id, force=True)
+        manager.close_task(blocker.id)
 
         assert all_tasks_have_durable_stop_wait(manager, task.id) is False
 

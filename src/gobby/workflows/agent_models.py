@@ -92,6 +92,14 @@ class AgentPromptBlocks(BaseModel):
         return value
 
 
+class AttestationKind(BaseModel):
+    """A definition's declared result vocabulary and author instructions."""
+
+    model_config = ConfigDict(extra="forbid")
+    allowed_results: list[StrictStr] = Field(min_length=1)
+    guidance: StrictStr = Field(min_length=1)
+
+
 class AgentTaskScope(BaseModel):
     """Optional task constraints for a definition's evidence or lifecycle authority."""
 
@@ -237,6 +245,7 @@ class AgentDefinitionBody(BaseModel):
         description="Attestation kinds this definition may author; * grants every kind.",
     )
     task_attestation_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)
+    task_attestation_kinds: dict[str, AttestationKind] = Field(default_factory=dict)
 
     task_close_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)
     task_land_scope: AgentTaskScope = Field(default_factory=AgentTaskScope)

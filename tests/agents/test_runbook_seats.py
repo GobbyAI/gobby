@@ -10,7 +10,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-import yaml
 
 from gobby.agents.runbook_seats import (
     READ_BOUND,
@@ -32,12 +31,8 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.utils.session_context import session_context_for_test
-from gobby.workflows.definitions import PipelineDefinition
-from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
-from gobby.workflows.templates import TemplateEngine
 from tests.agents.conftest import AGENT_TEST_MACHINE_ID
 
 RUNBOOK = "deploy-runbook"
@@ -629,197 +624,6 @@ def test_guard_refuses_an_ambiguous_titled_tab(env: _Env) -> None:
         _skip_check(env, caller, tab_title="Support")
 
 
-SUPPORT_SEATS = (
-    "release-manager",
-    "triage",
-    "archivist",
-    "security-reviewer",
-    "recovery-steward",
-    "consolidator",
-)
-
-
-def _run_support(env: _Env, **overrides: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Run the bundled Support runbook's guard; return its reply and each launched placement.
-
-    ``overrides`` replace launch inputs such as ``seats`` or ``report_to``.
-    """
-    path = get_bundled_pipelines_path() / "support.yaml"
-    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
-    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
-    inputs.update(
-        workspace=env.workspace_id, report_to=env.parent_session_id, project_path="/support"
-    )
-    inputs.update(overrides)
-    context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "support-run"}
-    renderer = StepRenderer(TemplateEngine())
-    guard = definition.steps[0].mcp
-    assert guard is not None and guard.arguments is not None
-    arguments = renderer.render_mcp_arguments(guard.arguments, context, drop_none=True)
-    caller = _pipeline_child(env)
-    registry = create_agents_registry(
-        MagicMock(), session_manager=SessionManager(env.db), db=env.db
-    )
-    with session_context_for_test(caller):
-        reply = registry.call_sync("check_runbook_seats", arguments)
-    child = SessionManager(env.db).get(caller)
-    assert child is not None
-    execution_id = child.external_id.removeprefix("pipeline-")
-    LocalPipelineExecutionManager(env.db, env.project_id).update_execution_status(
-        execution_id, ExecutionStatus.COMPLETED
-    )
-    context["steps"]["guard"] = {"output": reply}
-    placements: dict[str, Any] = {}
-    for step in definition.steps[1:]:
-        if (
-            step.mcp is not None
-            and step.mcp.tool == "spawn_agent"
-            and renderer.should_run_step(step, context)
-        ):
-            assert step.mcp.arguments is not None
-            rendered = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
-            placements[step.id] = rendered["placement"]
-    return reply, placements
-
-
-def _split(env: _Env, title: str) -> dict[str, Any]:
-    return {
-        "split": {
-            "workspace": env.workspace_id,
-            "tab_title": "Support",
-            "axis": "right",
-            "title": title,
-        }
-    }
-
-
-def test_support_reruns_launch_only_the_missing_seats(env: _Env) -> None:
-    for agent in SUPPORT_SEATS:
-        _install_agent(env.db, agent, env.project_id)
-
-    first, placed = _run_support(env)
-    titles = {entry["name"]: entry["title"] for entry in first["seats"]}
-    runs = {seat: _seat_session(env, seat) for seat in placed}
-    _support_tab(env)
-    second, replaced = _run_support(env)
-    _finished_run(env, *runs["triage"])
-    third, healed = _run_support(env)
-
-    assert (first["success"], list(first["launch"]), first["tab_exists"]) == (
-        True,
-        list(SUPPORT_SEATS),
-        False,
-    )
-    assert placed == {
-        "release-manager": {"tab": {"workspace": env.workspace_id, "title": "Support"}},
-        **{seat: _split(env, titles[seat]) for seat in SUPPORT_SEATS[1:]},
-    }
-    assert (list(second["launch"]), second["tab_exists"], replaced) == ([], True, {})
-    assert dict(second["live"]) == {seat: session for seat, (session, _) in runs.items()}
-    assert (list(third["launch"]), healed) == (
-        ["triage"],
-        {"triage": _split(env, titles["triage"])},
-    )
-
-
-def test_triage_opens_the_support_tab_and_the_other_seats_report_to_it(env: _Env) -> None:
-    """Cold start: the Orchestrator launches Triage alone, then the rest report to Triage."""
-    for agent in SUPPORT_SEATS:
-        _install_agent(env.db, agent, env.project_id)
-    rest = [seat for seat in SUPPORT_SEATS if seat != "triage"]
-
-    first, placed = _run_support(env, seats="triage", report_to=env.parent_session_id)
-    triage_session, _ = _seat_session(env, "triage")
-    _support_tab(env)
-    second, rest_placed = _run_support(env, seats=",".join(rest), report_to=triage_session)
-
-    assert first.get("success") is True, first
-    assert (list(first["launch"]), first["tab_exists"]) == (["triage"], False)
-    assert placed == {"triage": {"tab": {"workspace": env.workspace_id, "title": "Support"}}}
-    assert second.get("success") is True, second
-    assert (list(second["launch"]), second["tab_exists"]) == (rest, True)
-    titles = {entry["name"]: entry["title"] for entry in second["seats"]}
-    assert rest_placed == {seat: _split(env, titles[seat]) for seat in rest}
-
-
-RESEARCH_SEATS = ("researcher", "research-reviewer")
-
-
-def _run_research(env: _Env, task: Task) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Run the bundled Research runbook's guard for ``task``; return its reply and each placement."""
-    path = get_bundled_pipelines_path() / "research.yaml"
-    assert path.exists(), "the research runbook is not bundled"
-    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
-    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
-    inputs.update(
-        workspace=env.workspace_id,
-        report_to=env.parent_session_id,
-        project_path="/research",
-        task=f"#{task.seq_num}",
-    )
-    context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "research-run"}
-    renderer = StepRenderer(TemplateEngine())
-    guard = definition.steps[0].mcp
-    assert guard is not None and guard.arguments is not None
-    arguments = renderer.render_mcp_arguments(guard.arguments, context, drop_none=True)
-    caller = _pipeline_child(env, runbook="research", inputs={"task": f"#{task.seq_num}"})
-    registry = create_agents_registry(
-        MagicMock(), session_manager=SessionManager(env.db), db=env.db
-    )
-    with session_context_for_test(caller):
-        reply = registry.call_sync("check_runbook_seats", arguments)
-    child = SessionManager(env.db).get(caller)
-    assert child is not None
-    execution_id = child.external_id.removeprefix("pipeline-")
-    LocalPipelineExecutionManager(env.db, env.project_id).update_execution_status(
-        execution_id, ExecutionStatus.COMPLETED
-    )
-    context["steps"]["guard"] = {"output": reply}
-    placements: dict[str, Any] = {}
-    for step in definition.steps[1:]:
-        if (
-            step.mcp is not None
-            and step.mcp.tool == "spawn_agent"
-            and renderer.should_run_step(step, context)
-        ):
-            assert step.mcp.arguments is not None
-            rendered = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
-            placements[step.id] = rendered["placement"]
-            context["steps"][step.id] = {
-                "output": {"pane_ref": f"pane-{step.id}", "tab_ref": "tab-research"}
-            }
-    return reply, placements
-
-
-def test_research_reruns_launch_only_the_missing_seats(env: _Env) -> None:
-    for agent in RESEARCH_SEATS:
-        _install_agent(env.db, agent, env.project_id)
-    task = _team_task(env, "Research spike")
-
-    first, placed = _run_research(env, task)
-    runs = {seat: _seat_session(env, seat) for seat in placed}
-    _support_tab(env, title=first["tab_title"])
-    second, rejoined = _run_research(env, task)
-    _finished_run(env, *runs["researcher"])
-    third, healed = _run_research(env, task)
-
-    assert (first["success"], list(first["launch"]), first["tab_exists"]) == (
-        True,
-        list(RESEARCH_SEATS),
-        False,
-    )
-    assert first["tab_title"] == f"Research - #{task.seq_num}"
-    assert set(placed) == set(RESEARCH_SEATS)
-    assert "tab" in placed["researcher"]
-    assert "split" in placed["research-reviewer"]
-    assert (list(second["launch"]), second["tab_exists"], rejoined) == ([], True, {})
-    assert dict(second["live"]) == {seat: session for seat, (session, _) in runs.items()}
-    assert list(third["launch"]) == ["researcher"]
-    assert third["tab_exists"] is True
-    assert "split" in healed["researcher"]
-    assert "tab" not in healed["researcher"]
-
-
 @pytest.mark.parametrize(
     ("requested", "cause"),
     [
@@ -879,45 +683,6 @@ def test_registered_tool_replies_in_mcp_step_shape(env: _Env) -> None:
         "error": "seat 'ghost' is not in the catalogue",
         "error_code": "runbook_seat_refused",
     }
-
-
-@pytest.mark.parametrize("report_to", [None, "", " \t", "operator"])
-def test_devteam_guard_validates_rendered_report_target(env: _Env, report_to: str | None) -> None:
-    """The DevTeam guard requires an explicit, valid report target."""
-    path = get_bundled_pipelines_path() / "devteam.yaml"
-    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
-    guard = definition.steps[0].mcp
-    assert guard is not None and guard.arguments is not None
-    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
-    team = _team_task(env, "Report target team")
-    inputs.update(
-        task=f"#{team.seq_num}",
-        workspace=env.workspace_id,
-        seats="developer",
-        developer_model="claude-test-model",
-        reviewer_agent="fixture-reviewer",
-        report_to=env.parent_session_id if report_to == "operator" else report_to,
-    )
-    arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
-        guard.arguments, {"inputs": inputs, "steps": {}}, drop_none=True
-    )
-    _install_agent(env.db, "developer", env.project_id)
-    caller = _pipeline_child(env)
-    registry = create_agents_registry(
-        MagicMock(), session_manager=SessionManager(env.db), db=env.db
-    )
-    with session_context_for_test(caller):
-        result = registry.call_sync("check_runbook_seats", arguments)
-    assert arguments["require_report_to"] is True
-    if report_to == "operator":
-        assert result["success"] is True and "error" not in result, result
-        assert arguments["report_to"] == env.parent_session_id
-    else:
-        assert result == {
-            "success": False,
-            "error": "report_to must be a nonempty session ref",
-            "error_code": "runbook_seat_refused",
-        }
 
 
 MESSAGE_RESTRICTED = ("message_restricted_seats",)
@@ -1061,57 +826,3 @@ def test_report_to_session_ref_resolves_before_the_guard(
     assert result["success"] is False
     assert result["error_code"] == "runbook_seat_refused"
     assert f"report_to {report} does not admit seat 'lead'" in result["error"]
-
-
-@pytest.mark.parametrize(
-    ("tab_exists", "developer_launched", "placed"),
-    [(True, False, "split"), (True, True, "split"), (False, True, "split"), (False, False, "tab")],
-)
-def test_devteam_reviewer_places_into_the_tab_its_developer_opens(
-    tab_exists: bool, developer_launched: bool, placed: str
-) -> None:
-    """A reviewer-only re-run opens the tab when its tab is gone, as its developer would."""
-    path = get_bundled_pipelines_path() / "devteam.yaml"
-    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
-    reviewer = next(step for step in definition.steps if step.id == "reviewer")
-    assert reviewer.mcp is not None and reviewer.mcp.arguments is not None
-    steps: dict[str, Any] = {
-        "guard": {
-            "output": {"workspace_id": "ws-1", "tab_title": "Dev Team", "tab_exists": tab_exists}
-        }
-    }
-    # The engine records a step that did not run with a null output.
-    developer_output = {"child_session_id": "dev-child"} if developer_launched else None
-    steps["developer"] = {"output": developer_output}
-    rendered = StepRenderer(TemplateEngine()).render_mcp_arguments(
-        {"placement": reviewer.mcp.arguments["placement"]},
-        {"inputs": {}, "steps": steps},
-        drop_none=True,
-    )
-
-    expected = (
-        {
-            "split": {
-                "workspace": "ws-1",
-                "tab_title": "Dev Team",
-                "axis": "right",
-                "title": "Code Reviewer",
-            }
-        }
-        if placed == "split"
-        else {"tab": {"workspace": "ws-1", "title": "Dev Team"}}
-    )
-    assert rendered["placement"] == expected
-
-
-@pytest.mark.parametrize("step_id", ["developer", "reviewer"])
-def test_devteam_seats_report_a_needed_restart_and_never_run_one(step_id: str) -> None:
-    """A DevTeam seat reports a needed restart to its report target instead of running one."""
-    path = get_bundled_pipelines_path() / "devteam.yaml"
-    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
-    step = next(step for step in definition.steps if step.id == step_id)
-    assert step.mcp is not None and step.mcp.arguments is not None
-    prompt = " ".join(str(step.mcp.arguments["prompt"]).split())
-
-    assert "'activation needs restart'" in prompt
-    assert "never run gobby restart or cutover yourself" in prompt

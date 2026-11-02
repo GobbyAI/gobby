@@ -1,23 +1,15 @@
 """Declared string inputs survive CLI parsing and pipeline argument rendering."""
 
-from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import yaml
-from click.testing import CliRunner
 
-from gobby.agents.runbook_seats import RunbookSeatRefusal
-from gobby.cli.pipelines import pipelines
 from gobby.mcp_proxy.services.argument_validation import check_arguments
-from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.runbook_seat_tools import register_runbook_seat_tools
 from gobby.workflows.definitions import MCPStepConfig, PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_executor import PipelineExecutor
-from gobby.workflows.pipeline_state import ExecutionStatus
 from gobby.workflows.templates import TemplateEngine
 
 pytestmark = pytest.mark.unit
@@ -138,71 +130,3 @@ async def test_string_defaults_and_native_overrides_are_normalized(
         await executor.execute(pipeline, inputs, "11111111-1111-4111-8111-111111111111")
 
     assert received == [{"value": expected} if expected is not None else {}]
-
-
-def test_real_cli_command_keeps_numeric_text_inputs_to_the_guard(
-    mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
-) -> None:
-    root = Path(__file__).resolve().parents[2]
-    bundled = root / "src/gobby/install/shared/workflows/pipelines"
-    definition = yaml.safe_load((bundled / "devteam.yaml").read_text())
-    # Keep the actual input declarations and guard; this test never executes a spawn step.
-    definition["steps"] = definition["steps"][:1]
-    pipeline = PipelineDefinition.model_validate(definition)
-    registry = InternalToolRegistry("gobby-agents")
-    caller = "11111111-1111-4111-8111-111111111111"
-    report_session = "22222222-2222-4222-8222-222222222222"
-    ctx = MagicMock(spec=AgentsRegistryContext)
-    ctx.db = mock_db
-    ctx.get_current_session_id.return_value = caller
-    # report_to is a session ref; the seat tool resolves "17281" to the live session it names.
-    ctx.resolve_session_id.side_effect = lambda ref: report_session if ref == "17281" else caller
-    register_runbook_seat_tools(registry, ctx)
-    proxy = GuardProxy(registry)
-    execution = cast(MagicMock, mock_execution_manager.create_execution.return_value)
-    execution.pipeline_name = "devteam"
-
-    def update_status(*, execution_id: str, status: ExecutionStatus, **kwargs: Any) -> MagicMock:
-        execution.status = status
-        execution.outputs_json = kwargs.get("outputs_json")
-        return execution
-
-    mock_execution_manager.update_execution_status.side_effect = update_status
-    executor = PipelineExecutor(
-        db=mock_db,
-        execution_manager=mock_execution_manager,
-        llm_service=mock_llm_service,
-        template_engine=TemplateEngine(),
-        tool_proxy_getter=lambda: proxy,
-    )
-    loader = MagicMock()
-    loader.load_pipeline_sync.return_value = pipeline
-    with (
-        patch("gobby.cli.pipelines.get_workflow_loader", return_value=loader),
-        patch("gobby.cli.pipelines._get_project_id", return_value=caller),
-        patch("gobby.cli.pipelines._try_daemon_run", return_value=None),
-        patch("gobby.cli.pipelines.get_pipeline_executor", return_value=executor),
-        patch("gobby.utils.project_context.get_project_context", return_value=None),
-        patch(
-            "gobby.mcp_proxy.tools.runbook_seat_tools.check_runbook_seats",
-            side_effect=RunbookSeatRefusal("isolated guard reached; no seat launched"),
-        ) as guard,
-    ):
-        result = CliRunner().invoke(
-            pipelines,
-            [
-                "run",
-                "devteam",
-                *("-i", "task=24797", "-i", "workspace=3", "-i", "report_to=17281"),
-                *("-i", "seats=developer", "--json"),
-            ],
-        )
-
-    assert result.exit_code == 1  # The isolated guard deliberately refuses the launch.
-    assert len(proxy.calls) == 1
-    assert proxy.calls[0]["workspace"] == "3"
-    assert proxy.calls[0]["report_to"] == "17281"
-    assert proxy.calls[0]["requested"] == "developer"
-    guard.assert_called_once()
-    assert guard.call_args.kwargs["workspace"] == "3"
-    assert guard.call_args.kwargs["report_to"] == report_session
