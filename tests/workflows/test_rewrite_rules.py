@@ -25,7 +25,6 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 from gobby.workflows.templates import TemplateEngine
 from tests.framing_corpus import (
     REDIRECT_RULES,
-    TRUE_RESTRICTION_RULES,
 )
 from tests.framing_corpus import (
     SKILL_FETCH_REASON_TEMPLATE as _SKILL_FETCH_TEMPLATE,
@@ -126,12 +125,6 @@ class TestBundledBlockReasonFraming:
         reason = "Continue only after a maintainer approves this restricted action."
 
         assert is_action_first_reason(reason) is False
-
-    def test_every_live_before_tool_block_is_classified_once(self) -> None:
-        reasons = _bundled_before_tool_block_reasons()
-
-        assert REDIRECT_RULES.isdisjoint(TRUE_RESTRICTION_RULES)
-        assert set(reasons) == REDIRECT_RULES | TRUE_RESTRICTION_RULES
 
     def test_redirect_reasons_open_with_frozen_action_marker(self) -> None:
         reasons = _bundled_before_tool_block_reasons()

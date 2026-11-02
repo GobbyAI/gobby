@@ -70,7 +70,6 @@ workflows:
       - "name:seat-no-pipeline-cli"
       - "name:seat-no-project-create"
       - "name:non-operator-no-project-create"
-      - "name:seat-no-ask-user-question"
       - "name:block-update-task"
   variables:
     _seat_references:
