@@ -53,6 +53,8 @@ async def _decide(
         ).model_dump_json(),
         priority=10,
         enabled=True,
+        # The caller passes no agent definition, so only default-tagged rules run.
+        tags=["default"],
     )
     response = await (engine or RuleEngine(db)).evaluate(
         event, session_id=SESSION_ID, variables=variables

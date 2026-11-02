@@ -68,7 +68,8 @@ async def test_prompt_submit_memory_read_ignores_large_unrelated_defaults(
         / "src/gobby/install/shared/workflows/rules/memory-lifecycle"
         / "surface-memories-on-turn-start.yaml"
     )
-    rule = yaml.safe_load(rule_path.read_text())["rules"]["surface-memories-on-turn-start"]
+    rule_file = yaml.safe_load(rule_path.read_text())
+    rule = rule_file["rules"]["surface-memories-on-turn-start"]
     RuleDefinitionManager(temp_db).create(
         name="surface-memories-on-turn-start",
         definition_json=RuleDefinitionBody(
@@ -78,6 +79,8 @@ async def test_prompt_submit_memory_read_ignores_large_unrelated_defaults(
         ).model_dump(),
         priority=rule["priority"],
         enabled=True,
+        # Sync installs the file's tags on the row; the baseline selection needs `default`.
+        tags=rule_file["tags"],
     )
     calls: list[dict[str, Any]] = []
     origin_thread = threading.get_ident()

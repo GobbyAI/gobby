@@ -42,6 +42,8 @@ async def _evaluate(
         ).model_dump_json(),
         priority=10,
         enabled=True,
+        # No agent definition resolves with empty variables, so only default-tagged rules run.
+        tags=["default"],
     )
     return await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
 

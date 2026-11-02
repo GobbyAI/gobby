@@ -39,6 +39,7 @@ ghook-process = { max-threads = 2 }
 serial-db = { max-threads = 1 }
 gterm-pty = { max-threads = 1 }
 gdaemon-lease = { max-threads = 1 }
+gdaemon-native-ws = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = 'package(gobby-hooks)'
@@ -49,6 +50,12 @@ test-group = 'ghook-process'
 # wait; queued behind long lifecycle cases, a lease case outwaits that bound.
 filter = 'package(gobby-daemon) & (binary(lease) | binary(lifecycle))'
 test-group = 'gdaemon-lease'
+
+[[profile.default.overrides]]
+# Serial, so no sibling of this binary spawns during a test's spawn window
+# (see the leak-timeout note above). The publish test runs long enough to matter.
+filter = 'package(gobby-daemon) & binary(native_ws_transport)'
+test-group = 'gdaemon-native-ws'
 
 [[profile.default.overrides]]
 filter = 'package(gobby-core) & (test(schema::runner_tests) | binary(catalog_manifest_freshness) | binary(schema_contract))'
