@@ -11,7 +11,7 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -22,6 +22,7 @@ from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import ChannelConfig, CommsMessage
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
 from gobby.sessions.processor_stats import ProcessorStatsMixin
+from gobby.sessions.processor_types import ProcessorHost
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -409,7 +410,9 @@ async def test_multi_text_block_turn_is_mirrored_in_order(
         ],
     }
 
-    await _Host(manager)._broadcast_rendered_session_message(session_id, rendered, complete=True)
+    await ProcessorStatsMixin._broadcast_rendered_session_message(
+        cast(ProcessorHost, _Host(manager)), session_id, rendered, complete=True
+    )
 
     assert [_last_line(text) for text in payloads] == ["Before tool.", "After tool."]
     assert [_last_line(row.content) for row in _in_send_order(_outbound(store, channel))] == [
@@ -434,7 +437,9 @@ async def test_single_text_turn_is_mirrored_once(
         "content_blocks": [{"type": "text", "content": "Only final."}],
     }
 
-    await _Host(manager)._broadcast_rendered_session_message(session_id, rendered, complete=True)
+    await ProcessorStatsMixin._broadcast_rendered_session_message(
+        cast(ProcessorHost, _Host(manager)), session_id, rendered, complete=True
+    )
 
     assert [_last_line(text) for text in payloads] == ["Only final."]
     assert [_last_line(row.content) for row in _outbound(store, channel)] == ["Only final."]

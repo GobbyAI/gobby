@@ -341,9 +341,7 @@ async def test_inbound_access_policy_rejection_logs_at_warning(
 
     assert handled == [message]
     records = [
-        record
-        for record in caplog.records
-        if record.message.startswith("Rejected inbound message")
+        record for record in caplog.records if record.message.startswith("Rejected inbound message")
     ]
     assert len(records) == 1
     assert records[0].levelno == logging.WARNING
