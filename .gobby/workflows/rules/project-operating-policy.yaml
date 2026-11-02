@@ -53,7 +53,10 @@ rules:
                 "developer_reasoning_effort": "xhigh",
                 "reviewer_provider": "codex",
                 "reviewer_model": "gpt-6.1-sol",
-                "reviewer_reasoning_effort": "medium"
+                "reviewer_reasoning_effort": "medium",
+                "lead_provider": "claude",
+                "lead_model": "claude-haiku-5-5",
+                "lead_reasoning_effort": "xhigh"
               },
               "support": {
                 "release_manager_provider": "codex",

@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import sys
 import tomllib
 from collections.abc import Iterator
 from importlib.resources import files
@@ -14,7 +15,7 @@ from zipfile import ZipFile
 import psycopg
 import pytest
 import yaml
-from setuptools import Distribution
+from setuptools.build_meta import build_wheel
 
 from gobby.agents.trust import (
     active_codex_launch_models,
@@ -58,6 +59,25 @@ def test_packaged_models_are_parsed_once_per_process(monkeypatch: pytest.MonkeyP
     assert parse.call_count == cold_reads
 
 
+def test_packaged_launch_defaults_match_project_policy() -> None:
+    root = Path(__file__).resolve().parents[2]
+    document = yaml.safe_load(
+        (root / ".gobby/workflows/rules/project-operating-policy.yaml").read_text()
+    )
+    policies = [
+        effect["value"]
+        for rule in document["rules"].values()
+        for effect in rule["effects"]
+        if effect.get("type") == "set_variable" and effect.get("variable") == "project_policy"
+    ]
+    assert len(policies) == 1
+    path = _packaged_defaults_path()
+    assert path.is_file(), "Launch defaults must ship independently of the source checkout"
+    assert json.loads(path.read_text()) == {
+        key: policies[0][key] for key in ("launch_defaults", "role_launch_defaults")
+    }
+
+
 def test_launch_defaults_are_in_built_wheel(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -71,17 +91,20 @@ def test_launch_defaults_are_in_built_wheel(
     (package / "__init__.py").write_text("")
     shutil.copyfile(source, package / "data" / source.name)
     monkeypatch.chdir(tmp_path)
-    distribution = Distribution(
-        {
-            "name": "gobby-data-check",
-            "version": "0.0.0",
-            "script_name": "setup.py",
-            "packages": ["gobby"],
-            "package_dir": {"": "src"},
-            "package_data": config["tool"]["setuptools"]["package-data"],
-        }
+    package_data = config["tool"]["setuptools"]["package-data"]
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nrequires = ["setuptools"]\nbuild-backend = "setuptools.build_meta"\n'
+        '[project]\nname = "gobby-data-check"\nversion = "0.0.0"\n'
+        '[tool.setuptools]\npackages = ["gobby", "gobby.data"]\n'
+        '[tool.setuptools.package-dir]\n"" = "src"\n'
+        "[tool.setuptools.package-data]\n"
+        + "\n".join(
+            f"{json.dumps(key)} = {json.dumps(value)}" for key, value in package_data.items()
+        )
+        + "\n"
     )
-    distribution.run_command("bdist_wheel")
+    monkeypatch.setattr(sys, "argv", sys.argv.copy())
+    build_wheel(str(tmp_path / "dist"))
     wheels = list((tmp_path / "dist").glob("*.whl"))
     assert len(wheels) == 1
     with ZipFile(wheels[0]) as wheel:

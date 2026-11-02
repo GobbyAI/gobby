@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,8 +24,22 @@ from gobby.workflows.delivery_disposition import (
     DispositionAmbiguousError,
     prepare_rule_definition_for_persist,
 )
+from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 
 logger = logging.getLogger(__name__)
+
+
+def _reserved_writer_error(definition: dict[str, Any]) -> str | None:
+    """Reject authored effects that write runtime-owned variables after normalization."""
+    body = RuleDefinitionBody.model_validate(definition)
+    for effect in body.effects or []:
+        if (
+            effect.type == "set_variable"
+            and effect.variable is not None
+            and is_reserved_workflow_variable(effect.variable)
+        ):
+            return f"Rule effects cannot write reserved workflow variable {effect.variable!r}"
+    return None
 
 
 def _rule_body(row: RuleDefinitionRow) -> dict[str, Any]:
@@ -38,6 +54,22 @@ def _rule_body(row: RuleDefinitionRow) -> dict[str, Any]:
     if "event" not in body:
         raise TypeError("rule definition missing event")
     return body
+
+
+def _reserved_rule_mutation_error(row: RuleDefinitionRow) -> str | None:
+    """MCP authors cannot remove or alter an existing runtime-owned writer either."""
+    try:
+        return _reserved_writer_error(_rule_body(row))
+    except (json.JSONDecodeError, TypeError, ValidationError) as exc:
+        return f"Invalid stored rule definition: {exc}"
+
+
+@contextmanager
+def _locked_rule(manager: RuleDefinitionManager, definition_id: str) -> Iterator[RuleDefinitionRow]:
+    """Refresh admission under the row lock retained by nested manager mutations."""
+    with manager.db.transaction() as conn:
+        conn.execute("SELECT id FROM rule_definitions WHERE id = %s FOR UPDATE", (definition_id,))
+        yield manager.get(definition_id)
 
 
 def _export_row(row: RuleDefinitionRow) -> Any:
@@ -217,7 +249,10 @@ def toggle_rule(
     if row is None:
         return {"success": False, "error": f"Rule '{name}' not found"}
 
-    updated = def_manager.update(row.id, enabled=enabled)
+    with _locked_rule(def_manager, row.id) as row:
+        if reserved_error := _reserved_rule_mutation_error(row):
+            return {"success": False, "error": reserved_error}
+        updated = def_manager.update(row.id, enabled=enabled)
     logger.info("Toggled rule '%s' enabled=%s", name, enabled)
 
     return _rule_or_parse_error(updated)
@@ -278,6 +313,8 @@ def update_rule(
         try:
             local_def, embedded_metadata = split_rule_definition_data(definition)
             local_def = prepare_rule_definition_for_persist(name, local_def)
+            if reserved_error := _reserved_writer_error(local_def):
+                return {"success": False, "error": reserved_error}
         except ValidationError as e:
             return {"success": False, "error": f"Invalid rule definition: {e}"}
         except DispositionAmbiguousError as e:
@@ -291,8 +328,11 @@ def update_rule(
     if not fields:
         return {"success": False, "error": "No fields to update"}
 
-    preserve_bundled_tag(row.tags, fields)
-    updated = def_manager.update(row.id, **fields)
+    with _locked_rule(def_manager, row.id) as row:
+        if reserved_error := _reserved_rule_mutation_error(row):
+            return {"success": False, "error": reserved_error}
+        preserve_bundled_tag(row.tags, fields)
+        updated = def_manager.update(row.id, **fields)
     logger.info("Updated rule '%s' (fields=%s)", name, list(fields))
 
     try:
@@ -338,6 +378,8 @@ def create_rule(
     try:
         RuleDefinitionBody.model_validate(definition)
         definition = prepare_rule_definition_for_persist(name, definition)
+        if reserved_error := _reserved_writer_error(definition):
+            return {"success": False, "error": reserved_error}
     except ValidationError as e:
         return {"success": False, "error": f"Validation failed: {e}"}
     except DispositionAmbiguousError as e:
@@ -417,16 +459,18 @@ def delete_rule(
     if row is None:
         return {"success": False, "error": f"Rule '{name}' not found"}
 
-    if "gobby" in (row.tags or []) and not force:
-        return {
-            "success": False,
-            "error": (
-                f"Rule '{name}' is bundled and will be re-created on restart. "
-                "Use force=True to delete anyway."
-            ),
-        }
-
-    deleted = def_manager.delete(row.id)
+    with _locked_rule(def_manager, row.id) as row:
+        if reserved_error := _reserved_rule_mutation_error(row):
+            return {"success": False, "error": reserved_error}
+        if "gobby" in (row.tags or []) and not force:
+            return {
+                "success": False,
+                "error": (
+                    f"Rule '{name}' is bundled and will be re-created on restart. "
+                    "Use force=True to delete anyway."
+                ),
+            }
+        deleted = def_manager.delete(row.id)
     if not deleted:
         return {"success": False, "error": f"Failed to delete rule '{name}'"}
 
