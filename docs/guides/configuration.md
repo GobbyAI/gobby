@@ -518,6 +518,169 @@ Feature configs select ordered `provider/model` candidates. Provider auth and
 model discovery come from the provider CLIs, local compatible backends, shipped
 catalog metadata, and secrets managed by the relevant provider integration.
 
+### Decision classifier (`ai.decisions`)
+
+`ai.decisions` configures one decision endpoint, the `decide` capability.
+The contract is a System One-style decision: a caller sends a state and typed
+questions, and the backend returns probabilities. Each wire adapts that
+contract to its server. Gobby calls the one configured endpoint. It never
+starts, loads, or stops a decision server.
+
+```yaml
+ai:
+  decisions:
+    api_base: http://127.0.0.1:8100
+    wire_api: systemone
+    model: jev-latest
+    identity_contract: model_card
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `api_base` | unset | Endpoint base URL. Unset leaves `decide` unavailable. |
+| `wire_api` | `systemone` | `systemone`, `openrouter-decisions`, or `workers-ai`. |
+| `model` | unset | Decision model. Required when `api_base` is set. |
+| `api_key` | unset | Bearer token, or a `$secret:` reference. |
+| `identity_contract` | unset | `model_card` or `response_version`. `model_card` requires `wire_api: systemone`. |
+| `timeout_seconds` | `2.0` | Request timeout. |
+| `max_input_tokens` | `8192` | Application budget for state plus questions. Must stay below the backend maximum. |
+| `max_request_bytes` | unset | Optional cap on the compact UTF-8 JSON body, assets included. When set, it must be at least `4 * max_input_tokens + 3`. |
+| `backend_max_state_tokens` | per wire | Whole-request token maximum: `65536` on `systemone` and `workers-ai`, `64000` on `openrouter-decisions`. |
+| `backend_max_question_tokens` | `32000` on `openrouter-decisions`, else unset | State plus one question maximum. |
+| `long_context` | `false` | Opt in to 262144-token limits and the long-context header. Not valid with `workers-ai`. |
+| `failure_cooldown_seconds` | `60` | Seconds `decide` stays unavailable after a failed request. |
+
+Each consumer has its own `mode`: `off` (the default), `shadow`, or `enforce`.
+`enforce` also requires `evaluated_model` and `evaluated_backend`, which name
+the recorded evaluation that justifies it. The consumers are described in
+[LLM feature routing](llm-features.md#decision-consumers).
+
+Request limits apply before any dial. A request over the token or byte limit
+returns `oversize` and does not open the cooldown. A backend HTTP 413 returns
+`http_status` and does open the cooldown. Every typed reason is listed in
+[`gobby-decisions`](mcp-tools.md#internal-registries).
+
+#### `systemone` wire
+
+The default wire, `POST {api_base}/v1/systemone`. Two local servers use it.
+
+Kev, run by you on a local port:
+
+```yaml
+ai:
+  decisions:
+    api_base: http://127.0.0.1:8100
+    wire_api: systemone
+    model: jev-latest
+    identity_contract: model_card
+```
+
+Local Clef, served by `clef_mlx.py serve`. It binds `127.0.0.1:8000` by
+default. Keep it on `127.0.0.1`: the server has no authentication and fetches
+any remote image URL a request names.
+
+```yaml
+ai:
+  decisions:
+    api_base: http://127.0.0.1:8000
+    wire_api: systemone
+    model: clef-flash
+    backend_max_state_tokens: 16384
+    identity_contract: response_version
+```
+
+The server's default limit is 16,384 tokens for the whole prompt, and by
+default it truncates state silently. `backend_max_state_tokens: 16384` makes
+the truncation guard catch that. The server echoes the requested `model`.
+
+LM Studio, version 0.4.26 Build 4 or newer, serves `/v1/systemone` at the
+server root. `api_base` takes the server root, because Gobby appends
+`/v1/systemone`:
+
+```yaml
+ai:
+  decisions:
+    api_base: http://127.0.0.1:1234
+    wire_api: systemone
+    model: <identifier of the decision model you loaded>
+    api_key: $secret:LM_STUDIO_API_KEY
+    backend_max_state_tokens: <from your live capture>
+```
+
+- Load the decision model yourself, for example with `lms load <model>`, and set
+  `model` to its loaded identifier. Gobby sends no load request.
+- Set `backend_max_state_tokens` from your live capture. The wire default is
+  unverified for LM Studio.
+- Set `api_key` only when LM Studio's authentication is on.
+- Whether a `/v1/systemone` request loads a named model just in time is
+  unverified. Keep the named model loaded, or turn just-in-time loading off.
+
+#### `openrouter-decisions` wire
+
+```yaml
+ai:
+  decisions:
+    api_base: https://openrouter.ai/api
+    wire_api: openrouter-decisions
+    model: typesafe/jev-1.14-20261014
+    api_key: $secret:OPENROUTER_API_KEY
+```
+
+Gobby sends `provider: {"zdr": true, "data_collection": "deny"}` on every
+request. No config field controls it. The default limits are 64,000 tokens for
+the whole request and 32,000 for state plus one question. `long_context: true`
+raises them to 262,144 and sends the long-context header. OpenRouter's
+acceptance of that header is **unverified**.
+
+#### `workers-ai` wire (hosted Clef)
+
+```yaml
+ai:
+  decisions:
+    api_base: https://api.cloudflare.com/client/v4/accounts/<account_id>
+    wire_api: workers-ai
+    model: clef
+    api_key: $secret:CLOUDFLARE_API_TOKEN
+```
+
+`model` is `clef` or `clef-flash`. The token needs Workers AI Read and Edit.
+Cloudflare documents a 65,536-token context window and truncates long text
+state to fit. Where it truncates, and how `usage.input_tokens` is scoped, are
+unverified until the live capture.
+
+#### Identity contracts
+
+- `model_card` reads the server's `/v1/models` card. Only `systemone` servers
+  expose one, and the card must carry the identity fields. Kev's card key names
+  are unverified until the live capture.
+- `response_version` takes identity from the response's `model`. A server that
+  echoes the name you requested fails the alias check.
+
+Neither Clef form nor LM Studio reaches `enforce` yet. Local Clef cards carry no identity, and the server echoes the requested
+name. Hosted Clef has no documented versioning, and LM Studio's cards carry no
+identity fields and name loaded instances, not versions. Both stay in `shadow`
+and evaluation until a live capture passes the identity check.
+
+#### Local Clef latency
+
+These figures are community-reported on an M5 Max with text input. Gobby did
+not measure them. Latency is at 1k and at 16k tokens:
+
+| Conversion | Latency at 1k / 16k tokens |
+| --- | --- |
+| `clef-flash-4bit` (9B) | 0.31 s / 7.0 s |
+| `clef-flash-8bit` (9B) | 0.34 s / 7.7 s |
+| `clef-4bit` (27B) | 1.4 s / 26.0 s |
+| `clef-8bit` (27B) | 1.5 s / 32.0 s |
+
+The promotion gate's p95 bar is 1 s, and the default timeout is 2 s. The 27B
+conversions exceed 1 s even at 1k tokens. Flash meets the bar only on short
+states. `clef_mlx.py` also runs one request at a time, so concurrent consumers
+queue.
+
+`GET /api/llm/status` reports whether `decide` is available. The wire record
+with the dated sources is `docs/evidence/decisions/wire-contracts.md`.
+
 ### Storage, Embeddings, And Memory
 
 ```yaml
