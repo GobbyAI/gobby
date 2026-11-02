@@ -6,6 +6,7 @@ import json
 from collections.abc import Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -88,11 +89,15 @@ def _messages_to_events(
             and usage.cache_read_tokens == 0
         ):
             continue
-        if message.message_id:
-            # The first occurrence wins, as the ledger's (session_id, message_id) conflict does.
-            if message.message_id in seen_keys:
-                continue
-            seen_keys.add(message.message_id)
+        if message.message_id is None:
+            raise click.ClickException(
+                f"Session {session_id} has token usage without a message id; "
+                "the audit cannot key it"
+            )
+        # The first occurrence wins, as the ledger's (session_id, message_id) conflict does.
+        if message.message_id in seen_keys:
+            continue
+        seen_keys.add(message.message_id)
         events.append(
             TokenEvent(
                 session_id=session_id,
@@ -159,7 +164,7 @@ _COMPARED_COLUMNS = (
 def _read_stored_rows(db: HubDatabase, session_id: str) -> list[Mapping[str, Any]]:
     return db.fetchall(
         """
-        SELECT id, message_id, api_calls, input_tokens, output_tokens,
+        SELECT id, message_id, api_calls, event_at, input_tokens, output_tokens,
                cache_creation_tokens, cache_read_tokens
         FROM token_events
         WHERE session_id = %s
@@ -172,54 +177,69 @@ def _differs(row: Mapping[str, Any], event: TokenEvent) -> bool:
     return any(row[column] != getattr(event, column) for column in _COMPARED_COLUMNS)
 
 
+def _expired(value: datetime | str | None, cutoff: datetime) -> bool:
+    return canonicalize_event_timestamp(value) < cutoff
+
+
 def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAudit:
-    # Stored rows are read before the transcript. A line the processor ingests in
-    # between is then absent from `stored`, so --fix never deletes it.
-    stored = _read_stored_rows(db, session_id)
-    session_manager = SessionManager(db)
-    session = session_manager.get(session_id)
-    if session is None:
-        raise click.ClickException(f"Session {session_id} not found")
-    derived, last_model = _messages_to_events(
-        session_id, session, _load_session_messages(session_id, session)
-    )
+    # With --fix, the shared retention lock spans the read and the writes, so a prune cannot
+    # archive a row between them. Stored rows are read before the transcript: a line the
+    # processor ingests in between is then absent from `stored`, so --fix never deletes it.
+    with token_event_retention_transaction(db) if fix else nullcontext():
+        stored = _read_stored_rows(db, session_id)
+        session_manager = SessionManager(db)
+        session = session_manager.get(session_id)
+        if session is None:
+            raise click.ClickException(f"Session {session_id} not found")
+        derived, last_model = _messages_to_events(
+            session_id, session, _load_session_messages(session_id, session)
+        )
 
-    keyed = [row for row in stored if row["message_id"] is not None]
-    derived_by_key = {event.message_id: event for event in derived if event.message_id is not None}
-    stored_keys = {row["message_id"] for row in keyed}
-    # Retention archives older rows into token_event_retention_totals, so only
-    # in-window transcript events can be missing from the stored rows.
-    cutoff = token_event_retention_cutoff()
-    in_window = [e for e in derived if canonicalize_event_timestamp(e.event_at) >= cutoff]
-    # A row with no message_id matches no transcript key, so it is drift that --fix replaces.
-    absent = [
-        row
-        for row in stored
-        if row["message_id"] is None or row["message_id"] not in derived_by_key
-    ]
-    differing = [
-        row
-        for row in keyed
-        if row["message_id"] in derived_by_key and _differs(row, derived_by_key[row["message_id"]])
-    ]
-    missing = [event for event in in_window if event.message_id not in stored_keys]
-    # Lifetime totals include the retention archive, which the stored rows do not.
-    usage_mismatch = TokenEventStore(db).get_session_totals(session_id) != _session_totals(session)
-    stale_rows = len(absent) + len(differing)
+        # Retention archives events older than the cutoff into token_event_retention_totals
+        # and deletes their rows. An expired event that is not stored may already be archived,
+        # so it is never re-inserted. An expired stored row is live usage: it is repaired in
+        # place when its key matches, and otherwise kept, since no replacement is known to be
+        # unarchived.
+        cutoff = token_event_retention_cutoff()
+        derived_by_key = {
+            event.message_id: event for event in derived if event.message_id is not None
+        }
+        stored_keys = {row["message_id"] for row in stored if row["message_id"] is not None}
+        # A row with no message_id matches no transcript key, so it is drift that --fix replaces.
+        absent = [
+            row
+            for row in stored
+            if row["message_id"] not in derived_by_key and not _expired(row["event_at"], cutoff)
+        ]
+        differing = [
+            row
+            for row in stored
+            if row["message_id"] in derived_by_key
+            and _differs(row, derived_by_key[row["message_id"]])
+        ]
+        missing = [
+            event
+            for event in derived
+            if event.message_id not in stored_keys and not _expired(event.event_at, cutoff)
+        ]
+        repairable = [
+            event
+            for event in derived
+            if event.message_id in stored_keys or not _expired(event.event_at, cutoff)
+        ]
+        # Lifetime totals include the retention archive, which the stored rows do not.
+        usage_mismatch = TokenEventStore(db).get_session_totals(session_id) != _session_totals(
+            session
+        )
+        stale_rows = len(absent) + len(differing)
 
-    repaired = False
-    if fix and (stale_rows or missing or usage_mismatch):
-        store = TokenEventStore(db)
-        with token_event_retention_transaction(db):
+        repaired = False
+        if fix and (stale_rows or missing or usage_mismatch):
+            store = TokenEventStore(db)
             doomed = [row["id"] for row in absent]
             if doomed:
                 db.execute("DELETE FROM token_events WHERE id = ANY(%s)", (doomed,))
-            store.repair_keyed_events(in_window)
-            # An unkeyed transcript event has no key to upsert on, so re-insert it. The
-            # delete above removed the unkeyed rows, so this does not duplicate them.
-            for event in in_window:
-                if event.message_id is None:
-                    store.record(event)
+            store.repair_keyed_events(repairable)
             repaired_totals = store.get_session_totals(session_id)
             session_manager.update_usage(
                 session_id=session_id,
@@ -232,7 +252,7 @@ def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAud
                 ),
                 model=last_model,
             )
-        repaired = True
+            repaired = True
 
     return SessionAudit(
         session_id=session_id,

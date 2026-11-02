@@ -1,12 +1,14 @@
 """Per-call identity and api_calls for the usage ledger (plan 2.1, #23598)."""
 
 import json
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+import click
 import pytest
 
 from gobby.cli import tokens as tokens_cli
@@ -15,6 +17,7 @@ from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
+from gobby.sessions.transcripts.droid import DroidTranscriptParser
 from gobby.sessions.transcripts.grok import GrokTranscriptParser
 from gobby.sessions.usage_calls import api_call_count
 from gobby.storage.hub.protocol import HubDatabase
@@ -190,6 +193,7 @@ def _stored(
     output_tokens: int,
     cache_read: int = 0,
     api_calls: int | None = None,
+    event_at: datetime = datetime(2026, 10, 20, 10, tzinfo=UTC),
 ) -> TokenEvent:
     return TokenEvent(
         session_id=session_id,
@@ -202,7 +206,7 @@ def _stored(
         output_tokens=output_tokens,
         cache_creation_tokens=0,
         cache_read_tokens=cache_read,
-        event_at=datetime(2026, 10, 20, 10, tzinfo=UTC),
+        event_at=event_at,
         api_calls=api_calls,
     )
 
@@ -540,6 +544,228 @@ def test_fix_never_deletes_rows_ingested_during_audit(
 
     second = tokens_cli._audit_session(db, session.id, fix=False)
     assert (second.stale_rows, second.missing_rows, second.usage_mismatch) == (0, 1, False)
+
+
+EXPIRED = datetime(2026, 1, 1, tzinfo=UTC)
+EXPIRED_TS = "2026-01-01T00:00:00Z"
+AUDIT_CUTOFF = datetime(2026, 6, 1, tzinfo=UTC)
+
+
+@pytest.fixture
+def retention_cutoff(monkeypatch: pytest.MonkeyPatch) -> Callable[[datetime], None]:
+    """Move the retention cutoff for the store and the audit. It starts before EXPIRED."""
+
+    def set_cutoff(cutoff: datetime) -> None:
+        monkeypatch.setattr(
+            "gobby.storage.token_events.token_event_retention_cutoff", lambda: cutoff
+        )
+        monkeypatch.setattr(tokens_cli, "token_event_retention_cutoff", lambda: cutoff)
+
+    set_cutoff(datetime(2025, 1, 1, tzinfo=UTC))
+    return set_cutoff
+
+
+def _claude_line_at(message_id: str, input_tokens: int, output_tokens: int, timestamp: str) -> str:
+    record = json.loads(_claude_record(message_id, input_tokens, output_tokens))
+    record["timestamp"] = timestamp
+    return json.dumps(record)
+
+
+@pytest.mark.integration
+def test_fix_keeps_expired_unswept_rows(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    retention_cutoff: Callable[[datetime], None],
+    tmp_path: Path,
+) -> None:
+    # Retention has not swept this row, and the transcript no longer produces its key. The
+    # expired replacement is not stored, so inserting it could double usage the archive holds.
+    store = TokenEventStore(db)
+    transcript = tmp_path / "claude.jsonl"
+    transcript.write_text(
+        _jsonl([_claude_line_at("msg-replaced", 100, 20, EXPIRED_TS)]), encoding="utf-8"
+    )
+    session = _register(
+        session_manager, external_id="expired-unswept", source="claude", transcript_path=transcript
+    )
+    store.record(
+        _stored(
+            session.id,
+            source="claude",
+            message_id="legacy-key",
+            input_tokens=100,
+            output_tokens=20,
+            event_at=EXPIRED,
+        )
+    )
+    retention_cutoff(AUDIT_CUTOFF)
+
+    assert tokens_cli._audit_session(db, session.id, fix=True).repaired
+    assert [r["message_id"] for r in store.list_session_events(session.id)] == ["legacy-key"]
+    totals = store.get_session_totals(session.id)
+    assert (totals["input_tokens"], totals["output_tokens"]) == (100, 20)
+    settled = tokens_cli._audit_session(db, session.id, fix=False)
+    assert (settled.stale_rows, settled.missing_rows, settled.usage_mismatch) == (0, 0, False)
+
+
+@pytest.mark.integration
+def test_fix_repairs_expired_same_key_row_in_place(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    retention_cutoff: Callable[[datetime], None],
+    tmp_path: Path,
+) -> None:
+    # An update in place adds no usage, so an expired row with a matching key is corrected.
+    store = TokenEventStore(db)
+    transcript = tmp_path / "claude.jsonl"
+    transcript.write_text(_jsonl([_claude_line_at("msg-old", 7, 5, EXPIRED_TS)]), encoding="utf-8")
+    session = _register(
+        session_manager, external_id="expired-same-key", source="claude", transcript_path=transcript
+    )
+    store.record(
+        _stored(
+            session.id,
+            source="claude",
+            message_id="msg-old",
+            input_tokens=7,
+            output_tokens=5,
+            event_at=EXPIRED,
+        )
+    )
+    row_id = _row_id(store, session.id, "msg-old")
+    retention_cutoff(AUDIT_CUTOFF)
+
+    assert tokens_cli._audit_session(db, session.id, fix=False).stale_rows == 1
+    assert tokens_cli._audit_session(db, session.id, fix=True).repaired
+    [row] = store.list_session_events(session.id)
+    assert (row["id"], row["api_calls"] is not None) == (row_id, True)
+    settled = tokens_cli._audit_session(db, session.id, fix=False)
+    assert (settled.stale_rows, settled.missing_rows, settled.usage_mismatch) == (0, 0, False)
+
+
+@pytest.mark.integration
+def test_fix_replaces_unkeyed_row_and_converges(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    retention_cutoff: Callable[[datetime], None],
+    tmp_path: Path,
+) -> None:
+    # A row without a message_id is drift. Its keyed transcript event replaces it, and a
+    # repeated fix neither duplicates the usage nor keeps reporting it.
+    store = TokenEventStore(db)
+    transcript = tmp_path / "claude.jsonl"
+    transcript.write_text(_jsonl([_claude_record("msg-new", 7, 5)]), encoding="utf-8")
+    session = _register(
+        session_manager,
+        external_id="unkeyed-converges",
+        source="claude",
+        transcript_path=transcript,
+    )
+    store.record(
+        _stored(session.id, source="claude", message_id=None, input_tokens=7, output_tokens=5)
+    )
+    retention_cutoff(AUDIT_CUTOFF)
+
+    before = tokens_cli._audit_session(db, session.id, fix=False)
+    assert (before.stale_rows, before.missing_rows) == (1, 1)
+    assert tokens_cli._audit_session(db, session.id, fix=True).repaired
+    assert [r["message_id"] for r in store.list_session_events(session.id)] == ["msg-new"]
+    assert store.get_session_totals(session.id)["input_tokens"] == 7
+    assert not tokens_cli._audit_session(db, session.id, fix=True).repaired
+
+
+@pytest.mark.integration
+def test_repeated_fix_counts_a_row_ingested_during_audit_once(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    retention_cutoff: Callable[[datetime], None],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store = TokenEventStore(db)
+    transcript = tmp_path / "claude.jsonl"
+    transcript.write_text(
+        _jsonl([_claude_record("msg-a", 10, 5), _claude_record("msg-live", 7, 3)]),
+        encoding="utf-8",
+    )
+    session = _register(
+        session_manager,
+        external_id="ingested-during-fix",
+        source="claude",
+        transcript_path=transcript,
+    )
+    store.record(
+        _stored(
+            session.id,
+            source="claude",
+            message_id="msg-a",
+            input_tokens=10,
+            output_tokens=5,
+            api_calls=1,
+        )
+    )
+    original_load = tokens_cli._load_session_messages
+    injected: list[bool] = []
+
+    def load_after_live_ingest(session_id: str, session_row: Any) -> list[Any]:
+        # The live processor records msg-live after the stored-row read, before the transcript read.
+        if not injected:
+            injected.append(True)
+            store.record(
+                _stored(
+                    session.id,
+                    source="claude",
+                    message_id="msg-live",
+                    input_tokens=7,
+                    output_tokens=3,
+                    api_calls=1,
+                )
+            )
+        return original_load(session_id, session_row)
+
+    monkeypatch.setattr(tokens_cli, "_load_session_messages", load_after_live_ingest)
+    retention_cutoff(AUDIT_CUTOFF)
+
+    first = tokens_cli._audit_session(db, session.id, fix=True)
+    second = tokens_cli._audit_session(db, session.id, fix=True)
+
+    assert (first.stale_rows, first.missing_rows) == (0, 1)
+    assert (second.stale_rows, second.missing_rows, second.usage_mismatch) == (0, 0, False)
+    assert sorted(r["message_id"] for r in store.list_session_events(session.id)) == [
+        "msg-a",
+        "msg-live",
+    ]
+    totals = store.get_session_totals(session.id)
+    assert (totals["input_tokens"], totals["output_tokens"]) == (17, 8)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("raw_id", "expected"),
+    [(7, "droid-sess:droid:3"), ("rec-1", "rec-1")],
+)
+def test_droid_record_key_falls_back_to_line_index(raw_id: object, expected: str) -> None:
+    # A record whose id is not a string keys by its line index, so its usage is never unkeyed.
+    line = json.dumps(
+        {
+            "type": "message",
+            "id": raw_id,
+            "timestamp": TS,
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "Hi"}]},
+        }
+    )
+    parser = DroidTranscriptParser(session_id="droid-sess")
+    messages = [
+        m for m in parser.parse_lines([line + "\n"], start_index=3) if isinstance(m, ParsedMessage)
+    ]
+    assert {m.message_id for m in messages} == {expected}
+
+
+@pytest.mark.unit
+def test_audit_rejects_usage_without_a_message_id() -> None:
+    session = SimpleNamespace(project_id=PROJECT_ID, source="droid", context_window=None)
+    with pytest.raises(click.ClickException, match="without a message id"):
+        tokens_cli._messages_to_events("sess-1", session, [_parsed("text", {}, message_id=None)])
 
 
 def _row_id(store: TokenEventStore, session_id: str, message_id: str) -> Any:

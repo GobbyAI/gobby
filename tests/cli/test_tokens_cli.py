@@ -84,15 +84,16 @@ def test_audit_fix_preserves_archived_usage(runner: CliRunner) -> None:
     store.delete_session_events.assert_not_called()
 
 
-def test_audit_fix_reinserts_unkeyed_transcript_usage(runner: CliRunner) -> None:
-    # A stored row without a message_id is drift and is deleted. The transcript event has
-    # no key to upsert on, so --fix re-inserts it, and its usage survives the delete.
+def test_audit_fix_replaces_unkeyed_row_with_keyed_event(runner: CliRunner) -> None:
+    # A stored row without a message_id is drift and is deleted. The keyed transcript event
+    # takes its place, so the usage survives the delete.
     database = MagicMock(spec=HubDatabase)
     database.fetchall.return_value = [
         {
             "id": 1,
             "message_id": None,
             "api_calls": None,
+            "event_at": datetime.now(UTC),
             "input_tokens": 7,
             "output_tokens": 5,
             "cache_creation_tokens": 0,
@@ -114,7 +115,7 @@ def test_audit_fix_reinserts_unkeyed_transcript_usage(runner: CliRunner) -> None
     event = TokenEvent(
         session_id="sess-unkeyed",
         project_id=None,
-        message_id=None,
+        message_id="m-1",
         source="claude",
         origin="transcript",
         model=None,
@@ -139,7 +140,8 @@ def test_audit_fix_reinserts_unkeyed_transcript_usage(runner: CliRunner) -> None
     assert result.exit_code == 0, result.output
     assert "audited=1 stale=1 missing=1 repaired=1" in result.output
     database.execute.assert_any_call("DELETE FROM token_events WHERE id = ANY(%s)", ([1],))
-    store.record.assert_called_once_with(event)
+    store.record.assert_not_called()
+    store.repair_keyed_events.assert_called_once_with([event])
 
 
 @pytest.mark.parametrize(
