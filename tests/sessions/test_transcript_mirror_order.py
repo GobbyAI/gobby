@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.communications.manager import CommunicationsManager
-from gobby.communications.models import ChannelConfig
+from gobby.communications.models import ChannelConfig, CommsMessage
 from gobby.config.communications import CommunicationsConfig
 from gobby.sessions.processor_stats import ProcessorStatsMixin
 from gobby.sessions.processor_types import ProcessorHost
@@ -32,7 +32,12 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> Callable[[float], None]:
         nonlocal now
         now += timedelta(seconds=seconds)
 
-    for module in ("storage.communications", "communications.outbound", "communications.manager"):
+    for module in (
+        "storage.communications",
+        "communications.outbound",
+        "communications.manager",
+        "communications.transcript_order",
+    ):
         monkeypatch.setattr(f"gobby.{module}.utc_now", read_clock)
     return advance
 
@@ -151,6 +156,35 @@ async def test_an_exhausted_prefix_releases_its_suffix(
     # The third attempt exhausts the prefix, so the same pass delivers the suffix.
     assert sent(send) == ["Working.", "Working.", "Working.", "Final."]
     assert statuses(manager, session_id) == {"turn#0": "failed", "turn": "sent"}
+
+
+async def test_a_block_whose_reserve_failed_is_held_ahead_of_its_suffix(
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    clock: Callable[[float], None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager, session_id, send = attached
+    send.side_effect = ["p-1", "p-2"]
+    reserve = manager.store.reserve_transcript_message
+    calls = 0
+
+    def reserve_failing_once(message: CommsMessage) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("transaction failed")
+        return reserve(message)
+
+    monkeypatch.setattr(manager.store, "reserve_transcript_message", reserve_failing_once)
+    with pytest.raises(RuntimeError, match="transaction failed"):
+        await mirror(manager, session_id, ["Working.", "Final."])
+
+    assert sent(send) == []
+    assert statuses(manager, session_id) == {"turn#0": "failed", "turn": "failed"}
+    await manager.retry_transcript_deliveries(session_id)
+
+    assert sent(send) == ["Working.", "Final."]
+    assert statuses(manager, session_id) == {"turn#0": "sent", "turn": "sent"}
 
 
 async def test_single_and_healthy_turns_send_each_block_once_in_order(

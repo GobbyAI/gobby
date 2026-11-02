@@ -9,6 +9,7 @@ import os
 from collections.abc import Sequence
 from typing import Any
 
+from gobby.communications import transcript_order
 from gobby.sessions.context_usage import context_window_from_raw_message
 from gobby.sessions.message_stats import (
     MessageStats,
@@ -103,9 +104,10 @@ class ProcessorStatsMixin:
 
         The final block keeps the turn's message id, so its ledger row marks the
         whole turn as delivered. A single-block turn keeps its id unchanged. The
-        first failed block stops the turn: every later block is held in the ledger
-        and the retry loop sends it only after the block before it is delivered.
-        The failure is re-raised after the hold.
+        first failed block stops the turn: it and every later block are held in the
+        ledger (a recorded row is kept), and the retry loop sends each only after
+        the block before it is delivered. Holding stops at the first block that
+        cannot be recorded. The failure is re-raised after the hold.
         """
         manager = self.communications_manager
         if manager is None:
@@ -119,18 +121,20 @@ class ProcessorStatsMixin:
             try:
                 await manager.mirror_session_message(session_id, keys[index], text, order)
             except Exception:
-                for later in range(index + 1, last + 1):
+                for held in range(index, last + 1):
                     try:
-                        await manager.hold_transcript_message(
+                        await transcript_order.hold_transcript_message(
+                            manager,
                             session_id,
-                            keys[later],
-                            texts[later],
-                            {"transcript_turn_id": message_id, "transcript_block_index": later},
+                            keys[held],
+                            texts[held],
+                            {"transcript_turn_id": message_id, "transcript_block_index": held},
                         )
                     except Exception:
                         logger.warning(
-                            "Holding transcript block %s failed", keys[later], exc_info=True
+                            "Holding transcript block %s failed", keys[held], exc_info=True
                         )
+                        break
                 raise
 
     def _accumulate_stats(
