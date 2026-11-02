@@ -178,14 +178,18 @@ async def test_runtime_backfill_embeds_external_tools_with_valid_point_ids(
     internal.add_registry(registry)
     try:
         if cached:
-            await search.embed_tool(
-                tool_id=str(uuid4()),
-                name="navigate",
-                description="Navigate to a URL",
-                input_schema={},
-                server_name="browser",
-                project_id="project",
-                server_id="external",
+            await store.ensure_collection(search.TOOL_COLLECTION, 2)
+            await store.upsert(
+                str(uuid4()),
+                [1.0, 0.0],
+                {
+                    "server_id": "external",
+                    "server_name": "browser",
+                    "tool_name": "navigate",
+                    "project_id": "project",
+                    "description": "Navigate to a URL",
+                },
+                collection_name=search.TOOL_COLLECTION,
             )
         stats = await search.embed_all_tools("project", manager, internal_manager=internal)
         assert stats["failed"] == 0, stats
@@ -241,10 +245,182 @@ async def test_backfill_refuses_unscoped_servers_and_offloads_cache_reads(
     try:
         stats = await search.embed_all_tools("project", manager)
         assert stats["embedded"] == 1, stats
-        assert stats["failed"] == int(missing_id), stats
+        assert stats["failed"] == 0, stats
+        assert stats["skipped"] == int(missing_id), stats
         assert threads and all(thread != threading.get_ident() for thread in threads)
+        if missing_id:
+            config_store = ConfigStore(temp_db)
+            first = await maybe_backfill_scoped_tool_embeddings(
+                search, manager, config_store=config_store, project_id="project"
+            )
+            second = await maybe_backfill_scoped_tool_embeddings(
+                search, manager, config_store=config_store, project_id="project"
+            )
+            assert first["rewritten"] is True
+            assert second["rewritten"] is False
         found = await search.search_tools("navigate", "project")
         assert [result.server_name for result in found] == ["browser"]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("writer", ["refresh", "refresh_brief", "switch", "switch_tombstone"])
+async def test_incremental_writers_share_backfill_identity(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: str
+) -> None:
+    from gobby.ai.embedding_switch import SwitchJournal, build_physical_names
+    from gobby.ai.embedding_switch_runner import EmbeddingSwitchRunner
+    from gobby.mcp_proxy.manager import MCPServerConfig
+    from gobby.servers.routes.mcp.endpoints.registry import refresh_mcp_tools
+    from gobby.storage.embedding_generation_state import ProjectionChange
+
+    journal = SwitchJournal(
+        "identity",
+        "target",
+        target_dim=2,
+        target_model="test-model",
+        target_query_prefix="",
+        target_api_base=None,
+        provider="ollama",
+        phase="building",
+        started_at="2026-11-02T00:00:00Z",
+        updated_at="2026-11-02T00:00:00Z",
+    )
+    collection = build_physical_names(journal)["tool_embeddings"]
+    store = VectorStore(path=str(tmp_path / "vectors"), embedding_dim=2)
+    search = SemanticToolSearch(
+        temp_db, vector_store=store, embedding_dim=2, collection_name=collection
+    )
+    monkeypatch.setattr(SemanticToolSearch, "embed_text", AsyncMock(return_value=[1.0, 0.0]))
+    tool = SimpleNamespace(id=str(uuid4()), name="navigate", description="Old", input_schema={})
+    config = MCPServerConfig(
+        id="external", name="browser", project_id=GLOBAL_PROJECT_ID, url="https://browser.test"
+    )
+    db_manager = SimpleNamespace(db=temp_db, get_cached_tools=lambda _: [tool])
+    manager = SimpleNamespace(
+        project_id=GLOBAL_PROJECT_ID,
+        server_configs=[config],
+        mcp_db_manager=db_manager,
+        get_server_config=lambda _: config,
+        refresh_server=AsyncMock(),
+    )
+    try:
+        await search.embed_all_tools(GLOBAL_PROJECT_ID, manager)
+        old_source_id = tool.id
+        tool.id = str(uuid4())
+        tool.description = "Changed schema"
+        if writer.startswith("refresh"):
+            request = MagicMock()
+            request.json = AsyncMock(return_value={"force": True})
+            server = SimpleNamespace(
+                _mcp_db_manager=db_manager,
+                _tools_handler=SimpleNamespace(_semantic_search=search),
+                _internal_manager=InternalRegistryManager(),
+                mcp_manager=manager,
+                services=SimpleNamespace(project_id=GLOBAL_PROJECT_ID),
+            )
+            response = await refresh_mcp_tools(request, cast(Any, server))
+            assert response["success"], response
+            assert response["stats"]["embeddings_generated"] == 1, response
+        else:
+            row = {
+                "id": tool.id,
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": {},
+                "mcp_server_id": config.id,
+                "server_name": config.name,
+                "project_id": GLOBAL_PROJECT_ID,
+            }
+            runner = EmbeddingSwitchRunner(
+                ConfigStore(temp_db), SimpleNamespace(fetchone=lambda *_: row)
+            )
+            assert await runner._project_tool_change(journal, store, tool.id) == 1
+        found = await search.search_tools("navigate", GLOBAL_PROJECT_ID, mcp_manager=manager)
+        assert len(found) == 1, found
+        assert found[0].description == "Changed schema"
+        if writer == "refresh_brief":
+            db_manager.get_cached_tools = lambda _: []
+            config.tools = [{"name": "navigate", "brief": "Changed schema"}]
+            response = await refresh_mcp_tools(request, cast(Any, server))
+            assert response["stats"]["embeddings_generated"] == 1, response
+            runner = EmbeddingSwitchRunner(
+                ConfigStore(temp_db), SimpleNamespace(fetchone=lambda *_: None)
+            )
+            assert await runner._project_tool_change(journal, store, tool.id) == 0
+            assert (
+                await search.search_tools("navigate", GLOBAL_PROJECT_ID, mcp_manager=manager) == []
+            )
+        if writer.startswith("switch"):
+            manager.mcp_db_manager = None
+            config.tools = [{"name": "navigate", "brief": "Changed schema"}]
+            await search.embed_all_tools(GLOBAL_PROJECT_ID, manager)
+            await runner._delete_projection_tombstone(
+                journal, store, ProjectionChange(1, "tool", old_source_id, True)
+            )
+            remaining = await search.search_tools(
+                "navigate", GLOBAL_PROJECT_ID, mcp_manager=manager
+            )
+            assert len(remaining) == 1
+            await store.upsert(
+                tool.id,
+                [1.0, 0.0],
+                {
+                    "server_id": config.id,
+                    "server_name": config.name,
+                    "tool_name": tool.name,
+                    "project_id": GLOBAL_PROJECT_ID,
+                },
+                collection_name=collection,
+            )
+            if writer == "switch_tombstone":
+                await runner._delete_projection_tombstone(
+                    journal, store, ProjectionChange(1, "tool", tool.id, True)
+                )
+            else:
+                runner.db = SimpleNamespace(fetchone=lambda *_: None)
+                assert await runner._project_tool_change(journal, store, tool.id) == 0
+            assert (
+                await search.search_tools("navigate", GLOBAL_PROJECT_ID, mcp_manager=manager) == []
+            )
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_search_inventory_observes_rebuilt_manager(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = VectorStore(path=str(tmp_path / "vectors"), embedding_dim=2)
+    search = SemanticToolSearch(temp_db, vector_store=store, embedding_dim=2)
+    monkeypatch.setattr(search, "embed_text", AsyncMock(return_value=[1.0, 0.0]))
+    old_manager = SimpleNamespace(server_configs=[])
+    current_manager = SimpleNamespace(
+        server_configs=[SimpleNamespace(id="new", name="browser", project_id="project")]
+    )
+    active = [old_manager]
+    GobbyDaemonTools(
+        cast(Any, old_manager),
+        8787,
+        8788,
+        0,
+        InternalRegistryManager(),
+        None,
+        semantic_search=search,
+        mcp_manager_resolver=lambda: active[0],
+    )
+    try:
+        await store.ensure_collection(search.TOOL_COLLECTION, 2)
+        await store.upsert(
+            str(uuid4()),
+            [1.0, 0.0],
+            {"server_id": "new", "server_name": "browser", "tool_name": "navigate"},
+            collection_name=search.TOOL_COLLECTION,
+        )
+        active[0] = current_manager
+        found = await search.search_tools("navigate", "project", mcp_manager=current_manager)
+        assert [result.tool_name for result in found] == ["navigate"]
     finally:
         await store.close()
 

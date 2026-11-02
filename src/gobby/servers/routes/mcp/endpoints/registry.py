@@ -413,6 +413,14 @@ async def refresh_mcp_tools(
 
                 # Generate embeddings for new/changed tools
                 if semantic_search and tools_to_embed:
+                    from gobby.mcp_proxy.semantic_search import tool_embedding_id
+
+                    embedding_server_id = instance.id if instance is not None else server_name
+                    if not embedding_server_id:
+                        logger.warning(
+                            "Skipping tool embeddings for %s: missing server ID", server_name
+                        )
+                        continue
                     # Look up DB-assigned tool IDs if available, else use synthetic IDs
                     stored = None
                     if instance is not None:
@@ -430,11 +438,7 @@ async def refresh_mcp_tools(
                         tool_name = tool["name"]
                         tool_id = tool_id_map.get(tool_name)
                         if not tool_id:
-                            import uuid
-
-                            tool_id = str(
-                                uuid.uuid5(uuid.NAMESPACE_DNS, f"{server_name}/{tool_name}")
-                            )
+                            tool_id = tool_embedding_id(embedding_server_id, tool_name)
                         try:
                             await semantic_search.embed_tool(
                                 tool_id=tool_id,
@@ -443,7 +447,7 @@ async def refresh_mcp_tools(
                                 input_schema=tool.get("inputSchema"),
                                 server_name=server_name,
                                 project_id=hash_project,
-                                server_id=instance.id if instance is not None else None,
+                                server_id=embedding_server_id,
                             )
                             server_stats["embeddings"] += 1
                         except Exception as e:

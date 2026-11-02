@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SCOPED_PAYLOAD_VERSION_KEY = MCP_SCOPED_PAYLOAD_VERSION_KEY
-SCOPED_PAYLOAD_VERSION = 3
+SCOPED_PAYLOAD_VERSION = 4
 
 __all__ = [
     "LocalMCPManager",

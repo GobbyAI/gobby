@@ -62,6 +62,8 @@ class GobbyDaemonTools:
         memory_manager: Any | None = None,
         config_manager: Any | None = None,
         semantic_search: Any | None = None,
+        mcp_manager_resolver: Callable[[], Any] | None = None,
+        internal_manager_resolver: Callable[[], Any] | None = None,
         fallback_resolver: Any | None = None,
         hook_manager_resolver: Callable[[], Any | None] | None = None,
     ):
@@ -71,7 +73,10 @@ class GobbyDaemonTools:
         self._mcp_manager = mcp_manager  # Store for project_id access
         self._semantic_search = semantic_search  # Store for direct search access
         if isinstance(semantic_search, SemanticToolSearch):
-            semantic_search.configure_inventory(mcp_manager, internal_manager)
+            semantic_search.configure_inventory(
+                mcp_manager_resolver or (lambda: self._mcp_manager),
+                internal_manager_resolver or (lambda: self.internal_manager),
+            )
         self._session_manager = session_manager  # Store for per-call project resolution
         self.daemon_port = daemon_port
         self.websocket_port = websocket_port
