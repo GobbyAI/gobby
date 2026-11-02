@@ -183,7 +183,7 @@ class _RecordBatchDb:
     ) -> list[dict[str, object]]:
         self.statements.append((sql, tuple(params)))
         rows: list[dict[str, object]] = []
-        for start in range(0, len(params), 14):
+        for start in range(0, len(params), 15):
             session_id = params[start]
             message_id = params[start + 2]
             if message_id is None:
