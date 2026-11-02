@@ -166,8 +166,12 @@ pub struct ProjectionSyncReports {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProjectionFileSyncOutcome {
-    Synced { symbols: usize },
+    Synced {
+        symbols: usize,
+    },
     SkippedMissingIndexedFile,
+    /// The source was rewritten after indexing; the newer index re-syncs the file.
+    SkippedSourceChanged,
 }
 
 pub fn pending_after_code_fact_write(request: ProjectionSyncRequest) -> ProjectionSyncStatus {
@@ -414,6 +418,9 @@ pub(crate) fn sync_files_with_state<S>(
                     ));
                 }
             }
+            Ok(ProjectionFileSyncOutcome::SkippedSourceChanged) => {
+                skipped_files += 1;
+            }
             Err(error) => {
                 failed_files += 1;
                 let typed = typed_projection_error(&error);
@@ -481,6 +488,9 @@ fn sync_graph_files(
                             failure.target, failure.message
                         ));
                     }
+                }
+                Ok(ProjectionFileSyncOutcome::SkippedSourceChanged) => {
+                    skipped_files += 1;
                 }
                 Err(error) => {
                     failed_files += 1;
@@ -672,24 +682,33 @@ impl VectorProjectionState<'_> {
             else {
                 return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
             };
-            let output = pinned::sync_vector_attempt(
+            let sync = pinned::sync_vector_attempt(
                 &mut self.conn,
                 &self.ctx.project_id,
                 &mut self.lifecycle,
                 file_path,
                 &pin,
             )?;
-            return Ok(match output {
-                Some(output) => ProjectionFileSyncOutcome::Synced {
+            return Ok(match sync {
+                pinned::PinnedVectorSync::Synced(output) => ProjectionFileSyncOutcome::Synced {
                     symbols: output.symbols,
                 },
-                None => ProjectionFileSyncOutcome::SkippedMissingIndexedFile,
+                pinned::PinnedVectorSync::Superseded => {
+                    ProjectionFileSyncOutcome::SkippedMissingIndexedFile
+                }
+                pinned::PinnedVectorSync::SourceChanged => {
+                    ProjectionFileSyncOutcome::SkippedSourceChanged
+                }
             });
         };
         let symbols =
             code_symbols::fetch_symbols_for_file(&mut self.conn, &self.ctx.project_id, file_path)?;
         let symbol_count = symbols.len();
-        self.lifecycle.sync_file_symbols(file_path, &symbols)?;
+        let sync = self.lifecycle.sync_file_symbols(file_path, &symbols);
+        if matches!(sync, Err(VectorLifecycleError::IndexedSourceChanged { .. })) {
+            return Ok(ProjectionFileSyncOutcome::SkippedSourceChanged);
+        }
+        sync?;
         if db::mark_vectors_synced(
             &mut self.conn,
             &self.ctx.project_id,
@@ -752,6 +771,7 @@ fn vector_error_kind(error: &VectorLifecycleError) -> &'static str {
         VectorLifecycleError::EmbeddingHttp { .. } => "embedding_http",
         VectorLifecycleError::EmbeddingResponse(_) => "embedding_response",
         VectorLifecycleError::EmbeddingInput(_) => "embedding_input",
+        VectorLifecycleError::IndexedSourceChanged { .. } => "indexed_source_changed",
         VectorLifecycleError::QdrantHttp { .. } => "qdrant_http",
         VectorLifecycleError::QdrantOperation(_) => "qdrant_operation",
         VectorLifecycleError::InvalidCollectionName(_) => "invalid_collection_name",

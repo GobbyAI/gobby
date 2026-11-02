@@ -330,6 +330,7 @@ test_mode: false
 cors_origins:
   - http://localhost:*
   - https://localhost:*
+mcp_allowed_hosts: []
 
 websocket:
   enabled: true
@@ -346,6 +347,55 @@ Ports must be between `1024` and `65535`. Timeouts and intervals must be
 positive unless the field explicitly documents `0` as a special value.
 Daemon bind host and HTTP/WebSocket/UI ports belong to bootstrap, not this
 runtime fragment. Do not submit bootstrap keys to the values API.
+
+#### MCP allowed hosts
+
+`mcp_allowed_hosts` adds `Host` header values that the `/mcp` route accepts while
+the daemon binds loopback (`127.0.0.1`, `localhost`, or `::1`; the default is
+`127.0.0.1`). Set it when a proxy such as Tailscale Funnel forwards to the daemon
+under a public hostname. The empty default keeps the loopback Host check unchanged.
+
+- Each entry equals the forwarded `Host` header. A port-less Funnel request sends
+  `node.tailnet-name.ts.net`. A Serve port sends `node.tailnet-name.ts.net:8443`.
+  Append `:*` to accept any port.
+- Config validation rejects entries with a scheme, a path, a wildcard host, or
+  uppercase letters. Each entry also allows the matching `https://<entry>` Origin.
+- Bearer authentication runs before the Host check. Without a bearer, every host
+  gets `401`. With a bearer, an unlisted host gets `421 Invalid Host header`.
+- On a non-loopback `bind_host`, the SDK skips the Host check, so the setting has
+  no effect. The field is restart-required; apply it with `gobby restart`.
+
+Path-only Funnel recipe: only `/mcp` is public, on port 443. The UI stays
+tailnet-only on 8443.
+
+1. Leave `ui_expose` unset. `gobby ui expose` owns the port-443 root handler and
+   refuses to combine with Funnel. See
+   [Tailnet-only web UI](shared-stack.md#tailnet-only-web-ui).
+2. Set your node's hostname in the daemon config:
+
+   ```yaml
+   mcp_allowed_hosts:
+     - node.tailnet-name.ts.net
+   ```
+
+3. Configure Serve. It maps the UI to tailnet-only port 8443, and maps only `/mcp`
+   on port 443:
+
+   ```bash
+   tailscale serve --bg --https=8443 http://localhost:60887
+   tailscale serve --bg --https=443 --set-path=/mcp http://localhost:60887/mcp
+   ```
+
+   Enable Funnel for node port 443 only, with the flags your Tailscale client
+   documents under `tailscale funnel --help`. Do not enable Funnel on 8443.
+
+4. Verify from outside the tailnet:
+   - Unauthenticated `POST https://node.tailnet-name.ts.net/mcp` returns `401` from
+     Gobby.
+   - `421` means the host is missing from `mcp_allowed_hosts`.
+   - `404` means the Serve path mapping differs from this recipe. Check
+     `tailscale serve status`.
+   - Authenticated `initialize` returns `200`.
 
 ### Logging And Telemetry
 

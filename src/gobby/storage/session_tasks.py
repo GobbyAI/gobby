@@ -220,14 +220,19 @@ class SessionTaskManager:
         """Join current ownership to its first recorded claim, including missing history."""
         if not session_ids:
             return {}
+        # The artifact's worktree pointer outlives a deleted worktree, so it reports only
+        # while the worktree's registry row exists.
         rows = self.db.fetchall(
             """
             SELECT t.claimed_by_session_id, t.seq_num, t.id, t.title, t.path_cache,
-                   st.created_at AS claimed_at, artifacts.worktree_path
+                   st.created_at AS claimed_at,
+                   CASE WHEN registry.id IS NULL THEN NULL ELSE artifacts.worktree_path END
+                       AS worktree_path
             FROM tasks t
             LEFT JOIN session_tasks st ON st.task_id = t.id
                 AND st.session_id = t.claimed_by_session_id AND st.action = 'claimed'
             LEFT JOIN task_artifacts artifacts ON artifacts.task_id = t.id
+            LEFT JOIN worktrees registry ON registry.id::text = artifacts.worktree_id::text
             WHERE t.claimed_by_session_id = ANY(%s::uuid[]) AND t.closed_at IS NULL
             ORDER BY t.seq_num, t.id
             """,

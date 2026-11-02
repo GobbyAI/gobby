@@ -12,7 +12,7 @@ use postgres::GenericClient;
 use crate::db;
 use crate::graph::code_graph::CodeGraph;
 use crate::vector::code_symbols::{
-    self, CodeSymbolVectorLifecycle, CodeSymbolVectorLifecycleOutput,
+    self, CodeSymbolVectorLifecycle, CodeSymbolVectorLifecycleOutput, VectorLifecycleError,
 };
 
 /// One recovery attempt's stamp on a pin row.
@@ -143,26 +143,41 @@ fn finish_attempt(
         .is_some())
 }
 
+/// Outcome of one pinned vector sync attempt.
+pub(crate) enum PinnedVectorSync {
+    Synced(CodeSymbolVectorLifecycleOutput),
+    /// A newer pin or index won the race; this attempt was not recorded.
+    Superseded,
+    /// The pinned source moved after indexing. The attempt stays unfinished, so
+    /// the file stays pending for the newer index.
+    SourceChanged,
+}
+
 /// Projects the pinned source version into this overlay's vector namespace.
-/// `Ok(None)` means a newer pin state superseded the attempt.
 pub(crate) fn sync_vector_attempt(
     conn: &mut impl GenericClient,
     overlay_project_id: &str,
     lifecycle: &mut CodeSymbolVectorLifecycle,
     file_path: &str,
     attempt: &PinAttempt,
-) -> anyhow::Result<Option<CodeSymbolVectorLifecycleOutput>> {
+) -> anyhow::Result<PinnedVectorSync> {
     let symbols = code_symbols::fetch_symbols_for_file_version(
         conn,
         &attempt.source_project_id,
         file_path,
         &attempt.content_hash,
     )?;
-    let output = lifecycle.sync_file_symbols(file_path, &symbols)?;
+    let output = match lifecycle.sync_file_symbols(file_path, &symbols) {
+        Ok(output) => output,
+        Err(VectorLifecycleError::IndexedSourceChanged { .. }) => {
+            return Ok(PinnedVectorSync::SourceChanged);
+        }
+        Err(err) => return Err(err.into()),
+    };
     if finish_attempt(conn, Stage::Vector, overlay_project_id, file_path, attempt)? {
-        Ok(Some(output))
+        Ok(PinnedVectorSync::Synced(output))
     } else {
-        Ok(None)
+        Ok(PinnedVectorSync::Superseded)
     }
 }
 

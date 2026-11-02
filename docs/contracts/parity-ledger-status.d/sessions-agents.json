@@ -511,10 +511,6 @@
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::wait_for_output`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
   },
-  "MCP gobby-sessions:capture_baseline_dirty_files": {
-    "status": "dropped by decision #23563",
-    "note": "Retired capture_baseline_dirty_files and its inert baseline variable under #23563 Retire baseline dirty tracking; edit ledgers remain authoritative. No Rust port is planned."
-  },
   "MCP gobby-sessions:capture_output": {
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/sessions/_terminal.py::capture_output`; Rust blocker: implement native provider compact/clear handoff orchestration and terminal capture MCP handlers. Owner: #21565 Daemon-side gterm adoption and terminal WS. Registry flip: #21570 MCP registries."

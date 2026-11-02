@@ -23,7 +23,11 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.condition_helpers_sessions import agent_workspace_read_violation
-from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
+from gobby.workflows.definitions import (
+    RuleDefinitionBody,
+    RuleDefinitionMetadata,
+    split_rule_definition_data,
+)
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.idle_declaration import native_variable_write_error
 from gobby.workflows.state_manager import SessionVariableManager
@@ -116,8 +120,13 @@ def engine(temp_db: HubDatabase) -> RuleEngine:
             manager.create(
                 name=name,
                 definition_json=RuleDefinitionBody.model_validate(body_data).model_dump_json(),
-                priority=metadata["priority"],
-                enabled=metadata["enabled"],
+                # Rules omit priority and enabled when they take the schema defaults.
+                priority=metadata.get(
+                    "priority", RuleDefinitionMetadata.model_fields["priority"].default
+                ),
+                enabled=metadata.get(
+                    "enabled", RuleDefinitionMetadata.model_fields["enabled"].default
+                ),
                 tags=document["tags"],
             )
     return RuleEngine(temp_db)

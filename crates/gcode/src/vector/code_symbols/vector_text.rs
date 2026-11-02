@@ -6,8 +6,9 @@
 
 use std::path::Path;
 
-use anyhow::{Context, ensure};
+use anyhow::Context;
 
+use super::types::VectorLifecycleError;
 use crate::index::parser::{ImportResolutionContext, parse_source_with_semantic};
 use crate::models::Symbol;
 
@@ -15,17 +16,19 @@ use crate::models::Symbol;
 ///
 /// The file on disk must still hash to the indexed `file_content_hash`. Edited
 /// or missing source would supply different bytes at the stored offsets, so the
-/// symbol fails instead of embedding text that was never indexed.
+/// symbol fails instead of embedding text that was never indexed. A mismatch is
+/// the typed `IndexedSourceChanged`, which callers treat as a deferral rather
+/// than an error.
 fn indexed_source(root: &Path, symbol: &Symbol) -> anyhow::Result<String> {
     let bytes = std::fs::read(root.join(&symbol.file_path))
         .with_context(|| format!("indexed source {} is unreadable", symbol.file_path))?;
     let found = gobby_core::indexing::content_hash(&bytes);
-    ensure!(
-        found == symbol.file_content_hash,
-        "indexed source {} hash {found} differs from indexed {}",
-        symbol.file_path,
-        symbol.file_content_hash
-    );
+    if found != symbol.file_content_hash {
+        return Err(VectorLifecycleError::IndexedSourceChanged {
+            file_path: symbol.file_path.clone(),
+        }
+        .into());
+    }
     let range = bytes
         .get(symbol.byte_start..symbol.byte_end)
         .with_context(|| format!("symbol byte range is outside {}", symbol.file_path))?;

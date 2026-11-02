@@ -100,6 +100,7 @@ async def test_reference_contract_3_2_2(
             assert preview["success"] is True
             assert preview["can_close"] is True
             assert preview["closed"] is False
+            # Closure gates are declared by policy; preview reports them as blocking reasons.
             assert preview["blocking_reasons"] == []
             assert {
                 "children_closed",

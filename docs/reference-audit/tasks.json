@@ -495,14 +495,10 @@
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/tasks/_attestations.py",
-        "symbol": "create_attestation_registry"
+        "symbol": "create_attestation_registry.record"
       },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "attestation-tools"
-      ],
-      "audience": "agent; each author records its own attestation, never a peer's"
+      "verification": ["registered-inventory", "source-contract", "focused-task-tests"],
+      "audience": "agent; the claimed author and reviewers record evidence on their own sessions"
     },
     {
       "surface": "mcp",
@@ -511,14 +507,22 @@
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/tasks/_attestations.py",
-        "symbol": "create_attestation_registry"
+        "symbol": "create_attestation_registry.listing"
       },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "attestation-tools"
-      ],
-      "audience": "agent; reads the append-only attestation history"
+      "verification": ["registered-inventory", "source-contract", "focused-task-tests"],
+      "audience": "agent; any session in the task's project"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
+      "tool": "team_progress",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/live-work.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_team_progress.py",
+        "symbol": "create_team_progress_registry.team_progress_tool"
+      },
+      "verification": ["registered-inventory", "source-contract", "focused-task-tests"],
+      "audience": "agent; team seats and their owners read their own team's progress"
     },
     {
       "surface": "mcp",
@@ -1264,12 +1268,6 @@
     ]
   },
   "evidence": [
-    {
-      "id": "attestation-tools",
-      "kind": "isolated-tests",
-      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/tasks/test_attestations.py tests/mcp_proxy/tools/tasks/test_attestation_authority.py -q",
-      "result": "18 passed in 6.26s (test_attestations.py and test_attestation_authority.py)."
-    },
     {
       "id": "coordinator-claim-release",
       "kind": "isolated-tests",
