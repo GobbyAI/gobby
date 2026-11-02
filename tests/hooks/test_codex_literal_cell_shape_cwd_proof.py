@@ -14,7 +14,10 @@ from typing import Any
 
 import pytest
 
+from gobby.adapters.codex_impl.cell_shell_reach import may_reach_shell
+from gobby.adapters.codex_impl.execution_chain import extract_functions_exec_command
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls
 from gobby.hooks._path_scope import current_tool_cwd
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookResponse
@@ -175,3 +178,28 @@ def test_plain_dollar_home_in_a_literal_still_proves_its_cwd(
     event, response = _hook(event_handlers, tmp_path, records, command=command)
     assert response.decision == "allow", response.reason
     assert current_tool_cwd(event.data) == workdir
+
+
+# A comma or an if/else makes the launch part of one unbraced loop body, so it repeats.
+UNBRACED_LOOP_LAUNCHES = [
+    "for (const t of [1, 2]) await tools.noop(), LAUNCH",
+    "for (const t of [1, 2]) if (t) await tools.noop(); else LAUNCH",
+]
+# A poll value that runs code is not an inert empty chars key.
+EXECUTABLE_POLLS = [
+    'text(await tools.write_stdin({chars:"",session_id:eval("1")}));',
+    'text(await tools.write_stdin({chars:"",yield_time_ms:f()}));',
+]
+
+
+@pytest.mark.parametrize("shape", UNBRACED_LOOP_LAUNCHES)
+def test_launch_in_an_unbraced_loop_body_is_not_a_literal_shell_call(shape: str) -> None:
+    cell = shape.replace("LAUNCH", _literal(PYTEST, Path("/task")))
+    assert literal_shell_calls(cell) is None
+    assert extract_functions_exec_command(cell) is None
+
+
+@pytest.mark.parametrize("poll", EXECUTABLE_POLLS)
+def test_poll_with_an_executable_value_is_not_blanked_as_inert(poll: str) -> None:
+    assert may_reach_shell(poll)
+    assert literal_shell_calls(_literal(PYTEST, Path("/task")) + poll) is None

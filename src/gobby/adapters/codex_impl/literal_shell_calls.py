@@ -156,7 +156,10 @@ def _close(code: str, start: int) -> int | None:
 
 
 def _statement_end(code: str, start: int) -> int | None:
-    """Return where an unbraced body ends: its `;`, or the `,` or closer after it."""
+    """Return where an unbraced body ends: the `;` that no `else` follows, or the closer after it.
+
+    A comma does not end the body: `a, b` is one statement, so a launch after the comma repeats.
+    """
     expected: list[str] = []
     for index in range(start, len(code)):
         char = code[index]
@@ -167,6 +170,7 @@ def _statement_end(code: str, start: int) -> int | None:
                 return index
             if expected.pop() != char:
                 return None
-        elif not expected and char in ";,":
-            return index + 1 if char == ";" else index
+        elif char == ";" and not expected:
+            if not code.startswith("else", _skip_space(code, index + 1)):
+                return index + 1
     return len(code)
