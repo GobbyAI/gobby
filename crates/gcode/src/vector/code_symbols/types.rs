@@ -143,6 +143,10 @@ pub enum VectorLifecycleError {
     IndexedSourceChanged {
         file_path: String,
     },
+    /// The indexed source is absent from the checkout, so no vector input exists for it.
+    IndexedSourceMissing {
+        file_path: String,
+    },
     QdrantHttp {
         operation: &'static str,
         status: u16,
@@ -181,6 +185,9 @@ impl fmt::Display for VectorLifecycleError {
             }
             Self::IndexedSourceChanged { file_path } => {
                 write!(f, "indexed source {file_path} changed after indexing")
+            }
+            Self::IndexedSourceMissing { file_path } => {
+                write!(f, "indexed source {file_path} is missing from the checkout")
             }
             Self::QdrantHttp {
                 operation,

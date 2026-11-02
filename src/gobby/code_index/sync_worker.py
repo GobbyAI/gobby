@@ -791,11 +791,17 @@ async def _sync_vector_file(
     result = await gcode_gateway.vector_sync_file(project_root, file.file_path, timeout=timeout)
     _require_projection_success(result, "vector")
     if result.get("status") == "skipped":
-        logger.debug(
-            "Sync worker: vector sync skipped for %s: %s",
-            file.file_path,
-            result.get("reason"),
-        )
+        if result.get("reason") == "source_missing":
+            logger.info(
+                "Sync worker: retired pinned file %s; its source is missing from the checkout",
+                file.file_path,
+            )
+        else:
+            logger.debug(
+                "Sync worker: vector sync skipped for %s: %s",
+                file.file_path,
+                result.get("reason"),
+            )
         return False
     return True
 
