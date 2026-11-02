@@ -96,11 +96,12 @@ a replan under #21586, currently moves `_initialize_vector_store` out of
 blob; whichever lands second re-pins. Decision 3 needs the sessions plan's
 2.4 to export a port of
 `src/gobby/workflows/state_manager.py::SessionVariableManager.record_memory_review`
-(#25292); that plan does not name it yet, so the Orchestrator routes the
-amendment to #25253. 3.1's seam gains `promote` and `discard` for #25444's
-switch-time entity vectors, which the AI plan's 7.4 runner must call at flip
-and in abort cleanup; that plan does not name them yet, so the Orchestrator
-routes the amendment to #21587.
+(#25292); that plan does not name it yet, and the Orchestrator owns routing
+the amendment to #25253. 3.1's seam gains `promote` and `discard` for
+#25444's switch-time entity vectors, which the AI plan's 7.4 runner must
+call at flip and in abort cleanup; that plan does not name them yet, and the
+Orchestrator, which accepted the extension, owns routing the amendment and
+its caller tests to #21587.
 
 ## Decision Record
 `kind: framing`
@@ -273,7 +274,10 @@ routes the amendment to #21587.
     would move this renderer to gcore rather than copy it.
 13. **R0 gates the family (#25468, ROADMAP decision 26).** Under the
     runner-first ruling (`.gobby/plans/task-25460.md`, Decision 2), epic
-    #21563 is blocked by R0, so every leaf waits for it. R0 commits a
+    #21563 is blocked by R0. A task is ready only when its whole parent
+    chain is ready (`src/gobby/storage/tasks/_queries.py::_ready_tasks_cte_sql`,
+    that plan's Decision 9), so no leaf expanded under #21563, 0.1 and 2.1
+    included, is ready before R0 closes. R0 commits a
     lifecycle inventory with fixtures naming every startup job, service
     owner, identity and error in `runner.py` and `runner_lifecycle_*.py`,
     plus a versioned private command protocol and a Python facade that run
@@ -1435,9 +1439,10 @@ vector index, moves staged vectors at the target dimension into
 staged vectors and recreates the index at the target dimension. `discard`
 removes every staged vector. The AI plan's 7.4 runner calls `promote` at
 flip, after the alias switch and before the switch completes, and `discard`
-in abort cleanup. That plan does not name either call yet, so the
-Orchestrator routes the 7.4 amendment to #21587 (Overview, Cross-plan
-contention). 2.4's reconcile step stays the backstop for entities written
+in abort cleanup. That plan does not name either call yet. The
+Orchestrator accepted this extension and owns routing the 7.4 amendment and
+its caller tests to #21587 (Overview, Cross-plan contention); this leaf owns
+the seam's own failure and recovery tests. 2.4's reconcile step stays the backstop for entities written
 during the build.
 
 **Acceptance:**
@@ -1461,6 +1466,15 @@ during the build.
   already staged. `promote` leaves only target-dimension vectors under a
   recreated index, and `discard` removes every staged vector, matching
   Python's switch runner. test: `crates/gmemory/tests/rebuild_seam.rs::entity_vectors_stage_promote_and_discard`.
+- 3.1.6 - A target vector of another dimension fails `rebuild`, and a
+  project the fence rejects is skipped while the others stage. A `promote`
+  or `discard` that fails after any one of its effects (the index drop, the
+  promotion, the clear of other-dimension vectors or the staged-vector
+  removal) returns the error to its caller, so the switch cannot complete.
+  Called again, `promote` finishes with every target vector in `embedding`,
+  no staged vector and one index at the target dimension, and `discard`
+  finishes with no staged vector. Repeated calls of either are idempotent.
+  test: `crates/gmemory/tests/rebuild_seam.rs::entity_vector_staging_failures_recover`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test rebuild_seam`
 against run-unique physical collections and the embedding stub.
