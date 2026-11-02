@@ -572,6 +572,8 @@ pub(super) fn move_focused_pane_to_tab(
             title: agent_tab_title(workspace, &terminal_id),
             terminal_id: None,
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         })
     };

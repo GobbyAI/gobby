@@ -162,6 +162,8 @@ mod tests {
             title: None,
             terminal_id: None,
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         };
         for op in [split(), create] {

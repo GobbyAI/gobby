@@ -10,10 +10,12 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::ui::chrome::Tab;
+use crate::ui::pane_layout::lone_pane_inner_rect;
 use crate::ui::Chrome;
 
 use super::super::viewer_state::EMPTY_LOCAL_TAB_PREFIX;
 use super::super::Workspace;
+use super::actions::live_layout_area;
 use super::daemon_ops::op_tag;
 use super::jobs::{spawn_job, JobOutcome, JobResult, OwnedShell};
 use super::local_adoption::spawn_in_adopted_local_tab;
@@ -27,6 +29,17 @@ pub(super) fn active_daemon_tab(chrome: &Chrome) -> Option<&Tab> {
 /// The daemon pane id behind `slot`.
 pub(super) fn daemon_pane_id(chrome: &Chrome, slot: layout::PaneId) -> Option<String> {
     chrome.viewer.panes.daemon_id(slot).map(str::to_owned)
+}
+
+/// Rows and columns a new tab's first shell spawns at: the terminal rect its
+/// lone pane gets in the live layout, so the PTY starts at the viewport. With
+/// no room for a terminal, the daemon's default size applies.
+pub(super) fn new_tab_viewport(chrome: &Chrome) -> (Option<u16>, Option<u16>) {
+    let inner = lone_pane_inner_rect(live_layout_area(chrome), chrome.prefs.pane_scrollbars);
+    if inner.is_empty() {
+        return (None, None);
+    }
+    (Some(inner.height), Some(inner.width))
 }
 
 /// The op that places `terminal_id` per `placement` when the window views a
@@ -63,6 +76,7 @@ pub(super) fn placement_op(
         cwd: cwd.clone(),
         node: None,
     };
+    let (rows, cols) = new_tab_viewport(chrome);
     Some(match (placement, focused) {
         (Placement::Tab, _) | (_, None) => WorkspaceOp::TabCreate {
             workspace: model.workspace.id.clone(),
@@ -71,6 +85,8 @@ pub(super) fn placement_op(
             title: None,
             terminal_id,
             cwd,
+            rows,
+            cols,
             node: None,
         },
         (Placement::SplitRight, Some(pane)) => split(pane, LayoutAxis::Horizontal),

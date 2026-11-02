@@ -202,6 +202,8 @@ async fn adopt_chain(
             title,
             terminal_id: Some(first_terminal),
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         })
         .await

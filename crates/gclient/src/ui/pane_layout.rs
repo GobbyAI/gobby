@@ -53,6 +53,12 @@ pub fn stable_terminal_inner_rect(pane_inner: Rect, pane_scrollbars: bool) -> Re
     )
 }
 
+/// Terminal rect of a tab's only pane laid out in `area`. A lone pane keeps
+/// every border (`apply_pane_chrome`), so this is the size its shell starts at.
+pub fn lone_pane_inner_rect(area: Rect, pane_scrollbars: bool) -> Rect {
+    stable_terminal_inner_rect(pane_inner_rect(area, Borders::ALL), pane_scrollbars)
+}
+
 /// The reserved gutter as a visible scrollbar lane, only while scrollback
 /// exists (herdr `stable_scrollbar_gutter`).
 pub fn scrollbar_gutter(
@@ -139,11 +145,10 @@ pub fn pane_geometry(
     }
     if zoomed {
         let borders = Borders::ALL;
-        let pane_inner = pane_inner_rect(area, borders);
         let info = PaneInfo {
             id: focus,
             rect: area,
-            inner_rect: stable_terminal_inner_rect(pane_inner, prefs.pane_scrollbars),
+            inner_rect: lone_pane_inner_rect(area, prefs.pane_scrollbars),
             scrollbar_rect: None,
             borders,
             is_focused: true,

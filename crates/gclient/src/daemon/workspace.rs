@@ -234,6 +234,11 @@ pub enum WorkspaceOp {
         terminal_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<String>,
+        /// The new shell's size, when the client knows the pane's viewport. Both or neither.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rows: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cols: Option<u16>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         node: Option<String>,
     },
@@ -416,3 +421,7 @@ impl ScriptedDaemon {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "workspace/tests.rs"]
+mod tests;

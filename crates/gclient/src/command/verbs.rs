@@ -475,6 +475,8 @@ impl Action {
                         title,
                         terminal_id: None,
                         cwd: None,
+                        rows: None,
+                        cols: None,
                         node: None,
                     })
                     .await

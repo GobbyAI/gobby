@@ -13,7 +13,7 @@ use crate::Workspace;
 use super::actions::activate_live_tab;
 use super::daemon_ops::{op_tag, run_op};
 use super::jobs::{spawn_job, JobOutcome, JobResult};
-use super::workspace_actions::daemon_pane_id;
+use super::workspace_actions::{daemon_pane_id, new_tab_viewport};
 
 /// Run `ops` in order on `daemon`. The first refusal ends the chain and is
 /// its result; a close refused `not_found` is done, as in `run_op`.
@@ -264,6 +264,7 @@ pub(super) fn create_grid(
     };
     let rows = rows.clamp(1, 4) as usize;
     let cols = cols.clamp(1, 4) as usize;
+    let (viewport_rows, viewport_cols) = new_tab_viewport(chrome);
     let create = WorkspaceOp::TabCreate {
         workspace: workspace_id,
         project_id: project_id.clone(),
@@ -271,6 +272,8 @@ pub(super) fn create_grid(
         title: Some("new grid".to_owned()),
         terminal_id: None,
         cwd: None,
+        rows: viewport_rows,
+        cols: viewport_cols,
         node: None,
     };
     let daemon = workspace.daemon().clone();
