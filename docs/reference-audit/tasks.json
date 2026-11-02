@@ -491,66 +491,38 @@
     {
       "surface": "mcp",
       "server": "gobby-tasks",
-      "tool": "record_test_step",
+      "tool": "record_attestation",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
       "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_step_records.py",
-        "symbol": "_record_step"
+        "path": "src/gobby/mcp_proxy/tools/tasks/_attestations.py",
+        "symbol": "create_attestation_registry.record"
       },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; definitions granting the test step"
+      "verification": ["registered-inventory", "source-contract", "focused-task-tests"],
+      "audience": "agent; the claimed author and reviewers record evidence on their own sessions"
     },
     {
       "surface": "mcp",
       "server": "gobby-tasks",
-      "tool": "record_implementation_step",
+      "tool": "list_attestations",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
       "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_step_records.py",
-        "symbol": "_record_step"
+        "path": "src/gobby/mcp_proxy/tools/tasks/_attestations.py",
+        "symbol": "create_attestation_registry.listing"
       },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; definitions granting the implementation step"
+      "verification": ["registered-inventory", "source-contract", "focused-task-tests"],
+      "audience": "agent; any session in the task's project"
     },
     {
       "surface": "mcp",
       "server": "gobby-tasks",
-      "tool": "record_review_step",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "tool": "team_progress",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/live-work.md",
       "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_step_records.py",
-        "symbol": "_record_step"
+        "path": "src/gobby/mcp_proxy/tools/tasks/_team_progress.py",
+        "symbol": "create_team_progress_registry.team_progress_tool"
       },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; definitions granting the review step, independent of the task's work"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks",
-      "tool": "record_closing_step",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_step_records.py",
-        "symbol": "_record_step"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; definitions granting the closing step"
+      "verification": ["registered-inventory", "source-contract", "focused-task-tests"],
+      "audience": "agent; team seats and their owners read their own team's progress"
     },
     {
       "surface": "mcp",

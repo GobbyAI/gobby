@@ -39,8 +39,9 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "mcp step. requested is comma-separated seat names; catalogue is a list of "
             "{name, title, agent}. Refuses when the same runbook is still launching for the "
             "same project in the same workspace on the same machine, or when a seat's agent "
-            "definition is missing or disabled. If supplied, report_to must be a nonempty "
-            "session ref; require_report_to rejects omission. "
+            "definition is missing or disabled. report_to, if supplied, is a session ref that "
+            "must be live and whose definition admits every seat launched; require_report_to "
+            "rejects omission. "
             "launch names the seats to start; skip_live_seats leaves out each seat whose "
             "agent already runs on this machine with a live session in this project and "
             "maps it to that session under live. tab_title names the runbook tab; with task it "
@@ -73,13 +74,18 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             }
         try:
             caller_session_id = ctx.resolve_session_id(caller_ref)
+            report_session = (
+                ctx.resolve_session_id(report_to)
+                if report_to is not None and report_to.strip()
+                else report_to
+            )
             admitted = check_runbook_seats(
                 runbook_seat_stores(ctx.db),
                 caller_session_id=caller_session_id,
                 workspace=workspace,
                 requested=requested,
                 catalogue=catalogue,
-                report_to=report_to,
+                report_to=report_session,
                 require_report_to=require_report_to,
                 skip_live_seats=skip_live_seats,
                 team_id=team_id,

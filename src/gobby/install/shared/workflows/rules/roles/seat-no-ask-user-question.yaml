@@ -1,10 +1,11 @@
-tags: [roles, seat, enforcement, gobby, seat-policy]
+tags: [roles, seat, enforcement, gobby, seat-policy, default]
 
-# The Assistant's attached AskUserQuestion prompts reach Telegram as buttons.
-# Other seats route decisions through the Assistant. Unseated sessions keep the tool.
+# The native question dialog freezes a seat's pane until someone answers it, and no
+# seat can answer another seat's dialog. Every definition selects this rule through
+# tag:default; only the default definition excludes it.
 rules:
   seat-no-ask-user-question:
-    description: "Selected definitions route questions through send_message"
+    description: "Definitions ask through send_message instead of the native question dialog"
     event: before_tool
     enabled: true
     priority: 10
@@ -12,6 +13,6 @@ rules:
       - type: block
         tools: [AskUserQuestion]
         reason: >-
-          Use `gobby-agents:send_message` to send your question to your Dev Manager
-          or the Orchestrator. A decision for the operator goes through the Assistant, as
-          Telegram buttons or plain text at the end of its turn.
+          Use `gobby-agents:send_message` to send your question to the seat you report to
+          (your report_to session, Triage or your Dev Manager), then continue other work or
+          wait for the reply. The question dialog freezes your pane until someone answers it.

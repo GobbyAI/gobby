@@ -124,6 +124,9 @@ workflows:
       - "tag:plan-directive-policy"
     exclude:
       - "name:unassigned-session-no-task-close"
+      # Interactive sessions keep the native question dialog; every other definition
+      # asks through send_message.
+      - "name:seat-no-ask-user-question"
   skill_selectors:
     include: []
     # Every context epoch requests gobby:references/skills/loading.md, gobby:references/memory/overview.md, brevity, then restraint. Other

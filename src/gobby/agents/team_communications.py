@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
 from gobby.storage.hub.protocol import HubDatabase, Row
@@ -47,6 +47,29 @@ def _definition(db: HubDatabase, row: Row) -> AgentDefinitionBody | None:
     return resolved[0] if resolved is not None and resolved[1].enabled else None
 
 
+def admits_sender(body: AgentDefinitionBody | None, sender_capabilities: Collection[str]) -> bool:
+    """Whether a recipient definition admits a sender holding ``sender_capabilities``.
+
+    A definition declaring no ``message_sender_capabilities`` admits every sender; one that
+    declares them admits a sender holding any of them. No definition admits nobody.
+    """
+    if body is None:
+        return False
+    if not body.message_sender_capabilities:
+        return True
+    return not set(sender_capabilities).isdisjoint(body.message_sender_capabilities)
+
+
+def recipient_admits(
+    db: HubDatabase, recipient_id: str, sender_capabilities: Collection[str]
+) -> bool:
+    """Whether a session admits a sender holding ``sender_capabilities``; the operator always does."""
+    row = db.fetchone(_SEATS + "WHERE s.id = %s::uuid", (recipient_id,))
+    if row is None:
+        return False
+    return operator_terminal(row) or admits_sender(_definition(db, row), sender_capabilities)
+
+
 def recipient_policy(
     db: HubDatabase, sender_id: str, recipient_ids: Sequence[str]
 ) -> RecipientPolicy:
@@ -73,11 +96,7 @@ def recipient_policy(
     for recipient_id in recipient_ids:
         if recipient_id in operator_ids:
             continue
-        body = bodies.get(recipient_id)
-        if body is None or (
-            body.message_sender_capabilities
-            and not capabilities.intersection(body.message_sender_capabilities)
-        ):
+        if not admits_sender(bodies.get(recipient_id), capabilities):
             withheld.add(recipient_id)
     return RecipientPolicy(frozenset(withheld))
 

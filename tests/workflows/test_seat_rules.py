@@ -125,8 +125,6 @@ def _load_roles(db: HubDatabase) -> None:
             )
         if name in {"orchestrator", "dev-manager", "researcher", "consolidator"}:
             exclude.extend(["name:seat-no-task-close", "name:unassigned-session-no-task-close"])
-        if name == "assistant":
-            exclude.append("name:seat-no-ask-user-question")
         scope = {
             "assistant": "documentation-write-scope",
             "researcher": "research-artifact-write-scope",
@@ -400,23 +398,6 @@ async def test_orchestrator_still_cannot_spawn_from_the_shell(
         refused = await _decide(engine, _shell(command), seat)
         assert refused.decision == "block", command
         assert "Seats do not spawn agents from the shell" in (refused.reason or "")
-
-
-@pytest.mark.asyncio
-async def test_seats_ask_through_send_message(engine: RuleEngine) -> None:
-    ask = {"tool_name": "AskUserQuestion", "tool_input": {"questions": [{"question": "Land?"}]}}
-    seats = ("assistant", "orchestrator", "dev-manager", "triage", "release-manager", "developer")
-    for agent_type in (*seats, "plan-writer", "plan-enhancer", "plan-adversary"):
-        if agent_type == "assistant":
-            assert (await _decide(engine, ask, ASSISTANT)).decision == "allow"
-            continue
-        blocked = await _decide(engine, ask, {"_agent_type": agent_type})
-        assert blocked.decision == "block", agent_type
-        assert "Use `gobby-agents:send_message` to send your question" in (blocked.reason or "")
-    assert (await _decide(engine, _shell("ls"), DEVELOPER)).decision == "allow"
-
-    for non_seat in ({"_agent_type": "default"}, {}):
-        assert (await _decide(engine, ask, non_seat)).decision == "allow", non_seat
 
 
 PROJECT_CREATES = (

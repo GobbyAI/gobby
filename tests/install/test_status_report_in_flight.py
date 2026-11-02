@@ -12,6 +12,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.tasks.attestations import EvidenceReference, TaskAttestation
 from gobby.utils.machine_id import get_machine_id
 from tests.fixtures.postgres import TEST_USER_ID
 
@@ -24,24 +25,29 @@ PROCEDURES = (
 ASSISTANT = PROCEDURES / "assistant.md"
 REPORTER = PROCEDURES / "reporter.md"
 FULL_REPORT = PROCEDURES / "reporter-full-report.md"
-IN_FLIGHT_HEADING = "In-flight tasks: stage, time in stage, claim-to-close"
+IN_FLIGHT_HEADING = "In-flight tasks: evidence activity and claim-to-close"
 ROOT_REGEX = "^(24818)\\."
 TIP = "1" * 40
-STALE = "2" * 40
-EXPECTED_STAGES = {
-    "test rejected": ("test-writing", "decisive step record"),
-    "test approved": ("development", "decisive step record"),
-    "impl approved": ("review", "decisive step record"),
-    "review approved": ("waiting to land", "decisive step record"),
-    "review stale": ("unknown", "decisive step record"),
-    "impl rejected": ("development", "decisive step record"),
-    "review rejected": ("development", "decisive step record"),
-    "old epoch": ("development", "decisive step record"),
-    "supplemental only": ("review", "decisive step record"),
-    "legacy review": ("review", "decisive step record"),
-    "claim only": ("development", "claim time"),
-    "test pending": ("test-writing", "first step record"),
-    "unclaimed impl step": ("development", "first step record"),
+T0 = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+LATEST_AT = T0 + timedelta(minutes=5)
+EVIDENCE_COLUMNS = {
+    "seq_num",
+    "title",
+    "claimed_by_session_id",
+    "evidence_kind",
+    "evidence_result",
+    "evidence_summary",
+    "evidence_reference",
+    "evidence_recorded_at",
+    "first_claimed_at",
+    "total",
+}
+EXPECTED_EVIDENCE = {
+    "claim only": (None, None),
+    "legacy steps only": (None, None),
+    "latest wins": ("test", "approved"),
+    "correction": ("review", "rejected"),
+    "unclaimed attested": ("test", "approved"),
 }
 
 
@@ -60,7 +66,7 @@ def _bullet(section: str, label: str) -> str:
 
 
 def _recipe_queries() -> tuple[str, str]:
-    """Return the stage and closure statements of the in-flight recipe."""
+    """Return the evidence-activity and claim-to-close statements of the in-flight recipe."""
     recipe = _section(REPORTER.read_text(encoding="utf-8"), IN_FLIGHT_HEADING)
     blocks = [block.split("```", 1)[0].strip() for block in recipe.split("```sql\n")[1:]]
     assert len(blocks) == 2
@@ -68,8 +74,9 @@ def _recipe_queries() -> tuple[str, str]:
 
 
 def _read(db: HubDatabase, sql: str, params: tuple[Any, ...], limit: int = 2000) -> list[Any]:
-    """Run a recipe statement the way query_readonly does, under its outer LIMIT."""
-    with db.transaction() as conn:
+    """Run a recipe statement the way query_readonly runs it: a REPEATABLE READ READ ONLY
+    snapshot under the outer LIMIT."""
+    with db.bounded_transaction(repeatable_read_read_only=True) as conn:
         rows = conn.execute(
             f"SELECT * FROM (\n{sql}\n) AS readonly_result LIMIT %s", (*params, limit)
         ).fetchall()
@@ -115,10 +122,6 @@ def _claim(db: HubDatabase, task_id: str, session_id: str) -> None:
     _execute(db, "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s", (session_id, task_id))
 
 
-def _link(db: HubDatabase, task_id: str, *shas: str) -> None:
-    _execute(db, "UPDATE tasks SET commits = %s::jsonb WHERE id = %s", (json.dumps(shas), task_id))
-
-
 def _close(db: HubDatabase, task_id: str, closed_at: datetime) -> None:
     _execute(
         db,
@@ -127,27 +130,18 @@ def _close(db: HubDatabase, task_id: str, closed_at: datetime) -> None:
     )
 
 
-def _step(
-    db: HubDatabase,
-    task_id: str,
-    session_id: str,
-    sequence: int,
-    step: str,
-    status: str,
-    *,
-    epoch: int = 1,
-    commit: str | None = None,
-    supplemental: bool | None = None,
+def _legacy_step(
+    db: HubDatabase, task_id: str, session_id: str, sequence: int, step: str, status: str
 ) -> None:
+    """Seed a retired task_step record, which the evidence report must not read as stage."""
     body = {
         "step": step,
         "status": status,
         "sequence": sequence,
-        "epoch": epoch,
+        "epoch": 1,
         "round_number": 1,
         "feedback": "seeded",
-        "commit_sha": commit,
-        "supplemental_review": supplemental,
+        "commit_sha": TIP,
     }
     _execute(
         db,
@@ -155,6 +149,45 @@ def _step(
         "VALUES (%s, %s, %s, 'task_step', %s)",
         (str(uuid.uuid4()), task_id, session_id, json.dumps(body)),
     )
+
+
+def _attest(
+    db: HubDatabase,
+    task_id: str,
+    session_id: str,
+    sequence: int,
+    kind: str,
+    result: str,
+    *,
+    summary: str,
+    recorded_at: datetime,
+    reference: EvidenceReference | None = None,
+    supersedes_id: str | None = None,
+) -> str:
+    """Store an attestation in the writer's shape, validated by its model."""
+    record = TaskAttestation(
+        id=str(uuid.uuid4()),
+        task_id=task_id,
+        sequence=sequence,
+        session_id=session_id,
+        agent_definition="seeded",
+        agent_definition_hash="0" * 64,
+        agent_capabilities=(),
+        created_at=recorded_at,
+        kind=kind,
+        result=result,
+        summary=summary,
+        evidence={},
+        reference=reference,
+        supersedes_id=supersedes_id,
+    )
+    _execute(
+        db,
+        "INSERT INTO task_comments (id, task_id, author, author_type, body, created_at) "
+        "VALUES (%s, %s, %s, 'task_attestation', %s, %s)",
+        (record.id, task_id, session_id, record.model_dump_json(), recorded_at),
+    )
+    return record.id
 
 
 def _seed_in_flight(
@@ -165,88 +198,59 @@ def _seed_in_flight(
     def add(title: str, path: str = "24818.1", project: str = project_id) -> str:
         return _task(db, project, title, path)
 
-    rejected = add("test rejected")
-    _claim(db, rejected, holder)
-    _step(db, rejected, holder, 1, "test", "rejected")
-
-    approved = add("test approved")
-    _claim(db, approved, holder)
-    _step(db, approved, holder, 1, "test", "approved")
-
-    review = add("impl approved")
-    _claim(db, review, holder)
-    _link(db, review, TIP)
-    _step(db, review, holder, 1, "test", "approved")
-    _step(db, review, holder, 2, "implementation", "approved", commit=TIP)
-
-    landing = add("review approved")
-    _claim(db, landing, holder)
-    _link(db, landing, TIP)
-    _step(db, landing, holder, 1, "test", "approved")
-    _step(db, landing, holder, 2, "implementation", "approved", commit=TIP)
-    _step(db, landing, holder, 3, "review", "approved", commit=TIP, supplemental=False)
-
-    stale = add("review stale")
-    _claim(db, stale, holder)
-    _link(db, stale, TIP)
-    _step(db, stale, holder, 1, "test", "approved")
-    _step(db, stale, holder, 2, "implementation", "approved", commit=TIP)
-    _step(db, stale, holder, 3, "review", "approved", commit=STALE, supplemental=False)
-
-    impl_rejected = add("impl rejected")
-    _claim(db, impl_rejected, holder)
-    _link(db, impl_rejected, TIP)
-    _step(db, impl_rejected, holder, 1, "test", "approved")
-    _step(db, impl_rejected, holder, 2, "implementation", "approved", commit=TIP)
-    _step(db, impl_rejected, holder, 3, "implementation", "rejected")
-
-    review_rejected = add("review rejected")
-    _claim(db, review_rejected, holder)
-    _link(db, review_rejected, TIP)
-    _step(db, review_rejected, holder, 1, "test", "approved")
-    _step(db, review_rejected, holder, 2, "implementation", "approved", commit=TIP)
-    _step(db, review_rejected, holder, 3, "review", "rejected", commit=TIP, supplemental=False)
-
-    old_epoch = add("old epoch")
-    _claim(db, old_epoch, holder)
-    _link(db, old_epoch, TIP)
-    _execute(db, "UPDATE tasks SET review_epoch = 2 WHERE id = %s", (old_epoch,))
-    _step(db, old_epoch, holder, 1, "test", "approved")
-    _step(db, old_epoch, holder, 2, "implementation", "approved", commit=TIP)
-    _step(db, old_epoch, holder, 3, "review", "approved", commit=TIP, supplemental=False)
-    _step(db, old_epoch, holder, 4, "test", "approved", epoch=2)
-
-    supplemental = add("supplemental only")
-    _claim(db, supplemental, holder)
-    _link(db, supplemental, TIP)
-    _step(db, supplemental, holder, 1, "test", "approved")
-    _step(db, supplemental, holder, 2, "implementation", "approved", commit=TIP)
-    _step(db, supplemental, holder, 3, "review", "approved", commit=TIP, supplemental=True)
-
-    legacy = add("legacy review")
-    _claim(db, legacy, holder)
-    _link(db, legacy, TIP)
-    _step(db, legacy, holder, 1, "test", "approved")
-    _step(db, legacy, holder, 2, "implementation", "approved", commit=TIP)
-    _step(db, legacy, holder, 3, "review", "approved", commit=TIP)
-
     claim_only = add("claim only")
     _claim(db, claim_only, holder)
 
-    pending = add("test pending")
-    _claim(db, pending, holder)
-    _step(db, pending, holder, 1, "test", "in_progress")
+    legacy = add("legacy steps only")
+    _claim(db, legacy, holder)
+    _legacy_step(db, legacy, holder, 1, "test", "approved")
+    _legacy_step(db, legacy, holder, 2, "implementation", "approved")
+    _legacy_step(db, legacy, holder, 3, "review", "approved")
 
-    unclaimed = add("unclaimed impl step")
-    _step(db, unclaimed, holder, 1, "implementation", "pending")
+    latest = add("latest wins")
+    _claim(db, latest, holder)
+    _attest(db, latest, holder, 1, "test", "rejected", summary="first run failed", recorded_at=T0)
+    _attest(
+        db,
+        latest,
+        holder,
+        2,
+        "test",
+        "approved",
+        summary="rerun green",
+        recorded_at=LATEST_AT,
+        reference=EvidenceReference(scheme="commit", value=TIP),
+    )
+
+    corrected = add("correction")
+    _claim(db, corrected, holder)
+    original = _attest(
+        db, corrected, holder, 1, "review", "approved", summary="premature", recorded_at=T0
+    )
+    _attest(
+        db,
+        corrected,
+        holder,
+        2,
+        "review",
+        "rejected",
+        summary="reviewer objected",
+        recorded_at=T0 + timedelta(minutes=1),
+        supersedes_id=original,
+    )
+
+    attested = add("unclaimed attested")
+    _attest(db, attested, holder, 1, "test", "approved", summary="ran unclaimed", recorded_at=T0)
 
     add("idle")
 
     closed = add("closed")
     _claim(db, closed, holder)
+    _attest(db, closed, holder, 1, "test", "approved", summary="closed work", recorded_at=T0)
     _close(db, closed, datetime.now(UTC))
 
-    add("other root", path="30000.1")
+    outside = add("other root", path="30000.1")
+    _claim(db, outside, holder)
 
     other = _session(session_manager, other_project_id)
     elsewhere = add("other project", project=other_project_id, path="24818.9")
@@ -286,24 +290,22 @@ def test_assistant_gather_names_the_in_flight_query_owner() -> None:
     assert "run the two in-flight queries with `query_readonly`" in gather
 
 
-def test_in_flight_recipe_names_query_seat_and_stage_sources() -> None:
+def test_in_flight_recipe_names_query_seat_and_sources() -> None:
     recipe = _section(REPORTER.read_text(encoding="utf-8"), IN_FLIGHT_HEADING)
 
-    assert "`query_readonly` is Assistant- and Orchestrator-only" in recipe
-    assert "A Reporter seat cannot run them" in recipe
+    assert "Use `query_readonly` only when your installed definition permits it." in recipe
+    assert "GAP: in-flight evidence - query_readonly unavailable to this seat" in recipe
+    assert "A correction supersedes its named earlier record." in recipe
+    assert '"latest evidence", not "completion stage"' in recipe
+    assert "author_type = 'task_attestation'" in recipe
     assert "task_claim_intervals" in recipe
-    assert "author_type = 'task_step'" in recipe
-    assert "#25377" in recipe
     assert "limit=2000" in recipe
 
 
-def test_in_flight_queries_are_single_ascii_read_only_statements() -> None:
-    recipe = _section(REPORTER.read_text(encoding="utf-8"), IN_FLIGHT_HEADING)
-    blocks = recipe.split("```sql\n")[1:]
-
-    assert len(blocks) == 2
-    for block in blocks:
-        statement = block.split("```", 1)[0].strip()
+def test_in_flight_queries_are_single_ascii_read_only_statements(temp_db: HubDatabase) -> None:
+    evidence_sql, closure_sql = _recipe_queries()
+    window_start = (datetime.now(UTC) - timedelta(minutes=30)).isoformat()
+    for statement in (evidence_sql, closure_sql):
         assert statement.startswith(("SELECT", "WITH"))
         assert ";" not in statement
         assert statement.isascii()
@@ -311,35 +313,78 @@ def test_in_flight_queries_are_single_ascii_read_only_statements() -> None:
         assert "count(*) OVER ()" in statement
         assert "seq_num > %s" in statement
 
+    # Each statement runs in a READ ONLY snapshot, so a data-modifying clause fails in
+    # Postgres instead of passing on the text alone.
+    empty_project = _project(temp_db)
+    assert _read(temp_db, evidence_sql, (empty_project, ROOT_REGEX, 0)) == []
+    assert _read(temp_db, closure_sql, (empty_project, window_start, ROOT_REGEX, 0)) == []
 
-def test_in_flight_stage_follows_current_epoch_and_primary_records(
+
+def test_in_flight_reports_latest_active_attestation(
     temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:
     other_project_id = _project(temp_db)
     _seed_in_flight(temp_db, session_manager, sample_project["id"], other_project_id)
-    stage_sql, _ = _recipe_queries()
+    evidence_sql, _ = _recipe_queries()
 
-    rows = _read(temp_db, stage_sql, (sample_project["id"], ROOT_REGEX, 0))
+    rows = _read(temp_db, evidence_sql, (sample_project["id"], ROOT_REGEX, 0))
 
-    stages = {row["title"]: (row["stage"], row["stage_basis"]) for row in rows}
-    assert stages == EXPECTED_STAGES
-    assert {row["total"] for row in rows} == {len(EXPECTED_STAGES)}
+    assert rows
+    assert all(set(row) == EVIDENCE_COLUMNS for row in rows)
+    assert {row["total"] for row in rows} == {len(EXPECTED_EVIDENCE)}
+    by_title = {row["title"]: row for row in rows}
+    observed = {
+        title: (row["evidence_kind"], row["evidence_result"]) for title, row in by_title.items()
+    }
+    assert observed == EXPECTED_EVIDENCE
+
+    latest = by_title["latest wins"]
+    assert latest["evidence_summary"] == "rerun green"
+    # The hub hands JSON containers back as canonical text, so decode before comparing.
+    assert json.loads(latest["evidence_reference"]) == {"scheme": "commit", "value": TIP}
+    assert latest["evidence_recorded_at"] == LATEST_AT
+
+    corrected = by_title["correction"]
+    assert corrected["evidence_summary"] == "reviewer objected"
+    assert corrected["evidence_reference"] is None
+
+    claim_only = by_title["claim only"]
+    assert claim_only["evidence_recorded_at"] is None
+    assert claim_only["first_claimed_at"] is not None
+
+    legacy = by_title["legacy steps only"]
+    assert legacy["evidence_summary"] is None
+    assert legacy["evidence_recorded_at"] is None
+
+    attested = by_title["unclaimed attested"]
+    assert attested["claimed_by_session_id"] is None
+    assert attested["first_claimed_at"] is None
 
 
 def test_in_flight_pages_keep_the_full_total_under_the_outer_limit(
     temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:
+    project_id = sample_project["id"]
     other_project_id = _project(temp_db)
-    _seed_in_flight(temp_db, session_manager, sample_project["id"], other_project_id)
-    stage_sql, _ = _recipe_queries()
+    _seed_in_flight(temp_db, session_manager, project_id, other_project_id)
+    evidence_sql, _ = _recipe_queries()
 
-    first = _read(temp_db, stage_sql, (sample_project["id"], ROOT_REGEX, 0), limit=3)
-    assert len(first) == 3
-    assert first[0]["total"] == len(EXPECTED_STAGES)
+    first = _read(temp_db, evidence_sql, (project_id, ROOT_REGEX, 0), limit=2)
+    assert first
+    total = first[0]["total"]
+    assert total == len(EXPECTED_EVIDENCE)
 
-    rest = _read(temp_db, stage_sql, (sample_project["id"], ROOT_REGEX, first[-1]["seq_num"]))
-    titles = [row["title"] for row in first + rest]
-    assert len(titles) == len(set(titles)) == len(EXPECTED_STAGES)
+    collected = list(first)
+    while len(collected) < total:
+        page = _read(
+            temp_db, evidence_sql, (project_id, ROOT_REGEX, collected[-1]["seq_num"]), limit=2
+        )
+        assert page, "keyset paging ended before the first page's total"
+        collected.extend(page)
+
+    seq_nums = [row["seq_num"] for row in collected]
+    assert seq_nums == sorted(set(seq_nums))
+    assert {row["title"] for row in collected} == set(EXPECTED_EVIDENCE)
 
 
 def test_closures_report_claim_to_close_inside_the_window(

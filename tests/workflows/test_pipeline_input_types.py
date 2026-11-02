@@ -151,10 +151,12 @@ def test_real_cli_command_keeps_numeric_text_inputs_to_the_guard(
     pipeline = PipelineDefinition.model_validate(definition)
     registry = InternalToolRegistry("gobby-agents")
     caller = "11111111-1111-4111-8111-111111111111"
+    report_session = "22222222-2222-4222-8222-222222222222"
     ctx = MagicMock(spec=AgentsRegistryContext)
     ctx.db = mock_db
     ctx.get_current_session_id.return_value = caller
-    ctx.resolve_session_id.return_value = caller
+    # report_to is a session ref; the seat tool resolves "17281" to the live session it names.
+    ctx.resolve_session_id.side_effect = lambda ref: report_session if ref == "17281" else caller
     register_runbook_seat_tools(registry, ctx)
     proxy = GuardProxy(registry)
     execution = cast(MagicMock, mock_execution_manager.create_execution.return_value)
@@ -203,4 +205,4 @@ def test_real_cli_command_keeps_numeric_text_inputs_to_the_guard(
     assert proxy.calls[0]["requested"] == "developer"
     guard.assert_called_once()
     assert guard.call_args.kwargs["workspace"] == "3"
-    assert guard.call_args.kwargs["report_to"] == "17281"
+    assert guard.call_args.kwargs["report_to"] == report_session

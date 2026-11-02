@@ -36,6 +36,7 @@ BRANCH = "task-24797-runbooks"
 TASK_REF = "#22604"
 EXPECTED_TAB = {
     "devteam": f"Dev Team - {TASK_REF}",
+    "epic-devteam": "Epic DevTeam",
     "support": "Support",
     "team-planning": "Team Planning",
     "research": "Research",
@@ -97,23 +98,22 @@ def _placement_titles(placement: dict[str, Any]) -> tuple[str | None, str]:
 
 
 @pytest.mark.parametrize(
-    ("runbook", "seat", "pane_title"),
+    ("runbook", "step_id", "agent", "pane_title"),
     [
-        ("devteam", "dev-manager", "Dev Manager"),
-        ("devteam", "test-writer", "Test Writer"),
-        ("devteam", "developer", "Developer"),
-        ("devteam", "code-reviewer", "Code Reviewer"),
-        ("support", "release-manager", "Release Manager"),
-        ("support", "triage", "Triage"),
-        ("support", "archivist", "Archivist"),
-        ("support", "security-reviewer", "Security Reviewer"),
-        ("support", "recovery-steward", "Recovery Steward"),
-        ("support", "consolidator", "Consolidator"),
-        ("team-planning", "plan-writer", "Plan Writer"),
-        ("team-planning", "plan-adversary", "Plan Adversary"),
-        ("team-planning", "plan-enhancer", "Plan Enhancer"),
-        ("research", "researcher", "Researcher"),
-        ("research", "research-reviewer", "Research Reviewer"),
+        ("epic-devteam", "coordinator", "dev-manager", "Dev Manager"),
+        ("devteam", "developer", "developer", "Developer"),
+        ("devteam", "reviewer", "code-reviewer", "Code Reviewer"),
+        ("support", "release-manager", "release-manager", "Release Manager"),
+        ("support", "triage", "triage", "Triage"),
+        ("support", "archivist", "archivist", "Archivist"),
+        ("support", "security-reviewer", "security-reviewer", "Security Reviewer"),
+        ("support", "recovery-steward", "recovery-steward", "Recovery Steward"),
+        ("support", "consolidator", "consolidator", "Consolidator"),
+        ("team-planning", "plan-writer", "plan-writer", "Plan Writer"),
+        ("team-planning", "plan-adversary", "plan-adversary", "Plan Adversary"),
+        ("team-planning", "plan-enhancer", "plan-enhancer", "Plan Enhancer"),
+        ("research", "researcher", "researcher", "Researcher"),
+        ("research", "research-reviewer", "research-reviewer", "Research Reviewer"),
     ],
 )
 @pytest.mark.asyncio
@@ -123,7 +123,8 @@ async def test_runbook_seat_titles_are_definition_names_through_claim(
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     runbook: str,
-    seat: str,
+    step_id: str,
+    agent: str,
     pane_title: str,
     team_id: str | None,
 ) -> None:
@@ -141,12 +142,12 @@ async def test_runbook_seat_titles_are_definition_names_through_claim(
     inputs.update(
         task=TASK_REF,
         team_id=team_id,
-        seats=seat,
+        seats=agent,
         workspace="test-workspace",
         project_path=str(PIPELINES),
         report_to="gobby#1",
     )
-    step = next(step for step in definition.steps if step.id == seat)
+    step = next(step for step in definition.steps if step.id == step_id)
     assert step.mcp is not None and step.mcp.arguments is not None
     renderer = StepRenderer(TemplateEngine())
     arguments = renderer.render_mcp_arguments(
@@ -168,7 +169,7 @@ async def test_runbook_seat_titles_are_definition_names_through_claim(
                         "project_path": str(PIPELINES),
                         "report_to": "gobby#1",
                         "workspace_id": "test-workspace",
-                        "launch": [seat],
+                        "launch": [agent],
                         "live": {},
                         "tab_exists": False,
                         "tab_title": EXPECTED_TAB[runbook],
@@ -177,6 +178,7 @@ async def test_runbook_seat_titles_are_definition_names_through_claim(
                 "admit": {
                     "output": {
                         "branch": BRANCH,
+                        "worktree": str(uuid4()),
                         "project_path": str(PIPELINES),
                         "task_id": None,
                         "team": {"team_id": str(uuid4())},
@@ -187,7 +189,7 @@ async def test_runbook_seat_titles_are_definition_names_through_claim(
         drop_none=True,
     )
     parent = session_manager.register(
-        external_id=f"parent-{runbook}-{seat}",
+        external_id=f"parent-{runbook}-{agent}",
         machine_id="21000000-0000-4000-8000-000000000001",
         source="codex",
         project_id=sample_project["id"],
@@ -219,7 +221,7 @@ async def test_runbook_seat_titles_are_definition_names_through_claim(
         "_load_agent_body",
         Mock(
             return_value=AgentDefinitionBody(
-                name=seat,
+                name=agent,
                 prompts=AgentPromptBlocks(agent="Runbook seat"),
                 workflows=AgentWorkflows(rule_selectors=AgentSelector()),
             )
@@ -268,7 +270,7 @@ async def test_runbook_seat_titles_are_definition_names_through_claim(
         project_id=parent.project_id,
         source="codex",
         workflow_name=None,
-        agent_name=seat,
+        agent_name=agent,
         initial_variables=variables,
         git_branch=None,
         prompt="",
@@ -295,7 +297,7 @@ async def test_runbook_seat_titles_are_definition_names_through_claim(
     after_resume = session_manager.get(child.id)
     assert after_resume is not None and after_resume.title == claimed.title
 
-    tasks.close_task(task.id, force=True, closed_in_session_id=child.id)
+    tasks.release_task_claim(task.id)
     restored = recompute_automatic_title(session_manager, child.id)
 
     assert restored.title == pane_title and restored.title_source == "definition"

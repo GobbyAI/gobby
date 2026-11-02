@@ -18,7 +18,7 @@ paste it into the report.
 ## Gather
 
 Use the query recipe in `gobby:references/agents/procedures/reporter.md`, sections "Cadence and
-budget", "Sources" and "In-flight tasks: stage, time in stage, claim-to-close". Load it completely
+budget", "Sources" and "In-flight tasks: evidence activity and claim-to-close". Load it completely
 through `gobby-skills:get_skill_file(name="gobby", path="references/agents/procedures/reporter.md")`.
 Fetch its schema first when unleased, and follow every page.next_cursor using only cursor until
 null. For a full report, load `references/agents/procedures/reporter-full-report.md` the same way

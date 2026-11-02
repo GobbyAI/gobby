@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from gobby.config.ai import DecisionsConfig
 from gobby.config.tasks import TaskValidationConfig
 from gobby.config.validation_detection import (
     classify_validation_command,
@@ -106,6 +107,9 @@ class _Config:
     def __init__(self) -> None:
         self.validation_detection = None
         self.validation = TaskValidationConfig()
+        self.ai = SimpleNamespace(
+            decisions=DecisionsConfig(api_base="https://decisions.test", model="jev-1")
+        )
 
     def get_gobby_tasks_config(self) -> SimpleNamespace:
         return SimpleNamespace(validation=self.validation)

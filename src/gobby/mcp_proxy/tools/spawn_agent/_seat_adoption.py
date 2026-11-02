@@ -102,10 +102,14 @@ def reconcile_pipeline_invocation(
         if run.terminal_id
         else None
     )
+    # Carry the run and session ids a fresh launch returns, so later steps that
+    # address the seat (team-planning's notify-writer) work for an adopted seat too.
     return {
         "success": True,
         "adopted": True,
         "run_id": run.id,
+        "agent_run_id": run.id,
+        "child_session_id": run.child_session_id,
         "status": run.status,
         **(refs or _NO_SEAT),
     }

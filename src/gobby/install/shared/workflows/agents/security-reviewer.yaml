@@ -47,9 +47,14 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
+      - "tag:seat-policy"
       - "tag:worker-safety"
       - "tag:task-closure-general"
       - "tag:task-security"
       - "name:no-send-keys"
       - "name:no-git-push"
       - "name:reviewer-write-scope"
+    exclude:
+      # Closure follows the declarative task_close policy (#25449), so this seat
+      # keeps closing its own work instead of handing it to a closer.
+      - "name:seat-no-task-close"

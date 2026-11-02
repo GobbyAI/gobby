@@ -367,7 +367,8 @@ async def test_devteam_run_completes_when_its_arrange_layout_is_refused(
     assert [spawn["agent"] for spawn in proxy.spawns()] == DEVTEAM_SEATS
     developer, reviewer = proxy.spawns()
     assert developer["task_id"] == "task-1"
-    assert "task_id" not in reviewer
+    assert reviewer["task_id"] == "task-1"
+    assert reviewer["claim"] is False
     assert developer["project_path"] == reviewer["project_path"] == "/tmp/devteam"
     [connect] = [call for call in proxy.calls if call["tool"] == "gobby-agents:send_message"]
     assert connect["arguments"]["target"] == "session"
@@ -602,9 +603,12 @@ async def test_restart_reconciles_real_reserved_run(temp_db: HubDatabase, run_st
     run_id = interrupted["reserved_run_id"]
     sessions = SessionManager(temp_db)
     runs = LocalAgentRunManager(temp_db)
+    # Any existing session row serves as the seat's child session here.
+    seat_session_id = before.calls[-1]["session_id"]
     if run_state != "missing":
         run = runs.create(
             parent_session_id=before.calls[-1]["session_id"],
+            child_session_id=seat_session_id,
             provider="claude",
             prompt="Interrupted placed seat",
             run_id=run_id,
@@ -669,6 +673,9 @@ async def test_restart_reconciles_real_reserved_run(temp_db: HubDatabase, run_st
     if run_state == "started":
         assert reply["success"] is True and reply["adopted"] is True
         assert reply["run_id"] == run_id
+        # An adopted seat answers with the same ids a fresh launch returns.
+        assert reply["agent_run_id"] == run_id
+        assert reply["child_session_id"] == seat_session_id
     else:
         assert reply["success"] is False
         assert run_id in reply["error"]
