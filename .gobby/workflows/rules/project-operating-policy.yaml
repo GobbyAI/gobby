@@ -28,6 +28,12 @@ rules:
             ],
             "integration_branch": "0.5.0",
             "deferral_labels": ["deferred-by-josh"],
+            "security_paths": [
+              "crates/gclient/src/daemon/**",
+              "crates/gclient/src/app/live_loop/**",
+              "crates/gclient/src/ui/dialogs.rs",
+              "crates/gclient/src/ui/dialogs/**"
+            ],
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–05:00 America/Chicago daily; 04:00–06:00 on Mondays",
             "report_cadence_seconds": 1800,
