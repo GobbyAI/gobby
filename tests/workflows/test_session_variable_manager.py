@@ -136,6 +136,32 @@ def test_container_defaults_are_isolated_across_sessions_and_cache_hits(db: Any)
     assert session_b["loaded_skills"] is not cached["loaded_skills"]
 
 
+def test_defaults_cache_entry_stays_fresh_for_ttl_after_a_slow_load(
+    db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A load longer than the TTL must still serve the very next read from the cache."""
+    from types import SimpleNamespace
+
+    from gobby.workflows import state_manager
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    clock = [1_000.0]
+    loads: list[str | None] = []
+
+    def slow_load(_db: Any, project_id: str | None) -> dict[str, Any]:
+        loads.append(project_id)
+        clock[0] += SessionVariableManager._DEFAULTS_CACHE_TTL + 5.0
+        return {"recall_enabled": True}
+
+    monkeypatch.setattr(state_manager, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(state_manager, "load_variable_defaults", slow_load)
+    mgr = SessionVariableManager(db)
+
+    assert mgr._get_variable_defaults(PROJECT_ID) == {"recall_enabled": True}
+    assert mgr._get_variable_defaults(PROJECT_ID) == {"recall_enabled": True}
+    assert loads == [PROJECT_ID]
+
+
 def test_get_variables_skips_disabled_variable_defaults(db: Any) -> None:
     from gobby.storage.definitions import SessionVariableDefaultManager
     from gobby.workflows.state_manager import SessionVariableManager

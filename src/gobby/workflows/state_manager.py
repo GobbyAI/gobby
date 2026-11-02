@@ -168,8 +168,10 @@ class SessionVariableManager(SessionEditLedger, WorktreeShellCallRegistry, GitOp
             defaults = cached[1]
         else:
             defaults = load_variable_defaults(self.db, project_id)
+            # Stamp after the load: a slow load must not expire its own entry at once.
+            loaded_at = time.monotonic()
             with _VARIABLE_CACHE_LOCK:
-                _DEFAULTS_CACHE.setdefault(self.db, {})[cache_key] = (now, defaults)
+                _DEFAULTS_CACHE.setdefault(self.db, {})[cache_key] = (loaded_at, defaults)
         if keys is not None:
             defaults = {key: defaults[key] for key in keys if key in defaults}
         return deepcopy(defaults)
