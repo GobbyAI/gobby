@@ -418,10 +418,14 @@ class LocalCommunicationsStore:
         """Insert a message, or return the existing platform duplicate; True when inserted."""
         if not message.id:
             message.id = str(uuid.uuid4())
+        # Telegram ids are chat-local, so the platform key is scoped to the destination.
+        destination = message.metadata_json.get("platform_destination")
+        destination_key = "" if destination is None else str(destination)
         conflict_clause = (
             "ON CONFLICT DO NOTHING"
             if deduplicate_id
-            else "ON CONFLICT (channel_id, platform_message_id) "
+            else "ON CONFLICT (channel_id, "
+            "(COALESCE(metadata_json->>'platform_destination', '')), platform_message_id) "
             "WHERE platform_message_id IS NOT NULL DO NOTHING"
         )
         row = conn.execute(
@@ -456,8 +460,9 @@ class LocalCommunicationsStore:
                 SELECT *
                   FROM comms_messages
                  WHERE channel_id = %s AND platform_message_id = %s
+                   AND COALESCE(metadata_json->>'platform_destination', '') = %s
                 """,
-                (message.channel_id, message.platform_message_id),
+                (message.channel_id, message.platform_message_id, destination_key),
             ).fetchone()
         if row is None and deduplicate_id:
             row = conn.execute(
@@ -518,8 +523,9 @@ class LocalCommunicationsStore:
         platform_message_id: str,
         *,
         platform_destination: str | None = None,
+        direction: str | None = None,
     ) -> CommsMessage | None:
-        """Get a message by its platform ID on a specific channel."""
+        """Get a message by its platform ID on a specific channel, optionally one direction."""
         sql = """
             SELECT m.* FROM comms_messages m
             JOIN comms_channels c ON m.channel_id = c.id
@@ -533,6 +539,9 @@ class LocalCommunicationsStore:
         if platform_destination is not None:
             sql += " AND m.metadata_json->>'platform_destination' = %s"
             params += (platform_destination,)
+        if direction is not None:
+            sql += " AND m.direction = %s"
+            params += (direction,)
         row = self.db.fetchone(
             sql,
             params,

@@ -8244,7 +8244,7 @@
     },
     {
       "name": "idx_comms_messages_channel_platform_message",
-      "definition": "CREATE UNIQUE INDEX idx_comms_messages_channel_platform_message ON $schema.comms_messages USING btree (channel_id, platform_message_id) WHERE (platform_message_id IS NOT NULL)"
+      "definition": "CREATE UNIQUE INDEX idx_comms_messages_channel_platform_message ON $schema.comms_messages USING btree (channel_id, COALESCE((metadata_json ->> 'platform_destination'::text), ''::text), platform_message_id) WHERE (platform_message_id IS NOT NULL)"
     },
     {
       "name": "idx_comms_messages_direction",
