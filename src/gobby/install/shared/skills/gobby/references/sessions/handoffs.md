@@ -70,6 +70,14 @@ blocked on the test service; rerun when available" in `blockers` while unresolve
 Reference an older active decision as "Keep the 10K cap; rationale in task #22309"
 instead of recounting earlier epochs.
 
+## Workspace folder and other seats
+
+The agent workspace folder holds working artifacts only. A handoff holds continuation
+state and points to files; it does not carry another seat's inputs. Anything another
+seat needs goes in a message, a `send_attachment` (a document up to the attachment cap,
+readable by its sender and recipients), or a task. Durable outcomes go to tasks, memory,
+git, or plans.
+
 ## Submit and continue
 
 When the configured feedback survey applies, submit the epoch's feedback first.
@@ -108,4 +116,5 @@ failed recovery marker.
 
 Guide: [Creating and reading handoffs](../../../../../../../../docs/guides/sessions.md#creating-and-reading-handoffs).
 
-_Last verified: 2026-09-18_
+_Version: 1.1.0_
+_Last verified: 2026-11-02_

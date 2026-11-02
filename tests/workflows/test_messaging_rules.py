@@ -124,6 +124,7 @@ class TestIsMessageDeliveryTool:
     def test_recognises_message_retrieval_tools(self) -> None:
         assert is_message_delivery_tool("get_inter_session_message") is True
         assert is_message_delivery_tool("get_inter_session_messages") is True
+        assert is_message_delivery_tool("get_attachment") is True
 
     def test_rejects_other_tools(self) -> None:
         assert is_message_delivery_tool("list_tools") is False
@@ -208,6 +209,7 @@ def _notify_unread_mail_body() -> RuleDefinitionBody:
     return RuleDefinitionBody(
         event=RuleTriggerEvent.BEFORE_TOOL,
         agent_scope=["*"],
+        mandatory=True,
         when=(
             "has_pending_messages(event.metadata.get('_platform_session_id', '')) "
             "and not is_message_delivery_tool(event.data.get('mcp_tool'))"
@@ -404,6 +406,7 @@ class TestJinja2HelperRendering:
         body = RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
             agent_scope=["*"],
+            mandatory=True,
             when="has_pending_messages(event.metadata.get('_platform_session_id', ''))",
             effects=[
                 RuleEffect(
@@ -437,6 +440,7 @@ class TestJinja2HelperRendering:
         body = RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
             agent_scope=["*"],
+            mandatory=True,
             when="has_pending_messages(event.metadata.get('_platform_session_id', ''))",
             effects=[
                 RuleEffect(
