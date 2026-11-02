@@ -1841,6 +1841,10 @@ async fn bind_answers_within_the_publisher_deadline_during_a_max_publish() {
         "bind missed the publisher deadline behind a max publish"
     );
 
+    assert!(
+        !publish.is_finished(),
+        "bind answered only after the max publish completed"
+    );
     let publish_status = within("max publish", publish).await.expect("publish task");
     assert_eq!(
         publish_status,
