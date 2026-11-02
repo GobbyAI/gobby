@@ -127,7 +127,7 @@ applies unless the proof passes and the generation is current. Success returns 2
 Limits, with their sources:
 
 - Bind body: 4 KiB (`BIND_LIMIT`, `publish.rs`).
-- Publish body: 128 MiB (`PUBLISH_LIMIT`, `publish.rs`).
+- Publish body: 16 MiB (`PUBLISH_LIMIT`, `publish.rs`).
 - Public frame: the bind's `max_message_size`, per generation (`frame_limit`).
 - Connect, handshake and first private frame share 2 s (`READY_TIMEOUT`).
 - Private send and close deadlines: 2 s and 1 s (`transport_support.rs`).
@@ -227,10 +227,14 @@ When a publisher is attached:
   mode, because the broker may still have subscribers.
 - `WebSocketServer.stop()` drains terminals before `publisher.stop()`, so no fanout
   starts after the stop.
-- Each publish POST carries at most 1 MiB of encoded operations (`MAX_BATCH_BYTES`). This
-  bounds each request's latency under the 2 s `REQUEST_TIMEOUT`; it is a mitigation, not
-  a demonstrated cause of the timeouts. A failed publish logs its batch size and elapsed
-  time. The 128 MiB publish limit above is gdaemon's bound.
+- A publish call splits into operations of at most 4 MiB encoded (`PUBLISH_CHUNK`), kept in
+  frame order. A frame larger than that goes alone in its own operation. No frame is
+  refused or dropped by the split.
+- A POST carries whole operations up to 1 MiB (`MAX_BATCH_BYTES`), or one larger operation
+  alone. This bounds each request's latency under the 2 s `REQUEST_TIMEOUT`; it is a
+  mitigation, not a demonstrated cause of the timeouts. A failed publish logs its batch
+  size and elapsed time. The 16 MiB publish limit above is gdaemon's bound. It covers one
+  frame at the default 5 MiB `max_message_size` with every byte escaped, about 10 MiB.
 
 Python-only mode (no publisher) is unchanged.
 

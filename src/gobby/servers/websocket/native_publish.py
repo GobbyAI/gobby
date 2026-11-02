@@ -32,6 +32,11 @@ MAX_WAITING_FUTURES = 65_536
 # can exceed it. Capping each POST bounds its latency; one operation larger than the limit
 # still goes alone.
 MAX_BATCH_BYTES = 1024 * 1024
+# A publish call splits into ops of at most this many encoded bytes, so no request body grows
+# with the call. The cap sits above MAX_BATCH_BYTES because each subscriber queues 16 batches
+# (gdaemon broker.rs MAX_QUEUED_BATCHES); finer ops could retire a slow subscriber on a burst
+# that one op accepts today. A frame above the cap goes alone in its own op.
+PUBLISH_CHUNK = 4 * 1024 * 1024
 
 REQUEST_TIMEOUT = 2.0
 TOKEN_WAIT = 2.0
@@ -160,7 +165,13 @@ class NativePublisher:
     ) -> asyncio.Future[None]:
         # Frames are encoded exactly as BroadcastMixin.broadcast encodes them.
         payloads = [json_dumps(frame) for frame in frames] or [json_dumps(message)]
-        return self._enqueue({"op": "publish", "filter": message, "frames": payloads})
+        futures = [
+            self._enqueue({"op": "publish", "filter": message, "frames": chunk})
+            for chunk in _publish_chunks(message, payloads)
+        ]
+        if len(futures) == 1:
+            return futures[0]
+        return asyncio.ensure_future(_settle_all(futures))
 
     def subscribe(self, leg: int, events: Iterable[str]) -> asyncio.Future[None]:
         return self._enqueue({"op": "subscribe", "leg": leg, "events": list(events)})
@@ -364,6 +375,26 @@ def _request_body(generation: str, ops: list[bytes]) -> bytes:
     return b"".join(
         (b'{"generation":', json_dumps(generation).encode(), b',"ops":[', b",".join(ops), b"]}")
     )
+
+
+def _publish_chunks(message: dict[str, Any], payloads: list[str]) -> list[list[str]]:
+    """Groups frame payloads in order so each publish op encodes within PUBLISH_CHUNK."""
+    empty = len(json_dumps({"op": "publish", "filter": message, "frames": []}).encode())
+    chunks: list[list[str]] = [[]]
+    size = empty
+    for payload in payloads:
+        # Each frame costs its encoded bytes plus the separator before it.
+        cost = len(json_dumps(payload).encode()) + 2
+        if chunks[-1] and size + cost > PUBLISH_CHUNK:
+            chunks.append([])
+            size = empty
+        chunks[-1].append(payload)
+        size += cost
+    return chunks
+
+
+async def _settle_all(futures: list[asyncio.Future[None]]) -> None:
+    await asyncio.gather(*futures)
 
 
 def native_publisher_from_environment(
