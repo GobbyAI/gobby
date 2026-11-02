@@ -131,6 +131,17 @@ how the system behaves so you can work with it instead of being surprised by it.
     name of an agent definition (other than `default`), a rule, a step workflow or a
     pipeline. Code only validates and processes their YAML through the engine; their
     authorities and exemptions are declared in that YAML.
+17. Version every bundled definition change. Any commit that changes a bundled rule,
+    skill, skill reference, pipeline or agent definition under `src/gobby/install/shared/`
+    bumps that file's semver in the same commit, so a later improvement loop can tell
+    which version each seat runs. Agent definitions and pipelines use their top-level
+    `version: "MAJOR.MINOR.PATCH"`; skills use `version` in `SKILL.md` front matter; rule
+    files use a file-level `version` key; references add a `_Version: MAJOR.MINOR.PATCH_`
+    line above `_Last verified_`. A two-part version such as `"1.0"` becomes `"1.0.0"`
+    before its first bump. PATCH changes wording without changing behavior. MINOR adds a
+    duty, permission, step or rule. MAJOR removes authority or changes a contract (who
+    lands or closes, claim flow, attestation kinds, message routes). No hook enforces
+    this yet; reviewers check it.
 
 ## Session Handoff
 
