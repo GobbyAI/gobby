@@ -19,14 +19,16 @@ from gobby.runner_init.mcp_stack import (
     SCOPED_PAYLOAD_VERSION_KEY,
     maybe_backfill_scoped_tool_embeddings,
 )
+from gobby.servers.routes.mcp.endpoints.discovery import search_mcp_tools
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("entrypoint", ["semantic", "http"])
 async def test_visible_tools_are_filtered_before_vector_top_k(
-    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entrypoint: str
 ) -> None:
     collection = "tool-visibility-proof"
     store = VectorStore(path=str(tmp_path / "vectors"), collection_name=collection, embedding_dim=2)
@@ -62,14 +64,73 @@ async def test_visible_tools_are_filtered_before_vector_top_k(
                         "description": "Run a pipeline runbook",
                     },
                 )
+        if entrypoint == "http":
+            request = MagicMock()
+            request.json = AsyncMock(return_value={"query": "run pipeline runbook", "top_k": 2})
+            http_server = SimpleNamespace(
+                resolve_project_id=lambda *_: "project",
+                _tools_handler=SimpleNamespace(_semantic_search=search),
+                mcp_manager=manager,
+                _mcp_db_manager=manager,
+                _internal_manager=internal,
+            )
+            response = await search_mcp_tools(request, cast(Any, http_server))
+            assert response["success"], response
+            names = [row["server_name"] for row in response["results"]]
+        else:
+            found = await search.search_tools(
+                "run pipeline runbook",
+                "project",
+                top_k=2,
+                mcp_manager=manager,
+                internal_manager=internal,
+            )
+            names = [result.server_name for result in found]
+        assert names == ["gobby-workflows", "local"]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cached", [True, False])
+async def test_runtime_backfill_embeds_external_tools_with_valid_point_ids(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cached: bool
+) -> None:
+    store = VectorStore(path=str(tmp_path / "vectors"), embedding_dim=2)
+    search = SemanticToolSearch(temp_db, vector_store=store, embedding_dim=2)
+    monkeypatch.setattr(search, "embed_text", AsyncMock(return_value=[1.0, 0.0]))
+    tool_id = str(uuid4())
+    full_tool = SimpleNamespace(
+        id=tool_id, name="navigate", description="Navigate to a URL", input_schema={}
+    )
+    config = SimpleNamespace(
+        id="external",
+        name="browser",
+        project_id="project",
+        tools=[{"name": "navigate", "brief": "Navigate to a URL"}],
+    )
+    manager = SimpleNamespace(
+        server_configs=[config],
+        mcp_db_manager=SimpleNamespace(get_cached_tools=lambda _: [full_tool]) if cached else None,
+    )
+    internal = InternalRegistryManager()
+    registry = InternalToolRegistry("gobby-workflows")
+    registry.register(
+        "run_pipeline", description="Run a pipeline runbook", input_schema={}, func=lambda: None
+    )
+    internal.add_registry(registry)
+    try:
+        stats = await search.embed_all_tools("project", manager, internal_manager=internal)
+        assert stats["failed"] == 0, stats
+        assert stats["embedded"] == 2, stats
         found = await search.search_tools(
-            "run pipeline runbook",
-            "project",
-            top_k=2,
-            mcp_manager=manager,
-            internal_manager=internal,
+            "run pipeline runbook", "project", mcp_manager=manager, internal_manager=internal
         )
-        assert [result.server_name for result in found] == ["gobby-workflows", "local"]
+        assert {result.server_name for result in found} == {"browser", "gobby-workflows"}
+        external = next(result for result in found if result.server_name == "browser")
+        assert external.description == "Navigate to a URL"
+        if cached:
+            assert external.tool_id == tool_id
     finally:
         await store.close()
 

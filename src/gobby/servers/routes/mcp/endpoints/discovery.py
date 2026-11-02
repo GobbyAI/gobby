@@ -513,6 +513,8 @@ async def search_mcp_tools(
                     top_k=top_k,
                     min_similarity=min_similarity,
                     server_filter=server_filter,
+                    mcp_manager=server.mcp_manager,
+                    internal_manager=server._internal_manager,
                 )
                 visible_results = [result.to_dict() for result in results]
                 return {

@@ -544,7 +544,8 @@ class SemanticToolSearch:
             server_id = str(getattr(server, "id", "") or "")
             server_project = str(getattr(server, "project_id", project_id) or project_id)
             await self._delete_legacy_points(server_name, server_project)
-            getter = getattr(mcp_manager, "get_cached_tools", None)
+            cache_manager = getattr(mcp_manager, "mcp_db_manager", None) or mcp_manager
+            getter = getattr(cache_manager, "get_cached_tools", None)
             tools = getter(server_id) if callable(getter) and server_id else None
             if not tools:
                 tools = getattr(server, "tools", None) or []
@@ -558,10 +559,14 @@ class SemanticToolSearch:
                     if raw_name is None and isinstance(tool, dict):
                         raw_name = tool.get("name")
                     tool_name = str(raw_name or "")
-                    tool_id = str(raw_id or tool_name)
+                    tool_id = (
+                        str(raw_id)
+                        if raw_id
+                        else str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{server_id}/{tool_name}"))
+                    )
                     description = getattr(tool, "description", None)
                     if description is None and isinstance(tool, dict):
-                        description = tool.get("description")
+                        description = tool.get("description") or tool.get("brief")
                     input_schema = getattr(tool, "input_schema", None)
                     if input_schema is None and isinstance(tool, dict):
                         input_schema = tool.get("input_schema")
