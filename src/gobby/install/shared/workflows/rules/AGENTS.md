@@ -24,7 +24,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `restraint` | `restraint/` | 3 | Block first code write/edit until restraint is loaded, opt-out phrases, per-turn reinforcement |
 | `development-discipline` | `development-discipline/` | 1 | Block the first checkout-touching tool call under a claimed code/refactor/test task until developer test and structural guidance is loaded |
 | `review-learning` | `review-learning/` | 2 | Inject confirmed planning and review lessons into matching work |
-| `roles` | `roles/` | 18 | Definition-selected seat guidance and restrictions on spawning, pipeline launch, project creation, user questions, task closure, database queries and write scopes. Exclusions declare exemptions. Team managers use their declared spawn/resume scopes within the admitted team. Closing definitions declare reasons, task scopes and review requirements. Optional documentation, research, digest and Prometheus scopes are selected by name. Operator exemptions use stored identity; definition names grant no authority. |
+| `roles` | `roles/` | 29 | Definition-selected seat guidance and restrictions on spawning, pipeline launch, project creation, user questions, task closure, database queries and write scopes. Exclusions declare exemptions. Team managers use their declared spawn/resume scopes within the admitted team. Closing definitions declare reasons, task scopes and review requirements. Optional documentation, research, digest and Prometheus scopes are selected by name. Operator exemptions use stored identity; definition names grant no authority. |
 
 Definitions may explicitly select `name:no-git-push` or `name:no-agent-spawn`.
 These strict policies cover persona and spawned sessions, including team managers.

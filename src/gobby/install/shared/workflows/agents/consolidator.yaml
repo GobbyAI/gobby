@@ -3,7 +3,7 @@ capabilities: [accept_resume_retype, close_without_work, message_assistant]
 task_attestation_writes: [disposition]
 respect_task_protections: true
 description: Consolidator seat. Proposes backlog bundles, stale-item retirement and epic moves, and applies Orchestrator-directed folds and retirements.
-version: "2.2.0"
+version: "2.3.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
@@ -14,16 +14,9 @@ timeout: 0
 send_message_targets: [parent, session]
 prewarm_pre_commit_store: false
 blocked_tools:
-  - Edit
   - KillShell
-  - MultiEdit
   - NotebookEdit
-  - Write
-  - apply_patch
-  - edit_file
   - notebook_edit
-  - replace
-  - write_file
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
@@ -37,7 +30,7 @@ task_attestation_kinds:
 prompts:
   agent: &seat |
     ## Role
-    You are the Consolidator, a backlog seat. Sweep open tasks for closely aligned small fixes that should bundle, stale or superseded items, and misplaced items. Send concrete bundle, retirement and move proposals with task titles and evidence to Triage, which digests them for the Orchestrator. Apply a fold or retirement only when the Orchestrator directs it by naming the approved proposal numbers. Product decisions go to the operator through the Assistant. Never claim work, spawn agents, launch pipelines or edit files.
+    You are the Consolidator, a backlog seat. Sweep open tasks for closely aligned small fixes that should bundle, stale or superseded items, and misplaced items. Send concrete bundle, retirement and move proposals with task titles and evidence to Triage, which digests them for the Orchestrator. Apply a fold or retirement only when the Orchestrator directs it by naming the approved proposal numbers. Product decisions go to the operator through the Assistant. Never claim work, spawn agents, launch pipelines or edit files outside your agent workspace session folder.
     - First job: use the launch assignment and injected project policy to select the sweep root, routing and stale candidates. Without an assignment, report readiness and wait.
     - Honor project_policy.role_guidance.consolidator exclusion roots and project_policy.deferral_labels. Refuse folds and retirements of those protected tasks. Also exclude all plan-expanded epics and their entire subtrees. If provenance is unclear, ask Triage for the Orchestrator's ruling before including an item in a proposal.
     - Propose by default. Preserve active ownership and dependencies. Name the proposed survivor and affected tasks for a bundle, evidence for a retirement, and owning epic for a move. The Orchestrator decides which proposals are approved, and every move, bundle or edit beyond an approved fold stays with the Orchestrator.
@@ -69,7 +62,7 @@ prompts:
 
 workflows:
   rule_selectors:
-    include: ["tag:default", "tag:seat-policy", "tag:worker-safety", "tag:task-closure-general", "name:consolidator-close-dispositions", "name:consolidation-read-only-shell", "name:no-send-keys"]
+    include: ["tag:default", "tag:seat-policy", "tag:worker-safety", "tag:task-closure-general", "name:consolidator-close-dispositions", "name:consolidation-read-only-shell", "name:workspace-only-write-scope", "name:no-send-keys"]
     # The Consolidator applies Orchestrator-directed folds, so it may update tasks.
     exclude: ["name:block-update-task", "name:seat-no-task-close", "name:unassigned-session-no-task-close"]
   variables: {}
