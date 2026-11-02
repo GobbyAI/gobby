@@ -1,18 +1,25 @@
 """Startup repair must include internal tools, not just cached external servers."""
 
+import logging
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import httpx
 import pytest
+from fastapi import FastAPI, Request
 from qdrant_client.local.payload_filters import check_filter
 from qdrant_client.models import Filter
 
 from gobby.config.persistence import DEFAULT_EMBEDDING_DIM
 from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 from gobby.mcp_proxy.server import GobbyDaemonTools
+from gobby.mcp_proxy.services.fallback import ToolFallbackResolver
+from gobby.mcp_proxy.services.recommendation import RecommendationService
+from gobby.mcp_proxy.stdio_proxy import DaemonProxy, DaemonProxyDependencies
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.memory.vectorstore import VectorStore
 from gobby.runner_init.mcp_stack import (
@@ -26,7 +33,10 @@ from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("entrypoint", ["semantic", "http"])
+@pytest.mark.parametrize(
+    "entrypoint",
+    ["semantic", "http", "stdio", "protocol", "recommend_semantic", "recommend_hybrid", "fallback"],
+)
 async def test_visible_tools_are_filtered_before_vector_top_k(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entrypoint: str
 ) -> None:
@@ -39,10 +49,20 @@ async def test_visible_tools_are_filtered_before_vector_top_k(
     internal = InternalRegistryManager()
     internal.add_registry(InternalToolRegistry("gobby-workflows"))
     manager = SimpleNamespace(
+        project_id="project",
         server_configs=[
             SimpleNamespace(id="local", name="custom", project_id="project"),
             SimpleNamespace(id="shadowed", name="custom", project_id=GLOBAL_PROJECT_ID),
-        ]
+        ],
+    )
+    tools = GobbyDaemonTools(
+        mcp_manager=cast(Any, manager),
+        daemon_port=8787,
+        websocket_port=8788,
+        start_time=0,
+        internal_manager=internal,
+        db=None,
+        semantic_search=search,
     )
     try:
         await store.ensure_collection(collection, 2)
@@ -64,7 +84,7 @@ async def test_visible_tools_are_filtered_before_vector_top_k(
                         "description": "Run a pipeline runbook",
                     },
                 )
-        if entrypoint == "http":
+        if entrypoint in {"http", "stdio"}:
             request = MagicMock()
             request.json = AsyncMock(return_value={"query": "run pipeline runbook", "top_k": 2})
             http_server = SimpleNamespace(
@@ -74,16 +94,53 @@ async def test_visible_tools_are_filtered_before_vector_top_k(
                 _mcp_db_manager=manager,
                 _internal_manager=internal,
             )
-            response = await search_mcp_tools(request, cast(Any, http_server))
+            if entrypoint == "stdio":
+                app = FastAPI()
+
+                @app.post("/api/mcp/tools/search")
+                async def endpoint(request: Request) -> dict[str, Any]:
+                    return await search_mcp_tools(request, cast(Any, http_server))
+
+                monkeypatch.setattr("gobby.mcp_proxy.stdio_proxy.daemon_auth_headers", lambda: {})
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as client:
+                    deps = DaemonProxyDependencies(
+                        check_daemon_http_health=AsyncMock(return_value=True),
+                        read_project_id=lambda: "project",
+                        http_client_factory=lambda: client,
+                        logger=logging.getLogger(__name__),
+                    )
+                    proxy = DaemonProxy(8787, deps_factory=lambda: deps)
+                    response = await proxy.search_tools("run pipeline runbook", top_k=2)
+            else:
+                response = await search_mcp_tools(request, cast(Any, http_server))
             assert response["success"], response
             names = [row["server_name"] for row in response["results"]]
+        elif entrypoint == "protocol":
+            response = await tools.search_tools("run pipeline runbook", top_k=2)
+            assert response["success"], response
+            names = [row["server_name"] for row in response["results"]]
+        elif entrypoint.startswith("recommend_"):
+            recommendation = RecommendationService(None, manager, db=None, semantic_search=search)
+            response = await recommendation.recommend_tools(
+                "run pipeline runbook",
+                top_k=2,
+                search_mode=cast(Any, entrypoint.removeprefix("recommend_")),
+                project_id="project",
+            )
+            assert response["success"], response
+            names = [row["server"] for row in response["recommendations"]]
+        elif entrypoint == "fallback":
+            found_alternatives = await ToolFallbackResolver(search).find_alternatives(
+                "unavailable",
+                project_id="project",
+                top_k=2,
+            )
+            names = [result.server_name for result in found_alternatives]
         else:
             found = await search.search_tools(
                 "run pipeline runbook",
                 "project",
                 top_k=2,
-                mcp_manager=manager,
-                internal_manager=internal,
             )
             names = [result.server_name for result in found]
         assert names == ["gobby-workflows", "local"]
@@ -120,6 +177,16 @@ async def test_runtime_backfill_embeds_external_tools_with_valid_point_ids(
     )
     internal.add_registry(registry)
     try:
+        if cached:
+            await search.embed_tool(
+                tool_id=str(uuid4()),
+                name="navigate",
+                description="Navigate to a URL",
+                input_schema={},
+                server_name="browser",
+                project_id="project",
+                server_id="external",
+            )
         stats = await search.embed_all_tools("project", manager, internal_manager=internal)
         assert stats["failed"] == 0, stats
         assert stats["embedded"] == 2, stats
@@ -127,10 +194,57 @@ async def test_runtime_backfill_embeds_external_tools_with_valid_point_ids(
             "run pipeline runbook", "project", mcp_manager=manager, internal_manager=internal
         )
         assert {result.server_name for result in found} == {"browser", "gobby-workflows"}
+        assert len(found) == 2
         external = next(result for result in found if result.server_name == "browser")
         assert external.description == "Navigate to a URL"
         if cached:
-            assert external.tool_id == tool_id
+            manager.mcp_db_manager = None
+            await search.embed_all_tools("project", manager, internal_manager=internal)
+            manager.mcp_db_manager = SimpleNamespace(get_cached_tools=lambda _: [full_tool])
+            await search.embed_all_tools("project", manager, internal_manager=internal)
+            repeated = await search.search_tools(
+                "navigate", "project", mcp_manager=manager, internal_manager=internal
+            )
+            assert len([result for result in repeated if result.server_name == "browser"]) == 1
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_id", [True, False])
+async def test_backfill_refuses_unscoped_servers_and_offloads_cache_reads(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_id: bool
+) -> None:
+    store = VectorStore(path=str(tmp_path / "vectors"), embedding_dim=2)
+    search = SemanticToolSearch(temp_db, vector_store=store, embedding_dim=2)
+    monkeypatch.setattr(search, "embed_text", AsyncMock(return_value=[1.0, 0.0]))
+    threads: list[int] = []
+    tool = SimpleNamespace(
+        id=str(uuid4()), name="navigate", description="Navigate", input_schema={}
+    )
+
+    def cached_tools(_: str) -> list[Any]:
+        threads.append(threading.get_ident())
+        return [tool]
+
+    configs = [SimpleNamespace(id="server", name="browser", project_id="project")]
+    if missing_id:
+        configs.append(
+            SimpleNamespace(
+                id=None, name="unscoped", project_id="project", tools=[{"name": "navigate"}]
+            )
+        )
+    manager = SimpleNamespace(
+        get_cached_tools=cached_tools,
+        server_configs=configs,
+    )
+    try:
+        stats = await search.embed_all_tools("project", manager)
+        assert stats["embedded"] == 1, stats
+        assert stats["failed"] == int(missing_id), stats
+        assert threads and all(thread != threading.get_ident() for thread in threads)
+        found = await search.search_tools("navigate", "project")
+        assert [result.server_name for result in found] == ["browser"]
     finally:
         await store.close()
 

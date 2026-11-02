@@ -1214,8 +1214,9 @@ async def test_scoped_payload_backfill_rewrites_legacy_points_once(
     ) -> None:
         stored[memory_id] = dict(payload)
 
-    async def _delete(memory_id: str, **kwargs: Any) -> None:
-        stored.pop(memory_id, None)
+    async def _delete(memory_id: str | None = None, **kwargs: Any) -> None:
+        if memory_id is not None:
+            stored.pop(memory_id, None)
 
     mock_vs.search_with_payload = AsyncMock(side_effect=_search_with_payload)
     mock_vs.upsert = AsyncMock(side_effect=_upsert)
@@ -1245,6 +1246,7 @@ async def test_scoped_payload_backfill_rewrites_legacy_points_once(
         ],
     )
     config_store = _Store()
+    config_store.set("mcp.tool_embeddings.scoped_payload_version", 2)
     from gobby.mcp_proxy.tools.internal import InternalRegistryManager
     from gobby.runner_init.mcp_stack import schedule_scoped_embedding_backfill
 
@@ -1265,10 +1267,13 @@ async def test_scoped_payload_backfill_rewrites_legacy_points_once(
     mock_vs.delete_many.assert_awaited()
     deleted_ids = mock_vs.delete_many.await_args.args[0]
     assert "legacy-tool" in deleted_ids
-    assert stored["legacy-tool"]["server_id"] == "id-project"
-    assert stored["legacy-tool"]["server_name"] == "github"
-    assert stored["legacy-tool"]["project_id"] == project_id
-    assert config_store.get("mcp.tool_embeddings.scoped_payload_version") == 2
+    assert "legacy-tool" not in stored
+    assert len(stored) == 1
+    canonical_payload = next(iter(stored.values()))
+    assert canonical_payload["server_id"] == "id-project"
+    assert canonical_payload["server_name"] == "github"
+    assert canonical_payload["project_id"] == project_id
+    assert config_store.get("mcp.tool_embeddings.scoped_payload_version") == 3
 
     second = await maybe_backfill_scoped_tool_embeddings(
         search,

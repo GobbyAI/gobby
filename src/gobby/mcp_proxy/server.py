@@ -22,6 +22,7 @@ from gobby.mcp_proxy._call_tool_wrapper import (
 )
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 from gobby.mcp_proxy.services.recommendation import RecommendationService, SearchMode
 from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
@@ -69,6 +70,8 @@ class GobbyDaemonTools:
         self.internal_manager = internal_manager
         self._mcp_manager = mcp_manager  # Store for project_id access
         self._semantic_search = semantic_search  # Store for direct search access
+        if isinstance(semantic_search, SemanticToolSearch):
+            semantic_search.configure_inventory(mcp_manager, internal_manager)
         self._session_manager = session_manager  # Store for per-call project resolution
         self.daemon_port = daemon_port
         self.websocket_port = websocket_port

@@ -8,13 +8,14 @@ Provides infrastructure for embedding-based tool discovery:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
+from qdrant_client.models import FieldCondition, Filter, HasIdCondition, MatchAny, MatchValue
 
 from gobby.ai.embeddings import EmbeddingService
 from gobby.config.persistence import DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL
@@ -136,6 +137,13 @@ class SemanticToolSearch:
         )
         self._vector_store = vector_store
         self._collection_name = collection_name or self.TOOL_COLLECTION
+        self._mcp_manager: Any | None = None
+        self._internal_manager: Any | None = None
+
+    def configure_inventory(self, mcp_manager: Any, internal_manager: Any) -> None:
+        """Bind the complete runtime inventory for every search entrypoint."""
+        self._mcp_manager = mcp_manager
+        self._internal_manager = internal_manager
 
     @staticmethod
     def _is_dimension_mismatch_error(error: Exception) -> bool:
@@ -542,28 +550,29 @@ class SemanticToolSearch:
             server_stats = {"embedded": 0, "skipped": 0, "failed": 0}
             server_name = getattr(server, "name", "")
             server_id = str(getattr(server, "id", "") or "")
+            if not server_id:
+                server_stats["failed"] += 1
+                stats["failed"] += 1
+                error_msg = f"{server_name}: cannot embed tools without a server ID"
+                stats["errors"].append(error_msg)
+                stats["by_server"][str(server_name)] = server_stats
+                logger.error(error_msg)
+                continue
             server_project = str(getattr(server, "project_id", project_id) or project_id)
             await self._delete_legacy_points(server_name, server_project)
             cache_manager = getattr(mcp_manager, "mcp_db_manager", None) or mcp_manager
             getter = getattr(cache_manager, "get_cached_tools", None)
-            tools = getter(server_id) if callable(getter) and server_id else None
+            tools = await asyncio.to_thread(getter, server_id) if callable(getter) else None
             if not tools:
                 tools = getattr(server, "tools", None) or []
 
             for tool in tools:
                 try:
-                    raw_id = getattr(tool, "id", None)
-                    if raw_id is None and isinstance(tool, dict):
-                        raw_id = tool.get("id")
                     raw_name = getattr(tool, "name", None)
                     if raw_name is None and isinstance(tool, dict):
                         raw_name = tool.get("name")
                     tool_name = str(raw_name or "")
-                    tool_id = (
-                        str(raw_id)
-                        if raw_id
-                        else str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{server_id}/{tool_name}"))
-                    )
+                    tool_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{server_id}/{tool_name}"))
                     description = getattr(tool, "description", None)
                     if description is None and isinstance(tool, dict):
                         description = tool.get("description") or tool.get("brief")
@@ -579,6 +588,21 @@ class SemanticToolSearch:
                         project_id=server_project,
                         server_id=server_id or None,
                     )
+                    if self._vector_store is not None:
+                        await self._vector_store.delete(
+                            filters=Filter(
+                                must=[
+                                    FieldCondition(
+                                        key="server_id", match=MatchValue(value=server_id)
+                                    ),
+                                    FieldCondition(
+                                        key="tool_name", match=MatchValue(value=tool_name)
+                                    ),
+                                ],
+                                must_not=[HasIdCondition(has_id=[tool_id])],
+                            ),
+                            collection_name=self._collection_name,
+                        )
 
                     server_stats["embedded"] += 1
                     stats["embedded"] += 1
@@ -658,6 +682,11 @@ class SemanticToolSearch:
             )
             return []
         vector_store = self._vector_store
+
+        if self._mcp_manager is not None:
+            mcp_manager = self._mcp_manager
+        if self._internal_manager is not None:
+            internal_manager = self._internal_manager
 
         # Embed the query
         query_embedding = await self.embed_text(query, is_query=True)
