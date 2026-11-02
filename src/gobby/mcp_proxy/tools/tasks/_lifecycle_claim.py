@@ -128,11 +128,18 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 TaskToolErrorCode.TASK_CLOSED,
             )
 
-        # An epic team's own root is not work: its seats claim the open leaves below it instead.
+        # An epic team's own root is not work while leaves stay open: its seats claim those
+        # leaves. Once every descendant is closed, the root is the final epic validation.
         from gobby.agents.team_lifecycle import task_team
+        from gobby.agents.team_scope import open_descendants
 
         seat = seat_team(ctx.task_manager.db, resolved_session_id)
-        if seat is not None and seat.mode == EPIC_MODE and seat.task_id == resolved_id:
+        if (
+            seat is not None
+            and seat.mode == EPIC_MODE
+            and seat.task_id == resolved_id
+            and open_descendants(ctx.task_manager.db, resolved_id)
+        ):
             return task_error(
                 f"Task {resolved_id} is the epic root of team {seat.team_id}; "
                 "claim one of its open leaves",

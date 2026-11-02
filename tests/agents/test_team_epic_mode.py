@@ -231,6 +231,50 @@ async def test_team_seat_cannot_claim_its_epic_root(world: TeamWorld) -> None:
 
 
 @pytest.mark.asyncio
+async def test_team_seat_claims_its_epic_root_once_every_descendant_closes(
+    world: TeamWorld,
+) -> None:
+    """The epic root becomes the final validation only after its last open descendant closes."""
+    db = world.case.db
+    tasks = LocalTaskManager(db)
+    tools = create_task_registry(tasks)
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    runbook = world.child(epic)
+    await world.admit(runbook, epic)
+    seat = world.case.session("test-writer", parent=runbook.id)
+    # Selected policy reserves the bound root for explicit completion, as epic closure does.
+    owner = AgentSessions(db, world.case.project_id).add(
+        "bound-root-owner",
+        definition_fields={"workflows": {"rule_selectors": {"include": ["tag:root-close"]}}},
+    )
+    RuleDefinitionManager(db).create(
+        "explicit-bound-root-close",
+        {
+            "event": "task_close",
+            "when": f"task['id'] == '{epic.id}' and facts.get('closure_intent') == 'ancestor'",
+            "effects": [{"type": "block", "reason": "Close the bound root explicitly."}],
+        },
+        project_id=world.case.project_id,
+        tags=["root-close"],
+    )
+
+    async def claim() -> dict[str, Any]:
+        with session_context_for_test(seat):
+            return cast(dict[str, Any], await tools.call("claim_task", {"task_id": epic.id}))
+
+    refused = await claim()
+    assert refused.get("error_code") == "TASK_CLAIM_CONFLICT", refused
+    assert "claim one of its open leaves" in str(refused.get("error")), refused
+
+    tasks.close_task(leaf.id, reason="done", closed_in_session_id=owner)
+    assert tasks.get_task(epic.id).closed_at is None
+    reply = await claim()
+    assert reply.get("success") is True, reply
+    assert tasks.get_task(epic.id).claimed_by_session_id == seat
+
+
+@pytest.mark.asyncio
 async def test_planning_child_of_epic_is_claimable_by_non_team_session(world: TeamWorld) -> None:
     """A planning-category child under a live epic team is claimable by a plan writer seat."""
     tasks = LocalTaskManager(world.case.db)

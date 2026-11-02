@@ -50,6 +50,8 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "becomes '<tab_title> - #<seq>', and tab_exists reports that tab of the workspace. "
             "team_id limits live seats to that admitted team's runs and maps "
             "every catalogue seat with such a run under live, requested or not. "
+            "parent_team_id (or a team_id admitted under a parent team) launches no seat whose "
+            "agent definition declares team_manager; live maps it to the parent team's seat. "
             "seat_models maps a seat name to the model its launch takes; a seat that launches "
             "with no model there and none on its agent definition is refused. "
             "On success it returns the checked seats."
@@ -64,6 +66,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         require_report_to: bool = False,
         skip_live_seats: bool = False,
         team_id: str | None = None,
+        parent_team_id: str | None = None,
         tab_title: str | None = None,
         task: str | None = None,
         seat_models: dict[str, str | None] | None = None,
@@ -91,6 +94,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 require_report_to=require_report_to,
                 skip_live_seats=skip_live_seats,
                 team_id=team_id,
+                parent_team_id=parent_team_id,
                 tab_title=tab_title,
                 task=task,
                 seat_models=seat_models,
