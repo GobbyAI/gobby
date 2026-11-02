@@ -84,9 +84,9 @@ def test_audit_fix_preserves_archived_usage(runner: CliRunner) -> None:
     store.delete_session_events.assert_not_called()
 
 
-def test_audit_keeps_unkeyed_rows(runner: CliRunner) -> None:
-    # The live writer inserts a usage row without a message_id, and no conflict key
-    # matches it. Audit and repair cannot verify such a row, so they leave it alone.
+def test_audit_fix_reinserts_unkeyed_transcript_usage(runner: CliRunner) -> None:
+    # A stored row without a message_id is drift and is deleted. The transcript event has
+    # no key to upsert on, so --fix re-inserts it, and its usage survives the delete.
     database = MagicMock(spec=HubDatabase)
     database.fetchall.return_value = [
         {
@@ -137,9 +137,9 @@ def test_audit_keeps_unkeyed_rows(runner: CliRunner) -> None:
             tokens_module.tokens, ["audit", "--session", "sess-unkeyed", "--fix"]
         )
     assert result.exit_code == 0, result.output
-    assert "audited=1 stale=0 missing=0 repaired=0" in result.output
-    database.execute.assert_not_called()
-    store.repair_keyed_events.assert_not_called()
+    assert "audited=1 stale=1 missing=1 repaired=1" in result.output
+    database.execute.assert_any_call("DELETE FROM token_events WHERE id = ANY(%s)", ([1],))
+    store.record.assert_called_once_with(event)
 
 
 @pytest.mark.parametrize(

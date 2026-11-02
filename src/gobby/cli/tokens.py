@@ -184,20 +184,19 @@ def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAud
         session_id, session, _load_session_messages(session_id, session)
     )
 
-    # Only keyed rows and events can be matched. An unkeyed row stays as the live writer
-    # inserted it: no conflict key identifies it, so repair could not restore it.
     keyed = [row for row in stored if row["message_id"] is not None]
     derived_by_key = {event.message_id: event for event in derived if event.message_id is not None}
     stored_keys = {row["message_id"] for row in keyed}
     # Retention archives older rows into token_event_retention_totals, so only
     # in-window transcript events can be missing from the stored rows.
     cutoff = token_event_retention_cutoff()
-    in_window = [
-        e
-        for e in derived
-        if e.message_id is not None and canonicalize_event_timestamp(e.event_at) >= cutoff
+    in_window = [e for e in derived if canonicalize_event_timestamp(e.event_at) >= cutoff]
+    # A row with no message_id matches no transcript key, so it is drift that --fix replaces.
+    absent = [
+        row
+        for row in stored
+        if row["message_id"] is None or row["message_id"] not in derived_by_key
     ]
-    absent = [row for row in keyed if row["message_id"] not in derived_by_key]
     differing = [
         row
         for row in keyed
@@ -216,6 +215,11 @@ def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAud
             if doomed:
                 db.execute("DELETE FROM token_events WHERE id = ANY(%s)", (doomed,))
             store.repair_keyed_events(in_window)
+            # An unkeyed transcript event has no key to upsert on, so re-insert it. The
+            # delete above removed the unkeyed rows, so this does not duplicate them.
+            for event in in_window:
+                if event.message_id is None:
+                    store.record(event)
             repaired_totals = store.get_session_totals(session_id)
             session_manager.update_usage(
                 session_id=session_id,

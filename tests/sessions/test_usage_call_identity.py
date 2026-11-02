@@ -339,7 +339,7 @@ async def test_writers_persist_api_calls(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_audit_dedupes_and_keeps_unkeyed_rows(
+async def test_audit_dedupes_and_flags_unkeyed_rows(
     db: HubDatabase,
     session_manager: SessionManager,
     lifecycle_manager: SessionLifecycleManager,
@@ -367,18 +367,15 @@ async def test_audit_dedupes_and_keeps_unkeyed_rows(
     store.record(
         _stored(session.id, source="codex", message_id=None, input_tokens=1, output_tokens=1)
     )
-    # An unkeyed row is kept, not flagged: no transcript key matches it. Its tokens are
-    # in the lifetime totals but not yet in sessions.usage_*, so the mismatch fires. The
-    # deleted keyed row is still missing until the repair.
+    # A row with no message_id matches no transcript key, so it is drift.
     unkeyed = tokens_cli._audit_session(db, session.id, fix=False)
-    assert (unkeyed.stale_rows, unkeyed.missing_rows, unkeyed.usage_mismatch) == (0, 1, True)
+    assert unkeyed.stale_rows == 1
 
     repaired = tokens_cli._audit_session(db, session.id, fix=True)
     assert repaired.repaired
     final = tokens_cli._audit_session(db, session.id, fix=False)
     assert (final.stale_rows, final.missing_rows, final.usage_mismatch) == (0, 0, False)
-    message_ids = [row["message_id"] for row in store.list_session_events(session.id)]
-    assert message_ids.count(None) == 1
+    assert all(row["message_id"] is not None for row in store.list_session_events(session.id))
 
 
 @pytest.mark.integration
@@ -524,12 +521,12 @@ def test_fix_never_deletes_rows_ingested_during_audit(
 
     first = tokens_cli._audit_session(db, session.id, fix=True)
     assert first.repaired
-    assert first.stale_rows == 1  # msg-a with NULL api_calls; the unkeyed row is kept
+    assert first.stale_rows == 2  # msg-a with NULL api_calls, and the unkeyed row
     assert first.missing_rows == 1  # msg-live: ingested after the stored-row read
 
     monkeypatch.undo()
     rows = {r["message_id"]: r for r in store.list_session_events(session.id)}
-    assert rows[None]["input_tokens"] == 1  # the unkeyed row survives the repair
+    assert None not in rows
     assert rows["msg-a"]["id"] == pre_read_ids["msg-a"]
     assert rows["msg-a"]["api_calls"] == 1
     assert rows["msg-live"]["input_tokens"] == 7
