@@ -43,7 +43,11 @@ rules:
               "src/gobby/servers/middleware/auth.py",
               "src/gobby/servers/routes/mcp/endpoints/request_context.py",
               "src/gobby/servers/routes/mcp/endpoints/execution.py",
-              "crates/gdaemon/src/websocket/**"
+              "crates/gdaemon/src/websocket/**",
+              "src/gobby/workflows/workspace_read_targets.py",
+              "src/gobby/workflows/condition_helpers_sessions.py",
+              "src/gobby/hooks/_path_scope.py",
+              "src/gobby/hooks/_normalization_shell.py"
             ],
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–05:00 America/Chicago daily; 04:00–06:00 on Mondays",
