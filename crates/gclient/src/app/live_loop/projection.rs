@@ -36,7 +36,19 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
                 tab.slots.remove(&slot);
             }
         }
-        if !tab.slots.is_empty() && !tab.slots.contains_key(&viewer.focus_of(tab)) {
+        let focus = viewer.focus_of(tab);
+        // A focus whose shell the roster has not reached yet is pending, not
+        // gone: its placement is consumed when applied, so a fallback here
+        // would lose that focus for good.
+        let pending = workspace.workspace_model().is_some_and(|model| {
+            viewer
+                .panes
+                .daemon_id(focus)
+                .and_then(|pane_id| model.pane(pane_id))
+                .and_then(|pane| pane.terminal_id.as_deref())
+                .is_some_and(|terminal_id| workspace.pending_spawns.contains(terminal_id))
+        });
+        if !tab.slots.is_empty() && !tab.slots.contains_key(&focus) && !pending {
             if let Some(slot) = tab
                 .layout
                 .pane_ids()
@@ -158,3 +170,7 @@ pub(super) fn close_slot(tab: &mut Tab, viewer: &mut ViewerState, slot: layout::
         }
     }
 }
+
+#[cfg(test)]
+#[path = "projection/tests.rs"]
+mod tests;

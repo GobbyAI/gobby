@@ -146,7 +146,9 @@ pub(super) fn apply_job_outcome(
         JobResult::Disposed { orphan, outcome } => {
             chain_apply::apply_disposed(workspace, chrome, jobs, orphan, outcome);
         }
-        JobResult::OrphanInventory { result } => show_orphan_inventory(workspace, chrome, result),
+        JobResult::OrphanInventory { request, result } => {
+            show_orphan_inventory(workspace, chrome, request, result);
+        }
         JobResult::OrphansDestroyed { summary } => {
             apply_orphans_destroyed(workspace, chrome, &summary);
         }

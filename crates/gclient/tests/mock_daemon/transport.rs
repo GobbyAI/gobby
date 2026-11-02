@@ -361,6 +361,14 @@ impl MockDaemon {
             .tab_for_terminal(terminal_id)
     }
 
+    pub fn pane_for_terminal(&self, terminal_id: &str) -> Option<String> {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace
+            .pane_for_terminal(terminal_id)
+    }
+
     pub fn enqueue_spawn_events_before_reply(&self, events: Vec<Value>) {
         self.state
             .lock()

@@ -133,28 +133,46 @@ pub fn agent_orphan<D: Daemon>(workspace: &Workspace<D>, terminal_id: &str) -> O
 }
 
 /// Start the candidate read; the dialog opens when it lands, with every row
-/// checked, or a toast says there are none.
+/// checked, or a toast says there are none. The read becomes the pending
+/// request: input before it lands, or a newer request, drops it.
 pub fn open_destroy_orphans_dialog(
     workspace: &Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
     outcomes: &UnboundedSender<JobOutcome>,
 ) {
     if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
         return;
     }
+    chrome.orphan_requests += 1;
+    let request = chrome.orphan_requests;
+    chrome.orphan_pending = Some(request);
     let daemon = workspace.daemon().clone();
     spawn_job(outcomes, op_tag(&daemon), async move {
         JobResult::OrphanInventory {
+            request,
             result: fetch_inventory(&daemon).await,
         }
     });
 }
 
 /// Open the dialog over a landed inventory, or report the failure or emptiness.
+/// Only the pending request's inventory applies, and never over a dialog the
+/// user already has open.
 pub(super) fn show_orphan_inventory(
     workspace: &Workspace<LiveDaemon>,
     chrome: &mut Chrome,
+    request: u64,
     result: Result<Vec<TerminalRow>, DaemonError>,
 ) {
+    if chrome.orphan_pending != Some(request) {
+        tracing::debug!(request, "dropped a stale orphan inventory");
+        return;
+    }
+    chrome.orphan_pending = None;
+    if chrome.dialog.is_some() {
+        tracing::debug!(request, "dropped an orphan inventory behind an open dialog");
+        return;
+    }
     let rows = match result {
         Ok(rows) => orphan_rows(&rows, &workspace.sidebar_rows),
         Err(error) => {

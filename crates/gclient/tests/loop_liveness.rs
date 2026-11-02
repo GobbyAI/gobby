@@ -1340,6 +1340,91 @@ async fn orphan_kill_fanout_keeps_at_most_eight_requests_in_flight() {
     mock.shutdown().await;
 }
 
+async fn open_global_menu(input_tx: &mpsc::Sender<RawInputEvent>) {
+    input_tx
+        .send(RawInputEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: 95,
+            row: 0,
+            modifiers: KeyModifiers::empty(),
+        }))
+        .await
+        .expect("live loop mouse input");
+}
+
+#[tokio::test]
+async fn a_stale_orphan_inventory_never_replaces_a_dialog_opened_after_it() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _tab_id, _pane) = on_demand_workspace(&mock).await;
+    for _ in 0..4 {
+        mock.enqueue("GET", "/api/terminals?", 200, roster_items(&["terminal-a"]));
+    }
+    mock.seed_terminal_inventory(vec![
+        orphan_row("orphan-a", "alpha"),
+        orphan_row("orphan-b", "beta"),
+    ]);
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let inventory = mock.hold_ws("terminal_list", |_| true);
+
+    let driver = async {
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        // Destroy is the eighth global menu item. Its inventory is held.
+        open_global_menu(&input_tx).await;
+        probe.shows("Destroy orphaned terminals").await;
+        for _ in 0..8 {
+            probe.key(KeyCode::Down, KeyModifiers::empty()).await;
+        }
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        wait_until("the held inventory request", || {
+            websocket_requests(&mock, "terminal_list").len() == 1
+        })
+        .await;
+        // The user opens keybinding help, the sixth item, before the inventory lands.
+        open_global_menu(&input_tx).await;
+        probe.shows("Keybinding help").await;
+        for _ in 0..5 {
+            probe.key(KeyCode::Down, KeyModifiers::empty()).await;
+        }
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        probe.shows("Keybinds").await;
+        // The stale reply lands while the help is open.
+        inventory.notify_one();
+        for _ in 0..5 {
+            probe.draws_continue().await;
+        }
+        // Enter answers the open help, never a destroy list of checked rows.
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        probe.draws_continue().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(
+        chrome.dialog.is_none(),
+        "a stale inventory replaced the dialog state after the user moved on"
+    );
+    assert_eq!(
+        websocket_requests(&mock, "terminal_kill").len(),
+        0,
+        "Enter sent kills for rows the user never asked to destroy"
+    );
+    mock.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_held_open_unresolved_terminal_job_is_coalesced_and_nonblocking() {
     let mock = MockDaemon::start("local-token").await;

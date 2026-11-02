@@ -8579,6 +8579,18 @@ async fn splitting_a_local_bare_tab_preserves_layout_and_owns_only_new_shells() 
                 .any(|request| request.get("terminal_id") == Some(&json!(NEXT_OWNED)))
         })
         .await;
+        // Focus moves to the new shell after its viewport, in a later job. The
+        // focus hint naming its pane is the request sent once focus has moved.
+        let next_pane = mock
+            .pane_for_terminal(NEXT_OWNED)
+            .expect("mock pane for the new shell");
+        wait_until(|| {
+            websocket_requests(&mock, "workspace_op").iter().any(|op| {
+                op.get("op") == Some(&json!("workspace.set_focus_hints"))
+                    && op.get("pane") == Some(&json!(next_pane))
+            })
+        })
+        .await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;

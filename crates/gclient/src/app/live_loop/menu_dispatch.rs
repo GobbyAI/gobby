@@ -96,7 +96,7 @@ pub async fn apply_live_menu_action(
         MenuAction::ShowAlerts => open_alerts_dialog(chrome),
         MenuAction::ShowDaemon => open_daemon_dialog(workspace, chrome),
         MenuAction::ShowAbout => open_about_dialog(chrome),
-        MenuAction::DestroyOrphans => open_destroy_orphans_dialog(workspace, outcomes),
+        MenuAction::DestroyOrphans => open_destroy_orphans_dialog(workspace, chrome, outcomes),
         MenuAction::DestroyTerminal(terminal_id) => {
             let target = agent_orphan(workspace, &terminal_id);
             destroy_orphans(workspace, outcomes, vec![target]);
