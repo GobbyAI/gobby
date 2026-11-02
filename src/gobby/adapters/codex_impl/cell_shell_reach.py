@@ -20,6 +20,16 @@ _STATIC_TOOL_CALL_RE = re.compile(r"\btools(?:\.[$A-Za-z_][$\w]*)+\s*\(")
 # Left in code after blanking, a slash, quote or backslash is lexical syntax this module
 # does not read: a regex literal, division, an unmatched quote, or an escape.
 _AMBIGUOUS_RE = re.compile(r"[/\\\"'`]")
+# An empty poll only reads a running session's output. A poll that types input can run a
+# command in that shell, so only the single literal `chars:""` form is blanked as inert.
+_INERT_POLL_RE = re.compile(
+    r"""\btools\.write_stdin\s*\(\s*(\{(?:[^{}"]|"(?:\\.|[^"\\])*")*\})\s*\)"""
+)
+_STRING_LITERAL_RE = re.compile(r'"(?:\\.|[^"\\])*"')
+# A spread, a computed or quoted key, or an escape can set `chars` past the one named key.
+_DYNAMIC_KEY_RE = re.compile(r"\.\.\.|[\['`\\]")
+_CHARS_WORD_RE = re.compile(r"\bchars\b")
+_EMPTY_CHARS_RE = re.compile(r"""(?:^|[{,])\s*"?chars"?\s*:\s*""\s*(?=[,}])""")
 
 
 def static_code(source: str) -> str | None:
@@ -32,6 +42,17 @@ def static_code(source: str) -> str | None:
     return None if _AMBIGUOUS_RE.search(code) else code
 
 
+def _blank_inert_poll(match: re.Match[str]) -> str:
+    """Replace one write_stdin call that cannot type input with a non-primitive call."""
+    body = match.group(1)
+    unquoted = _STRING_LITERAL_RE.sub('""', body)
+    if _DYNAMIC_KEY_RE.search(unquoted) or len(_CHARS_WORD_RE.findall(body)) != 1:
+        return match.group(0)
+    if _EMPTY_CHARS_RE.search(body):
+        return "tools.idle_poll()"
+    return match.group(0)
+
+
 def may_reach_shell(arguments: Any) -> bool:
     """Return whether a cell could start a shell whose command this hook cannot read.
 
@@ -41,6 +62,7 @@ def may_reach_shell(arguments: Any) -> bool:
     """
     if not isinstance(arguments, str) or "${" in arguments:
         return True
+    arguments = _INERT_POLL_RE.sub(_blank_inert_poll, arguments)
     code = static_code(arguments)
     if code is None or _PRIMITIVE_RE.search(code):
         return True

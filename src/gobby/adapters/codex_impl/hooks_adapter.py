@@ -129,9 +129,11 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
     transcript_path = input_data.get("transcript_path")
     tool_input = input_data.get("tool_input")
     if not isinstance(transcript_path, str) or not isinstance(tool_input, dict):
+        logger.info("cwd proof refused: transcript path or tool input is missing")
         return None
     command = tool_input.get("command", tool_input.get("cmd"))
     if not isinstance(command, str):
+        logger.info("cwd proof refused: command is not text")
         return None
     parser = CodexTranscriptParser()
     validated: dict[str, str | None] = {}
@@ -140,7 +142,9 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
         with Path(transcript_path).open(encoding="utf-8") as transcript:
             for index, line in enumerate(transcript):
                 if not line.endswith("\n"):
-                    return None  # An incomplete provider record cannot prove the active call.
+                    # An incomplete provider record cannot prove the active call.
+                    logger.info("cwd proof refused: incomplete provider record at line %d", index)
+                    return None
                 json.loads(line)  # A malformed record could hide a competing pending call.
                 parsed = parser.parse_line(line, index)
                 if isinstance(parsed, ParsedMessage) and parsed.content_type == "tool_use":
@@ -160,13 +164,15 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
                     ):
                         cwd = arguments.get("cwd")
                         validated[parsed.tool_use_id] = cwd if isinstance(cwd, str) else None
-    except (OSError, UnicodeError, ValueError):
+    except (OSError, UnicodeError, ValueError) as exc:
+        logger.info("cwd proof refused: rollout unreadable or malformed: %s", exc)
         return None
     chain = parser.snapshot_state()["execution_chain"]
     # Process IDs describe commands that already started. Losing old process
     # receipts must not poison a new command's cwd proof; unresolved calls and
     # yielded cells can still launch it, so their overflow remains fail closed.
     if not chain["pending_complete"] or chain["ambiguous_cells"]:
+        logger.info("cwd proof refused: pending calls overflowed or are ambiguous")
         return None
     pending = {
         entry["outer_call_id"]: entry
@@ -182,15 +188,23 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
         )
     ]
     if any(entry["literal_command"] is None for entry in invocations):
+        logger.info("cwd proof refused: unattributed pending call blocks every proof")
         return None
     matches = [entry for entry in invocations if entry["literal_command"] == command]
-    if len(matches) != 1 or matches[0]["outer_call_id"] not in validated:
+    if len(matches) != 1:
+        logger.info("cwd proof refused: %d pending calls match the command", len(matches))
         return None
     match = matches[0]
+    if match["outer_call_id"] not in validated:
+        logger.info("cwd proof refused: matched call is not a validated shell call")
+        return None
     cwd = current_tool_cwd(
         {"cwd": validated[match["outer_call_id"]], "tool_input": {"workdir": match["workdir"]}}
     )
-    return str(cwd) if cwd is not None else None
+    if cwd is None:
+        logger.info("cwd proof refused: matched call has no proven cwd")
+        return None
+    return str(cwd)
 
 
 def _command_execution_result(input_data: dict[str, Any]) -> dict[str, Any] | None:
