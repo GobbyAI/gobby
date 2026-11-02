@@ -6,9 +6,10 @@ Provides CRUD, list, and dependency endpoints for the task system.
 
 import logging
 from collections.abc import Iterable
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from gobby.servers.routes.tasks_comment_routes import register_task_comment_routes
@@ -337,7 +338,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
     @router.patch("/{task_id}")
-    async def update_task(task_id: str, request_data: TaskUpdateRequest) -> Any:
+    async def update_task(task_id: str, request_data: TaskUpdateRequest, request: Request) -> Any:
         """Update a task's fields. Only provided fields are changed."""
         try:
             # Resolve the task ID first
@@ -365,7 +366,13 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 await server.run_db(_apply_owner_ref, [unchanged])
                 return unchanged
 
-            updated = await server.run_db(server.task_manager.update_task, resolved_id, **kwargs)
+            from gobby.storage.tasks._label_policy import operator_label_changes
+
+            principal = await server.run_db(server.auth_service.request_principal, request)
+            with operator_label_changes() if principal is None else nullcontext():
+                updated = await server.run_db(
+                    server.task_manager.update_task, resolved_id, **kwargs
+                )
             result = updated.to_dict()
             await _broadcast_task("task_updated", result)
             return result

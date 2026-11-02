@@ -35,7 +35,8 @@ def installed_project_policy(rules: list[RuleDefinitionRow]) -> dict[str, JsonVa
     """Read a single authoritative policy value from enabled installed effects.
 
     Session variables are projections controlled by hook delivery timing. They
-    cannot authorize security decisions. Conflicting writers fail closed.
+    cannot authorize security decisions. No configured policy contributes an
+    empty path floor; malformed or conflicting writers fail closed.
     """
     policies = [
         effect.get("value")
@@ -46,7 +47,9 @@ def installed_project_policy(rules: list[RuleDefinitionRow]) -> dict[str, JsonVa
         and effect.get("type") == "set_variable"
         and effect.get("variable") == "project_policy"
     ]
-    if not policies or any(not isinstance(value, dict) for value in policies):
+    if not policies:
+        return {}
+    if any(not isinstance(value, dict) for value in policies):
         return None
     if any(value != policies[0] for value in policies):
         return None

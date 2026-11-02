@@ -27,6 +27,7 @@ rules:
               {"epic": "#21542", "name": "Gobby 1.0", "lang": "Rust", "description": "gdaemon front door, strangler port, hub and node, including hub mode (#21575)."}
             ],
             "integration_branch": "0.5.0",
+            "deferral_labels": ["deferred-by-josh"],
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–05:00 America/Chicago daily; 04:00–06:00 on Mondays",
             "report_cadence_seconds": 1800,
@@ -46,7 +47,7 @@ rules:
               "research": "Each research run opens one tab titled 'Research - #<task>' holding its Researcher and Research Reviewer."
             },
             "launch_defaults": {
-              "devteam": {
+              "dev-team": {
                 "developer_provider": "claude",
                 "developer_model": "claude-haiku-5-5",
                 "developer_reasoning_effort": "xhigh",

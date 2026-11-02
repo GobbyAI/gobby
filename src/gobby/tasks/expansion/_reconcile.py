@@ -255,6 +255,10 @@ def update_reused_leaf(
     """Refresh an open unclaimed leaf from the amended section text."""
     raw_description = task_item.get("description") or ""
     description = f"{plan_ref_block}{raw_description}" if plan_ref_block else raw_description
+    from gobby.storage.tasks._label_policy import retain_security_review_label
+
+    previous = self.task_manager.get_task(task_id)
+    labels = retain_security_review_label(previous.labels, labels)
     self.task_manager.update_task(
         task_id,
         title=task_item["title"],

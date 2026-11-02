@@ -253,6 +253,8 @@ async def test_started_run_is_adopted(
         "success": True,
         "adopted": True,
         "run_id": run_id,
+        "agent_run_id": run_id,
+        "child_session_id": run.child_session_id,
         "status": "running",
         **refs,
     }

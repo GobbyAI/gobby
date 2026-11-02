@@ -1,4 +1,4 @@
-version: "1.0.1"
+version: "2.0.0"
 tags: [roles, seat, enforcement, gobby, default]
 
 # query_readonly reads the daemon database. The operator ruled that only the

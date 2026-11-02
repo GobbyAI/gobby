@@ -22,6 +22,26 @@ from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 pytestmark = pytest.mark.unit
 
 
+def test_restore_preserves_a_security_floor_absent_from_backup(
+    backup_manager: TaskBackupManager,
+    task_manager: LocalTaskManager,
+    sample_project: dict[str, Any],
+) -> None:
+    task = task_manager.create_task(
+        sample_project["id"], "Retain review requirement", labels=["security-review", "old"]
+    )
+    backup_manager.backup()
+    path = _backup_file(backup_manager)
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line]
+    for row in rows:
+        if row["id"] == task.id:
+            row["labels"] = ["imported"]
+            row["updated_at"] = "2099-01-01T00:00:00+00:00"
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    assert backup_manager.restore() >= 1
+    assert set(task_manager.get_task(task.id).labels or []) == {"security-review", "imported"}
+
+
 def test_cli_backup_wraps_domain_error_as_click_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

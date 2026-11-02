@@ -41,7 +41,7 @@ Default retains its separate declared integration-path workflow.
 
 Persist team, root, worktree, report target, launch defaults and seat refs before
 dispatch. Traverse every container and page of descendants. Dispatch only ready,
-open, unheld leaves, excluding project_policy's declared deferral labels and held ancestors. Recheck claims
+open, unheld leaves, excluding labels in project_policy.deferral_labels and held ancestors. Recheck claims
 and eligibility immediately before assignment. Assign the first ready leaf to
 the persistent pair; launch independent siblings through the same dev-team
 pipeline with parent_team_id. Each child team has its own lead and worktree.
@@ -75,6 +75,6 @@ with the same target. If any proof fails, preserve the tree and report the block
 Report task, SHA, checks and cleanup to report_to/Triage. Route genuine blockers
 through Triage, preserving holds and dependencies.
 
-_Version: 2.1.0_
+_Version: 2.2.0_
 
 _Last verified: 2026-11-01_

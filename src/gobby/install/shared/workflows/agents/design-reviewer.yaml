@@ -5,7 +5,7 @@ description: |
   against the project's .impeccable.md design contract. Reports findings with
   screenshots and evidence, then gives LAND or BOUNCE on design grounds.
   Read-only.
-version: "1.0.1"
+version: "2.0.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit

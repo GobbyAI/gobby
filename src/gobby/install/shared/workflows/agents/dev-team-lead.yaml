@@ -7,7 +7,7 @@ capabilities:
 - team_main_checkout
 - write_session_variables
 description: Leads single-task and epic DevTeams; lands, validates, closes and cleans up.
-version: "2.1.0"
+version: "2.2.0"
 tags:
 - gobby
 - seat
@@ -167,7 +167,7 @@ step_workflow:
       A container is any task with children, including non-epic containers.
       Re-read each candidate with get_task(brief=false) for holds/dependencies.
       Dispatch only open, unclaimed, dependency-ready, unheld leaves, excluding
-        the deferral labels declared in project_policy and held ancestors. Sort ready leaves by priority then
+        labels in project_policy.deferral_labels and held ancestors. Sort ready leaves by priority then
       numeric seq_num. Recheck eligibility immediately before dispatch.
 
       Assign the first ready leaf to the idle persistent developer and reviewer

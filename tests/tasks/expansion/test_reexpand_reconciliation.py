@@ -761,6 +761,7 @@ def test_reexpand_reused_leaf_uses_created_leaf_labels(
         _save_run(service, parent, sample_project, _spec([leaf])).id, session_id=None
     )
     amended_leaf = _leaf("again-11", "1.1", "Grouped section amended", "Touches src/keep.py.")
+    service.task_manager.add_label(_task_id(applied, "leaf-11"), "security-review")
     amended_leaf["execution_group"] = "wave"
     reconciled = service.apply_run(
         _save_run(service, parent, sample_project, _spec([amended_leaf])).id,
@@ -768,6 +769,7 @@ def test_reexpand_reused_leaf_uses_created_leaf_labels(
     )
     reused = service.task_manager.get_task(_task_id(applied, "leaf-11"))
     labels = set(reused.labels or [])
+    assert "security-review" in labels
     assert "parallel:wave" in labels
     assert f"expansion-run:{reconciled.id}" in labels
     assert "covers:plan:1.1:1.1.1" in labels

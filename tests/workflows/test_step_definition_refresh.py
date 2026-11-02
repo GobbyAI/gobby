@@ -131,11 +131,24 @@ def _definition(revision: str, tool: str) -> AgentDefinitionBody:
 
 def _reviewer_definition() -> AgentDefinitionBody:
     """A synthetic reviewer: a candidate waits in await until verdict judges it."""
-    advance = {"server": "gobby-agents", "tool": "send_message", "action": "advance_seat"}
+    handlers = [
+        {
+            "server": "gobby-agents",
+            "tool": "send_message",
+            "action": "set_variable",
+            "when": "tool_input.get('content', '').startswith('EVENT=FINISHED ')",
+            "variable": key,
+            "value": value,
+        }
+        for key, value in (
+            ("candidate_received", False),
+            ("verdict_ready", False),
+            ("candidate_task", None),
+        )
+    ]
     return AgentDefinitionBody.model_validate(
         {
             "name": "code-reviewer",
-            "task_step_writes": ["independent-review"],
             "prompts": {"agent": "Synthetic reviewer seat."},
             "workflows": {"rule_selectors": {"include": []}},
             "step_workflow": {
@@ -160,7 +173,7 @@ def _reviewer_definition() -> AgentDefinitionBody:
                     },
                     {
                         "name": "verdict",
-                        "on_mcp_success": [advance],
+                        "on_mcp_success": handlers,
                         "transitions": [{"to": "await", "when": "not vars.candidate_received"}],
                     },
                 ],
@@ -261,13 +274,11 @@ async def test_reloaded_reviewer_ends_only_on_terminal_event(
     if recreate_engine:
         engine = RuleEngine(hub_db)
     messages = InterSessionMessageManager(hub_db)
-    # A LAND without this reviewer's approved review record keeps the unit open,
-    # whatever its NOTE says.
+    # A nonterminal status keeps the unit open even when its note mentions the terminal event.
     land = messages.create_message(
         session_id,
         recipient,
-        f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=LAND "
-        "NOTE=No VERDICT=BOUNCE needed",
+        f"EVENT=STATUS TASK={task.id} SHA={sha} NOTE=No EVENT=FINISHED needed",
     )
     event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
@@ -298,7 +309,7 @@ async def test_reloaded_reviewer_ends_only_on_terminal_event(
     bounce = messages.create_message(
         session_id,
         recipient,
-        f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=BOUNCE NOTE=fix",
+        f"EVENT=FINISHED TASK={task.id} SHA={sha} NOTE=done",
     )
     event.data["tool_input"]["arguments"]["content"] = bounce.content
     event.data["tool_output"] = {"success": True, "message_ids": [bounce.id]}

@@ -1,5 +1,6 @@
 """Declared direct-integration permissions permit self-authored task delivery."""
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -126,7 +127,7 @@ async def test_replay_rechecks_original_candidate_paths(
     assert list_close_receipts(case.db, task.id) == receipts
 
 
-async def test_direct_replay_requires_scope_provenance(case: LandingCase) -> None:
+async def test_receiptless_direct_commit_derives_immutable_scope(case: LandingCase) -> None:
     sha = case.candidate("external-delivery", {"src/owned.py": "implemented = True\n"})
     task = case.task()
     case.link(task, sha)
@@ -137,8 +138,63 @@ async def test_direct_replay_requires_scope_provenance(case: LandingCase) -> Non
 
     result = await case.land(task, sha, caller=case.claimant)
 
+    assert result["landed"] is True, result
+    assert list_close_receipts(case.db, task.id)
+
+
+async def test_receiptless_root_commit_has_proven_scope(case: LandingCase) -> None:
+    task = case.task()
+    case.link(task, case.base)
+    case.implement(task, case.base)
+    grant(case, ["land_tasks", "direct_integration_commit"], ["README.md"])
+    result = await case.land(task, case.base, caller=case.claimant)
+    assert result["landed"] is True, result
+
+
+async def test_receiptless_task_retains_earlier_linked_commit_scope(case: LandingCase) -> None:
+    first = case.candidate("first-change", {"src/auth.py": "protected = True\n"})
+    last = case.candidate("last-change", {"docs/readme.md": "Documented\n"}, base=first)
+    task = case.task()
+    case.db.execute(
+        "UPDATE tasks SET commits = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+        (json.dumps([first, last]), task.id),
+    )
+    case.implement(task, last)
+    grant(case, ["land_tasks", "direct_integration_commit"], ["docs/**"])
+    case.git("merge", "--ff-only", last)
+
+    result = await case.land(task, last, caller=case.claimant)
+
     assert result["landed"] is False, result
-    assert list_close_receipts(case.db, task.id) == []
+    assert not list_close_receipts(case.db, task.id)
+
+
+async def test_receiptless_merge_has_first_parent_scope(case: LandingCase) -> None:
+    from gobby.tasks.land_commit import candidate_scope_paths
+
+    branch = case.candidate("merged-change", {"src/auth.py": "protected = True\n"})
+    case.git("merge", "--no-ff", branch, "-m", "External merge")
+    merged = case.git("rev-parse", "HEAD")
+
+    assert await candidate_scope_paths(case.repo, merged, merged, []) == ["src/auth.py"]
+
+
+async def test_reflog_recovery_retains_scope_base(case: LandingCase) -> None:
+    sha = case.candidate("recover-source", {"src/owned.py": "implemented = True\n"})
+    task = case.task()
+    case.link(task, sha)
+    case.implement(task, sha)
+    grant(case, ["land_tasks", "direct_integration_commit"], ["src/**"])
+    assert (await case.land(task, sha, caller=case.claimant))["landed"] is True
+    case.db.execute(
+        "DELETE FROM task_comments WHERE task_id = %s AND author_type = %s",
+        (task.id, "close_receipt"),
+    )
+    recovered = await case.land(task, sha, caller=case.claimant)
+    assert recovered["landed"] is True, recovered
+    receipt = list_close_receipts(case.db, task.id)[0]
+    assert receipt.facts["integration_base"] == case.base
+    assert receipt.facts["provenance"] == "reflog"
 
 
 @pytest.mark.parametrize("implementation", ["missing", "stale"])

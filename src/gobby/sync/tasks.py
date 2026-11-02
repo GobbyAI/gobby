@@ -589,6 +589,14 @@ class TaskBackupManager:
 
                         # Handle labels stored as JSON in the hub.
                         labels_raw = data.get("labels")
+                        if existing_row:
+                            from gobby.storage.tasks._label_policy import (
+                                retain_security_review_label,
+                            )
+
+                            labels_raw = retain_security_review_label(
+                                existing_row["labels"], labels_raw
+                            )
                         labels_json = json.dumps(labels_raw) if labels_raw else None
 
                         claimed_by_session_id = data.get("claimed_by_session_id")

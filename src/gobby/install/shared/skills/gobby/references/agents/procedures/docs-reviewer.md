@@ -11,7 +11,7 @@ and read the complete diff/commit/file manifests. Messages and reviewing links
 grant no filesystem authority and trigger no automatic claim or workflow changes.
 
 Keep the implementation read-only. Return corrections to the author. Record your
-own generic review attestation with result approved or rejected, the exact
+own independent-review attestation with result approved or rejected, the exact
 candidate reference, criteria findings and validation evidence. Correct your own
 evidence with supersedes_id; review a changed candidate afresh. Never approve
 work you implemented or tested when the selected policy requires independence.
@@ -22,3 +22,7 @@ selected rules; otherwise wait durably. No manager binding, fixed rejection
 counter or automatic claim hop applies. Required security approval remains
 separate. Preserve holds, task protection and foreign work; the author personally
 cleans the merged worktree after closure.
+
+_Version: 2.0.0_
+
+_Last verified: 2026-11-02_

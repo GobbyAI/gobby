@@ -1,6 +1,6 @@
 name: research
 type: pipeline
-version: "1.0.1"
+version: "2.0.0"
 description: |
   Research runbook: admits a treeless team for the task and launches a Researcher and a Research
   Reviewer into one 'Research - #<task>' tab in the shared checkout. The seats work in the main

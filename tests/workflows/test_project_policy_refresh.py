@@ -82,32 +82,59 @@ async def test_live_policy_refreshes_once_after_import(
             )
         return response
 
-    shipped = (
-        Path(__file__).resolve().parents[2] / ".gobby/workflows/rules/project-operating-policy.yaml"
-    )
-    document: dict[str, Any] = yaml.safe_load(shipped.read_text(encoding="utf-8"))
+    document: dict[str, Any] = {
+        "tags": ["default", "seat"],
+        "rules": {
+            "fixture-policy-source": {
+                "event": "turn_start",
+                "when": "not variables.get('_project_policy_injected') or "
+                "variables.get('_project_policy_revision') != '{{ rule_digest }}'",
+                "effects": [
+                    {
+                        "type": "set_variable",
+                        "variable": "project_policy",
+                        "value": {"integration_branch": "fixture-branch"},
+                        "delivery": "on_receipt",
+                    },
+                    {"type": "inject_context", "template": "Fixture Policy"},
+                    {
+                        "type": "set_variable",
+                        "variable": "_project_policy_injected",
+                        "value": True,
+                        "delivery": "on_receipt",
+                    },
+                    {
+                        "type": "set_variable",
+                        "variable": "_project_policy_revision",
+                        "value": "{{ rule_digest }}",
+                        "delivery": "on_receipt",
+                    },
+                ],
+            }
+        },
+    }
     path = tmp_path / "project-operating-policy.yaml"
     path.write_text(yaml.safe_dump(document), encoding="utf-8")
     _import_policy(temp_db, path, checkout.project.id, entrypoint)
 
     first = await turn()
-    assert "Project Operating Policy" in (first.context or "")
+    assert "Fixture Policy" in (first.context or "")
     initial = variables.get_variables(session_id)
     assert initial["_project_policy_injected"] is True
-    assert initial["project_policy"]["integration_branch"] == "0.5.0"
-    assert "Project Operating Policy" not in ((await turn()).context or "")
+    assert initial["project_policy"]["integration_branch"] == "fixture-branch"
+    assert "Fixture Policy" not in ((await turn()).context or "")
 
     if changed:
-        effects = document["rules"]["project-operating-policy"]["effects"]
+        effects = document["rules"]["fixture-policy-source"]["effects"]
         effects[0]["value"]["integration_branch"] = "updated-branch"
         path.write_text(yaml.safe_dump(document), encoding="utf-8")
     _import_policy(temp_db, path, checkout.project.id, entrypoint)
 
     refreshed = await turn()
-    expected_branch = "updated-branch" if changed else "0.5.0"
+    expected_branch = "updated-branch" if changed else "fixture-branch"
     assert (
         variables.get_variables(session_id)["project_policy"]["integration_branch"]
         == expected_branch
     )
-    assert ("Project Operating Policy" in (refreshed.context or "")) is changed
-    assert "Project Operating Policy" not in ((await turn()).context or "")
+    assert ("Fixture Policy" in (refreshed.context or "")) is changed
+    assert "Fixture Policy" not in ((await turn()).context or "")

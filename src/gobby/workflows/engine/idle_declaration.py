@@ -44,6 +44,10 @@ def native_variable_write_error(
     name = tool_input.get("name") if isinstance(tool_input, dict) else None
     if isinstance(name, str) and name in WORKSPACE_VARIABLE_NAMES:
         return prefix + f"Native set_variable may not rebind the agent workspace {name!r}."
+    from gobby.workflows.reserved_variables import is_reserved_workflow_variable
+
+    if isinstance(name, str) and is_reserved_workflow_variable(name):
+        return prefix + f"Native set_variable may not change the reserved variable {name!r}."
     if not caller_id or sessions is None:
         return prefix + "Native set_variable requires a resolved calling session."
     caller = sessions.get(caller_id)

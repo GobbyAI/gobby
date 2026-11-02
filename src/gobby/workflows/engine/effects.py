@@ -92,7 +92,10 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                 variables,
                 ctx,
                 allowed_funcs,
-                allow_reserved=is_internal_rule(row),
+                allow_reserved=(
+                    is_internal_rule(row)
+                    or (effect.variable == "project_policy" and row.source == "installed")
+                ),
             )
             if wrote and effect.delivery == "on_receipt" and effect.variable is not None:
                 staged_variable_updates[effect.variable] = variables[effect.variable]

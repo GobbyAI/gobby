@@ -41,7 +41,7 @@ def test_snapshot_uses_installed_policy_instead_of_caller_variables(
     assert prepared.snapshot.facts["landing_receipts"] == []
 
 
-def test_missing_installed_policy_is_observable_to_selected_policy(
+def test_missing_installed_policy_has_an_empty_security_floor(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     project = sample_project["id"]
@@ -61,8 +61,9 @@ def test_missing_installed_policy_is_observable_to_selected_policy(
         project_id=project,
     )
     prepared = prepare_closure(temp_db, task_id=task.id, session_id=author)
-    assert not prepared.decision.allowed
-    assert prepared.snapshot.facts["project_policy_available"] is False
+    assert prepared.decision.allowed
+    assert prepared.snapshot.facts["project_policy_available"] is True
+    assert prepared.snapshot.facts["project_policy"] == {}
 
 
 def test_snapshot_tracks_policy_and_evidence_without_a_repository(

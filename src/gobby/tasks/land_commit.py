@@ -24,7 +24,12 @@ from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import LocalTaskManager, Task, TaskAlreadyEscalatedError
+from gobby.storage.tasks import (
+    LocalTaskManager,
+    Task,
+    TaskAlreadyEscalatedError,
+    TaskStaleStateError,
+)
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 from gobby.tasks.close_receipts import (
     LANDING,
@@ -246,6 +251,7 @@ async def _recover_landing(
             activation_class = "restart" if action["class"] == "sync" else action["class"]
             facts: dict[str, str | int | bool] = {
                 **unknown,
+                "integration_base": entry.old,
                 "landed_tip": entry.new,
                 "mode": action["mode"],
                 "activation_class": activation_class,
@@ -384,8 +390,20 @@ async def candidate_scope_paths(
     tip: str,
     sha: str,
     receipts: list[CloseReceipt],
+    linked_commits: list[str] | None = None,
 ) -> list[str] | None:
     """Pin the candidate's immutable path scope before definition admission."""
+    if linked_commits:
+        paths: set[str] = set()
+        for linked in {sha, *linked_commits}:
+            resolved = await _resolve(main, linked)
+            if resolved is None:
+                return None
+            scope = await candidate_scope_paths(main, tip, resolved, receipts)
+            if scope is None:
+                return None
+            paths.update(scope)
+        return sorted(paths)
     base = await _git(main, "merge-base", tip, sha)
     if base == sha:
         # Recheck the original candidate scope, even when the integration delta
@@ -395,7 +413,26 @@ async def candidate_scope_paths(
         )
         original_tip = receipt.facts.get("integration_base") if receipt else None
         if not isinstance(original_tip, str) or not _FULL_SHA.fullmatch(original_tip):
-            return None
+            # Operator commits and externally integrated commits need no daemon
+            # receipt to prove their immutable first-parent change scope.
+            result = await daemon_git.run(
+                (
+                    "diff-tree",
+                    "--root",
+                    "--first-parent",
+                    "--diff-merges=first-parent",
+                    "-r",
+                    "--no-renames",
+                    "--name-only",
+                    "-z",
+                    "--no-commit-id",
+                    sha,
+                ),
+                cwd=main,
+            )
+            if not isinstance(result, GitOk):
+                raise LandingGitError(f"could not read committed candidate paths: {result.stderr}")
+            return sorted(path for path in result.stdout.split("\0") if path)
         sha = receipt.commit_sha if receipt else sha
         base = await _git(main, "merge-base", original_tip, sha)
     return sorted(await _paths(main, base, sha))
@@ -528,7 +565,9 @@ async def land_candidate(
                 blockers: list[str] = []
                 if not _manages_task(db, current_task, caller_session_id):
                     blockers.append("landing_authority_required")
-                grant_paths = await candidate_scope_paths(main, tip, sha, receipts)
+                grant_paths = await candidate_scope_paths(
+                    main, tip, sha, receipts, list(current_task.commits or [])
+                )
                 admission: dict[str, str | int | bool] = {}
                 if not blockers:
 
@@ -545,6 +584,7 @@ async def land_candidate(
                         db,
                         task_id=task.id,
                         session_id=caller_session_id,
+                        expected_updated_at=current_task.updated_at,
                         event="task_land",
                         facts={
                             "closure_intent": "landing",
@@ -696,5 +736,7 @@ async def land_candidate(
                     return _refused(refusal, "checkout_busy", result.stderr)
                 return _refused(refusal, "git_failed", result.stderr)
             return _refused(refusal, "tip_contention")
+    except TaskStaleStateError:
+        return {"landed": False, "error": "task_changed"}
     except LandingGitError as exc:
         return {"landed": False, "error": "git_failed", "message": str(exc)}

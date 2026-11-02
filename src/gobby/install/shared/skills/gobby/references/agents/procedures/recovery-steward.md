@@ -26,6 +26,6 @@
 - Never pass `force` or `force_delete_branch`, and never delete an unmerged, dirty, unregistered or open-task tree.
 - Never end a seat of an open task, and never restart the daemon or edit a file.
 
-_Version: 1.0.1_
+_Version: 2.0.0_
 
 _Last verified: 2026-11-01_

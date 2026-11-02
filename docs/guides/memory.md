@@ -336,15 +336,11 @@ minting a key; reuse an existing equivalent check. Identity is
 | `over-engineering` | `proportionality` |
 | `gobby-format` | `plan-contract` |
 
-Reviewer-miss proof supplies all `participating_section_ids`, the earlier and
-approval evidence IDs, and missed completed-round count; every participating
-section must remain hash-unchanged. Cross-section proof supplies all
-`causal_section_ids`, causal finding, introduced round, and causal/approval
-evidence IDs; every causal section must have changed. Evidence services compare
-immutable manifests. Unknown IDs, empty required sets, or partial proof fail.
-Dual-class lessons need both independent bundles, while one proven class remains
-recordable if the other is unproven. The reviser records after final approval is
-checkpointed; the adversary supplies attestations and never records its own round.
+Reviewer-miss evidence should identify the participating sections, earlier and
+approval evidence IDs, and missed completed-round count. Include the manifest
+hash comparison or validation result that proves the missed condition. The
+reviser records the verified lesson after final approval is checkpointed; the
+adversary supplies review evidence and never records its own round.
 
 ## Dream Operations
 

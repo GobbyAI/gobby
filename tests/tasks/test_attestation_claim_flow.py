@@ -213,6 +213,12 @@ def _exercise_claim_flow(
                 ("2026-01-01T00:00:00+00:00", task.id, "task_claim_flow"),
             )
 
+    if scenario == "null-last":
+        attest(maker, "checks")
+        assert tasks.get_task(task.id).claimed_by_session_id == maker
+        attest(maker, "recipe")
+        assert tasks.get_task(task.id).claimed_by_session_id == reviewer
+        return task.id, reviewer
     attest(maker, "recipe")
     assert tasks.get_task(task.id).claimed_by_session_id == maker
     if recipient_state == "missing":
@@ -246,7 +252,7 @@ def _exercise_claim_flow(
     return task.id, lead
 
 
-@pytest.mark.parametrize("scenario", ["readmitted", "future-ambiguous"])
+@pytest.mark.parametrize("scenario", ["readmitted", "future-ambiguous", "null-last"])
 def test_claim_flow_only_considers_current_team_and_needed_seats(
     temp_db: HubDatabase, sample_project: dict[str, Any], scenario: str
 ) -> None:

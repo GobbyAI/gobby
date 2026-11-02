@@ -1,5 +1,6 @@
 """Landing uses selected policies and generic evidence, without fixed workflow gates."""
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,7 @@ from tests.fixtures.landing_case import make_landing_case
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
-@pytest.mark.parametrize("mutation", ["unlink", "claim"])
+@pytest.mark.parametrize("mutation", ["unlink", "claim", "link-protected"])
 async def test_landing_checks_links_and_scope_from_the_admitted_task(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -40,7 +41,8 @@ async def test_landing_checks_links_and_scope_from_the_admitted_task(
         definition_fields={"task_land_scope": {"own_claim_only": True}},
     )
     successor = seats.add("new-owner")
-    sha = case.candidate("candidate", {"chapter.txt": "Final manuscript.\n"})
+    protected = case.candidate("protected", {"src/auth.py": "protected = True\n"})
+    sha = case.candidate("candidate", {"chapter.txt": "Final manuscript.\n"}, base=protected)
     task = case.task("Deliver manuscript")
     manager = LocalTaskManager(temp_db)
     manager.claim_task(task.id, caller, force=True)
@@ -52,8 +54,13 @@ async def test_landing_checks_links_and_scope_from_the_admitted_task(
             links = manager.get_task(task.id).commits
             assert links
             manager.unlink_commit(task.id, links[0])
-        else:
+        elif mutation == "claim":
             manager.claim_task(task.id, successor, force=True)
+        else:
+            temp_db.execute(
+                "UPDATE tasks SET commits = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                (json.dumps([protected, sha]), task.id),
+            )
         return original(*args, **kwargs)
 
     monkeypatch.setattr(landing, "prepare_closure", change_before_admission)

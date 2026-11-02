@@ -6,7 +6,6 @@ import json
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, SessionManager
@@ -70,26 +69,26 @@ def advance_claim_flow(
         seat_step = seat_steps[seat]
         agent = (seat_step.mcp.arguments or {}).get("agent") if seat_step.mcp else None
         live: set[str] = set()
-        runs = LocalAgentRunManager(db)
-        offset = 0
-        while agent:
-            page = runs.list_active_for_machine(author.machine_id, limit=100, offset=offset)
-            for run in page:
-                if run.agent_name != agent or not run.child_session_id:
-                    continue
-                child_session = session_store.get(run.child_session_id)
-                if (
-                    child_session is None
-                    or child_session.project_id != task.project_id
-                    or child_session.status not in LIVE_SESSION_STATUSES
-                ):
-                    continue
-                child_team = seat_team(db, child_session.id)
+        if agent:
+            rows = conn.execute(
+                "SELECT ar.child_session_id FROM agent_runs ar "
+                "JOIN sessions s ON s.id = ar.child_session_id "
+                "WHERE ar.status IN ('queued', 'running', 'pending') "
+                "AND ar.machine_id = %s AND ar.agent_name = %s "
+                "AND s.project_id = %s AND s.machine_id = %s AND s.status = ANY(%s)",
+                (
+                    author.machine_id,
+                    agent,
+                    task.project_id,
+                    author.machine_id,
+                    list(LIVE_SESSION_STATUSES),
+                ),
+            ).fetchall()
+            for row in rows:
+                child_id = str(row["child_session_id"])
+                child_team = seat_team(db, child_id)
                 if child_team is not None and child_team.team_id == team.team_id:
-                    live.add(child_session.id)
-            if len(page) < 100:
-                break
-            offset += len(page)
+                    live.add(child_id)
         if len(live) > 1:
             raise ValueError(f"claim flow stage {stage_name!r} has ambiguous live pipeline seats")
         return next(iter(live)) if live else child
@@ -105,13 +104,20 @@ def advance_claim_flow(
         and item.sequence > state.get("after_sequence", 0)
     }
     target = None
+    references = {
+        (item.reference.scheme, item.reference.value)
+        for kind, item in active.items()
+        if kind in stage.done_when and item.reference is not None
+    }
     if record.kind in stage.done_when and record.result == stage.rejected_result:
         target = stage.on_rejected
-    elif stage.done_when and all(
-        kind in active
-        and active[kind].result == stage.approved_result
-        and (active[kind].reference is None or active[kind].reference == record.reference)
-        for kind in stage.done_when
+    elif (
+        stage.done_when
+        and len(references) <= 1
+        and all(
+            kind in active and active[kind].result == stage.approved_result
+            for kind in stage.done_when
+        )
     ):
         target = stage.next
     if target is None:

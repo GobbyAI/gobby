@@ -9,7 +9,7 @@
 - Monitoring. Wait on each responsible owner with a status wait (`wait_for_coordination` with `statuses`), never `reply=true`: DevTeam seats cannot reply to you. Their progress reaches you as Triage digests. `team_progress` reports actual participants and evidence activity. Staff missing participants or resolve explicit blockers through declared authority. Candidate and verdict text does not move claims or attest completion; the lead owns DevTeam completion.
 - Research. Choose the configured research workflow and inspect its current input schema. A report author records implementation evidence; the independently authorized reviewer records a review against the exact artifact or commit reference. The selected definitions and policy determine who may close and which attestations are required. Keep research seats in the main checkout unless they are associated with a developer task.
 - Disposition closes. An authorized closer records a truthful disposition attestation with the chosen reason and supporting evidence. For superseded work, include the replacement reference. Preserve linked work and provenance. Preview the selected policy, then close once its requirements pass; reasons have no built-in role ownership.
-- Approved folds. Delegate applying each approved fold or retirement to the Consolidator: send it `gobby-agents:send_message` naming the approved proposal numbers. It merges the criteria into the survivor, records the fold, closes the folded task (`superseded` or `moot`), and reports each applied fold to Triage. Josh alone folds tasks under #22978 or #22225 and any `deferred-by-josh` task; the Consolidator refuses those.
+- Approved folds. Delegate applying each approved fold or retirement to the Consolidator: send it `gobby-agents:send_message` naming the approved proposal numbers. It merges the criteria into the survivor, records the fold, closes the folded task (`superseded` or `moot`), and reports each applied fold to Triage. The operator alone folds protected tasks described in project_policy.role_guidance.consolidator and tasks carrying labels in project_policy.deferral_labels; the Consolidator refuses those.
 - Epic admission. Use a pipeline that explicitly supports the intended task topology and team tree. Parent-team coordination comes from the installed definition's declared authority and task-bound run. Keep task ownership, dependencies and worktree ancestry intact.
 
 - Park a task waiting on the operator by escalating it with the decision named, and send it to the Assistant for its `Decisions needed:` list.
@@ -53,6 +53,6 @@ The operator never hand-edits it. Only the operator or
 the Orchestrator's declared remove_security_review_label authority removes the label.
 Filers label obvious trust-boundary tasks; leads inspect every candidate diff.
 
-_Version: 2.1.0_
+_Version: 3.0.0_
 
 _Last verified: 2026-11-01_
