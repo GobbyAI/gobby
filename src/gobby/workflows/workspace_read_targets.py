@@ -79,12 +79,28 @@ def _split_heredoc_bodies(command: str) -> tuple[str, list[str]]:
     return "".join(kept), bodies
 
 
+_OPERATOR_CHARS = frozenset("();<>|&\n")
+_OPERATOR_RUN = re.compile(r"&&|\|\||\|&|[();<>|&\n]")
+
+
 def _shell_tokens(command: str) -> list[str]:
-    """Shell words with operators split off only outside quotes, so quoted text stays whole."""
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    """Shell words with operators split off only outside quotes, so quoted text stays whole.
+
+    An unquoted newline ends a command, so it is a token of its own. A backslash-newline
+    continues the line, so it is read as a space. shlex joins adjacent operator characters,
+    so a run such as `);` is split back into its operators.
+    """
+    lexer = shlex.shlex(command.replace("\\\n", " "), posix=True, punctuation_chars="();<>|&\n")
     lexer.whitespace_split = True
+    lexer.whitespace = " \t\r"
     lexer.commenters = ""
-    return list(lexer)
+    tokens: list[str] = []
+    for token in lexer:
+        if token and set(token) <= _OPERATOR_CHARS:
+            tokens.extend(_OPERATOR_RUN.findall(token))
+        else:
+            tokens.append(token)
+    return tokens
 
 
 _SHELL_WRAPPERS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
@@ -193,7 +209,15 @@ def _mask_regex_operands(command: str) -> str:
     return "".join(masked)
 
 
-_SHELL_SEPARATORS = frozenset({"&&", "||", ";", "|", "&", "(", ")"})
+_SHELL_SEPARATORS = frozenset({"&&", "||", ";", "|", "|&", "&", "(", ")", "\n"})
+# Words that start a command. An evaluator there runs its body in the current shell.
+_COMMAND_STARTS = _SHELL_SEPARATORS | frozenset(
+    {"{", "!", "then", "do", "else", "elif", "if", "while", "until", "time", "command", "builtin"}
+)
+# Commands that move the shell's directory. Their operand is the target.
+_CD_COMMANDS = frozenset({"cd", "pushd", "popd"})
+# Commands that run a body in the current shell, which may move it. The body is unknown.
+_EVALUATORS = frozenset({"eval", "source", ".", "exec", "alias"})
 
 
 def _anchored(words: list[str], directory: Path | None, moved: bool) -> list[str]:
@@ -202,41 +226,117 @@ def _anchored(words: list[str], directory: Path | None, moved: bool) -> list[str
     return [w if w.startswith(("/", "~")) else os.path.join(directory, w) for w in words]
 
 
-def _cd_anchored_words(
-    tokens: list[str], base: Path | None, moved: bool = False
-) -> tuple[list[str], Path | None, bool]:
-    """Read words anchored to where the shell is when each operand runs.
+# A place the shell may be in: a directory, and whether a literal `cd` put the shell there.
+# None is a place a dynamic `cd` reached, whose directory cannot be resolved.
+_Place = tuple[Path | None, bool] | None
+# A `cd` after one of these, or first in the command, runs unconditionally. Any other `cd` may
+# be skipped, fail, or run in a pipeline, so it only adds its target to the places.
+_CD_CERTAIN = frozenset({";", "\n"})
+# Marks a read through a place that cannot be resolved. The caller refuses it.
+_UNKNOWN_CWD = "\0unknown-cwd"
 
-    `base` is the hook cwd, the shell's cwd before the command, and `moved` says whether an
-    enclosing `cd` already moved it. A literal `cd` moves it for the operands after it, and a
-    subshell restores it at `)`. A dynamic `cd` target cannot be resolved, so `base` stays in
-    effect after it. Once the shell has moved, every operand counts, not only path-like ones.
-    """
-    directory, skip = base, -1
-    saved: list[tuple[Path | None, bool]] = []
+
+def _enterable(place: _Place) -> bool:
+    """True when `cd` into the place certainly succeeds: an existing, searchable directory."""
+    return (
+        place is not None
+        and place[0] is not None
+        and os.path.isdir(place[0])
+        and os.access(place[0], os.X_OK)
+    )
+
+
+def _place_words(token: str, places: frozenset[_Place]) -> list[str]:
+    """Words one token reads from each place. Once a place has moved, every bare word counts."""
     words: list[str] = []
+    for place in places:
+        if place is None:
+            if not token.startswith(("/", "~", "-")):
+                words.append(_UNKNOWN_CWD)
+            continue
+        directory, moved = place
+        found = os.path.expandvars(token).split() if moved else _path_words([token])
+        words.extend(_anchored(found, directory, moved))
+    return words
+
+
+def _cd_places(arg: str, places: frozenset[_Place], certain: bool) -> frozenset[_Place]:
+    """Places the shell may be in after `cd arg` runs from any of `places`.
+
+    A literal target replaces the places only when the cd certainly runs and lands. Otherwise
+    the cd may be skipped or fail, so the places before it stay reachable beside its target.
+    A dynamic target cannot be resolved, so it adds an unknown place.
+    """
+    literal = not arg.startswith("-") and "$" not in arg and _READ_PATTERN.search(arg) is None
+    landed: set[_Place] = set()
+    for place in places:
+        directory = place[0] if place is not None else None
+        if not literal or (place is None and not arg.startswith(("/", "~"))):
+            landed.add(None)
+            continue
+        target = resolve_tool_path(arg, directory)
+        landed.add((target, True) if target is not None else None)
+    if certain and all(_enterable(place) for place in landed):
+        return frozenset(landed)
+    return places | frozenset(landed)
+
+
+def _cd_anchored_words(
+    tokens: list[str], base: Path | None, places: frozenset[_Place]
+) -> tuple[list[str], frozenset[_Place]]:
+    """Read words anchored to every place the shell may be in when each operand runs.
+
+    `places` is where the shell may be before the command; its hook cwd is `base`. A `cd`,
+    `pushd` or `popd` adds its target to those places, and replaces them only when it runs
+    unconditionally at a command start. A subshell restores the places at `)`, and a brace
+    group keeps the places before it at `}`. A `CDPATH` in the command makes every target
+    dynamic, and a `case` pattern's `)` keeps the places before it, since it is not a close.
+    """
+    saved: list[tuple[str, frozenset[_Place]]] = []
+    skip = -1
+    words: list[str] = []
+    cdpath = any("CDPATH" in token for token in tokens)
+    case_seen = "case" in tokens
     for index, token in enumerate(tokens):
         if index == skip:
             continue
-        if token == "(":
-            saved.append((directory, moved))
-        elif token == ")":
-            directory, moved = saved.pop() if saved else (directory, moved)
-        elif os.path.basename(token) == "cd" and (
-            index == 0 or tokens[index - 1] in {"&&", ";", "("} or index - 1 == skip
-        ):
+        previous = tokens[index - 1] if index else ""
+        if token in {"(", "{"}:
+            saved.append((token, places))
+        elif token in {")", "}"}:
+            opener, before = saved.pop() if saved else ("", places)
+            restore = (opener, token) == ("(", ")") and not case_seen
+            places = before if restore else before | places
+        elif token.lstrip("`") in _CD_COMMANDS:
+            name = token.lstrip("`")
             consumed = index + 1 < len(tokens) and tokens[index + 1] not in _SHELL_SEPARATORS
-            arg = tokens[index + 1] if consumed else "~"
-            words.extend(_anchored(_path_words([arg]), directory, moved))
-            literal = arg != "-" and "$" not in arg and _READ_PATTERN.search(arg) is None
-            directory, moved = (
-                (resolve_tool_path(arg, directory), True) if literal else (base, False)
-            )
+            raw = tokens[index + 1] if consumed else "~"
             skip = index + 1 if consumed else -1
+            words.extend(_place_words(raw, places))
+            if name == "popd" or cdpath or not consumed:
+                target = "-"
+            else:
+                target = raw
+            after = index + 2 if consumed else index + 1
+            piped = after < len(tokens) and tokens[after] in {"|", "|&", "&"}
+            certain = name == "cd" and not piped and (index == 0 or previous in _CD_CERTAIN)
+            places = _cd_places(target, places, certain)
         elif token not in _SHELL_SEPARATORS:
-            found = os.path.expandvars(token).split() if moved else _path_words([token])
-            words.extend(_anchored(found, directory, moved))
-    return words, directory, moved
+            words.extend(_place_words(token, places))
+            if token in _EVALUATORS and (index == 0 or previous in _COMMAND_STARTS):
+                places = places | frozenset({None})
+    return words, places
+
+
+def _command_places_words(command: str, places: frozenset[_Place]) -> list[str]:
+    """Judge a nested shell body from every place the shell may be in."""
+    words: list[str] = []
+    for place in places:
+        if place is None:
+            words.append(_UNKNOWN_CWD)
+        else:
+            words.extend(_shell_path_words(command, place[0], place[1]))
+    return words
 
 
 def _shell_path_words(command: Any, base: Path | None = None, moved: bool = False) -> list[str]:
@@ -249,20 +349,21 @@ def _shell_path_words(command: Any, base: Path | None = None, moved: bool = Fals
     if not isinstance(command, str):
         return []
     text, bodies = _split_heredoc_bodies(command)
-    text = _mask_regex_operands(text)
+    text = _mask_regex_operands(text.strip())
     try:
         tokens = _shell_tokens(text)
     except ValueError:
         tokens = _SHELL_OPERATORS.sub(" ", text).split()
     shell_reads = any(os.path.basename(os.path.expandvars(t)) in _BODY_CONSUMERS for t in tokens)
-    words, directory, moved = _cd_anchored_words(tokens, base, moved)
+    start = frozenset({(base, moved)})
+    words, places = _cd_anchored_words(tokens, base, start)
     # The operator-aware lexer splits extglob parentheses and alternatives. Keep
     # an additional whole-word view so their literal path prefix is not lost.
     try:
         whole_words = shlex.split(text)
     except ValueError:
         whole_words = []
-    whole_anchored, _, _ = _cd_anchored_words(whole_words, base, moved)
+    whole_anchored, _ = _cd_anchored_words(whole_words, base, start)
     words.extend(word for word in whole_anchored if _EXTGLOB.search(word))
     command_name = os.path.basename(os.path.expandvars(tokens[0])) if tokens else ""
     data_consumer = command_name in {"cat", "tee"} or (
@@ -273,9 +374,9 @@ def _shell_path_words(command: Any, base: Path | None = None, moved: bool = Fals
     )
     if shell_reads or compound or not data_consumer:
         for body in bodies:
-            words.extend(_shell_path_words(body, directory, moved))
+            words.extend(_command_places_words(body, places))
     for wrapped in _wrapped_commands(tokens):
-        words.extend(_shell_path_words(wrapped, directory, moved))
+        words.extend(_command_places_words(wrapped, places))
     return words
 
 
@@ -387,6 +488,8 @@ def _workspace_read_targets(
     raws: list[Any]
     if data.get("tool_name") == "Bash":
         raws = list(_shell_path_words(tool_input.get("command"), base))
+        if _UNKNOWN_CWD in raws:
+            return None
     else:
         raws = [tool_input.get("file_path"), tool_input.get("path")]
     inputs = [(raw, base, data.get("tool_name") == "Bash") for raw in raws]
