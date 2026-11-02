@@ -148,6 +148,20 @@ class TestSendAttachment:
         )
         assert outsider_read["error_code"] == "attachment_not_found"
 
+    async def test_global_fanout_gives_each_recipient_its_own_copy(self, env: _Env) -> None:
+        sent = await _send_document(env, target="global", target_id=None)
+
+        assert sent["success"] is True
+        assert len(sent["message_ids"]) == 3
+        for recipient in ("peer", "other", "outsider"):
+            readable = []
+            for message_id in sent["message_ids"]:
+                read = await _call(env, recipient, "get_attachment", {"message_id": message_id})
+                if read["success"]:
+                    readable.append(read)
+            assert len(readable) == 1
+            assert readable[0]["attachment"]["sha256"] == sent["attachment"]["sha256"]
+
     async def test_oversize_document_is_refused_and_nothing_is_stored(self, env: _Env) -> None:
         before = _stored_message_count(env, "root")
 
