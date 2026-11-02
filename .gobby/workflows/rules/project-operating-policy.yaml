@@ -66,7 +66,14 @@ rules:
               "src/gobby/communications/group_policy.py",
               "src/gobby/communications/adapters/telegram.py",
               "src/gobby/communications/adapters/telegram_inbound.py",
-              "crates/gcore/assets/schema/migrations/487_comms_message_destination_key.sql"
+              "crates/gcore/assets/schema/migrations/487_comms_message_destination_key.sql",
+              "src/gobby/workflows/condition_helpers_pods.py",
+              "src/gobby/workflows/condition_helpers_paths.py",
+              "src/gobby/agents/team_lifecycle.py",
+              "src/gobby/mcp_proxy/tools/tasks/_team_progress.py",
+              "src/gobby/install/shared/workflows/agents/dev-team-lead.yaml",
+              "src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml",
+              "src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml"
             ],
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–05:00 America/Chicago daily; 04:00–06:00 on Mondays",
