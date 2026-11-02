@@ -1550,8 +1550,15 @@ deferred to #21546. Stage 2 native git runs at the stored checkout path on the
 hub exactly as Python does (1.3), and close keeps Python's remote-session
 refusal (3.7.5). Native matches Python on every surface, so no node waiver
 exists. The heading names no dependency: #21546 already waits on all of
-#21560 through #21574. At approval the Orchestrator labels #21546
-`deferred-from:tasks-family:3.8`.
+#21560 through #21574. Ownership therefore routes through #21546's cited
+parent, never a dependency edge: a #21560 to #21546 edge would cycle through
+#21574 and #21544 and block Stage 2 on Stage 4.
+`src/gobby/plans/deferral.py::validate_deferral` accepts that form, which the
+`project-checkout-identity` plan used for its D1. At approval the Orchestrator
+labels #21546 `deferred-from:tasks-family:3.8` and `cited-parent:#21542` (its
+parent, the 1.0 root), labels #21542 `out-of-scope-for:#21560`, checks that
+#21542 is open and outside #21560's dependency closure, and copies 3.8.1 to
+3.8.5 into #21546's validation criteria.
 
 ```yaml
 deferral:
@@ -2462,7 +2469,8 @@ Cross-plan edges:
 - #21562 and #21567: inherit 3.5's session-variable seam.
 - #21567: owns `team_progress` (D1).
 - #21546: receives 3.8's deferred node checkout git, labeled
-  `deferred-from:tasks-family:3.8` (A).
+  `deferred-from:tasks-family:3.8` (A) and `cited-parent:#21542`, with
+  `out-of-scope-for:#21560` on #21542 (3.8); no edge joins #21560 and #21546.
 - #25468 (R0): gates the P0 phase (ENH-STALENESS-3).
 - #21570: activates both MCP servers, ending the Q4 authority window; its close,
   repair and landing tools wait on #24151.
