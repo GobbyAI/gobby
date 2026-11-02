@@ -39,7 +39,8 @@ class UiExposeResult:
     url: str | None = None
     changed: bool = False
     degraded_reason: str | None = None
-    funnel: bool = False
+    # Observed Funnel state of the route's port; None when Tailscale could not be read.
+    funnel: bool | None = False
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,18 @@ def disable_mcp_exposure(
     return _remove_route(daemon_port, _mcp_route(port, mode=mode), persist, forget=forget)
 
 
+def replace_tailscale_ui(
+    daemon_port: int,
+    *,
+    previous: UiExposureConfig,
+    port: int,
+    persist: PersistIntent | None = None,
+) -> UiExposeResult:
+    """Move the Web UI from the recorded port to `port`. See `_replace_route`."""
+    recorded = _ui_route(previous.port) if previous.mode == "tailnet" else None
+    return _replace_route(daemon_port, recorded, _ui_route(port), persist)
+
+
 def replace_mcp_exposure(
     daemon_port: int,
     *,
@@ -132,19 +145,30 @@ def replace_mcp_exposure(
     port: int,
     persist: PersistIntent | None = None,
 ) -> UiExposeResult:
-    """Move /mcp from the recorded route to the proposed one.
+    """Move /mcp from the recorded route to the proposed one. See `_replace_route`."""
+    recorded = _mcp_route(previous.port, mode=previous.mode) if previous.mode != "off" else None
+    return _replace_route(daemon_port, recorded, _mcp_route(port, mode=mode), persist)
+
+
+def _replace_route(
+    daemon_port: int,
+    recorded: _Route | None,
+    proposed: _Route,
+    persist: PersistIntent | None,
+) -> UiExposeResult:
+    """Move a recorded route to the proposed one without leaving the recorded one behind.
 
     The recorded route is removed first, so a changed port or mode never leaves the old
     route serving behind the new intent. If the proposed route fails, the recorded one
     is restored.
     """
-    if previous.mode == "off" or (previous.mode, previous.port) == (mode, port):
-        return enable_mcp_exposure(daemon_port, mode=mode, port=port, persist=persist)
-    disable_mcp_exposure(daemon_port, mode=previous.mode, port=previous.port)
+    if recorded is None or recorded == proposed:
+        return _apply_route(daemon_port, proposed, persist)
+    _remove_route(daemon_port, recorded, None, forget=False)
     try:
-        return enable_mcp_exposure(daemon_port, mode=mode, port=port, persist=persist)
+        return _apply_route(daemon_port, proposed, persist)
     except UiExposeError:
-        _best_effort_restore(daemon_port, _mcp_route(previous.port, mode=previous.mode))
+        _best_effort_restore(daemon_port, recorded)
         raise
 
 
@@ -161,19 +185,11 @@ def reconcile_exposures(
     """
     results: list[UiExposeResult] = []
     if ui.mode == "tailnet":
-        results.append(
-            _degraded(
-                funnel=False,
-                action=lambda: enable_tailscale_ui(daemon_port, port=ui.port),
-            )
-        )
+        results.append(_degraded(action=lambda: enable_tailscale_ui(daemon_port, port=ui.port)))
     if mcp.mode != "off":
         mcp_mode = mcp.mode
         results.append(
-            _degraded(
-                funnel=mcp_mode == "funnel",
-                action=lambda: enable_mcp_exposure(daemon_port, mode=mcp_mode, port=mcp.port),
-            )
+            _degraded(action=lambda: enable_mcp_exposure(daemon_port, mode=mcp_mode, port=mcp.port))
         )
     return results
 
@@ -251,7 +267,7 @@ def _apply_route(
             )
         if not route.funnel or route.port in state.funnel_ports:
             _run_persist(persist)
-            return _enabled_result(state.node, route, changed=False)
+            return _enabled_result(state, route, changed=False)
         # Upgrading a route that is already served would need a rollback that could
         # delete it, so refuse before any mutation.
         raise UiExposeError(
@@ -271,7 +287,7 @@ def _apply_route(
     except Exception:
         _best_effort_remove(daemon_port, route)
         raise
-    return _enabled_result(verified.node, route, changed=True)
+    return _enabled_result(verified, route, changed=True)
 
 
 def _remove_route(
@@ -315,32 +331,35 @@ def _status(daemon_port: int, route: _Route) -> UiExposeResult:
     try:
         state = _probe_serve_state()
     except UiExposeError as exc:
-        return UiExposeResult(enabled=True, degraded_reason=str(exc), funnel=route.funnel)
+        return UiExposeResult(enabled=True, degraded_reason=str(exc), funnel=None)
+    funnel = route.port in state.funnel_ports
     current = state.handlers.get(route.port, {}).get(route.path)
     if current is None:
         reason = f"HTTPS {route.path} handler is missing on port {route.port}"
     elif not _is_gobby_target(current, route, daemon_port):
         reason = f"HTTPS {route.path} handler on port {route.port} points to another proxy"
-    elif route.funnel and route.port not in state.funnel_ports:
+    elif route.funnel and not funnel:
         reason = f"Tailscale Funnel is not active on port {route.port}"
+    elif not route.funnel and funnel:
+        reason = f"Tailscale Funnel is active on port {route.port}, which must stay tailnet-only"
     else:
-        return _enabled_result(state.node, route, changed=False)
-    return UiExposeResult(enabled=True, degraded_reason=reason, funnel=route.funnel)
+        return _enabled_result(state, route, changed=False)
+    return UiExposeResult(enabled=True, degraded_reason=reason, funnel=funnel)
 
 
-def _degraded(*, funnel: bool, action: Callable[[], UiExposeResult]) -> UiExposeResult:
+def _degraded(*, action: Callable[[], UiExposeResult]) -> UiExposeResult:
     try:
         return action()
     except UiExposeError as exc:
-        return UiExposeResult(enabled=True, degraded_reason=str(exc), funnel=funnel)
+        return UiExposeResult(enabled=True, degraded_reason=str(exc), funnel=None)
 
 
-def _enabled_result(node: _NodeInfo, route: _Route, *, changed: bool) -> UiExposeResult:
+def _enabled_result(state: _ServeState, route: _Route, *, changed: bool) -> UiExposeResult:
     return UiExposeResult(
         enabled=True,
-        url=node.url(route.port, route.path),
+        url=state.node.url(route.port, route.path),
         changed=changed,
-        funnel=route.funnel,
+        funnel=route.port in state.funnel_ports,
     )
 
 

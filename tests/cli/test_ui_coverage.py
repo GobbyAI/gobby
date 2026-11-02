@@ -627,7 +627,7 @@ class TestUiExposureCommands:
         bootstrap = MagicMock(daemon_port=60887)
         enable = Mock(return_value=UiExposeResult(enabled=True, url="https://node/"))
         monkeypatch.setattr(ui_module, "load_bootstrap", Mock(return_value=bootstrap))
-        monkeypatch.setattr(ui_module, "enable_tailscale_ui", enable)
+        monkeypatch.setattr(ui_module, "replace_tailscale_ui", enable)
 
         result = runner.invoke(ui, ["expose"])
 
@@ -644,7 +644,7 @@ class TestUiExposureCommands:
         monkeypatch.setattr(
             ui_module, "load_bootstrap", Mock(return_value=MagicMock(daemon_port=60887))
         )
-        monkeypatch.setattr(ui_module, "enable_tailscale_ui", enable)
+        monkeypatch.setattr(ui_module, "replace_tailscale_ui", enable)
         monkeypatch.setattr(ui_module, "record_exposure", record)
 
         result = runner.invoke(ui, ["expose", "--port", "8443"])
@@ -705,13 +705,34 @@ class TestUiExposureCommands:
             "read_exposure_config",
             Mock(return_value=(UiExposureConfig(), McpExposureConfig(mode="funnel", port=8443))),
         )
-        monkeypatch.setattr(ui_module, "enable_tailscale_ui", enable)
+        monkeypatch.setattr(ui_module, "replace_tailscale_ui", enable)
 
         result = runner.invoke(ui, ["expose", "--port", "8443"])
 
         assert result.exit_code == 1
         assert "is the Funnel port for /mcp" in result.output
         enable.assert_not_called()
+
+    def test_expose_moves_the_recorded_port_instead_of_adding_a_root(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        recorded = UiExposureConfig(mode="tailnet", port=8443)
+        monkeypatch.setattr(
+            ui_module,
+            "read_exposure_config",
+            Mock(return_value=(recorded, McpExposureConfig())),
+        )
+        replace = Mock(return_value=UiExposeResult(enabled=True, url="https://node:10000/"))
+        monkeypatch.setattr(
+            ui_module, "load_bootstrap", Mock(return_value=MagicMock(daemon_port=60887))
+        )
+        monkeypatch.setattr(ui_module, "replace_tailscale_ui", replace)
+
+        result = runner.invoke(ui, ["expose", "--port", "10000"])
+
+        assert result.exit_code == 0
+        assert replace.call_args.kwargs["previous"] == recorded
+        assert replace.call_args.kwargs["port"] == 10000
 
     def test_mcp_unexpose_refuses_without_recorded_exposure(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
@@ -782,7 +803,7 @@ class TestUiExposureCommands:
         monkeypatch.setattr(ui_module, "load_bootstrap", Mock(return_value=bootstrap))
         monkeypatch.setattr(
             ui_module,
-            "enable_tailscale_ui",
+            "replace_tailscale_ui",
             Mock(side_effect=UiExposeError("conflict")),
         )
 

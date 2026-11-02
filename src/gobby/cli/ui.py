@@ -21,8 +21,8 @@ from gobby.ui_exposure import (
     UiExposeError,
     disable_mcp_exposure,
     disable_tailscale_ui,
-    enable_tailscale_ui,
     replace_mcp_exposure,
+    replace_tailscale_ui,
 )
 
 from .exposure_config import (
@@ -143,15 +143,16 @@ _PORT_HELP = "HTTPS port on this node. Tailscale Funnel allows only 443, 8443 an
 def ui_expose(port: int) -> None:
     """Expose the web UI to this machine's Tailscale network and record the choice."""
     proposed = UiExposureConfig(mode="tailnet", port=port)
-    _, recorded_mcp = read_exposure_config(bootstrap_path())
+    recorded_ui, recorded_mcp = read_exposure_config(bootstrap_path())
     try:
         validate_exposure_pair(proposed, recorded_mcp)
     except ValidationError as exc:
         raise click.ClickException(str(exc)) from exc
     daemon_port = load_bootstrap().daemon_port
     try:
-        result = enable_tailscale_ui(
+        result = replace_tailscale_ui(
             daemon_port,
+            previous=recorded_ui,
             port=port,
             persist=lambda: record_exposure(bootstrap_path(), ui=proposed),
         )

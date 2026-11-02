@@ -310,3 +310,66 @@ def test_status_lines_name_both_exposures_and_funnel_state(
         f"Web UI exposure: tailnet (https://{OLD_NAME}:8443/; Funnel off)",
         f"MCP exposure: funnel (https://{OLD_NAME}/mcp; Funnel on)",
     ]
+
+
+def test_moving_recorded_ui_port_leaves_no_root_handler_behind(fake: FakeTailscale) -> None:
+    ui_exposure.enable_tailscale_ui(DAEMON_PORT, port=8443)
+
+    ui_exposure.replace_tailscale_ui(
+        DAEMON_PORT,
+        previous=UiExposureConfig(mode="tailnet", port=8443),
+        port=10000,
+    )
+    ui_exposure.disable_tailscale_ui(DAEMON_PORT, port=10000)
+
+    assert fake.serve["Web"] == {}
+
+
+def test_status_degrades_tailnet_route_when_funnel_is_active_on_its_port(
+    fake: FakeTailscale,
+) -> None:
+    ui_exposure.enable_tailscale_ui(DAEMON_PORT, port=8443)
+    fake.serve["AllowFunnel"][f"{OLD_NAME}:8443"] = True
+
+    ui_result, _ = ui_exposure.get_exposure_status(
+        DAEMON_PORT,
+        ui=UiExposureConfig(mode="tailnet", port=8443),
+        mcp=McpExposureConfig(),
+    )
+
+    assert ui_result.funnel is True
+    assert ui_result.degraded_reason == (
+        "Tailscale Funnel is active on port 8443, which must stay tailnet-only"
+    )
+
+
+def test_status_reports_observed_funnel_not_the_recorded_mode(fake: FakeTailscale) -> None:
+    ui_exposure.enable_mcp_exposure(DAEMON_PORT, mode="tailnet", port=443)
+
+    _, mcp_result = ui_exposure.get_exposure_status(
+        DAEMON_PORT,
+        ui=UiExposureConfig(),
+        mcp=McpExposureConfig(mode="funnel", port=443),
+    )
+
+    assert mcp_result.funnel is False
+    assert mcp_result.degraded_reason == "Tailscale Funnel is not active on port 443"
+
+
+def test_status_line_says_funnel_unknown_when_tailscale_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unreadable(_arguments: list[str]) -> dict[str, object]:
+        raise UiExposeError("tailscale is unavailable")
+
+    monkeypatch.setattr(ui_exposure, "_run_json", unreadable)
+    monkeypatch.setattr(
+        exposure_config,
+        "read_exposure_config",
+        lambda _path: (UiExposureConfig(), McpExposureConfig(mode="funnel", port=443)),
+    )
+
+    assert exposure_config.exposure_status_lines(DAEMON_PORT) == [
+        "Web UI exposure: off",
+        "MCP exposure: funnel (degraded: tailscale is unavailable; Funnel unknown)",
+    ]

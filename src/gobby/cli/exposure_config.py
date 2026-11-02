@@ -65,7 +65,10 @@ def exposure_status_lines(daemon_port: int) -> list[str]:
 def _describe_exposure(label: str, mode: str, result: UiExposeResult) -> str:
     if mode == "off":
         return f"{label} exposure: off"
-    funnel = "on" if result.funnel else "off"
+    if result.funnel is None:
+        funnel = "unknown"
+    else:
+        funnel = "on" if result.funnel else "off"
     if result.degraded_reason is not None:
         return f"{label} exposure: {mode} (degraded: {result.degraded_reason}; Funnel {funnel})"
     return f"{label} exposure: {mode} ({result.url}; Funnel {funnel})"
