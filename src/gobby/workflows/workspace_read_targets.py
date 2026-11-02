@@ -210,9 +210,27 @@ def _mask_regex_operands(command: str) -> str:
 
 
 _SHELL_SEPARATORS = frozenset({"&&", "||", ";", "|", "|&", "&", "(", ")", "\n"})
-# Words that start a command. An evaluator there runs its body in the current shell.
+# Words that start a command. An evaluator there runs its body in the current shell. zsh
+# precommand modifiers (`noglob`, `nocorrect`, `exec`, `-`) keep the evaluator at a command start.
 _COMMAND_STARTS = _SHELL_SEPARATORS | frozenset(
-    {"{", "!", "then", "do", "else", "elif", "if", "while", "until", "time", "command", "builtin"}
+    {
+        "{",
+        "!",
+        "then",
+        "do",
+        "else",
+        "elif",
+        "if",
+        "while",
+        "until",
+        "time",
+        "command",
+        "builtin",
+        "exec",
+        "noglob",
+        "nocorrect",
+        "-",
+    }
 )
 # Commands that move the shell's directory. Their operand is the target.
 _CD_COMMANDS = frozenset({"cd", "pushd", "popd"})

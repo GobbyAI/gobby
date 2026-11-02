@@ -1458,6 +1458,10 @@ def test_skipped_piped_or_dynamic_cd_keeps_foreign_reads_refused(
         'eval "cd {checkout}"; cat ../session-99/notes.md',
         "source ./lib.sh; cat notes.md",
         "( cd {checkout} ); cat ../session-99/notes.md",
+        "noglob eval 'cd ..'; cat session-99/notes.md",
+        "noglob source ./lib.sh; cat session-99/notes.md",
+        "nocorrect . ./lib.sh; cat session-99/notes.md",
+        "- source ./lib.sh; cat session-99/notes.md",
     ],
 )
 def test_widened_cwd_forms_keep_foreign_reads_refused(
