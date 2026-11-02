@@ -165,16 +165,19 @@ class NativePublisher:
     ) -> asyncio.Future[None]:
         # Frames are encoded exactly as BroadcastMixin.broadcast encodes them.
         payloads = [json_dumps(frame) for frame in frames] or [json_dumps(message)]
+        filter_json = json_dumps(message)
         futures = [
-            self._enqueue({"op": "publish", "filter": message, "frames": chunk})
-            for chunk in _publish_chunks(message, payloads)
+            self._enqueue(_publish_op(filter_json, chunk))
+            for chunk in _publish_chunks(filter_json, payloads)
         ]
         if len(futures) == 1:
             return futures[0]
         return asyncio.ensure_future(_settle_all(futures))
 
     def subscribe(self, leg: int, events: Iterable[str]) -> asyncio.Future[None]:
-        return self._enqueue({"op": "subscribe", "leg": leg, "events": list(events)})
+        return self._enqueue(
+            json_dumps({"op": "subscribe", "leg": leg, "events": list(events)}).encode()
+        )
 
     def fail_generation(self, generation: str | None) -> None:
         """Retire the current generation without retrying its work, then rebind."""
@@ -218,13 +221,12 @@ class NativePublisher:
             await asyncio.sleep(TOKEN_POLL_INTERVAL)
         return token
 
-    def _enqueue(self, op: dict[str, Any]) -> asyncio.Future[None]:
+    def _enqueue(self, encoded: bytes) -> asyncio.Future[None]:
         future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         generation = self._generation
         if generation is None:
             future.set_result(None)
             return future
-        encoded = json_dumps(op).encode()
         # Each operation holds exactly one waiting future, so the op count is the future count.
         if (
             self._retained_bytes + len(encoded) > MAX_RETAINED_BYTES
@@ -377,18 +379,27 @@ def _request_body(generation: str, ops: list[bytes]) -> bytes:
     )
 
 
-def _publish_chunks(message: dict[str, Any], payloads: list[str]) -> list[list[str]]:
-    """Groups frame payloads in order so each publish op encodes within PUBLISH_CHUNK."""
-    empty = len(json_dumps({"op": "publish", "filter": message, "frames": []}).encode())
+def _publish_op(filter_json: str, frames: list[str]) -> bytes:
+    """Encodes a publish op from frame strings already encoded as JSON, as json_dumps would."""
+    return f'{{"op": "publish", "filter": {filter_json}, "frames": [{", ".join(frames)}]}}'.encode()
+
+
+def _publish_chunks(filter_json: str, payloads: list[str]) -> list[list[str]]:
+    """Groups frame payloads in order so each publish op encodes within PUBLISH_CHUNK.
+
+    Each payload is encoded as a JSON string once, here, and the op reuses that encoding.
+    """
+    empty = len(_publish_op(filter_json, []))
     chunks: list[list[str]] = [[]]
     size = empty
     for payload in payloads:
+        literal = json_dumps(payload)
         # Each frame costs its encoded bytes plus the separator before it.
-        cost = len(json_dumps(payload).encode()) + 2
+        cost = len(literal.encode()) + 2
         if chunks[-1] and size + cost > PUBLISH_CHUNK:
             chunks.append([])
             size = empty
-        chunks[-1].append(payload)
+        chunks[-1].append(literal)
         size += cost
     return chunks
 

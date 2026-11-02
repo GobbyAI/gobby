@@ -145,6 +145,18 @@ async def test_publish_frame_larger_than_the_op_cap_goes_alone(supervisor_token:
     assert [len(op["frames"]) for op in daemon.ops(GEN1)] == [1, 1, 1]
 
 
+def test_publish_op_bytes_match_the_generic_encoder() -> None:
+    """An op assembled from frame literals encodes exactly as json_dumps encodes the op."""
+    message = {"type": "terminal_output"}
+    payloads = [
+        json_dumps({"seq": 1, "data": 'quote " and \\ slash'}),
+        json_dumps({"seq": 2, "data": "héllo"}),
+    ]
+    literals = [json_dumps(payload) for payload in payloads]
+    op = {"op": "publish", "filter": message, "frames": payloads}
+    assert native_publish._publish_op(json_dumps(message), literals) == json_dumps(op).encode()
+
+
 class _Daemon:
     """gdaemon's private bind and publish endpoints, with a gate to stall the sender."""
 
