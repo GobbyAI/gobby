@@ -8,6 +8,8 @@
 
 mod common;
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::net::SocketAddr;
@@ -1796,15 +1798,46 @@ async fn browser_attach_receives_only_its_session_frames() {
     );
 }
 
-/// The publisher gives up after two seconds (`native_publish.py`). A publish
-/// body is parsed on the runtime worker before its handler yields, so a bind
-/// that arrives with it cannot answer until the whole parse returns. A bind
-/// does 4 KiB of work; the budget covers scheduling jitter, and a max publish
-/// parse takes about 616 ms in this debug build.
+/// Allocations of at least this size are counted on a thread while it is armed.
+const LARGE_ALLOC: usize = 32 * 1024 * 1024;
+
+thread_local! {
+    static ARMED: Cell<bool> = const { Cell::new(false) };
+    static LARGE_ALLOCS: Cell<usize> = const { Cell::new(0) };
+}
+
+struct CountLargeAllocs;
+
+// SAFETY: each method forwards to `System` with the caller's layout and pointer
+// unchanged. The thread-locals are const-initialized and hold no heap memory,
+// so counting never re-enters the allocator.
+unsafe impl GlobalAlloc for CountLargeAllocs {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if layout.size() >= LARGE_ALLOC {
+            let _ = ARMED.try_with(|armed| {
+                if armed.get() {
+                    let _ = LARGE_ALLOCS.try_with(|count| count.set(count.get() + 1));
+                }
+            });
+        }
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: CountLargeAllocs = CountLargeAllocs;
+
+/// Publish latency and the bind wall time are recorded measurements, not
+/// asserts (#25575). The load-independent proof is the ordering assertion plus
+/// the large-allocation check: the publish body copy must not run on the
+/// runtime thread before bind answers.
 #[tokio::test]
 async fn bind_answers_within_the_publisher_deadline_during_a_max_publish() {
-    const PUBLISHER_DEADLINE: Duration = Duration::from_secs(2);
-    const BIND_BUDGET: Duration = Duration::from_millis(250);
+    const PUBLISH_COMPLETION: Duration = Duration::from_secs(120);
     let mut h = Harness::start().await;
     h.bind().await;
 
@@ -1818,34 +1851,36 @@ async fn bind_answers_within_the_publisher_deadline_during_a_max_publish() {
     let native = h.native.clone();
     let token = h.token.clone();
 
-    let started = Instant::now();
+    LARGE_ALLOCS.with(|count| count.set(0));
+    ARMED.with(|armed| armed.set(true));
     let publish = tokio::spawn({
         let (native, token) = (native.clone(), token.clone());
         async move {
             let request = private_request(PUBLISH, Some(SECRET), Some(&token), body);
-            call(&native, request, LOOPBACK).await.0
+            let peer: SocketAddr = LOOPBACK.parse().expect("peer address");
+            let response = timeout(PUBLISH_COMPLETION, publish::handle(&native, request, peer))
+                .await
+                .expect("max publish completes within its bound");
+            response.status()
         }
     });
     // Let the publish start first, as a concurrent request would.
     tokio::task::yield_now().await;
     let probe = private_request(BIND, Some(SECRET), Some(&token), "{not json");
     let (probe_status, _) = call(&native, probe, LOOPBACK).await;
-    let probe_elapsed = started.elapsed();
+    ARMED.with(|armed| armed.set(false));
+    let large_allocs = LARGE_ALLOCS.with(Cell::get);
     assert_eq!(probe_status, StatusCode::BAD_REQUEST, "bind probe");
-    assert!(
-        probe_elapsed < BIND_BUDGET,
-        "bind answered after {probe_elapsed:?} behind a max publish"
-    );
-    assert!(
-        probe_elapsed < PUBLISHER_DEADLINE,
-        "bind missed the publisher deadline behind a max publish"
+    assert_eq!(
+        large_allocs, 0,
+        "the runtime thread copied a publish body before bind answered"
     );
 
     assert!(
         !publish.is_finished(),
         "bind answered only after the max publish completed"
     );
-    let publish_status = within("max publish", publish).await.expect("publish task");
+    let publish_status = publish.await.expect("publish task");
     assert_eq!(
         publish_status,
         StatusCode::NO_CONTENT,

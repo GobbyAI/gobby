@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use axum::body::Body;
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
+use bytes::Bytes;
 use http_body_util::{BodyExt, LengthLimitError, Limited};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -146,7 +147,7 @@ async fn read_bounded(
     headers: &HeaderMap,
     body: Body,
     limit: usize,
-) -> Result<Vec<u8>, Response<Body>> {
+) -> Result<Bytes, Response<Body>> {
     let declared = headers
         .get(CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
@@ -155,7 +156,7 @@ async fn read_bounded(
         return Err(status_only(StatusCode::PAYLOAD_TOO_LARGE));
     }
     match Limited::new(body, limit).collect().await {
-        Ok(collected) => Ok(collected.to_bytes().to_vec()),
+        Ok(collected) => Ok(collected.to_bytes()),
         Err(error) if error.is::<LengthLimitError>() => {
             Err(status_only(StatusCode::PAYLOAD_TOO_LARGE))
         }
