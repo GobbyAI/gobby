@@ -819,3 +819,67 @@ def test_recorded_reached_type_is_exhausted_without_windows(reached: str) -> Non
     (component,) = observation.components
     assert component.state == "exhausted"
     assert component.window is None
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        {"used_percent": 10**400, "window_minutes": 300},
+        {"used_percent": 10**5000, "window_minutes": 300},
+        {"used_percent": float("nan"), "window_minutes": 300},
+        {"used_percent": float("inf"), "window_minutes": 300},
+        {"used_percent": 10.0, "window_minutes": 10**400},
+        {"used_percent": 10.0, "window_minutes": 10**5000},
+        {"used_percent": 10.0, "window_minutes": 300, "resets_at": 10**5000},
+    ],
+    ids=[
+        "used-400-digits",
+        "used-5000-digits",
+        "used-nan",
+        "used-inf",
+        "minutes-400-digits",
+        "minutes-5000-digits",
+        "reset-5000-digits",
+    ],
+)
+def test_codex_hostile_window_numbers_are_ignored(window: Mapping[str, object]) -> None:
+    # Numbers past float or integer-digit range, or non-finite, make the payload unverifiable.
+    record: Mapping[str, object] = {
+        "type": "event_msg",
+        "payload": {"type": "token_count", "rate_limits": {"primary": window, "secondary": None}},
+    }
+    assert normalize_typed_signal("codex", record, observed_at=_T0, source_key="s") is None
+
+
+@pytest.mark.parametrize(
+    "resets_at",
+    [10**400, float("nan"), float("inf")],
+    ids=["reset-400-digits", "reset-nan", "reset-inf"],
+)
+def test_codex_hostile_reset_is_unknown_not_raised(resets_at: object) -> None:
+    # A reset that is not a representable finite time is unknown; the window itself stays.
+    record: Mapping[str, object] = {
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "rate_limits": {
+                "primary": {"used_percent": 80.0, "window_minutes": 300, "resets_at": resets_at},
+                "secondary": None,
+            },
+        },
+    }
+    observation = normalize_typed_signal("codex", record, observed_at=_T0, source_key="s")
+    assert observation is not None
+    (component,) = observation.components
+    assert component.resets_at is None
+    assert component.state == "available"
+
+
+@pytest.mark.parametrize("digits", [400, 5000], ids=["400-digits", "5000-digits"])
+def test_agy_oversized_duration_is_ignored(digits: int) -> None:
+    # A duration past timedelta range or the integer digit limit is unverifiable, never raised.
+    record: Mapping[str, object] = {
+        "status": "ERROR",
+        "error": "Individual quota reached. Resets in " + "9" * digits + "h.",
+    }
+    assert normalize_typed_signal("agy", record, observed_at=_T0, source_key="s") is None

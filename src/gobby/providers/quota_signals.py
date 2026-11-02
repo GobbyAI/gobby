@@ -71,7 +71,11 @@ def normalize_typed_signal(
     source_key: str,
 ) -> QuotaObservation | None:
     """Normalize one top-level raw provider envelope; None for unverified or untrusted input."""
-    occurrence = _digest({"provider": provider, "record": record})
+    try:
+        occurrence = _digest({"provider": provider, "record": record})
+    except ValueError:
+        # An integer past the digit limit cannot be fingerprinted, so the record is unverifiable.
+        return None
     if provider == "codex":
         return _codex_signal(
             record, observed_at=observed_at, occurrence=occurrence, source_key=source_key
@@ -254,7 +258,7 @@ def _relative_reset(observed_at: datetime, text: str) -> datetime | None:
         for amount, unit in _DURATION_PART_RE.findall(match.group(1)):
             total += timedelta(**{_DURATION_UNITS[unit]: int(amount)})
         resets_at = observed_at + total
-    except OverflowError:
+    except (OverflowError, ValueError):
         return None
     return resets_at if total > timedelta() else None
 

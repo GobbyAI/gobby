@@ -18,6 +18,8 @@ _DEFAULT_LIMIT_ID = "codex"
 _WEEKLY_MINUTES = 10080
 _FIVE_HOUR_MINUTES = 300
 _PERCENT_LIMIT = 100.0
+# Largest accepted window length; keeps the minute count within a 32-bit value.
+_MAX_WINDOW_MINUTES = 2**31 - 1
 # RateLimitReachedType values from the Codex core protocol; any other value is unverified.
 _VERIFIED_REACHED_TYPES = frozenset(
     {
@@ -126,7 +128,11 @@ def _window_component(
     minutes = raw.get("window_minutes")
     if used is None or used < 0:
         return None
-    if not isinstance(minutes, int) or isinstance(minutes, bool) or minutes <= 0:
+    if (
+        not isinstance(minutes, int)
+        or isinstance(minutes, bool)
+        or not 0 < minutes <= _MAX_WINDOW_MINUTES
+    ):
         return None
     window = UsageWindow(
         label=_window_label(minutes),
@@ -175,7 +181,10 @@ def _hard_component(
 def _number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
     return number if math.isfinite(number) else None
 
 
