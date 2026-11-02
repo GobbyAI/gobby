@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 from gobby.providers.capacity_service import ProviderCapacityService
 from gobby.providers.codex_rate_limits import observation_from_rate_limits
+from gobby.providers.quota_observations import PANE_HINT_LIMIT, decode_quota_details
 from gobby.providers.quota_signals import (
     PaneOccurrenceTracker,
     PaneQuotaHint,
@@ -696,6 +697,28 @@ async def test_pane_hints_persist_for_every_provider() -> None:
         assert await service.observe_pane_hint(hint) is False
         # A hint alone is never a quota reading.
         assert (await service.get(provider)).state == "unknown"
+
+
+async def test_pane_hints_keep_only_the_newest_occurrences() -> None:
+    clock = _Clock(_T0)
+    storage = _MemoryStorage(clock)
+    service = ProviderCapacityService(storage, reporters={}, support_resolvers={}, clock=clock)
+    total = PANE_HINT_LIMIT + 3
+    for index in range(total):
+        hint = PaneQuotaHint(
+            provider="codex",
+            occurrence=f"pane-occ-{index}",
+            kind="usage_limit",
+            detected_at=_T0 + timedelta(seconds=index),
+        )
+        assert await service.observe_pane_hint(hint) is True
+    record = storage.get("codex")
+    assert record is not None
+    _, pane_hints = decode_quota_details(record.details)
+    # The oldest detections are evicted; the newest PANE_HINT_LIMIT stay as dedupe records.
+    assert len(pane_hints) == PANE_HINT_LIMIT
+    assert "pane-occ-0" not in pane_hints
+    assert f"pane-occ-{total - 1}" in pane_hints
 
 
 def test_codex_malformed_reached_and_reset_handling() -> None:

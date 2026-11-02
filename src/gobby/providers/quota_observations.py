@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from gobby.providers.usage import UsageWindow
@@ -22,6 +22,7 @@ type AdmissionOutcome = Literal[
 type QuotaState = Literal["available", "exhausted", "stale", "unknown"]
 
 FRESHNESS_SECONDS = 900.0
+PANE_HINT_LIMIT = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,11 +118,20 @@ def encode_quota_details(
     components: Mapping[str, QuotaComponent],
     pane_hints: Mapping[str, Mapping[str, str]],
 ) -> dict[str, object]:
-    """Serialize components and pane-hint dedupe records into the row details column."""
+    """Serialize components and the newest PANE_HINT_LIMIT pane-hint dedupe records.
+
+    Every row write passes through here, so the cap bounds the details column. A scan only
+    re-presents recent terminal lines, so evicting the oldest detections does not re-admit them.
+    """
+    newest = sorted(pane_hints.items(), key=lambda item: _hint_time(item[1]))[-PANE_HINT_LIMIT:]
     return {
         "quota_components": {key: _encode_component(c) for key, c in components.items()},
-        "pane_hints": {occurrence: dict(hint) for occurrence, hint in pane_hints.items()},
+        "pane_hints": {occurrence: dict(hint) for occurrence, hint in newest},
     }
+
+
+def _hint_time(hint: Mapping[str, str]) -> datetime:
+    return parse_stored_datetime(hint.get("detected_at")) or datetime.min.replace(tzinfo=UTC)
 
 
 def decode_quota_details(
