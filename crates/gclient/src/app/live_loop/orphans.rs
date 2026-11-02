@@ -10,17 +10,20 @@
 
 use std::collections::HashSet;
 
+use futures_util::{stream, StreamExt};
 use serde_json::Value;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::Backend;
 use crate::daemon::{Daemon, DaemonError, KillOutcome, LiveDaemon, SidebarRows, TerminalRow};
-use crate::frame_source::FrameError;
 use crate::ui::dialogs::project::plural;
 use crate::ui::dialogs::{Dialog, OrphanRow};
 use crate::ui::status::Toast;
 use crate::ui::{Chrome, Mode};
 
 use super::super::{short_terminal_id, Workspace};
+use super::daemon_ops::op_tag;
+use super::jobs::{spawn_job, JobOutcome, JobResult};
 
 /// The inventory states an orphan candidate can sit in.
 const CANDIDATE_STATES: [&str; 2] = ["live", "orphaned"];
@@ -87,16 +90,13 @@ fn clock_time(stamp: &str) -> Option<String> {
     (stamp.as_bytes().get(10) == Some(&b'T')).then(|| time.to_string())
 }
 
-/// Every orphan candidate the daemon knows, across all projects.
-pub async fn fetch_orphans<D: Daemon>(
-    workspace: &Workspace<D>,
-) -> Result<Vec<OrphanRow>, DaemonError> {
+/// Every candidate row the daemon knows, across all projects, read page by page.
+pub async fn fetch_inventory<D: Daemon>(daemon: &D) -> Result<Vec<TerminalRow>, DaemonError> {
     let mut cursor: Option<String> = None;
     let mut cursors = HashSet::new();
     let mut rows = Vec::new();
     loop {
-        let page = workspace
-            .daemon
+        let page = daemon
             .inventory_page(&CANDIDATE_STATES, cursor.as_deref())
             .await?;
         rows.extend(page.items);
@@ -110,7 +110,7 @@ pub async fn fetch_orphans<D: Daemon>(
             None => break,
         }
     }
-    Ok(orphan_rows(&rows, &workspace.sidebar_rows))
+    Ok(rows)
 }
 
 /// The agent row's terminal as a single dialog-less target.
@@ -132,14 +132,31 @@ pub fn agent_orphan<D: Daemon>(workspace: &Workspace<D>, terminal_id: &str) -> O
     }
 }
 
-/// Fetch the candidates and open the dialog with every row checked; with
-/// none, say so in a toast instead.
-pub async fn open_destroy_orphans_dialog(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
+/// Start the candidate read; the dialog opens when it lands, with every row
+/// checked, or a toast says there are none.
+pub fn open_destroy_orphans_dialog(
+    workspace: &Workspace<LiveDaemon>,
+    outcomes: &UnboundedSender<JobOutcome>,
+) {
     if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
         return;
     }
-    let rows = match fetch_orphans(workspace).await {
-        Ok(rows) => rows,
+    let daemon = workspace.daemon().clone();
+    spawn_job(outcomes, op_tag(&daemon), async move {
+        JobResult::OrphanInventory {
+            result: fetch_inventory(&daemon).await,
+        }
+    });
+}
+
+/// Open the dialog over a landed inventory, or report the failure or emptiness.
+pub(super) fn show_orphan_inventory(
+    workspace: &Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    result: Result<Vec<TerminalRow>, DaemonError>,
+) {
+    let rows = match result {
+        Ok(rows) => orphan_rows(&rows, &workspace.sidebar_rows),
         Err(error) => {
             chrome.notify(Toast::error(format!("Orphaned terminals: {error}")));
             return;
@@ -164,9 +181,34 @@ pub struct DestroySummary {
     pub total: usize,
     /// Names of the rows the daemon refused to kill.
     pub refused: Vec<String>,
+    /// Names of the rows whose kill request failed.
+    pub failed: Vec<String>,
 }
 
 impl DestroySummary {
+    /// One answer per target, in target order, however the kills completed.
+    fn from_results(targets: &[OrphanRow], results: Vec<Result<KillOutcome, DaemonError>>) -> Self {
+        let mut summary = Self {
+            total: targets.len(),
+            ..Self::default()
+        };
+        for (target, result) in targets.iter().zip(results) {
+            match result {
+                Ok(KillOutcome::Killed { .. }) => summary.killed += 1,
+                Ok(KillOutcome::Refused { .. }) => summary.refused.push(target.name.clone()),
+                Err(error) => {
+                    tracing::warn!(
+                        terminal_id = %target.terminal_id,
+                        %error,
+                        "orphan kill request failed"
+                    );
+                    summary.failed.push(target.name.clone());
+                }
+            }
+        }
+        summary
+    }
+
     /// The status-line summary.
     pub fn message(&self) -> String {
         let mut message = format!(
@@ -178,44 +220,58 @@ impl DestroySummary {
             message.push_str("; refused: ");
             message.push_str(&self.refused.join(", "));
         }
+        if !self.failed.is_empty() {
+            message.push_str("; failed: ");
+            message.push_str(&self.failed.join(", "));
+        }
         message
     }
 }
 
-/// Kill `targets` one by one; each kill waits for the daemon's answer.
-pub async fn kill_orphans<D: Daemon>(
-    daemon: &D,
-    targets: &[OrphanRow],
-) -> Result<DestroySummary, DaemonError> {
-    let mut summary = DestroySummary {
-        total: targets.len(),
-        ..DestroySummary::default()
-    };
-    for target in targets {
-        match daemon.terminate(&target.terminal_id).await? {
-            KillOutcome::Killed { .. } => summary.killed += 1,
-            KillOutcome::Refused { .. } => summary.refused.push(target.name.clone()),
-        }
-    }
-    Ok(summary)
+/// Most kill requests in flight at once; the rest queue behind them.
+const KILL_FANOUT: usize = 8;
+
+/// Kill `targets`, up to `KILL_FANOUT` at a time; replies land in target order.
+pub async fn kill_orphans<D: Daemon>(daemon: &D, targets: &[OrphanRow]) -> DestroySummary {
+    let ids: Vec<String> = targets
+        .iter()
+        .map(|target| target.terminal_id.clone())
+        .collect();
+    let results: Vec<_> = stream::iter(ids)
+        .map(move |id| async move { daemon.terminate(&id).await })
+        .buffered(KILL_FANOUT)
+        .collect()
+        .await;
+    DestroySummary::from_results(targets, results)
 }
 
-/// Destroy `targets`, report in a toast, and refresh the roster so
-/// the sidebar drops the rows.
-pub async fn destroy_orphans(
+/// Destroy `targets` as one job; its summary lands in `apply_orphans_destroyed`.
+pub fn destroy_orphans(
+    workspace: &Workspace<LiveDaemon>,
+    outcomes: &UnboundedSender<JobOutcome>,
+    targets: Vec<OrphanRow>,
+) {
+    if targets.is_empty() || workspace.exit_reason().is_some() || !workspace.daemon_ready() {
+        return;
+    }
+    let daemon = workspace.daemon().clone();
+    spawn_job(outcomes, op_tag(&daemon), async move {
+        let summary = kill_orphans(&daemon, &targets).await;
+        JobResult::OrphansDestroyed { summary }
+    });
+}
+
+/// Toasts the destroy's summary, and refreshes the roster when a kill landed
+/// so the sidebar drops the rows.
+pub(super) fn apply_orphans_destroyed(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
-    targets: Vec<OrphanRow>,
-) -> Result<(), FrameError> {
-    if targets.is_empty() || workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return Ok(());
-    }
-    let summary = kill_orphans(workspace.daemon(), &targets).await?;
+    summary: &DestroySummary,
+) {
     chrome.notify(Toast::info(summary.message()));
     if summary.killed > 0 {
-        workspace.fetch_roster().await?;
+        workspace.request_relist();
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -317,7 +373,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_orphans_pages_the_inventory() {
+    async fn fetch_inventory_pages_the_inventory() {
         let ws = Workspace::scripted();
         ws.daemon().set_inventory_pages(vec![
             json!({
@@ -330,7 +386,7 @@ mod tests {
             }),
         ]);
 
-        let names: Vec<String> = fetch_orphans(&ws)
+        let names: Vec<String> = fetch_inventory(ws.daemon())
             .await
             .expect("inventory")
             .into_iter()
@@ -356,9 +412,7 @@ mod tests {
         let daemon = ScriptedDaemon::new();
         daemon.set_kill_refusals(vec!["t-2".to_string()]);
 
-        let summary = kill_orphans(&daemon, &[target("t-1", "alpha"), target("t-2", "beta")])
-            .await
-            .expect("kills");
+        let summary = kill_orphans(&daemon, &[target("t-1", "alpha"), target("t-2", "beta")]).await;
 
         assert_eq!(
             summary,
@@ -366,6 +420,7 @@ mod tests {
                 killed: 1,
                 total: 2,
                 refused: vec!["beta".to_string()],
+                failed: Vec::new(),
             }
         );
         assert_eq!(
@@ -377,10 +432,47 @@ mod tests {
                 killed: 1,
                 total: 1,
                 refused: Vec::new(),
+                failed: Vec::new(),
             }
             .message(),
             "destroyed 1 of 1 orphaned terminal"
         );
         assert_eq!(daemon.ws_sent_types(), ["terminal_kill", "terminal_kill"]);
+    }
+
+    #[test]
+    fn destroy_summary_keeps_one_answer_per_target_in_target_order() {
+        let targets = [
+            target("t-1", "alpha"),
+            target("t-2", "beta"),
+            target("t-3", "gamma"),
+        ];
+
+        let summary = DestroySummary::from_results(
+            &targets,
+            vec![
+                Err(DaemonError::Unavailable { retry_after: None }),
+                Ok(KillOutcome::Refused {
+                    terminal_id: "t-2".to_string(),
+                }),
+                Ok(KillOutcome::Killed {
+                    terminal_id: "t-3".to_string(),
+                }),
+            ],
+        );
+
+        assert_eq!(
+            summary,
+            DestroySummary {
+                killed: 1,
+                total: 3,
+                refused: vec!["beta".to_string()],
+                failed: vec!["alpha".to_string()],
+            }
+        );
+        assert_eq!(
+            summary.message(),
+            "destroyed 1 of 3 orphaned terminals; refused: beta; failed: alpha"
+        );
     }
 }

@@ -79,6 +79,8 @@ struct MockState {
     websocket_gate: Option<Arc<Notify>>,
     websocket_read_gate: Option<Arc<Notify>>,
     ws_holds: Vec<WsHold>,
+    /// Rows the `terminal_list` reply serves, filtered by the request's `states`.
+    terminal_inventory: Vec<Value>,
     /// Replies actually written, per request `type`.
     ws_replies: HashMap<String, usize>,
     active_websockets: usize,
@@ -152,6 +154,7 @@ impl MockDaemon {
             websocket_gate: None,
             websocket_read_gate: None,
             ws_holds: Vec::new(),
+            terminal_inventory: Vec::new(),
             ws_replies: HashMap::new(),
             active_websockets: 0,
             websocket_closes: 0,
@@ -566,6 +569,11 @@ impl MockDaemon {
     /// Hold the reply to the `workspace_attach` request until released.
     pub fn hold_attach(&self) -> Arc<Notify> {
         self.hold_ws("workspace_attach", |_| true)
+    }
+
+    /// Serve these rows to every `terminal_list` request whose `states` name them.
+    pub fn seed_terminal_inventory(&self, rows: Vec<Value>) {
+        self.state.lock().expect("mock state").terminal_inventory = rows;
     }
 
     /// Hold the reply (and the events sent before it) to the next websocket
@@ -1174,6 +1182,30 @@ fn websocket_reply(
                     "reason": null,
                 }))
             }
+        }
+        "terminal_list" => {
+            let states = request.get("states").and_then(Value::as_array);
+            let items: Vec<Value> = state
+                .lock()
+                .expect("mock state")
+                .terminal_inventory
+                .iter()
+                .filter(|row| {
+                    states.is_none_or(|states| {
+                        states
+                            .iter()
+                            .any(|name| name.as_str() == row.get("state").and_then(Value::as_str))
+                    })
+                })
+                .cloned()
+                .collect();
+            Some(json!({
+                "type": "terminal_list_result",
+                "request_id": request.get("request_id"),
+                "success": true,
+                "items": items,
+                "next_cursor": null,
+            }))
         }
         "terminal_kill" => {
             let mut state = state.lock().expect("mock state");

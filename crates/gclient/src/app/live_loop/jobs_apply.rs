@@ -17,6 +17,7 @@ use super::control::{
 };
 use super::daemon_ops::{apply_kills, apply_ops};
 use super::jobs::{JobOutcome, JobResult, LoopJobs, OpIntent};
+use super::orphans::{apply_orphans_destroyed, show_orphan_inventory};
 
 #[cfg(test)]
 #[path = "jobs_apply_tests.rs"]
@@ -53,6 +54,8 @@ pub(super) fn apply_job_outcome(
         } => return apply_kills(workspace, chrome, killed, kept, result),
         // A host grant is real whichever generation asked for it, so it lands.
         result @ JobResult::HostGrant { .. } => result,
+        // The destroy's kills happened whichever generation issued them.
+        result @ JobResult::OrphansDestroyed { .. } => result,
         // A chain's committed answer lands or is orphaned whichever generation
         // issued it; the arms below decide which.
         result @ (JobResult::Spawned { .. }
@@ -142,6 +145,10 @@ pub(super) fn apply_job_outcome(
         }
         JobResult::Disposed { orphan, outcome } => {
             chain_apply::apply_disposed(workspace, chrome, jobs, orphan, outcome);
+        }
+        JobResult::OrphanInventory { result } => show_orphan_inventory(workspace, chrome, result),
+        JobResult::OrphansDestroyed { summary } => {
+            apply_orphans_destroyed(workspace, chrome, &summary);
         }
         JobResult::Responded { pending, result } => {
             apply_response(workspace, chrome, pending, result);
