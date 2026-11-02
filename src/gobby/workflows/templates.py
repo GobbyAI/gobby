@@ -4,7 +4,7 @@ import shlex
 from typing import Any, Protocol, runtime_checkable
 
 from jinja2 import FileSystemLoader, StrictUndefined, Undefined, select_autoescape
-from jinja2.sandbox import ImmutableSandboxedEnvironment
+from jinja2.sandbox import ImmutableSandboxedEnvironment, modifies_known_mutable
 from psycopg.errors import QueryCanceled
 
 from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
@@ -61,11 +61,23 @@ def _shlex_quote(value: str) -> str:
     return shlex.quote(str(value))
 
 
+class WorkflowTemplateEnvironment(ImmutableSandboxedEnvironment):
+    """Refuse mutators reached through built-in type globals as well as instances."""
+
+    def is_safe_attribute(self, obj: Any, attr: str, value: Any) -> bool:
+        if isinstance(obj, type) and any(
+            issubclass(obj, mutable_type) and modifies_known_mutable(mutable_type(), attr)
+            for mutable_type in (dict, list, set, bytearray)
+        ):
+            return False
+        return super().is_safe_attribute(obj, attr, value)
+
+
 def create_workflow_template_environment(
     template_dirs: list[str] | None = None, *, strict_undefined: bool = False
 ) -> ImmutableSandboxedEnvironment:
     """Construct the single immutable sandbox used by every workflow render site."""
-    env = ImmutableSandboxedEnvironment(
+    env = WorkflowTemplateEnvironment(
         loader=FileSystemLoader(template_dirs) if template_dirs else None,
         autoescape=select_autoescape(["html", "xml"], default_for_string=False),
         undefined=StrictUndefined if strict_undefined else Undefined,

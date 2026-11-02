@@ -291,8 +291,6 @@ class RuleEffect(BaseModel):
 
     @model_validator(mode="after")
     def _validate_required_fields(self) -> RuleEffect:
-        if self.recovery_when is not None and self.type != "block":
-            raise ValueError("recovery_when is only valid on block effects")
         required_fields: dict[str, tuple[str, ...]] = {
             "block": ("reason",),
             "set_variable": ("variable",),
@@ -392,6 +390,11 @@ class RuleEffect(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         """Warn when fields irrelevant to the effect type are set."""
         import warnings
+
+        # Post-init precedes after-model validators. Reject this invalid contract
+        # before advisory irrelevant-field warnings can obscure its ValidationError.
+        if self.recovery_when is not None and self.type != "block":
+            raise ValueError("recovery_when is only valid on block effects")
 
         if self.type == "proxy_hook":
             # The strict proxy validator emits one actionable error for unsafe fields.

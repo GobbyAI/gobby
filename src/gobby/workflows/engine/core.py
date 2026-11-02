@@ -709,7 +709,7 @@ class RuleEngine(
                             tool_input.get("command") if isinstance(tool_input, dict) else None
                         )
                         if isinstance(command, str):
-                            rewrite_meta = variables.setdefault("_rewrite_input", {})
+                            rewrite_meta = dict(variables.get("_rewrite_input", {}))
                             current_updates = rewrite_meta.get("input_updates")
                             if not isinstance(current_updates, dict):
                                 current_updates = {}
@@ -717,6 +717,7 @@ class RuleEngine(
                                 **current_updates,
                                 "command": command,
                             }
+                            variables["_rewrite_input"] = rewrite_meta
 
                     if input_was_rewritten or proxy_changed:
                         agent_block = await offload(

@@ -50,6 +50,7 @@ from gobby.workflows.engine.event_utils import (
     _is_write_like_event_data,
 )
 from gobby.workflows.engine.proxy_hooks import ProxyHookInvocation
+from gobby.workflows.evaluation_context import freeze_evaluation_value, refresh_evaluation_variables
 from gobby.workflows.reserved_variables import (
     HANDOFF_TURN_END_PENDING_VARIABLE,
     write_rule_variable,
@@ -80,6 +81,7 @@ class EvaluationContext:
     rule_context: dict[str, Any] | None = None
     rule_allowed_funcs: dict[str, Callable[..., Any]] | None = None
     rule_project_snapshot: Any = None
+    rule_variable_sources: dict[str, Any] = field(default_factory=dict)
     pending_rule_evaluations: list[tuple[str, RuleResult, float]] = field(default_factory=list)
 
     @property
@@ -559,17 +561,20 @@ class EvaluationMixin:
             allowed_funcs = await offload(self._build_allowed_funcs, ctx)
             evaluation.rule_context = ctx
             evaluation.rule_allowed_funcs = allowed_funcs
+            evaluation.rule_variable_sources = dict(evaluation.variables)
             project_value = evaluation.variables.get("project")
             project_snapshot = (
                 dict(project_value) if isinstance(project_value, dict) else project_value
             )
         else:
             # A proxy rewrite changes the same event's input before block-only replay.
-            ctx["tool_input"] = await offload(self._rule_tool_input, evaluation.event)
+            ctx["tool_input"] = freeze_evaluation_value(
+                await offload(self._rule_tool_input, evaluation.event)
+            )
+            ctx["event"] = freeze_evaluation_value(evaluation.event)
             project_snapshot = evaluation.rule_project_snapshot
         protected_keys = {"variables", "event", "tool_input", "source", "project"}
         protected_keys.update(evaluation.eval_context or {})
-        flattened_keys = set(ctx) - protected_keys
 
         for row, body in rules:
             if bridge.cancelled.is_set():
@@ -582,19 +587,16 @@ class EvaluationMixin:
             ):
                 continue
             # Match the prior per-rule snapshot without rebuilding helpers or project state.
-            current_keys = set(evaluation.variables) - protected_keys
-            for key in flattened_keys - current_keys:
-                ctx.pop(key, None)
-            for key in current_keys:
-                ctx[key] = evaluation.variables[key]
-            flattened_keys = current_keys
+            refresh_evaluation_variables(
+                ctx, evaluation.variables, evaluation.rule_variable_sources, protected_keys
+            )
             current_project = evaluation.variables.get("project")
             if current_project != project_snapshot:
                 if isinstance(current_project, dict) and current_project.get("path"):
-                    ctx["project"] = current_project
+                    ctx["project"] = freeze_evaluation_value(current_project)
                 else:
-                    ctx["project"] = await offload(
-                        self._resolve_project_info, evaluation.event, current_project
+                    ctx["project"] = freeze_evaluation_value(
+                        await offload(self._resolve_project_info, evaluation.event, current_project)
                     )
                 project_snapshot = (
                     dict(current_project) if isinstance(current_project, dict) else current_project
@@ -761,6 +763,9 @@ class EvaluationMixin:
                         if effect.block_on_success or effect.block_on_failure
                         else None
                     )
+                refresh_evaluation_variables(
+                    ctx, evaluation.variables, evaluation.rule_variable_sources, protected_keys
+                )
                 if inline_block_reason:
                     rule_blocked = True
                     block_gates.append(

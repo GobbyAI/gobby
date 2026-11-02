@@ -49,6 +49,8 @@ def freeze_evaluation_value(value: Any) -> Any:
     if isinstance(value, set):
         return frozenset(freeze_evaluation_value(item) for item in value)
     if isinstance(value, HookEvent):
+        if isinstance(value.data, _ReadOnlyDict) and isinstance(value.metadata, _ReadOnlyDict):
+            return value
         return replace(
             value,
             data=freeze_evaluation_value(value.data),
@@ -75,3 +77,32 @@ def mutable_evaluation_result(value: Any) -> Any:
     if isinstance(value, tuple):
         return tuple(mutable_evaluation_result(item) for item in value)
     return value
+
+
+def refresh_evaluation_variables(
+    context: dict[str, Any], variables: dict[str, Any], sources: dict[str, Any], protected: set[str]
+) -> None:
+    """Refresh only values replaced by effects, retaining every unchanged frozen value.
+
+    Rule writes replace values through write_rule_variable; template and expression
+    inputs cannot mutate their nested contents. Sources stay outside the exposed
+    context and exist only for this event's rule passes.
+    """
+    updates = {
+        key: freeze_evaluation_value(value)
+        for key, value in variables.items()
+        if key not in sources or sources[key] is not value
+    }
+    removed = sources.keys() - variables.keys()
+    if not updates and not removed:
+        return
+    snapshot = dict(context["variables"])
+    for key in removed:
+        snapshot.pop(key, None)
+        if key not in protected:
+            context.pop(key, None)
+    snapshot.update(updates)
+    context["variables"] = _ReadOnlyDict(snapshot)
+    context.update({key: value for key, value in updates.items() if key not in protected})
+    sources.clear()
+    sources.update(variables)

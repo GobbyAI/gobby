@@ -41,6 +41,7 @@ from gobby.workflows.enforcement.blocking import (
     requires_task_for_any_touched_file,
     schema_lease_key,
 )
+from gobby.workflows.evaluation_context import freeze_evaluation_value, snapshot_evaluation_context
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.templates import TemplateEngine
 
@@ -205,42 +206,44 @@ class TemplatingMixin:
     ) -> dict[str, Any]:
         """Build evaluation context for condition checking."""
 
-        ctx: dict[str, Any] = {
-            "variables": variables,
-            "event": event,
-            "tool_input": self._rule_tool_input(event),
-            "source": event.source.value if event.source else None,
-        }
+        frozen_variables = freeze_evaluation_value(variables)
+        ctx: dict[str, Any] = snapshot_evaluation_context(
+            {
+                "variables": frozen_variables,
+                "event": event,
+                "tool_input": self._rule_tool_input(event),
+                "source": event.source.value if event.source else None,
+            }
+        )
 
-        project_from_vars = variables.get("project")
+        project_from_vars = frozen_variables.get("project")
         if isinstance(project_from_vars, dict) and project_from_vars.get("path"):
             ctx["project"] = project_from_vars
         else:
-            ctx["project"] = self._resolve_project_info(event, project_from_vars)
+            ctx["project"] = freeze_evaluation_value(
+                self._resolve_project_info(event, project_from_vars)
+            )
 
         # Flatten variables at top level for convenience
-        for key, val in variables.items():
+        for key, val in frozen_variables.items():
             if key not in ctx:
                 ctx[key] = val
 
         # Add extra context (LazyBool thunks, etc.)
         if extra_context:
-            ctx.update(extra_context)
+            ctx.update(snapshot_evaluation_context(extra_context))
 
         return ctx
 
     def _build_allowed_funcs(self, ctx: dict[str, Any]) -> dict[str, Callable[..., Any]]:
         """Build the shared helper-function dict for condition evaluation and template rendering."""
-        variables = ctx.get("variables", {})
-        event = ctx.get("event")
-        event_data = event.data if isinstance(event, HookEvent) else None
         funcs = build_condition_helpers(
             task_manager=getattr(self, "_task_manager", None),
             context=ctx,
             session_manager=getattr(self, "_session_manager", None),
         )
         funcs["isinstance"] = isinstance
-        funcs["is_tool_unlocked"] = lambda ti: is_tool_unlocked(ti, variables)
+        funcs["is_tool_unlocked"] = lambda ti: is_tool_unlocked(ti, ctx.get("variables", {}))
         funcs["is_argumentless_proxy_tool"] = is_argumentless_proxy_tool
         funcs["schema_lease_key"] = schema_lease_key
         funcs["is_discovery_tool"] = is_discovery_tool
@@ -260,7 +263,9 @@ class TemplatingMixin:
                     artifact_path,
                     require_current_artifact,
                     project_path=(ctx.get("project") or {}).get("path"),
-                    event_data=event_data,
+                    event_data=(
+                        ctx["event"].data if isinstance(ctx.get("event"), HookEvent) else None
+                    ),
                 )
             )
         )

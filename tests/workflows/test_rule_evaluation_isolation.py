@@ -238,3 +238,194 @@ def test_shared_workflow_evaluation_consumers_preserve_state(
         pass
     assert variables["_handoff_turn_end_pending"] == original["_handoff_turn_end_pending"]
     assert variables["project_policy"] == original["project_policy"]
+
+
+def test_event_snapshot_is_reused_across_conditions_and_templates(temp_db: HubDatabase) -> None:
+    variables = {**_variables(), "project": {"path": "/tmp/synthetic"}}
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        source=SessionSource.CLAUDE,
+        session_id="11111111-1111-4111-8111-111111111111",
+        timestamp=datetime.now(UTC),
+        data={},
+    )
+    engine = RuleEngine(temp_db)
+    context = engine._build_eval_context(event, variables)
+    assert context["variables"] is not variables
+    assert context["project_policy"] is context["variables"]["project_policy"]
+    seen: list[int] = []
+
+    def observe(value: Any) -> bool:
+        seen.append(id(value))
+        return True
+
+    for _ in range(10):
+        assert (
+            engine._evaluate_condition(
+                "observe(variables)", context, allowed_funcs={"observe": observe}
+            )
+            is True
+        )
+    engine._render_template("{{ observe(variables) }}", context, {"observe": observe})
+    assert seen == [id(context["variables"])] * 11
+    assert SafeExpressionEvaluator(context, {}).context["event"] is context["event"]
+
+
+@pytest.mark.parametrize(
+    ("template", "types"),
+    [
+        ("{{ dict.update(value, {'changed': true}) }}", {}),
+        ("{{ dict.update(value, {'changed': true}) }}", {"dict": dict}),
+        ("{{ list.append(value, 'changed') }}", {"list": list}),
+    ],
+)
+def test_type_called_mutators_are_blocked(template: str, types: dict[str, Any]) -> None:
+    value: Any = [] if "list" in types else {"safe": True}
+    with pytest.raises(SecurityError):
+        TemplateEngine().render(template, {"value": value, **types})
+
+
+@pytest.mark.asyncio
+async def test_event_snapshot_refreshes_effect_writes_without_recopying_other_values(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = RuleDefinitionManager(temp_db)
+    for priority, when, effect in [
+        (1, None, {"type": "set_variable", "variable": "phase", "value": 1}),
+        (
+            2,
+            "variables.get('phase') == 1",
+            {"type": "set_variable", "variable": "phase", "value": 2},
+        ),
+        (3, "phase == 2", {"type": "inject_context", "template": "phase={{ phase }}"}),
+    ]:
+        manager.create(
+            name=f"synthetic-phase-{priority}",
+            tags=["default"],
+            priority=priority,
+            definition_json={"event": "before_tool", "when": when, "effects": [effect]},
+        )
+    variables: dict[str, Any] = {"records": [{"id": n} for n in range(100)]}
+    engine = RuleEngine(temp_db)
+    original = engine._evaluate_condition
+    seen: list[int] = []
+
+    def observe(condition: str, context: dict[str, Any], *args: Any, **kwargs: Any) -> bool:
+        assert context["variables"] is not variables
+        seen.append(id(context["variables"]["records"]))
+        return original(condition, context, *args, **kwargs)
+
+    monkeypatch.setattr(engine, "_evaluate_condition", observe)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        source=SessionSource.CLAUDE,
+        session_id="11111111-1111-4111-8111-111111111111",
+        timestamp=datetime.now(UTC),
+        data={"tool_name": "Read", "tool_input": {"file_path": "example.py"}},
+    )
+    response = await engine.evaluate(event, session_id=event.session_id, variables=variables)
+    assert variables["phase"] == 2
+    assert response.context == "phase=2"
+    assert len(seen) == 2
+    assert seen[0] == seen[1]
+
+
+@pytest.mark.parametrize("writer", ["set_variable", "mcp_call"])
+@pytest.mark.parametrize("reader", ["inject_context", "block"])
+@pytest.mark.asyncio
+async def test_sibling_effects_read_completed_variable_writes(
+    temp_db: HubDatabase, writer: str, reader: str
+) -> None:
+    write_effect: dict[str, Any] = (
+        {"type": "set_variable", "variable": "phase", "value": True}
+        if writer == "set_variable"
+        else {
+            "type": "mcp_call",
+            "server": "synthetic",
+            "tool": "read",
+            "inject_result": True,
+            "success_variable": "phase",
+        }
+    )
+    read_effect = {
+        "type": reader,
+        "when": "variables.get('phase') is True",
+        "reason" if reader == "block" else "template": "{{ variables.phase }}/{{ phase }}",
+    }
+    RuleDefinitionManager(temp_db).create(
+        name="synthetic-siblings",
+        tags=["default"],
+        definition_json={"event": "before_tool", "effects": [write_effect, read_effect]},
+    )
+
+    async def dispatch(*args: Any) -> dict[str, Any]:
+        return {"success": True}
+
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        source=SessionSource.CLAUDE,
+        session_id="11111111-1111-4111-8111-111111111111",
+        timestamp=datetime.now(UTC),
+        data={"tool_name": "Read", "tool_input": {"file_path": "example.py"}},
+    )
+    response = await RuleEngine(temp_db, mcp_dispatcher=dispatch).evaluate(
+        event,
+        session_id=event.session_id,
+        variables={"phase": False},
+    )
+    if reader == "block":
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert response.reason.endswith("True/True")
+    else:
+        assert response.context == "True/True"
+
+
+@pytest.mark.asyncio
+async def test_proxy_replay_refreshes_rewrite_variable_snapshot(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = RuleDefinitionManager(temp_db)
+    definitions: list[tuple[int, dict[str, Any]]] = [
+        (
+            1,
+            {
+                "effects": [
+                    {"type": "rewrite_input", "input_updates": {"command": "echo declarative"}}
+                ]
+            },
+        ),
+        (2, {"effects": [{"type": "inject_context", "template": "Snapshot reader"}]}),
+        (3, {"effects": [{"type": "proxy_hook", "handler": "synthetic"}]}),
+        (
+            4,
+            {
+                "when": "tool_input.get('command') == 'echo proxy' and variables.get('_rewrite_input', {}).get('input_updates', {}).get('command') != 'echo proxy'",
+                "effects": [{"type": "block", "reason": "Stale rewrite snapshot"}],
+            },
+        ),
+    ]
+    for priority, definition in definitions:
+        manager.create(
+            name=f"synthetic-replay-{priority}",
+            tags=["default"],
+            priority=priority,
+            definition_json={"event": "before_tool", **definition},
+        )
+    engine = RuleEngine(temp_db)
+
+    async def rewrite(invocations: Any, event: HookEvent, **kwargs: Any) -> bool:
+        event.data["tool_input"]["command"] = "echo proxy"
+        return True
+
+    monkeypatch.setattr(engine, "_run_proxy_hooks", rewrite)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        source=SessionSource.CLAUDE,
+        session_id="11111111-1111-4111-8111-111111111111",
+        timestamp=datetime.now(UTC),
+        data={"tool_name": "Bash", "tool_input": {"command": "echo original"}},
+    )
+    response = await engine.evaluate(event, session_id=event.session_id, variables={})
+    assert response.decision == "allow"
+    assert response.modified_input == {"command": "echo proxy"}

@@ -898,7 +898,7 @@ async def test_agent_denials_carry_guidance_and_count(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", ["assistant", "orchestrator", "default"])
+@pytest.mark.parametrize("role", ["synthetic-worker", "synthetic-coordinator", "default"])
 @pytest.mark.parametrize(
     "event_data",
     [
@@ -927,7 +927,7 @@ async def test_reserved_variable_denial_is_variable_specific(
     manager: AgentDefinitionManager,
     instance_mgr: AgentStepInstanceManager,
 ) -> None:
-    """Native and MCP set_variable routes tell the agent to abandon only one variable."""
+    """Both routes refuse the particular reserved variable under their own authority gate."""
     _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
     engine = RuleEngine(db, session_manager=SessionManager(db))
 
@@ -939,8 +939,14 @@ async def test_reserved_variable_denial_is_variable_specific(
 
     assert response.decision == "block"
     assert response.reason is not None
-    assert "Abandon only this write to variable 'tool_block_pending'" in response.reason
-    assert "set_variable remains available for other permitted variables" in response.reason
+    if event_data["tool_name"] == "mcp__gobby__set_variable":
+        assert response.reason == (
+            "Rule enforced by Gobby: [native-variable-authority]\n"
+            "Native set_variable may not change the reserved variable 'tool_block_pending'."
+        )
+    else:
+        assert "Abandon only this write to variable 'tool_block_pending'" in response.reason
+        assert "set_variable remains available for other permitted variables" in response.reason
     assert "This capability is unavailable for the rest" not in response.reason
 
 
