@@ -12,7 +12,7 @@ from gobby.adapters.codex_impl.cell_shell_reach import may_reach_shell, static_c
 _CALL = re.compile(r"\btools\.exec_command\s*\(")
 _REPEATED = re.compile(r"\b(?:do|for|while|function)\b|=>|\.(?:forEach|map|reduce)\s*\(")
 _KEY = re.compile(r'("(?:\\.|[^"\\])*"|[$A-Za-z_][$\w]*)\s*:')
-_ELSE_RE = re.compile(r"else\b")
+_ELSE_RE = re.compile(r"else(?![\w$])")
 
 
 def literal_shell_calls(arguments: Any) -> list[dict[str, Any]] | None:

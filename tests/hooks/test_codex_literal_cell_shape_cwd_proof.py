@@ -191,9 +191,13 @@ EXECUTABLE_POLLS = [
     'text(await tools.write_stdin({chars:"",yield_time_ms:f()}));',
 ]
 # An identifier that starts with `else` is not the keyword, so the loop body ends at its `;`.
-ELSE_PREFIX_IDENTIFIER = (
-    "let elsewhere; for (const t of [1, 2]) await tools.noop(); elsewhere = LAUNCH"
-)
+# `$` is a JavaScript identifier character, so `else$result` is not the keyword either.
+ELSE_PREFIX_IDENTIFIERS = [
+    "let elsewhere; for (const t of [1, 2]) await tools.noop(); elsewhere = LAUNCH",
+    "let else$result; for (const t of [1, 2]) await tools.noop(); else$result = LAUNCH",
+    "let else_result; for (const t of [1, 2]) await tools.noop(); else_result = LAUNCH",
+    "let else1; for (const t of [1, 2]) await tools.noop(); else1 = LAUNCH",
+]
 
 
 @pytest.mark.parametrize("shape", UNBRACED_LOOP_LAUNCHES)
@@ -209,8 +213,9 @@ def test_poll_with_an_executable_value_is_not_blanked_as_inert(poll: str) -> Non
     assert literal_shell_calls(_literal(PYTEST, Path("/task")) + poll) is None
 
 
-def test_identifier_with_an_else_prefix_does_not_extend_a_loop_body() -> None:
-    cell = ELSE_PREFIX_IDENTIFIER.replace("LAUNCH", _literal(PYTEST, Path("/task")))
+@pytest.mark.parametrize("shape", ELSE_PREFIX_IDENTIFIERS)
+def test_identifier_with_an_else_prefix_does_not_extend_a_loop_body(shape: str) -> None:
+    cell = shape.replace("LAUNCH", _literal(PYTEST, Path("/task")))
     calls = literal_shell_calls(cell)
     assert calls is not None
     assert [call["cmd"] for call in calls] == [PYTEST]
