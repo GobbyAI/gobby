@@ -5,8 +5,9 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from gobby.adapters.base import (
     BaseAdapter,
@@ -117,24 +118,23 @@ def _node_shell_workdir(input_data: dict[str, Any]) -> str | None:
     return target
 
 
-def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
-    """Borrow cwd only from one proven, still-pending provider shell call.
+# A pending call's record can still be mid-write, or not yet flushed, when the hook reads the
+# rollout. Re-reading a few times covers that window; a longer gap stays refused.
+_PENDING_RECORD_RETRIES = 2
+_PENDING_RECORD_RETRY_DELAY_SECONDS = 0.2
 
-    Native Bash hooks omit nested exec_command.workdir. Reuse the transcript
-    execution correlator, including yielded cells, instead of guessing from the
-    session's task or the most recent matching historical command.
-    """
-    if node_origin():
-        return _node_shell_workdir(input_data)
-    transcript_path = input_data.get("transcript_path")
-    tool_input = input_data.get("tool_input")
-    if not isinstance(transcript_path, str) or not isinstance(tool_input, dict):
-        logger.info("cwd proof refused: transcript path or tool input is missing")
-        return None
-    command = tool_input.get("command", tool_input.get("cmd"))
-    if not isinstance(command, str):
-        logger.info("cwd proof refused: command is not text")
-        return None
+
+class _PendingLookup(NamedTuple):
+    """One snapshot of the rollout: a proven workdir, or the guard that refused it."""
+
+    workdir: str | None
+    refusal: str = ""
+    # Only an unterminated tail or a missing match can be completed by a later write.
+    retryable: bool = False
+
+
+def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
+    """Read the rollout once and prove the pending call that launched ``command``."""
     parser = CodexTranscriptParser()
     validated: dict[str, str | None] = {}
     batches: dict[str, list[dict[str, Any]]] = {}
@@ -143,8 +143,9 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
             for index, line in enumerate(transcript):
                 if not line.endswith("\n"):
                     # An incomplete provider record cannot prove the active call.
-                    logger.info("cwd proof refused: incomplete provider record at line %d", index)
-                    return None
+                    return _PendingLookup(
+                        None, f"incomplete provider record at line {index}", retryable=True
+                    )
                 json.loads(line)  # A malformed record could hide a competing pending call.
                 parsed = parser.parse_line(line, index)
                 if isinstance(parsed, ParsedMessage) and parsed.content_type == "tool_use":
@@ -165,15 +166,13 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
                         cwd = arguments.get("cwd")
                         validated[parsed.tool_use_id] = cwd if isinstance(cwd, str) else None
     except (OSError, UnicodeError, ValueError) as exc:
-        logger.info("cwd proof refused: rollout unreadable or malformed: %s", exc)
-        return None
+        return _PendingLookup(None, f"rollout unreadable or malformed: {exc}")
     chain = parser.snapshot_state()["execution_chain"]
     # Process IDs describe commands that already started. Losing old process
     # receipts must not poison a new command's cwd proof; unresolved calls and
     # yielded cells can still launch it, so their overflow remains fail closed.
     if not chain["pending_complete"] or chain["ambiguous_cells"]:
-        logger.info("cwd proof refused: pending calls overflowed or are ambiguous")
-        return None
+        return _PendingLookup(None, "pending calls overflowed or are ambiguous")
     pending = {
         entry["outer_call_id"]: entry
         for key in ("calls", "cells")
@@ -188,23 +187,53 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
         )
     ]
     if any(entry["literal_command"] is None for entry in invocations):
-        logger.info("cwd proof refused: unattributed pending call blocks every proof")
-        return None
+        return _PendingLookup(None, "unattributed pending call blocks every proof")
     matches = [entry for entry in invocations if entry["literal_command"] == command]
     if len(matches) != 1:
-        logger.info("cwd proof refused: %d pending calls match the command", len(matches))
-        return None
+        return _PendingLookup(
+            None, f"{len(matches)} pending calls match the command", retryable=not matches
+        )
     match = matches[0]
     if match["outer_call_id"] not in validated:
-        logger.info("cwd proof refused: matched call is not a validated shell call")
-        return None
+        return _PendingLookup(None, "matched call is not a validated shell call")
     cwd = current_tool_cwd(
         {"cwd": validated[match["outer_call_id"]], "tool_input": {"workdir": match["workdir"]}}
     )
     if cwd is None:
-        logger.info("cwd proof refused: matched call has no proven cwd")
+        return _PendingLookup(None, "matched call has no proven cwd")
+    return _PendingLookup(str(cwd))
+
+
+def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
+    """Borrow cwd only from one proven, still-pending provider shell call.
+
+    Native Bash hooks omit nested exec_command.workdir. Reuse the transcript
+    execution correlator, including yielded cells, instead of guessing from the
+    session's task or the most recent matching historical command.
+    """
+    if node_origin():
+        workdir = _node_shell_workdir(input_data)
+        if workdir is None:
+            logger.warning("cwd proof refused: node command is not a proven literal cd")
+        return workdir
+    transcript_path = input_data.get("transcript_path")
+    tool_input = input_data.get("tool_input")
+    if not isinstance(transcript_path, str) or not isinstance(tool_input, dict):
+        logger.warning("cwd proof refused: transcript path or tool input is missing")
         return None
-    return str(cwd)
+    command = tool_input.get("command", tool_input.get("cmd"))
+    if not isinstance(command, str):
+        logger.warning("cwd proof refused: command is not text")
+        return None
+    lookup = _pending_shell_lookup(transcript_path, command)
+    for _ in range(_PENDING_RECORD_RETRIES):
+        if lookup.workdir is not None or not lookup.retryable:
+            break
+        time.sleep(_PENDING_RECORD_RETRY_DELAY_SECONDS)
+        lookup = _pending_shell_lookup(transcript_path, command)
+    if lookup.workdir is None:
+        logger.warning("cwd proof refused: %s", lookup.refusal)
+    return lookup.workdir
 
 
 def _command_execution_result(input_data: dict[str, Any]) -> dict[str, Any] | None:

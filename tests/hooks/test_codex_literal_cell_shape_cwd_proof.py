@@ -190,6 +190,10 @@ EXECUTABLE_POLLS = [
     'text(await tools.write_stdin({chars:"",session_id:eval("1")}));',
     'text(await tools.write_stdin({chars:"",yield_time_ms:f()}));',
 ]
+# An identifier that starts with `else` is not the keyword, so the loop body ends at its `;`.
+ELSE_PREFIX_IDENTIFIER = (
+    "let elsewhere; for (const t of [1, 2]) await tools.noop(); elsewhere = LAUNCH"
+)
 
 
 @pytest.mark.parametrize("shape", UNBRACED_LOOP_LAUNCHES)
@@ -203,3 +207,10 @@ def test_launch_in_an_unbraced_loop_body_is_not_a_literal_shell_call(shape: str)
 def test_poll_with_an_executable_value_is_not_blanked_as_inert(poll: str) -> None:
     assert may_reach_shell(poll)
     assert literal_shell_calls(_literal(PYTEST, Path("/task")) + poll) is None
+
+
+def test_identifier_with_an_else_prefix_does_not_extend_a_loop_body() -> None:
+    cell = ELSE_PREFIX_IDENTIFIER.replace("LAUNCH", _literal(PYTEST, Path("/task")))
+    calls = literal_shell_calls(cell)
+    assert calls is not None
+    assert [call["cmd"] for call in calls] == [PYTEST]
