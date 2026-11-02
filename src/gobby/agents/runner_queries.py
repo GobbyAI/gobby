@@ -65,7 +65,9 @@ def list_runs(
     )
 
 
-def cancel_run(runner: AgentRunner, run_id: str) -> bool:
+def cancel_run(
+    runner: AgentRunner, run_id: str, *, terminal_reason: AgentRunTerminalReason | None = None
+) -> bool:
     """Cancel a running agent."""
     run = runner._run_storage.get(run_id)
     if not run:
@@ -73,7 +75,7 @@ def cancel_run(runner: AgentRunner, run_id: str) -> bool:
     if run.status not in ("pending", "running"):
         return False
 
-    cancelled_run = runner._run_storage.cancel(run_id)
+    cancelled_run = runner._run_storage.cancel(run_id, terminal_reason=terminal_reason)
     if cancelled_run is None:
         runner.logger.debug(
             "Cancel no-op for run %s; another terminal state won the race",

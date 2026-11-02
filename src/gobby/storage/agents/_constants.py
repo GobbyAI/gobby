@@ -17,6 +17,10 @@ AgentRunTerminalReason = Literal[
     "early_exit",
     "provider_quota_exhausted",
     "provider_error",
+    "task_closed:superseded",
+    "task_closed:moot",
+    "task_closed:abandoned",
+    "task_closed:unspecified",
 ]
 TerminalAction = Literal["complete", "fail", "timeout", "cancel"]
 
@@ -29,6 +33,10 @@ DELIBERATE_STOP_TERMINAL_REASONS: tuple[AgentRunTerminalReason, ...] = (
     "user_cancelled",
     "daemon_stop",
     "spawn_rollback",
+    "task_closed:superseded",
+    "task_closed:moot",
+    "task_closed:abandoned",
+    "task_closed:unspecified",
 )
 
 STATUS_QUEUED: AgentRunStatus = "queued"

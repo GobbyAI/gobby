@@ -61,13 +61,14 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["done", "superseded", "moot", "abandoned"])
 async def test_closed_task_teardown_records_success_without_user_cancellation(
-    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, reason: str
 ) -> None:
     db = world.case.db
     team = await admitted_team(world, "Successful task teardown")
     run_ids = [run.id for run in LocalAgentRunManager(db).list_by_parent(team.runbook.id)]
-    closed = close(world, team, land(world, team, "successful.py"))
+    closed = close(world, team, land(world, team, "successful.py"), reason=reason)
     runner = daemon(db)
     runner.agent_runner = AgentRunner(db, SessionManager(db))
     kill = AsyncMock(return_value={"success": True})
@@ -86,7 +87,8 @@ async def test_closed_task_teardown_records_success_without_user_cancellation(
     for run_id in run_ids:
         run = LocalAgentRunManager(db).get(run_id)
         assert run is not None
-        assert (run.status, run.terminal_reason) == ("success", None)
+        expected = ("success", None) if reason == "done" else ("cancelled", f"task_closed:{reason}")
+        assert (run.status, run.terminal_reason) == expected
         assert get_agent_end_handoff(db, run_id)
     assert not tree_of(team.binding).exists()
 
@@ -142,12 +144,14 @@ def land(world: TeamWorld, team: Team, name: str) -> str:
     return sha
 
 
-def close(world: TeamWorld, team: Team, sha: str, *, minutes_ago: int = 0) -> Task:
+def close(
+    world: TeamWorld, team: Team, sha: str, *, minutes_ago: int = 0, reason: str = "done"
+) -> Task:
     """The Dev Team Lead's committed close, optionally backdated past the teardown grace."""
     db = world.case.db
     db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha]), team.task.id))
     LocalTaskManager(db).close_task(
-        team.task.id, reason="done", closed_in_session_id=team.seats[0], closed_commit_sha=sha
+        team.task.id, reason=reason, closed_in_session_id=team.seats[0], closed_commit_sha=sha
     )
     db.execute(
         "UPDATE tasks SET closed_at = closed_at - make_interval(mins => %s) WHERE id = %s",

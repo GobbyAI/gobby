@@ -50,6 +50,45 @@ async def test_protocol_schema_lease(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("authenticated", [True, False])
+async def test_schema_lease_cannot_target_another_session(
+    session_manager: SessionManager, authenticated: bool
+) -> None:
+    from contextlib import nullcontext
+
+    caller, other = [
+        session_manager.register(
+            external_id=f"lease-{name}",
+            machine_id=require_machine_id(),
+            source="grok",
+            project_id=None,
+        )
+        for name in ("caller", "other")
+    ]
+    tools = GobbyDaemonTools(
+        mcp_manager=MagicMock(),
+        daemon_port=8787,
+        websocket_port=8788,
+        start_time=0,
+        internal_manager=MagicMock(),
+        db=session_manager.db,
+        session_manager=session_manager,
+        hook_manager_resolver=lambda: SimpleNamespace(_database=session_manager.db),
+    )
+    response = {"success": True, "tool": {"name": "get_task", "inputSchema": {}}}
+    with (
+        patch.object(tools.tool_proxy, "get_tool_schema", AsyncMock(return_value=response)),
+        session_context_for_test(caller.id) if authenticated else nullcontext(),
+    ):
+        await tools.get_tool_schema("gobby-tasks", "get_task", session_id=other.id)
+    variables = SessionVariableManager(session_manager.db)
+    assert not variables.get_variables(other.id).get("unlocked_tools")
+    assert variables.get_variables(caller.id).get("unlocked_tools", []) == (
+        ["gobby-tasks:get_task"] if authenticated else []
+    )
+
+
+@pytest.mark.asyncio
 async def test_hookless_schema_lookup_admits_actual_call(
     session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:

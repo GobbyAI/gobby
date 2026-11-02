@@ -1,15 +1,20 @@
 """Startup repair must include internal tools, not just cached external servers."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
+from qdrant_client.local.payload_filters import check_filter
+from qdrant_client.models import Filter
 
 from gobby.config.persistence import DEFAULT_EMBEDDING_DIM
 from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
+from gobby.memory.vectorstore import VectorStore
 from gobby.runner_init.mcp_stack import (
     SCOPED_PAYLOAD_VERSION_KEY,
     maybe_backfill_scoped_tool_embeddings,
@@ -17,6 +22,56 @@ from gobby.runner_init.mcp_stack import (
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+
+@pytest.mark.asyncio
+async def test_visible_tools_are_filtered_before_vector_top_k(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    collection = "tool-visibility-proof"
+    store = VectorStore(path=str(tmp_path / "vectors"), collection_name=collection, embedding_dim=2)
+    search = SemanticToolSearch(
+        temp_db, vector_store=store, collection_name=collection, embedding_dim=2
+    )
+    monkeypatch.setattr(search, "embed_text", AsyncMock(return_value=[1.0, 0.0]))
+    internal = InternalRegistryManager()
+    internal.add_registry(InternalToolRegistry("gobby-workflows"))
+    manager = SimpleNamespace(
+        server_configs=[
+            SimpleNamespace(id="local", name="custom", project_id="project"),
+            SimpleNamespace(id="shadowed", name="custom", project_id=GLOBAL_PROJECT_ID),
+        ]
+    )
+    try:
+        await store.ensure_collection(collection, 2)
+        for server, project, vector, count in (
+            ("foreign", "foreign-project", [1.0, 0.0], 20),
+            ("shadowed", GLOBAL_PROJECT_ID, [0.999, 0.001], 10),
+            ("gobby-workflows", GLOBAL_PROJECT_ID, [0.9, 0.1], 1),
+            ("local", "project", [0.8, 0.2], 1),
+        ):
+            for _ in range(count):
+                await store.upsert(
+                    str(uuid4()),
+                    vector,
+                    {
+                        "server_id": server,
+                        "server_name": server,
+                        "project_id": project,
+                        "tool_name": "run_pipeline",
+                        "description": "Run a pipeline runbook",
+                    },
+                )
+        found = await search.search_tools(
+            "run pipeline runbook",
+            "project",
+            top_k=2,
+            mcp_manager=manager,
+            internal_manager=internal,
+        )
+        assert [result.server_name for result in found] == ["gobby-workflows", "local"]
+    finally:
+        await store.close()
 
 
 @pytest.mark.asyncio
@@ -104,9 +159,10 @@ async def test_pipeline_discovery_uses_complete_visible_inventory(
     vector.get_collection_dimension.return_value = DEFAULT_EMBEDDING_DIM
 
     async def query_points(**kwargs: Any) -> list[tuple[str, float, dict[str, Any]]]:
-        filters = kwargs.get("filters") or {}
+        filters = kwargs["filters"]
+        assert isinstance(filters, Filter)
         rows = [("pipeline", 0.95, payload), ("foreign", 1.0, {**payload, "server_id": "foreign"})]
-        return [row for row in rows if all(row[2].get(k) == v for k, v in filters.items())]
+        return [row for row in rows if check_filter(filters, row[2], row[0], {})]
 
     vector.search_with_payload.side_effect = query_points
     search = SemanticToolSearch(temp_db, vector_store=vector)

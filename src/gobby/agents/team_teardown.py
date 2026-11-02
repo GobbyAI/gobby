@@ -52,7 +52,7 @@ class TeamSeatNotEndedError(RuntimeError):
         self.code = code
 
 
-TeamRunTerminator = Callable[[AgentRun], Awaitable[bool]]
+TeamRunTerminator = Callable[[AgentRun, str | None], Awaitable[bool]]
 TeamTreeDeleter = Callable[[TeamBinding], Awaitable[WorktreeDeletionResult]]
 
 
@@ -99,7 +99,7 @@ async def reconcile_team_teardowns(
             logger.exception("Leaf %s teardown failed; the next pass retries", leaf.binding.task_id)
     for runbook in await asyncio.to_thread(_due_runbook_seats, db, cutoff):
         try:
-            ended, refusal = await _end_seats(db, terminate, runbook.seats)
+            ended, refusal = await _end_seats(db, terminate, runbook.seats, runbook.task_id)
             actions += sum(ended)
             if refusal is None and all(ended):
                 await asyncio.to_thread(_expire_runs, db, runbook.seats)
@@ -353,7 +353,7 @@ async def _tear_down(
     eligible = await asyncio.to_thread(
         _eligible_seats, db, [*seats, *dispatched], team.binding.task_id
     )
-    ended, refusal = await _end_seats(db, terminate, eligible)
+    ended, refusal = await _end_seats(db, terminate, eligible, team.binding.task_id)
     if refusal is not None:
         label = f"team-{team.binding.team_id}"
         outcome = await asyncio.to_thread(_refuse, db, team.binding, refusal, label)
@@ -406,7 +406,7 @@ async def _tear_down_leaf(
         _dispatched_runs, db, seats, leaf.binding.worktree_path, leaf.binding.task_id
     )
     eligible = await asyncio.to_thread(_eligible_seats, db, dispatched, leaf.binding.task_id)
-    ended, refusal = await _end_seats(db, terminate, eligible)
+    ended, refusal = await _end_seats(db, terminate, eligible, leaf.binding.task_id)
     label = f"leaf-{leaf.binding.worktree_id}"
     if refusal is not None:
         await asyncio.to_thread(_refuse, db, leaf.binding, refusal, label)
@@ -427,9 +427,11 @@ async def _tear_down_leaf(
 
 
 async def _end_seats(
-    db: HubDatabase, terminate: TeamRunTerminator, runs: list[AgentRun]
+    db: HubDatabase, terminate: TeamRunTerminator, runs: list[AgentRun], task_id: str
 ) -> tuple[list[bool], WorktreeDeletionResult | None]:
     """Retire stopped seats even if a live seat refuses to end."""
+    task = await asyncio.to_thread(LocalTaskManager(db).get_task, task_id)
+    closed_reason = task.closed_reason
     await asyncio.to_thread(
         _expire_runs, db, [run for run in runs if run.status not in ACTIVE_AGENT_RUN_STATUSES]
     )
@@ -439,15 +441,17 @@ async def _end_seats(
         if run.status not in ACTIVE_AGENT_RUN_STATUSES:
             continue
         try:
-            await asyncio.to_thread(_stage_teardown_handoff, db, run)
-            ended.append(await terminate(run))
+            await asyncio.to_thread(_stage_teardown_handoff, db, run, closed_reason)
+            ended.append(await terminate(run, closed_reason))
         except TeamSeatNotEndedError as exc:
             if refusal is None:
                 refusal = WorktreeDeletionResult(success=False, error_code=exc.code, error=str(exc))
     return ended, refusal
 
 
-def _stage_teardown_handoff(db: HubDatabase, run: AgentRun) -> None:
+def _stage_teardown_handoff(
+    db: HubDatabase, run: AgentRun, closed_reason: str | None = None
+) -> None:
     """Preserve any authored handoff; otherwise record why the daemon ended this seat."""
     if run.child_session_id is None:
         return
@@ -457,7 +461,10 @@ def _stage_teardown_handoff(db: HubDatabase, run: AgentRun) -> None:
         child_session_id=run.child_session_id,
         parent_session_id=run.parent_session_id,
         payload=build_handoff_payload(
-            current_state="The runbook's task is closed. The daemon requested seat teardown.",
+            current_state=(
+                f"The runbook's task is closed ({closed_reason or 'unspecified'}). "
+                "The daemon requested seat teardown."
+            ),
             next_steps=["No further work is assigned to this run."],
             references=[run.task_id] if run.task_id else [],
         ),

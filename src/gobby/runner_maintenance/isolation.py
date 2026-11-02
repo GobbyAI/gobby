@@ -36,7 +36,7 @@ from gobby.sessions.tmux_window_naming import (
     release_window_name_if_unowned,
     resolve_tmux_repair_owner,
 )
-from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.agents import AgentRun, AgentRunTerminalReason, LocalAgentRunManager
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import require_root
@@ -285,8 +285,13 @@ async def cleanup_expired_isolation_loop(
 def team_run_terminator(runner: GobbyRunner) -> TeamRunTerminator:
     """End a team seat's run through the daemon termination lifecycle, closing its tab."""
 
-    async def terminate(run: AgentRun) -> bool:
+    async def terminate(run: AgentRun, closed_reason: str | None) -> bool:
         db = runner.database
+        closure_reasons: dict[str, AgentRunTerminalReason] = {
+            "superseded": "task_closed:superseded",
+            "moot": "task_closed:moot",
+            "abandoned": "task_closed:abandoned",
+        }
         result = await agent_cancellation.terminate_agent_run(
             run=run,
             runner=runner.agent_runner,
@@ -296,7 +301,8 @@ def team_run_terminator(runner: GobbyRunner) -> TeamRunTerminator:
             completion_registry=runner.completion_registry,
             task_manager=runner.task_manager,
             session_manager=SessionManager(db),
-            effective_status="success",
+            effective_status="success" if closed_reason == "done" else "cancelled",
+            terminal_reason=closure_reasons.get(closed_reason or "", "task_closed:unspecified"),
             debug=False,
         )
         if result.get("success"):

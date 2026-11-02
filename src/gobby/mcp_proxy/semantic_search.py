@@ -14,6 +14,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
+
 from gobby.ai.embeddings import EmbeddingService
 from gobby.config.persistence import DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL
 from gobby.projects.fenced_vector_store import ProjectFencedVectorStore, project_write_context
@@ -655,30 +657,6 @@ class SemanticToolSearch:
         # Embed the query
         query_embedding = await self.embed_text(query, is_query=True)
 
-        filters: dict[str, str] = {}
-        if mcp_manager is None and internal_manager is None:
-            filters["project_id"] = project_id
-        if server_filter:
-            filters["server_name"] = server_filter
-
-        async def _search() -> list[tuple[str, float, dict[str, Any]]]:
-            return await vector_store.search_with_payload(
-                query_embedding=query_embedding,
-                limit=max(top_k * 4, top_k),
-                filters=filters or None,
-                collection_name=self._collection_name,
-            )
-
-        await self._ensure_tool_collection("search_tools")
-        try:
-            qdrant_results = await _search()
-        except Exception as error:
-            qdrant_results = await self._repair_tool_collection_and_retry(
-                "search_tools",
-                error,
-                _search,
-            )
-
         visible_ids: set[str] | None = None
         if mcp_manager is not None:
             from gobby.mcp_proxy.services.server_resolution import iter_manager_configs
@@ -704,6 +682,39 @@ class SemanticToolSearch:
             if visible_ids is None:
                 visible_ids = set()
             visible_ids.update(registry.name for registry in internal_manager.get_all_registries())
+
+        filters: dict[str, str] | Filter
+        if visible_ids is not None:
+            if not visible_ids:
+                return []
+            conditions = [FieldCondition(key="server_id", match=MatchAny(any=sorted(visible_ids)))]
+            if server_filter:
+                conditions.append(
+                    FieldCondition(key="server_name", match=MatchValue(value=server_filter))
+                )
+            filters = Filter(must=conditions)
+        else:
+            filters = {"project_id": project_id}
+            if server_filter:
+                filters["server_name"] = server_filter
+
+        async def _search() -> list[tuple[str, float, dict[str, Any]]]:
+            return await vector_store.search_with_payload(
+                query_embedding=query_embedding,
+                limit=max(top_k * 4, top_k),
+                filters=filters,
+                collection_name=self._collection_name,
+            )
+
+        await self._ensure_tool_collection("search_tools")
+        try:
+            qdrant_results = await _search()
+        except Exception as error:
+            qdrant_results = await self._repair_tool_collection_and_retry(
+                "search_tools",
+                error,
+                _search,
+            )
 
         results: list[SearchResult] = []
         for tool_id, score, payload in qdrant_results:

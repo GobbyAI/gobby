@@ -10,7 +10,7 @@ from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
 from gobby.agents.recovery_state import is_daemon_stop_parked
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
 from gobby.agents.task_recovery import TaskRecoveryHandler
-from gobby.storage.agents import TerminalAction
+from gobby.storage.agents import AgentRunTerminalReason, TerminalAction
 from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ async def terminalize_cancelled_agent_run(
     *,
     runner: Any,
     run_id: str,
-    terminal_reason: str,
+    terminal_reason: AgentRunTerminalReason,
     lifecycle_monitor: Any | None,
     completion_registry: Any | None,
     task_manager: Any | None,
@@ -98,7 +98,7 @@ async def terminalize_cancelled_agent_run(
             )
         )
 
-    transitioned = bool(runner.cancel_run(run_id))
+    transitioned = bool(runner.cancel_run(run_id, terminal_reason=terminal_reason))
     if not transitioned:
         return False
 
@@ -130,6 +130,7 @@ async def terminalize_killed_agent_run(
     completion_registry: Any | None,
     task_manager: Any | None,
     terminal_error: str | None = None,
+    terminal_reason: AgentRunTerminalReason = "user_cancelled",
 ) -> tuple[dict[str, Any], bool]:
     """Apply workflow terminal state after an explicit parent-side kill."""
     from gobby.agents.terminal_delivery import (
@@ -172,7 +173,7 @@ async def terminalize_killed_agent_run(
     transitioned = await terminalize_cancelled_agent_run(
         runner=runner,
         run_id=run_id,
-        terminal_reason="user_cancelled",
+        terminal_reason=terminal_reason,
         lifecycle_monitor=lifecycle_monitor,
         completion_registry=completion_registry,
         task_manager=task_manager,
@@ -189,7 +190,7 @@ async def terminalize_killed_agent_run(
     return (
         {
             "status": "cancelled",
-            "terminal_reason": "user_cancelled",
+            "terminal_reason": terminal_reason,
             "workflow_stopped": True,
         },
         transitioned,
@@ -212,6 +213,7 @@ async def terminate_agent_run(
     debug: bool = False,
     stop: bool = True,
     terminal_error: str | None = None,
+    terminal_reason: AgentRunTerminalReason = "user_cancelled",
     kill_agent_process: Any | None = None,
     cleanup_terminal_artifacts: Any | None = None,
 ) -> dict[str, Any]:
@@ -254,10 +256,8 @@ async def terminate_agent_run(
     # The managed-terminal kill commits the run's terminal state before
     # terminalize_killed_agent_run runs, so it must carry the requested outcome.
     terminal_action: TerminalAction = "fail" if effective_status == "error" else "cancel"
-    terminal_reason = (
-        (terminal_error or _SELF_REPORTED_ERROR)
-        if effective_status == "error"
-        else "user_cancelled"
+    kill_reason = (
+        (terminal_error or _SELF_REPORTED_ERROR) if effective_status == "error" else terminal_reason
     )
 
     async def kill_and_deliver() -> dict[str, Any]:
@@ -270,7 +270,7 @@ async def terminate_agent_run(
                     signal_name=signal,
                     close_terminal=not debug,
                     terminal_action=terminal_action,
-                    terminal_reason=terminal_reason,
+                    terminal_reason=kill_reason,
                     terminal_services=getattr(runner, "terminal_services", None),
                 ),
             )
@@ -294,6 +294,7 @@ async def terminate_agent_run(
                 completion_registry=completion_registry,
                 task_manager=task_manager,
                 terminal_error=terminal_error,
+                terminal_reason=terminal_reason,
             )
             result.update(terminal_result)
 

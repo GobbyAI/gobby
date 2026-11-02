@@ -26,13 +26,13 @@ from gobby.mcp_proxy.services.recommendation import RecommendationService, Searc
 from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
-from gobby.mcp_proxy.services.session_context import get_requested_session_id
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.wait_tools import call_with_wait_heartbeat, prepare_client_guard
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tool_results import ToolResultStore
 from gobby.utils import project_context as project_context_utils
 from gobby.utils.session_context import (
+    get_current_session_id,
     reset_seeded_contexts,
     resolve_and_seed_contexts,
 )
@@ -409,7 +409,7 @@ class GobbyDaemonTools:
         if result.get("success") is True and isinstance(result.get("tool"), dict):
             record_schema_shown(
                 self.tool_proxy,
-                get_requested_session_id(session_id),
+                get_current_session_id(),
                 server_name=server_name,
                 tool_name=tool_name,
             )

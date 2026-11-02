@@ -599,6 +599,19 @@ def _validate_unindexed_targets(
     for target in targets:
         if target.section_id in completed_section_ids:
             continue
+        if target.wildcard and not (target.scope_reason or "").strip():
+            issues.append(
+                SymbolValidationIssue(
+                    code=INVALID_WILDCARD_REASON,
+                    message=(
+                        f"Wildcard target `{target.reference}` requires "
+                        "`scope-reason: <non-empty explanation>`"
+                    ),
+                    section_id=target.section_id,
+                    file_path=target.file_path,
+                )
+            )
+            continue
         # A delete-lines proof must use `::*`; production-size-growth checks it against the bytes.
         # A justified whole-file scope describes existing bytes without naming indexed symbols.
         if target.symbol is not None or (

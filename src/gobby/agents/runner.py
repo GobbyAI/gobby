@@ -139,9 +139,11 @@ class AgentRunner:
         """List agent runs for a session. Delegates to runner_queries."""
         return _queries.list_runs(self, parent_session_id, status=status, limit=limit)
 
-    def cancel_run(self, run_id: str) -> bool:
+    def cancel_run(
+        self, run_id: str, *, terminal_reason: AgentRunTerminalReason | None = None
+    ) -> bool:
         """Cancel a running agent. Delegates to runner_queries."""
-        return _queries.cancel_run(self, run_id)
+        return _queries.cancel_run(self, run_id, terminal_reason=terminal_reason)
 
     def complete_run(
         self,

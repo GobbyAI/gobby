@@ -373,7 +373,7 @@ async def test_topology_and_bound_close_teardown(world: TeamWorld) -> None:
 
     deleted: list[TeamBinding] = []
 
-    async def terminate(_run: AgentRun) -> bool:
+    async def terminate(_run: AgentRun, _closed_reason: str | None) -> bool:
         return True
 
     async def delete(binding: TeamBinding) -> WorktreeDeletionResult:

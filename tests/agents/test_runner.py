@@ -213,7 +213,7 @@ class TestAgentRunnerCancelRun:
         result = runner.cancel_run("run-cancel")
 
         assert result is True
-        runner._run_storage.cancel.assert_called_once_with("run-cancel")
+        runner._run_storage.cancel.assert_called_once_with("run-cancel", terminal_reason=None)
         mock_session_storage.update_status_if_non_terminal.assert_called_once_with(
             "sess-child", "cancelled"
         )
@@ -249,7 +249,7 @@ class TestAgentRunnerCancelRun:
         result = runner.cancel_run("run-tracked")
 
         assert result is True
-        runner._run_storage.cancel.assert_called_once_with("run-tracked")
+        runner._run_storage.cancel.assert_called_once_with("run-tracked", terminal_reason=None)
 
     def test_cancel_run_no_child_session(self, runner) -> None:
         """cancel_run handles case where run has no child_session_id."""
@@ -263,7 +263,7 @@ class TestAgentRunnerCancelRun:
         result = runner.cancel_run("run-no-child")
 
         assert result is True
-        runner._run_storage.cancel.assert_called_once_with("run-no-child")
+        runner._run_storage.cancel.assert_called_once_with("run-no-child", terminal_reason=None)
 
     def test_cancel_run_pending_agent(self, runner, mock_session_storage) -> None:
         """cancel_run cancels a pending agent (not yet running)."""
@@ -277,7 +277,7 @@ class TestAgentRunnerCancelRun:
         result = runner.cancel_run("run-pending")
 
         assert result is True
-        runner._run_storage.cancel.assert_called_once_with("run-pending")
+        runner._run_storage.cancel.assert_called_once_with("run-pending", terminal_reason=None)
         mock_session_storage.update_status_if_non_terminal.assert_called_once_with(
             "sess-child", "cancelled"
         )

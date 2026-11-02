@@ -192,7 +192,9 @@ async def test_terminate_agent_run_commits_requested_outcome_at_terminal_close(
     runner = SimpleNamespace(
         run_storage=storage,
         get_run=storage.get,
-        cancel_run=lambda run_id: storage.cancel(run_id, terminal_reason="user_cancelled"),
+        cancel_run=lambda run_id, terminal_reason: storage.cancel(
+            run_id, terminal_reason=terminal_reason
+        ),
         terminal_services=object(),
     )
 
@@ -289,7 +291,7 @@ async def test_terminalize_cancelled_agent_run_fallback_recovers_task_claim(
 
     assert transitioned is True
     assert isinstance(transitioned, bool)
-    runner.cancel_run.assert_called_once_with("run-123")
+    runner.cancel_run.assert_called_once_with("run-123", terminal_reason="user_cancelled")
     assert runner.run_storage.get.call_args_list == [
         (("run-123",), {}),
         (("run-123",), {}),
@@ -333,7 +335,7 @@ async def test_terminalize_cancelled_agent_run_fallback_skips_recovery_when_not_
 
     assert transitioned is False
     assert isinstance(transitioned, bool)
-    runner.cancel_run.assert_called_once_with("run-123")
+    runner.cancel_run.assert_called_once_with("run-123", terminal_reason="user_cancelled")
     runner.run_storage.get.assert_not_called()
     completion_registry.notify.assert_not_awaited()
 

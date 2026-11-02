@@ -21,12 +21,28 @@ from gobby.plans.symbol_targets import (
     SYMBOL_TARGET_ISSUE_CODES,
     UNRESOLVED_SYMBOL,
     UUID_REFERENCE,
+    SymbolTarget,
     SymbolValidationResult,
+    _validate_unindexed_targets,
     parse_symbol_targets,
     validate_symbol_targets,
 )
 
 PROJECT_ID = "project-1"
+
+
+@pytest.mark.parametrize("reason", [None, "", "   "])
+def test_existing_unindexed_wildcard_requires_justification(reason: str | None) -> None:
+    target = SymbolTarget(
+        section_id="S1",
+        file_path="settings.yaml",
+        symbol=None,
+        wildcard=True,
+        scope_reason=reason,
+        raw="settings.yaml::*",
+    )
+    issues = _validate_unindexed_targets([target], frozenset(), existing_file=True)
+    assert INVALID_WILDCARD_REASON in {issue.code for issue in issues}
 
 
 @dataclass(frozen=True)

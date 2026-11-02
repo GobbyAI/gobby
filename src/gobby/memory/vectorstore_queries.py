@@ -119,7 +119,7 @@ class VectorStoreQueries:
         self,
         query_embedding: list[float],
         limit: int = 10,
-        filters: dict[str, str] | None = None,
+        filters: dict[str, str] | Filter | None = None,
         collection_name: str | None = None,
     ) -> list[tuple[str, float, dict[str, Any]]]:
         """Search for similar vectors and return their payloads."""

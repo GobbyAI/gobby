@@ -22,6 +22,51 @@ def _mgr(db: HubDatabase) -> AgentDefinitionManager:
     return AgentDefinitionManager(db)
 
 
+@pytest.mark.parametrize(
+    "duplicate",
+    [
+        "prompts: {agent: Work.}\ncapabilities: [first]\ncapabilities: [second]\n",
+        "prompts:\n  agent: First.\n  agent: Second.\n",
+    ],
+)
+def test_sync_rejects_duplicate_mapping_keys_and_preserves_installed_definition(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, duplicate: str
+) -> None:
+    monkeypatch.setattr("gobby.agents.sync.get_bundled_agents_path", lambda: tmp_path)
+    source = tmp_path / "custom.yaml"
+    prefix = "name: custom\nworkflows: {rule_selectors: {include: [], exclude: []}}\n"
+    source.write_text(prefix + "prompts: {agent: Original.}\n")
+    assert sync_bundled_agents(temp_db)["synced"] == 1
+    original = _mgr(temp_db).get_by_name("custom")
+    assert original is not None
+    source.write_text(prefix + duplicate)
+
+    result = sync_bundled_agents(temp_db)
+
+    assert result["success"] is False, result
+    assert any("duplicate" in error.lower() for error in result["errors"]), result
+    preserved = _mgr(temp_db).get(original.id)
+    assert preserved.definition_json == original.definition_json
+    assert preserved.deleted_at is None
+
+
+def test_sync_preserves_yaml_merge_override(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("gobby.agents.sync.get_bundled_agents_path", lambda: tmp_path)
+    (tmp_path / "custom.yaml").write_text(
+        "name: custom\nworkflows: {rule_selectors: {include: [], exclude: []}}\n"
+        "prompts:\n  <<: &base {agent: Original.}\n  agent: Override.\n"
+    )
+
+    result = sync_bundled_agents(temp_db)
+
+    assert result["success"] is True, result
+    installed = _mgr(temp_db).get_by_name("custom")
+    assert installed is not None
+    assert _parse_body(installed).prompts.agent == "Override."
+
+
 def _parse_body(row: object) -> AgentDefinitionBody:
     payload = row.definition_json  # type: ignore[attr-defined]
     if isinstance(payload, str):
