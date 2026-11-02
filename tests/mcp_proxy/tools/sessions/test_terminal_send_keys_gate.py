@@ -23,6 +23,42 @@ from tests.agents.detection_test_support import BundledDetectionRegistry
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("package", ["claude", "other", "wrong-bin", "missing"])
+@pytest.mark.parametrize("busy", [False, True])
+async def test_node_composer_requires_verified_claude_entrypoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, package: str, busy: bool
+) -> None:
+    script = tmp_path / "cli.js"
+    script.write_text("// CLI fixture\n")
+    manifests = {
+        "claude": '{"name":"@anthropic-ai/claude-code","bin":{"claude":"cli.js"}}',
+        "other": '{"name":"other-cli","bin":{"claude":"cli.js"}}',
+        "wrong-bin": '{"name":"@anthropic-ai/claude-code","bin":{"claude":"other.js"}}',
+    }
+    if package in manifests:
+        (tmp_path / "package.json").write_text(manifests[package])
+    manager = _scene(
+        monkeypatch,
+        foreground={TERMINAL_ID: "/usr/local/bin/node"},
+        snapshot=HOOK_DENIAL_OVER_LIVE_TURN if busy else IDLE_COMPOSER,
+    )
+    monkeypatch.setattr(
+        gate, "foreground_node_script", lambda pid: str(script) if pid == 4321 else None
+    )
+
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+
+    if package == "claude" and not busy:
+        assert refusal is None
+    else:
+        assert refusal is not None
+        assert refusal.code == (
+            "send_keys_composer_not_idle" if package == "claude" else "send_keys_target_unconfirmed"
+        )
+
+
 SESSION_ID = "33333333-3333-4333-8333-333333333333"
 TERMINAL_ID = "terminal-1"
 # The framed Claude composer the provider manifest reads as empty (corpus claude.composer_empty).

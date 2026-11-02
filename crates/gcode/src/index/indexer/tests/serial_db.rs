@@ -43,6 +43,104 @@ pub(super) fn machine_context(
     ignore = "requires a PostgreSQL test database URL"
 )]
 #[serial_test::serial(serial_db)]
+fn hidden_policy_membership_stays_absent_across_primary_and_overlay_sync() {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let base = tempfile::tempdir().expect("tempdir");
+    let parent_root = base.path().join("parent");
+    let overlay_root = base.path().join("overlay");
+    let hooks = base.path().join("hooks");
+    std::fs::create_dir_all(&hooks).expect("hooks directory");
+    let policy = ".gobby/workflows/rules/project-operating-policy.yaml";
+    write_file(&parent_root, policy, b"rules: []\n");
+    write_file(&parent_root, "src/lib.rs", b"fn visible() {}\n");
+    git(&parent_root, &hooks, &["init", "-q"]);
+    git(&parent_root, &hooks, &["add", "."]);
+    git(&parent_root, &hooks, &["commit", "-q", "-m", "fixture"]);
+    git(
+        &parent_root,
+        &hooks,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "overlay",
+            overlay_root.to_str().expect("overlay path"),
+        ],
+    );
+    let parent_id = unique_test_uuid("hidden-policy-primary");
+    let overlay_id = unique_test_uuid("hidden-policy-overlay");
+    let _parent_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: parent_id.clone(),
+    };
+    let _overlay_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_id.clone(),
+    };
+    seed_primary_checkout(&mut conn, &parent_id, &parent_root).expect("primary checkout");
+    let machine = gobby_core::machine::read_local_machine_id().expect("machine id");
+    let mut primary = machine_context(&database_url, &parent_id, &parent_root, &machine);
+    let mut overlay = machine_context(&database_url, &overlay_id, &overlay_root, &machine);
+    overlay.index_scope = ProjectIndexScope::Overlay {
+        overlay_project_id: overlay_id,
+        overlay_root: overlay_root.clone(),
+        parent_project_id: parent_id,
+        parent_root: parent_root.clone(),
+    };
+
+    for respect_gitignore in [false, true] {
+        primary.indexing.respect_gitignore = respect_gitignore;
+        overlay.indexing.respect_gitignore = respect_gitignore;
+        for ctx in [&primary, &overlay] {
+            for explicit in [false, true, false, true] {
+                index_files(
+                    IndexRequest {
+                        project_root: ctx.project_root.clone(),
+                        path_filter: None,
+                        explicit_files: if explicit {
+                            vec![ctx.project_root.join(policy)]
+                        } else {
+                            Vec::new()
+                        },
+                        full: !explicit,
+                        require_cpp_semantics: false,
+                        sync_projections: false,
+                    },
+                    ctx,
+                    IndexOptions::default(),
+                )
+                .expect("index hidden policy fixture");
+                let count: i64 = conn.query_one(
+                    "SELECT count(*) FROM code_indexed_file_states WHERE project_id = $1 AND file_path = $2",
+                    &[&test_uuid_param(&ctx.project_id), &policy],
+                ).expect("stored membership").get(0);
+                assert_eq!(
+                    count, 0,
+                    "explicit={explicit}, gitignore={respect_gitignore}"
+                );
+                assert!(
+                    visibility::visible_tree(&mut conn, ctx)
+                        .expect("outline membership")
+                        .iter()
+                        .all(|file| file.file_path != policy)
+                );
+                assert!(
+                    visibility::visible_symbols_for_file(&mut conn, ctx, policy)
+                        .expect("outline symbols")
+                        .is_empty()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
 fn foreign_machine_index_writes_only_that_machine() -> anyhow::Result<()> {
     let (mut conn, database_url) = connect_summary_preservation_test_db();
     let root = tempfile::tempdir()?;

@@ -179,8 +179,7 @@ def add_messaging_tools(
                     }
                 from_session = ctx_session_id
 
-            content = content.strip()
-            if not content:
+            if not content.strip():
                 return {"success": False, "error": "content is required."}
 
             if target is None or not target.strip():
@@ -294,6 +293,7 @@ def add_messaging_tools(
                 target_id=resolved_target_id,
                 wake=wake,
                 content=content,
+                preserve_content=True,
                 priority=priority,
                 message_type=message_type,
                 metadata=metadata,

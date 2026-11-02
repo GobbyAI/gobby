@@ -52,6 +52,22 @@ def _claim_worktrees(temp_db: HubDatabase, holder: str) -> list[str | None]:
     return [claim["worktree"] for claim in claims[holder]]
 
 
+def test_child_claim_reports_registered_epic_tree(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    holder, worktree_id = _claimed_with_tree(temp_db, sample_project)
+    _insert_registry_row(temp_db, sample_project, worktree_id)
+    tasks = LocalTaskManager(temp_db)
+    root = SessionTaskManager(temp_db).get_current_claims([holder])[holder][0]
+    parent = tasks.resolve_task_reference(root["ref"], sample_project["id"])
+    tasks.release_task_claim(parent)
+    leaf = tasks.create_task(sample_project["id"], "Epic leaf", parent_task_id=parent)
+    tasks.claim_task(leaf.id, holder)
+    assert _claim_worktrees(temp_db, holder) == [TREE_PATH]
+    temp_db.execute("DELETE FROM worktrees WHERE id = %s", (worktree_id,))
+    assert _claim_worktrees(temp_db, holder) == [None]
+
+
 def test_claim_worktree_reads_present_while_registry_row_exists(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:

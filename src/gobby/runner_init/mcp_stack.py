@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SCOPED_PAYLOAD_VERSION_KEY = MCP_SCOPED_PAYLOAD_VERSION_KEY
-SCOPED_PAYLOAD_VERSION = 1
+SCOPED_PAYLOAD_VERSION = 2
 
 __all__ = [
     "LocalMCPManager",
@@ -85,8 +85,9 @@ async def maybe_backfill_scoped_tool_embeddings(
     config_store: Any,
     vector_store: Any | None = None,
     project_id: str | None = None,
+    internal_manager: Any | None = None,
 ) -> dict[str, Any]:
-    """Rewrite legacy tool embeddings once after the scoped-payload change."""
+    """Repair the scoped inventory, including internal registry tools."""
     raw = _store_get(config_store, SCOPED_PAYLOAD_VERSION_KEY)
     try:
         current = int(raw) if raw is not None else 0
@@ -97,11 +98,14 @@ async def maybe_backfill_scoped_tool_embeddings(
     if vector_store is not None and getattr(search, "_vector_store", None) is None:
         search._vector_store = vector_store
     try:
-        stats = await search.embed_all_tools(project_id or GLOBAL_PROJECT_ID, mcp_manager)
+        stats = await search.embed_all_tools(
+            project_id or GLOBAL_PROJECT_ID, mcp_manager, internal_manager=internal_manager
+        )
     except Exception:
         logger.exception("Scoped tool embedding backfill failed; will retry on next start")
         raise
-    _store_set(config_store, SCOPED_PAYLOAD_VERSION_KEY, SCOPED_PAYLOAD_VERSION)
+    if isinstance(stats, dict) and not stats.get("failed"):
+        _store_set(config_store, SCOPED_PAYLOAD_VERSION_KEY, SCOPED_PAYLOAD_VERSION)
     embedded = int(stats.get("embedded", 0)) if isinstance(stats, dict) else 0
     return {"rewritten": True, "embedded": embedded, **(stats if isinstance(stats, dict) else {})}
 
@@ -143,11 +147,6 @@ def init_mcp_stack(runner: GobbyRunner) -> None:
         ),
     )
     schedule_oauth_keepalive(runner.mcp_proxy)
-    schedule_scoped_embedding_backfill(
-        getattr(runner, "semantic_search", None),
-        runner.mcp_proxy,
-        config_store=getattr(runner, "config_store", None),
-    )
 
 
 _BACKFILL_TASKS: set[Any] = set()
@@ -158,9 +157,10 @@ def schedule_scoped_embedding_backfill(
     mcp_manager: Any,
     *,
     config_store: Any,
+    internal_manager: Any | None = None,
 ) -> None:
     """Run the one-shot scoped-payload backfill, inline or as a loop task."""
-    if search is None or config_store is None:
+    if search is None or config_store is None or internal_manager is None:
         return
     import asyncio
 
@@ -173,6 +173,7 @@ def schedule_scoped_embedding_backfill(
                     search,
                     mcp_manager,
                     config_store=config_store,
+                    internal_manager=internal_manager,
                 )
             )
         except Exception:
@@ -185,6 +186,7 @@ def schedule_scoped_embedding_backfill(
                     search,
                     mcp_manager,
                     config_store=config_store,
+                    internal_manager=internal_manager,
                 )
             except Exception:
                 logger.exception("Scoped tool embedding backfill failed")

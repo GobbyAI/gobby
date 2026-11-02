@@ -350,6 +350,31 @@ def test_validate_requires_symbol_scope_for_symbol_bearing_file(tmp_path: Path) 
     assert MISSING_SYMBOL_SCOPE in _issue_codes(result)
 
 
+@pytest.mark.parametrize("index_state", ["absent", "content", "symbols"])
+def test_existing_policy_wildcard_is_independent_of_index_timing(
+    tmp_path: Path, index_state: str
+) -> None:
+    relative = ".gobby/workflows/rules/project-operating-policy.yaml"
+    source = tmp_path / relative
+    source.parent.mkdir(parents=True)
+    source.write_text("rules: []\n")
+    index = _Index(
+        files={}
+        if index_state == "absent"
+        else {relative: _IndexedFile(_hash(source), int(index_state == "symbols"))},
+        symbols={relative: [_Symbol("rules")]} if index_state == "symbols" else {},
+    )
+
+    result = validate_symbol_targets(
+        _parse(tmp_path, f"- `{relative}::*` — scope-reason: replace the complete policy mapping"),
+        project_context=_project_context(tmp_path),
+        code_index=index,
+        required=True,
+    )
+
+    assert result.status == "passed", result.errors
+
+
 def test_validate_rejects_symbol_scope_for_unindexed_file(tmp_path: Path) -> None:
     result = validate_symbol_targets(
         _parse(tmp_path, "- `src/new_file.py::run`"),

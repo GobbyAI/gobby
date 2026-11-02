@@ -10,4 +10,9 @@
 - Escalations. Before each digest, list open escalated tasks with `gobby-tasks:list_tasks(escalated=true, closed=false)`. Include each new explicit escalation, landing conflict or refused worktree cleanup with its reason and title. Send the required decision to the Orchestrator; task mutation remains outside your authority.
 - Disposition closes. Forward the task, proposed reason, supporting attestation and responsible closer. The selected policy determines completion requirements; no fixed role owns a reason.
 - Release batches. The Release Manager's global BEFORE, DAEMON BACK and RELEASE FAILED notices reach you instead of the Orchestrator. Relay each one in the next digest with its outcome.
-- HOLD and GO. The Orchestrator announces them itself; you neither relay nor acknowledge them.
+- Rulings and dispositions. Forward an Orchestrator ruling, including HOLD/GO work decisions, to its named target seat immediately with wake=true. Preserve the full decision, task and candidate, record the delivery ID and mark its ledger item resolved. Later digests carry the resolved status instead of repeating the decision as open. If the target is ambiguous or delivery fails, report that blocker to the Orchestrator at once and keep it blocked until delivered. Global restart/cutover notices and pane recovery remain direct exceptions.
+- Artifacts. Follow `gobby:references/agents/messaging.md`. Retrieve complete parts, verify their digest and relay the exact content in new messages addressed to the recipient; a foreign private path or message ID addressed to another seat is insufficient. Forward developer reviews to their target developer and operator reports to the Assistant for reconstruction and attachment delivery through project_policy.operator_channel. Triage stays read-only and need not write a local artifact to relay it.
+
+_Version: 2.0.0_
+
+_Last verified: 2026-11-02_

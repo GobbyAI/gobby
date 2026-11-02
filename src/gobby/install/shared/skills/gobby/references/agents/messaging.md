@@ -27,6 +27,33 @@ recipient read or acted on it. Use `get_inter_session_message` for a message ID
 and `get_inter_session_messages` for supported bounded mailbox filters. Read all
 needed windows; lists are not automatically exhaustive.
 
+## Deliver text artifacts across workspace boundaries
+
+Send the complete UTF-8 report or review as `send_message.content`, with its task,
+candidate SHA, suggested filename and content SHA-256 in `metadata`. Preserve the
+returned message IDs in the handoff and attestation evidence. A sender's private
+workspace path alone is not a delivery: recipients cannot read that folder.
+
+The recipient calls `get_inter_session_message(message_id=...)` for each ID,
+checks the task, candidate and digest, and writes the exact content to a file in
+its own session workspace. Choose the local filename there; never treat a sender's
+path as a write destination. If a transport requires parts, send numbered parts
+with the part count in metadata and one digest for the assembled content. Fetch
+every part and verify the assembled bytes before acting. A notification preview
+or mailbox list is not the full artifact. Confirm the received message IDs and
+local artifact to the sender; the sender retains its original.
+
+For a developer review, address the task's assigned developer through the declared
+report route. Orchestrator rulings and dispositions go through Triage, which
+retrieves and forwards the complete content to the target seat with `wake=true`.
+Forwarding creates new message IDs; give those recipient-addressed IDs to the
+developer, since only each message's sender and recipient may retrieve it.
+
+For an operator report, send the complete content to the Assistant through its
+declared route. The Assistant reconstructs its own file and uses
+`send_operator_attachment` with `project_policy.operator_channel`; report the
+returned delivery message ID. This route grants no access to another seat's folder.
+
 For a coordinated hold, load the schema for `wait_for_coordination` and register
 once against the owner session. Supply exactly one condition: a unique
 `coordination_key`, a nonempty list of canonical session `statuses`, or
@@ -46,6 +73,14 @@ inspect the terminal outcome before registering again. Use a fresh key for a
 separate keyed hold. Only the waiting session can use `cancel_coordination_wait`
 to cancel its own wait.
 
+When a reply may come from either of two owners, register one reply subscription
+per owner in the same turn before yielding and retain both wait IDs. On the first
+reply, cancel the other active subscription before processing it. Cancel stale
+subscriptions before acting on an owner's message that arrives outside a wait,
+and cancel all outstanding waits before ending. On timeout, cancel the remaining
+subscription and report the unresolved dependency once. Do not automatically
+rearm hourly timeout cycles; register fresh waits only for a new pending response.
+
 For a task blocker, use `target="parent"` (or omit `target`) and send the failing command, diagnostics, paths,
 impact, and exact task identity in `metadata.task_id`. In configured worker steps,
 a successful matching `message_type="task_blocker"` sets the blocker transition;
@@ -58,4 +93,5 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Last verified: 2026-10-02_
+_Version: 1.1.0_
+_Last verified: 2026-11-02_

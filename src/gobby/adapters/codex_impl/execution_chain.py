@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from gobby.adapters.codex_impl.cell_shell_reach import may_reach_shell, static_code
+from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls
 from gobby.config.validation_detection import classify_validation_segments
 from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
 from gobby.hooks.normalization import normalize_tool_display_fields
@@ -180,6 +181,8 @@ def validate_functions_exec_wrapper(arguments: Any) -> str | None:
     if call_count == 0:
         return None
     if call_count > 1:
+        if literal_shell_calls(arguments) is not None:
+            return None
         return (
             "functions.exec shell wrappers may contain exactly one static exec_command call; "
             "run batched validations as separate native commands"
@@ -246,40 +249,8 @@ def functions_exec_shell_input(arguments: Any) -> dict[str, str] | None:
 
 def _functions_exec_arguments(arguments: Any) -> dict[str, Any] | None:
     """Read a single literal argument object, rejecting computed or overwritten fields."""
-    if not isinstance(arguments, str):
-        return None
-    calls = list(_EXEC_COMMAND_CALL_RE.finditer(arguments))
-    if len(calls) != 1:
-        return None
-    source = arguments[calls[0].end() :].lstrip()
-    if not source.startswith("{"):
-        return None
-    decoder = json.JSONDecoder()
-    fields: dict[str, Any] = {}
-    source = source[1:].lstrip()
-    while source and not source.startswith("}"):
-        key_match = re.match(r'("(?:\\.|[^"\\])*"|[$A-Za-z_][$\w]*)\s*:', source)
-        if key_match is None:
-            return None
-        raw_key = key_match[1]
-        try:
-            key = json.loads(raw_key) if raw_key.startswith('"') else raw_key
-        except ValueError:
-            return None
-        if key in fields:
-            return None
-        source = source[key_match.end() :].lstrip()
-        try:
-            value, end = decoder.raw_decode(source)
-        except ValueError:
-            return None
-        fields[key] = value
-        source = source[end:].lstrip()
-        if source.startswith(","):
-            source = source[1:].lstrip()
-        elif not source.startswith("}"):
-            return None
-    return fields if source.startswith("}") and source[1:].lstrip().startswith(")") else None
+    calls = literal_shell_calls(arguments)
+    return calls[0] if calls is not None and len(calls) == 1 else None
 
 
 def _literal_workdir(value: Any) -> str | None:

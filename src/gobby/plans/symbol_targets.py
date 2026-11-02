@@ -499,7 +499,11 @@ def _validate_file_targets(
             )
         ]
     if indexed_file is None:
-        return _validate_unindexed_targets(targets, completed_section_ids)
+        return _validate_unindexed_targets(
+            targets,
+            completed_section_ids,
+            existing_file=(scope.filesystem_root / file_path).is_file(),
+        )
 
     current_path = scope.filesystem_root / file_path
     current_hash = _file_sha256(current_path)
@@ -589,14 +593,17 @@ def _validate_file_targets(
 
 
 def _validate_unindexed_targets(
-    targets: list[SymbolTarget], completed_section_ids: frozenset[str]
+    targets: list[SymbolTarget], completed_section_ids: frozenset[str], *, existing_file: bool
 ) -> list[SymbolValidationIssue]:
     issues: list[SymbolValidationIssue] = []
     for target in targets:
         if target.section_id in completed_section_ids:
             continue
         # A delete-lines proof must use `::*`; production-size-growth checks it against the bytes.
-        if target.symbol is not None or (target.wildcard and not target.delete_lines):
+        # A justified whole-file scope describes existing bytes without naming indexed symbols.
+        if target.symbol is not None or (
+            target.wildcard and not target.delete_lines and not existing_file
+        ):
             issues.append(
                 SymbolValidationIssue(
                     code=UNRESOLVED_SYMBOL,

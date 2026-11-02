@@ -207,7 +207,7 @@ async def terminate_agent_run(
     task_manager: Any | None,
     session_manager: Any | None,
     agent_session_id: str | None = None,
-    effective_status: Literal["cancelled", "error"],
+    effective_status: Literal["cancelled", "error", "success"],
     signal: str = "TERM",
     debug: bool = False,
     stop: bool = True,
@@ -221,6 +221,19 @@ async def terminate_agent_run(
         run_terminal_delivery_offload,
         shielded_terminal_delivery,
     )
+
+    if effective_status == "success":
+        from gobby.mcp_proxy.tools.agents_termination import _complete_self_terminated_run
+
+        return await _complete_self_terminated_run(
+            runner=runner,
+            run=run,
+            kill_db=db or agent_run_manager.db,
+            completion_registry=completion_registry,
+            session_manager=session_manager,
+            signal=signal,
+            debug=debug,
+        )
 
     resolved_kill_agent_process = kill_agent_process
     if resolved_kill_agent_process is None:

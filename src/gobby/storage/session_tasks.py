@@ -226,13 +226,26 @@ class SessionTaskManager:
             """
             SELECT t.claimed_by_session_id, t.seq_num, t.id, t.title, t.path_cache,
                    st.created_at AS claimed_at,
-                   CASE WHEN registry.id IS NULL THEN NULL ELSE artifacts.worktree_path END
-                       AS worktree_path
+                   owned_tree.worktree_path
             FROM tasks t
             LEFT JOIN session_tasks st ON st.task_id = t.id
                 AND st.session_id = t.claimed_by_session_id AND st.action = 'claimed'
-            LEFT JOIN task_artifacts artifacts ON artifacts.task_id = t.id
-            LEFT JOIN worktrees registry ON registry.id::text = artifacts.worktree_id::text
+            LEFT JOIN LATERAL (
+                WITH RECURSIVE ancestry AS (
+                    SELECT t.id, t.parent_task_id, 0 AS depth, ARRAY[t.id] AS visited
+                    UNION ALL
+                    SELECT parent.id, parent.parent_task_id, ancestry.depth + 1,
+                           ancestry.visited || parent.id
+                    FROM tasks parent JOIN ancestry ON parent.id = ancestry.parent_task_id
+                    WHERE parent.project_id = t.project_id AND NOT parent.id = ANY(ancestry.visited)
+                )
+                SELECT registry.worktree_path
+                FROM ancestry
+                JOIN task_artifacts artifacts ON artifacts.task_id = ancestry.id
+                JOIN worktrees registry ON registry.id::text = artifacts.worktree_id::text
+                    AND registry.project_id = t.project_id
+                ORDER BY ancestry.depth LIMIT 1
+            ) owned_tree ON TRUE
             WHERE t.claimed_by_session_id = ANY(%s::uuid[]) AND t.closed_at IS NULL
             ORDER BY t.seq_num, t.id
             """,

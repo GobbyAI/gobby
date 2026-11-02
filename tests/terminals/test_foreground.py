@@ -15,12 +15,43 @@ from gobby.terminals.foreground import (
     _process_snapshot,
     command_name,
     foreground_commands,
+    foreground_node_script,
     process_shell,
     shell_cwds,
     shell_pid,
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("argv", "executable", "expected"),
+    [
+        (["/usr/local/bin/node", "/pkg/cli.js"], "/usr/local/bin/node", "/pkg/cli.js"),
+        (["/usr/local/bin/node", "relative.js"], "/usr/local/bin/node", None),
+        (["/usr/local/bin/node", "--eval", "code"], "/usr/local/bin/node", None),
+        (["/usr/local/bin/node"], "/usr/local/bin/node", None),
+        (["/usr/local/bin/node", "/pkg/cli.js"], "/bin/other", None),
+    ],
+)
+def test_node_script_is_read_from_actual_foreground_group(
+    argv: list[str], executable: str, expected: str | None
+) -> None:
+    with (
+        patch(
+            "gobby.terminals.foreground._process_snapshot",
+            return_value={
+                10: (20, "/bin/zsh"),
+                20: (20, "/usr/local/bin/node"),
+            },
+        ),
+        patch("gobby.terminals.foreground.psutil.Process") as process,
+    ):
+        process.return_value.cmdline.return_value = argv
+        process.return_value.exe.return_value = executable
+        assert foreground_node_script(10) == expected
+        process.assert_called_once_with(20)
+
 
 # pid, tpgid, comm -- the three columns `ps -A -o pid=,tpgid=,comm=` prints.
 PS_TABLE = """\

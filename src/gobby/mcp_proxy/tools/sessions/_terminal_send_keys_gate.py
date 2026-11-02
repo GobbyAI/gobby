@@ -9,6 +9,7 @@ screen. Every signal that cannot be read refuses.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -18,7 +19,12 @@ from typing import Any
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, plain_text
 from gobby.terminals.composer_ledger import read_composer
-from gobby.terminals.foreground import command_name, foreground_executables, shell_pid
+from gobby.terminals.foreground import (
+    command_name,
+    foreground_executables,
+    foreground_node_script,
+    shell_pid,
+)
 from gobby.terminals.pane_io import composer_reader, live_runtime_pane
 
 logger = logging.getLogger(__name__)
@@ -83,6 +89,30 @@ def _is_versioned_claude(executable: str) -> bool:
     )
 
 
+def _node_agent_cli(pid: int) -> str | None:
+    """Bind node's live script to the installed Claude package's declared CLI."""
+    script = foreground_node_script(pid)
+    if script is None:
+        return None
+    try:
+        entrypoint = Path(script).resolve(strict=True)
+        manifest_path = entrypoint.parent / "package.json"
+        if not entrypoint.is_file() or manifest_path.stat().st_size > 65536:
+            return None
+        package = json.loads(manifest_path.read_text())
+        if not isinstance(package, dict) or package.get("name") != "@anthropic-ai/claude-code":
+            return None
+        bins = package.get("bin")
+        relative = bins.get("claude") if isinstance(bins, dict) else None
+        if not isinstance(relative, str):
+            return None
+        if (entrypoint.parent / relative).resolve(strict=True) == entrypoint:
+            return "claude"
+    except (OSError, ValueError):
+        return None
+    return None
+
+
 def _detection_registry(terminal_manager: Any) -> DetectionManifestRegistry:
     """The installed provider composer manifests, read from the hub database."""
     return DetectionManifestRegistry(terminal_manager.db)
@@ -114,6 +144,8 @@ async def send_keys_target_refusal(
         if command in _SHELLS:
             return _refuse("send_keys_target_bare_shell", "the target is a bare shell")
         cli = _agent_cli(command, executable)
+        if cli is None and command == "node" and pid is not None:
+            cli = await asyncio.to_thread(_node_agent_cli, pid)
         if cli is None:
             return _refuse(
                 "send_keys_target_unconfirmed",

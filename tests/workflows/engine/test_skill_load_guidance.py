@@ -13,6 +13,32 @@ from gobby.workflows.engine.skill_load_guidance import (
 pytestmark = pytest.mark.unit
 
 
+def test_declared_skill_order_controls_bootstrap_guidance() -> None:
+    step = WorkflowStep.model_validate(
+        {
+            "name": "load_skill",
+            "allowed_mcp_tools": ["gobby-skills:get_skill"],
+            "on_mcp_success": [
+                {
+                    "server": "gobby-skills",
+                    "tool": "get_skill",
+                    "when": f"tool_input.name == '{name}'",
+                }
+                for name in ("second-method", "first-method")
+            ],
+        }
+    )
+    variables: dict[str, object] = {
+        "required_skills": ["first-method", "second-method", "not-in-this-step"]
+    }
+    for guidance in (
+        skill_load_block_guidance(step, variables),
+        skill_load_call_lead(step, variables),
+    ):
+        assert guidance.index("first-method") < guidance.index("second-method")
+        assert "not-in-this-step" not in guidance
+
+
 def _skill_step(*, variable_name: str) -> WorkflowStep:
     return WorkflowStep.model_validate(
         {

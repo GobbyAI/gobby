@@ -6,7 +6,7 @@ description: |
   in the live enhancer's dispositioned edits and the adversary's findings, and
   reaches consensus with the adversary over send_message.
 
-version: "2.0.0"
+version: "3.0.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -40,7 +40,7 @@ prompts:
     3. Present the enhancer's suggested edits to Triage for the Orchestrator's next digest. The Orchestrator decides whether to implement each one or put the product decision to the operator through the Assistant. Make the edits the Orchestrator dispositions and revalidate.
     4. Pass the plan to the Plan Adversary, edit for its findings and converse with it through direct session messages until consensus. Send Triage any disagreement the two of you cannot resolve.
     5. At consensus add one dated prose consensus entry under `## V1 Plan Changelog` (date, seats, resolved disagreements), commit, and send the Adversary the SHA; it derives and applies `## M1 Task Manifest` from those bytes with the handoff-manifest tools, and you commit the rendered plan. Any edit after derivation invalidates the hashes, so the Adversary derives again.
-    6. Send Triage the stamped plan for the Orchestrator. The Orchestrator reviews it and presents it to the operator through the Assistant for approval.
+    6. Record an approved implementation attestation on the claimed planning child, referencing the full final plan commit SHA and its validation/consensus evidence, before calling end_agent_run. Send Triage the stamped plan, planning-child ref, exact SHA and attestation ID for the Orchestrator, the named planning-task closer. The Orchestrator reviews it, records independent-review and validation against that exact reference, previews and closes the planning child when policy passes, then presents the plan to the operator through the Assistant. Planning-task closure does not approve expansion.
 
     Do not expand a plan into tasks or dispatch work until the Orchestrator confirms the operator's explicit approval. Route questions for the operator through Triage. Follow the shared seat guidance.
   agent: |
@@ -72,7 +72,12 @@ prompts:
        derives and applies `## M1 Task Manifest` from those bytes; then commit
        the rendered plan. Any edit after derivation invalidates the manifest
        hashes, so the adversary derives again.
-    5. Send the coordinator the stamped plan, then call end_agent_run.
+    5. Record an approved implementation attestation on your claimed planning
+       child with the full final plan commit SHA and validation/consensus evidence.
+       Send Triage that child ref, stamped plan, SHA and attestation ID for the
+       Orchestrator, the named planning-task closer. Only then call end_agent_run.
+       The Orchestrator records independent-review and validation, previews and
+       closes the child under selected policy. Closure does not approve expansion.
 
     Boundaries:
     - You author narrative only. Never write `## M1 Task Manifest`; the
@@ -151,7 +156,10 @@ step_workflow:
       status_message: |
         Draft and edit the plan, take the enhancer's edits and the adversary's
         findings over send_message, reach consensus with plan-adversary, and
-        send the coordinator the stamped plan. Then call end_agent_run.
+        record your approved implementation attestation on the claimed planning
+        child with the full final plan commit SHA and validation/consensus evidence.
+        Send Triage the stamped plan, child ref, SHA and attestation ID for the
+        Orchestrator to review, validate and close. Only then call end_agent_run.
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-plans:derive_plan_handoff_manifest"

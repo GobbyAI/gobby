@@ -110,6 +110,11 @@ def _skill_load_targets(
                 if isinstance(value, list):
                     targets.extend(item for item in value if isinstance(item, str))
 
+    declared_order = variables.get("required_skills")
+    if isinstance(declared_order, list):
+        targets = [
+            target for target in declared_order if isinstance(target, str) and target in targets
+        ] + targets
     ordered_unloaded = list(
         dict.fromkeys(target for target in targets if not instruction_is_loaded(target, variables))
     )

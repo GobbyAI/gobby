@@ -280,6 +280,9 @@ fn scan_served(
                     file,
                     served.get(file).map(String::as_str),
                     excludes,
+                    crate::index::walker::DiscoveryOptions {
+                        respect_gitignore: ctx.indexing.respect_gitignore,
+                    },
                 )
             })
             .collect(),
@@ -396,6 +399,9 @@ fn overlay_files_need_refresh(ctx: &Context, paths: &[PathBuf]) -> anyhow::Resul
             &file,
             served.as_deref(),
             &ctx.indexing.extra_excludes,
+            crate::index::walker::DiscoveryOptions {
+                respect_gitignore: ctx.indexing.respect_gitignore,
+            },
         ) {
             return Ok(true);
         }

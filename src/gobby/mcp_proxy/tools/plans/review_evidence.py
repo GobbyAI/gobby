@@ -310,7 +310,10 @@ def register_review_evidence_tools(
 
     registry.register(
         name="derive_plan_handoff_manifest",
-        description=("Coordinator-only canonical M1 derivation for explicit human plan handoff."),
+        description=(
+            "Canonical M1 derivation by any authorized session, including default, "
+            "for an operator-approved plan handoff."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -349,7 +352,10 @@ def register_review_evidence_tools(
 
     registry.register(
         name="apply_plan_handoff_manifest",
-        description=("Coordinator-only drift-checked atomic M1 apply for explicit human handoff."),
+        description=(
+            "Drift-checked atomic M1 apply by any authorized session, including default, "
+            "for an operator-approved plan handoff."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -429,7 +435,8 @@ def register_review_evidence_tools(
     registry.register(
         name="apply_plan_review_manifest",
         description=(
-            "Coordinator applies an approved, server-validated M1 manifest before the Writer "
+            "Any authorized session, including default, applies an approved, server-validated "
+            "M1 manifest before the Writer "
             "appends its checkpoint and the reviewer finalizes the round."
         ),
         input_schema={

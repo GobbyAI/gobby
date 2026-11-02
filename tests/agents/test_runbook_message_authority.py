@@ -4,22 +4,95 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Literal
 
 import pytest
 
+from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.sessions.mailbox import MailboxSendResult, MailboxService
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager, AgentDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager, system_session_id
+from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.conftest import AGENT_TEST_MACHINE_ID
 
 pytestmark = pytest.mark.unit
 
 REFUSED = "message_recipient_not_allowed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("artifact_kind", ["review", "operator-report"])
+async def test_full_artifact_relay_round_trip(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    artifact_kind: str,
+) -> None:
+    """Durable message IDs deliver complete artifacts across private workspace boundaries."""
+    project = sample_project["id"]
+    author = _seat(session_manager, project, "artifact-author", "artifact-author")
+    relay = _seat(session_manager, project, "artifact-relay", "artifact-relay")
+    recipient = _seat(session_manager, project, "artifact-recipient", "artifact-recipient")
+    outsider = _seat(session_manager, project, "artifact-outsider", "artifact-outsider")
+    content = f"{artifact_kind}\n" + ("Complete finding and evidence: café.\n" * 220) + "END\n"
+    assert len(content.encode()) > 7000
+    wakes = _Wakes()
+    registry = InternalToolRegistry("artifact-messages")
+    add_messaging_tools(
+        registry,
+        InterSessionMessageManager(temp_db),
+        session_manager,
+        temp_db,
+        wake_dispatcher=wakes,
+    )
+    with session_context_for_test(author):
+        sent = await registry.call(
+            "send_message",
+            {
+                "target": "session",
+                "target_id": relay,
+                "content": content,
+                "wake": True,
+            },
+        )
+    assert sent["success"] is True
+    with session_context_for_test(relay):
+        original = await registry.call(
+            "get_inter_session_message", {"message_id": sent["message_ids"][0]}
+        )
+        assert original["success"] is True
+        assert original["message"]["content"] == content
+        forwarded = await registry.call(
+            "send_message",
+            {
+                "target": "session",
+                "target_id": recipient,
+                "content": original["message"]["content"],
+                "wake": True,
+            },
+        )
+    assert forwarded["success"] is True
+    with session_context_for_test(recipient):
+        received = await registry.call(
+            "get_inter_session_message", {"message_id": forwarded["message_ids"][0]}
+        )
+    assert received["success"] is True
+    own_artifact = tmp_path / f"{artifact_kind}.md"
+    own_artifact.write_text(received["message"]["content"], encoding="utf-8")
+    assert own_artifact.read_bytes() == content.encode()
+    assert wakes.calls == [relay, recipient]
+    with session_context_for_test(outsider):
+        refused = await registry.call(
+            "get_inter_session_message", {"message_id": forwarded["message_ids"][0]}
+        )
+    assert refused["error_code"] == "message_access_denied"
 
 
 class _Wakes:
@@ -135,6 +208,8 @@ async def test_resolved_role_routing(
         refused = await send(sender, target, target_id)
         assert (refused.error_code, refused.recipient_session_ids) == (REFUSED, [])
         assert refused.success is False
+        assert "report_to" in (refused.error or "")
+        assert "Triage" in (refused.error or "")
     assert temp_db.fetchone(
         "SELECT count(*) AS n FROM inter_session_messages WHERE to_session = %s",
         (orchestrator,),

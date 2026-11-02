@@ -17,6 +17,7 @@ import gobby.runner_lifecycle_agents as lifecycle_agents
 import gobby.runner_lifecycle_callbacks as lifecycle_callbacks
 from gobby.agents import resume_executor
 from gobby.agents.resume_executor import ResumeAgentResult
+from gobby.agents.runner import AgentRunner
 from gobby.agents.team_admission_records import SeatTarget, TeamAdmissionRefused, TeamBinding
 from gobby.agents.team_lifecycle import check_team_spawn
 from gobby.agents.team_teardown import FINDING_LABEL, TEARDOWN_GRACE
@@ -57,6 +58,37 @@ if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_closed_task_teardown_records_success_without_user_cancellation(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = world.case.db
+    team = await admitted_team(world, "Successful task teardown")
+    run_ids = [run.id for run in LocalAgentRunManager(db).list_by_parent(team.runbook.id)]
+    closed = close(world, team, land(world, team, "successful.py"))
+    runner = daemon(db)
+    runner.agent_runner = AgentRunner(db, SessionManager(db))
+    kill = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr("gobby.agents.kill.kill_agent", kill)
+    monkeypatch.setattr("gobby.mcp_proxy.tools.agents._kill_agent_process", kill)
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.agents_termination.reap_terminal_sandbox_run", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.agents_termination.record_sandbox_retention", lambda *a: None
+    )
+
+    await teardown_pass(db, runner, closed_at(closed) + TEARDOWN_GRACE)
+
+    assert run_ids
+    for run_id in run_ids:
+        run = LocalAgentRunManager(db).get(run_id)
+        assert run is not None
+        assert (run.status, run.terminal_reason) == ("success", None)
+        assert get_agent_end_handoff(db, run_id)
+    assert not tree_of(team.binding).exists()
 
 
 @pytest.mark.asyncio
@@ -196,7 +228,7 @@ async def test_close_collapses_all_team_seats(
     assert terminations.ended() == sorted(seats)
     assert all(get_agent_end_handoff(db, call["run"].id) for call in terminations.calls)
     assert {(call["effective_status"], call["debug"]) for call in terminations.calls} == {
-        ("cancelled", False)
+        ("success", False)
     }, "each seat's tab closes with its run"
     assert {session_status(db, session) for session in seats} == {"expired"}
     assert {session_status(db, session) for session in bystander.seats} == {"active"}

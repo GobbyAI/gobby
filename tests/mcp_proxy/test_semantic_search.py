@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from gobby.mcp_proxy.client_manager import tool_inventory
 from gobby.config.persistence import DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL
+from gobby.mcp_proxy.client_manager import tool_inventory
 from gobby.mcp_proxy.models import MCPError, MCPServerConfig
 from gobby.mcp_proxy.semantic_search import (
     SearchResult,
@@ -1049,6 +1049,7 @@ class TestSearchTools:
 @pytest.mark.asyncio
 async def test_tool_embedding_holds_project_admission_from_embedding_through_upsert(
     temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project = SimpleNamespace(deleted_at=None)
     fence = ProjectWriteFence(lambda _project_id: project)
@@ -1064,7 +1065,7 @@ async def test_tool_embedding_holds_project_admission_from_embedding_through_ups
     inner.upsert.side_effect = upsert
     vector_store = ProjectFencedVectorStore(inner, fence)
     search = SemanticToolSearch(temp_db, vector_store=vector_store)
-    search.embed_text = AsyncMock(return_value=[0.1] * DEFAULT_EMBEDDING_DIM)
+    monkeypatch.setattr(search, "embed_text", AsyncMock(return_value=[0.1] * DEFAULT_EMBEDDING_DIM))
     write_task = asyncio.create_task(
         search.embed_tool(
             tool_id="tool-1",
@@ -1244,34 +1245,20 @@ async def test_scoped_payload_backfill_rewrites_legacy_points_once(
         ],
     )
     config_store = _Store()
-    from gobby.runner_init.mcp_stack import init_mcp_stack
+    from gobby.mcp_proxy.tools.internal import InternalRegistryManager
+    from gobby.runner_init.mcp_stack import schedule_scoped_embedding_backfill
 
     scheduled: list[Any] = []
-    from gobby.runner import GobbyRunner
-
-    runner = cast(
-        GobbyRunner,
-        SimpleNamespace(
-            database=temp_db,
-            startup_config=SimpleNamespace(logging=SimpleNamespace()),
-            mcp_db_manager=None,
-            mcp_proxy=None,
-            metrics_event_store=None,
-            metrics_manager=None,
-            semantic_search=search,
-            config_store=config_store,
-        ),
-    )
     with (
-        patch("gobby.runner_init.mcp_stack.LocalMCPManager", return_value=MagicMock()),
-        patch("gobby.runner_init.mcp_stack.MCPClientManager", return_value=manager),
-        patch("gobby.runner_init.mcp_stack.ToolMetricsManager"),
-        patch("gobby.runner_init.mcp_stack.MetricsEventStore"),
-        patch("gobby.runner_init.mcp_stack.resolved_log_path", return_value="/tmp/gobby.log"),
         patch("asyncio.get_running_loop", side_effect=RuntimeError("no loop")),
         patch("asyncio.run", side_effect=scheduled.append),
     ):
-        init_mcp_stack(runner)
+        schedule_scoped_embedding_backfill(
+            search,
+            manager,
+            config_store=config_store,
+            internal_manager=InternalRegistryManager(),
+        )
     assert scheduled
     first = await scheduled[0]
     assert first["rewritten"] is True
@@ -1281,7 +1268,7 @@ async def test_scoped_payload_backfill_rewrites_legacy_points_once(
     assert stored["legacy-tool"]["server_id"] == "id-project"
     assert stored["legacy-tool"]["server_name"] == "github"
     assert stored["legacy-tool"]["project_id"] == project_id
-    assert config_store.get("mcp.tool_embeddings.scoped_payload_version") == 1
+    assert config_store.get("mcp.tool_embeddings.scoped_payload_version") == 2
 
     second = await maybe_backfill_scoped_tool_embeddings(
         search,

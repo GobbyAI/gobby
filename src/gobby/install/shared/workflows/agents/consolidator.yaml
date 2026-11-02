@@ -3,7 +3,7 @@ capabilities: [accept_resume_retype, close_without_work, message_assistant]
 task_attestation_writes: [disposition]
 respect_task_protections: true
 description: Consolidator seat. Proposes backlog bundles, stale-item retirement and epic moves, and applies Orchestrator-directed folds and retirements.
-version: "2.0.0"
+version: "2.1.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
@@ -60,7 +60,7 @@ prompts:
 
 workflows:
   rule_selectors:
-    include: ["tag:default", "tag:seat-policy", "tag:worker-safety", "tag:task-closure-general", "name:consolidator-close-dispositions", "name:no-send-keys"]
+    include: ["tag:default", "tag:seat-policy", "tag:worker-safety", "tag:task-closure-general", "name:consolidator-close-dispositions", "name:consolidation-read-only-shell", "name:no-send-keys"]
     # The Consolidator applies Orchestrator-directed folds, so it may update tasks.
     exclude: ["name:block-update-task", "name:seat-no-task-close", "name:unassigned-session-no-task-close"]
   variables: {}
@@ -114,6 +114,7 @@ step_workflow:
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's skill tracking.
       allowed_tools:
+        - Bash
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools

@@ -25,6 +25,7 @@ from gobby.adapters.codex_impl.execution_chain import (
     functions_exec_shell_input,
 )
 from gobby.adapters.codex_impl.lifecycle_events import annotate_codex_hook_event
+from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls
 from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
 )
@@ -134,6 +135,7 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
         return None
     parser = CodexTranscriptParser()
     validated: dict[str, str | None] = {}
+    batches: dict[str, list[dict[str, Any]]] = {}
     try:
         with Path(transcript_path).open(encoding="utf-8") as transcript:
             for index, line in enumerate(transcript):
@@ -143,6 +145,12 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
                 parsed = parser.parse_line(line, index)
                 if isinstance(parsed, ParsedMessage) and parsed.content_type == "tool_use":
                     arguments = parsed.tool_input or {}
+                    if parsed.tool_use_id and parsed.tool_name in FUNCTIONS_EXEC_NAMES:
+                        calls = literal_shell_calls(arguments.get("raw"))
+                        if calls is not None and len(calls) > 1:
+                            batches[parsed.tool_use_id] = calls
+                            cwd = arguments.get("cwd")
+                            validated[parsed.tool_use_id] = cwd if isinstance(cwd, str) else None
                     if parsed.tool_use_id and (
                         parsed.tool_name in DIRECT_EXEC_NAMES
                         or (
@@ -166,9 +174,16 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
         for entry in chain[key].values()
         if entry.get("session_id") is None
     }
-    if any(entry["literal_command"] is None for entry in pending.values()):
+    invocations = [
+        {**entry, "literal_command": call["cmd"], "workdir": call.get("workdir")}
+        for entry in pending.values()
+        for call in batches.get(
+            entry["outer_call_id"], [{"cmd": entry["literal_command"], "workdir": entry["workdir"]}]
+        )
+    ]
+    if any(entry["literal_command"] is None for entry in invocations):
         return None
-    matches = [entry for entry in pending.values() if entry["literal_command"] == command]
+    matches = [entry for entry in invocations if entry["literal_command"] == command]
     if len(matches) != 1 or matches[0]["outer_call_id"] not in validated:
         return None
     match = matches[0]

@@ -5,7 +5,7 @@ description: |
   passes it, reaches consensus with the writer over send_message, and stamps
   the M1 task manifest on consensus. Never edits the plan narrative.
 
-version: "2.1"
+version: "2.2.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -109,6 +109,7 @@ workflows:
       - "name:no-send-keys"
       - "name:guard-durable-memory-writes"
       - "name:inject-plan-reviewer-lessons"
+      - "name:reviewer-write-scope"
     exclude:
       - "tag:task-skill-gates"
       - "name:guard-plan-memory-writes"
@@ -190,9 +191,6 @@ step_workflow:
         coordinator. SHA must be the full 40-character lowercase hexadecimal commit ID.
         The successful send_message handler enters stamp; do not call set_variable.
       allowed_tools: "all"
-      blocked_tools:
-        - "Edit"
-        - "Write"
       blocked_mcp_tools:
         - "gobby-plans:derive_plan_handoff_manifest"
         - "gobby-plans:apply_plan_handoff_manifest"

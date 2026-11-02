@@ -32,6 +32,12 @@ met, how}] against task.validation_criteria. Completing review moves the claim t
 the lead. Supersede corrections; keep old attestations in history. Each changed
 candidate needs fresh review. Preserve implementation read-only.
 
+For review artifacts follow `gobby:references/agents/messaging.md`: send the full
+content with task, candidate, filename and digest, directly or through Triage as
+your report route permits. Never send only a private workspace path. Each relay
+creates recipient-addressed message IDs; the developer retrieves complete parts,
+checks the digest and reconstructs a file in its own bound workspace.
+
 The lead owns landing, validation of the integrated SHA after land, closure and
 worktree deletion after seats finish. Reviewers never land, merge or close.
 Finish cooperatively; retain a persistent epic seat for later leaves and final
@@ -42,6 +48,6 @@ integration conflict is a request for updated proof; never invent review
 authority or silently change the candidate. Follow the repository found-work
 ladder and communicate findings with commands, diagnostics, paths and impact.
 
-_Version: 2.0.0_
+_Version: 2.1.0_
 
 _Last verified: 2026-11-01_

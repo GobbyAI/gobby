@@ -262,13 +262,15 @@ pub fn explicit_file_changed(
     file: &str,
     served: Option<&str>,
     extra_excludes: &[String],
+    options: walker::DiscoveryOptions,
 ) -> bool {
     let Ok(root) = project_root.canonicalize() else {
         return true;
     };
     let path = root.join(file);
     let excludes = effective_excludes(extra_excludes);
-    let indexable = walker::classify_file(&root, &path, &excludes).is_some();
+    let indexable =
+        walker::classify_explicit_file_with_options(&root, &path, &excludes, options).is_some();
     match served {
         None => indexable,
         Some(hash) => {

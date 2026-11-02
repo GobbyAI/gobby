@@ -296,7 +296,7 @@ def team_run_terminator(runner: GobbyRunner) -> TeamRunTerminator:
             completion_registry=runner.completion_registry,
             task_manager=runner.task_manager,
             session_manager=SessionManager(db),
-            effective_status="cancelled",
+            effective_status="success",
             debug=False,
         )
         if result.get("success"):

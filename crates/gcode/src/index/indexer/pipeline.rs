@@ -94,7 +94,7 @@ pub(super) fn explicit_route_with_discovery_options(
     excludes: &[&str],
     options: walker::DiscoveryOptions,
 ) -> ExplicitFileRoute {
-    if !options.respect_gitignore {
+    if options.respect_gitignore {
         return explicit_file_route(root_path, abs, excludes);
     }
     match walker::classify_explicit_file_with_options(root_path, abs, excludes, options) {

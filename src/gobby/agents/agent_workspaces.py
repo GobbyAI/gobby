@@ -872,6 +872,8 @@ def grant_seat_workspace_paths(
             else None
         )
         body = row.definition_json if row is not None else {}
+        if "promote_workspace_binaries" in body.get("capabilities", []):
+            granted.append(str(get_gobby_home() / "bin"))
         if body.get("read_all_agent_workspaces") is True:
             reads = [str(workspaces_root())]
         elif body.get("persistent_workspace") is True and definition and location["seq_num"]:

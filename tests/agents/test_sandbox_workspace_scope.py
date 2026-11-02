@@ -97,7 +97,9 @@ async def test_workspace_scope_cannot_be_interpreted_as_a_glob(
         await compute_sandbox_paths(config, str(checkout))
 
 
-def _definition(db: HubDatabase, *, persistent: bool, read_all: bool = False) -> None:
+def _definition(
+    db: HubDatabase, *, persistent: bool, read_all: bool = False, promote: bool = False
+) -> None:
     AgentDefinitionManager(db).upsert_with_steps(
         "custom-seat",
         {
@@ -105,11 +107,35 @@ def _definition(db: HubDatabase, *, persistent: bool, read_all: bool = False) ->
             "prompts": {"agent": "Work."},
             "persistent_workspace": persistent,
             "read_all_agent_workspaces": read_all,
+            "capabilities": ["promote_workspace_binaries"] if promote else [],
             "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         },
         {"steps": [{"name": "work"}]},
         source="custom",
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("promote", [False, True])
+async def test_binary_promotion_grant_is_definition_owned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    promote: bool,
+) -> None:
+    gobby_home = tmp_path / "gobby"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    _definition(temp_db, persistent=False, promote=promote)
+    caller = _session(temp_db, sample_project["id"], 40)
+    own = gobby_home / "agents_workspaces" / sample_project["id"] / "custom-seat" / "session-40"
+    config = grant_seat_workspace_paths(
+        SandboxConfig(enabled=True, backend="srt"), temp_db, caller, "custom-seat"
+    )
+    paths = await compute_sandbox_paths(config, str(own))
+    assert (str(gobby_home / "bin") in paths.write_paths) is promote
+    assert str(gobby_home) not in paths.write_paths
+    assert str(gobby_home / "logs") not in paths.write_paths
 
 
 def _session(db: HubDatabase, project: str, seq: int, folder: Path | None = None) -> str:

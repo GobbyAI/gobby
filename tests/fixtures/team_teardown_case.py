@@ -37,7 +37,7 @@ class Team:
 
 @dataclass
 class Terminations:
-    """What the daemon termination leaves behind: the run cancelled, its session expired.
+    """What daemon termination leaves behind: the requested outcome and an expired session.
 
     ``stop_after`` cancels the pass, as a daemon shutdown does, once that many seats ended.
     """
@@ -57,7 +57,10 @@ class Terminations:
             runs.merge_resume_metadata(
                 run.id, {REAP_REQUESTED_AT_KEY: datetime.now(UTC).isoformat()}
             )
-        runs.cancel(run.id)
+        if kwargs["effective_status"] == "success":
+            runs.complete(run.id)
+        else:
+            runs.cancel(run.id)
         if run.child_session_id is not None:
             SessionManager(self.db).update_status(run.child_session_id, "expired")
         return {"success": True}

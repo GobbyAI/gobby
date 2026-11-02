@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from gobby.ai.embeddings import EmbeddingService
 from gobby.config.persistence import DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL
-from gobby.projects.fenced_vector_store import project_write_context
+from gobby.projects.fenced_vector_store import ProjectFencedVectorStore, project_write_context
 from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 from gobby.search.similarity import cosine_similarity
 from gobby.storage.hub.protocol import HubDatabase
@@ -106,7 +106,7 @@ class SemanticToolSearch:
         embedding_dim: int = DEFAULT_EMBEDDING_DIM,
         embedding_api_key: str | None = None,
         api_base: str | None = None,
-        vector_store: VectorStore | None = None,
+        vector_store: VectorStore | ProjectFencedVectorStore | None = None,
         collection_name: str | None = None,
     ):
         """
@@ -628,6 +628,7 @@ class SemanticToolSearch:
         min_similarity: float = 0.0,
         server_filter: str | None = None,
         mcp_manager: Any | None = None,
+        internal_manager: Any | None = None,
     ) -> list[SearchResult]:
         """
         Search for tools semantically similar to a query.
@@ -655,7 +656,7 @@ class SemanticToolSearch:
         query_embedding = await self.embed_text(query, is_query=True)
 
         filters: dict[str, str] = {}
-        if mcp_manager is None:
+        if mcp_manager is None and internal_manager is None:
             filters["project_id"] = project_id
         if server_filter:
             filters["server_name"] = server_filter
@@ -698,6 +699,11 @@ class SemanticToolSearch:
                     visible_ids.add(config_id)
                 elif config_project == GLOBAL_PROJECT_ID and name not in project_names:
                     visible_ids.add(config_id)
+
+        if internal_manager is not None:
+            if visible_ids is None:
+                visible_ids = set()
+            visible_ids.update(registry.name for registry in internal_manager.get_all_registries())
 
         results: list[SearchResult] = []
         for tool_id, score, payload in qdrant_results:

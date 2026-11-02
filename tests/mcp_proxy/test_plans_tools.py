@@ -940,6 +940,31 @@ async def test_validate_plan_resolves_completed_section_targets(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("relative", [True, False])
+async def test_validate_plan_uses_callers_project_in_shared_registry(
+    temp_db: HubDatabase, tmp_path: Path, relative: bool
+) -> None:
+    daemon_root = tmp_path / "daemon"
+    caller_root = tmp_path / "caller"
+    daemon_root.mkdir()
+    caller_root.mkdir()
+    daemon_project = _create_indexed_project(temp_db, daemon_root)
+    caller_project = _create_indexed_project(temp_db, caller_root)
+    plan_path = _write_plan(caller_root)
+    registry = create_plan_registry(temp_db, default_project_id=daemon_project)
+    token = set_project_context({"id": caller_project, "project_path": str(caller_root)})
+    try:
+        result = await registry.call(
+            "validate_plan",
+            {"plan_file": str(plan_path.relative_to(caller_root) if relative else plan_path)},
+        )
+    finally:
+        reset_project_context(token)
+    assert result["valid"] is True, result
+    assert result["symbol_validation"]["status"] == "passed"
+
+
+@pytest.mark.asyncio
 async def test_validate_plan_uses_complete_isolated_context(
     temp_db: HubDatabase,
     tmp_path: Path,
@@ -1031,7 +1056,54 @@ async def test_validate_plan_returns_same_payload_as_tasks_ops(
 
 
 @pytest.mark.asyncio
-async def test_validate_plan_rejects_unindexed_wildcard_target(
+async def test_optional_plan_lookup_returns_the_registered_path_for_task(
+    temp_db: HubDatabase, tmp_path: Path, coverage_executor: CoverageExecutor
+) -> None:
+    project = _create_project(temp_db, tmp_path, "registered-plan-path")
+    task = LocalTaskManager(temp_db).create_task(project, "Plan path owner")
+    plan_path = _write_plan(tmp_path).rename(tmp_path / ".gobby/plans/tasks-family.md")
+    registry = create_plan_registry(
+        temp_db, default_project_id=project, coverage_executor=coverage_executor
+    )
+    created = await registry.call(
+        "create_plan",
+        {
+            "plan_id": "task-100-demo",
+            "plan_path": str(plan_path),
+            "root_task_ref": f"#{task.seq_num}",
+        },
+    )
+    assert created["ok"] is True
+    found = await registry.call(
+        "get_plan",
+        {
+            "plan_id_or_ref": f"#{task.seq_num}",
+            "required": False,
+        },
+    )
+    assert found["ok"] is True
+    assert Path(found["plan"]["plan_path"]).name == "tasks-family.md"
+
+
+@pytest.mark.asyncio
+async def test_optional_registered_plan_lookup_distinguishes_absence_from_invalid_input(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    registry = create_plan_registry(temp_db, default_project_id=sample_project["id"])
+    optional = await registry.call(
+        "get_plan", {"plan_id_or_ref": "missing-plan", "required": False}
+    )
+    assert optional == {"ok": True, "plan": None}
+    required = await registry.call("get_plan", {"plan_id_or_ref": "missing-plan"})
+    assert required["ok"] is False
+    assert required["error"] == "plan_not_found"
+    invalid = await registry.call("get_plan", {"plan_id_or_ref": " ", "required": False})
+    assert invalid["ok"] is False
+    assert invalid["error"] != "plan_not_found"
+
+
+@pytest.mark.asyncio
+async def test_validate_plan_accepts_justified_unindexed_wildcard_target(
     temp_db: HubDatabase, tmp_path: Path
 ) -> None:
     project_id = _create_indexed_project(temp_db, tmp_path)
@@ -1054,14 +1126,12 @@ async def test_validate_plan_rejects_unindexed_wildcard_target(
     finally:
         reset_project_context(token)
 
-    assert result["valid"] is False
-    assert result["symbol_validation"]["status"] == "failed"
+    assert result["valid"] is True
+    assert result["symbol_validation"]["status"] == "passed"
     assert result["symbol_validation"]["checked_targets"] == [
         ".codex/rules.py::*",
     ]
-    assert {issue["code"] for issue in result["symbol_validation"]["issues"]} == {
-        "target_symbol_unresolved",
-    }
+    assert result["symbol_validation"]["issues"] == []
 
 
 @pytest.mark.asyncio

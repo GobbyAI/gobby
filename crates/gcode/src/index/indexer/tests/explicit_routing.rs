@@ -6,6 +6,67 @@ use crate::index::walker;
 use std::path::Path;
 
 #[test]
+fn explicit_hidden_routes_match_full_discovery_regardless_of_gitignore() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let policy = ".gobby/workflows/rules/project-operating-policy.yaml";
+    let plan = ".gobby/plans/example.md";
+    write_file(root, policy, b"rules: []\n");
+    write_file(root, plan, b"# Plan\n");
+
+    for respect_gitignore in [false, true] {
+        let options = walker::DiscoveryOptions { respect_gitignore };
+        let (ast, content) = walker::discover_files_with_options(root, DEFAULT_EXCLUDES, options);
+        assert!(!ast.contains(&root.join(policy)));
+        assert!(!content.contains(&root.join(policy)));
+        assert!(content.contains(&root.join(plan)));
+        assert_eq!(
+            explicit_route_with_discovery_options(
+                root,
+                &root.join(policy),
+                DEFAULT_EXCLUDES,
+                options
+            ),
+            ExplicitFileRoute::Skip,
+            "hidden metadata must not appear only during per-file indexing"
+        );
+        assert_eq!(
+            explicit_route_with_discovery_options(
+                root,
+                &root.join(plan),
+                DEFAULT_EXCLUDES,
+                options
+            ),
+            ExplicitFileRoute::ContentOnly,
+        );
+    }
+    assert_eq!(
+        explicit_file_route(root, &root.join(policy), DEFAULT_EXCLUDES),
+        ExplicitFileRoute::Skip
+    );
+
+    write_file(
+        root,
+        ".gobby/gcode.json",
+        br#"{"index":{"hidden_allowlist":[".gobby/workflows/**/*.yaml"]}}"#,
+    );
+    for respect_gitignore in [false, true] {
+        let options = walker::DiscoveryOptions { respect_gitignore };
+        let (ast, _) = walker::discover_files_with_options(root, DEFAULT_EXCLUDES, options);
+        assert!(ast.contains(&root.join(policy)));
+        assert_eq!(
+            explicit_route_with_discovery_options(
+                root,
+                &root.join(policy),
+                DEFAULT_EXCLUDES,
+                options
+            ),
+            ExplicitFileRoute::Ast,
+        );
+    }
+}
+
+#[test]
 fn explicit_file_route_sends_unsupported_text_to_content_only() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();

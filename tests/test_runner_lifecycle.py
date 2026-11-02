@@ -559,6 +559,7 @@ async def test_backend_ports_behind_front_door(
     )
     with (
         patch("gobby.runner_init.servers.HTTPServer") as http_server_cls,
+        patch("gobby.runner_init.mcp_stack.schedule_scoped_embedding_backfill") as backfill,
         patch("gobby.runner_init.servers.WebSocketServer") as websocket_server_cls,
         patch("gobby.runner_init.servers.WebChatRuntimeManager"),
         patch("gobby.runner_init.servers.ModelMetadataCoverageAuditor"),
@@ -576,6 +577,14 @@ async def test_backend_ports_behind_front_door(
         init_servers(runner)
 
     assert http_server_cls.call_args.kwargs["port"] == http_port
+    backfill.assert_called_once()
+    assert (
+        backfill.call_args.args[0] is http_server_cls.return_value._tools_handler._semantic_search
+    )
+    assert (
+        backfill.call_args.kwargs["internal_manager"]
+        is http_server_cls.return_value._internal_manager
+    )
     websocket_config = websocket_server_cls.call_args.kwargs["config"]
     assert (websocket_config.host, websocket_config.port) == (host, ws_port)
 
@@ -672,6 +681,7 @@ class TestInitSubsystems:
                 self.services = services
                 self.codex_client = codex_client
                 self._internal_manager = object()
+                self._tools_handler = None
                 self.broadcaster = SimpleNamespace(websocket_server=None)
 
             def set_runner_getter(self, getter: object) -> None:

@@ -54,7 +54,7 @@ pub fn classify_explicit_file_with_options(
     options: DiscoveryOptions,
 ) -> Option<FileClassification> {
     let context = HiddenPathContext::load(root);
-    if options.respect_gitignore && !explicit_path_visible(root, path, options, &context) {
+    if !explicit_path_visible(root, path, options, &context) {
         return None;
     }
     classify_file(root, path, exclude_patterns)

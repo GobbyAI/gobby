@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import subprocess
 from collections.abc import Mapping
+from pathlib import Path
 
 import psutil
 
@@ -108,6 +109,30 @@ def foreground_commands(shell_pids: Mapping[str, int]) -> dict[str, str]:
         for key, executable in foreground_executables(shell_pids).items()
     }
     return {key: name for key, name in commands.items() if name}
+
+
+def foreground_node_script(pid: int) -> str | None:
+    """Return the foreground node process's direct script entrypoint, if proven."""
+    snapshot = _process_snapshot()
+    shell = snapshot.get(pid)
+    leader = snapshot.get(shell[0]) if shell else None
+    if shell is None or leader is None or command_name(leader[1]) != "node":
+        return None
+    try:
+        process = psutil.Process(shell[0])
+        argv = process.cmdline()
+        if command_name(process.exe()) != "node" or len(argv) < 2:
+            return None
+        script = argv[1]
+        if (
+            command_name(argv[0]) != "node"
+            or not isinstance(script, str)
+            or not Path(script).is_absolute()
+        ):
+            return None
+        return script
+    except (psutil.Error, OSError):
+        return None
 
 
 def shell_cwds(shell_pids: Mapping[str, int]) -> dict[str, str]:

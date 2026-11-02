@@ -194,6 +194,8 @@ def create_base_patches(
         mock_http.app.state = State()
         mock_http.port = 60887
     set_mock_default(mock_http, "_terminate_streamable_http_sessions", AsyncMock())
+    # No embedding service is initialized by this shared server double.
+    set_mock_default(mock_http, "_tools_handler", None)
     # Startup recovery awaits the task registry's close-review promoter.
     internal_manager = MagicMock()
     registry = internal_manager.get_registry.return_value
@@ -292,6 +294,8 @@ def create_base_patches(
         patch("gobby.runner_init.storage.ensure_system_session"),
         # Construction otherwise fetches the OpenRouter registry and rewrites model_metadata.
         patch("gobby.storage.model_metadata.ModelMetadataStore.populate", return_value=0),
+        # The background refresh must not fetch the real registry or write through a DB double.
+        patch("gobby.runner_model_metadata_refresh.fetch_models_async", AsyncMock(return_value=[])),
         # Startup otherwise shells out to gdaemon to drop test schemas on config.database_url.
         patch("gobby.runner_maintenance.storage_hygiene.sweep_orphaned_test_schemas"),
         patch("gobby.storage.hub.postgres.PostgresHubDatabase", side_effect=make_postgres_db),

@@ -29,6 +29,18 @@ You run the two in-flight queries with `query_readonly`; no Reporter seat can.
 Honor the gathering budget. When it expires, deliver what you have with each gap labelled and the
 report marked incomplete.
 
+## Report handoff from another seat
+
+To deliver another seat's report, use the full-content
+[artifact transport](../messaging.md#deliver-text-artifacts-across-workspace-boundaries).
+Retrieve each complete message by ID, verify all parts and the content digest,
+then write the exact text into your own workspace folder. Read
+`project_policy.operator_channel`, then call
+`gobby-communications:send_operator_attachment(channel=<operator_channel>, file_path=<local copy>)`.
+Keep the returned message ID and acknowledge delivery to the sender. A source path
+in another seat's private folder is a reference, never a readable attachment.
+Report missing parts or delivery errors.
+
 ## Report
 
 Open with one line: `Status, <full|delta>, <start>-<end> CT`.
@@ -46,6 +58,11 @@ Open with one line: `Status, <full|delta>, <start>-<end> CT`.
   Do not repeat the full root table.
 
 Rules for every report:
+
+- A live run bound to an open task is never an orphan. Check its assigned task and
+  current claims against open task state. Idle, waiting, stale activity or an old
+  parent alone never establishes orphanhood. Report missing ownership evidence as
+  a source gap; route actual cleanup to the Orchestrator.
 
 - Name each #NNNNN with its title or a short task phrase. State its real condition. When no work
   is active, say so.
@@ -75,3 +92,6 @@ Rules for every report:
    send the exact error to the Orchestrator. On the pane path the report is typed once, and no
    retry applies.
 4. On the send path, never resend a confirmed delivery.
+
+_Version: 1.1.0_
+_Last verified: 2026-11-02_

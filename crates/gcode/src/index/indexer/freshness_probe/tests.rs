@@ -2,6 +2,44 @@ use super::*;
 use std::fs::File;
 use std::path::PathBuf;
 
+#[test]
+fn explicit_freshness_honors_hidden_visibility_and_gitignore_options() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    write_file(root, ".gitignore", b"ignored.rs\n");
+    write_file(root, "ignored.rs", b"fn ignored() {}\n");
+    let policy = ".gobby/workflows/rules/project-operating-policy.yaml";
+    let plan = ".gobby/plans/example.md";
+    write_file(root, policy, b"rules: []\n");
+    let plan_path = write_file(root, plan, b"# Plan\n");
+    let plan_hash = crate::index::hasher::file_content_hash(&plan_path).expect("plan hash");
+
+    for respect_gitignore in [false, true] {
+        let options = walker::DiscoveryOptions { respect_gitignore };
+        assert!(!explicit_file_changed(root, policy, None, &[], options));
+        assert!(explicit_file_changed(
+            root,
+            policy,
+            Some("old-row"),
+            &[],
+            options
+        ));
+        assert!(explicit_file_changed(root, plan, None, &[], options));
+        assert!(!explicit_file_changed(
+            root,
+            plan,
+            Some(&plan_hash),
+            &[],
+            options
+        ));
+        assert_eq!(
+            explicit_file_changed(root, "ignored.rs", None, &[], options),
+            !respect_gitignore
+        );
+    }
+}
+
 fn write_file(root: &Path, rel: &str, contents: &[u8]) -> PathBuf {
     let path = root.join(rel);
     if let Some(parent) = path.parent() {

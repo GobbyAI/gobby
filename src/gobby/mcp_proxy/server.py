@@ -24,7 +24,9 @@ from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.services.recommendation import RecommendationService, SearchMode
 from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
+from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
+from gobby.mcp_proxy.services.session_context import get_requested_session_id
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.wait_tools import call_with_wait_heartbeat, prepare_client_guard
 from gobby.storage.hub.protocol import HubDatabase
@@ -401,9 +403,17 @@ class GobbyDaemonTools:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         """Get tool schema."""
-        return await self.tool_proxy.get_tool_schema(
+        result = await self.tool_proxy.get_tool_schema(
             server_name, tool_name, project_id=self._caller_project_ref()
         )
+        if result.get("success") is True and isinstance(result.get("tool"), dict):
+            record_schema_shown(
+                self.tool_proxy,
+                get_requested_session_id(session_id),
+                server_name=server_name,
+                tool_name=tool_name,
+            )
+        return result
 
     async def read_mcp_resource(self, server_name: str, resource_uri: str) -> Any:
         """Read resource."""
@@ -536,6 +546,8 @@ class GobbyDaemonTools:
                 top_k=top_k,
                 min_similarity=min_similarity,
                 server_filter=server_name,
+                mcp_manager=self._mcp_manager,
+                internal_manager=self.internal_manager,
             )
 
             return {

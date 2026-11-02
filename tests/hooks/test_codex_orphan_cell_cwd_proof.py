@@ -156,6 +156,38 @@ def test_shell_capable_cell_without_compaction_still_fails_closed(
     event, response = _hook(event_handlers, tmp_path, records)
     assert response.decision == "block", current_tool_cwd(event.data)
     assert "cannot prove its working directory" in (response.reason or "")
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_multi_call_cell_proves_each_literal_workdir(
+    event_handlers: EventHandlers, tmp_path: Path, parallel: bool
+) -> None:
+    first = f"tools.exec_command({json.dumps({'cmd': PYTEST, 'workdir': str(tmp_path / 'task')})})"
+    second = f"tools.exec_command({json.dumps({'cmd': 'git status', 'workdir': str(tmp_path / 'other')})})"
+    source = (
+        f"await Promise.allSettled([{first}, {second}]);"
+        if parallel
+        else f"text(await {first}); text(await {second});"
+    )
+    event, response = _hook(event_handlers, tmp_path, [_call("multi", source)])
+    assert response.decision == "allow", response.reason
+    assert current_tool_cwd(event.data) == tmp_path / "task"
+
+
+@pytest.mark.parametrize("unsafe", ["duplicate", "computed", "loop"])
+def test_multi_call_cell_refuses_ambiguous_provenance(
+    event_handlers: EventHandlers, tmp_path: Path, unsafe: str
+) -> None:
+    source = _literal(PYTEST, tmp_path / "task")
+    if unsafe == "duplicate":
+        source += _literal(PYTEST, tmp_path / "other")
+    elif unsafe == "computed":
+        source += "await tools.exec_command({cmd: command, workdir: directory});"
+    else:
+        source = f"for (const value of values) {{ {source} }}" + _literal("git status", tmp_path)
+    event, response = _hook(event_handlers, tmp_path, [_call("multi", source)])
+    assert response.decision == "block", response.reason
+    assert "cannot prove its working directory" in (response.reason or "")
     assert "one exec_command per functions.exec cell" in (response.reason or "")
 
 

@@ -1,0 +1,18 @@
+version: "1.0.0"
+tags: [roles, seat, enforcement, gobby]
+rules:
+  consolidation-read-only-shell:
+    description: Permit proven read-only evidence checks for consolidation.
+    event: before_tool
+    enabled: true
+    priority: 5
+    when: >-
+      not event.data.get('canonical_read_only', False)
+      and str(tool_input.get('command') or tool_input.get('cmd') or '')
+          not in ['gobby status', 'uv run gobby status']
+    effects:
+      - type: block
+        tools: [Bash]
+        reason: >-
+          Consolidation permits only proven read-only checks, such as git log,
+          grep and gobby status. Mutating commands and unresolved execution are refused.

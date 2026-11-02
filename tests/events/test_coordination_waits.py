@@ -182,6 +182,23 @@ def test_release_matches_structured_identity_only(harness: CoordinationHarness) 
     assert harness.row(row["id"]) == completed
 
 
+@pytest.mark.parametrize("reply_from_first_owner", [True, False])
+def test_either_owner_reply_cancels_the_unused_subscription(
+    harness: CoordinationHarness, reply_from_first_owner: bool
+) -> None:
+    owners = (harness.owner, harness.stranger)
+    waits = {owner: harness.manager.register(harness.waiter, owner, reply=True) for owner in owners}
+    replying_owner, remaining_owner = owners if reply_from_first_owner else owners[::-1]
+    harness.reply(from_session=replying_owner)
+    assert harness.row(waits[replying_owner]["id"])["outcome"] == "replied"
+    cancelled = harness.manager.cancel(waits[remaining_owner]["id"], harness.waiter)
+    assert cancelled["outcome"] == "cancelled"
+    assert harness.manager.count_active_waits(harness.waiter) == 0
+    harness.reply(from_session=remaining_owner)
+    assert harness.row(waits[remaining_owner]["id"])["outcome"] == "cancelled"
+    assert harness.manager.count_active_waits(harness.waiter) == 0
+
+
 def test_reply_resolves_on_the_next_owner_message(harness: CoordinationHarness) -> None:
     row = harness.wait(reply=True)
     assert row["outcome"] == "waiting"

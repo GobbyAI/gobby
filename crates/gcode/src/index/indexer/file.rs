@@ -137,7 +137,12 @@ pub(super) fn explicit_file_route(
     path: &Path,
     exclude_patterns: &[impl AsRef<str>],
 ) -> ExplicitFileRoute {
-    match walker::classify_file(root_path, path, exclude_patterns) {
+    match walker::classify_explicit_file_with_options(
+        root_path,
+        path,
+        exclude_patterns,
+        walker::DiscoveryOptions::default(),
+    ) {
         Some(walker::FileClassification::Ast) => ExplicitFileRoute::Ast,
         Some(walker::FileClassification::ContentOnly) => ExplicitFileRoute::ContentOnly,
         None => ExplicitFileRoute::Skip,

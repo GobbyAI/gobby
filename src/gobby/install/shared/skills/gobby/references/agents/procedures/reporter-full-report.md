@@ -10,6 +10,11 @@ List every tab in tab order, using the returned tab position, and every pane und
 For each pane, print its pane label (or unlabeled) and seat label/role, provider, model, reasoning effort, state, and every current claimed task ref with title (or none). Use live agent rows for role, state and current claims; use session source, model and reasoning_effort for missing provider/model/effort, never launch defaults. Resolve interactive claims from the already gathered current task rows by owner session. Missing metadata stays unknown with its source gap. A claim alone does not prove the seat is working. State is stalled when stall_suspected is true, otherwise waiting when a wait is recorded, working when current activity proves it, or idle when inactivity is recorded; retain unknown if the sources cannot distinguish them. A pane with no live session is empty, with state no seat, provider/model/effort none and task none. A live unclaimed seat retains its observed state and says task none.
 Format one tab heading followed by one line per pane: `label | seat | provider / model / reasoning effort | state | task ref and title or none`. Explicit examples: `unlabeled | empty | none / none / none | no seat | task none`; `seat label | role | provider / model / reasoning effort | idle | task none`. Never omit empty panes or unclaimed seats. Report tabs_read/total and panes_read/total; delivery success does not establish roster completeness. Targeted roster session lookups and their result pages are exempt from the 35-call cap, but remain within the gathering time budget. Reuse the snapshot across report sections. Include roster_complete and roster coverage counts in the run result.
 
+A live run bound to an open task is never an orphan. Check its assigned task and
+current claims against open task state before suggesting cleanup. Idle, waiting
+or stale activity alone never establishes orphanhood. Record missing ownership
+evidence as a gap.
+
 ## Full report
 Start with the report mode, timestamp, and evidence age. Use compact markdown blocks readable on the configured channel:
 - Policy-defined roots: one block for every root, including idle or unstaffed roots. Name the epic ref and title; current task(s) ref and title, developer/reviewer seat, and time claimed; the next five queued task refs and titles in Archivist order (or all if fewer); and candidates waiting on landing/activation/close. State missing queue or claim-time evidence explicitly. Use this policy-derived scaffold when available; otherwise read every root from injected policy, and mark missing policy as a source gap:
@@ -24,3 +29,6 @@ Start with the report mode, timestamp, and evidence age. Use compact markdown bl
 - ROADMAP: stage progress from task state, plus policy-designated critical paths and their blocked dependency refs and titles.
 - In-flight tasks: every task in flight with its pipeline stage (test-writing, development, review, waiting to land), time in stage and claimed-since time, grouped by root, and the tasks closed in the window with claim-to-close time. Follow the in-flight section of reporter.md. The Assistant runs the stage and closure queries; a Reporter seat marks that part as a GAP.
 - Last 30 minutes: landed, activated, closed, and escalated, separately, with task refs and titles and evidence timestamps. Include stuck items and alarms with their source.
+
+_Version: 1.1.0_
+_Last verified: 2026-11-02_

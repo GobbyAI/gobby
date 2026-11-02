@@ -106,13 +106,17 @@ def create_plan_registry(
         func=create_plan,
     )
 
-    def get_plan(plan_id_or_ref: str, project: str | None = None) -> dict[str, Any]:
+    def get_plan(
+        plan_id_or_ref: str, project: str | None = None, required: bool = True
+    ) -> dict[str, Any]:
         try:
             record = manager.get_plan(
                 plan_id_or_ref,
                 project_id=_optional_project_id(db, project, default_project_id),
             )
         except PlanNotFoundError as exc:
+            if not required:
+                return {"ok": True, "plan": None}
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
         except ValueError as exc:
             return _known_error_payload(exc, "get_plan_failed")
@@ -126,6 +130,11 @@ def create_plan_registry(
             "properties": {
                 "plan_id_or_ref": {"type": "string"},
                 "project": PROJECT_PROPERTY,
+                "required": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "False returns plan=null only when no registered plan exists.",
+                },
             },
             "required": ["plan_id_or_ref"],
         },
@@ -326,7 +335,7 @@ def create_plan_registry(
             None,
             plan_path,
             project_context=project_context,
-            expected_project_id=default_project_id,
+            expected_project_id=context_project_id,
             code_index=code_index,
             require_symbol_validation=True,
             task_manager=LocalTaskManager(db),
