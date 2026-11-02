@@ -875,6 +875,48 @@ def test_codex_hostile_reset_is_unknown_not_raised(resets_at: object) -> None:
     assert component.state == "available"
 
 
+@pytest.mark.parametrize(
+    "used",
+    [100.5, 10**100, 10**300, 1.7976931348623157e308],
+    ids=["just-over-100", "1e100", "1e300", "float-max"],
+)
+def test_codex_out_of_range_percent_is_ignored(used: float) -> None:
+    # A used percent past the 0-100 scale is not a verified reading, however finite.
+    record: Mapping[str, object] = {
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "rate_limits": {
+                "primary": {"used_percent": used, "window_minutes": 300},
+                "secondary": None,
+            },
+        },
+    }
+    assert normalize_typed_signal("codex", record, observed_at=_T0, source_key="s") is None
+
+
+@pytest.mark.parametrize(
+    ("used", "state"),
+    [(0.0, "available"), (100.0, "exhausted")],
+    ids=["zero", "exactly-100"],
+)
+def test_codex_percent_boundaries_are_inclusive(used: float, state: str) -> None:
+    record: Mapping[str, object] = {
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "rate_limits": {
+                "primary": {"used_percent": used, "window_minutes": 300},
+                "secondary": None,
+            },
+        },
+    }
+    observation = normalize_typed_signal("codex", record, observed_at=_T0, source_key="s")
+    assert observation is not None
+    (component,) = observation.components
+    assert component.state == state
+
+
 @pytest.mark.parametrize("digits", [400, 5000], ids=["400-digits", "5000-digits"])
 def test_agy_oversized_duration_is_ignored(digits: int) -> None:
     # A duration past timedelta range or the integer digit limit is unverifiable, never raised.

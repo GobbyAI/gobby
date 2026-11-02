@@ -126,7 +126,7 @@ def _window_component(
         return None
     used = _number(raw.get("used_percent"))
     minutes = raw.get("window_minutes")
-    if used is None or used < 0:
+    if used is None or not 0 <= used <= _PERCENT_LIMIT:
         return None
     if (
         not isinstance(minutes, int)
