@@ -18,6 +18,8 @@ _DEFAULT_LIMIT_ID = "codex"
 _WEEKLY_MINUTES = 10080
 _FIVE_HOUR_MINUTES = 300
 _PERCENT_LIMIT = 100.0
+# Reached types the Codex contract is verified to emit; any other value is unverified.
+_VERIFIED_REACHED_TYPES = frozenset({"rate_limit_reached"})
 
 
 def observation_from_rate_limits(
@@ -53,7 +55,7 @@ def observation_from_rate_limits(
         components.append(component)
     reached = rate_limits.get("rate_limit_reached_type")
     if reached is not None:
-        if not isinstance(reached, str) or not reached:
+        if not isinstance(reached, str) or reached not in _VERIFIED_REACHED_TYPES:
             return None
         components.append(
             _hard_component(

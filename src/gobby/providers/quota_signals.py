@@ -227,8 +227,8 @@ def _agy_signal(
         return None
     if not text.startswith(_AGY_ERROR_PREFIX):
         return None
-    duration = _relative_reset(text)
-    if duration is None:
+    resets_at = _relative_reset(observed_at, text)
+    if resets_at is None:
         return None
     scope = f"source:{source_key}"
     component = QuotaComponent(
@@ -240,19 +240,23 @@ def _agy_signal(
         state="exhausted",
         source_observed_at=observed_at,
         occurrence=occurrence,
-        resets_at=observed_at + duration,
+        resets_at=resets_at,
     )
     return QuotaObservation(provider="agy", components=(component,))
 
 
-def _relative_reset(text: str) -> timedelta | None:
+def _relative_reset(observed_at: datetime, text: str) -> datetime | None:
     match = _RELATIVE_RESET_RE.search(text)
     if match is None:
         return None
     total = timedelta()
-    for amount, unit in _DURATION_PART_RE.findall(match.group(1)):
-        total += timedelta(**{_DURATION_UNITS[unit]: int(amount)})
-    return total if total > timedelta() else None
+    try:
+        for amount, unit in _DURATION_PART_RE.findall(match.group(1)):
+            total += timedelta(**{_DURATION_UNITS[unit]: int(amount)})
+        resets_at = observed_at + total
+    except OverflowError:
+        return None
+    return resets_at if total > timedelta() else None
 
 
 def _parse_reset(value: str | None) -> datetime | None:
@@ -260,7 +264,7 @@ def _parse_reset(value: str | None) -> datetime | None:
         return None
     try:
         return parse_stored_datetime(value)
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
 
 

@@ -749,3 +749,44 @@ def test_codex_malformed_reached_and_reset_handling() -> None:
     (component,) = observation.components
     assert component.resets_at is None
     assert component.state == "available"
+
+
+def test_unverified_reached_code_and_overflowing_reset_are_ignored() -> None:
+    # An unknown reached code is not a verified reached type, so the payload is unverified.
+    unknown_code: Mapping[str, object] = {
+        "limit_id": "codex",
+        "primary": None,
+        "secondary": None,
+        "rate_limit_reached_type": "unverified_future_code",
+    }
+    assert (
+        observation_from_rate_limits(
+            unknown_code, source_observed_at=_T0, occurrence="unknown-code", source_key="s"
+        )
+        is None
+    )
+    # Durations that overflow timedelta or move past datetime.max are malformed, not clamped.
+    for text in (
+        "Individual quota reached. Resets in 999999999999999999999h.",
+        "Individual quota reached. Resets in 99999999h.",
+    ):
+        record: Mapping[str, object] = {"status": "ERROR", "error": text}
+        assert normalize_typed_signal("agy", record, observed_at=_T0, source_key="s") is None
+    # A reporter reset that parses but converts out of datetime range is unknown, not an error.
+    edge = ProviderUsageSnapshot(
+        provider="agy",
+        observed_at=_T0,
+        supported=True,
+        windows=(
+            UsageWindow(
+                label="Edge",
+                used=1.0,
+                limit=1.0,
+                unit="fraction",
+                resets_at="9999-12-31T23:59:59-05:00",
+            ),
+        ),
+        raw={},
+    )
+    (edge_component,) = normalize_reporter_snapshot(edge).components
+    assert edge_component.resets_at is None
