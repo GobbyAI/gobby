@@ -1833,13 +1833,16 @@ unsafe impl GlobalAlloc for CountLargeAllocs {
 #[global_allocator]
 static ALLOCATOR: CountLargeAllocs = CountLargeAllocs;
 
-/// Publish latency and the bind wall time are recorded measurements, not
-/// asserts (#25575). The load-independent proof is the ordering assertion plus
-/// the large-allocation check: the publish body copy must not run on the
-/// runtime thread before bind answers.
+/// The publisher gives up after two seconds (`native_publish.py`). Deterministic
+/// checks: the bind probe status, no large allocation on the runtime thread
+/// before bind answers, and the max publish still running when bind answers.
+/// Wall-clock checks (#25270 criterion 3): bind answers within BIND_BUDGET and
+/// before PUBLISHER_DEADLINE.
 #[tokio::test]
 async fn bind_answers_within_the_publisher_deadline_during_a_max_publish() {
     const PUBLISH_COMPLETION: Duration = Duration::from_secs(120);
+    const PUBLISHER_DEADLINE: Duration = Duration::from_secs(2);
+    const BIND_BUDGET: Duration = Duration::from_millis(250);
     let mut h = Harness::start().await;
     h.bind().await;
 
@@ -1855,6 +1858,7 @@ async fn bind_answers_within_the_publisher_deadline_during_a_max_publish() {
 
     LARGE_ALLOCS.with(|count| count.set(0));
     ARMED.with(|armed| armed.set(true));
+    let started = Instant::now();
     let publish = tokio::spawn({
         let (native, token) = (native.clone(), token.clone());
         async move {
@@ -1870,6 +1874,7 @@ async fn bind_answers_within_the_publisher_deadline_during_a_max_publish() {
     tokio::task::yield_now().await;
     let probe = private_request(BIND, Some(SECRET), Some(&token), "{not json");
     let (probe_status, _) = call(&native, probe, LOOPBACK).await;
+    let probe_elapsed = started.elapsed();
     ARMED.with(|armed| armed.set(false));
     let large_allocs = LARGE_ALLOCS.with(Cell::get);
     assert_eq!(probe_status, StatusCode::BAD_REQUEST, "bind probe");
@@ -1877,10 +1882,17 @@ async fn bind_answers_within_the_publisher_deadline_during_a_max_publish() {
         large_allocs, 0,
         "the runtime thread copied a publish body before bind answered"
     );
-
     assert!(
         !publish.is_finished(),
         "bind answered only after the max publish completed"
+    );
+    assert!(
+        probe_elapsed < BIND_BUDGET,
+        "bind answered after {probe_elapsed:?} behind a max publish"
+    );
+    assert!(
+        probe_elapsed < PUBLISHER_DEADLINE,
+        "bind missed the publisher deadline behind a max publish"
     );
     let publish_status = publish.await.expect("publish task");
     assert_eq!(
