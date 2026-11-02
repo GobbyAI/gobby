@@ -21,7 +21,7 @@ from pydantic import ValidationError
 from gobby.storage.definitions import preserve_bundled_tag
 from gobby.storage.definitions._shared import DefinitionNameConflictError, DefinitionNotFoundError
 from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
-from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, split_rule_definition_data
 from gobby.workflows.delivery_disposition import (
     DispositionAmbiguousError,
     prepare_rule_definition_for_persist,
@@ -56,13 +56,9 @@ def _reserved_writer_error(definition: dict[str, Any]) -> str | None:
     for effect in effects:
         if not isinstance(effect, dict):
             continue
-        variable = None
-        if effect.get("type") == "set_variable":
-            variable = effect.get("variable")
-        elif effect.get("type") == "mcp_call" and effect.get("inject_result"):
-            variable = effect.get("success_variable")
-        if isinstance(variable, str) and is_reserved_workflow_variable(variable):
-            return f"Rule effects cannot write reserved workflow variable {variable!r}"
+        for variable in RuleEffect.variable_write_targets(effect):
+            if is_reserved_workflow_variable(variable):
+                return f"Rule effects cannot write reserved workflow variable {variable!r}"
     return None
 
 

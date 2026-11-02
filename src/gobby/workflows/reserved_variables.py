@@ -1,6 +1,7 @@
 """Workflow variables owned by runtime enforcement and observers."""
 
-from typing import TYPE_CHECKING
+import logging
+from typing import TYPE_CHECKING, Any
 
 HANDOFF_TURN_END_PENDING_VARIABLE = "_handoff_turn_end_pending"
 # The Unix-socket root an SRT launch granted its own run; only the launch records it.
@@ -80,3 +81,27 @@ def is_internal_rule(row: "RuleDefinitionRow") -> bool:
         and "gobby" in tags
         and "user" not in tags
     )
+
+
+def write_rule_variable(
+    variables: dict[str, Any],
+    name: str,
+    value: Any,
+    *,
+    row: "RuleDefinitionRow | None",
+    delivery: str = "eager",
+    staged: dict[str, Any] | None = None,
+) -> bool:
+    """Admit every rule-originated variable write before mutation or receipt staging."""
+    if is_reserved_workflow_variable(name) and not (
+        row is not None
+        and (is_internal_rule(row) or (name == "project_policy" and row.source == "installed"))
+    ):
+        logging.getLogger(__name__).warning(
+            "Rule effect cannot write runtime-managed variable %r", name
+        )
+        return False
+    variables[name] = value
+    if delivery == "on_receipt" and staged is not None:
+        staged[name] = value
+    return True

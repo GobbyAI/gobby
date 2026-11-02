@@ -23,7 +23,7 @@ from gobby.workflows.engine.delivery_formatting import (
     DeliveryFormattingMixin,
     _is_empty_inject_payload,
 )
-from gobby.workflows.reserved_variables import is_internal_rule, is_reserved_workflow_variable
+from gobby.workflows.reserved_variables import write_rule_variable
 
 logger = logging.getLogger(__name__)
 
@@ -257,12 +257,15 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
         variables: dict[str, Any],
         staged_variable_updates: dict[str, Any],
     ) -> None:
-        if effect.success_variable and (
-            is_internal_rule(row) or not is_reserved_workflow_variable(effect.success_variable)
-        ):
-            variables[effect.success_variable] = True
-            if effect.delivery == "on_receipt":
-                staged_variable_updates[effect.success_variable] = True
+        if effect.success_variable:
+            write_rule_variable(
+                variables,
+                effect.success_variable,
+                True,
+                row=row,
+                delivery=effect.delivery,
+                staged=staged_variable_updates,
+            )
 
     async def _deliver_late_mcp_injections(
         self,

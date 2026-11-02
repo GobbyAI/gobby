@@ -22,7 +22,7 @@ from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.command_matching import command_patterns_match
 from gobby.workflows.engine.mcp_injections import CachedMcpInjectionMixin
 from gobby.workflows.engine.run_command_effects import RunCommandEffectsMixin
-from gobby.workflows.reserved_variables import is_internal_rule, is_reserved_workflow_variable
+from gobby.workflows.reserved_variables import write_rule_variable
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 logger = logging.getLogger(__name__)
@@ -86,19 +86,15 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
             blocking outcome, otherwise None.
         """
         if effect.type == "set_variable":
-            wrote = await offload(
+            await offload(
                 self._apply_set_variable,
                 effect,
                 variables,
                 ctx,
                 allowed_funcs,
-                allow_reserved=(
-                    is_internal_rule(row)
-                    or (effect.variable == "project_policy" and row.source == "installed")
-                ),
+                row=row,
+                staged=staged_variable_updates,
             )
-            if wrote and effect.delivery == "on_receipt" and effect.variable is not None:
-                staged_variable_updates[effect.variable] = variables[effect.variable]
 
         elif effect.type == "inject_context":
             # NOTE: inject_context templates render with rule evaluation context:
@@ -119,15 +115,16 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                 context_parts.append((f"rule:{row.name}", template_text))
 
         elif effect.type == "set_display_content":
-            variables["_display_content"] = await offload(
+            display_content = await offload(
                 self._render_template,
                 effect.template,
                 ctx,
                 allowed_funcs,
             )
+            write_rule_variable(variables, "_display_content", display_content, row=row)
 
         elif effect.type == "observe":
-            obs_list = variables.get("_observations", [])
+            obs_list = list(variables.get("_observations", []))
             msg = effect.message or ""
             msg = await offload(self._render_template, msg, ctx, allowed_funcs)
             obs_list.append(
@@ -138,7 +135,7 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                     "rule": row.name,
                 }
             )
-            variables["_observations"] = obs_list[-MAX_OBSERVATIONS:]
+            write_rule_variable(variables, "_observations", obs_list[-MAX_OBSERVATIONS:], row=row)
 
         elif effect.type == "mcp_call":
             raw_args = effect.arguments or {}
@@ -178,12 +175,14 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                         dr = await asyncio.wait_for(dispatch, timeout=effect.timeout_seconds)
                     success = isinstance(dr, dict) and dr.get("success", False)
                     if success and effect.success_variable:
-                        if is_internal_rule(row) or not is_reserved_workflow_variable(
-                            effect.success_variable
-                        ):
-                            variables[effect.success_variable] = True
-                            if effect.delivery == "on_receipt":
-                                staged_variable_updates[effect.success_variable] = True
+                        write_rule_variable(
+                            variables,
+                            effect.success_variable,
+                            True,
+                            row=row,
+                            delivery=effect.delivery,
+                            staged=staged_variable_updates,
+                        )
                     if success and dr.get("result"):
                         if isinstance(event, HookEvent):
                             await self._append_injected_mcp_result(
@@ -284,12 +283,19 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                         )
                         original_args = {}
                     rendered_updates = {"arguments": {**original_args, **rendered_updates}}
-                rewrite_meta = variables.setdefault("_rewrite_input", {})
-                rewrite_meta["input_updates"] = rendered_updates
-                rewrite_meta["auto_approve"] = effect.auto_approve
+                write_rule_variable(
+                    variables,
+                    "_rewrite_input",
+                    {
+                        **variables.get("_rewrite_input", {}),
+                        "input_updates": rendered_updates,
+                        "auto_approve": effect.auto_approve,
+                    },
+                    row=row,
+                )
 
         elif effect.type == "set_permission_response":
-            permission_meta = variables.setdefault("_permission_response", {})
+            permission_meta = dict(variables.get("_permission_response", {}))
             if effect.permission_decision:
                 permission_meta["permission_decision"] = effect.permission_decision
             if effect.input_updates is not None:
@@ -305,18 +311,24 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                     ctx,
                     allowed_funcs,
                 )
+            write_rule_variable(variables, "_permission_response", permission_meta, row=row)
 
         elif effect.type == "set_retry":
-            variables["_retry"] = (
-                effect.retry if effect.retry is not None else True
-            )  # None means default to True; explicit False must stay False.
+            # None means default to True; explicit False must stay False.
+            write_rule_variable(
+                variables,
+                "_retry",
+                effect.retry if effect.retry is not None else True,
+                row=row,
+            )
 
         elif effect.type == "set_watch_paths":
             if effect.watch_paths is not None:
-                variables["_watch_paths"] = self._render_nested_value(
-                    effect.watch_paths,
-                    ctx,
-                    allowed_funcs,
+                write_rule_variable(
+                    variables,
+                    "_watch_paths",
+                    self._render_nested_value(effect.watch_paths, ctx, allowed_funcs),
+                    row=row,
                 )
 
         elif effect.type == "set_worktree_path":
@@ -326,17 +338,18 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                     and "{{" not in effect.worktree_path
                     and "{%" not in effect.worktree_path
                 ):
-                    variables["_worktree_path"] = effect.worktree_path
+                    worktree_path = effect.worktree_path
                 else:
-                    variables["_worktree_path"] = await offload(
+                    worktree_path = await offload(
                         self._render_nested_value,
                         effect.worktree_path,
                         ctx,
                         allowed_funcs,
                     )
+                write_rule_variable(variables, "_worktree_path", worktree_path, row=row)
 
         elif effect.type == "set_elicitation":
-            elicitation_meta = variables.setdefault("_elicitation", {})
+            elicitation_meta = dict(variables.get("_elicitation", {}))
             if effect.elicitation_action:
                 elicitation_meta["action"] = effect.elicitation_action
             if effect.elicitation_content is not None:
@@ -353,6 +366,7 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                     ctx,
                     allowed_funcs,
                 )
+            write_rule_variable(variables, "_elicitation", elicitation_meta, row=row)
 
         elif effect.type == "run_command":
             await self._apply_run_command(effect, row, ctx, context_parts)
@@ -433,13 +447,11 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
         eval_context: dict[str, Any],
         allowed_funcs: dict[str, Callable[..., Any]] | None = None,
         *,
-        allow_reserved: bool = False,
+        row: RuleDefinitionRow | None = None,
+        staged: dict[str, Any] | None = None,
     ) -> bool:
         """Apply a set_variable effect, handling expressions."""
         if effect.variable is None:
-            return False
-        if is_reserved_workflow_variable(effect.variable) and not allow_reserved:
-            logger.warning("Rule effect cannot write runtime-managed variable %r", effect.variable)
             return False
         value = effect.value
 
@@ -448,8 +460,14 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
             ctx = eval_context
             funcs = allowed_funcs if allowed_funcs is not None else self._build_allowed_funcs(ctx)
             rendered = self._render_template(value, ctx, funcs)
-            variables[effect.variable] = self._coerce_rendered_value(rendered)
-            return True
+            return write_rule_variable(
+                variables,
+                effect.variable,
+                self._coerce_rendered_value(rendered),
+                row=row,
+                delivery=effect.delivery,
+                staged=staged,
+            )
 
         # If value is a string that looks like an expression, evaluate it
         if isinstance(value, str) and self._is_expression(value):
@@ -471,8 +489,14 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                 )
                 return False
 
-        variables[effect.variable] = value
-        return True
+        return write_rule_variable(
+            variables,
+            effect.variable,
+            value,
+            row=row,
+            delivery=effect.delivery,
+            staged=staged,
+        )
 
     def _is_expression(self, value: str) -> bool:
         """Heuristic: is this string an expression rather than a literal?"""

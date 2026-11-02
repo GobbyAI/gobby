@@ -50,7 +50,10 @@ from gobby.workflows.engine.event_utils import (
     _is_write_like_event_data,
 )
 from gobby.workflows.engine.proxy_hooks import ProxyHookInvocation
-from gobby.workflows.reserved_variables import HANDOFF_TURN_END_PENDING_VARIABLE
+from gobby.workflows.reserved_variables import (
+    HANDOFF_TURN_END_PENDING_VARIABLE,
+    write_rule_variable,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.workflow_audit import WorkflowAuditManager
@@ -95,6 +98,7 @@ class BlockGate:
     acknowledge_variable: str | None = None
     delivery: str = "eager"
     recovery_when: str | None = None
+    row: RuleDefinitionRow | None = None
 
 
 class _RuleLoopBridge:
@@ -663,6 +667,7 @@ class EvaluationMixin:
                     block_gates.append(
                         BlockGate(
                             rule_name=row.name,
+                            row=row,
                             reason=reason,
                             condition=combined_rule_condition(body.when, effect.when),
                             acknowledge_variable=effect.acknowledge_variable,
@@ -761,6 +766,7 @@ class EvaluationMixin:
                     block_gates.append(
                         BlockGate(
                             rule_name=row.name,
+                            row=row,
                             reason=inline_block_reason,
                             condition=combined_rule_condition(body.when, effect.when),
                         )
@@ -781,6 +787,7 @@ class EvaluationMixin:
                     block_gates.append(
                         BlockGate(
                             rule_name=row.name,
+                            row=row,
                             reason=rendered_block_reason,
                             condition=combined_rule_condition(body.when, deferred_block.when),
                             acknowledge_variable=deferred_block.acknowledge_variable,
@@ -949,9 +956,14 @@ class EvaluationMixin:
         if block_reason:
             for gate in block_gates:
                 if gate.acknowledge_variable:
-                    evaluation.variables[gate.acknowledge_variable] = True
-                    if gate.delivery == "on_receipt":
-                        evaluation.staged_variable_updates[gate.acknowledge_variable] = True
+                    write_rule_variable(
+                        evaluation.variables,
+                        gate.acknowledge_variable,
+                        True,
+                        row=gate.row,
+                        delivery=gate.delivery,
+                        staged=evaluation.staged_variable_updates,
+                    )
             _apply_staged_effects_metadata(meta, evaluation)
             return HookResponse(
                 decision="block",

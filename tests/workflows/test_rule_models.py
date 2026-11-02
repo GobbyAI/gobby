@@ -15,9 +15,16 @@ pytestmark = pytest.mark.unit
 
 class TestRuleTriggerEvent:
     def test_enum_exposes_raw_hook_events_and_semantic_turn_boundaries(self) -> None:
+        from gobby.hooks.events import HookEventType
         from gobby.workflows.definitions import RuleTriggerEvent
 
-        assert len(RuleTriggerEvent) == 36
+        raw_events = {event.value for event in HookEventType if event != HookEventType.INTERRUPT}
+        assert {event.value for event in RuleTriggerEvent} == raw_events | {
+            "turn_start",
+            "turn_end",
+            "task_close",
+            "task_land",
+        }
 
     def test_enum_values(self) -> None:
         from gobby.workflows.definitions import RuleTriggerEvent

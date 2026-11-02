@@ -197,7 +197,9 @@ class RuleEffect(BaseModel):
     reason: str | None = None
     # Pure expression over the next tool's event data and current variables.
     recovery_when: str | None = None
-    acknowledge_variable: str | None = None
+    acknowledge_variable: str | None = Field(
+        default=None, json_schema_extra={"variable_writer_for": "block"}
+    )
     tools: list[str] | None = None
     mcp_tools: list[str] | None = None
     command_pattern: str | None = None
@@ -212,7 +214,9 @@ class RuleEffect(BaseModel):
     resolve_uv_run: bool = True
 
     # set_variable — update session/workflow state
-    variable: str | None = None
+    variable: str | None = Field(
+        default=None, json_schema_extra={"variable_writer_for": "set_variable"}
+    )
     value: Any = None
 
     # inject_context — add text to system message
@@ -226,7 +230,9 @@ class RuleEffect(BaseModel):
     inject_result: bool = False  # Capture result and inject as agent context
     block_on_failure: bool = False  # Block original tool call if this mcp_call fails
     block_on_success: bool = False  # Block original tool call if this mcp_call succeeds
-    success_variable: str | None = None  # Set to true after successful inline dispatch
+    success_variable: str | None = Field(
+        default=None, json_schema_extra={"variable_writer_for": "mcp_call"}
+    )  # Set to true after successful inline dispatch
 
     # observe — append structured entry to _observations session variable
     category: str | None = None
@@ -264,6 +270,24 @@ class RuleEffect(BaseModel):
 
     # proxy_hook — trusted synchronous input transformation resolved internally.
     handler: str | None = None
+
+    @classmethod
+    def variable_write_targets(cls, effect: Mapping[str, Any]) -> list[str]:
+        """Enumerate target names from the writer fields declared on this model.
+
+        Accept raw mappings so mutation admission also protects legacy or malformed
+        stored definitions without requiring them to pass current validation.
+        """
+        targets = []
+        for name, field in cls.model_fields.items():
+            metadata = field.json_schema_extra
+            if isinstance(metadata, dict) and metadata.get("variable_writer_for") == effect.get(
+                "type"
+            ):
+                target = effect.get(name)
+                if isinstance(target, str):
+                    targets.append(target)
+        return targets
 
     @model_validator(mode="after")
     def _validate_required_fields(self) -> RuleEffect:

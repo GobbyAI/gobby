@@ -19,8 +19,19 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.parametrize("variable", ["project_policy", "unlocked_tools", "_agent_srt_socket_root"])
 @pytest.mark.parametrize("operation", ["create", "update-enabled", "update-disabled"])
+@pytest.mark.parametrize(
+    ("target_field", "effect"),
+    [
+        ("variable", {"type": "set_variable", "value": {}}),
+        (
+            "success_variable",
+            {"type": "mcp_call", "server": "synthetic", "tool": "read", "inject_result": True},
+        ),
+        ("acknowledge_variable", {"type": "block", "reason": "Synthetic gate"}),
+    ],
+)
 def test_reserved_variable_writer_is_refused_before_persistence(
-    temp_db: HubDatabase, variable: str, operation: str
+    temp_db: HubDatabase, variable: str, operation: str, target_field: str, effect: dict[str, Any]
 ) -> None:
     manager = RuleDefinitionManager(temp_db)
     original: dict[str, Any] = {
@@ -31,7 +42,7 @@ def test_reserved_variable_writer_is_refused_before_persistence(
         "event": "turn_start",
         "effects": [
             *original["effects"],
-            {"type": "set_variable", "variable": variable, "value": {}},
+            {**effect, target_field: variable},
         ],
     }
     name = "synthetic-writer"
