@@ -406,18 +406,25 @@ impl Workspace {
             .get("lease_generation")
             .and_then(Value::as_u64)
             .unwrap_or_default();
-        self.panes
-            .get_mut(&pane_id)
-            .expect("pane exists")
-            .install_attachment(
-                attachment_id,
-                transport,
-                generation,
-                lease_generation,
-                PaneFrameSource::Scripted(source),
-            );
+        let pane = self.panes.get_mut(&pane_id).expect("pane exists");
+        pane.install_attachment(
+            attachment_id,
+            transport,
+            generation,
+            lease_generation,
+            PaneFrameSource::Scripted(source),
+        );
+        pane.pty_size = reply_pty_size(message);
         Ok(())
     }
+}
+
+/// The PTY size an attach reply reports, from its `rows` and `cols`.
+/// `None` when either is missing, so the pane's size stays unknown.
+pub(super) fn reply_pty_size(reply: &Value) -> Option<(u16, u16)> {
+    let rows = u16::try_from(reply.get("rows")?.as_u64()?).ok()?;
+    let cols = u16::try_from(reply.get("cols")?.as_u64()?).ok()?;
+    Some((rows, cols))
 }
 
 pub(super) fn frame_daemon_error(error: FrameError) -> DaemonError {
@@ -431,6 +438,7 @@ mod tests {
     use super::*;
     use crate::app::Backend;
     use gobby_terminal::protocol::{CellData, FrameData, PaneModes};
+    use serde_json::json;
 
     #[test]
     fn panes_keep_their_last_frame_while_the_daemon_is_away() {
@@ -463,5 +471,15 @@ mod tests {
         assert_eq!(pane.scroll_offset(), 7);
         assert_eq!(pane.max_scroll, 10);
         assert!(pane.frame_source().is_none());
+    }
+
+    #[test]
+    fn an_attach_reply_reports_the_pty_size_it_attached_at() {
+        assert_eq!(
+            reply_pty_size(&json!({"rows": 30, "cols": 100})),
+            Some((30, 100))
+        );
+        assert_eq!(reply_pty_size(&json!({"rows": 30})), None);
+        assert_eq!(reply_pty_size(&json!({"rows": 70_000, "cols": 100})), None);
     }
 }

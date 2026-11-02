@@ -188,6 +188,7 @@ impl Workspace<LiveDaemon> {
             lease_generation,
             PaneFrameSource::Direct(source),
         );
+        pane.pty_size = super::attach::reply_pty_size(reply);
         pane.host_themes = super::theme_sync::host_accepts_themes(reply);
         pane.observe_lease_holder(
             reply
@@ -431,6 +432,7 @@ impl Workspace<LiveDaemon> {
             lease_generation,
             PaneFrameSource::Proxy(source),
         );
+        pane.pty_size = super::attach::reply_pty_size(reply);
         pane.host_themes = super::theme_sync::host_accepts_themes(reply);
         pane.observe_lease_holder(
             reply
