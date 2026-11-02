@@ -136,7 +136,6 @@ def _window_component(
         occurrence=occurrence,
         resets_at=_reset_time(raw.get("resets_at")),
         window=window,
-        verified_recovery=True,
         metadata=metadata,
     )
 

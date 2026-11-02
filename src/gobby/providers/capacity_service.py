@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import partial
 from typing import Literal, Protocol, cast
@@ -95,6 +95,7 @@ class ProviderCapacitySnapshot:
     windows: tuple[UsageWindow, ...]
     reason: str | None
     source_version: str | None
+    details: Mapping[str, object] = field(default_factory=dict)
 
     @classmethod
     def unknown(cls, provider: str, reason: str) -> ProviderCapacitySnapshot:
@@ -118,6 +119,7 @@ class ProviderCapacitySnapshot:
             "windows": [window.to_dict() for window in self.windows],
             "reason": self.reason,
             "source_version": self.source_version,
+            "details": dict(self.details),
         }
 
 
@@ -194,10 +196,8 @@ class ProviderCapacityService:
             for _ in range(_MAX_CAS_ATTEMPTS):
                 record = await self._run_store(self.storage.get, provider)
                 components, pane_hints = _decode(record)
-                merged, _ = merge_components(
-                    components, observation.components, snapshot_at=observation.snapshot_at
-                )
-                if merged == components:
+                merged, outcomes = merge_components(components, observation.components)
+                if "accepted" not in outcomes.values():
                     return self._read(provider, record)
                 aggregate = await self._write(
                     provider, record, merged, pane_hints, observation.source_version
@@ -354,6 +354,7 @@ class ProviderCapacityService:
             windows=aggregate.windows,
             reason=reason,
             source_version=source_version,
+            details=aggregate.details,
         )
 
     def _write_lock(self, provider: str) -> asyncio.Lock:
@@ -392,6 +393,7 @@ def _snapshot(
         windows=aggregate.windows,
         reason=aggregate.reason,
         source_version=source_version,
+        details=aggregate.details,
     )
 
 

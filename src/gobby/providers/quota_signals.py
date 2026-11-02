@@ -107,13 +107,11 @@ def normalize_reporter_snapshot(snapshot: ProviderUsageSnapshot) -> QuotaObserva
                 ),
                 resets_at=_parse_reset(window.resets_at),
                 window=window,
-                verified_recovery=True,
             )
         )
     return QuotaObservation(
         provider=snapshot.provider,
         components=tuple(components),
-        snapshot_at=snapshot.observed_at,
     )
 
 

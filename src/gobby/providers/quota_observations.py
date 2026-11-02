@@ -44,15 +44,11 @@ class QuotaComponent:
 
 @dataclass(frozen=True, slots=True)
 class QuotaObservation:
-    """Verified components from one raw provider envelope or reporter snapshot.
-
-    A complete provider-wide reporter snapshot sets snapshot_at to its observation time.
-    """
+    """Verified components from one raw provider envelope or reporter snapshot."""
 
     provider: str
     components: tuple[QuotaComponent, ...]
     source_version: str = "unknown"
-    snapshot_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +60,7 @@ class QuotaAggregate:
     reason: str | None
     observed_at: datetime | None
     stale_keys: tuple[str, ...]
+    details: Mapping[str, object] = field(default_factory=dict)
 
 
 def component_key(provider: str, scope: str, limit_id: str, identity: str) -> str:
@@ -76,16 +73,8 @@ def window_is_exhausted(window: UsageWindow) -> bool:
     return window.limit > 0 and window.used >= window.limit
 
 
-def admit_component(
-    existing: QuotaComponent | None,
-    incoming: QuotaComponent,
-    *,
-    snapshot_at: datetime | None = None,
-) -> AdmissionOutcome:
-    """Decide whether one incoming reading may replace the retained component.
-
-    A complete snapshot is the provider's current reading, so its reset may move earlier.
-    """
+def admit_component(existing: QuotaComponent | None, incoming: QuotaComponent) -> AdmissionOutcome:
+    """Decide whether one incoming reading may replace the retained component."""
     if existing is None:
         return "accepted"
     if incoming.occurrence == existing.occurrence:
@@ -93,8 +82,7 @@ def admit_component(
     if incoming.source_observed_at < existing.source_observed_at:
         return "older"
     if (
-        snapshot_at is None
-        and incoming.resets_at is not None
+        incoming.resets_at is not None
         and existing.resets_at is not None
         and incoming.resets_at < existing.resets_at
     ):
@@ -113,31 +101,15 @@ def admit_component(
 def merge_components(
     existing: Mapping[str, QuotaComponent],
     incoming: Sequence[QuotaComponent],
-    *,
-    snapshot_at: datetime | None = None,
 ) -> tuple[dict[str, QuotaComponent], dict[str, AdmissionOutcome]]:
-    """Admit each incoming component independently and return the merged map with outcomes.
-
-    A complete snapshot that reports at least one window also retires each provider-wide
-    component it omits, unless that component is newer than the snapshot. An empty success
-    is not evidence that every window is gone, so it retires nothing.
-    """
+    """Admit each incoming component independently and return the merged map with outcomes."""
     merged = dict(existing)
     outcomes: dict[str, AdmissionOutcome] = {}
     for component in incoming:
-        outcome = admit_component(merged.get(component.key), component, snapshot_at=snapshot_at)
+        outcome = admit_component(merged.get(component.key), component)
         outcomes[component.key] = outcome
         if outcome == "accepted":
             merged[component.key] = component
-    if snapshot_at is not None and incoming:
-        reported = {component.key for component in incoming}
-        for key, component in list(merged.items()):
-            if (
-                key not in reported
-                and component.scope == "provider"
-                and component.source_observed_at <= snapshot_at
-            ):
-                del merged[key]
     return merged, outcomes
 
 
@@ -178,8 +150,12 @@ def aggregate_components(
             state="unknown", windows=(), reason=None, observed_at=None, stale_keys=()
         )
     ordered = sorted(components)
-    fresh = [components[key] for key in ordered if _is_fresh(components[key], now)]
-    stale_keys = tuple(key for key in ordered if not _is_fresh(components[key], now))
+    reasons = {key: _stale_reason(components[key], now) for key in ordered}
+    fresh = [components[key] for key in ordered if reasons[key] is None]
+    stale_keys = tuple(key for key in ordered if reasons[key] is not None)
+    details = {
+        "components": {key: _component_detail(components[key], reasons[key]) for key in ordered}
+    }
     if any(component.state == "exhausted" for component in fresh):
         state: QuotaState = "exhausted"
         reason: str | None = "one or more usage windows exhausted"
@@ -195,6 +171,7 @@ def aggregate_components(
         reason=reason,
         observed_at=max(c.source_observed_at for c in components.values()),
         stale_keys=stale_keys,
+        details=details,
     )
 
 
@@ -216,11 +193,24 @@ def _recovery_verified(existing: QuotaComponent, incoming: QuotaComponent) -> bo
     )
 
 
-def _is_fresh(component: QuotaComponent, now: datetime) -> bool:
-    age = (now - component.source_observed_at).total_seconds()
-    if age > FRESHNESS_SECONDS:
-        return False
-    return component.resets_at is None or component.resets_at > now
+def _stale_reason(component: QuotaComponent, now: datetime) -> str | None:
+    if (now - component.source_observed_at).total_seconds() > FRESHNESS_SECONDS:
+        return "source_older_than_900s"
+    if component.resets_at is not None and component.resets_at <= now:
+        return "reset_passed"
+    return None
+
+
+def _component_detail(component: QuotaComponent, stale_reason: str | None) -> dict[str, object]:
+    return {
+        "limit_id": component.limit_id,
+        "scope": component.scope,
+        "state": component.state,
+        "fresh": stale_reason is None,
+        "stale_reason": stale_reason,
+        "source_observed_at": component.source_observed_at.isoformat(),
+        "resets_at": None if component.resets_at is None else component.resets_at.isoformat(),
+    }
 
 
 def _encode_component(component: QuotaComponent) -> dict[str, object]:

@@ -680,3 +680,49 @@ async def test_pane_hint_persistence_dedupes_occurrences() -> None:
     assert await service.observe_pane_hint(hint) is True
     # A duplicate is recognized before any write, so it neither refreshes nor duplicates.
     assert await service.observe_pane_hint(hint) is False
+
+
+async def test_pane_hints_persist_for_every_provider() -> None:
+    for provider in ("claude", "codex", "grok", "droid", "qwen", "agy"):
+        service = _service(_Clock(_T0))
+        hint = PaneQuotaHint(
+            provider=provider,
+            occurrence=f"{provider}-pane-occ",
+            kind="usage_limit",
+            detected_at=_T0,
+        )
+        assert await service.observe_pane_hint(hint) is True
+        # The persisted dedupe record recognizes a repeat before any write.
+        assert await service.observe_pane_hint(hint) is False
+        # A hint alone is never a quota reading.
+        assert (await service.get(provider)).state == "unknown"
+
+
+def test_codex_malformed_reached_and_reset_handling() -> None:
+    # A reached flag that is not a non-empty string is unverified, so the whole payload is ignored.
+    for reached in ("", 1, True):
+        payload: Mapping[str, object] = {
+            "limit_id": "codex",
+            "primary": None,
+            "secondary": None,
+            "rate_limit_reached_type": reached,
+        }
+        assert (
+            observation_from_rate_limits(
+                payload, source_observed_at=_T0, occurrence="bad-reached", source_key="s"
+            )
+            is None
+        )
+    # A reset that is not a finite number is unknown, never a fabricated reset time.
+    payload = {
+        "limit_id": "codex",
+        "primary": {"used_percent": 80.0, "window_minutes": 10080, "resets_at": "soon"},
+        "secondary": None,
+    }
+    observation = observation_from_rate_limits(
+        payload, source_observed_at=_T0, occurrence="bad-reset", source_key="s"
+    )
+    assert observation is not None
+    (component,) = observation.components
+    assert component.resets_at is None
+    assert component.state == "available"
