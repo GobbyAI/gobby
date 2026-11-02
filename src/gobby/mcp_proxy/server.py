@@ -33,6 +33,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tool_results import ToolResultStore
 from gobby.utils import project_context as project_context_utils
 from gobby.utils.session_context import (
+    SeededContextTokens,
     get_current_session_id,
     reset_seeded_contexts,
     resolve_and_seed_contexts,
@@ -288,18 +289,7 @@ class GobbyDaemonTools:
                 is_error=True,
             )
 
-        db = self._session_manager.db if self._session_manager else None
-        session_scope_ref = (
-            self._caller_project_ref() if session_id and session_id.lstrip("#").isdigit() else None
-        )
-        tokens = await resolve_and_seed_contexts(
-            session_ref=session_id,
-            session_manager=self._session_manager,
-            project_ref=project_id,
-            session_scope_ref=session_scope_ref,
-            session_ref_origin="ambient",
-            db=db,
-        )
+        tokens = await self._seed_call_context(session_id, project_id)
 
         # User-input error: caller passed project_id but it did not resolve.
         if project_id and tokens.resolved_project_id is None:
@@ -410,23 +400,64 @@ class GobbyDaemonTools:
         tool_name: str,
         session_id: str | None = None,
     ) -> dict[str, Any]:
-        """Get tool schema."""
+        """Get tool schema; a successful lookup latches its lease for call_tool."""
         result = await self.tool_proxy.get_tool_schema(
             server_name, tool_name, project_id=self._caller_project_ref()
         )
         if result.get("success") is True and isinstance(result.get("tool"), dict):
-            try:
-                record_schema_shown(
-                    self.tool_proxy,
-                    session_id or get_current_session_id(),
-                    server_name=server_name,
-                    tool_name=tool_name,
-                )
-            except ValueError as exc:
-                logger.warning(
-                    "Schema lease not recorded for %s:%s: %s", server_name, tool_name, exc
-                )
+            await self._record_schema_lease(server_name, tool_name, session_id)
         return result
+
+    async def _seed_call_context(
+        self, session_id: str | None, project_id: str | None = None
+    ) -> SeededContextTokens:
+        """Seed the session ref exactly as call_tool does, so leases and enforcement agree."""
+        db = self._session_manager.db if self._session_manager else None
+        session_scope_ref = (
+            self._caller_project_ref() if session_id and session_id.lstrip("#").isdigit() else None
+        )
+        return await resolve_and_seed_contexts(
+            session_ref=session_id,
+            session_manager=self._session_manager,
+            project_ref=project_id,
+            session_scope_ref=session_scope_ref,
+            session_ref_origin="ambient",
+            db=db,
+        )
+
+    async def _record_schema_lease(
+        self, server_name: str, tool_name: str, session_id: str | None
+    ) -> None:
+        """Latch the lease on the session call_tool enforces for this ref.
+
+        The lease is recorded while the ref is seeded as call_tool seeds it. An explicit
+        ref that call_tool refuses records nothing. An omitted ref leases the ambient
+        session, which enforcement also resolves.
+        """
+        tokens = await self._seed_call_context(session_id)
+        try:
+            if session_id:
+                lease_session_id = tokens.resolved_session_id
+                if lease_session_id is None:
+                    logger.warning(
+                        "Schema lease not recorded for %s:%s: session_id %r did not resolve",
+                        server_name,
+                        tool_name,
+                        session_id,
+                    )
+                    return
+            else:
+                lease_session_id = get_current_session_id()
+            record_schema_shown(
+                self.tool_proxy,
+                lease_session_id,
+                server_name=server_name,
+                tool_name=tool_name,
+            )
+        except ValueError as exc:
+            logger.warning("Schema lease not recorded for %s:%s: %s", server_name, tool_name, exc)
+        finally:
+            reset_seeded_contexts(tokens)
 
     async def read_mcp_resource(self, server_name: str, resource_uri: str) -> Any:
         """Read resource."""
