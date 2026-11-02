@@ -967,6 +967,12 @@ pub(crate) mod serial_db {
             conn,
             lifecycle,
         };
+        let before = crate::visibility::visible_symbols_for_file(&mut state.conn, &ctx, FILE)
+            .expect("pinned selector before retirement");
+        assert!(
+            !before.is_empty(),
+            "the pin serves the deleted file's symbols before retirement"
+        );
 
         let outcome = state
             .sync_file(FILE)
@@ -975,6 +981,12 @@ pub(crate) mod serial_db {
         assert_eq!(
             outcome,
             ProjectionFileSyncOutcome::SkippedMissingIndexedFile
+        );
+        let after = crate::visibility::visible_symbols_for_file(&mut state.conn, &ctx, FILE)
+            .expect("pinned selector after retirement");
+        assert!(
+            after.is_empty(),
+            "retired pin's symbols left the pinned selector: {after:?}"
         );
         let requests = server.join().expect("collection service");
         assert!(
@@ -990,7 +1002,10 @@ pub(crate) mod serial_db {
             )
             .expect("pin count")
             .get(0);
-        assert_eq!(retained, 0, "the deleted source's pin is retired");
+        assert_eq!(
+            retained, 0,
+            "the deleted source's pin is retired, so no vector work is pending"
+        );
         assert_eq!(
             state.sync_file(FILE).expect("later pass"),
             ProjectionFileSyncOutcome::SkippedMissingIndexedFile,
