@@ -1,5 +1,5 @@
 name: test-writer
-version: "1.1.0"
+version: "2.0.0"
 description: Writes focused failing tests and records test evidence for the assigned task.
 tags: [gobby, seat]
 capabilities: [accept_resume_retype, release_own_claim]

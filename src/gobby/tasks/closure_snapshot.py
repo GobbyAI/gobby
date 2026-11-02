@@ -31,13 +31,31 @@ _JSON_OBJECT = TypeAdapter(dict[str, Any])
 _JSON_POLICY = TypeAdapter(dict[str, JsonValue])
 
 
-def installed_project_policy(rules: list[RuleDefinitionRow]) -> dict[str, JsonValue] | None:
+def installed_project_policy(
+    rules: list[RuleDefinitionRow], *, provenance: list[RuleDefinitionRow] | None = None
+) -> dict[str, JsonValue] | None:
     """Read a single authoritative policy value from enabled installed effects.
 
     Session variables are projections controlled by hook delivery timing. They
     cannot authorize security decisions. No configured policy contributes an
     empty path floor; malformed or conflicting writers fail closed.
     """
+    registry = provenance if provenance is not None else rules
+    writers = [
+        rule
+        for rule in registry
+        if any(
+            isinstance(effect, dict)
+            and effect.get("type") == "set_variable"
+            and effect.get("variable") == "project_policy"
+            for effect in rule.definition_json.get("effects", [])
+        )
+    ]
+    installed_names = {rule.name for rule in writers if rule.source == "installed"}
+    if any(rule.source != "installed" for rule in writers) or any(
+        rule.source != "installed" and rule.name in installed_names for rule in registry
+    ):
+        return None
     policies = [
         effect.get("value")
         for rule in rules
@@ -177,8 +195,11 @@ def prepare_closure(
         task_data = _JSON_OBJECT.dump_python(task.to_dict(), mode="json")
         if prospective_commits is not None:
             task_data["commits"] = list(prospective_commits)
-        rules = RuleDefinitionManager(db).list_effective(task.project_id)
-        project_policy = installed_project_policy(rules)
+        rule_store = RuleDefinitionManager(db)
+        rules = rule_store.list_effective(task.project_id)
+        project_policy = installed_project_policy(
+            rules, provenance=rule_store.list_all(project_id=task.project_id)
+        )
         snapshot = ClosureSnapshot(
             event=event,
             task=task_data,

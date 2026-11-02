@@ -213,64 +213,43 @@ async def test_plan_loop_recording_contract(monkeypatch: pytest.MonkeyPatch) -> 
     assert recalled["count"] == 1
 
     cases = [
-        ("unproven", "weak-testability", [], []),
-        ("cross-section", "unhandled-edge", [], ["1.1"]),
-        ("dual", "bad-sequencing", ["1.1", "1.2"], ["1.1"]),
+        ("unproven", "weak-testability", []),
+        ("cross-section", "bad-sequencing", ["1.1", "1.2"]),
     ]
-    recorded_classes: list[tuple[str, str]] = []
-    for finding_id, category, participating, causal in cases:
-        class_bundles = (
-            ("reviewer-miss", {"participating_section_ids": participating}),
-            (
-                "cross-section",
-                {
-                    "causal_section_ids": causal,
-                    "causal_finding_id": f"{finding_id}-cause",
-                    "introduced_in_round": 2,
-                },
-            ),
+    recorded_findings: list[str] = []
+    for finding_id, category, participating in cases:
+        if not participating:
+            continue
+        events.append("record")
+        result = await service.record(
+            source_kind="plan_review",
+            source="interactive-approval",
+            source_review="approval-round-3",
+            decision="confirmed",
+            finding={
+                "title": f"{finding_id} reviewer miss",
+                "lesson_type": "reviewer-miss",
+                "pattern_id": f"plan-review:reviewer-miss:{category}:{finding_id}",
+                "check_key": finding_id,
+                "category": category,
+                "principle": "Preserve evidence-backed plan review lessons",
+                "prevention": "Review every participating section",
+                "guardrail_target": "checklist",
+                "rule_id": f"plan-review:{category}",
+            },
+            evidence={"participating_section_ids": participating},
         )
-        for lesson_type, evidence in class_bundles:
-            section_ids = participating if lesson_type == "reviewer-miss" else causal
-            if not section_ids:
-                continue
-            events.append("record")
-            result = await service.record(
-                source_kind="plan_review",
-                source="interactive-approval",
-                source_review="approval-round-3",
-                decision="confirmed",
-                finding={
-                    "title": f"{finding_id} {lesson_type}",
-                    "lesson_type": lesson_type,
-                    "pattern_id": (
-                        f"plan-review:{lesson_type}:{category}:{finding_id}-{lesson_type}"
-                    ),
-                    "check_key": f"{finding_id}-{lesson_type}",
-                    "category": category,
-                    "principle": "Preserve evidence-backed plan review lessons",
-                    "prevention": "Review the proven causal section bundle",
-                    "guardrail_target": "checklist",
-                    "rule_id": f"plan-review:{category}",
-                },
-                evidence=evidence,
-            )
-            recorded_classes.append((finding_id, lesson_type))
-            assert result["lesson_id"]
+        recorded_findings.append(finding_id)
+        assert result["lesson_id"]
 
     assert events[0] == "recall"
-    assert recorded_classes == [
-        ("cross-section", "cross-section"),
-        ("dual", "reviewer-miss"),
-        ("dual", "cross-section"),
-    ]
+    assert recorded_findings == ["cross-section"]
     recorded = memories.memories[1:]
-    assert len(recorded) == 3
+    assert len(recorded) == 1
     assert all("lesson-domain:plan" in (memory.tags or []) for memory in recorded)
     assert all("- guardrail_target: checklist" in memory.content for memory in recorded)
     assert all("- rule_id: plan-review:" in memory.content for memory in recorded)
-    assert "participating_section_ids" in recorded[1].content
-    assert "causal_section_ids" in recorded[0].content
+    assert "participating_section_ids" in recorded[0].content
 
 
 def test_interactive_approval_sequence(

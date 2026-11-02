@@ -31,9 +31,15 @@ def test_operator_scope_is_explicit_and_does_not_leak(
         tasks.remove_label(task.id, "security-review")
 
 
-def test_operator_cli_can_remove_review_label(
-    temp_db: HubDatabase, sample_project: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("bound_seat", [False, True])
+def test_cli_cannot_grant_itself_review_label_authority(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    bound_seat: bool,
 ) -> None:
+    from contextlib import nullcontext
+
     from click.testing import CliRunner
 
     from gobby.cli.tasks.labels import label_cmd
@@ -43,9 +49,15 @@ def test_operator_cli_can_remove_review_label(
         sample_project["id"], "Operator CLI decision", labels=["security-review"]
     )
     monkeypatch.setattr("gobby.cli.tasks.labels.get_task_manager", lambda: tasks)
-    result = CliRunner().invoke(label_cmd, ["remove", task.id, "security-review"])
-    assert result.exit_code == 0, result.output
-    assert not tasks.get_task(task.id).labels
+    actor = (
+        AgentSessions(temp_db, sample_project["id"]).add("unprivileged-seat")
+        if bound_seat
+        else None
+    )
+    with session_context_for_test(session_id=actor) if actor else nullcontext():
+        result = CliRunner().invoke(label_cmd, ["remove", task.id, "security-review"])
+    assert result.exit_code != 0, result.output
+    assert "security-review" in (tasks.get_task(task.id).labels or [])
 
 
 @pytest.mark.asyncio

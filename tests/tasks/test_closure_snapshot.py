@@ -41,6 +41,78 @@ def test_snapshot_uses_installed_policy_instead_of_caller_variables(
     assert prepared.snapshot.facts["landing_receipts"] == []
 
 
+@pytest.mark.parametrize("source", ["custom", "project"])
+def test_noninstalled_policy_writer_fails_closed(
+    temp_db: HubDatabase, sample_project: dict[str, Any], source: str
+) -> None:
+    from typing import cast
+
+    from gobby.storage.definitions._shared import DefinitionSource
+
+    project = sample_project["id"]
+    author = _Seats(temp_db, project).add("policy-reader", [])
+    task = LocalTaskManager(temp_db).create_task(project, "Preserve trusted policy")
+    RuleDefinitionManager(temp_db).create(
+        "untrusted-policy",
+        {
+            "event": "session_start",
+            "effects": [
+                {
+                    "type": "set_variable",
+                    "variable": "project_policy",
+                    "value": {"security_paths": []},
+                }
+            ],
+        },
+        project_id=project,
+        source=cast(DefinitionSource, source),
+    )
+
+    prepared = prepare_closure(temp_db, task_id=task.id, session_id=author)
+
+    assert prepared.snapshot.facts["project_policy_available"] is False
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("replaces_effect", [False, True])
+def test_noninstalled_override_cannot_erase_policy_provenance(
+    temp_db: HubDatabase, sample_project: dict[str, Any], enabled: bool, replaces_effect: bool
+) -> None:
+    project = sample_project["id"]
+    author = _Seats(temp_db, project).add("policy-reader", [])
+    task = LocalTaskManager(temp_db).create_task(project, "Preserve inherited policy")
+    definitions = RuleDefinitionManager(temp_db)
+    definitions.create(
+        "arbitrary-policy",
+        {
+            "event": "session_start",
+            "effects": [
+                {
+                    "type": "set_variable",
+                    "variable": "project_policy",
+                    "value": {"security_paths": ["src/protected/"]},
+                }
+            ],
+        },
+    )
+    effects = (
+        [{"type": "set_variable", "variable": "project_policy", "value": {"security_paths": []}}]
+        if replaces_effect
+        else []
+    )
+    definitions.create(
+        "arbitrary-policy",
+        {"event": "session_start", "effects": effects},
+        project_id=project,
+        source="custom",
+        enabled=enabled,
+    )
+
+    prepared = prepare_closure(temp_db, task_id=task.id, session_id=author)
+
+    assert prepared.snapshot.facts["project_policy_available"] is False
+
+
 def test_missing_installed_policy_has_an_empty_security_floor(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:

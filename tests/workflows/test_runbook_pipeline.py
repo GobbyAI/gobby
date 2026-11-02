@@ -47,9 +47,12 @@ PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 class RunbookAgentsProxy:
     """Stub gobby-agents proxy: records each call and answers spawns like a placed reply."""
 
-    def __init__(self, fail_agents: frozenset[str] = frozenset()) -> None:
+    def __init__(
+        self, fail_agents: frozenset[str] = frozenset(), *, refuse_layout: bool = False
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.fail_agents = fail_agents
+        self.refuse_layout = refuse_layout
 
     async def get_tool_schema(
         self, server: str, tool: str, *, session_id: str | None
@@ -84,7 +87,11 @@ class RunbookAgentsProxy:
                 "workspace_id": "ws-1",
                 "tab_title": TAB_TITLE,
             }
-        # Non-spawn tools (rebalance, task lookups, messages) succeed without a spawn payload.
+        if tool == "rebalance_tab" and self.refuse_layout:
+            return {"success": False, "code": "forbidden", "error": "Skipped alpha: layout refused"}
+        if tool == "list_tasks":
+            return {"success": True, "tasks": [], "open_count": 0}
+        # Non-spawn tools succeed without a spawn payload.
         if tool != "spawn_agent":
             return {"success": True}
         if arguments["agent"] in self.fail_agents:
@@ -135,11 +142,22 @@ async def _team_planning(temp_db: HubDatabase) -> PipelineDefinition:
                         },
                     },
                     {
+                        "id": "child_count",
+                        "mcp": {
+                            "server": "gobby-tasks",
+                            "tool": "list_tasks",
+                            "arguments": {"parent_task_id": "${{ inputs.task }}", "limit": 1},
+                        },
+                    },
+                    {
                         "id": "children",
                         "mcp": {
                             "server": "gobby-tasks",
                             "tool": "list_tasks",
-                            "arguments": {"parent_task_id": "${{ inputs.task }}", "limit": 1000},
+                            "arguments": {
+                                "parent_task_id": "${{ inputs.task }}",
+                                "limit": "${{ steps.child_count.output.open_count or 1 }}",
+                            },
                         },
                     },
                     *[
@@ -172,6 +190,7 @@ async def _team_planning(temp_db: HubDatabase) -> PipelineDefinition:
                         "mcp": {
                             "server": "gobby-workspaces",
                             "tool": "rebalance_tab",
+                            "on_refused": "record",
                             "arguments": {},
                         },
                     },
@@ -239,7 +258,21 @@ async def test_partial_deploy_relaunches_missing_seat(temp_db: HubDatabase) -> N
     assert [spawn["agent"] for spawn in relaunch.spawns()] == ["beta"]
 
 
-DEVTEAM_SEATS = ["developer", "code-reviewer"]
+async def test_recorded_layout_refusal_completes_with_skipped_seat(temp_db: HubDatabase) -> None:
+    pipeline = await _team_planning(temp_db)
+    proxy = RunbookAgentsProxy(refuse_layout=True)
+
+    result = await _executor(temp_db, proxy).execute(pipeline, RUN_INPUTS, PROJECT_ID)
+
+    assert result.status == ExecutionStatus.COMPLETED
+    steps = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID).get_steps_for_execution(
+        result.id
+    )
+    arrange = next(step for step in steps if step.step_id == "arrange")
+    assert arrange.status == StepStatus.COMPLETED
+    refusal = json.loads(arrange.output_json or "null")["refused"]
+    assert refusal["code"] == "forbidden"
+    assert "alpha" in refusal["error"]
 
 
 LAYOUT_REFUSED = {
@@ -422,7 +455,10 @@ async def test_planning_child_past_the_first_fifty_children_is_reused(
     result = await _executor(temp_db, proxy).execute(pipeline, RUN_INPUTS, PROJECT_ID)
 
     assert result.status == ExecutionStatus.COMPLETED
-    assert "gobby-tasks:create_task" not in [call["tool"] for call in proxy.calls]
+    lookups = [
+        call["arguments"] for call in proxy.calls if call["tool"] == "gobby-tasks:list_tasks"
+    ]
+    assert [lookup["limit"] for lookup in lookups] == [1, len(children)]
     writer = proxy.spawns()[0]
     assert "#26100" in writer["prompt"]
 

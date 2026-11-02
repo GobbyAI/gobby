@@ -14,7 +14,6 @@ from uuid import uuid4
 
 import httpx
 import pytest
-import yaml
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
@@ -525,10 +524,31 @@ async def test_devteam_arrange_refuses_a_pipeline_run_with_no_request_principal(
     assert refused == "forbidden"
 
 
-TEAM_PLANNING = (
-    Path(__file__).resolve().parents[2]
-    / "src/gobby/install/shared/workflows/pipelines/team-planning.yaml"
-)
+def _layout_pipeline() -> PipelineDefinition:
+    tabs = "[steps[s].output.tab_ref for s in inputs.seats.split(',') if steps[s].output.tab_ref]"
+    return PipelineDefinition.model_validate(
+        {
+            "name": "fixture-layout",
+            "type": "pipeline",
+            "steps": [
+                {
+                    "id": "arrange",
+                    "mcp": {
+                        "server": "gobby-workspaces",
+                        "tool": "rebalance_tab",
+                        "arguments": {
+                            "workspace": "${{ none if " + tabs + " else inputs.workspace }}",
+                            "tab": "${{ (" + tabs + " or [steps.guard.output.tab_title])[0] }}",
+                            "seats": "${{ [{'name': s, 'pane': steps[s].output.pane_ref} "
+                            "for s in steps.guard.output.launch] }}",
+                            "rows": 100,
+                            "layout": "tiled",
+                        },
+                    },
+                }
+            ],
+        }
+    )
 
 
 @pytest.mark.parametrize("managed", [False, True], ids=["operator-launch", "managed-launch"])
@@ -550,7 +570,7 @@ async def test_team_planning_arrange_tiles_the_tab_a_seat_pane_joins(
     The run inherits its launcher's principal: none for an operator launch, the managed token
     for an agent launch. The step acts as the pipeline's session either way.
     """
-    definition = PipelineDefinition.model_validate(yaml.safe_load(TEAM_PLANNING.read_text()))
+    definition = _layout_pipeline()
     arrange = next(step for step in definition.steps if step.id == "arrange")
     assert arrange.mcp is not None and arrange.mcp.arguments is not None
     registry = _registry(stack)
@@ -624,7 +644,7 @@ def test_team_planning_arrange_finds_its_tab_by_title_when_a_seat_pane_vanished(
 
     Arrange then names the team tab by its workspace and title, as devteam's arrange does.
     """
-    definition = PipelineDefinition.model_validate(yaml.safe_load(TEAM_PLANNING.read_text()))
+    definition = _layout_pipeline()
     arrange = next(step for step in definition.steps if step.id == "arrange")
     assert arrange.mcp is not None and arrange.mcp.arguments is not None
     context = {

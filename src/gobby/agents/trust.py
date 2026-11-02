@@ -352,9 +352,6 @@ def _seed_codex_trust(
     result.add_file_written(config_path)
 
 
-_PROJECT_POLICY_RULE = "project-operating-policy"
-
-
 def codex_model_ids_in_policy(defaults: Any) -> set[str]:
     """Return the Codex model ids named anywhere under one launch-defaults tree.
 
@@ -407,8 +404,8 @@ def packaged_codex_launch_models() -> frozenset[str]:
 def active_codex_launch_models(db: HubDatabase | None, project_id: str | None) -> tuple[str, ...]:
     """Return the Codex model ids in the DB-active project operating policy.
 
-    Reads the ``project-operating-policy`` rule row and walks each ``project_policy``
-    effect value, so a live policy change is seeded without a checkout edit. Returns
+    Reads enabled installed ``project_policy`` effects, so a live policy change
+    is seeded without a checkout edit. Returns
     an empty tuple when there is no database or the row cannot be read: a database
     error, or a malformed row, must not block a spawn.
     """
@@ -417,18 +414,23 @@ def active_codex_launch_models(db: HubDatabase | None, project_id: str | None) -
     if db is None:
         return ()
     try:
-        rule = RuleDefinitionManager(db).get_by_name(_PROJECT_POLICY_RULE, project_id)
+        rules = RuleDefinitionManager(db).list_effective(project_id)
     except (psycopg.Error, ValueError):
         logger.warning(
             "Active project policy unreadable; using packaged Codex defaults", exc_info=True
         )
         return ()
-    if rule is None:
-        return ()
     models: set[str] = set()
-    for effect in rule.definition_json.get("effects") or []:
-        if isinstance(effect, Mapping) and effect.get("variable") == "project_policy":
-            models |= codex_model_ids_in_policy(effect.get("value"))
+    for rule in rules:
+        if not rule.enabled or rule.source != "installed":
+            continue
+        for effect in rule.definition_json.get("effects") or []:
+            if (
+                isinstance(effect, Mapping)
+                and effect.get("type") == "set_variable"
+                and effect.get("variable") == "project_policy"
+            ):
+                models |= codex_model_ids_in_policy(effect.get("value"))
     return tuple(sorted(models))
 
 

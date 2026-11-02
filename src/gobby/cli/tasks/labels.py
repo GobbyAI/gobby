@@ -53,10 +53,7 @@ def remove_label(task_id: str, label: str) -> None:
         raise SystemExit(1)
 
     try:
-        from gobby.storage.tasks._label_policy import operator_label_changes
-
-        with operator_label_changes():
-            manager.remove_label(resolved.id, label)
+        manager.remove_label(resolved.id, label)
     except ValueError as e:
         click.secho(f"Error: {e}", fg="red", err=True)
         raise SystemExit(1) from None

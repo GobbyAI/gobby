@@ -1,4 +1,4 @@
-version: "2.0.0"
+version: "2.0.1"
 tags: [roles, seat, enforcement, gobby, seat-policy]
 
 # Definitions select this policy group and exclude the permissions they grant.
@@ -9,7 +9,7 @@ rules:
     enabled: true
     priority: 10
     # The Assistant and Orchestrator launch seats for the operator, so this rule
-    # never covers them (operator ruling, 2026-10-21). A team manager (its definition sets the
+    # never covers them. A team manager (its definition sets the
     # `team_manager` variable) spawns and resumes its team's seats, so this rule
     # exempts its spawn_agent calls. Spawn admission bounds them: an epic team's
     # Dev Team Lead takes only its epic's leaves, reviewers and the team tree.

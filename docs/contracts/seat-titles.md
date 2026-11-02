@@ -48,7 +48,7 @@ Recorded verbatim:
 - Launch: `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py` sets the
   definition title from the agent name.
 - Runbook placements: `src/gobby/install/shared/workflows/pipelines/`
-(`dev-team.yaml`, `team-planning.yaml`, `support.yaml`).
+  (`dev-team.yaml`, `team-planning.yaml`, `support.yaml`).
 - Pinned by `tests/sessions/test_title_lifecycle.py`,
   `tests/agents/test_runbook_seat_titles.py`,
   `tests/mcp_proxy/tools/spawn_agent/test_seat_titles.py`, and

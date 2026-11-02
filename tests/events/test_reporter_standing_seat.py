@@ -2,28 +2,24 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import yaml
 
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.coordination_waits import CoordinationWaitService
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.datetime import utc_now
 from gobby.utils.machine_id import require_machine_id
-from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.events.test_coordination_waits import CoordinationHarness, connection_for
 from tests.events.test_coordination_waits import harness as coordination_fixture
 from tests.terminals.fakes import make_memory_terminal
@@ -32,22 +28,7 @@ pytestmark = pytest.mark.integration
 
 harness = coordination_fixture
 
-REPORTER = (
-    Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents/reporter.yaml"
-)
 CADENCE_SECONDS = 1800
-
-
-def _cadence_wait_timeout() -> int:
-    """Read the wait timeout the reporter prompt renders for the policy cadence."""
-    data: dict[str, Any] = yaml.safe_load(REPORTER.read_text(encoding="utf-8"))
-    prompt = AgentDefinitionBody.model_validate(data).prompt_for(
-        "agent",
-        variables={"project_policy": {"roots": [], "report_cadence_seconds": CADENCE_SECONDS}},
-    )
-    match = re.search(r"wait_for_coordination\(reply=true, timeout=(\d+)\)", prompt)
-    assert match is not None
-    return int(match.group(1))
 
 
 def _expire(h: CoordinationHarness, wait_id: str) -> None:
@@ -59,17 +40,27 @@ def _expire(h: CoordinationHarness, wait_id: str) -> None:
 
 
 @pytest.mark.parametrize("state", ["no_wait", "waiting", "woke"])
+@pytest.mark.parametrize("allow_tick_yield", [False, True])
 async def test_reporter_stop_gate_allows_the_yield_without_end_agent_run(
-    harness: CoordinationHarness, state: str
+    harness: CoordinationHarness, state: str, allow_tick_yield: bool
 ) -> None:
-    sync_bundled_rules(harness.db, get_bundled_rules_path())
+    RuleDefinitionManager(harness.db).create(
+        "fixture-standing-yield",
+        {
+            "event": "stop",
+            "when": "variables.get('is_spawned_agent') and not variables.get('allow_tick_yield')",
+            "effects": [{"type": "block", "reason": "Finish with end_agent_run"}],
+        },
+        tags=["default"],
+    )
     if state != "no_wait":
-        row = harness.wait(reply=True, timeout=_cadence_wait_timeout())
+        row = harness.wait(reply=True, timeout=CADENCE_SECONDS)
         if state == "woke":
             _expire(harness, row["id"])
     variables: dict[str, Any] = {
         "_memory_initial_stop_checked": True,
         "is_spawned_agent": True,
+        "allow_tick_yield": allow_tick_yield,
     }
     event = HookEvent(
         event_type=HookEventType.STOP,
@@ -81,15 +72,14 @@ async def test_reporter_stop_gate_allows_the_yield_without_end_agent_run(
     engine = RuleEngine(harness.db, task_manager=LocalTaskManager(harness.db))
     decision = await engine.evaluate(event, session_id=harness.waiter, variables=variables)
 
-    assert decision.decision == "allow"
-    assert "end_agent_run" not in (decision.reason or "")
+    assert decision.decision == ("allow" if allow_tick_yield else "block")
+    assert ("end_agent_run" in (decision.reason or "")) is not allow_tick_yield
 
 
 async def test_reporter_cadence_wait_wakes_next_tick_and_rearms(
     harness: CoordinationHarness,
 ) -> None:
-    timeout = _cadence_wait_timeout()
-    assert timeout == CADENCE_SECONDS
+    timeout = CADENCE_SECONDS
     harness.db.execute(
         "UPDATE sessions SET source = 'codex', status = 'paused' WHERE id = %s",
         (harness.waiter,),
@@ -98,7 +88,7 @@ async def test_reporter_cadence_wait_wakes_next_tick_and_rearms(
         parent_session_id=harness.owner,
         child_session_id=harness.waiter,
         provider="codex",
-        agent_name="reporter",
+        agent_name="fixture-cadence-seat",
         prompt="Report on each policy cadence",
         resume_metadata_json={"execution_mode": "interactive", "provider_cli_mode": "terminal"},
     )

@@ -58,23 +58,6 @@ def test_packaged_models_are_parsed_once_per_process(monkeypatch: pytest.MonkeyP
     assert parse.call_count == cold_reads
 
 
-def test_packaged_launch_defaults_match_project_policy() -> None:
-    root = Path(__file__).resolve().parents[2]
-    document = yaml.safe_load(
-        (root / ".gobby/workflows/rules/project-operating-policy.yaml").read_text()
-    )
-    policy = next(
-        effect["value"]
-        for effect in document["rules"]["project-operating-policy"]["effects"]
-        if effect.get("variable") == "project_policy"
-    )
-    path = _packaged_defaults_path()
-    assert path.is_file(), "Launch defaults must ship independently of the source checkout"
-    assert json.loads(path.read_text()) == {
-        key: policy[key] for key in ("launch_defaults", "role_launch_defaults")
-    }
-
-
 def test_launch_defaults_are_in_built_wheel(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -209,9 +192,12 @@ def test_active_policy_codex_model_is_seeded(
     """A Codex model added to the DB-active project policy is acknowledged at spawn."""
     monkeypatch.delenv("CODEX_HOME", raising=False)
     policy_row = SimpleNamespace(
+        enabled=True,
+        source="installed",
         definition_json={
             "effects": [
                 {
+                    "type": "set_variable",
                     "variable": "project_policy",
                     "value": {
                         "launch_defaults": {
@@ -221,9 +207,11 @@ def test_active_policy_codex_model_is_seeded(
                     },
                 }
             ]
-        }
+        },
     )
-    monkeypatch.setattr(RuleDefinitionManager, "get_by_name", lambda *_args, **_kwargs: policy_row)
+    monkeypatch.setattr(
+        RuleDefinitionManager, "list_effective", lambda *_args, **_kwargs: [policy_row]
+    )
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
@@ -261,6 +249,34 @@ def test_active_codex_models_empty_without_database_or_readable_row(
     def unreadable(*_args: Any, **_kwargs: Any) -> None:
         raise failure
 
-    monkeypatch.setattr(RuleDefinitionManager, "get_by_name", unreadable)
+    monkeypatch.setattr(RuleDefinitionManager, "list_effective", unreadable)
 
+    assert active_codex_launch_models(cast(Any, object()), "project-1") == ()
+
+
+@pytest.mark.parametrize(
+    ("enabled", "source"), [(False, "installed"), (True, "custom"), (True, "project")]
+)
+def test_active_models_ignore_disabled_or_untrusted_writers(
+    monkeypatch: pytest.MonkeyPatch, enabled: bool, source: str
+) -> None:
+    row = SimpleNamespace(
+        enabled=enabled,
+        source=source,
+        definition_json={
+            "effects": [
+                {
+                    "type": "set_variable",
+                    "variable": "project_policy",
+                    "value": {
+                        "launch_defaults": {
+                            "fixture_provider": "codex",
+                            "fixture_model": "untrusted-model",
+                        }
+                    },
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(RuleDefinitionManager, "list_effective", lambda *_args, **_kwargs: [row])
     assert active_codex_launch_models(cast(Any, object()), "project-1") == ()

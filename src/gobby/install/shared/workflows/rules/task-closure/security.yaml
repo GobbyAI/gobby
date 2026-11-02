@@ -1,4 +1,4 @@
-version: "3.0.0"
+version: "3.0.1"
 tags: [task-security]
 
 rules:
@@ -12,7 +12,7 @@ rules:
         facts.get('candidate_paths_available') != True))
     effects:
       - type: block
-        reason: Security admission requires an installed project policy and proven candidate paths.
+        reason: Security admission requires trusted policy provenance and proven candidate paths.
 
   landing-requires-security-policy-provenance:
     event: task_land
@@ -20,7 +20,7 @@ rules:
     when: *security_provenance
     effects:
       - type: block
-        reason: Security admission requires an installed project policy and proven candidate paths.
+        reason: Security admission requires trusted policy provenance and proven candidate paths.
 
   closure-requires-security-approval:
     description: Security-labeled work needs an independent authorized approval for the exact candidate.
