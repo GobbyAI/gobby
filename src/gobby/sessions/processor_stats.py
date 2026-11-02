@@ -102,22 +102,36 @@ class ProcessorStatsMixin:
         """Mirror each text block of a completed turn in order, one outbound row each.
 
         The final block keeps the turn's message id, so its ledger row marks the
-        whole turn as delivered. A single-block turn keeps its id unchanged. Every
-        block is attempted, and the first failure is re-raised after the rest.
+        whole turn as delivered. A single-block turn keeps its id unchanged. The
+        first failed block stops the turn: every later block is held in the ledger
+        and the retry loop sends it only after the block before it is delivered.
+        The failure is re-raised after the hold.
         """
         manager = self.communications_manager
         if manager is None:
             return
         last = len(texts) - 1
-        first_error: Exception | None = None
+        keys = [
+            message_id if index == last else f"{message_id}#{index}" for index in range(last + 1)
+        ]
         for index, text in enumerate(texts):
-            key = message_id if index == last else f"{message_id}#{index}"
+            order = {"transcript_turn_id": message_id, "transcript_block_index": index}
             try:
-                await manager.mirror_session_message(session_id, key, text)
-            except Exception as exc:
-                first_error = first_error or exc
-        if first_error is not None:
-            raise first_error
+                await manager.mirror_session_message(session_id, keys[index], text, order)
+            except Exception:
+                for later in range(index + 1, last + 1):
+                    try:
+                        await manager.hold_transcript_message(
+                            session_id,
+                            keys[later],
+                            texts[later],
+                            {"transcript_turn_id": message_id, "transcript_block_index": later},
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Holding transcript block %s failed", keys[later], exc_info=True
+                        )
+                raise
 
     def _accumulate_stats(
         self: ProcessorHost, session_id: str, records: Sequence[StatsRecord]
