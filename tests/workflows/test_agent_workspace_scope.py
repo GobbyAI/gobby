@@ -1328,6 +1328,80 @@ def test_explicit_regex_option_keeps_first_file_operand(
     assert agent_workspace_read_violation(None, data, data["tool_input"], variables, None)
 
 
+@pytest.mark.parametrize("hook_cwd", ["definition", "root"])
+def test_leading_cd_anchors_relative_reads_to_its_target(
+    root: Path, tmp_path: Path, hook_cwd: str
+) -> None:
+    # The hook reports the shell cwd from before the command. A shell left inside the
+    # workspace must still judge a relative operand against the checkout its `cd` enters.
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    checkout = tmp_path / "gobby"
+    cwd = own.parent if hook_cwd == "definition" else root
+    command = (
+        f"cd {checkout} && grep -n -E '^#{{1,4}} |^`kind:|^\\*\\*(Plan ID|Granularity)|^Targets:' "
+        ".gobby/plans/task-25460.md | head -120"
+    )
+    data = {
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+        "cwd": str(cwd),
+        "project_path": str(checkout),
+    }
+    assert not agent_workspace_read_violation(None, data, data["tool_input"], variables, None)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd {checkout} && cat {foreign}/notes.md",
+        "cd {own} && cat ../session-99/notes.md",
+        "cd {foreign} && cat notes.md",
+        "cd {foreign} && sh -c 'cat notes.md'",
+    ],
+)
+def test_leading_cd_still_refuses_foreign_workspace_reads(
+    root: Path, tmp_path: Path, command: str
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    foreign = own.parent / "session-99"
+    own.mkdir(parents=True)
+    foreign.mkdir()
+    checkout = tmp_path / "gobby"
+    data = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": command.format(checkout=checkout, own=own, foreign=foreign),
+        },
+        "cwd": str(checkout),
+        "project_path": str(checkout),
+    }
+    assert agent_workspace_read_violation(None, data, data["tool_input"], variables, None)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["cd {own} && cat ./notes.md", "cd {own} && cat notes.md", "cd {own} && cat sub/notes.md"],
+)
+def test_leading_cd_into_own_folder_keeps_own_reads_allowed(
+    root: Path, tmp_path: Path, command: str
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    (own / "sub").mkdir(parents=True)
+    (own / "notes.md").write_text("Own notes")
+    (own / "sub" / "notes.md").write_text("Own nested notes")
+    checkout = tmp_path / "gobby"
+    data = {
+        "tool_name": "Bash",
+        "tool_input": {"command": command.format(own=own)},
+        "cwd": str(checkout),
+        "project_path": str(checkout),
+    }
+    assert not agent_workspace_read_violation(None, data, data["tool_input"], variables, None)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["permission", "braces"])
 async def test_unreadable_directory_and_brace_limit_are_distinct(
@@ -1337,7 +1411,7 @@ async def test_unreadable_directory_and_brace_limit_are_distinct(
     monkeypatch: pytest.MonkeyPatch,
     failure: str,
 ) -> None:
-    from gobby.workflows import condition_helpers_sessions as helpers
+    from gobby.workflows import workspace_read_targets as helpers
 
     variables = _seat(root / PROJECT, "developer", 12)
     own = Path(variables["_agent_workspace_dir"])
