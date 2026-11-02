@@ -5,10 +5,13 @@ import sys
 from pathlib import Path
 
 import click
+import psycopg
 
+from gobby.cli.exposure_config import read_exposure_config
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+from gobby.config.bootstrap_io import bootstrap_path as default_bootstrap_path
 from gobby.paths import get_gobby_home
-from gobby.ui_exposure import UiExposeError, disable_tailscale_ui
+from gobby.ui_exposure import UiExposeError, disable_mcp_exposure, disable_tailscale_ui
 
 from ._install_prompts import _echo_uninstall_summary
 from .install_components import UNINSTALLABLE_COMPONENTS, run_uninstall_components
@@ -25,24 +28,31 @@ _GLOBAL_CLI_CONFIGS: tuple[tuple[str, str], ...] = (
 
 
 def _teardown_ui_exposure() -> None:
-    """Best-effort removal of the managed Tailscale UI exposure."""
+    """Best-effort removal of the managed Tailscale Web UI and /mcp handlers.
+
+    The recorded choices stay in hub config, so the next daemon start restores them.
+    """
     try:
         bootstrap = load_bootstrap(resolve_database_url=False)
-    except BootstrapConfigError as exc:
-        click.echo(f"Warning: could not read UI exposure intent: {exc}", err=True)
+        ui_config, mcp_config = read_exposure_config(default_bootstrap_path())
+    except (BootstrapConfigError, RuntimeError, psycopg.Error) as exc:
+        click.echo(f"Warning: could not read Tailscale exposure intent: {exc}", err=True)
         return
-    if bootstrap.ui_expose is None:
+    if ui_config.mode == "off" and mcp_config.mode == "off":
         return
     try:
-        disable_tailscale_ui(bootstrap.daemon_port)
+        if ui_config.mode == "tailnet":
+            disable_tailscale_ui(bootstrap.daemon_port, port=ui_config.port)
+        if mcp_config.mode != "off":
+            disable_mcp_exposure(bootstrap.daemon_port, mode=mcp_config.mode, port=mcp_config.port)
     except UiExposeError as exc:
         click.echo(
-            f"Warning: could not remove Tailscale UI exposure: {exc}. "
-            "Run 'gobby ui unexpose' to retry.",
+            f"Warning: could not remove Tailscale exposure: {exc}. "
+            "Run 'gobby ui unexpose' and 'gobby ui mcp-unexpose' to retry.",
             err=True,
         )
         return
-    click.echo("Removed Tailscale UI exposure.")
+    click.echo("Removed Tailscale exposure.")
 
 
 def _detected_clis(home: Path) -> list[str]:

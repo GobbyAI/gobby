@@ -163,23 +163,12 @@ def test_bootstrap_preserves_valid_explicit_scalar_values(tmp_path: Path) -> Non
     assert "database_path" not in bootstrap.to_config_dict()
 
 
-def test_ui_exposure_mode_loads_from_bootstrap(tmp_path: Path) -> None:
+def test_retired_ui_expose_key_in_bootstrap_is_rejected(tmp_path: Path) -> None:
     bootstrap_path = tmp_path / "bootstrap.yaml"
     _write_bootstrap(bootstrap_path, "ui_expose: tailscale\n")
 
-    assert load_bootstrap(str(bootstrap_path)).ui_expose == "tailscale"
-
-
-def test_ui_exposure_mode_rejects_unknown_value(tmp_path: Path) -> None:
-    bootstrap_path = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(bootstrap_path, "ui_expose: funnel\n")
-
-    with pytest.raises(BootstrapConfigError, match="ui_expose"):
+    with pytest.raises(BootstrapConfigError, match="gobby ui expose"):
         load_bootstrap(str(bootstrap_path))
-
-
-def test_ui_exposure_is_machine_local_only() -> None:
-    assert "ui_expose" not in BootstrapConfig(ui_expose="tailscale").to_config_dict()
 
 
 def test_loading_a_missing_bootstrap_never_writes_one(tmp_path: Path) -> None:

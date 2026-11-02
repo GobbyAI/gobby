@@ -127,39 +127,40 @@ Any failed check aborts installation with endpoint-specific diagnostics.
 
 Gobby can publish its local web UI through Tailscale Serve while the daemon remains
 bound to `localhost`. The same mandatory Gobby authentication policy applies through
-the HTTPS URL. The exposure choice is stored as
-`ui_expose: tailscale` in the machine-local `bootstrap.yaml` and is never copied into
-shared configuration.
+the HTTPS URL. The choice is recorded in hub config as `ui_exposure` (`mode: tailnet`,
+`port`, default 443). It is applied on every daemon start, and the URL uses the
+Tailscale name of the machine running the daemon, so it follows the daemon when it moves.
+Don't set `ui_expose` in `bootstrap.yaml`; that key is retired.
 
 An interactive full install offers this setup when Tailscale is running, with
 **No** as the default; `--no-interactive` skips it, and component installs never
-touch exposure. Change it afterwards with `gobby ui expose` and `gobby ui unexpose`.
-
-Manage exposure explicitly with:
+touch exposure. Change it afterwards with the commands below.
 
 ```bash
-gobby ui expose
+gobby ui expose --port 8443      # tailnet-only Web UI on this HTTPS port
 gobby ui status
 gobby ui unexpose
+gobby ui mcp-expose --funnel     # /mcp only, public over Funnel; see the configuration guide
+gobby ui mcp-unexpose
 ```
 
-`gobby ui expose` manages only the HTTPS port 443 root handler and preserves sibling
-Serve handlers. `gobby ui unexpose` verifies root-handler removal before forgetting
-Gobby's intent. Use `gobby ui unexpose --forget` only when external Serve state is
-being managed separately; it clears Gobby's intent without claiming the root handler
-was removed.
+`gobby ui expose` manages only the Gobby-owned handler on its port and preserves sibling
+Serve handlers. It refuses a port that a foreign proxy owns, that Funnel publishes, or
+that would carry a non-`/mcp` route on a Funnel port. `gobby ui unexpose` verifies
+removal before forgetting Gobby's intent. Use `--forget` only when external Serve state
+is being managed separately; it clears Gobby's intent without claiming the handler was
+removed.
 
 On each `gobby start`, saved intent is reconciled after daemon readiness. A successful
 reconciliation prints the MagicDNS HTTPS URL. A Tailscale failure emits a warning and
 does not block daemon startup. With no saved intent, startup makes no Tailscale calls
 and leaves manual Serve configuration alone.
 
-`gobby ui status` reports exposure as off, healthy with its URL, or degraded with the
-reason. Recovery is fail-closed: ensure the Tailscale backend and MagicDNS are enabled,
-remove any conflicting port-443 protocol or foreign root proxy, and disable Funnel for
-the node's `host:443`; then rerun `gobby ui expose` or `gobby start`. Gobby refuses to
-combine this feature with Funnel because Funnel permits public ingress beyond the
-tailnet.
+`gobby ui status` and `gobby status` report each exposure as off, healthy with its URL,
+or degraded with the reason. Recovery is fail-closed: ensure the Tailscale backend and
+MagicDNS are enabled, remove any conflicting foreign handler on the port, and then rerun
+`gobby ui expose` or `gobby start`. Funnel is reachable only through `gobby ui mcp-expose
+--funnel`, which serves `/mcp` alone. The Web UI never shares a Funnel port.
 
 ## M0 acceptance checklist
 

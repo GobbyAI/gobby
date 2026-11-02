@@ -1,510 +1,415 @@
+"""Tailscale exposure: adoption, refusal, rollback, probe failures, and installer consent."""
+
 from __future__ import annotations
 
+import copy
+import shutil
 import subprocess
-from pathlib import Path
-from unittest.mock import Mock
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 
 from gobby import ui_exposure
-from gobby.config.bootstrap import load_bootstrap
+from gobby.config.app import McpExposureConfig, UiExposureConfig
 from gobby.ui_exposure import UiExposeError
 
-_DNS_NAME = "node.example.ts.net"
-_HOST_PORT = f"{_DNS_NAME}:443"
-_STATUS = {
-    "BackendState": "Running",
-    "Self": {"DNSName": f"{_DNS_NAME}."},
-    "CurrentTailnet": {"MagicDNSEnabled": True},
-}
+pytestmark = pytest.mark.unit
+
+DAEMON_PORT = 60887
+DNS_NAME = "node.example.ts.net"
+ROOT_PROXY = f"http://localhost:{DAEMON_PORT}"
+MCP_PROXY = f"http://localhost:{DAEMON_PORT}/mcp"
+ROOT_HOST_PORT = f"{DNS_NAME}:443"
+
+MutationHook = Callable[["FakeTailscale", list[str]], None]
 
 
-def _write_bootstrap(path: Path, *, exposed: bool = False) -> None:
-    files_home = path.parent / "files"
-    files_home.mkdir(exist_ok=True)
-    lines = [
-        "datastore_mode: local",
-        f"files_home: {files_home}",
-    ]
-    if exposed:
-        lines.append("ui_expose: tailscale")
-    path.write_text("\n".join(lines) + "\n")
-    path.chmod(0o600)
+class FakeTailscale:
+    """In-memory tailscale CLI with injectable serve-status failures and mutation hooks."""
+
+    def __init__(self) -> None:
+        self.dns_name = DNS_NAME
+        self.status: dict[str, Any] = {
+            "BackendState": "Running",
+            "CurrentTailnet": {"MagicDNSEnabled": True},
+            "Self": {"DNSName": f"{DNS_NAME}."},
+        }
+        self.serve: dict[str, Any] = {"TCP": {}, "Web": {}, "AllowFunnel": {}}
+        self.mutations: list[list[str]] = []
+        self.serve_reads = 0
+        self.failing_serve_reads: set[int] = set()
+        self.on_mutation: MutationHook | None = None
+
+    def run_json(self, arguments: list[str]) -> dict[str, object]:
+        if arguments == ["status", "--json"]:
+            return copy.deepcopy(self.status)
+        assert arguments == ["serve", "status", "--json"], arguments
+        self.serve_reads += 1
+        if self.serve_reads in self.failing_serve_reads:
+            raise UiExposeError("tailscale command timed out")
+        return copy.deepcopy(self.serve)
+
+    def run_mutation(self, arguments: list[str]) -> None:
+        self.mutations.append(arguments)
+        if self.on_mutation is not None:
+            self.on_mutation(self, arguments)
+        else:
+            self.apply(arguments)
+
+    def apply(self, arguments: list[str]) -> None:
+        https = _flag(arguments, "--https=")
+        set_path = _flag(arguments, "--set-path=")
+        host_port = f"{self.dns_name}:{https}"
+        off = arguments[-1] == "off"
+        web = self.serve["Web"]
+        handlers = web.setdefault(host_port, {"Handlers": {}})["Handlers"]
+        if off:
+            handlers.pop(set_path, None)
+            if not handlers:
+                web.pop(host_port, None)
+        else:
+            handlers[set_path] = {"Proxy": arguments[-1]}
+            self.serve["TCP"][https] = {"HTTPS": True}
+        if arguments[0] == "funnel":
+            self.serve["AllowFunnel"][host_port] = not off
 
 
-def _serve_config(
-    root_proxy: str | None = None,
-    *,
-    funnel: bool = False,
-    tcp: object = None,
-    sibling: bool = False,
-) -> dict[str, object]:
-    handlers: dict[str, object] = {}
-    if root_proxy is not None:
-        handlers["/"] = {"Proxy": root_proxy}
-    if sibling:
-        handlers["/metrics"] = {"Proxy": "http://localhost:9999"}
-    return {
-        "TCP": {"443": {"HTTPS": True}} if tcp is None else tcp,
-        "Web": {_HOST_PORT: {"Handlers": handlers}} if handlers else {},
-        "AllowFunnel": {_HOST_PORT: True} if funnel else None,
-    }
+def _flag(arguments: list[str], prefix: str) -> str:
+    return next(arg for arg in arguments if arg.startswith(prefix)).removeprefix(prefix)
 
 
-def _mock_json(monkeypatch: pytest.MonkeyPatch, *responses: object) -> Mock:
-    mock = Mock(side_effect=responses)
-    monkeypatch.setattr(ui_exposure, "_run_json", mock)
-    return mock
+def _root_proxy(fake: FakeTailscale) -> str | None:
+    handler = fake.serve["Web"].get(ROOT_HOST_PORT, {}).get("Handlers", {}).get("/")
+    return None if handler is None else handler["Proxy"]
 
 
-def test_enable_installs_root_handler_and_persists_intent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(path)
-    _mock_json(
-        monkeypatch,
-        _STATUS,
-        _serve_config(tcp={}),
-        _STATUS,
-        _serve_config("http://localhost:60887", sibling=True),
+def _raise(message: str) -> Callable[[], None]:
+    def persist() -> None:
+        raise RuntimeError(message)
+
+    return persist
+
+
+def _refuse_any_call(*_args: object, **_kwargs: object) -> None:
+    raise AssertionError("Tailscale must not be called")
+
+
+@pytest.fixture
+def tailscale(monkeypatch: pytest.MonkeyPatch) -> FakeTailscale:
+    fake = FakeTailscale()
+    monkeypatch.setattr(ui_exposure, "_run_json", fake.run_json)
+    monkeypatch.setattr(ui_exposure, "_run_mutation", fake.run_mutation)
+    return fake
+
+
+def test_enable_installs_root_then_records_intent(tailscale: FakeTailscale) -> None:
+    recorded_after: list[int] = []
+
+    result = ui_exposure.enable_tailscale_ui(
+        DAEMON_PORT, persist=lambda: recorded_after.append(len(tailscale.mutations))
     )
-    mutation = Mock()
-    monkeypatch.setattr(ui_exposure, "_run_mutation", mutation)
 
-    result = ui_exposure.enable_tailscale_ui(60887, config_path=path)
-
-    assert result.url == f"https://{_DNS_NAME}/"
+    assert result.enabled is True
     assert result.changed is True
-    mutation.assert_called_once_with(
-        [
-            "serve",
-            "--yes",
-            "--bg",
-            "--https=443",
-            "--set-path=/",
-            "http://localhost:60887",
-        ]
-    )
-    assert load_bootstrap(str(path)).ui_expose == "tailscale"
+    assert result.url == f"https://{DNS_NAME}/"
+    assert _root_proxy(tailscale) == ROOT_PROXY
+    assert recorded_after == [1]
 
 
 def test_enable_adopts_equivalent_manual_mapping_without_mutation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tailscale: FakeTailscale,
 ) -> None:
-    path = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(path)
-    probe = _mock_json(
-        monkeypatch,
-        _STATUS,
-        _serve_config("http://127.0.0.1:60887/", sibling=True),
-    )
-    mutation = Mock()
-    monkeypatch.setattr(ui_exposure, "_run_mutation", mutation)
+    tailscale.serve = {
+        "TCP": {"443": {"HTTPS": True}},
+        "Web": {ROOT_HOST_PORT: {"Handlers": {"/": {"Proxy": f"http://127.0.0.1:{DAEMON_PORT}/"}}}},
+        "AllowFunnel": {},
+    }
+    recorded: list[bool] = []
 
-    result = ui_exposure.enable_tailscale_ui(60887, config_path=path)
+    result = ui_exposure.enable_tailscale_ui(DAEMON_PORT, persist=lambda: recorded.append(True))
 
     assert result.changed is False
-    assert probe.call_count == 2
-    mutation.assert_not_called()
-    assert load_bootstrap(str(path)).ui_expose == "tailscale"
+    assert tailscale.mutations == []
+    assert recorded == [True]
 
 
-@pytest.mark.parametrize(
-    ("serve_config", "message"),
-    [
-        (_serve_config(tcp={"443": {"HTTP": True}}), "conflicting protocol"),
-        (_serve_config("http://localhost:9999"), "owned by another proxy"),
-        (_serve_config(funnel=True), "Funnel is active"),
-    ],
-)
-def test_enable_fails_closed_on_conflicting_state(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    serve_config: dict[str, object],
-    message: str,
-) -> None:
-    path = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(path)
-    _mock_json(monkeypatch, _STATUS, serve_config)
-    mutation = Mock()
-    monkeypatch.setattr(ui_exposure, "_run_mutation", mutation)
+def test_enable_fails_closed_on_foreign_root_handler(tailscale: FakeTailscale) -> None:
+    tailscale.serve = {
+        "TCP": {"443": {"HTTPS": True}},
+        "Web": {ROOT_HOST_PORT: {"Handlers": {"/": {"Proxy": "http://localhost:9999"}}}},
+        "AllowFunnel": {},
+    }
 
-    with pytest.raises(UiExposeError, match=message):
-        ui_exposure.enable_tailscale_ui(60887, config_path=path)
+    with pytest.raises(UiExposeError, match="owned by another proxy"):
+        ui_exposure.enable_tailscale_ui(DAEMON_PORT)
 
-    mutation.assert_not_called()
-    assert load_bootstrap(str(path)).ui_expose is None
+    assert tailscale.mutations == []
 
 
-def test_enable_verification_failure_does_not_remove_foreign_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(path)
-    _mock_json(
-        monkeypatch,
-        _STATUS,
-        _serve_config(tcp={}),
-        _STATUS,
-        _serve_config("http://localhost:9999"),
-        _STATUS,
-        _serve_config("http://localhost:9999"),
-    )
-    mutation = Mock()
-    monkeypatch.setattr(ui_exposure, "_run_mutation", mutation)
+def test_enable_refuses_port_with_conflicting_protocol_state(tailscale: FakeTailscale) -> None:
+    tailscale.serve = {
+        "TCP": {"443": {"TCP": {"ProxyProtocol": 1}}},
+        "Web": {},
+        "AllowFunnel": {},
+    }
 
-    with pytest.raises(UiExposeError, match="expected HTTPS root handler"):
-        ui_exposure.enable_tailscale_ui(60887, config_path=path)
+    with pytest.raises(UiExposeError, match="conflicting protocol state"):
+        ui_exposure.enable_tailscale_ui(DAEMON_PORT)
 
-    assert mutation.call_count == 1
-    assert load_bootstrap(str(path)).ui_expose is None
+    assert tailscale.mutations == []
+
+
+def test_enable_verification_failure_keeps_foreign_root(tailscale: FakeTailscale) -> None:
+    def replaced_by_someone_else(fake: FakeTailscale, _arguments: list[str]) -> None:
+        fake.serve["TCP"]["443"] = {"HTTPS": True}
+        fake.serve["Web"][ROOT_HOST_PORT] = {"Handlers": {"/": {"Proxy": "http://localhost:9999"}}}
+
+    tailscale.on_mutation = replaced_by_someone_else
+
+    with pytest.raises(UiExposeError, match="did not install the expected HTTPS / handler"):
+        ui_exposure.enable_tailscale_ui(DAEMON_PORT)
+
+    assert len(tailscale.mutations) == 1
+    assert _root_proxy(tailscale) == "http://localhost:9999"
 
 
 def test_enable_inconclusive_verification_removes_confirmed_new_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tailscale: FakeTailscale,
 ) -> None:
-    path = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(path)
-    _mock_json(
-        monkeypatch,
-        _STATUS,
-        _serve_config(tcp={}),
-        _STATUS,
-        {"TCP": {"443": {"HTTPS": True}}, "Web": []},
-        _STATUS,
-        _serve_config("http://localhost:60887"),
+    tailscale.failing_serve_reads = {2}
+
+    with pytest.raises(UiExposeError, match="timed out"):
+        ui_exposure.enable_tailscale_ui(DAEMON_PORT)
+
+    assert tailscale.mutations[-1][-1] == "off"
+    assert _root_proxy(tailscale) is None
+
+
+def test_enable_persistence_failure_rolls_back_new_root(tailscale: FakeTailscale) -> None:
+    with pytest.raises(UiExposeError, match="failed to persist exposure intent: disk full"):
+        ui_exposure.enable_tailscale_ui(DAEMON_PORT, persist=_raise("disk full"))
+
+    assert tailscale.mutations[-1][-1] == "off"
+    assert _root_proxy(tailscale) is None
+
+
+def test_disable_removes_root_then_records_intent_off(tailscale: FakeTailscale) -> None:
+    ui_exposure.enable_tailscale_ui(DAEMON_PORT)
+    root_present_at_record: list[bool] = []
+
+    result = ui_exposure.disable_tailscale_ui(
+        DAEMON_PORT,
+        persist=lambda: root_present_at_record.append(ROOT_HOST_PORT in tailscale.serve["Web"]),
     )
-    mutation = Mock()
-    monkeypatch.setattr(ui_exposure, "_run_mutation", mutation)
 
-    with pytest.raises(UiExposeError, match="Web state is malformed"):
-        ui_exposure.enable_tailscale_ui(60887, config_path=path)
-
-    assert mutation.call_args_list[1].args[0] == [
-        "serve",
-        "--yes",
-        "--https=443",
-        "--set-path=/",
-        "off",
-    ]
-    assert load_bootstrap(str(path)).ui_expose is None
+    assert result.enabled is False
+    assert result.changed is True
+    assert root_present_at_record == [False]
 
 
-def test_enable_persistence_failure_rolls_back_new_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_disable_persistence_failure_restores_root(tailscale: FakeTailscale) -> None:
+    ui_exposure.enable_tailscale_ui(DAEMON_PORT)
+
+    with pytest.raises(UiExposeError, match="failed to persist exposure intent"):
+        ui_exposure.disable_tailscale_ui(DAEMON_PORT, persist=_raise("disk full"))
+
+    assert _root_proxy(tailscale) == ROOT_PROXY
+
+
+def test_disable_persistence_failure_keeps_foreign_root_written_meanwhile(
+    tailscale: FakeTailscale,
 ) -> None:
-    path = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(path)
-    _mock_json(
-        monkeypatch,
-        _STATUS,
-        _serve_config(tcp={}),
-        _STATUS,
-        _serve_config("http://localhost:60887"),
-        _STATUS,
-        _serve_config("http://localhost:60887"),
+    ui_exposure.enable_tailscale_ui(DAEMON_PORT)
+
+    def foreign_then_fail() -> None:
+        tailscale.serve["Web"][ROOT_HOST_PORT] = {
+            "Handlers": {"/": {"Proxy": "http://localhost:9999"}}
+        }
+        raise RuntimeError("disk full")
+
+    with pytest.raises(UiExposeError, match="failed to persist exposure intent"):
+        ui_exposure.disable_tailscale_ui(DAEMON_PORT, persist=foreign_then_fail)
+
+    assert _root_proxy(tailscale) == "http://localhost:9999"
+
+
+def test_forget_clears_intent_without_tailscale_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ui_exposure, "_run_json", _refuse_any_call)
+    monkeypatch.setattr(ui_exposure, "_run_mutation", _refuse_any_call)
+    recorded: list[bool] = []
+
+    result = ui_exposure.disable_tailscale_ui(
+        DAEMON_PORT, forget=True, persist=lambda: recorded.append(True)
     )
-    mutation = Mock()
-    monkeypatch.setattr(ui_exposure, "_run_mutation", mutation)
-    monkeypatch.setattr(
-        ui_exposure,
-        "update_bootstrap_yaml",
-        Mock(side_effect=OSError("disk full")),
-    )
 
-    with pytest.raises(UiExposeError, match="failed to persist.*disk full"):
-        ui_exposure.enable_tailscale_ui(60887, config_path=path)
-
-    assert mutation.call_count == 2
-    assert mutation.call_args_list[1].args[0][-1] == "off"
+    assert result.enabled is False
+    assert recorded == [True]
 
 
-def test_disable_removes_root_then_clears_intent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_status_and_reconcile_skip_tailscale_without_recorded_intent(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(path, exposed=True)
-    _mock_json(
-        monkeypatch,
-        _STATUS,
-        _serve_config("http://localhost:60887", sibling=True),
-        _STATUS,
-        _serve_config(sibling=True),
+    monkeypatch.setattr(ui_exposure, "_run_json", _refuse_any_call)
+    monkeypatch.setattr(ui_exposure, "_run_mutation", _refuse_any_call)
+
+    results = ui_exposure.reconcile_exposures(
+        DAEMON_PORT, ui=UiExposureConfig(), mcp=McpExposureConfig()
     )
-    mutation = Mock()
-    monkeypatch.setattr(ui_exposure, "_run_mutation", mutation)
-
-    result = ui_exposure.disable_tailscale_ui(60887, config_path=path)
-
-    assert result.mode is None
-    mutation.assert_called_once_with(["serve", "--yes", "--https=443", "--set-path=/", "off"])
-    assert load_bootstrap(str(path)).ui_expose is None
-
-
-def test_disable_persistence_failure_restores_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(path, exposed=True)
-    _mock_json(
-        monkeypatch,
-        _STATUS,
-        _serve_config("http://localhost:60887"),
-        _STATUS,
-        _serve_config(tcp={}),
-        _STATUS,
-        _serve_config(tcp={}),
-    )
-    mutation = Mock()
-    monkeypatch.setattr(ui_exposure, "_run_mutation", mutation)
-    monkeypatch.setattr(
-        ui_exposure,
-        "update_bootstrap_yaml",
-        Mock(side_effect=OSError("read-only")),
+    ui_status, mcp_status = ui_exposure.get_exposure_status(
+        DAEMON_PORT, ui=UiExposureConfig(), mcp=McpExposureConfig()
     )
 
-    with pytest.raises(UiExposeError, match="failed to clear.*read-only"):
-        ui_exposure.disable_tailscale_ui(60887, config_path=path)
-
-    assert mutation.call_count == 2
-    assert mutation.call_args_list[1].args[0] == [
-        "serve",
-        "--yes",
-        "--bg",
-        "--https=443",
-        "--set-path=/",
-        "http://localhost:60887",
-    ]
+    assert results == []
+    assert ui_status.enabled is False
+    assert mcp_status.enabled is False
 
 
-def test_disable_persistence_failure_does_not_overwrite_foreign_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(path, exposed=True)
-    _mock_json(
-        monkeypatch,
-        _STATUS,
-        _serve_config("http://localhost:60887"),
-        _STATUS,
-        _serve_config(tcp={}),
-        _STATUS,
-        _serve_config("http://localhost:9999"),
-    )
-    mutation = Mock()
-    monkeypatch.setattr(ui_exposure, "_run_mutation", mutation)
-    monkeypatch.setattr(
-        ui_exposure,
-        "update_bootstrap_yaml",
-        Mock(side_effect=OSError("read-only")),
+def test_status_reports_healthy_and_degraded_exposures(tailscale: FakeTailscale) -> None:
+    ui_exposure.enable_tailscale_ui(DAEMON_PORT, port=8443)
+    ui_exposure.enable_mcp_exposure(DAEMON_PORT, mode="funnel", port=443)
+    recorded = (
+        UiExposureConfig(mode="tailnet", port=8443),
+        McpExposureConfig(mode="funnel", port=443),
     )
 
-    with pytest.raises(UiExposeError, match="failed to clear.*read-only"):
-        ui_exposure.disable_tailscale_ui(60887, config_path=path)
-
-    assert mutation.call_count == 1
-
-
-def test_forget_clears_intent_without_tailscale_calls(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(path, exposed=True)
-
-    def unexpected_call(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("forget must not call Tailscale")
-
-    monkeypatch.setattr(ui_exposure, "_run_json", unexpected_call)
-    monkeypatch.setattr(ui_exposure, "_run_mutation", unexpected_call)
-
-    ui_exposure.disable_tailscale_ui(60887, config_path=path, forget=True)
-
-    assert load_bootstrap(str(path)).ui_expose is None
-
-
-def test_status_and_reconcile_skip_tailscale_without_intent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(path)
-    probe = Mock()
-    mutation = Mock()
-    monkeypatch.setattr(ui_exposure, "_run_json", probe)
-    monkeypatch.setattr(ui_exposure, "_run_mutation", mutation)
-
-    status = ui_exposure.get_ui_exposure_status(60887, config_path=path)
-    reconciled = ui_exposure.reconcile_ui_exposure(60887, config_path=path)
-
-    assert status.mode is None
-    assert reconciled is None
-    probe.assert_not_called()
-    mutation.assert_not_called()
-
-
-def test_status_reports_healthy_and_degraded_intent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(path, exposed=True)
-    _mock_json(
-        monkeypatch,
-        _STATUS,
-        _serve_config("http://localhost:60887"),
-        _STATUS,
-        _serve_config(tcp={}),
+    healthy_ui, healthy_mcp = ui_exposure.get_exposure_status(
+        DAEMON_PORT, ui=recorded[0], mcp=recorded[1]
+    )
+    tailscale.serve["AllowFunnel"] = {}
+    degraded_ui, degraded_mcp = ui_exposure.get_exposure_status(
+        DAEMON_PORT, ui=recorded[0], mcp=recorded[1]
     )
 
-    healthy = ui_exposure.get_ui_exposure_status(60887, config_path=path)
-    degraded = ui_exposure.get_ui_exposure_status(60887, config_path=path)
-
-    assert healthy.url == f"https://{_DNS_NAME}/"
-    assert healthy.degraded_reason is None
-    assert degraded.url is None
-    assert degraded.degraded_reason == "HTTPS root handler is missing"
+    assert healthy_ui.degraded_reason is None
+    assert healthy_mcp.degraded_reason is None
+    assert healthy_mcp.funnel is True
+    assert degraded_ui.degraded_reason is None
+    assert degraded_mcp.degraded_reason == "Tailscale Funnel is not active on port 443"
 
 
 @pytest.mark.parametrize(
-    ("status", "message"),
+    ("status_patch", "message"),
     [
-        ({**_STATUS, "BackendState": "Stopped"}, "backend is not running"),
-        (
-            {**_STATUS, "CurrentTailnet": {"MagicDNSEnabled": False}},
-            "MagicDNS is disabled",
-        ),
-        ({**_STATUS, "Self": {"DNSName": ""}}, "missing this node's MagicDNS name"),
+        ({"BackendState": "NeedsLogin"}, "Tailscale backend is not running"),
+        ({"CurrentTailnet": {"MagicDNSEnabled": False}}, "Tailscale MagicDNS is disabled"),
     ],
 )
 def test_node_probe_fails_closed(
-    monkeypatch: pytest.MonkeyPatch, status: dict[str, object], message: str
+    tailscale: FakeTailscale, status_patch: dict[str, Any], message: str
 ) -> None:
-    _mock_json(monkeypatch, status)
+    tailscale.status.update(status_patch)
 
     with pytest.raises(UiExposeError, match=message):
-        ui_exposure._read_node_info()
+        ui_exposure.enable_tailscale_ui(DAEMON_PORT)
+
+    assert tailscale.mutations == []
+
+
+def test_node_probe_without_dns_name_fails_closed(tailscale: FakeTailscale) -> None:
+    tailscale.status["Self"] = {}
+
+    with pytest.raises(UiExposeError, match="missing this node's MagicDNS name"):
+        ui_exposure.enable_tailscale_ui(DAEMON_PORT)
+
+    assert tailscale.mutations == []
 
 
 def test_json_probe_reports_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("gobby.ui_exposure.shutil.which", Mock(return_value=None))
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
 
-    with pytest.raises(UiExposeError, match="executable was not found"):
+    with pytest.raises(UiExposeError, match="tailscale executable was not found"):
         ui_exposure._run_json(["status", "--json"])
 
 
 @pytest.mark.parametrize(
-    ("side_effect", "completed", "message"),
+    ("returncode", "stdout", "stderr", "message"),
     [
-        (subprocess.TimeoutExpired("tailscale", 5), None, "timed out"),
-        (None, subprocess.CompletedProcess([], 1, "", "backend error"), "backend error"),
-        (None, subprocess.CompletedProcess([], 0, "not-json", ""), "malformed JSON"),
+        (1, "", "not logged in", "tailscale command failed: not logged in"),
+        (0, "not json", "", "tailscale returned malformed JSON"),
+        (0, "[]", "", "tailscale returned malformed JSON"),
     ],
 )
-def test_json_probe_reports_command_failures(
+def test_json_probe_reports_command_and_parse_failures(
     monkeypatch: pytest.MonkeyPatch,
-    side_effect: BaseException | None,
-    completed: subprocess.CompletedProcess[str] | None,
+    returncode: int,
+    stdout: str,
+    stderr: str,
     message: str,
 ) -> None:
-    monkeypatch.setattr("gobby.ui_exposure.shutil.which", lambda _name: "/bin/tailscale")
-
-    def run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        if side_effect is not None:
-            raise side_effect
-        assert completed is not None
-        return completed
-
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/local/bin/tailscale")
+    completed = subprocess.CompletedProcess(
+        args=["tailscale"], returncode=returncode, stdout=stdout, stderr=stderr
+    )
+    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: completed)
 
     with pytest.raises(UiExposeError, match=message):
         ui_exposure._run_json(["status", "--json"])
 
 
 def test_mutation_is_blocked_by_test_protect(monkeypatch: pytest.MonkeyPatch) -> None:
-    run = Mock()
-    monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/local/bin/tailscale")
+    monkeypatch.setattr(subprocess, "run", _refuse_any_call)
 
-    with pytest.raises(UiExposeError, match="GOBBY_TEST_PROTECT"):
-        ui_exposure._run_mutation(["serve", "off"])
-
-    run.assert_not_called()
+    with pytest.raises(UiExposeError, match="blocked by GOBBY_TEST_PROTECT"):
+        ui_exposure._run_mutation(["serve", "--yes", "--https=443", "--set-path=/", "off"])
 
 
 @pytest.mark.parametrize(
-    ("target", "expected"),
+    ("route", "target", "expected"),
     [
-        ("http://localhost:60887", True),
-        ("http://localhost:60887/", True),
-        ("http://127.0.0.1:60887", True),
-        ("https://localhost:60887", False),
-        ("http://localhost:60888", False),
-        ("http://example.com:60887", False),
-        ("http://localhost:60887/admin", False),
+        (ui_exposure._ui_route(443), ROOT_PROXY, True),
+        (ui_exposure._ui_route(443), f"http://127.0.0.1:{DAEMON_PORT}/", True),
+        (ui_exposure._ui_route(443), MCP_PROXY, False),
+        (ui_exposure._ui_route(443), f"https://localhost:{DAEMON_PORT}", False),
+        (ui_exposure._ui_route(443), f"http://localhost:{DAEMON_PORT + 1}", False),
+        (ui_exposure._ui_route(443), f"{ROOT_PROXY}?x=1", False),
+        (ui_exposure._mcp_route(443, mode="tailnet"), MCP_PROXY, True),
+        (ui_exposure._mcp_route(443, mode="tailnet"), ROOT_PROXY, False),
+        (ui_exposure._mcp_route(443, mode="tailnet"), f"{MCP_PROXY}/", False),
     ],
 )
-def test_proxy_target_comparison_is_semantic(target: str, expected: bool) -> None:
-    assert ui_exposure._is_gobby_proxy(target, 60887) is expected
+def test_proxy_target_comparison_is_semantic(
+    route: ui_exposure._Route, target: str, expected: bool
+) -> None:
+    assert ui_exposure._is_gobby_target(target, route, DAEMON_PORT) is expected
 
 
 def test_installer_consent_is_tri_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    confirm = Mock(return_value=True)
-    probe = _mock_json(monkeypatch, _STATUS)
+    def consent_not_asked() -> bool:
+        raise AssertionError("consent must not be asked")
 
-    assert (
-        ui_exposure.resolve_installer_ui_exposure(
-            None,
-            full_install=True,
-            no_interactive=False,
-            confirm=confirm,
-        )
-        is True
-    )
-    assert probe.call_count == 1
-    confirm.assert_called_once_with()
+    def node_reachable() -> ui_exposure._NodeInfo:
+        return ui_exposure._NodeInfo(dns_name=DNS_NAME)
 
-    probe.reset_mock()
-    confirm.reset_mock()
-    assert (
-        ui_exposure.resolve_installer_ui_exposure(
-            None,
-            full_install=False,
-            no_interactive=False,
+    def node_unreachable() -> ui_exposure._NodeInfo:
+        raise UiExposeError("Tailscale backend is not running")
+
+    def resolve(
+        explicit: bool | None, *, full: bool, interactive: bool, confirm: Callable[[], bool]
+    ) -> bool:
+        return ui_exposure.resolve_installer_ui_exposure(
+            explicit,
+            full_install=full,
+            no_interactive=not interactive,
             confirm=confirm,
         )
-        is False
-    )
-    probe.assert_not_called()
-    confirm.assert_not_called()
-    assert (
-        ui_exposure.resolve_installer_ui_exposure(
-            None,
-            full_install=True,
-            no_interactive=True,
-            confirm=confirm,
-        )
-        is False
-    )
-    probe.assert_not_called()
-    confirm.assert_not_called()
-    assert (
-        ui_exposure.resolve_installer_ui_exposure(
-            True,
-            full_install=False,
-            no_interactive=True,
-            confirm=confirm,
-        )
-        is True
-    )
-    probe.assert_not_called()
-    confirm.assert_not_called()
-    assert (
-        ui_exposure.resolve_installer_ui_exposure(
-            False,
-            full_install=True,
-            no_interactive=False,
-            confirm=confirm,
-        )
-        is False
-    )
-    probe.assert_not_called()
-    confirm.assert_not_called()
+
+    monkeypatch.setattr(ui_exposure, "_read_node_info", node_reachable)
+    assert resolve(True, full=False, interactive=False, confirm=consent_not_asked) is True
+    assert resolve(False, full=True, interactive=True, confirm=consent_not_asked) is False
+    assert resolve(None, full=False, interactive=True, confirm=consent_not_asked) is False
+    assert resolve(None, full=True, interactive=False, confirm=consent_not_asked) is False
+    assert resolve(None, full=True, interactive=True, confirm=lambda: True) is True
+    assert resolve(None, full=True, interactive=True, confirm=lambda: False) is False
+
+    monkeypatch.setattr(ui_exposure, "_read_node_info", node_unreachable)
+    assert resolve(None, full=True, interactive=True, confirm=consent_not_asked) is False
+
+
+def test_installer_declined_applies_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ui_exposure, "_run_json", _refuse_any_call)
+    monkeypatch.setattr(ui_exposure, "_run_mutation", _refuse_any_call)
+
+    assert ui_exposure.apply_installer_ui_exposure(False, DAEMON_PORT) is None

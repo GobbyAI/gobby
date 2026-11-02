@@ -16,7 +16,9 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.routing import Route
 
+from gobby import ui_exposure
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
+from gobby.config.app import McpExposureConfig
 from gobby.hooks.hook_manager import HookManager
 from gobby.servers._app_lifecycle import (
     _CODEX_SYNC_TIMEOUT_SECONDS,
@@ -92,6 +94,23 @@ def _mcp_transport_security(
     )
 
 
+def _admitted_mcp_hosts(configured: list[str], exposure: McpExposureConfig) -> list[str]:
+    """Return the configured Host allowance, plus this node's name while /mcp is exposed.
+
+    The node name is read from Tailscale when the app is created and never persisted,
+    so a machine move or rename cannot leave a stale host admitted.
+    """
+    if exposure.mode == "off":
+        return configured
+    try:
+        dns_name = ui_exposure.node_dns_name()
+    except ui_exposure.UiExposeError as exc:
+        logger.warning("/mcp exposure host not admitted; Tailscale node name unavailable: %s", exc)
+        return configured
+    host = dns_name if exposure.port == 443 else f"{dns_name}:{exposure.port}"
+    return [*configured, host]
+
+
 def create_app(server: "HTTPServer") -> FastAPI:
     """
     Create and configure FastAPI application.
@@ -107,7 +126,12 @@ def create_app(server: "HTTPServer") -> FastAPI:
         # The SDK enables DNS-rebinding protection only for loopback hosts, so
         # the MCP app must see the same bind host uvicorn serves on.
         bind_host = server.bootstrap_config.bind_host
-        extra_hosts = server.startup_config.mcp_allowed_hosts if server.startup_config else []
+        startup_config = server.startup_config
+        extra_hosts = (
+            _admitted_mcp_hosts(startup_config.mcp_allowed_hosts, startup_config.mcp_exposure)
+            if startup_config
+            else []
+        )
         mcp_app = server._mcp_server.streamable_http_app(
             host=bind_host,
             transport_security=_mcp_transport_security(bind_host, extra_hosts),

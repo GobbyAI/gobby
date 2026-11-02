@@ -110,7 +110,8 @@ def _login_client_id(server: "HTTPServer", request: Request) -> str:
         effective_ui_host(config.ui.host, config.bind_host)
     )
     if (
-        server.bootstrap_config.ui_expose == "tailscale"
+        config is not None
+        and config.ui_exposure.mode == "tailnet"
         and is_loopback_bind_host(peer)
         and tailscale_login
         and not lan_dev_ui

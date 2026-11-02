@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import click
 
+from gobby.cli.exposure_config import record_exposure
 from gobby.cli.install_files_home import (
     acquire_install_maintenance,
     local_install_requires_maintenance,
@@ -19,6 +20,7 @@ from gobby.cli.install_files_home import (
     publish_install_files_home,
     resolve_install_files_home,
 )
+from gobby.config.app import UiExposureConfig
 from gobby.config.bootstrap import BootstrapConfigError, DatastoreMode, load_bootstrap
 from gobby.config.bootstrap_io import bootstrap_path
 from gobby.paths import get_gobby_home
@@ -492,6 +494,9 @@ def install(
             exposure_result = apply_installer_ui_exposure(
                 expose_ui,
                 load_bootstrap().daemon_port,
+                persist=lambda: record_exposure(
+                    bootstrap_path(), ui=UiExposureConfig(mode="tailnet", port=443)
+                ),
             )
         except UiExposeError as exc:
             click.echo(

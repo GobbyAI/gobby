@@ -1117,7 +1117,7 @@ def test_postgres_rotation_preserves_unrelated_bootstrap_fields(
     _patch_connect(monkeypatch)
 
     def _annotate(data: dict[str, Any]) -> None:
-        data["ui_expose"] = "tailscale"
+        data["ui_port"] = 61236
         data["cosmetic_note"] = "keep me"
 
     update_bootstrap_yaml(rotation_home / "bootstrap.yaml", _annotate)
@@ -1127,5 +1127,5 @@ def test_postgres_rotation_preserves_unrelated_bootstrap_fields(
     assert result.exit_code == 0, result.output
     persisted = read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
     assert persisted["cosmetic_note"] == "keep me"
-    assert persisted["ui_expose"] == "tailscale"
+    assert persisted["ui_port"] == 61236
     assert "credential_rotation" not in persisted

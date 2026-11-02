@@ -147,6 +147,9 @@ _MCP_ALLOWED_HOST_PATTERN = re.compile(
 )
 
 
+TAILSCALE_FUNNEL_PORTS: frozenset[int] = frozenset({443, 8443, 10000})
+
+
 class UiExposureConfig(BaseModel):
     """Tailscale Serve exposure of the Web UI root (`/`). Off until the operator records it."""
 
@@ -175,6 +178,15 @@ class McpExposureConfig(BaseModel):
         le=65535,
         description="HTTPS port for the /mcp route. Funnel accepts only 443, 8443 or 10000.",
     )
+
+    @model_validator(mode="after")
+    def _funnel_port_is_allowed(self) -> McpExposureConfig:
+        if self.mode == "funnel" and self.port not in TAILSCALE_FUNNEL_PORTS:
+            raise ValueError(
+                f"mcp_exposure.port {self.port} cannot be published with Funnel; "
+                "use 443, 8443 or 10000"
+            )
+        return self
 
 
 class DaemonConfig(BaseModel):
@@ -271,6 +283,20 @@ class DaemonConfig(BaseModel):
         description="Path-only /mcp Tailscale Serve exposure, tailnet-only or published with "
         "Funnel. Off by default; Funnel is never enabled unless the operator records it.",
     )
+
+    @model_validator(mode="after")
+    def _ui_and_funnel_ports_differ(self) -> DaemonConfig:
+        # Funnel is per host:port, so a Funnel port may carry only /mcp, never the UI root.
+        if (
+            self.mcp_exposure.mode == "funnel"
+            and self.ui_exposure.mode == "tailnet"
+            and self.ui_exposure.port == self.mcp_exposure.port
+        ):
+            raise ValueError(
+                f"ui_exposure.port {self.ui_exposure.port} is the Funnel port for /mcp; "
+                "the tailnet UI must use a different port"
+            )
+        return self
 
     # Hub connection settings
     hub_backend: Literal["postgres"] = Field(

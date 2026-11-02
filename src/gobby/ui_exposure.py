@@ -1,4 +1,10 @@
-"""Machine-local intent and Tailscale Serve management for the web UI."""
+"""Tailscale Serve and Funnel exposure of the Web UI and the /mcp route.
+
+The operator's choices live in hub-backed config (`ui_exposure`, `mcp_exposure`).
+This module applies them to the node's Tailscale state at daemon start and when the
+operator changes them. It adopts equivalent manual handlers, refuses handlers it does
+not own, and never touches a serve handler outside the ports and paths it manages.
+"""
 
 from __future__ import annotations
 
@@ -7,26 +13,27 @@ import shutil
 import subprocess  # nosec B404 # fixed tailscale CLI commands
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Literal, cast
 from urllib.parse import urlsplit
 
 from gobby.config.app import McpExposureConfig, UiExposureConfig
-from gobby.config.bootstrap import UiExposureMode, load_bootstrap
-from gobby.config.bootstrap_io import bootstrap_path, update_bootstrap_yaml
 from gobby.utils.env import is_test_protect_enabled
 
 _READ_TIMEOUT_SECONDS = 5.0
 _MUTATION_TIMEOUT_SECONDS = 15.0
+_UI_PATH = "/"
+_MCP_PATH = "/mcp"
+
+PersistIntent = Callable[[], None]
 
 
 class UiExposeError(RuntimeError):
-    """Raised when UI exposure cannot be safely inspected or changed."""
+    """Raised when exposure cannot be safely inspected or changed."""
 
 
 @dataclass(frozen=True)
 class UiExposeResult:
-    """Current or resulting Tailscale exposure state for the UI or the /mcp route."""
+    """Current or resulting exposure state for the Web UI or the /mcp route."""
 
     enabled: bool
     url: str | None = None
@@ -35,15 +42,85 @@ class UiExposeResult:
     funnel: bool = False
 
 
+@dataclass(frozen=True)
+class _Route:
+    """One Gobby-managed Serve handler: a path on one HTTPS port of this node."""
+
+    port: int
+    path: str
+    funnel: bool
+
+    def target(self, daemon_port: int) -> str:
+        return f"http://localhost:{daemon_port}{self.path if self.path == _MCP_PATH else ''}"
+
+
+@dataclass(frozen=True)
+class _NodeInfo:
+    dns_name: str
+
+    def url(self, port: int, path: str) -> str:
+        authority = self.dns_name if port == 443 else f"{self.dns_name}:{port}"
+        return f"https://{authority}{path}"
+
+
+@dataclass(frozen=True)
+class _ServeState:
+    node: _NodeInfo
+    tcp: Mapping[int, object]
+    handlers: Mapping[int, Mapping[str, str]]
+    funnel_ports: frozenset[int]
+
+
+def _ui_route(port: int) -> _Route:
+    return _Route(port=port, path=_UI_PATH, funnel=False)
+
+
+def _mcp_route(port: int, *, mode: Literal["tailnet", "funnel"]) -> _Route:
+    return _Route(port=port, path=_MCP_PATH, funnel=mode == "funnel")
+
+
+def enable_tailscale_ui(
+    daemon_port: int,
+    *,
+    port: int = 443,
+    persist: PersistIntent | None = None,
+) -> UiExposeResult:
+    """Serve the Web UI root on a tailnet-only HTTPS port and record it with `persist`."""
+    return _apply_route(daemon_port, _ui_route(port), persist)
+
+
+def disable_tailscale_ui(
+    daemon_port: int,
+    *,
+    port: int = 443,
+    forget: bool = False,
+    persist: PersistIntent | None = None,
+) -> UiExposeResult:
+    """Remove the managed Web UI handler, or only forget the recorded intent."""
+    return _remove_route(daemon_port, _ui_route(port), persist, forget=forget)
+
+
 def enable_mcp_exposure(
     daemon_port: int,
     *,
     mode: Literal["tailnet", "funnel"],
     port: int,
-    persist: Callable[[], None] | None = None,
+    persist: PersistIntent | None = None,
 ) -> UiExposeResult:
-    """Shape only: RED-phase stub."""
-    raise NotImplementedError
+    """Serve only the /mcp path on `port`, optionally published with Funnel."""
+    return _apply_route(daemon_port, _mcp_route(port, mode=mode), persist)
+
+
+def disable_mcp_exposure(
+    daemon_port: int,
+    *,
+    mode: Literal["tailnet", "funnel"],
+    port: int,
+    forget: bool = False,
+    persist: PersistIntent | None = None,
+) -> UiExposeResult:
+    """Remove the managed /mcp handler, or only forget the recorded intent."""
+    return _remove_route(daemon_port, _mcp_route(port, mode=mode), persist, forget=forget)
 
 
 def reconcile_exposures(
@@ -52,8 +129,28 @@ def reconcile_exposures(
     ui: UiExposureConfig,
     mcp: McpExposureConfig,
 ) -> list[UiExposeResult]:
-    """Shape only: RED-phase stub."""
-    raise NotImplementedError
+    """Re-derive every recorded handler on this node at daemon start.
+
+    Each failure becomes a degraded result instead of an exception, so one broken
+    exposure cannot block daemon start or the other exposure.
+    """
+    results: list[UiExposeResult] = []
+    if ui.mode == "tailnet":
+        results.append(
+            _degraded(
+                funnel=False,
+                action=lambda: enable_tailscale_ui(daemon_port, port=ui.port),
+            )
+        )
+    if mcp.mode != "off":
+        mcp_mode = mcp.mode
+        results.append(
+            _degraded(
+                funnel=mcp_mode == "funnel",
+                action=lambda: enable_mcp_exposure(daemon_port, mode=mcp_mode, port=mcp.port),
+            )
+        )
+    return results
 
 
 def get_exposure_status(
@@ -62,158 +159,23 @@ def get_exposure_status(
     ui: UiExposureConfig,
     mcp: McpExposureConfig,
 ) -> tuple[UiExposeResult, UiExposeResult]:
-    """Shape only: RED-phase stub."""
-    raise NotImplementedError
+    """Return the recorded UI and /mcp exposure state, reading Tailscale without changes."""
+    ui_status = (
+        _status(daemon_port, _ui_route(ui.port))
+        if ui.mode == "tailnet"
+        else UiExposeResult(enabled=False)
+    )
+    mcp_status = (
+        _status(daemon_port, _mcp_route(mcp.port, mode=mcp.mode))
+        if mcp.mode != "off"
+        else UiExposeResult(enabled=False)
+    )
+    return ui_status, mcp_status
 
 
 def node_dns_name() -> str:
-    """Shape only: RED-phase stub."""
-    raise NotImplementedError
-
-
-@dataclass(frozen=True)
-class _NodeInfo:
-    dns_name: str
-
-    @property
-    def host_port(self) -> str:
-        return f"{self.dns_name}:443"
-
-    @property
-    def url(self) -> str:
-        return f"https://{self.dns_name}/"
-
-
-@dataclass(frozen=True)
-class _ServeState:
-    node: _NodeInfo
-    root_proxy: str | None
-
-
-def enable_tailscale_ui(
-    daemon_port: int,
-    *,
-    config_path: Path | None = None,
-    port: int = 443,
-    persist: Callable[[], None] | None = None,
-) -> UiExposeResult:
-    """Enable and persist the root Tailscale Serve proxy for Gobby."""
-    path = config_path or bootstrap_path()
-    state = _probe_serve_state()
-    target = _proxy_target(daemon_port)
-
-    if state.root_proxy is not None:
-        if not _is_gobby_proxy(state.root_proxy, daemon_port):
-            raise UiExposeError("the Tailscale HTTPS root handler is owned by another proxy")
-        try:
-            _write_intent(path, "tailscale")
-        except Exception as exc:
-            raise UiExposeError(f"failed to persist UI exposure intent: {exc}") from exc
-        return UiExposeResult(mode="tailscale", url=state.node.url)
-
-    _run_mutation(
-        [
-            "serve",
-            "--yes",
-            "--bg",
-            "--https=443",
-            "--set-path=/",
-            target,
-        ]
-    )
-    try:
-        verified = _probe_serve_state()
-        if verified.root_proxy is None or not _is_gobby_proxy(verified.root_proxy, daemon_port):
-            raise UiExposeError("Tailscale did not install the expected HTTPS root handler")
-        _write_intent(path, "tailscale")
-    except Exception as exc:
-        _best_effort_remove_root(daemon_port)
-        if isinstance(exc, UiExposeError):
-            raise
-        raise UiExposeError(f"failed to persist UI exposure intent: {exc}") from exc
-
-    return UiExposeResult(mode="tailscale", url=verified.node.url, changed=True)
-
-
-def disable_tailscale_ui(
-    daemon_port: int,
-    *,
-    config_path: Path | None = None,
-    forget: bool = False,
-    port: int = 443,
-    persist: Callable[[], None] | None = None,
-) -> UiExposeResult:
-    """Disable the managed root handler, or only forget machine-local intent."""
-    path = config_path or bootstrap_path()
-    if forget:
-        try:
-            _write_intent(path, None)
-        except Exception as exc:
-            raise UiExposeError(f"failed to clear UI exposure intent: {exc}") from exc
-        return UiExposeResult(mode=None)
-
-    state = _probe_serve_state()
-    if state.root_proxy is None:
-        try:
-            _write_intent(path, None)
-        except Exception as exc:
-            raise UiExposeError(f"failed to clear UI exposure intent: {exc}") from exc
-        return UiExposeResult(mode=None)
-    if not _is_gobby_proxy(state.root_proxy, daemon_port):
-        raise UiExposeError("the Tailscale HTTPS root handler is owned by another proxy")
-
-    _run_mutation(["serve", "--yes", "--https=443", "--set-path=/", "off"])
-    try:
-        verified = _probe_serve_state()
-        if verified.root_proxy is not None:
-            raise UiExposeError("Tailscale did not remove the HTTPS root handler")
-        _write_intent(path, None)
-    except Exception as exc:
-        _best_effort_restore_root(daemon_port)
-        if isinstance(exc, UiExposeError):
-            raise
-        raise UiExposeError(f"failed to clear UI exposure intent: {exc}") from exc
-
-    return UiExposeResult(mode=None, changed=True)
-
-
-def get_ui_exposure_status(
-    daemon_port: int,
-    *,
-    config_path: Path | None = None,
-) -> UiExposeResult:
-    """Return configured exposure status without touching external state."""
-    path = config_path or bootstrap_path()
-    if _read_intent(path) is None:
-        return UiExposeResult(mode=None)
-
-    try:
-        state = _probe_serve_state()
-        if state.root_proxy is None:
-            return UiExposeResult(
-                mode="tailscale",
-                degraded_reason="HTTPS root handler is missing",
-            )
-        if not _is_gobby_proxy(state.root_proxy, daemon_port):
-            return UiExposeResult(
-                mode="tailscale",
-                degraded_reason="HTTPS root handler points to another proxy",
-            )
-        return UiExposeResult(mode="tailscale", url=state.node.url)
-    except UiExposeError as exc:
-        return UiExposeResult(mode="tailscale", degraded_reason=str(exc))
-
-
-def reconcile_ui_exposure(
-    daemon_port: int,
-    *,
-    config_path: Path | None = None,
-) -> UiExposeResult | None:
-    """Restore configured exposure after daemon readiness; skip absent intent."""
-    path = config_path or bootstrap_path()
-    if _read_intent(path) is None:
-        return None
-    return enable_tailscale_ui(daemon_port, config_path=path)
+    """Return this node's MagicDNS name from `tailscale status`."""
+    return _read_node_info().dns_name
 
 
 def resolve_installer_ui_exposure(
@@ -239,66 +201,208 @@ def apply_installer_ui_exposure(
     expose: bool,
     daemon_port: int,
     *,
-    config_path: Path | None = None,
+    port: int = 443,
+    persist: PersistIntent | None = None,
 ) -> UiExposeResult | None:
     """Apply an affirmative installer exposure choice."""
     if not expose:
         return None
-    return enable_tailscale_ui(daemon_port, config_path=config_path)
+    return enable_tailscale_ui(daemon_port, port=port, persist=persist)
 
 
-def _read_intent(path: Path) -> UiExposureMode | None:
-    return load_bootstrap(str(path)).ui_expose
+def _apply_route(
+    daemon_port: int,
+    route: _Route,
+    persist: PersistIntent | None,
+) -> UiExposeResult:
+    state = _probe_serve_state()
+    _assert_port_usable(state, route)
+    current = state.handlers.get(route.port, {}).get(route.path)
+    if current is not None:
+        if not _is_gobby_target(current, route, daemon_port):
+            raise UiExposeError(
+                f"the Tailscale HTTPS {route.path} handler on port {route.port} "
+                "is owned by another proxy"
+            )
+        if not route.funnel or route.port in state.funnel_ports:
+            _run_persist(persist)
+            return _enabled_result(state.node, route, changed=False)
+
+    _run_mutation(_mutation_args(route, daemon_port, off=False))
+    try:
+        verified = _probe_serve_state()
+        if not _route_applied(verified, route, daemon_port):
+            raise UiExposeError(
+                f"Tailscale did not install the expected HTTPS {route.path} handler "
+                f"on port {route.port}"
+            )
+        _run_persist(persist)
+    except Exception:
+        _best_effort_remove(daemon_port, route)
+        raise
+    return _enabled_result(verified.node, route, changed=True)
 
 
-def _write_intent(path: Path, mode: UiExposureMode | None) -> None:
-    if mode is None and not path.exists():
+def _remove_route(
+    daemon_port: int,
+    route: _Route,
+    persist: PersistIntent | None,
+    *,
+    forget: bool,
+) -> UiExposeResult:
+    if forget:
+        _run_persist(persist)
+        return UiExposeResult(enabled=False)
+
+    state = _probe_serve_state()
+    current = state.handlers.get(route.port, {}).get(route.path)
+    if current is None:
+        _run_persist(persist)
+        return UiExposeResult(enabled=False)
+    if not _is_gobby_target(current, route, daemon_port):
+        raise UiExposeError(
+            f"the Tailscale HTTPS {route.path} handler on port {route.port} "
+            "is owned by another proxy"
+        )
+
+    _run_mutation(_mutation_args(route, daemon_port, off=True))
+    try:
+        verified = _probe_serve_state()
+        if verified.handlers.get(route.port, {}).get(route.path) is not None:
+            raise UiExposeError(f"Tailscale did not remove the HTTPS {route.path} handler")
+        if route.funnel and route.port in verified.funnel_ports:
+            if not verified.handlers.get(route.port):
+                raise UiExposeError(f"Tailscale Funnel is still active on port {route.port}")
+        _run_persist(persist)
+    except Exception:
+        _best_effort_restore(daemon_port, route)
+        raise
+    return UiExposeResult(enabled=False, changed=True)
+
+
+def _status(daemon_port: int, route: _Route) -> UiExposeResult:
+    try:
+        state = _probe_serve_state()
+    except UiExposeError as exc:
+        return UiExposeResult(enabled=True, degraded_reason=str(exc), funnel=route.funnel)
+    current = state.handlers.get(route.port, {}).get(route.path)
+    if current is None:
+        reason = f"HTTPS {route.path} handler is missing on port {route.port}"
+    elif not _is_gobby_target(current, route, daemon_port):
+        reason = f"HTTPS {route.path} handler on port {route.port} points to another proxy"
+    elif route.funnel and route.port not in state.funnel_ports:
+        reason = f"Tailscale Funnel is not active on port {route.port}"
+    else:
+        return _enabled_result(state.node, route, changed=False)
+    return UiExposeResult(enabled=True, degraded_reason=reason, funnel=route.funnel)
+
+
+def _degraded(*, funnel: bool, action: Callable[[], UiExposeResult]) -> UiExposeResult:
+    try:
+        return action()
+    except UiExposeError as exc:
+        return UiExposeResult(enabled=True, degraded_reason=str(exc), funnel=funnel)
+
+
+def _enabled_result(node: _NodeInfo, route: _Route, *, changed: bool) -> UiExposeResult:
+    return UiExposeResult(
+        enabled=True,
+        url=node.url(route.port, route.path),
+        changed=changed,
+        funnel=route.funnel,
+    )
+
+
+def _route_applied(state: _ServeState, route: _Route, daemon_port: int) -> bool:
+    current = state.handlers.get(route.port, {}).get(route.path)
+    if current is None or not _is_gobby_target(current, route, daemon_port):
+        return False
+    return not route.funnel or route.port in state.funnel_ports
+
+
+def _assert_port_usable(state: _ServeState, route: _Route) -> None:
+    tcp_value = state.tcp.get(route.port)
+    existing = state.handlers.get(route.port, {})
+    if tcp_value is not None:
+        mapping = _required_mapping(tcp_value, f'TCP["{route.port}"]')
+        if mapping.get("HTTPS") is not True or set(mapping) != {"HTTPS"}:
+            raise UiExposeError(f"Tailscale port {route.port} has conflicting protocol state")
+    elif existing:
+        raise UiExposeError(f"Tailscale handlers exist on port {route.port} without HTTPS state")
+    if route.funnel:
+        foreign = sorted(path for path in existing if path != _MCP_PATH)
+        if foreign:
+            raise UiExposeError(
+                f"Funnel port {route.port} would carry the non-/mcp route {foreign[0]}; refusing"
+            )
+    elif route.port in state.funnel_ports:
+        raise UiExposeError(
+            f"Tailscale Funnel is active for this node on port {route.port}; "
+            f"refusing to serve {route.path} there"
+        )
+
+
+def _is_gobby_target(target: str, route: _Route, daemon_port: int) -> bool:
+    try:
+        parsed = urlsplit(target)
+        port = parsed.port
+    except ValueError:
+        return False
+    if not (
+        parsed.scheme == "http"
+        and parsed.hostname in {"localhost", "127.0.0.1"}
+        and port == daemon_port
+        and parsed.query == ""
+        and parsed.fragment == ""
+        and parsed.username is None
+        and parsed.password is None
+    ):
+        return False
+    if route.path == _MCP_PATH:
+        return parsed.path == _MCP_PATH
+    return parsed.path in {"", "/"}
+
+
+def _mutation_args(route: _Route, daemon_port: int, *, off: bool) -> list[str]:
+    https = f"--https={route.port}"
+    set_path = f"--set-path={route.path}"
+    if route.funnel:
+        if off:
+            return ["funnel", https, set_path, "off"]
+        return ["funnel", "--bg", https, set_path, route.target(daemon_port)]
+    if off:
+        return ["serve", "--yes", https, set_path, "off"]
+    return ["serve", "--yes", "--bg", https, set_path, route.target(daemon_port)]
+
+
+def _run_persist(persist: PersistIntent | None) -> None:
+    if persist is None:
         return
-    if _read_intent(path) == mode:
-        return
-
-    def update(data: dict[str, Any]) -> None:
-        if mode is None:
-            data.pop("ui_expose", None)
-        else:
-            data["ui_expose"] = mode
-
-    update_bootstrap_yaml(path, update)
+    try:
+        persist()
+    except Exception as exc:
+        raise UiExposeError(f"failed to persist exposure intent: {exc}") from exc
 
 
-def _probe_serve_state() -> _ServeState:
-    node = _read_node_info()
-    config = _run_json(["serve", "status", "--json"])
-    tcp = _optional_mapping(config.get("TCP"), "TCP")
-    web = _optional_mapping(config.get("Web"), "Web")
-    allow_funnel = _optional_mapping(config.get("AllowFunnel"), "AllowFunnel")
+def _best_effort_remove(daemon_port: int, route: _Route) -> None:
+    try:
+        state = _probe_serve_state()
+        current = state.handlers.get(route.port, {}).get(route.path)
+        if current is None or not _is_gobby_target(current, route, daemon_port):
+            return
+        _run_mutation(_mutation_args(route, daemon_port, off=True))
+    except UiExposeError:
+        pass
 
-    port_config = tcp.get("443")
-    if port_config is not None:
-        port_mapping = _required_mapping(port_config, 'TCP["443"]')
-        if port_mapping.get("HTTPS") is not True or set(port_mapping) != {"HTTPS"}:
-            raise UiExposeError("Tailscale port 443 has conflicting protocol state")
 
-    funnel_value = allow_funnel.get(node.host_port)
-    if funnel_value is not None and not isinstance(funnel_value, bool):
-        raise UiExposeError("Tailscale AllowFunnel state is malformed")
-    if funnel_value is True:
-        raise UiExposeError("Tailscale Funnel is active for this node on port 443")
-
-    host_config = web.get(node.host_port)
-    if host_config is None:
-        return _ServeState(node=node, root_proxy=None)
-    host_mapping = _required_mapping(host_config, f'Web["{node.host_port}"]')
-    handlers = _optional_mapping(host_mapping.get("Handlers"), "Handlers")
-    root = handlers.get("/")
-    if root is None:
-        return _ServeState(node=node, root_proxy=None)
-    if port_config is None:
-        raise UiExposeError("Tailscale root handler exists without HTTPS port 443 state")
-    root_mapping = _required_mapping(root, 'Handlers["/"]')
-    if set(root_mapping) != {"Proxy"} or not isinstance(root_mapping.get("Proxy"), str):
-        raise UiExposeError("the Tailscale HTTPS root handler is not a proxy")
-    return _ServeState(node=node, root_proxy=cast(str, root_mapping["Proxy"]))
+def _best_effort_restore(daemon_port: int, route: _Route) -> None:
+    try:
+        state = _probe_serve_state()
+        if state.handlers.get(route.port, {}).get(route.path) is not None:
+            return
+        _run_mutation(_mutation_args(route, daemon_port, off=False))
+    except UiExposeError:
+        pass
 
 
 def _read_node_info() -> _NodeInfo:
@@ -318,6 +422,52 @@ def _read_node_info() -> _NodeInfo:
     if not isinstance(dns_name, str) or not dns_name.strip("."):
         raise UiExposeError("Tailscale status is missing this node's MagicDNS name")
     return _NodeInfo(dns_name=dns_name.rstrip("."))
+
+
+def _probe_serve_state() -> _ServeState:
+    node = _read_node_info()
+    config = _run_json(["serve", "status", "--json"])
+    tcp = _optional_mapping(config.get("TCP"), "TCP")
+    web = _optional_mapping(config.get("Web"), "Web")
+    allow_funnel = _optional_mapping(config.get("AllowFunnel"), "AllowFunnel")
+    prefix = f"{node.dns_name}:"
+
+    handlers: dict[int, dict[str, str]] = {}
+    for host_port, host_config in web.items():
+        if not host_port.startswith(prefix):
+            continue
+        host_mapping = _required_mapping(host_config, f'Web["{host_port}"]')
+        port_handlers: dict[str, str] = {}
+        for path, handler in _optional_mapping(host_mapping.get("Handlers"), "Handlers").items():
+            mapping = _required_mapping(handler, f'Handlers["{path}"]')
+            if set(mapping) != {"Proxy"} or not isinstance(mapping.get("Proxy"), str):
+                raise UiExposeError(f"the Tailscale handler for {path} is not a proxy")
+            port_handlers[path] = cast(str, mapping["Proxy"])
+        handlers[_port_of(host_port)] = port_handlers
+
+    funnel_ports: set[int] = set()
+    for host_port, value in allow_funnel.items():
+        if not host_port.startswith(prefix):
+            continue
+        if not isinstance(value, bool):
+            raise UiExposeError("Tailscale AllowFunnel state is malformed")
+        if value:
+            funnel_ports.add(_port_of(host_port))
+
+    return _ServeState(
+        node=node,
+        tcp={_port_of(key): value for key, value in tcp.items()},
+        handlers=handlers,
+        funnel_ports=frozenset(funnel_ports),
+    )
+
+
+def _port_of(key: str) -> int:
+    """Read the port from a `HOST:PORT` Web key or a bare TCP port key."""
+    try:
+        return int(key.rsplit(":", 1)[-1])
+    except ValueError as exc:
+        raise UiExposeError(f"Tailscale returned a malformed port key {key!r}") from exc
 
 
 def _run_json(arguments: list[str]) -> dict[str, object]:
@@ -371,35 +521,6 @@ def _run_mutation(arguments: list[str]) -> None:
         raise UiExposeError(f"tailscale command failed: {detail}")
 
 
-def _best_effort_remove_root(daemon_port: int) -> None:
-    try:
-        state = _probe_serve_state()
-        if state.root_proxy is None or not _is_gobby_proxy(state.root_proxy, daemon_port):
-            return
-        _run_mutation(["serve", "--yes", "--https=443", "--set-path=/", "off"])
-    except UiExposeError:
-        pass
-
-
-def _best_effort_restore_root(daemon_port: int) -> None:
-    try:
-        state = _probe_serve_state()
-        if state.root_proxy is not None:
-            return
-        _run_mutation(
-            [
-                "serve",
-                "--yes",
-                "--bg",
-                "--https=443",
-                "--set-path=/",
-                _proxy_target(daemon_port),
-            ]
-        )
-    except UiExposeError:
-        pass
-
-
 def _required_mapping(value: object, label: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise UiExposeError(f"Tailscale {label} state is malformed")
@@ -410,25 +531,3 @@ def _optional_mapping(value: object, label: str) -> Mapping[str, object]:
     if value is None:
         return {}
     return _required_mapping(value, label)
-
-
-def _proxy_target(daemon_port: int) -> str:
-    return f"http://localhost:{daemon_port}"
-
-
-def _is_gobby_proxy(target: str, daemon_port: int) -> bool:
-    try:
-        parsed = urlsplit(target)
-        port = parsed.port
-    except ValueError:
-        return False
-    return (
-        parsed.scheme == "http"
-        and parsed.hostname in {"localhost", "127.0.0.1"}
-        and port == daemon_port
-        and parsed.path in {"", "/"}
-        and parsed.query == ""
-        and parsed.fragment == ""
-        and parsed.username is None
-        and parsed.password is None
-    )

@@ -9,8 +9,7 @@ import pytest
 from httpx2 import Response
 from starlette.testclient import TestClient
 
-from gobby.config.app import DaemonConfig
-from gobby.config.bootstrap import BootstrapConfig
+from gobby.config.app import DaemonConfig, UiExposureConfig
 from gobby.identity import DUMMY_PASSWORD_HASH, hash_password, verify_password_hash
 from gobby.servers.http import HTTPServer
 from gobby.storage.auth import hash_token
@@ -29,13 +28,16 @@ def temp_db(hub_db: HubDatabase) -> HubDatabase:
     return hub_db
 
 
-def _server(db: HubDatabase) -> HTTPServer:
+def _server(db: HubDatabase, *, config: DaemonConfig | None = None) -> HTTPServer:
     return create_http_server(
-        config=DaemonConfig(),
+        config=config or DaemonConfig(),
         database=db,
         task_manager=LocalTaskManager(db),
         authenticated_requests=False,
     )
+
+
+_TAILNET_UI = DaemonConfig(ui_exposure=UiExposureConfig(mode="tailnet"))
 
 
 def _set_password(db: HubDatabase, password: str = "correctpassword") -> None:
@@ -148,8 +150,7 @@ class TestAuthLogin:
 
     def test_tailscale_proxy_tracks_login_failures_per_user(self, temp_db: HubDatabase) -> None:
         _set_password(temp_db, "mypassword")
-        server = _server(temp_db)
-        server.bootstrap_config = BootstrapConfig(ui_expose="tailscale")
+        server = _server(temp_db, config=_TAILNET_UI)
         client = TestClient(server.app, client=("127.0.0.1", 50000))
         credentials = {"email": TEST_USER_EMAIL, "password": "wrong"}
 
@@ -182,12 +183,13 @@ class TestAuthLogin:
         # 127.0.0.1, so a loopback peer no longer proves the request came via Tailscale.
         _set_password(temp_db, "mypassword")
         server = create_http_server(
-            config=DaemonConfig(bind_host="192.168.1.20"),
+            config=DaemonConfig(
+                bind_host="192.168.1.20", ui_exposure=UiExposureConfig(mode="tailnet")
+            ),
             database=temp_db,
             task_manager=LocalTaskManager(temp_db),
             authenticated_requests=False,
         )
-        server.bootstrap_config = BootstrapConfig(ui_expose="tailscale")
         client = TestClient(server.app, client=("127.0.0.1", 50000))
         credentials = {"email": TEST_USER_EMAIL, "password": "wrong"}
 
@@ -209,8 +211,7 @@ class TestAuthLogin:
 
     def test_tailscale_identity_header_requires_loopback_proxy(self, temp_db: HubDatabase) -> None:
         _set_password(temp_db, "mypassword")
-        server = _server(temp_db)
-        server.bootstrap_config = BootstrapConfig(ui_expose="tailscale")
+        server = _server(temp_db, config=_TAILNET_UI)
         client = TestClient(server.app, client=("203.0.113.10", 50000))
         credentials = {"email": TEST_USER_EMAIL, "password": "wrong"}
 

@@ -354,6 +354,8 @@ runtime fragment. Do not submit bootstrap keys to the values API.
 the daemon binds loopback (`127.0.0.1`, `localhost`, or `::1`; the default is
 `127.0.0.1`). Set it when a proxy such as Tailscale Funnel forwards to the daemon
 under a public hostname. The empty default keeps the loopback Host check unchanged.
+While `mcp_exposure.mode` is not `off`, Gobby admits this node's Tailscale DNS name
+itself, so the list is only needed for other hostnames.
 
 - Each entry equals the forwarded `Host` header. A port-less Funnel request sends
   `node.tailnet-name.ts.net`. A Serve port sends `node.tailnet-name.ts.net:8443`.
@@ -365,37 +367,73 @@ under a public hostname. The empty default keeps the loopback Host check unchang
 - On a non-loopback `bind_host`, the SDK skips the Host check, so the setting has
   no effect. The field is restart-required; apply it with `gobby restart`.
 
-Path-only Funnel recipe: only `/mcp` is public, on port 443. The UI stays
-tailnet-only on 8443.
+#### Tailscale exposure
 
-1. Leave `ui_expose` unset. `gobby ui expose` owns the port-443 root handler and
-   refuses to combine with Funnel. See
-   [Tailnet-only web UI](shared-stack.md#tailnet-only-web-ui).
-2. Set your node's hostname in the daemon config:
+The Web UI and `/mcp` exposures are recorded in hub config and restored on every
+daemon start, so a reinstall or a move to another machine needs no re-setup. Both
+default to `off`: a fresh install exposes nothing. Record them with the CLI, which
+checks Tailscale before it records anything:
 
-   ```yaml
-   mcp_allowed_hosts:
-     - node.tailnet-name.ts.net
-   ```
+```yaml
+ui_exposure:
+  mode: off        # off | tailnet
+  port: 443        # HTTPS port for the tailnet-only Web UI
+mcp_exposure:
+  mode: off        # off | tailnet | funnel
+  port: 443        # HTTPS port for /mcp; Funnel allows only 443, 8443, 10000
+```
 
-3. Configure Serve. It maps the UI to tailnet-only port 8443, and maps only `/mcp`
-   on port 443:
+- `ui_expose` in `bootstrap.yaml` is retired. The daemon refuses to start while it
+  is present. Remove it, then run `gobby ui expose --port <port>`.
+- The Web UI port may not equal the Funnel port. A Funnel port carries only `/mcp`,
+  and Gobby refuses any other route on it.
+- The node's DNS name comes from `tailscale status` on the machine that runs the
+  daemon. It is never hardcoded.
+- Both settings are restart-required. Apply a change with `gobby restart`.
+- `gobby status` reports both exposures and Funnel state.
 
-   ```bash
-   tailscale serve --bg --https=8443 http://localhost:60887
-   tailscale serve --bg --https=443 --set-path=/mcp http://localhost:60887/mcp
-   ```
+Recipe: `/mcp` public over Funnel, Web UI on tailnet port 8443
 
-   Enable Funnel for node port 443 only, with the flags your Tailscale client
-   documents under `tailscale funnel --help`. Do not enable Funnel on 8443.
+1. Record the tailnet-only Web UI: `gobby ui expose --port 8443`.
+2. Publish `/mcp` over Funnel: `gobby ui mcp-expose --port 443 --funnel`. Funnel must
+   be allowed for this node in the Tailscale admin console. If Tailscale refuses,
+   the command exits with its error, removes any handler it just added, and records
+   nothing.
+3. Restart the daemon so it admits the node's name on `/mcp`: `gobby restart`.
+4. Verify.
 
-4. Verify from outside the tailnet:
-   - Unauthenticated `POST https://node.tailnet-name.ts.net/mcp` returns `401` from
-     Gobby.
-   - `421` means the host is missing from `mcp_allowed_hosts`.
-   - `404` means the Serve path mapping differs from this recipe. Check
-     `tailscale serve status`.
-   - Authenticated `initialize` returns `200`.
+| Request | Expected |
+| --- | --- |
+| `GET https://node.tailnet-name.ts.net/` | `404`: only `/mcp` is served on the Funnel port |
+| `GET https://node.tailnet-name.ts.net/api/health` | `404` |
+| `POST https://node.tailnet-name.ts.net/mcp`, no bearer | `401` from Gobby |
+| `GET https://node.tailnet-name.ts.net:8443/` from a tailnet device | `200` |
+
+With a bearer, a host missing from `mcp_allowed_hosts` gets `421`, but the node's own
+name is admitted automatically. A `404` on `/mcp` means the Serve path mapping
+differs from this recipe. Check `tailscale serve status`.
+
+To remove the public route, run `gobby ui mcp-unexpose`. Then restart, so the daemon
+stops admitting the name.
+
+#### Public `/mcp` keys
+
+Give each Funnel client its own key. Do not reuse the enrolled key:
+
+```bash
+gobby auth key --mint grok-connector
+```
+
+The key prints once. Store it in the client. Then:
+
+- `gobby auth key list` shows key IDs.
+- `gobby auth key revoke <KEY_ID>` revokes one. Revoked keys stop authenticating. The
+  bootstrap's current key cannot be revoked this way.
+
+Caveat: a minted key is full-scope. It authorizes the same MCP tools as the enrolled
+key, so anyone holding it can call every tool the daemon exposes over `/mcp`. Mint one
+key per client, label it for that client, and revoke it when the client goes away.
+Narrower scopes for public clients come with OAuth, tracked in #24360.
 
 ### Logging And Telemetry
 

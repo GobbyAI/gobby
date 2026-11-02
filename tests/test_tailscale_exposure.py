@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -63,11 +62,10 @@ def _flag(arguments: list[str], prefix: str) -> str:
 
 
 @pytest.fixture
-def fake(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeTailscale:
+def fake(monkeypatch: pytest.MonkeyPatch) -> FakeTailscale:
     tailscale = FakeTailscale(dns_name=OLD_NAME)
     monkeypatch.setattr(ui_exposure, "_run_json", tailscale.run_json)
     monkeypatch.setattr(ui_exposure, "_run_mutation", tailscale.run_mutation)
-    monkeypatch.setattr(ui_exposure, "bootstrap_path", lambda: tmp_path / "bootstrap.yaml")
     return tailscale
 
 
@@ -146,7 +144,7 @@ def test_reconcile_with_no_recorded_choice_touches_nothing(fake: FakeTailscale) 
 
 
 def test_reconcile_restores_recorded_exposures_on_new_node_name(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tailscale = FakeTailscale(
         dns_name=NEW_NAME,
@@ -160,7 +158,6 @@ def test_reconcile_restores_recorded_exposures_on_new_node_name(
     )
     monkeypatch.setattr(ui_exposure, "_run_json", tailscale.run_json)
     monkeypatch.setattr(ui_exposure, "_run_mutation", tailscale.run_mutation)
-    monkeypatch.setattr(ui_exposure, "bootstrap_path", lambda: tmp_path / "bootstrap.yaml")
 
     results = ui_exposure.reconcile_exposures(
         DAEMON_PORT,

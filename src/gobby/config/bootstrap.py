@@ -42,7 +42,6 @@ BACKEND_PORT_OFFSET = 100
 
 DatastoreMode = Literal["local", "remote"]
 RunMode = Literal["standalone", "hub", "node"]
-UiExposureMode = Literal["tailscale"]
 FrontDoorRouteBackend = Literal["proxy", "native", "compare"]
 FRONT_DOOR_ROUTE_BACKENDS: tuple[FrontDoorRouteBackend, ...] = ("proxy", "native", "compare")
 _FRONT_DOOR_KEYS = frozenset({"enabled", "routes", "tls"})
@@ -108,7 +107,6 @@ class BootstrapConfig:
     database_url: str | None = None
     postgres_pool: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG
     daemon_url: str | None = None
-    ui_expose: UiExposureMode | None = None
     files_home: str | None = None
     hub_daemon_url: str | None = None
     front_door: FrontDoorConfig = FrontDoorConfig()
@@ -214,11 +212,15 @@ def bootstrap_from_mapping(
         raise BootstrapConfigError(
             "postgres_install_mode has been removed; PostgreSQL is always Docker-managed"
         )
+    if "ui_expose" in data:
+        raise BootstrapConfigError(
+            "ui_expose has moved to hub-backed config. Remove it from bootstrap.yaml, "
+            "then run 'gobby ui expose --port <port>' to record the choice."
+        )
     postgres_pool = _parse_postgres_pool(data.get("postgres_pool"))
     datastore_mode = _parse_datastore_mode(
         data.get("datastore_mode", BootstrapConfig.datastore_mode)
     )
-    ui_expose = _parse_ui_exposure_mode(data.get("ui_expose"))
     hub = _parse_yaml_bool(data.get("hub", BootstrapConfig.hub), "hub")
     bind_host = _parse_str(data.get("bind_host", BootstrapConfig.bind_host), "bind_host")
     daemon_port = _parse_int(data.get("daemon_port", BootstrapConfig.daemon_port), "daemon_port")
@@ -255,7 +257,6 @@ def bootstrap_from_mapping(
         database_url=database_url,
         postgres_pool=postgres_pool,
         daemon_url=daemon_url,
-        ui_expose=ui_expose,
         files_home=files_home,
         hub_daemon_url=hub_daemon_url,
         front_door=_parse_front_door(data.get("front_door"), bind_host),
@@ -537,14 +538,6 @@ def _parse_datastore_mode(value: object) -> DatastoreMode:
     if value in ("local", "remote"):
         return cast(DatastoreMode, value)
     raise BootstrapConfigError("datastore_mode must be one of: local, remote")
-
-
-def _parse_ui_exposure_mode(value: object) -> UiExposureMode | None:
-    if value is None:
-        return None
-    if value != "tailscale":
-        raise BootstrapConfigError("ui_expose must be 'tailscale' when configured")
-    return cast(UiExposureMode, value)
 
 
 def _validate_managed_database_url(

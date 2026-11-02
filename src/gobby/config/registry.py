@@ -621,6 +621,9 @@ _RESTART_PREFIXES = (
     "database_concurrency.",
     "databases.",
     "telemetry.",
+    # Header trust and the /mcp Host allowance are read when the app is created.
+    "ui_exposure.",
+    "mcp_exposure.",
 )
 _RESTART_NESTED_PATHS = frozenset(
     {

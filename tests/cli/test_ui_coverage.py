@@ -21,7 +21,7 @@ from gobby.cli.ui import (
     ui,
 )
 from gobby.cli.utils_ui import _write_ui_pid_record
-from gobby.config.app import DaemonConfig
+from gobby.config.app import DaemonConfig, McpExposureConfig, UiExposureConfig
 from gobby.ui_exposure import UiExposeError, UiExposeResult
 
 pytestmark = pytest.mark.unit
@@ -47,8 +47,8 @@ def live_process() -> Iterator[subprocess.Popen[bytes]]:
 def isolate_ui_exposure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         ui_module,
-        "get_ui_exposure_status",
-        lambda _daemon_port: UiExposeResult(mode=None),
+        "exposure_status_lines",
+        lambda _daemon_port: ["Web UI exposure: off", "MCP exposure: off"],
     )
 
 
@@ -543,7 +543,7 @@ class TestUiStatus:
         result = runner.invoke(ui, ["status"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "Disabled" in result.output
-        assert "Exposure: off" in result.output
+        assert "Web UI exposure: off" in result.output
 
     @patch("gobby.cli.ui._get_ui_pid", return_value=5555)
     def test_status_dev_running(self, _pid: MagicMock, runner: CliRunner) -> None:
@@ -580,15 +580,19 @@ class TestUiStatus:
         config.ui.enabled = False
         monkeypatch.setattr(
             ui_module,
-            "get_ui_exposure_status",
-            lambda _daemon_port: UiExposeResult(
-                mode="tailscale", url="https://node.example.ts.net/"
-            ),
+            "exposure_status_lines",
+            lambda _daemon_port: [
+                "Web UI exposure: tailnet (https://node.example.ts.net:8443/; Funnel off)",
+                "MCP exposure: off",
+            ],
         )
 
         result = runner.invoke(ui, ["status"], obj=_runtime(config), catch_exceptions=False)
 
-        assert "Exposure: tailscale (https://node.example.ts.net/)" in result.output
+        assert "Web UI exposure: tailnet (https://node.example.ts.net:8443/; Funnel off)" in (
+            result.output
+        )
+        assert "MCP exposure: off" in result.output
 
     def test_status_exposure_degraded(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
@@ -597,21 +601,23 @@ class TestUiStatus:
         config.ui.enabled = False
         monkeypatch.setattr(
             ui_module,
-            "get_ui_exposure_status",
-            lambda _daemon_port: UiExposeResult(
-                mode="tailscale", degraded_reason="root handler is missing"
-            ),
+            "exposure_status_lines",
+            lambda _daemon_port: [
+                "Web UI exposure: tailnet (degraded: root handler is missing; Funnel off)"
+            ],
         )
 
         result = runner.invoke(ui, ["status"], obj=_runtime(config), catch_exceptions=False)
 
-        assert "Exposure: tailscale (degraded: root handler is missing)" in result.output
+        assert "Web UI exposure: tailnet (degraded: root handler is missing; Funnel off)" in (
+            result.output
+        )
 
 
 class TestUiExposureCommands:
     def test_expose_prints_url(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
         bootstrap = MagicMock(daemon_port=60887)
-        enable = Mock(return_value=UiExposeResult(mode="tailscale", url="https://node/"))
+        enable = Mock(return_value=UiExposeResult(enabled=True, url="https://node/"))
         monkeypatch.setattr(ui_module, "load_bootstrap", Mock(return_value=bootstrap))
         monkeypatch.setattr(ui_module, "enable_tailscale_ui", enable)
 
@@ -619,21 +625,112 @@ class TestUiExposureCommands:
 
         assert result.exit_code == 0
         assert "Web UI exposed at https://node/" in result.output
-        enable.assert_called_once_with(60887)
+        assert enable.call_args.args == (60887,)
+        assert enable.call_args.kwargs["port"] == 443
+
+    def test_expose_port_is_recorded_when_applied(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        enable = Mock(return_value=UiExposeResult(enabled=True, url="https://node:8443/"))
+        record = Mock()
+        monkeypatch.setattr(
+            ui_module, "load_bootstrap", Mock(return_value=MagicMock(daemon_port=60887))
+        )
+        monkeypatch.setattr(ui_module, "enable_tailscale_ui", enable)
+        monkeypatch.setattr(ui_module, "record_exposure", record)
+
+        result = runner.invoke(ui, ["expose", "--port", "8443"])
+
+        assert result.exit_code == 0
+        assert enable.call_args.kwargs["port"] == 8443
+        enable.call_args.kwargs["persist"]()
+        assert record.call_args.kwargs["ui"] == UiExposureConfig(mode="tailnet", port=8443)
+
+    def test_mcp_expose_funnel_records_mode_and_port(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        enable = Mock(
+            return_value=UiExposeResult(enabled=True, url="https://node/mcp", funnel=True)
+        )
+        record = Mock()
+        monkeypatch.setattr(
+            ui_module, "load_bootstrap", Mock(return_value=MagicMock(daemon_port=60887))
+        )
+        monkeypatch.setattr(ui_module, "enable_mcp_exposure", enable)
+        monkeypatch.setattr(ui_module, "record_exposure", record)
+
+        result = runner.invoke(ui, ["mcp-expose", "--funnel"])
+
+        assert result.exit_code == 0
+        assert "MCP exposed at https://node/mcp" in result.output
+        assert "gobby restart" in result.output
+        assert enable.call_args.args == (60887,)
+        assert enable.call_args.kwargs["mode"] == "funnel"
+        assert enable.call_args.kwargs["port"] == 443
+        enable.call_args.kwargs["persist"]()
+        assert record.call_args.kwargs["mcp"] == McpExposureConfig(mode="funnel", port=443)
+
+    def test_mcp_unexpose_refuses_without_recorded_exposure(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        disable = Mock()
+        monkeypatch.setattr(
+            ui_module, "load_bootstrap", Mock(return_value=MagicMock(daemon_port=60887))
+        )
+        monkeypatch.setattr(
+            ui_module,
+            "read_exposure_config",
+            Mock(return_value=(UiExposureConfig(), McpExposureConfig())),
+        )
+        monkeypatch.setattr(ui_module, "disable_mcp_exposure", disable)
+
+        result = runner.invoke(ui, ["mcp-unexpose"])
+
+        assert result.exit_code == 1
+        assert "No /mcp exposure is recorded" in result.output
+        disable.assert_not_called()
+
+    def test_mcp_unexpose_uses_recorded_mode_and_port(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        disable = Mock(return_value=UiExposeResult(enabled=False, changed=True))
+        monkeypatch.setattr(
+            ui_module, "load_bootstrap", Mock(return_value=MagicMock(daemon_port=60887))
+        )
+        monkeypatch.setattr(
+            ui_module,
+            "read_exposure_config",
+            Mock(return_value=(UiExposureConfig(), McpExposureConfig(mode="funnel", port=443))),
+        )
+        monkeypatch.setattr(ui_module, "disable_mcp_exposure", disable)
+
+        result = runner.invoke(ui, ["mcp-unexpose"])
+
+        assert result.exit_code == 0
+        assert disable.call_args.args == (60887,)
+        assert disable.call_args.kwargs["mode"] == "funnel"
+        assert disable.call_args.kwargs["port"] == 443
 
     def test_unexpose_forget_is_explicit(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         bootstrap = MagicMock(daemon_port=60887)
-        disable = Mock(return_value=UiExposeResult(mode=None))
+        disable = Mock(return_value=UiExposeResult(enabled=False))
         monkeypatch.setattr(ui_module, "load_bootstrap", Mock(return_value=bootstrap))
+        monkeypatch.setattr(
+            ui_module,
+            "read_exposure_config",
+            Mock(return_value=(UiExposureConfig(mode="tailnet", port=8443), McpExposureConfig())),
+        )
         monkeypatch.setattr(ui_module, "disable_tailscale_ui", disable)
 
         result = runner.invoke(ui, ["unexpose", "--forget"])
 
         assert result.exit_code == 0
         assert "Serve state was not changed" in result.output
-        disable.assert_called_once_with(60887, forget=True)
+        assert disable.call_args.args == (60887,)
+        assert disable.call_args.kwargs["port"] == 8443
+        assert disable.call_args.kwargs["forget"] is True
 
     def test_exposure_error_is_click_error(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch

@@ -2856,6 +2856,26 @@
           "default": 10,
           "description": "Default number of results to return for semantic search"
         },
+        "mcp_exposure.mode": {
+          "type": "string",
+          "namespace": "mcp_exposure",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "restart_required",
+          "machineExport": false,
+          "default": "off",
+          "description": "'tailnet' serves /mcp to the tailnet; 'funnel' also publishes it publicly."
+        },
+        "mcp_exposure.port": {
+          "type": "integer",
+          "namespace": "mcp_exposure",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "restart_required",
+          "machineExport": false,
+          "default": 443,
+          "description": "HTTPS port for the /mcp route. Funnel accepts only 443, 8443 or 10000."
+        },
         "memory.access_debounce_seconds": {
           "type": "integer",
           "namespace": "memory",
@@ -4966,6 +4986,26 @@
           "machineExport": false,
           "default": null,
           "description": "Path to web/ dir (auto-detected if None)"
+        },
+        "ui_exposure.mode": {
+          "type": "string",
+          "namespace": "ui_exposure",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "restart_required",
+          "machineExport": false,
+          "default": "off",
+          "description": "'tailnet' serves the UI on this node's tailnet-only HTTPS port."
+        },
+        "ui_exposure.port": {
+          "type": "integer",
+          "namespace": "ui_exposure",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "restart_required",
+          "machineExport": false,
+          "default": 443,
+          "description": "HTTPS port for the tailnet-only Web UI. Keep it off the MCP Funnel port."
         },
         "ui_settings.defaultChatMode": {
           "type": [

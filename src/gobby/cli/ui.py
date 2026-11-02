@@ -7,20 +7,24 @@ from __future__ import annotations
 import subprocess  # nosec B404 # subprocess needed for npm commands
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import click
 import psutil
 
+from gobby.config.app import McpExposureConfig, UiExposureConfig
 from gobby.config.bootstrap import load_bootstrap
+from gobby.config.bootstrap_io import bootstrap_path
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
 from gobby.ui_exposure import (
     UiExposeError,
+    disable_mcp_exposure,
     disable_tailscale_ui,
+    enable_mcp_exposure,
     enable_tailscale_ui,
-    get_ui_exposure_status,
 )
 
+from .exposure_config import exposure_status_lines, read_exposure_config, record_exposure
 from .ui_mode import UIModeResolution
 from .utils import (
     _is_process_alive,
@@ -119,12 +123,28 @@ def sign_in_link() -> None:
     click.echo(response.json()["url"])
 
 
+_PORT_HELP = "HTTPS port on this node. Tailscale Funnel allows only 443, 8443 and 10000."
+
+
 @ui.command("expose")
-def ui_expose() -> None:
-    """Expose the web UI to this machine's Tailscale network."""
+@click.option(
+    "--port",
+    type=click.IntRange(1, 65535),
+    default=443,
+    show_default=True,
+    help="HTTPS port on this node that serves the tailnet-only Web UI.",
+)
+def ui_expose(port: int) -> None:
+    """Expose the web UI to this machine's Tailscale network and record the choice."""
     daemon_port = load_bootstrap().daemon_port
     try:
-        result = enable_tailscale_ui(daemon_port)
+        result = enable_tailscale_ui(
+            daemon_port,
+            port=port,
+            persist=lambda: record_exposure(
+                bootstrap_path(), ui=UiExposureConfig(mode="tailnet", port=port)
+            ),
+        )
     except UiExposeError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"Web UI exposed at {result.url}")
@@ -137,16 +157,84 @@ def ui_expose() -> None:
     help="Forget Gobby's exposure intent without asserting Serve state was removed.",
 )
 def ui_unexpose(forget: bool) -> None:
-    """Remove Gobby's Tailscale root handler."""
+    """Remove Gobby's recorded Web UI Tailscale handler."""
     daemon_port = load_bootstrap().daemon_port
+    ui_config, _ = read_exposure_config(bootstrap_path())
     try:
-        disable_tailscale_ui(daemon_port, forget=forget)
+        disable_tailscale_ui(
+            daemon_port,
+            port=ui_config.port,
+            forget=forget,
+            persist=lambda: record_exposure(
+                bootstrap_path(), ui=UiExposureConfig(mode="off", port=ui_config.port)
+            ),
+        )
     except UiExposeError as exc:
         raise click.ClickException(str(exc)) from exc
     if forget:
         click.echo("UI exposure intent forgotten; Tailscale Serve state was not changed.")
     else:
         click.echo("Web UI exposure disabled.")
+
+
+@ui.command("mcp-expose")
+@click.option(
+    "--port", type=click.IntRange(1, 65535), default=443, show_default=True, help=_PORT_HELP
+)
+@click.option(
+    "--funnel",
+    is_flag=True,
+    help="Publish /mcp on the public internet with Funnel. Use a key from 'gobby auth key --mint'.",
+)
+def ui_mcp_expose(port: int, funnel: bool) -> None:
+    """Expose only the /mcp route on this node, optionally over Funnel."""
+    daemon_port = load_bootstrap().daemon_port
+    mode: Literal["tailnet", "funnel"] = "funnel" if funnel else "tailnet"
+    try:
+        result = enable_mcp_exposure(
+            daemon_port,
+            mode=mode,
+            port=port,
+            persist=lambda: record_exposure(
+                bootstrap_path(), mcp=McpExposureConfig(mode=mode, port=port)
+            ),
+        )
+    except UiExposeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"MCP exposed at {result.url}")
+    click.echo("Restart the daemon ('gobby restart') to admit this node's name on /mcp.")
+
+
+@ui.command("mcp-unexpose")
+@click.option(
+    "--forget",
+    is_flag=True,
+    help="Forget Gobby's exposure intent without asserting Serve state was removed.",
+)
+def ui_mcp_unexpose(forget: bool) -> None:
+    """Remove Gobby's recorded /mcp Tailscale handler."""
+    daemon_port = load_bootstrap().daemon_port
+    _, mcp_config = read_exposure_config(bootstrap_path())
+    mode = mcp_config.mode
+    if mode == "off":
+        raise click.ClickException("No /mcp exposure is recorded; nothing to remove.")
+    try:
+        disable_mcp_exposure(
+            daemon_port,
+            mode=mode,
+            port=mcp_config.port,
+            forget=forget,
+            persist=lambda: record_exposure(
+                bootstrap_path(), mcp=McpExposureConfig(mode="off", port=mcp_config.port)
+            ),
+        )
+    except UiExposeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if forget:
+        click.echo("MCP exposure intent forgotten; Tailscale Serve state was not changed.")
+    else:
+        click.echo("MCP exposure disabled.")
+    click.echo("Restart the daemon ('gobby restart') to drop the /mcp Host allowance.")
 
 
 @ui.command("start")
@@ -243,13 +331,8 @@ def ui_status(ctx: click.Context) -> None:
 
 
 def _echo_exposure_status(daemon_port: int) -> None:
-    exposure = get_ui_exposure_status(daemon_port)
-    if exposure.mode is None:
-        click.echo("Exposure: off")
-    elif exposure.degraded_reason is not None:
-        click.echo(f"Exposure: tailscale (degraded: {exposure.degraded_reason})")
-    else:
-        click.echo(f"Exposure: tailscale ({exposure.url})")
+    for line in exposure_status_lines(daemon_port):
+        click.echo(line)
 
 
 @ui.command()

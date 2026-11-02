@@ -14,16 +14,19 @@ from typing import Any
 
 import click
 import httpx
+import psycopg
 
 from gobby.agents.spawners.auth_env import has_auth_env
 from gobby.cli.daemon_singleton import (
     admit_direct_start,
     service_backend_name,
 )
+from gobby.cli.exposure_config import read_exposure_config
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap, node_daemon_refusal
+from gobby.config.bootstrap_io import bootstrap_path as default_bootstrap_path
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.runner_pid_file import cancel_service_reservation, convert_held_claim_to_reservation
-from gobby.ui_exposure import UiExposeError, reconcile_ui_exposure
+from gobby.ui_exposure import reconcile_exposures
 from gobby.utils.dependency_requirements import (
     collect_dependency_report,
     required_dependency_errors,
@@ -74,15 +77,20 @@ def _start_dependency_errors() -> list[str]:
     return required_dependency_errors(report)
 
 
-def _reconcile_ui_exposure(daemon_port: int) -> None:
+def _reconcile_exposures(daemon_port: int) -> None:
+    """Re-derive the recorded Web UI and /mcp exposures on this node at daemon start."""
     try:
-        result = reconcile_ui_exposure(daemon_port)
-    except UiExposeError as exc:
-        click.secho(f"warning: UI exposure reconciliation failed: {exc}", fg="yellow")
+        ui_config, mcp_config = read_exposure_config(default_bootstrap_path())
+    except (BootstrapConfigError, RuntimeError, psycopg.Error) as exc:
+        click.secho(f"warning: could not read Tailscale exposure intent: {exc}", fg="yellow")
         return
-
-    if result is not None:
-        _step(f"Web UI exposed at {result.url}")
+    for result in reconcile_exposures(daemon_port, ui=ui_config, mcp=mcp_config):
+        if result.degraded_reason is not None:
+            click.secho(
+                f"warning: exposure reconciliation degraded: {result.degraded_reason}", fg="yellow"
+            )
+        else:
+            _step(f"Exposure restored at {result.url}")
 
 
 def _show_runtime_output_tail(runtime_log_file: Path, n: int = 15) -> None:
@@ -296,7 +304,7 @@ def _launch_direct_runner(
                 _show_runtime_output_tail(runtime_log_file)
                 sys.exit(1)
 
-            _reconcile_ui_exposure(http_port)
+            _reconcile_exposures(http_port)
 
             ui_url = None
             ui_mode_display = None
@@ -427,7 +435,7 @@ def start(ctx: click.Context, verbose: bool) -> None:
                     sys.exit(1)
                 _step(f"Daemon started via {svc.get('platform', 'OS')} service")
                 _step(f"Health check passed ({elapsed:.1f}s)")
-                _reconcile_ui_exposure(config.daemon_port)
+                _reconcile_exposures(config.daemon_port)
                 reserved = False
                 return
             _step(f"Service start failed: {result.get('error')}", error=True)

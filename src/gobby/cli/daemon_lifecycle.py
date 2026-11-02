@@ -621,6 +621,7 @@ def _restart_backend(
 @click.pass_context
 def status(ctx: click.Context) -> None:
     """Show Gobby daemon operational health dashboard."""
+    from gobby.cli.exposure_config import exposure_status_lines
     from gobby.cli.runtime import get_cli_runtime, require_cli_database
     from gobby.storage.hub.managed import managed_grant_path
     from gobby.storage.schema_divergence import collect_installed_binary_set, collect_schema_heads
@@ -838,6 +839,13 @@ def status(ctx: click.Context) -> None:
         process_uptime_seconds=uptime_seconds,
     )
     click.echo(message)
+    try:
+        exposure_lines = exposure_status_lines(http_port)
+    except Exception as exc:
+        logger.warning("Failed to read Tailscale exposure intent", exc_info=True)
+        exposure_lines = [f"Exposure: unavailable ({type(exc).__name__})"]
+    for line in exposure_lines:
+        click.echo(line)
     for note in notes:
         click.echo(note)
     sys.exit(0)

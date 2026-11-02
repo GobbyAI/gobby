@@ -29,7 +29,7 @@ Parity waivers in `docs/contracts/parity-waivers.json` cite a changed behaviour 
 row; the row status is unchanged and the note reads `Waived`. `native-extension` rows are
 additive surfaces with no Python counterpart; their readiness comes from native tests alone.
 
-Public surfaces and evidence gates: 1075. Unclassified: 0.
+Public surfaces and evidence gates: 1077. Unclassified: 0.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -323,17 +323,19 @@ Public surfaces and evidence gates: 1075. Unclassified: 0.
 | `CLI gobby tokens` | proxied | Python `src/gobby/cli/tokens.py::tokens (line 25)`; blocked on Rust CLI dispatcher for `gobby tokens`. Owner: #21568 Remaining route families. |
 | `CLI gobby tokens audit` | proxied | Python `src/gobby/cli/tokens.py::audit_tokens (line 123)`; blocked on Rust CLI dispatcher for `gobby tokens audit`. Owner: #21568 Remaining route families. |
 | `CLI gobby tokens stats` | proxied | Python `src/gobby/cli/tokens.py::token_stats (line 230)`; blocked on Rust CLI dispatcher for `gobby tokens stats`. Owner: #21568 Remaining route families. |
-| `CLI gobby ui` | proxied | Python handler `ui` at `src/gobby/cli/ui.py:101`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
-| `CLI gobby ui build` | proxied | Python handler `build` at `src/gobby/cli/ui.py:276`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
-| `CLI gobby ui dev` | proxied | Python handler `dev` at `src/gobby/cli/ui.py:240`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
-| `CLI gobby ui expose` | proxied | Python handler `ui_expose` at `src/gobby/cli/ui.py:107`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
-| `CLI gobby ui install-deps` | proxied | Python handler `install_deps` at `src/gobby/cli/ui.py:308`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
-| `CLI gobby ui restart` | proxied | Python handler `ui_restart` at `src/gobby/cli/ui.py:193`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui` | proxied | Python handler `ui` at `src/gobby/cli/ui.py:108`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui build` | proxied | Python handler `build` at `src/gobby/cli/ui.py:376`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui dev` | proxied | Python handler `dev` at `src/gobby/cli/ui.py:342`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui expose` | proxied | Python handler `ui_expose` at `src/gobby/cli/ui.py:137`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui install-deps` | proxied | Python handler `install_deps` at `src/gobby/cli/ui.py:408`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui mcp-expose` | proxied | Python handler `ui_mcp_expose` at `src/gobby/cli/ui.py:189`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui mcp-unexpose` | proxied | Python handler `ui_mcp_unexpose` at `src/gobby/cli/ui.py:214`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui restart` | proxied | Python handler `ui_restart` at `src/gobby/cli/ui.py:298`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
 | `CLI gobby ui sign-in-link` | proxied | Python `src/gobby/cli/ui.py::sign_in_link`; blocked on native Rust CLI dispatcher. Owner: #21568 Remaining route families. #24908 supplies loopback browser sign-in. |
-| `CLI gobby ui start` | proxied | Python handler `ui_start` at `src/gobby/cli/ui.py:137`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
-| `CLI gobby ui status` | proxied | Python handler `ui_status` at `src/gobby/cli/ui.py:201`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
-| `CLI gobby ui stop` | proxied | Python handler `ui_stop` at `src/gobby/cli/ui.py:177`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
-| `CLI gobby ui unexpose` | proxied | Python handler `ui_unexpose` at `src/gobby/cli/ui.py:118`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui start` | proxied | Python handler `ui_start` at `src/gobby/cli/ui.py:242`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui status` | proxied | Python handler `ui_status` at `src/gobby/cli/ui.py:306`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui stop` | proxied | Python handler `ui_stop` at `src/gobby/cli/ui.py:281`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui unexpose` | proxied | Python handler `ui_unexpose` at `src/gobby/cli/ui.py:159`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
 | `CLI gobby uninstall` | proxied | Blocked on #21568 item 12 (install and setup): port `gobby uninstall` from Python callback `src/gobby/cli/uninstall.py:72` to Rust project/bootstrap setup, bundled-content installation and CLI parity. |
 | `CLI gobby unpack` | proxied | Blocked on #21568 item 12 (install and setup): port `gobby unpack` from Python callback `src/gobby/cli/pack.py:676` to Rust portable archive export/restore and CLI parity. |
 | `CLI gobby variables` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby variables` from Python callback `src/gobby/cli/variables.py:67` to Rust services and CLI parity. |

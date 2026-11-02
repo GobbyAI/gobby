@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 import click
 import httpx
 import psutil
+import psycopg
 import pytest
 from click.testing import CliRunner
 
@@ -27,12 +28,13 @@ from gobby.cli import cli
 from gobby.cli.daemon_lifecycle import _request_admin_stop as request_admin_stop
 from gobby.cli.daemon_start import (
     PORT_REUSE_WAIT_SECONDS,
-    _reconcile_ui_exposure,
+    _reconcile_exposures,
     _start_dependency_errors,
 )
+from gobby.config.app import McpExposureConfig, UiExposureConfig
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.runner_pid_file import PidFileClaim, ProbeState
-from gobby.ui_exposure import UiExposeError, UiExposeResult
+from gobby.ui_exposure import UiExposeResult
 from gobby.utils.status import RichStatusProbe
 from tests.fixtures.fake_hub import FAKE_DATABASE_URL
 
@@ -494,36 +496,59 @@ def test_startup_progress_stops_when_the_launched_child_dies_after_health(
     assert len(probes) < 25
 
 
-def test_reconcile_ui_exposure_reports_url(
+def test_reconcile_exposures_reports_restored_urls(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(
-        "gobby.cli.daemon_start.reconcile_ui_exposure",
-        lambda _port: UiExposeResult(
-            mode="tailscale",
-            url="https://host.tailnet.ts.net/",
-            changed=False,
-        ),
+        "gobby.cli.daemon_start.read_exposure_config",
+        lambda _path: (UiExposureConfig(mode="tailnet", port=8443), McpExposureConfig()),
+    )
+    monkeypatch.setattr(
+        "gobby.cli.daemon_start.reconcile_exposures",
+        lambda _port, *, ui, mcp: [UiExposeResult(enabled=True, url="https://host.ts.net:8443/")],
     )
 
-    _reconcile_ui_exposure(60887)
+    _reconcile_exposures(60887)
 
-    assert "Web UI exposed at https://host.tailnet.ts.net/" in capsys.readouterr().out
+    assert "Exposure restored at https://host.ts.net:8443/" in capsys.readouterr().out
 
 
-def test_reconcile_ui_exposure_warns_without_raising(
+def test_reconcile_exposures_warns_on_degraded_result(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def fail(_port: int) -> None:
-        raise UiExposeError("tailscale is unavailable")
+    monkeypatch.setattr(
+        "gobby.cli.daemon_start.read_exposure_config",
+        lambda _path: (UiExposureConfig(mode="tailnet", port=443), McpExposureConfig()),
+    )
+    monkeypatch.setattr(
+        "gobby.cli.daemon_start.reconcile_exposures",
+        lambda _port, *, ui, mcp: [
+            UiExposeResult(enabled=True, degraded_reason="tailscale is unavailable")
+        ],
+    )
 
-    monkeypatch.setattr("gobby.cli.daemon_start.reconcile_ui_exposure", fail)
+    _reconcile_exposures(60887)
 
-    _reconcile_ui_exposure(60887)
-
-    assert "warning: UI exposure reconciliation failed: tailscale is unavailable" in (
+    assert "warning: exposure reconciliation degraded: tailscale is unavailable" in (
         capsys.readouterr().out
     )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [RuntimeError("hub database URL is not configured"), psycopg.OperationalError("hub is down")],
+)
+def test_reconcile_exposures_warns_when_hub_intent_is_unreadable(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: Exception
+) -> None:
+    def unreadable(_path: object) -> None:
+        raise error
+
+    monkeypatch.setattr("gobby.cli.daemon_start.read_exposure_config", unreadable)
+
+    _reconcile_exposures(60887)
+
+    assert "warning: could not read Tailscale exposure intent" in capsys.readouterr().out
 
 
 class TestStartCommand:
@@ -536,7 +561,7 @@ class TestStartCommand:
 
     @pytest.fixture(autouse=True)
     def mock_ui_exposure_reconciliation(self) -> Generator[MagicMock]:
-        with patch("gobby.cli.daemon_start._reconcile_ui_exposure") as reconcile:
+        with patch("gobby.cli.daemon_start._reconcile_exposures") as reconcile:
             yield reconcile
 
     @pytest.fixture(autouse=True)
