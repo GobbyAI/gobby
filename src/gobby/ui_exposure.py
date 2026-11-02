@@ -68,6 +68,7 @@ class _ServeState:
     node: _NodeInfo
     tcp: Mapping[int, object]
     handlers: Mapping[int, Mapping[str, str]]
+    opaque: frozenset[tuple[int, str]]
     funnel_ports: frozenset[int]
 
 
@@ -121,6 +122,30 @@ def disable_mcp_exposure(
 ) -> UiExposeResult:
     """Remove the managed /mcp handler, or only forget the recorded intent."""
     return _remove_route(daemon_port, _mcp_route(port, mode=mode), persist, forget=forget)
+
+
+def replace_mcp_exposure(
+    daemon_port: int,
+    *,
+    previous: McpExposureConfig,
+    mode: Literal["tailnet", "funnel"],
+    port: int,
+    persist: PersistIntent | None = None,
+) -> UiExposeResult:
+    """Move /mcp from the recorded route to the proposed one.
+
+    The recorded route is removed first, so a changed port or mode never leaves the old
+    route serving behind the new intent. If the proposed route fails, the recorded one
+    is restored.
+    """
+    if previous.mode == "off" or (previous.mode, previous.port) == (mode, port):
+        return enable_mcp_exposure(daemon_port, mode=mode, port=port, persist=persist)
+    disable_mcp_exposure(daemon_port, mode=previous.mode, port=previous.port)
+    try:
+        return enable_mcp_exposure(daemon_port, mode=mode, port=port, persist=persist)
+    except UiExposeError:
+        _best_effort_restore(daemon_port, _mcp_route(previous.port, mode=previous.mode))
+        raise
 
 
 def reconcile_exposures(
@@ -227,6 +252,12 @@ def _apply_route(
         if not route.funnel or route.port in state.funnel_ports:
             _run_persist(persist)
             return _enabled_result(state.node, route, changed=False)
+        # Upgrading a route that is already served would need a rollback that could
+        # delete it, so refuse before any mutation.
+        raise UiExposeError(
+            f"HTTPS {route.path} on port {route.port} is served without Funnel; "
+            "run 'gobby ui mcp-unexpose' before enabling Funnel"
+        )
 
     _run_mutation(_mutation_args(route, daemon_port, off=False))
     try:
@@ -323,14 +354,19 @@ def _route_applied(state: _ServeState, route: _Route, daemon_port: int) -> bool:
 def _assert_port_usable(state: _ServeState, route: _Route) -> None:
     tcp_value = state.tcp.get(route.port)
     existing = state.handlers.get(route.port, {})
+    occupied = {path for port, path in state.opaque if port == route.port}
+    if route.path in occupied:
+        raise UiExposeError(
+            f"the Tailscale HTTPS {route.path} handler on port {route.port} is not a proxy"
+        )
     if tcp_value is not None:
         mapping = _required_mapping(tcp_value, f'TCP["{route.port}"]')
         if mapping.get("HTTPS") is not True or set(mapping) != {"HTTPS"}:
             raise UiExposeError(f"Tailscale port {route.port} has conflicting protocol state")
-    elif existing:
+    elif existing or occupied:
         raise UiExposeError(f"Tailscale handlers exist on port {route.port} without HTTPS state")
     if route.funnel:
-        foreign = sorted(path for path in existing if path != _MCP_PATH)
+        foreign = sorted((set(existing) | occupied) - {_MCP_PATH})
         if foreign:
             raise UiExposeError(
                 f"Funnel port {route.port} would carry the non-/mcp route {foreign[0]}; refusing"
@@ -433,17 +469,21 @@ def _probe_serve_state() -> _ServeState:
     prefix = f"{node.dns_name}:"
 
     handlers: dict[int, dict[str, str]] = {}
+    opaque: set[tuple[int, str]] = set()
     for host_port, host_config in web.items():
         if not host_port.startswith(prefix):
             continue
+        port = _port_of(host_port)
         host_mapping = _required_mapping(host_config, f'Web["{host_port}"]')
         port_handlers: dict[str, str] = {}
         for path, handler in _optional_mapping(host_mapping.get("Handlers"), "Handlers").items():
             mapping = _required_mapping(handler, f'Handlers["{path}"]')
             if set(mapping) != {"Proxy"} or not isinstance(mapping.get("Proxy"), str):
-                raise UiExposeError(f"the Tailscale handler for {path} is not a proxy")
+                # Not a Gobby-style proxy: recorded so conflicts are refused, never edited.
+                opaque.add((port, path))
+                continue
             port_handlers[path] = cast(str, mapping["Proxy"])
-        handlers[_port_of(host_port)] = port_handlers
+        handlers[port] = port_handlers
 
     funnel_ports: set[int] = set()
     for host_port, value in allow_funnel.items():
@@ -458,6 +498,7 @@ def _probe_serve_state() -> _ServeState:
         node=node,
         tcp={_port_of(key): value for key, value in tcp.items()},
         handlers=handlers,
+        opaque=frozenset(opaque),
         funnel_ports=frozenset(funnel_ports),
     )
 

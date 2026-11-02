@@ -219,6 +219,19 @@ def test_mcp_exposure_admits_node_dns_name_from_tailscale_status(
     assert response.status_code == 200
 
 
+def test_mcp_exposure_node_name_without_bearer_is_401(session_storage: SessionManager) -> None:
+    with patch("gobby.ui_exposure.node_dns_name", return_value="node.example.ts.net"):
+        response = _post_initialize(
+            session_storage,
+            [],
+            "node.example.ts.net",
+            bearer=False,
+            exposure=McpExposureConfig(mode="funnel", port=443),
+        )
+
+    assert response.status_code == 401
+
+
 def test_mcp_exposure_never_admits_a_host_other_than_the_node_name(
     session_storage: SessionManager,
 ) -> None:

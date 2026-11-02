@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 import click
 import psutil
+from pydantic import ValidationError
 
 from gobby.config.app import McpExposureConfig, UiExposureConfig
 from gobby.config.bootstrap import load_bootstrap
@@ -20,11 +21,16 @@ from gobby.ui_exposure import (
     UiExposeError,
     disable_mcp_exposure,
     disable_tailscale_ui,
-    enable_mcp_exposure,
     enable_tailscale_ui,
+    replace_mcp_exposure,
 )
 
-from .exposure_config import exposure_status_lines, read_exposure_config, record_exposure
+from .exposure_config import (
+    exposure_status_lines,
+    read_exposure_config,
+    record_exposure,
+    validate_exposure_pair,
+)
 from .ui_mode import UIModeResolution
 from .utils import (
     _is_process_alive,
@@ -136,14 +142,18 @@ _PORT_HELP = "HTTPS port on this node. Tailscale Funnel allows only 443, 8443 an
 )
 def ui_expose(port: int) -> None:
     """Expose the web UI to this machine's Tailscale network and record the choice."""
+    proposed = UiExposureConfig(mode="tailnet", port=port)
+    _, recorded_mcp = read_exposure_config(bootstrap_path())
+    try:
+        validate_exposure_pair(proposed, recorded_mcp)
+    except ValidationError as exc:
+        raise click.ClickException(str(exc)) from exc
     daemon_port = load_bootstrap().daemon_port
     try:
         result = enable_tailscale_ui(
             daemon_port,
             port=port,
-            persist=lambda: record_exposure(
-                bootstrap_path(), ui=UiExposureConfig(mode="tailnet", port=port)
-            ),
+            persist=lambda: record_exposure(bootstrap_path(), ui=proposed),
         )
     except UiExposeError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -188,16 +198,21 @@ def ui_unexpose(forget: bool) -> None:
 )
 def ui_mcp_expose(port: int, funnel: bool) -> None:
     """Expose only the /mcp route on this node, optionally over Funnel."""
-    daemon_port = load_bootstrap().daemon_port
     mode: Literal["tailnet", "funnel"] = "funnel" if funnel else "tailnet"
     try:
-        result = enable_mcp_exposure(
+        proposed = McpExposureConfig(mode=mode, port=port)
+        recorded_ui, previous = read_exposure_config(bootstrap_path())
+        validate_exposure_pair(recorded_ui, proposed)
+    except ValidationError as exc:
+        raise click.ClickException(str(exc)) from exc
+    daemon_port = load_bootstrap().daemon_port
+    try:
+        result = replace_mcp_exposure(
             daemon_port,
+            previous=previous,
             mode=mode,
             port=port,
-            persist=lambda: record_exposure(
-                bootstrap_path(), mcp=McpExposureConfig(mode=mode, port=port)
-            ),
+            persist=lambda: record_exposure(bootstrap_path(), mcp=proposed),
         )
     except UiExposeError as exc:
         raise click.ClickException(str(exc)) from exc

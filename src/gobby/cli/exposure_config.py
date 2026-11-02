@@ -37,6 +37,14 @@ def exposure_from_values(
     return config.ui_exposure, config.mcp_exposure
 
 
+def validate_exposure_pair(ui: UiExposureConfig, mcp: McpExposureConfig) -> None:
+    """Raise ValidationError for a UI and /mcp pair that DaemonConfig refuses.
+
+    Call before any Tailscale mutation so a refused choice never touches serve state.
+    """
+    DaemonConfig(ui_exposure=ui, mcp_exposure=mcp)
+
+
 def read_exposure_config(bootstrap_path: Path) -> tuple[UiExposureConfig, McpExposureConfig]:
     """Read the recorded exposure choices from the hub database."""
     with runtime_hub_database(str(bootstrap_path), apply_migrations=False) as database:

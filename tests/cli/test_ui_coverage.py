@@ -615,6 +615,14 @@ class TestUiStatus:
 
 
 class TestUiExposureCommands:
+    @pytest.fixture(autouse=True)
+    def _recorded_exposure_is_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            ui_module,
+            "read_exposure_config",
+            Mock(return_value=(UiExposureConfig(), McpExposureConfig())),
+        )
+
     def test_expose_prints_url(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
         bootstrap = MagicMock(daemon_port=60887)
         enable = Mock(return_value=UiExposeResult(enabled=True, url="https://node/"))
@@ -656,7 +664,7 @@ class TestUiExposureCommands:
         monkeypatch.setattr(
             ui_module, "load_bootstrap", Mock(return_value=MagicMock(daemon_port=60887))
         )
-        monkeypatch.setattr(ui_module, "enable_mcp_exposure", enable)
+        monkeypatch.setattr(ui_module, "replace_mcp_exposure", enable)
         monkeypatch.setattr(ui_module, "record_exposure", record)
 
         result = runner.invoke(ui, ["mcp-expose", "--funnel"])
@@ -665,10 +673,45 @@ class TestUiExposureCommands:
         assert "MCP exposed at https://node/mcp" in result.output
         assert "gobby restart" in result.output
         assert enable.call_args.args == (60887,)
+        assert enable.call_args.kwargs["previous"] == McpExposureConfig()
         assert enable.call_args.kwargs["mode"] == "funnel"
         assert enable.call_args.kwargs["port"] == 443
         enable.call_args.kwargs["persist"]()
         assert record.call_args.kwargs["mcp"] == McpExposureConfig(mode="funnel", port=443)
+
+    def test_mcp_expose_refuses_pair_that_conflicts_with_recorded_ui(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        replace = Mock()
+        monkeypatch.setattr(
+            ui_module,
+            "read_exposure_config",
+            Mock(return_value=(UiExposureConfig(mode="tailnet", port=8443), McpExposureConfig())),
+        )
+        monkeypatch.setattr(ui_module, "replace_mcp_exposure", replace)
+
+        result = runner.invoke(ui, ["mcp-expose", "--funnel", "--port", "8443"])
+
+        assert result.exit_code == 1
+        assert "tailnet UI must use a different port" in result.output
+        replace.assert_not_called()
+
+    def test_expose_refuses_port_that_is_recorded_as_funnel(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        enable = Mock()
+        monkeypatch.setattr(
+            ui_module,
+            "read_exposure_config",
+            Mock(return_value=(UiExposureConfig(), McpExposureConfig(mode="funnel", port=8443))),
+        )
+        monkeypatch.setattr(ui_module, "enable_tailscale_ui", enable)
+
+        result = runner.invoke(ui, ["expose", "--port", "8443"])
+
+        assert result.exit_code == 1
+        assert "is the Funnel port for /mcp" in result.output
+        enable.assert_not_called()
 
     def test_mcp_unexpose_refuses_without_recorded_exposure(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch

@@ -6,9 +6,12 @@ import copy
 from typing import Any
 
 import pytest
+from click.testing import CliRunner
 from pydantic import ValidationError
 
 from gobby import ui_exposure
+from gobby.cli import exposure_config
+from gobby.cli.ui import ui
 from gobby.config.app import DaemonConfig, McpExposureConfig, UiExposureConfig
 from gobby.config.bootstrap import BootstrapConfigError, bootstrap_from_mapping
 from gobby.ui_exposure import UiExposeError
@@ -27,8 +30,10 @@ class FakeTailscale:
         self.dns_name = dns_name
         self.serve: dict[str, Any] = serve or {"TCP": {}, "Web": {}, "AllowFunnel": {}}
         self.mutations: list[list[str]] = []
+        self.reads: list[list[str]] = []
 
     def run_json(self, arguments: list[str]) -> dict[str, object]:
+        self.reads.append(arguments)
         if arguments == ["status", "--json"]:
             return {
                 "BackendState": "Running",
@@ -203,3 +208,105 @@ def test_node_dns_name_comes_from_tailscale_status(fake: FakeTailscale) -> None:
 def test_bootstrap_rejects_retired_ui_expose_key() -> None:
     with pytest.raises(BootstrapConfigError, match="gobby ui expose"):
         bootstrap_from_mapping({"ui_expose": "tailscale"})
+
+
+def test_mcp_expose_refuses_invalid_funnel_port_before_any_tailscale_call(
+    fake: FakeTailscale,
+) -> None:
+    result = CliRunner().invoke(ui, ["mcp-expose", "--funnel", "--port", "9000"])
+
+    assert result.exit_code != 0
+    assert "cannot be published with Funnel" in result.output
+    assert fake.reads == []
+    assert fake.mutations == []
+
+
+def test_moving_funnel_mcp_route_removes_the_old_public_handler(fake: FakeTailscale) -> None:
+    ui_exposure.enable_mcp_exposure(DAEMON_PORT, mode="funnel", port=443)
+
+    ui_exposure.replace_mcp_exposure(
+        DAEMON_PORT,
+        previous=McpExposureConfig(mode="funnel", port=443),
+        mode="funnel",
+        port=8443,
+    )
+
+    assert set(fake.serve["Web"]) == {f"{OLD_NAME}:8443"}
+    assert {key for key, public in fake.serve["AllowFunnel"].items() if public} == {
+        f"{OLD_NAME}:8443"
+    }
+
+
+def test_failed_move_restores_the_recorded_mcp_route(
+    fake: FakeTailscale, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ui_exposure.enable_mcp_exposure(DAEMON_PORT, mode="tailnet", port=443)
+    apply_mutation = fake.run_mutation
+
+    def refuse_new_port(arguments: list[str]) -> None:
+        if "--https=8443" in arguments and arguments[-1] != "off":
+            raise UiExposeError("tailscale refused the new port")
+        apply_mutation(arguments)
+
+    monkeypatch.setattr(ui_exposure, "_run_mutation", refuse_new_port)
+
+    with pytest.raises(UiExposeError, match="refused the new port"):
+        ui_exposure.replace_mcp_exposure(
+            DAEMON_PORT,
+            previous=McpExposureConfig(mode="tailnet", port=443),
+            mode="funnel",
+            port=8443,
+        )
+
+    handlers = fake.serve["Web"][f"{OLD_NAME}:443"]["Handlers"]
+    assert handlers == {"/mcp": {"Proxy": f"http://localhost:{DAEMON_PORT}/mcp"}}
+    assert set(fake.serve["Web"]) == {f"{OLD_NAME}:443"}
+
+
+def test_funnel_upgrade_over_a_served_route_is_refused_without_mutation(
+    fake: FakeTailscale,
+) -> None:
+    ui_exposure.enable_mcp_exposure(DAEMON_PORT, mode="tailnet", port=443)
+    fake.mutations.clear()
+
+    with pytest.raises(UiExposeError, match="before enabling Funnel"):
+        ui_exposure.enable_mcp_exposure(DAEMON_PORT, mode="funnel", port=443)
+
+    assert fake.mutations == []
+    assert set(fake.serve["Web"]) == {f"{OLD_NAME}:443"}
+
+
+def test_unrelated_non_proxy_handler_does_not_block_reconciliation(fake: FakeTailscale) -> None:
+    fake.serve = {
+        "TCP": {"10000": {"HTTPS": True}},
+        "Web": {f"{OLD_NAME}:10000": {"Handlers": {"/": {"Text": "hello"}}}},
+        "AllowFunnel": {},
+    }
+
+    results = ui_exposure.reconcile_exposures(
+        DAEMON_PORT,
+        ui=UiExposureConfig(mode="tailnet", port=8443),
+        mcp=McpExposureConfig(mode="funnel", port=443),
+    )
+
+    assert [result.degraded_reason for result in results] == [None, None]
+
+
+def test_status_lines_name_both_exposures_and_funnel_state(
+    fake: FakeTailscale, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ui_exposure.enable_tailscale_ui(DAEMON_PORT, port=8443)
+    ui_exposure.enable_mcp_exposure(DAEMON_PORT, mode="funnel", port=443)
+    monkeypatch.setattr(
+        exposure_config,
+        "read_exposure_config",
+        lambda _path: (
+            UiExposureConfig(mode="tailnet", port=8443),
+            McpExposureConfig(mode="funnel", port=443),
+        ),
+    )
+
+    assert exposure_config.exposure_status_lines(DAEMON_PORT) == [
+        f"Web UI exposure: tailnet (https://{OLD_NAME}:8443/; Funnel off)",
+        f"MCP exposure: funnel (https://{OLD_NAME}/mcp; Funnel on)",
+    ]

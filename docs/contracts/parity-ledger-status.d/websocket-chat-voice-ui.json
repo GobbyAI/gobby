@@ -1,51 +1,51 @@
 {
   "CLI gobby ui": {
     "status": "proxied",
-    "note": "Python handler `ui` at `src/gobby/cli/ui.py:108`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+    "note": "Python handler `ui` at `src/gobby/cli/ui.py:113`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
   },
   "CLI gobby ui build": {
     "status": "proxied",
-    "note": "Python handler `build` at `src/gobby/cli/ui.py:376`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+    "note": "Python handler `build` at `src/gobby/cli/ui.py:389`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
   },
   "CLI gobby ui dev": {
     "status": "proxied",
-    "note": "Python handler `dev` at `src/gobby/cli/ui.py:342`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+    "note": "Python handler `dev` at `src/gobby/cli/ui.py:353`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
   },
   "CLI gobby ui expose": {
     "status": "proxied",
-    "note": "Python handler `ui_expose` at `src/gobby/cli/ui.py:137`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+    "note": "Python handler `ui_expose` at `src/gobby/cli/ui.py:135`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
   },
   "CLI gobby ui install-deps": {
     "status": "proxied",
-    "note": "Python handler `install_deps` at `src/gobby/cli/ui.py:408`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+    "note": "Python handler `install_deps` at `src/gobby/cli/ui.py:421`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
   },
   "CLI gobby ui mcp-expose": {
     "status": "proxied",
-    "note": "Python handler `ui_mcp_expose` at `src/gobby/cli/ui.py:189`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+    "note": "Python handler `ui_mcp_expose` at `src/gobby/cli/ui.py:190`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
   },
   "CLI gobby ui mcp-unexpose": {
     "status": "proxied",
-    "note": "Python handler `ui_mcp_unexpose` at `src/gobby/cli/ui.py:214`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+    "note": "Python handler `ui_mcp_unexpose` at `src/gobby/cli/ui.py:223`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
   },
   "CLI gobby ui restart": {
     "status": "proxied",
-    "note": "Python handler `ui_restart` at `src/gobby/cli/ui.py:298`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+    "note": "Python handler `ui_restart` at `src/gobby/cli/ui.py:311`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
   },
   "CLI gobby ui start": {
     "status": "proxied",
-    "note": "Python handler `ui_start` at `src/gobby/cli/ui.py:242`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+    "note": "Python handler `ui_start` at `src/gobby/cli/ui.py:255`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
   },
   "CLI gobby ui status": {
     "status": "proxied",
-    "note": "Python handler `ui_status` at `src/gobby/cli/ui.py:306`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+    "note": "Python handler `ui_status` at `src/gobby/cli/ui.py:319`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
   },
   "CLI gobby ui stop": {
     "status": "proxied",
-    "note": "Python handler `ui_stop` at `src/gobby/cli/ui.py:281`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+    "note": "Python handler `ui_stop` at `src/gobby/cli/ui.py:295`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
   },
   "CLI gobby ui unexpose": {
     "status": "proxied",
-    "note": "Python handler `ui_unexpose` at `src/gobby/cli/ui.py:159`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+    "note": "Python handler `ui_unexpose` at `src/gobby/cli/ui.py:163`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
   },
   "HTTP DELETE /api/chat/attachments/{attachment_id}": {
     "status": "proxied",
