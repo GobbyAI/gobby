@@ -496,14 +496,18 @@ class WorkspaceOps(WorkspacePaneIOMixin):
         cwd: str | None = None,
         node: str | None = None,
         terminal_theme: dict[str, object] | None = None,
+        rows: int | None = None,
+        cols: int | None = None,
     ) -> LayoutChange:
         """Split ``pane`` with a new pane that spawns a shell or adopts ``terminal_id``.
 
         The pane row is inserted (terminal NULL, guarded as in flight) before the
         spawn; a failed spawn removes it again and raises ``terminal_failed``.
+        ``rows`` and ``cols`` size a spawned shell to its viewport; give both or neither.
         """
         if role == "":
             raise WorkspaceOpError("invalid_op", "Pane role must be non-empty")
+        spawn_rows, spawn_cols = _spawn_size(rows, cols)
         target = await self._enter(pane, node)
         tab, beside = _pane_of(target, pane)
         source = await self._db(
@@ -535,6 +539,8 @@ class WorkspaceOps(WorkspacePaneIOMixin):
                 change.panes[0],
                 source,
                 terminal_theme,
+                rows=spawn_rows,
+                cols=spawn_cols,
             )
         finally:
             await self._db(self._workspaces.clear_spawn_in_flight, pane_id)

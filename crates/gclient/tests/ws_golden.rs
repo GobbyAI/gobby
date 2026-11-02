@@ -136,6 +136,8 @@ fn workspace_fixtures_decode_into_typed_rows_ops_and_events() {
             axis: LayoutAxis::Horizontal,
             terminal_id: None,
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         }
     );

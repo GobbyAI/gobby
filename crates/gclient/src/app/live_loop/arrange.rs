@@ -6,14 +6,16 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::app::{ArrangeLayout, ArrangeTarget, PaneId};
 use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceOp};
 use crate::frame_source::FrameError;
+use crate::ui::pane_layout::grid_terminal_rects;
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
 use crate::Workspace;
+use ratatui::layout::Rect;
 
-use super::actions::activate_live_tab;
+use super::actions::{activate_live_tab, live_layout_area};
 use super::daemon_ops::{op_tag, run_op};
 use super::jobs::{spawn_job, JobOutcome, JobResult};
-use super::workspace_actions::{daemon_pane_id, new_tab_viewport};
+use super::workspace_actions::{daemon_pane_id, viewport_of};
 
 /// Run `ops` in order on `daemon`. The first refusal ends the chain and is
 /// its result; a close refused `not_found` is done, as in `run_op`.
@@ -264,7 +266,8 @@ pub(super) fn create_grid(
     };
     let rows = rows.clamp(1, 4) as usize;
     let cols = cols.clamp(1, 4) as usize;
-    let (viewport_rows, viewport_cols) = new_tab_viewport(chrome);
+    let cells = grid_terminal_rects(rows, cols, live_layout_area(chrome), &chrome.prefs);
+    let (viewport_rows, viewport_cols) = viewport_of(cells[0][0]);
     let create = WorkspaceOp::TabCreate {
         workspace: workspace_id,
         project_id: project_id.clone(),
@@ -279,7 +282,7 @@ pub(super) fn create_grid(
     let daemon = workspace.daemon().clone();
     spawn_job(outcomes, op_tag(&daemon), async move {
         let mut tab = None;
-        let result = grid_chain(&daemon, create, rows, cols, &mut tab).await;
+        let result = grid_chain(&daemon, create, &cells, &mut tab).await;
         JobResult::Grid {
             project: project_id,
             tab,
@@ -293,10 +296,11 @@ pub(super) fn create_grid(
 async fn grid_chain(
     daemon: &LiveDaemon,
     create: WorkspaceOp,
-    rows: usize,
-    cols: usize,
+    cells: &[Vec<Rect>],
     tab: &mut Option<String>,
 ) -> Result<(), DaemonError> {
+    let cols = cells.len();
+    let rows = cells[0].len();
     let reply = daemon.workspace_op(create).await?;
     let mut head = reply_id(&reply.result, "panes", "Grid creation returned no pane")?;
     *tab = Some(reply_id(
@@ -305,8 +309,8 @@ async fn grid_chain(
         "Grid creation returned no tab",
     )?);
     let mut columns = vec![head.clone()];
-    for _ in 1..cols {
-        head = split_pane(daemon, &head, LayoutAxis::Horizontal).await?;
+    for column_cells in &cells[1..] {
+        head = split_pane(daemon, &head, LayoutAxis::Horizontal, column_cells[0]).await?;
         columns.push(head.clone());
     }
     // Once vertical splits are added, a head's nearest split is vertical.
@@ -316,11 +320,11 @@ async fn grid_chain(
         push_resize(&mut sizes, pane, 1.0 / (cols - index) as f64);
     }
     send_ops(daemon, sizes).await?;
-    for column in columns {
+    for (column, column_cells) in columns.into_iter().zip(cells) {
         let mut current = column.clone();
         let mut panes = vec![column];
-        for _ in 1..rows {
-            current = split_pane(daemon, &current, LayoutAxis::Vertical).await?;
+        for cell in &column_cells[1..] {
+            current = split_pane(daemon, &current, LayoutAxis::Vertical, *cell).await?;
             panes.push(current.clone());
         }
         let mut sizes = Vec::new();
@@ -332,18 +336,22 @@ async fn grid_chain(
     Ok(())
 }
 
-/// Split `pane` along `axis`; the reply names the new pane.
+/// Split `pane` along `axis`, the new shell sized to `inner`; the reply names the new pane.
 async fn split_pane(
     daemon: &LiveDaemon,
     pane: &str,
     axis: LayoutAxis,
+    inner: Rect,
 ) -> Result<String, DaemonError> {
+    let (rows, cols) = viewport_of(inner);
     let reply = daemon
         .workspace_op(WorkspaceOp::PaneSplit {
             pane: pane.to_owned(),
             axis,
             terminal_id: None,
             cwd: None,
+            rows,
+            cols,
             node: None,
         })
         .await?;

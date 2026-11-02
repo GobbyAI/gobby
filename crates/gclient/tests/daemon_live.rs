@@ -2536,6 +2536,8 @@ async fn workspace_attach_op_and_event_round_trip() {
         axis: LayoutAxis::Horizontal,
         terminal_id: None,
         cwd: None,
+        rows: None,
+        cols: None,
         node: None,
     };
     let reply = daemon
