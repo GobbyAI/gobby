@@ -110,6 +110,41 @@ async def test_publish_requests_stay_within_a_deadline_sized_batch(supervisor_to
     assert max(publish_bodies) <= 2 * (1 << 20)
 
 
+async def test_large_publish_splits_into_bounded_ops_in_frame_order(supervisor_token: str) -> None:
+    """One publish call of many frames never becomes one oversized request body."""
+    daemon = _Daemon()
+    frames = [{"type": "terminal_output", "seq": seq, "data": "x" * (1 << 20)} for seq in range(10)]
+    publisher = _publisher(daemon)
+    try:
+        await publisher.start()
+        await asyncio.wait_for(publisher.publish({"type": "terminal_output"}, frames), 5.0)
+    finally:
+        await publisher.stop()
+    delivered = [json.loads(payload)["seq"] for op in daemon.ops(GEN1) for payload in op["frames"]]
+    assert delivered == list(range(10))
+    assert len(daemon.body_sizes) > 1
+    assert max(daemon.body_sizes) <= 4 * (1 << 20) + 1024
+
+
+async def test_publish_frame_larger_than_the_op_cap_goes_alone(supervisor_token: str) -> None:
+    """A frame too large to share an op with its neighbours is sent alone, in frame order."""
+    daemon = _Daemon()
+    frames = [
+        {"type": "terminal_output", "seq": 0, "data": "x" * (1 << 20)},
+        {"type": "terminal_output", "seq": 1, "data": "x" * (5 << 20)},
+        {"type": "terminal_output", "seq": 2, "data": "x" * (1 << 20)},
+    ]
+    publisher = _publisher(daemon)
+    try:
+        await publisher.start()
+        await asyncio.wait_for(publisher.publish({"type": "terminal_output"}, frames), 5.0)
+    finally:
+        await publisher.stop()
+    delivered = [json.loads(payload)["seq"] for op in daemon.ops(GEN1) for payload in op["frames"]]
+    assert delivered == [0, 1, 2]
+    assert [len(op["frames"]) for op in daemon.ops(GEN1)] == [1, 1, 1]
+
+
 class _Daemon:
     """gdaemon's private bind and publish endpoints, with a gate to stall the sender."""
 

@@ -63,7 +63,7 @@ const PUBLISH: &str = "/_gobby/ws/publish";
 const KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
 const ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
 const MAX_MESSAGE: u64 = 64 * 1024;
-const PUBLISH_BOUND: u64 = 128 * 1024 * 1024;
+const PUBLISH_BOUND: u64 = 16 * 1024 * 1024;
 /// A leg ID gdaemon never assigns in these tests.
 const UNREGISTERED_LEG: u64 = 4_000_000_000;
 const SUBSCRIBE_SESSION: &str = r#"{"type": "subscribe", "events": ["session_event"]}"#;
@@ -1029,7 +1029,7 @@ async fn bind_and_publish_admit_only_the_current_pair() {
     assert_eq!(
         call(&h.native, request, LOOPBACK).await.0,
         StatusCode::PAYLOAD_TOO_LARGE,
-        "declared body over 128 MiB"
+        "declared body over the publish bound"
     );
 
     // Operations apply in order, each publish operation once.
@@ -1799,7 +1799,9 @@ async fn browser_attach_receives_only_its_session_frames() {
 }
 
 /// Allocations of at least this size are counted on a thread while it is armed.
-const LARGE_ALLOC: usize = 32 * 1024 * 1024;
+/// A publish body is at most PUBLISH_BOUND (16 MiB), so a copy of one is at least
+/// 8 MiB; a bind allocates about 4 KiB.
+const LARGE_ALLOC: usize = 8 * 1024 * 1024;
 
 thread_local! {
     static ARMED: Cell<bool> = const { Cell::new(false) };
@@ -1841,11 +1843,11 @@ async fn bind_answers_within_the_publisher_deadline_during_a_max_publish() {
     let mut h = Harness::start().await;
     h.bind().await;
 
-    // One batch at MAX_QUEUED_BYTES: 1024 frames of exactly max_message_size.
+    // One body near PUBLISH_BOUND: 240 frames of exactly max_message_size, about 15 MiB.
     let ops = json!([{
         "op": "publish",
         "filter": {"type": "task_event"},
-        "frames": vec!["x".repeat(MAX_MESSAGE as usize); 1024],
+        "frames": vec!["x".repeat(MAX_MESSAGE as usize); 240],
     }]);
     let body = json!({"generation": h.generation, "ops": ops}).to_string();
     let native = h.native.clone();
