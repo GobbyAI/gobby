@@ -23,8 +23,6 @@ from gobby.agents.idle_detector import ComposerRead
 from gobby.mcp_proxy.tools.sessions._terminal_clear import CLEAR_COMMAND
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMPACTION_REJECTION_ERROR_CODE,
-    _COMPOSER_OCCUPIED_ERROR_CODE,
-    _COMPOSER_UNKNOWN_ERROR_CODE,
     _INTERRUPT_ATTEMPTS,
     _INTERRUPT_UNCONFIRMED_ERROR_CODE,
     _OBSERVED_INTERRUPT_SETTLE_SECONDS,
@@ -277,8 +275,8 @@ async def test_grok_settled_turn_is_compacted_without_an_interrupt() -> None:
     result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: True)
 
     assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
-    # The ledger reads the composer empty, so nothing is drained before the command.
-    assert pane.keys == ["enter"]
+    # Grok has no composer reader, so set_handoff's wipe is one blind drain pass.
+    assert pane.keys == [*_DRAIN, "enter"]
     assert "ctrl_c" not in pane.keys
     assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once()
@@ -297,7 +295,7 @@ async def test_empty_composer_dispatches_after_terminal_replies(
 
     assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
     assert pane.typed == [f"{_COMMAND}\n"]
-    assert pane.keys == ["enter"]
+    assert pane.keys == [*_DRAIN, "enter"]
     mark.assert_called_once()
     clear.assert_not_called()
 
@@ -667,7 +665,7 @@ async def test_compaction_waits_for_a_live_turn_to_settle_before_submitting() ->
 
     assert polls["n"] >= 2
     assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
-    assert pane.keys == ["enter"]
+    assert pane.keys == [*_DRAIN, "enter"]
     assert "ctrl_c" not in pane.keys
     assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once()
@@ -720,8 +718,8 @@ async def test_grok_rejection_after_a_settled_submission_interrupts_before_resub
     )
 
     assert result == (True, None, True, {"submit_unverified": True})
-    # Ctrl+C may restore a prompt the ledger cannot see, so only that write is drained.
-    assert pane.keys == ["enter", "ctrl_c", *_DRAIN, "enter"]
+    # Without a reader every submission is preceded by one blind wipe pass.
+    assert pane.keys == [*_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
     assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
     mark.assert_called_once()
     clear.assert_not_called()
@@ -738,7 +736,7 @@ async def test_grok_rejection_resubmission_checks_idle_before_first_ctrl_c() -> 
     # The rejection consumed the first command, so the resubmission types it again
     # instead of pressing a bare Enter into an empty composer.
     assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
-    assert pane.keys == ["enter", "enter"]
+    assert pane.keys == [*_DRAIN, "enter", *_DRAIN, "enter"]
     mark.assert_called_once()
     clear.assert_not_called()
 
@@ -776,38 +774,22 @@ def _untracked(_ledger: ComposerLedger) -> None:
     bind_composer_ledger(ComposerLedger())
 
 
-_UNCONFIRMED = (
-    f"composer could not be confirmed empty before {_COMMAND}; once the pane shows an "
-    "empty composer, an operator can release it with gobby-sessions release_composer"
-)
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("seed", "reason", "error_code"),
-    [
-        (_operator_draft, "composer holds an operator draft", _COMPOSER_OCCUPIED_ERROR_CODE),
-        (_host_gap, _UNCONFIRMED, _COMPOSER_UNKNOWN_ERROR_CODE),
-        (_untracked, _UNCONFIRMED, _COMPOSER_UNKNOWN_ERROR_CODE),
-    ],
-    ids=["draft", "blocked", "untracked"],
+    "seed", [_operator_draft, _host_gap, _untracked], ids=["draft", "blocked", "untracked"]
 )
-async def test_compaction_refuses_any_non_empty_composer_before_interrupt(
+async def test_readerless_compaction_interrupts_and_wipes_any_composer(
     composer_ledger: ComposerLedger,
     seed: Callable[[ComposerLedger], None],
-    reason: str,
-    error_code: str,
 ) -> None:
-    """Only an empty or daemon-held ledger entry authorizes the compact command.
+    """set_handoff owns the composer: no ledger state withholds its command (#25595).
 
-    Josh's 2026-09-29 policy (memory 720f1129) supersedes the old blind-drain
-    fallback: an operator draft, a host gap or an untracked seat retains the
-    message durably and retries rather than risking a write into the operator's draft.
+    Grok has no composer reader, so the wipe is one blind drain pass.
     """
     seed(composer_ledger)
     pane = _GrokPane()
     mark = MagicMock(return_value=True)
-    ok, actual_reason, pending, detail = await _send_terminal_compaction_command(
+    ok, reason, pending, detail = await _send_terminal_compaction_command(
         pane,
         _COMMAND,
         "session-grok",
@@ -817,8 +799,7 @@ async def test_compaction_refuses_any_non_empty_composer_before_interrupt(
         observe_interrupt=lambda: True,
         settle_seconds=_SETTLE,
     )
-    assert (ok, actual_reason, pending) == (False, reason, False)
-    assert detail == {"error_code": error_code, "continuation_pending": False}
-    # The gate reads the ledger, so a refusal sends nothing and never reads the pane.
-    assert pane.keys == [] and pane.typed == [] and pane.snapshot_modes == []
-    mark.assert_not_called()
+    assert (ok, reason, pending, detail) == (True, None, True, {"submit_unverified": True})
+    assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
+    assert pane.typed == [f"{_COMMAND}\n"]
+    mark.assert_called_once_with()

@@ -21,9 +21,16 @@ def _context_project_id(context: dict[str, Any] | None) -> str | None:
 
 
 def _target_project_id(
-    sessions: SessionManager, project_path: Any, parent_session_id: Any
+    sessions: SessionManager,
+    project_path: Any,
+    parent_session_id: Any,
+    caller_project_id: str | None,
 ) -> str | None:
-    """Resolve launch identity without depending on terminal/path placement."""
+    """Resolve launch identity without depending on terminal/path placement.
+
+    With no explicit path or parent, the launch targets the verified caller's
+    project. Rule evaluation has no per-call project context to fall back on.
+    """
     if isinstance(project_path, str) and not project_path.strip():
         project_path = None
     if parent_session_id == "":
@@ -43,7 +50,7 @@ def _target_project_id(
         return parent.project_id
     if project_path is not None:
         return None
-    return _context_project_id(get_project_context())
+    return caller_project_id
 
 
 def spawn_capabilities_allowed(
@@ -72,7 +79,9 @@ def spawn_capabilities_allowed(
     resolved = session_agent_definition(session_manager.db, caller)
     if resolved is None:
         return False
-    project_id = _target_project_id(session_manager, project_path, parent_session_id)
+    project_id = _target_project_id(
+        session_manager, project_path, parent_session_id, caller.project_id
+    )
     if project_id is None:
         return False
     target = "default" if agent is None else agent

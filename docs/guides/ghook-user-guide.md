@@ -91,6 +91,14 @@ Claude's `post-tool-batch` returns the continue response, because its exit 2
 would end the turn. The next tool call still pauses at its pre-tool hook until
 the daemon is back.
 
+Some hooks pass during any connection outage, so a held seat can still check
+in: the prompt hook, `ScheduleWakeup`, and the `call_tool` hold calls
+(`gobby-sessions` `set_handoff`, `get_handoff`, `feedback`, plus `gobby-agents`
+`send_message` and `wait_for_coordination`). A post-tool batch passes only
+when every call in it is one of those. With a fresh restart marker, `gmcp`
+retries those calls the daemon never received until it is back or the request
+times out. A delivered call is never sent again.
+
 Environment knobs:
 
 - `GOBBY_DAEMON_URL` overrides the daemon URL used for live POSTs and

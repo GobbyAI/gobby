@@ -36,6 +36,11 @@ class CoordinationWaitService:
     async def start(self) -> None:
         if self._listener is not None:
             return
+        try:
+            await asyncio.to_thread(self.manager.rearm_lapsed, self.machine_id)
+        except Exception:
+            # Delivery must still start; lapsed waits then time out as before.
+            logger.warning("Failed to re-arm lapsed coordination waits", exc_info=True)
         self._worker = asyncio.create_task(self._consume(), name="coordination-delivery")
         self._listener = asyncio.create_task(self._listen(), name="coordination-listener")
         try:

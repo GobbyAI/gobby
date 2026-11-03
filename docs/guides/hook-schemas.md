@@ -97,6 +97,15 @@ with `intent: restart`), Claude's `post-tool-batch` continues, so the restart
 does not end the turn; the next tool call still pauses at PreToolUse. The
 ghook user guide has the marker rules.
 
+A spawned seat can still check in while the daemon is down. Its prompt hook
+passes, and so do the tool hooks for `ScheduleWakeup` and for the five hold
+calls made through `call_tool`: `gobby-sessions` `set_handoff`, `get_handoff`
+and `feedback`, and `gobby-agents` `send_message` and `wait_for_coordination`.
+A post-tool batch passes only when every call in it is one of those. Any
+other tool call still pauses. While a fresh restart marker is present, `gmcp`
+retries those hold calls until the daemon is back or the request times out.
+It retries only a call the daemon never received, so no call runs twice.
+
 Turn-level `Stop` is never critical. In operator sessions, a daemon outage
 fails open on every provider's Stop, PreToolUse, and other turn-level hooks so
 an unreachable daemon cannot freeze the CLI on every turn. Session-lifecycle

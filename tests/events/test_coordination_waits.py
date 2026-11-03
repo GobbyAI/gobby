@@ -736,6 +736,73 @@ async def test_restart_rehydrates_active_wait_and_deadline(harness: Coordination
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("form", "outcome"),
+    [({"statuses": ["paused"]}, "status_matched"), ({"reply": True}, "replied")],
+    ids=["owner-status", "reply"],
+)
+async def test_daemon_start_rearms_waits_whose_deadline_lapsed_while_down(
+    harness: CoordinationHarness, form: dict[str, Any], outcome: str
+) -> None:
+    row = harness.wait(**form, timeout=60)
+    # The daemon was down past the deadline, so no resolver ran: the row still says waiting.
+    harness.db.execute(
+        "UPDATE coordination_waits SET expires_at = clock_timestamp() - interval '5 minutes' "
+        "WHERE id = %s",
+        (row["id"],),
+    )
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    service = CoordinationWaitService(
+        harness.manager,
+        CompletionEventRegistry(wake_callback=wake),
+        require_machine_id(),
+        lambda: connection_for(harness),
+    )
+    await service.start()
+    try:
+        await asyncio.wait_for(service._queue.join(), 5)
+        rearmed = harness.row(row["id"])
+        assert rearmed["outcome"] == "waiting"
+        assert rearmed["expires_at"] > utc_now()
+        assert row["id"] in service._timers
+        wake.assert_not_awaited()
+
+        # The re-armed wait still resolves on its own condition.
+        if form.get("reply"):
+            harness.reply()
+        else:
+            harness.status("paused")
+        assert harness.row(row["id"])["outcome"] == outcome
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_failed_rearm_still_starts_delivery(
+    harness: CoordinationHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(machine_id: str, grace_seconds: int = 900) -> int:
+        raise RuntimeError(f"hub unavailable for {machine_id}")
+
+    monkeypatch.setattr(harness.manager, "rearm_lapsed", refuse)
+    row = harness.wait(reply=True, timeout=60)
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    service = CoordinationWaitService(
+        harness.manager,
+        CompletionEventRegistry(wake_callback=wake),
+        require_machine_id(),
+        lambda: connection_for(harness),
+    )
+    await service.start()
+    try:
+        harness.reply()
+        assert harness.row(row["id"])["outcome"] == "replied"
+        assert service._listener is not None and not service._listener.done()
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
 async def test_failed_delivery_retains_outcome_for_recovery(harness: CoordinationHarness) -> None:
     row = harness.wait()
     harness.release()
