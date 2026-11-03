@@ -1,4 +1,4 @@
-version: "1.1.0"
+version: "1.2.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -76,7 +76,12 @@ rules:
               "src/gobby/mcp_proxy/tools/tasks/_team_progress.py",
               "src/gobby/install/shared/workflows/agents/dev-team-lead.yaml",
               "src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml",
-              "src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml"
+              "src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml",
+              "src/gobby/install/shared/workflows/rules/tool-hygiene/definition-mutation-authority.yaml",
+              "src/gobby/install/shared/workflows/rules/tool-hygiene/workflow-cli-authority.yaml",
+              "src/gobby/install/shared/workflows/rules/tool-hygiene/agent-activation-authority.yaml",
+              "src/gobby/workflows/condition_helpers_spawn.py",
+              "src/gobby/install/shared/workflows/rules/tool-hygiene/spawn-capability-authority.yaml"
             ],
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–05:00 America/Chicago daily; 04:00–06:00 on Mondays",
