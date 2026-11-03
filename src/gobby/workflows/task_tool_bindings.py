@@ -19,7 +19,8 @@ from gobby.adapters.codex_impl.execution_chain import (
     extract_yielded_cell_id,
     structured_exec_results,
 )
-from gobby.hooks.events import HookEvent, HookEventType, tool_execution_id
+from gobby.adapters.codex_impl.native_exec_failures import failed_native_outer_calls
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource, tool_execution_id
 from gobby.tasks.transcript_background import background_job_receipt
 from gobby.workflows.git_operation_ownership import OPERATIONS_VARIABLE, retire_operation_calls
 from gobby.workflows.state_manager import SessionVariableManager
@@ -166,6 +167,7 @@ def cleanup_task_tool_bindings(
     """Clear abandoned calls before a turn/session boundary's rule evaluation."""
     if not session_id or manager is None or event.metadata.get("_native_subagent_binding"):
         return
+    TaskToolBindings(manager, session_id).reconcile_native_failures(event)
     boundaries = {
         HookEventType.STOP: "turn_end",
         HookEventType.AFTER_AGENT: "turn_end",
@@ -271,6 +273,9 @@ class TaskToolBindings:
                 "anonymous": anonymous,
                 "source": event.source.value,
             }
+            outer = event.metadata.get("_native_shell_outer_call_id")
+            if event.source == SessionSource.CODEX and isinstance(outer, str) and outer:
+                calls[key]["native_outer_call_id"] = outer
             if anonymous:
                 calls[key]["selection_count"] = len(variables.get("task_selection_history", []))
             variables["task_tool_bindings"] = calls
@@ -279,6 +284,74 @@ class TaskToolBindings:
         self.manager._mutate_variables(
             self.session_id, mutate, keys=("task_tool_bindings", "claimed_tasks")
         )
+
+    def reconcile_native_failures(self, event: HookEvent) -> None:
+        """Drop uniquely proven abandoned native calls, preserving all edit ownership."""
+        if event.source != SessionSource.CODEX or event.metadata.get("_native_hook_type") not in {
+            "PreToolUse",
+            "PostToolUse",
+        }:
+            return
+        path = event.data.get("transcript_path")
+        if not isinstance(path, str):
+            return
+        state = self.manager.get_variable_subset(self.session_id, ("task_tool_bindings",))
+        calls = _bindings(state)
+        candidates = {
+            call["native_outer_call_id"]
+            for call in calls.values()
+            if isinstance(call.get("native_outer_call_id"), str)
+            and call.get("pending") is True
+            and not call.get("background")
+            and not call.get("aliases")
+        }
+        if not candidates or not (failed := failed_native_outer_calls(path, candidates)):
+            return
+
+        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+            current = _bindings(variables)
+            retired: set[str] = set()
+            for outer in failed:
+                matching = [
+                    key
+                    for key, call in current.items()
+                    if call.get("native_outer_call_id") == outer
+                ]
+                if len(matching) != 1:
+                    continue
+                key = matching[0]
+                call = current[key]
+                if call.get("pending") is not True or call.get("background") or call.get("aliases"):
+                    continue
+                call.update(pending=False, abandoned=True)
+                retired.add(key.partition(":")[2])
+            if not retired:
+                return None, False
+            variables["task_tool_bindings"] = current
+            for name in ("claimed_shell_snapshots", "worktree_shell_calls"):
+                snapshots = variables.get(name)
+                if isinstance(snapshots, dict):
+                    variables[name] = {k: v for k, v in snapshots.items() if k not in retired}
+            kept = {key.partition(":")[2] for key in current} - retired
+            retire_operation_calls(variables, kept)
+            return None, True
+
+        self.manager._mutate_variables(
+            self.session_id,
+            mutate,
+            keys=(
+                "task_tool_bindings",
+                "claimed_shell_snapshots",
+                "worktree_shell_calls",
+                OPERATIONS_VARIABLE,
+            ),
+        )
+
+    def is_abandoned(self, event: HookEvent) -> bool:
+        """A late post cannot re-adopt edits or credit an outcome we could not prove."""
+        state = self.manager.get_variable_subset(self.session_id, ("task_tool_bindings",))
+        key = _matching_key(event, state)
+        return key is not None and _bindings(state)[key].get("abandoned") is True
 
     def clear_pending(self, boundary: str) -> None:
         """Retire completed/abandoned calls; only live background work crosses turns.
@@ -294,9 +367,12 @@ class TaskToolBindings:
             kept = {
                 key: call
                 for key, call in calls.items()
-                if call.get("pending") is True
-                and call.get("background") is True
-                and boundary in {"prompt", "interrupt", "turn_end"}
+                if (
+                    call.get("pending") is True
+                    and call.get("background") is True
+                    and boundary in {"prompt", "interrupt", "turn_end"}
+                )
+                or (call.get("abandoned") is True and boundary not in {"session_end", "clear"})
             }
             ends_turn = boundary != "prompt"
             changed = kept != calls or (ends_turn and "task_tool_turn" in variables)
@@ -366,6 +442,8 @@ class TaskToolBindings:
             key = _matching_key(event, variables)
             calls = _bindings(variables)
             if key is None or key not in calls:
+                return None, False
+            if calls[key].get("abandoned") is True:
                 return None, False
             aliases = _returned_aliases(event, shell_call=calls[key].get("fences_switch") is True)
             calls[key]["aliases"] = sorted(set(calls[key].get("aliases", [])) | set(aliases))

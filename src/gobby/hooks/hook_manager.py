@@ -444,6 +444,19 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
         self._resolve_session_refs_in_tool_input(event)
         self._recheck_pending_transcript(event)
 
+        if (
+            event.source == SessionSource.CODEX
+            and event.metadata.get("_native_hook_type") in {"PreToolUse", "PostToolUse"}
+            and (session_id := event.metadata.get("_platform_session_id"))
+        ):
+            from gobby.workflows.state_manager import SessionVariableManager
+            from gobby.workflows.task_tool_bindings import TaskToolBindings
+
+            bindings = TaskToolBindings(SessionVariableManager(self._database), session_id)
+            bindings.reconcile_native_failures(event)
+            if event.event_type == HookEventType.AFTER_TOOL and bindings.is_abandoned(event):
+                return HookResponse(decision="allow")
+
         # Get handler for this event type
         handler = self._get_event_handler(event.event_type)
         if handler is None:
