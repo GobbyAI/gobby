@@ -168,11 +168,20 @@ def _last_count_option(parts: list[str]) -> tuple[str, str | None] | None:
         if part == "--":
             break
         name, equals, value = part.partition("=")
-        if name in _LONG_COUNT_OPTIONS:
+        # getopt_long accepts any unambiguous abbreviation, such as `--l` or `--byt`.
+        mode = next(
+            (
+                short
+                for option, short in _LONG_COUNT_OPTIONS.items()
+                if len(name) > 2 and option.startswith(name)
+            ),
+            None,
+        )
+        if mode is not None:
             if equals:
-                last = (_LONG_COUNT_OPTIONS[name], value)
+                last = (mode, value)
             else:
-                last, index = (_LONG_COUNT_OPTIONS[name], following), index + 1
+                last, index = (mode, following), index + 1
         elif re.fullmatch(r"-\d+", part):
             last = ("n", part[1:])
         elif part.startswith("-") and not part.startswith("--"):

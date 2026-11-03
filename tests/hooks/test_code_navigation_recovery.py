@@ -1175,6 +1175,10 @@ def test_a_path_git_refuses_does_not_hide_later_answers(repo: Path) -> None:
         ("head -c 10 -n 5000 src/long.py", True),
         ("head -n 5 -n 5000 src/long.py", True),
         ("head -n 5000 -n 5 src/long.py", False),
+        # getopt_long accepts unambiguous long-option abbreviations.
+        ("head -n 5 --line=5000 src/long.py", True),
+        ("head -n 5 --l 5000 src/long.py", True),
+        ("head -c 100 --byt=99999 src/long.py", True),
         ("head -qn5 src/long.py", False),
         ("xargs nl < list", True),
         ("xargs cat -n < list", True),
