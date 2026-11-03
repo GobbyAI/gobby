@@ -8,8 +8,6 @@ from stat import S_ISDIR, S_ISREG
 from types import SimpleNamespace
 from typing import Any
 
-import yaml
-
 from gobby.paths import get_global_workflows_dir
 from gobby.storage.definition_validation import validate_registry_regexes
 from gobby.storage.definitions import preserve_bundled_tag
@@ -27,6 +25,7 @@ from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
 from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.utils.dev import linked_worktree_root
+from gobby.utils.strict_yaml import load_strict_yaml
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import (
     PipelineDefinition,
@@ -242,8 +241,7 @@ def sync_imported_workflow_file(
     on_disk: set[tuple[str, str]] | None = None,
 ) -> Any:
     """Load one workflow YAML file and upsert it into the runtime database."""
-    with path.open(encoding="utf-8") as file:
-        data = yaml.safe_load(file)
+    data = load_strict_yaml(path.read_text(encoding="utf-8"))
     if isinstance(data, dict) and "name" not in data and isinstance(data.get("rules"), dict):
         # A rule file in the `gobby rules import` format: file-level group and
         # tags over a `rules` mapping. Import it through that same path.

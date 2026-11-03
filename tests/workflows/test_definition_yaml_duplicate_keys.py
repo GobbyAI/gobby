@@ -1,17 +1,62 @@
-"""Duplicate mapping keys refuse the whole definition file in pipeline and variable sync."""
+"""Duplicate mapping keys refuse the whole definition in every definition ingest path."""
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
+from gobby.mcp_proxy.tools.workflows._pipelines import create_pipeline_definition
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.imports import sync_imported_workflow_file
+from gobby.workflows.rule_validation_yaml import validate_rule_yaml
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 from gobby.workflows.sync_variables import sync_bundled_variables
 
 pytestmark = pytest.mark.unit
+
+_DUPLICATE_RULE_FILE = (
+    "rules:\n"
+    "  guarded-rule:\n"
+    "    event: before_tool\n"
+    "    effects:\n"
+    "      - type: block\n"
+    "        reason: first\n"
+    "    when: 'True'\n"
+    "    when: 'False'\n"
+)
+
+
+def test_rule_preflight_reports_duplicate_key() -> None:
+    (report,) = validate_rule_yaml(_DUPLICATE_RULE_FILE)
+
+    assert not report.valid
+    assert any("duplicate mapping key" in issue.message for issue in report.errors), report
+
+
+def test_project_import_refuses_duplicate_key(temp_db: HubDatabase, tmp_path: Path) -> None:
+    path = tmp_path / "imported.yaml"
+    path.write_text(_pipeline("imported-pipeline", "First.") + "description: Second.\n")
+
+    with pytest.raises(yaml.YAMLError, match="duplicate mapping key"):
+        sync_imported_workflow_file(temp_db, path, None)
+    assert PipelineDefinitionManager(temp_db).get_by_name("imported-pipeline") is None
+
+
+def test_pipeline_authoring_refuses_duplicate_key(temp_db: HubDatabase) -> None:
+    manager = PipelineDefinitionManager(temp_db)
+
+    result = create_pipeline_definition(
+        manager,
+        MagicMock(),
+        _pipeline("authored-pipeline", "First.") + "description: Second.\n",
+    )
+
+    assert result["success"] is False
+    assert "duplicate mapping key" in result["error"]
+    assert manager.get_by_name("authored-pipeline") is None
 
 
 def _pipeline(name: str, description: str) -> str:
@@ -27,9 +72,7 @@ def test_pipeline_duplicate_key_refused_while_siblings_sync_and_installed_row_su
     pip_dir = tmp_path / "pipelines"
     pip_dir.mkdir()
     (pip_dir / "kept.yaml").write_text(_pipeline("kept-pipeline", "First."))
-    with patch(
-        "gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=pip_dir
-    ):
+    with patch("gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=pip_dir):
         assert sync_bundled_pipelines(temp_db)["synced"] == 1
 
         (pip_dir / "kept.yaml").write_text(

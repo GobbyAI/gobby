@@ -851,7 +851,8 @@ async def test_reserved_variable_denial_is_variable_specific(
     if event_data["tool_name"] == "mcp__gobby__set_variable":
         assert response.reason == (
             "Rule enforced by Gobby: [native-variable-authority]\n"
-            "Native set_variable may not change the reserved variable 'tool_block_pending'."
+            "Native set_variable may not change the reserved variable 'tool_block_pending'. "
+            "set_variable remains available for other permitted variables."
         )
     else:
         assert "Abandon only this write to variable 'tool_block_pending'" in response.reason

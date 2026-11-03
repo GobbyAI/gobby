@@ -15,34 +15,45 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 
 pytestmark = pytest.mark.unit
 
-SECURITY_CLOSURE_RULES = (
-    "closure-requires-security-policy-provenance",
-    "landing-requires-security-policy-provenance",
-    "closure-requires-security-approval",
-    "landing-requires-security-approval",
-)
+PROTECTED_RULE = "synthetic-protected-rule"
 
 
 @pytest.fixture
-def bundled(temp_db: HubDatabase) -> RuleDefinitionManager:
+def manager(temp_db: HubDatabase) -> RuleDefinitionManager:
+    manager = RuleDefinitionManager(temp_db)
+    created = create_rule(
+        manager,
+        PROTECTED_RULE,
+        {
+            "event": "task_close",
+            "protected": True,
+            "when": "reason == 'done'",
+            "effects": [{"type": "block", "reason": "Synthetic protected gate."}],
+        },
+    )
+    assert created["success"] is True, created
+    return manager
+
+
+def test_bundled_task_security_rules_declare_protection(temp_db: HubDatabase) -> None:
     assert sync_bundled_rules(temp_db, get_bundled_rules_path())["errors"] == []
-    return RuleDefinitionManager(temp_db)
+    security_rules = [
+        row
+        for row in RuleDefinitionManager(temp_db).list_all()
+        if "task-security" in (row.tags or [])
+    ]
+
+    assert security_rules
+    for row in security_rules:
+        assert row.definition_json.get("protected") is True, row.name
 
 
-def test_bundled_security_closure_rules_declare_protection(bundled: RuleDefinitionManager) -> None:
-    for name in SECURITY_CLOSURE_RULES:
-        row = bundled.get_by_name(name)
-        assert row is not None, name
-        assert row.definition_json["protected"] is True, name
-
-
-@pytest.mark.parametrize("name", SECURITY_CLOSURE_RULES)
 def test_seat_cannot_toggle_update_or_delete_protected_rule(
-    bundled: RuleDefinitionManager, name: str
+    manager: RuleDefinitionManager,
 ) -> None:
-    toggled = toggle_rule(bundled, name, False)
-    updated = update_rule(bundled, name, enabled=False)
-    deleted = delete_rule(bundled, name, force=True)
+    toggled = toggle_rule(manager, PROTECTED_RULE, False)
+    updated = update_rule(manager, PROTECTED_RULE, enabled=False)
+    deleted = delete_rule(manager, PROTECTED_RULE, force=True)
 
     assert toggled["success"] is False
     assert "protected" in toggled["error"]
@@ -50,26 +61,25 @@ def test_seat_cannot_toggle_update_or_delete_protected_rule(
     assert "protected" in updated["error"]
     assert deleted["success"] is False
     assert "protected" in deleted["error"]
-    row = bundled.get_by_name(name)
+    row = manager.get_by_name(PROTECTED_RULE)
     assert row is not None
     assert row.enabled is True
     assert row.deleted_at is None
+    assert row.definition_json["protected"] is True
 
 
-def test_operator_principal_still_changes_protected_rule(bundled: RuleDefinitionManager) -> None:
-    name = "closure-requires-security-approval"
-
+def test_operator_principal_still_changes_protected_rule(manager: RuleDefinitionManager) -> None:
     with operator_rule_changes():
-        assert toggle_rule(bundled, name, False)["success"] is True
+        assert toggle_rule(manager, PROTECTED_RULE, False)["success"] is True
 
-    row = bundled.get_by_name(name)
+    row = manager.get_by_name(PROTECTED_RULE)
     assert row is not None
     assert row.enabled is False
 
 
-def test_unprotected_rule_remains_seat_toggleable(bundled: RuleDefinitionManager) -> None:
+def test_unprotected_rule_remains_seat_toggleable(manager: RuleDefinitionManager) -> None:
     created = create_rule(
-        bundled,
+        manager,
         "ordinary-rule",
         {
             "event": "turn_start",
@@ -78,6 +88,6 @@ def test_unprotected_rule_remains_seat_toggleable(bundled: RuleDefinitionManager
     )
     assert created["success"] is True, created
 
-    result = toggle_rule(bundled, "ordinary-rule", False)
+    result = toggle_rule(manager, "ordinary-rule", False)
 
     assert result["success"] is True, result

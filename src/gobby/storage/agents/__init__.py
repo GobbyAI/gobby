@@ -17,6 +17,7 @@ from ._constants import (
     AgentRunTerminalReason,
     TerminalAction,
     logger,
+    task_closed_terminal_reason,
 )
 from ._manager import LocalAgentRunManager
 from ._models import AgentRun
@@ -38,6 +39,7 @@ __all__ = [
     "AgentRunTerminalReason",
     "LocalAgentRunManager",
     "TerminalAction",
+    "task_closed_terminal_reason",
     "logger",
     "sandbox_record",
 ]

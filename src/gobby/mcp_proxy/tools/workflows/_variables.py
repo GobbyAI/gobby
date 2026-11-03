@@ -24,6 +24,7 @@ from gobby.storage.definitions.variables import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import VariableDefinitionBody
+from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
 
