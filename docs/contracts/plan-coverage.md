@@ -404,11 +404,33 @@ floats as an orphan follow-up. The task carries the actual ordering edges: a
 internal leaves the deferred work needs (for example the audit leaf it follows),
 which the heading's `(depends: ...)` names.
 
+A deferral target satisfies ownership by one of two routes, checked against the
+recovery epic (the plan's registered root task):
+
+1. Dependency closure. The target is in the recovery epic's `blocked-by`
+   closure, usually by the edge root-blocked-by-target.
+2. Cited parent. Use this when that edge would cycle or would block an earlier
+   stage on a later one. The target carries the label `cited-parent:<P>`, and
+   task P is open, outside the recovery epic's `blocked-by` closure, and labeled
+   `out-of-scope-for:<epic>`. Both refs use the `#N` form
+   (`cited-parent:#21542`, `out-of-scope-for:#21478`), because the validator
+   normalizes a bare number to `#N` and matches the label exactly. Use the
+   target's own parent epic as P.
+
+A target with neither route reports `missing_dependency_or_cited_parent`.
+
 The task is created at expansion or finalization, never while the plan is being
 drafted, enhanced, or adversarially reviewed — plans may change or be abandoned
 before then. A dangling `task_ref` in an unfinalized plan is expected and does
-not fail base validation; the open-task, provenance, and dependency-closure
-gates above apply from expansion validation onward.
+not fail base validation. Expansion-mode validation (`gobby plans validate
+--mode expansion`) does not check deferral ownership either: it runs before the
+root epic is created and registered, so no recovery epic exists to check the
+target against. The first deferral gate is expansion coverage QA
+(`run_expansion_qa_coverage`, run by the `expand-task` pipeline). After a
+plan edit, refresh the plan hash, regenerate coverage and rerun QA. QA applies the
+open-task, provenance, acceptance-duplication and ownership checks above
+against the registered root's live task tree, and any `invalid` deferral row
+fails QA.
 
 Expansion apply creates the task for every deferred section whose `task_ref` is
 a placeholder (anything that is not a bare `#N`): one `planning` task under the
