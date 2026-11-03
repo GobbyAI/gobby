@@ -178,6 +178,7 @@ async def test_native_comms_wake_clears_before_submitting(
 
 @pytest.mark.parametrize("channel", ["telegram", "slack", "teams"])
 @pytest.mark.parametrize("active", [False, True], ids=["idle", "active"])
+@pytest.mark.parametrize("composer", ["draft", "blocked"])
 async def test_operator_comms_wake_replaces_idle_composer_only(
     temp_db: HubDatabase,
     session_manager: SessionManager,
@@ -185,10 +186,15 @@ async def test_operator_comms_wake_replaces_idle_composer_only(
     composer_ledger: ComposerLedger,
     channel: str,
     active: bool,
+    composer: str,
 ) -> None:
     seat = _seat(temp_db, session_manager, sample_project)
     composer_ledger.record_spawn("terminal-1", "host-epoch-1")
     composer_ledger.observe_write("terminal-1", origin="operator", kind="text", payload="leftover")
+    if composer == "blocked":
+        # A gap leaves the composer unvouched; an operator comms wake still replaces it.
+        composer_ledger.block("terminal-1", "gap")
+    assert composer_ledger.read("terminal-1").state == composer
     seat.session.status = "active" if active else "paused"
     messages = MagicMock()
     messages.get_undelivered_wake_messages.return_value = [
@@ -218,7 +224,7 @@ async def test_operator_comms_wake_replaces_idle_composer_only(
         if active:
             assert result["skipped"] == "session_active"
             seat.pane_sender.assert_not_awaited()
-            assert composer_ledger.read("terminal-1").state == "draft"
+            assert composer_ledger.read("terminal-1").state == composer
         else:
             seat.pane_sender.assert_awaited_once()
             assert seat.pane_sender.await_args is not None

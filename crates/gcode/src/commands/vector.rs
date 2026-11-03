@@ -142,6 +142,16 @@ fn sync_pinned_vector_file(
                     None,
                 );
             }
+            pinned::PinnedVectorSync::SourceMissing => {
+                return print_skipped_sync_file(
+                    ctx,
+                    file_path,
+                    format,
+                    locks,
+                    SyncFileSkip::SourceMissing,
+                    None,
+                );
+            }
         };
     let report = ProjectionSyncReport::ok(1, output.symbols);
     print_file_lifecycle_output(&output, report, format, locks)
@@ -151,6 +161,7 @@ enum SyncFileSkip {
     MissingIndexedFile,
     Superseded,
     SourceChanged,
+    SourceMissing,
 }
 
 fn print_skipped_missing_indexed_file(
@@ -204,6 +215,11 @@ fn skip_descriptor(skip: SyncFileSkip, file_path: &str) -> (&'static str, &'stat
             "source_changed",
             "source changed after indexing",
             format!("`{file_path}` changed after indexing; its newer index re-syncs it"),
+        ),
+        SyncFileSkip::SourceMissing => (
+            "source_missing",
+            "source missing from checkout",
+            format!("`{file_path}` is missing from the checkout; its pin was retired"),
         ),
     }
 }

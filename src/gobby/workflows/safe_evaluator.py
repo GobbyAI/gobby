@@ -520,6 +520,7 @@ def build_condition_helpers(
     )
     from .condition_helpers_definition_pins import projected_definition_pins
     from .condition_helpers_paths import PATH_CONDITION_HELPERS
+    from .condition_helpers_selection import pending_selection_fence_calls
     from .condition_helpers_sessions import session_condition_helpers
     from .engine.command_environment import command_sets_environment
     from .monolith_guard import (
@@ -588,6 +589,16 @@ def build_condition_helpers(
         funcs["task_needs_human_review"] = lambda task_id: False
         funcs["task_state_in"] = lambda task_id, *states: False
         funcs["task_type_in"] = lambda task_id_or_ids, *types: False
+
+    def _event_project_id() -> str | None:
+        project_id = getattr(ctx.get("event"), "project_id", None)
+        if not project_id:
+            project_id = (ctx.get("project") or {}).get("id")
+        return str(project_id) if project_id else None
+
+    funcs["pending_selection_fence_calls"] = lambda task_ref: pending_selection_fence_calls(
+        task_manager, _get_variables(ctx), _event_project_id(), task_ref
+    )
 
     # --- Stop signal helper ---
 

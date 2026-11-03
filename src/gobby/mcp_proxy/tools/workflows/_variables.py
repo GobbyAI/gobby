@@ -213,7 +213,7 @@ def get_variable(
     if scope == "step":
         if instance_manager is None:
             instance_manager = AgentStepInstanceManager(db)
-        instance = instance_manager.get_for_session(resolved_session_id)
+        instance = instance_manager.get_active_for_session(resolved_session_id)
         if instance is None:
             return {
                 "success": False,

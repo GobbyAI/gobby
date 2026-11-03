@@ -1062,3 +1062,49 @@ def test_bounded_and_malformed_input() -> None:
         "Bash", {"command": "echo " + "$(" * 30 + "codex" + ")" * 30}
     )
     assert not blocks_direct_provider_launch("spawn_agent", {"command": "codex exec hi"})
+
+
+_SRT_DIST = "/Users/josh/.gobby/tools/srt/0.0.79/node_modules/@anthropic-ai/sandbox-runtime/dist"
+_SRT_PROBE = (
+    f"D={_SRT_DIST}; "
+    'grep -rn "function whichSync" $D | head; '
+    'f=$(grep -rln "function whichSync" $D | head -1); '
+    'n=$(grep -n "function whichSync" $f | cut -d: -f1); '
+    'sed -n "{start},$((n+30))p" $f'
+)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'n=3; sed -n "$n,30p" a.py',
+        'a=10; b=20; sed -n "${a},${b}p" src/x.py',
+        'n=3 && sed -n "$n,$((n+30))p" a.py',
+        'N=5; sed -n "$N"p src/x.py',
+        _SRT_PROBE.format(start="$((n))"),
+    ],
+)
+def test_sed_program_with_literal_bindings_or_arithmetic_is_allowed(command: str) -> None:
+    assert not blocks_direct_provider_launch("Bash", {"command": command})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Parameter text inside a sed program is program text, not an operand.
+        _SRT_PROBE.format(start="$n"),
+        'sed -n "$n,30p" a.py',
+        "n='1e claude -p hi'; sed -n \"${n}p\" a.py",
+        'n=$(echo 1e claude); sed -n "${n}p" a.py',
+        'n=3; n=$(echo 1e claude); sed -n "${n}p" a.py',
+        'n=3 sed -n "${n}p" a.py',
+        'n=3 | sed -n "${n}p" a.py',
+        'true || n=3; sed -n "${n}p" a.py',
+        'n=3; echo; sed -n "${n}p" a.py',
+        f"{_SRT_DIST}/claude -p hi",
+        'f=claude; "$f" -p hi',
+        "f=/usr/local/bin/codex; ${f} exec hi",
+    ],
+)
+def test_sed_program_with_unproven_text_stays_blocked(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command})

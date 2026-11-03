@@ -5,6 +5,9 @@ binding is literal, stable and never rebound before a write operand uses it.
 """
 
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
 
 from gobby.hooks._normalization_shell import (
     _is_env_assignment,
@@ -184,3 +187,46 @@ def _shell_segment_preserves_loop_binding(
     if command == "printf" and "-v" in parts[1:]:
         return False
     return command_is_known
+
+
+_LEADING_BINDING_SEPARATORS = frozenset({None, "&&", ";", "\n"})
+
+
+@dataclass(slots=True)
+class LeadingLiteralBindings:
+    """Literal scalar assignments that open a command and reach only its first command.
+
+    Every leading assignment must be literal; a substitution, marker or pipeline ends the
+    proof, and the bindings are handed to the first non-assignment segment and then dropped.
+    """
+
+    values: dict[str, str] = field(default_factory=dict)
+    leading: bool = True
+
+    def segment(
+        self,
+        words: tuple[str, ...],
+        raw_words: tuple[str, ...],
+        before: str | None,
+        after: str | None,
+    ) -> Mapping[str, str]:
+        """Record an assignment-only segment, or return the bindings this segment may use."""
+        sequential = before in _LEADING_BINDING_SEPARATORS
+        assigned = (
+            _literal_assignment_values(words, raw_words)
+            if self.leading and sequential and after not in {"|", "&"}
+            else None
+        )
+        if assigned is not None and all(
+            value is not None and "__gobby_" not in value for value in assigned.values()
+        ):
+            for name, value in assigned.items():
+                if value is not None and _loop_binding_variable_is_stable(name):
+                    self.values[name] = value
+                else:
+                    self.values.pop(name, None)
+            return MappingProxyType({})
+        self.leading = False
+        bindings = MappingProxyType(self.values if sequential else {})
+        self.values = {}
+        return bindings

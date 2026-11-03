@@ -14,7 +14,7 @@ from contextvars import ContextVar
 from typing import Any, Literal
 
 from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect
-from gobby.hooks._normalization_bindings import _raw_shell_word_is_literal
+from gobby.hooks._normalization_bindings import LeadingLiteralBindings, _raw_shell_word_is_literal
 from gobby.hooks._normalization_shell import (
     ShellToken,
     _contains_unexpanded_shell_reference,
@@ -33,6 +33,7 @@ from gobby.hooks._python_mutation_targets import (
 )
 from gobby.hooks._python_pipeline_classifier import _inline_interpreter_parts
 from gobby.hooks._sed_arguments import _sed_file_operands
+from gobby.hooks._sed_expansion import sed_literal_bindings
 from gobby.hooks._sed_program import sed_execution
 from gobby.hooks._shell_execution_words import _unwrap
 
@@ -711,6 +712,7 @@ def _evaluate_blocked(
         python_pipes = shell_pipes.copy()
         start = 0
         heredoc_index = 0
+        leading_bindings = LeadingLiteralBindings()
         for end in range(len(scan.tokens) + 1):
             if end < len(scan.tokens) and not _separator(scan.tokens[end]):
                 continue
@@ -732,6 +734,12 @@ def _evaluate_blocked(
             while heredoc_index < len(scan.heredocs) and scan.heredocs[heredoc_index].opener < end:
                 heredoc_index += 1
             bodies = scan.heredocs[lo:heredoc_index]
+            bindings = leading_bindings.segment(
+                tuple(raw_words),
+                _raw_executable_words(prepared, segment, segment_spans),
+                scan.tokens[start - 1].value if start else None,
+                scan.tokens[end].value if end < len(scan.tokens) else None,
+            )
             start = end + 1
             if not words:
                 if "exec" in raw_words[:2]:
@@ -742,7 +750,9 @@ def _evaluate_blocked(
                         segment, expansions, depth, dialect, python=True
                     )
                 continue
-            name = words[0].rsplit("/", 1)[-1]
+            reference = re.fullmatch(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))", words[0])
+            bound = reference and bindings.get(reference[1] or reference[2])
+            name = (bound or words[0]).rsplit("/", 1)[-1]
             # A named shell decodes the script it runs in its own dialect.
             inner: ShellDialect = "zsh" if name == "zsh" else "bash"
             piped = (
@@ -841,10 +851,14 @@ def _evaluate_blocked(
                 # This distinguishes a literal '$' in sed data from a dynamic program.
                 raw_parts = _raw_executable_words(prepared, segment, segment_spans)
                 prefix = len(raw_words) - len(words)
-                operands = _sed_file_operands(
-                    words,
-                    raw_parts[prefix:] if prefix >= 0 and raw_words[prefix:] == words else None,
-                )
+                bindings_token = sed_literal_bindings.set(bindings)
+                try:
+                    operands = _sed_file_operands(
+                        words,
+                        raw_parts[prefix:] if prefix >= 0 and raw_words[prefix:] == words else None,
+                    )
+                finally:
+                    sed_literal_bindings.reset(bindings_token)
                 # Program files are unread executable input, even for a literal path.
                 if (
                     operands.unresolved
