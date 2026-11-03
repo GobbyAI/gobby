@@ -282,6 +282,25 @@ def _redirect_at(tokens: list[str], index: int) -> bool:
     return token.startswith(("<", ">")) or (token.isdigit() and following.startswith(("<", ">")))
 
 
+def _backgrounded(tokens: list[str], start: int) -> bool:
+    """Whether the and-or list running through `tokens[start:]` ends at `&`.
+
+    The list ends at a top-level `;` or newline. An `&` anywhere before that counts, even
+    inside a group, so a misread nesting only keeps more places.
+    """
+    depth = 0
+    for token in tokens[start:]:
+        if token in {"(", "{"}:
+            depth += 1
+        elif token in {")", "}"}:
+            depth -= 1
+        elif token == "&":
+            return True
+        elif depth <= 0 and token in {";", "\n"}:
+            return False
+    return False
+
+
 def _place_words(token: str, places: frozenset[_Place]) -> list[str]:
     """Words one token reads from each place. Once a place has moved, every bare word counts."""
     words: list[str] = []
@@ -368,9 +387,16 @@ def _cd_anchored_words(
                 target = "-"
             else:
                 target = raw
-            # Only a leading `cd` whose segment ends at `&&`, `;` or a newline may narrow.
+            # Only a leading `cd` whose segment ends at `&&`, `;` or a newline may narrow, and
+            # only when its and-or list is not backgrounded by `&`.
             ends_segment = after == len(tokens) or tokens[after] in {"&&", ";", "\n"}
-            certain = name == "cd" and index == 0 and consumed and ends_segment
+            certain = (
+                name == "cd"
+                and index == 0
+                and consumed
+                and ends_segment
+                and not _backgrounded(tokens, after)
+            )
             places = _cd_places(target, places, certain)
         elif token not in _SHELL_SEPARATORS:
             words.extend(_place_words(token, places))

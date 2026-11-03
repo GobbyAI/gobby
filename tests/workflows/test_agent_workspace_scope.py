@@ -1401,6 +1401,12 @@ def test_reported_grep_from_a_workspace_cwd_follows_its_leading_cd(
         # zsh `cd old new` swaps `old` for `new` in the current directory.
         ("cd 12 99; cat notes.md", True),
         ("cd 12 99 && cat notes.md", True),
+        # A trailing `&` runs the whole and-or list in the background, so the shell stays put.
+        ("cd inner && true &\ncat ../session-99/notes.md", True),
+        ("cd inner && true & cat ../session-99/notes.md", True),
+        ("cd inner && sleep 0 & wait; cat ../session-99/notes.md", True),
+        ("cd inner && (true; true) &\ncat ../session-99/notes.md", True),
+        ("cd inner && true; cat ../notes.md", False),
         # A redirection after the target is not a second operand.
         ("cd inner 2>/dev/null && cat notes.md", False),
         ("cd inner >/dev/null && cat notes.md", False),
