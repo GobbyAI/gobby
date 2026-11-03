@@ -236,6 +236,7 @@ _COMMAND_STARTS = _SHELL_SEPARATORS | frozenset(
 _CD_COMMANDS = frozenset({"cd", "chdir", "pushd", "popd"})
 # Commands that run a body in the current shell, which may move it. The body is unknown.
 _EVALUATORS = frozenset({"eval", "source", ".", "exec", "alias", "trap"})
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 
 
 def _anchored(words: list[str], directory: Path | None, moved: bool) -> list[str]:
@@ -338,6 +339,8 @@ def _cd_anchored_words(
     words: list[str] = []
     cdpath = any("CDPATH" in token for token in tokens)
     case_seen = "case" in tokens
+    autocd = any("autocd" in token.lower().replace("_", "") for token in tokens)
+    command_word = 0
     for index, token in enumerate(tokens):
         if index == skip:
             continue
@@ -371,8 +374,13 @@ def _cd_anchored_words(
             places = _cd_places(target, places, certain)
         elif token not in _SHELL_SEPARATORS:
             words.extend(_place_words(token, places))
-            at_start = index == 0 or previous in _COMMAND_STARTS
-            if token in _EVALUATORS and at_start:
+            at_start = index in (0, command_word) or previous in _COMMAND_STARTS
+            if at_start and _ASSIGNMENT.match(token):
+                # A `NAME=value` prefix keeps the next word in command position.
+                command_word = index + 1
+            elif at_start and (token in _EVALUATORS or token.startswith(("`", "$(")) or autocd):
+                # An evaluator body or a substituted command name may move the shell. Under
+                # AUTO_CD any command word may name a directory, even a link the command makes.
                 places = places | frozenset({None})
             elif at_start:
                 # zsh AUTO_CD enters a directory named as a command, like `cd` would.

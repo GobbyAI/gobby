@@ -1622,6 +1622,17 @@ def test_widened_cwd_forms_keep_foreign_reads_refused(
         ("cd {checkout}; trap 'cd {own}' DEBUG; cat ../session-99/notes.md", True),
         # zsh AUTO_CD enters a directory named as a command.
         ("cd {checkout}; setopt autocd; {own}; cat ../session-99/notes.md", True),
+        # An assignment prefix keeps the next word in command position.
+        ('cd {checkout}; FOO=1 trap "cd {own}" DEBUG; cat ../session-99/notes.md', True),
+        # A substituted command name may be `cd`.
+        ("cd {checkout}; `echo cd` {own}; cat ../session-99/notes.md", True),
+        # AUTO_CD enters a link made in the same command, which does not exist yet.
+        ("cd {checkout}; setopt autocd; ln -s {own} lnk; lnk; cat ../session-99/notes.md", True),
+        (
+            "cd {checkout}; setopt AUTO_CD; mkdir d && ln -s {own} d/l; d/l; "
+            "cat ../session-99/notes.md",
+            True,
+        ),
         # zsh `cd +N` rotates the directory stack.
         ("cd {checkout}; cd +1; cat ../session-99/notes.md", True),
         # Command words that name no directory leave the narrowed checkout alone.
