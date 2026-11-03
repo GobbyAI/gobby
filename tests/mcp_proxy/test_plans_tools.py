@@ -42,6 +42,7 @@ from gobby.utils.git import run_git_command
 from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import write_project_marker
+from tests.mcp_proxy.caller_principal_support import bound_principal, session_claims
 
 pytestmark = pytest.mark.unit
 
@@ -1240,15 +1241,17 @@ async def test_prepare_review_round_uses_call_tool_envelope_session(
     )
     plan_path = _write_plan(tmp_path)
 
-    result = await tools.call_tool(
-        server_name="gobby-plans",
-        tool_name="prepare_plan_review_round",
-        arguments={
-            "plan_path": str(plan_path),
-            "round_number": 1,
-        },
-        session_id=session.id,
-    )
+    # The /mcp route binds the caller; the envelope names the caller's own session.
+    with bound_principal(session_claims(session.id, project_id=project_id)):
+        result = await tools.call_tool(
+            server_name="gobby-plans",
+            tool_name="prepare_plan_review_round",
+            arguments={
+                "plan_path": str(plan_path),
+                "round_number": 1,
+            },
+            session_id=session.id,
+        )
 
     assert result["ok"] is True
     evidence = PlanReviewEvidenceService(temp_db).get_evidence(result["evidence_id"])
@@ -1275,17 +1278,18 @@ async def test_prepare_review_round_staged_binding_with_ambient_context(
     )
     plan_path = _write_plan(tmp_path)
 
-    result = await tools.call_tool(
-        server_name="gobby-plans",
-        tool_name="prepare_plan_review_round",
-        arguments={
-            "plan_path": str(plan_path),
-            "round_number": 1,
-            "task_id": task.id,
-            "stage": "development",
-        },
-        session_id=ambient_session.id,
-    )
+    with bound_principal(session_claims(ambient_session.id, project_id=project_id)):
+        result = await tools.call_tool(
+            server_name="gobby-plans",
+            tool_name="prepare_plan_review_round",
+            arguments={
+                "plan_path": str(plan_path),
+                "round_number": 1,
+                "task_id": task.id,
+                "stage": "development",
+            },
+            session_id=ambient_session.id,
+        )
 
     assert result["ok"] is True
     evidence = PlanReviewEvidenceService(temp_db).get_evidence(result["evidence_id"])
@@ -1315,16 +1319,17 @@ async def test_prepare_review_round_explicit_session_wins_over_ambient_context(
     )
     plan_path = _write_plan(tmp_path)
 
-    result = await tools.call_tool(
-        server_name="gobby-plans",
-        tool_name="prepare_plan_review_round",
-        arguments={
-            "plan_path": str(plan_path),
-            "round_number": 1,
-            "session_id": explicit_session.id,
-        },
-        session_id=ambient_session.id,
-    )
+    with bound_principal(session_claims(ambient_session.id, project_id=project_id)):
+        result = await tools.call_tool(
+            server_name="gobby-plans",
+            tool_name="prepare_plan_review_round",
+            arguments={
+                "plan_path": str(plan_path),
+                "round_number": 1,
+                "session_id": explicit_session.id,
+            },
+            session_id=ambient_session.id,
+        )
 
     assert result["ok"] is True
     evidence = PlanReviewEvidenceService(temp_db).get_evidence(result["evidence_id"])

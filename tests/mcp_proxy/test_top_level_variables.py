@@ -1,13 +1,31 @@
 """Tests for top-level set_variable / get_variable on GobbyDaemonTools."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
+from gobby.utils.session_context import SessionContext
+from tests.mcp_proxy.caller_principal_support import operator_caller
 
 pytestmark = pytest.mark.unit
+
+RESOLVED = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+
+@contextmanager
+def _operator_naming_resolved_session() -> Iterator[None]:
+    """The operator names "#1", which resolves to RESOLVED."""
+    project = "11111111-1111-1111-1111-111111111111"
+    resolved = (RESOLVED, project, SessionContext(session_id=RESOLVED), {"id": project})
+    with (
+        operator_caller(),
+        patch("gobby.utils.session_context._resolve_context_values", return_value=resolved),
+    ):
+        yield
 
 
 def _make_handler(session_manager: MagicMock | None = None) -> GobbyDaemonTools:
@@ -35,10 +53,13 @@ async def test_set_variable_delegates_correctly() -> None:
     sm.db = MagicMock()
     handler = _make_handler(session_manager=sm)
 
-    with patch(
-        "gobby.mcp_proxy.tools.workflows._variables.set_variable",
-        return_value={"success": True, "value": True, "scope": "session"},
-    ) as mock_set:
+    with (
+        _operator_naming_resolved_session(),
+        patch(
+            "gobby.mcp_proxy.tools.workflows._variables.set_variable",
+            return_value={"success": True, "value": True, "scope": "session"},
+        ) as mock_set,
+    ):
         result = await handler.set_variable(
             name="flag",
             value=True,
@@ -48,7 +69,7 @@ async def test_set_variable_delegates_correctly() -> None:
 
     mock_set.assert_called_once()
     args, kwargs = mock_set.call_args
-    assert args[:5] == (sm, sm.db, "flag", True, "#1")
+    assert args[:5] == (sm, sm.db, "flag", True, RESOLVED)
     assert kwargs["scope"] == "step"
     assert result["success"] is True
 
@@ -59,17 +80,20 @@ async def test_get_variable_delegates_correctly() -> None:
     sm.db = MagicMock()
     handler = _make_handler(session_manager=sm)
 
-    with patch(
-        "gobby.mcp_proxy.tools.workflows._variables.get_variable",
-        return_value={
-            "success": True,
-            "session_id": "uuid",
-            "variable": "flag",
-            "value": True,
-            "exists": True,
-            "scope": "session",
-        },
-    ) as mock_get:
+    with (
+        _operator_naming_resolved_session(),
+        patch(
+            "gobby.mcp_proxy.tools.workflows._variables.get_variable",
+            return_value={
+                "success": True,
+                "session_id": "uuid",
+                "variable": "flag",
+                "value": True,
+                "exists": True,
+                "scope": "session",
+            },
+        ) as mock_get,
+    ):
         result = await handler.get_variable(
             name="flag",
             session_id="#1",
@@ -78,7 +102,7 @@ async def test_get_variable_delegates_correctly() -> None:
 
     mock_get.assert_called_once()
     args, kwargs = mock_get.call_args
-    assert args[:4] == (sm, sm.db, "flag", "#1")
+    assert args[:4] == (sm, sm.db, "flag", RESOLVED)
     assert kwargs["scope"] == "step"
     assert result["success"] is True
     assert result["value"] is True
@@ -93,10 +117,13 @@ async def test_get_variable_forwards_brief_to_the_workflow_tool(
     sm.db = MagicMock()
     handler = _make_handler(session_manager=sm)
 
-    with patch(
-        "gobby.mcp_proxy.tools.workflows._variables.get_variable",
-        return_value={"success": True, "names": []},
-    ) as mock_get:
+    with (
+        _operator_naming_resolved_session(),
+        patch(
+            "gobby.mcp_proxy.tools.workflows._variables.get_variable",
+            return_value={"success": True, "names": []},
+        ) as mock_get,
+    ):
         await handler.get_variable(session_id="#1", **kwargs)
 
     assert mock_get.call_args.kwargs["brief"] is brief
