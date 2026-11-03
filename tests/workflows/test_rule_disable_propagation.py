@@ -47,7 +47,8 @@ def _make_blocking_rule(manager: RuleDefinitionManager) -> str:
         enabled=True,
         priority=1,
         source="installed",
-        tags=["gobby"],
+        # The probe session binds no definition, so only the default-tagged baseline applies.
+        tags=["default"],
     )
     return row.id
 

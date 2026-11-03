@@ -20,6 +20,7 @@ from gobby.workflows.delivery_disposition import (
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 from gobby.workflows.sync_rules import sync_bundled_rules
 from gobby.workflows.sync_variables import sync_bundled_variables
+from tests.fixtures.rule_definitions import store_unvalidated_rule
 
 pytestmark = pytest.mark.integration
 
@@ -38,8 +39,12 @@ def test_orphan_sync_allocation_ignores_unrelated_payload(
         if kind == "pipelines":
             return pipeline_manager.create(name, payload, source=source, tags=["gobby"]).id
         if kind == "rules":
-            payload["effect"] = {"type": "inject_context", "content": "x" * size}
-            return rule_manager.create(name, payload, source=source, tags=["gobby"]).id
+            # Rule bodies are schema-validated on create, so the bulk rides a valid field.
+            rule = {
+                "event": "before_tool",
+                "effects": [{"type": "inject_context", "template": "x" * size}],
+            }
+            return rule_manager.create(name, rule, source=source, tags=["gobby"]).id
         return variable_manager.create(name, payload, source=source, tags=["gobby"]).id
 
     def sync() -> dict[str, Any]:
@@ -137,7 +142,7 @@ def test_delivery_projection_preserves_classification_and_full_rewrite(
 ) -> None:
     manager = RuleDefinitionManager(temp_db)
     definition = {**definition, "unrelated_blob": "x" * 4096}
-    row = manager.create("projection", definition, source="custom", enabled=False)
+    row = store_unvalidated_rule(temp_db, "projection", definition, enabled=False)
     candidates = manager.list_delivery_disposition_candidates()
     assert len(candidates) == 1
     compact = candidates[0]
