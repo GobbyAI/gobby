@@ -261,6 +261,26 @@ def _enterable(place: _Place) -> bool:
     )
 
 
+def _logical_cd_target(arg: str, directory: Path | None) -> Path | None:
+    """Where `cd arg` lands on the shell's logical path: `..` folds lexically, links stay."""
+    try:
+        candidate = Path(arg).expanduser()
+    except RuntimeError:
+        return None
+    if not candidate.is_absolute():
+        if directory is None:
+            return None
+        candidate = directory / candidate
+    return Path(os.path.normpath(candidate))
+
+
+def _redirect_at(tokens: list[str], index: int) -> bool:
+    """Whether `tokens[index]` starts a redirection such as `>x` or `2>x`."""
+    token = tokens[index]
+    following = tokens[index + 1] if index + 1 < len(tokens) else ""
+    return token.startswith(("<", ">")) or (token.isdigit() and following.startswith(("<", ">")))
+
+
 def _place_words(token: str, places: frozenset[_Place]) -> list[str]:
     """Words one token reads from each place. Once a place has moved, every bare word counts."""
     words: list[str] = []
@@ -280,7 +300,10 @@ def _cd_places(arg: str, places: frozenset[_Place], certain: bool) -> frozenset[
 
     A literal target replaces the places only when the cd certainly runs and lands. Otherwise
     the cd may be skipped or fail, so the places before it stay reachable beside its target.
-    A dynamic target cannot be resolved, so it adds an unknown place.
+    A dynamic target cannot be resolved, so it adds an unknown place. A literal target lands on
+    the logical path, where `..` folds lexically, or on the physical path, where links resolve
+    first: bash retries it when the logical path is missing, and `set -P` or zsh `chase_links`
+    choose it outright. Both are reachable. Operands are resolved physically when read.
     """
     literal = not arg.startswith("-") and "$" not in arg and _READ_PATTERN.search(arg) is None
     landed: set[_Place] = set()
@@ -289,8 +312,8 @@ def _cd_places(arg: str, places: frozenset[_Place], certain: bool) -> frozenset[
         if not literal or (place is None and not arg.startswith(("/", "~"))):
             landed.add(None)
             continue
-        target = resolve_tool_path(arg, directory)
-        landed.add((target, True) if target is not None else None)
+        for target in (_logical_cd_target(arg, directory), resolve_tool_path(arg, directory)):
+            landed.add((target, True) if target is not None else None)
     if certain and all(_enterable(place) for place in landed):
         return frozenset(landed)
     return places | frozenset(landed)
@@ -328,11 +351,17 @@ def _cd_anchored_words(
             raw = tokens[index + 1] if consumed else "~"
             skip = index + 1 if consumed else -1
             words.extend(_place_words(raw, places))
-            if name == "popd" or cdpath or not consumed:
+            after = index + 2 if consumed else index + 1
+            # zsh `cd old new` swaps `old` for `new` in the current directory.
+            swapped = (
+                after < len(tokens)
+                and tokens[after] not in _SHELL_SEPARATORS
+                and not _redirect_at(tokens, after)
+            )
+            if name == "popd" or cdpath or not consumed or swapped:
                 target = "-"
             else:
                 target = raw
-            after = index + 2 if consumed else index + 1
             # Only a leading `cd` whose segment ends at `&&`, `;` or a newline may narrow.
             ends_segment = after == len(tokens) or tokens[after] in {"&&", ";", "\n"}
             certain = name == "cd" and index == 0 and consumed and ends_segment

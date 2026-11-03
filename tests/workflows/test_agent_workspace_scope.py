@@ -1357,6 +1357,94 @@ def test_reported_project_grep_is_allowed_from_checkout(root: Path, tmp_path: Pa
     assert not agent_workspace_read_violation(None, data, data["tool_input"], variables, None)
 
 
+def test_reported_grep_from_a_workspace_cwd_follows_its_leading_cd(
+    root: Path, tmp_path: Path
+) -> None:
+    # The reported grep with its cd target an existing checkout, run from a workspace folder
+    # that is not the seat's own. The pre-fix rule took the grep's relative file operand from
+    # that cwd and refused it; the leading cd moves the operand to the checkout.
+    variables = _seat(root / PROJECT, "developer", 12)
+    definition = root / PROJECT / "plan-writer"
+    definition.mkdir(parents=True)
+    checkout = tmp_path / "gobby"
+    checkout.mkdir()
+    command = (
+        f"cd {checkout} && grep -n -E "
+        r"'^#{1,4} |^`kind:|^\*\*(Plan ID|Granularity|Acceptance)|^Targets:|"
+        r"^Consumers unchanged:' .gobby/plans/task-25460.md | head -120"
+    )
+    data = {
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+        "cwd": str(definition),
+        "project_path": str(checkout),
+    }
+    assert not agent_workspace_read_violation(None, data, data["tool_input"], variables, None)
+
+
+@pytest.mark.parametrize(
+    ("command", "refused"),
+    [
+        # Bash and zsh fold `..` on the logical path: `hop/..` is the developer folder.
+        ("cd {hop}/.. && cat session-99/notes.md", True),
+        ("cd {hop}/..; cat session-99/notes.md", True),
+        ("cd {hop}/..\ncat session-99/notes.md", True),
+        ("cd {hop} && cd .. && cat session-99/notes.md", True),
+        ("cd {foreign_link} && cat notes.md", True),
+        # Bash falls back to the physical path when the logical one does not exist. The
+        # link sits outside the workspaces root, so `deep_hop/../x` is a missing folder there,
+        # and bash lands in own/inner/deep/x, four levels below the developer folder.
+        ("cd {deep_hop}/../x && cat ../../../../session-99/notes.md", True),
+        ("cd {deep_hop}/../x; cat ../../../../session-99/notes.md", True),
+        # `set -P` (or zsh `chase_links`) makes cd physical even where the logical path exists.
+        ("set -P; cd {phys_hop}/../x && cat ../../../../session-99/notes.md", True),
+        # zsh `cd old new` swaps `old` for `new` in the current directory.
+        ("cd 12 99; cat notes.md", True),
+        ("cd 12 99 && cat notes.md", True),
+        # A redirection after the target is not a second operand.
+        ("cd inner 2>/dev/null && cat notes.md", False),
+        ("cd inner >/dev/null && cat notes.md", False),
+        # A link to the seat's own folder stays readable.
+        ("cd {own_link} && cat notes.md", False),
+    ],
+)
+def test_symlinked_cd_reads_follow_the_shell_path(
+    root: Path, tmp_path: Path, command: str, refused: bool
+) -> None:
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    foreign = own.parent / "session-99"
+    (own / "inner" / "deep" / "deeper").mkdir(parents=True)
+    (own / "inner" / "deep" / "x").mkdir()
+    foreign.mkdir()
+    (foreign / "notes.md").write_text("held\n")
+    (own / "notes.md").write_text("own\n")
+    outside = tmp_path / "outside"
+    (outside / "phys" / "x").mkdir(parents=True)
+    links = {
+        "hop": (own.parent / "hop", own / "inner"),
+        "deep_hop": (outside / "deep_hop", own / "inner" / "deep" / "deeper"),
+        "phys_hop": (outside / "phys" / "hop", own / "inner" / "deep" / "deeper"),
+        "foreign_link": (own.parent / "foreign_link", foreign),
+        "own_link": (own.parent / "own_link", own),
+    }
+    for link, target in links.values():
+        link.symlink_to(target)
+    checkout = tmp_path / "gobby"
+    checkout.mkdir()
+    data = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": command.format(**{name: link for name, (link, _) in links.items()}),
+        },
+        "cwd": str(own),
+        "project_path": str(checkout),
+    }
+    assert (
+        agent_workspace_read_violation(None, data, data["tool_input"], variables, None) is refused
+    )
+
+
 @pytest.mark.parametrize("hook_cwd", ["definition", "root"])
 def test_leading_cd_anchors_relative_reads_to_its_target(
     root: Path, tmp_path: Path, hook_cwd: str
