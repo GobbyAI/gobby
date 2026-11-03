@@ -188,9 +188,12 @@ compaction and clear remain synchronous because they do not replace a terminal c
 
 Before compact staging, `set_handoff` validates bounded handoff content and checks
 the separate feedback submission. A staging failure can be retried without
-resubmitting feedback. Compact dispatch probes the composer first: a positively read operator draft refuses
-the delivery with `error_code: "composer_occupied"` before any key is sent, and the
-retry guidance tells the agent to wait for the operator to send or clear the draft.
+resubmitting feedback. `set_handoff` owns the composer: after the interrupt, compact
+dispatch wipes whatever the composer holds, an operator draft or stuck continuation
+text included, and only then submits `/compact`. Each wipe pass sizes its backspaces
+to the draft the frame shows; a draft that survives every pass fails the delivery
+with `error_code: "composer_not_clean"` and nothing is typed. Other composer writers
+(`send_keys`, wakes, the continuation pull) keep refusing operator drafts.
 A session whose recorded CLI process no longer owns its terminal gets no keys.
 Ownership is re-read immediately before every key and text write of compact and
 `/clear` dispatch, so a CLI that exits during a settle wait, an interrupt
@@ -243,8 +246,8 @@ Manual or automatic provider compaction without `set_handoff` has no pending mar
 ## Clear Path
 
 Clear dispatch stages a one-shot predecessor marker before the post-result worker
-probes the composer (refusing with `composer_occupied` on an operator draft),
-interrupts the provider, clears its composer, and submits `/clear`. A matching
+interrupts the provider, wipes its composer (operator drafts included, as on the
+compact path), and submits `/clear`. A matching
 successor atomically consumes that marker, records the clear delivery receipt, records
 direct predecessor parentage, and expires the predecessor. Live task claims then move
 through expected-owner compare-and-swap. Web chat performs successor insertion in the

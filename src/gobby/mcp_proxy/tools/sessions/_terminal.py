@@ -28,6 +28,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _DEFAULT_INTERRUPT_SETTLE_SECONDS,
     _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
     _OBSERVED_INTERRUPT_SETTLE_SECONDS,
+    ComposerPolicy,
     _capture_pane_snapshot,
     _compact_interrupt_key,
     _detect_compaction_rejection,
@@ -199,6 +200,7 @@ async def _send_terminal_compaction_command(
     composer_read: Callable[[str | None], Any] | None = None,
     on_command_submitting: Callable[[], None] | None = None,
     seat_left: Callable[[], bool] | None = None,
+    composer_policy: ComposerPolicy = "protect",
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
     """Persist continuation state, confirm interruption, drain the composer, then compact."""
     return await _send_terminal_compaction_command_impl(
@@ -222,6 +224,7 @@ async def _send_terminal_compaction_command(
         composer_read=composer_read,
         on_command_submitting=on_command_submitting,
         seat_left=seat_left,
+        composer_policy=composer_policy,
     )
 
 

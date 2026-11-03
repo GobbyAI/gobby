@@ -683,3 +683,39 @@ async def test_codex_clear_continuation_forwards_terminal_runtime() -> None:
         terminal_manager=terminal_manager,
         terminal_runtime_registry=registry,
     )
+
+
+@pytest.mark.asyncio
+async def test_set_handoff_clear_wipes_the_composer_before_clear() -> None:
+    """set_handoff(clear_session=true) owns the composer: drafts are wiped, not waited on."""
+    session = _terminal_session(terminal_context={"gobby_terminal_id": "term-1"})
+    pane = _Pane(_IDLE_PANE)
+    pane.backend = "native"
+    policies: list[object] = []
+
+    async def send_command(*_args: Any, **kwargs: Any) -> tuple[bool, None, bool, None]:
+        policies.append(kwargs.get("composer_policy"))
+        return True, None, True, None
+
+    agent_run_manager = MagicMock()
+    agent_run_manager.get_by_session.return_value = None
+    with ExitStack() as stack:
+        for patcher in _clear_patches(
+            session,
+            send_command,
+            pane=pane,
+            acknowledgment=AsyncMock(return_value=("successor-1", "successor_binding")),
+            restore_failed_attempt=MagicMock(return_value=True),
+            schedule_continuation=MagicMock(return_value=True),
+        ):
+            stack.enter_context(patcher)
+        result = await _terminal_clear.deliver_staged_clear_session(
+            session.id,
+            "a" * 32,
+            session_manager=MagicMock(),
+            db=MagicMock(),
+            agent_run_manager=agent_run_manager,
+        )
+
+    assert result["success"] is True
+    assert policies == ["wipe"]
