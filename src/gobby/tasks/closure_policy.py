@@ -11,11 +11,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from gobby.storage.definitions.rules import RuleDefinitionRow
+from gobby.tasks.attestation_shapes import select_closure_rules
 from gobby.tasks.attestations import TaskAttestation
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
-from gobby.workflows.selectors import resolve_rules_for_agent
 
 
 class ClosureSnapshot(BaseModel):
@@ -45,16 +45,7 @@ def evaluate_closure_policy(
     Attestation kind/result strings have no built-in meaning. YAML supplies every
     requirement; this function supplies only snapshot queries and block semantics.
     """
-    available = [row for row in rules if row.enabled and row.deleted_at is None]
-    selected_names = resolve_rules_for_agent(agent, available)
-    selected = sorted(
-        (
-            row
-            for row in available
-            if row.name in selected_names and row.definition_json.get("event") == snapshot.event
-        ),
-        key=lambda row: (row.priority, row.name, row.id),
-    )
+    selected = select_closure_rules(agent, rules, (snapshot.event,))
     policy_data = {
         "agent": agent.model_dump(mode="json"),
         "rules": [
