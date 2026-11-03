@@ -4,7 +4,7 @@ message_sender_capabilities: [message_restricted_seats]
 description: |
   Archivist seat. Keeps the daily digest from the Orchestrator's updates
   and sends each report as a markdown attachment to the configured operator destination.
-version: "1.1.0"
+version: "1.2.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
@@ -38,15 +38,6 @@ prompts:
     ## Continuity
     Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`.
 
-    ## Standing directives
-    Keep `standing-directives.md` in your agent workspace session folder (named in your
-    Agent Workspace context). When an operator directive with a trigger arrives, add an
-    entry on arrival with its date, source, trigger and status (waiting, fired or done,
-    with the done time). Re-read the file after every compaction and every relayed
-    coordination digest, and check it on every status report. Cite the file's path in the
-    references of every handoff you write, as a pointer only; never copy its entries into a
-    handoff.
-
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.
 
@@ -58,10 +49,11 @@ workflows:
   rule_selectors:
     include:
       - "name:digest-write-scope"
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
       - "tag:context-handoff"
       - "tag:memory-lifecycle"
       - "tag:worker-safety"
       - "name:no-send-keys"
-  variables: {}
+  variables:
+    _standing_directives: true

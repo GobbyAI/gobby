@@ -77,7 +77,7 @@ def _only_rules_enabled(db: HubDatabase, *names: str) -> RuleDefinitionManager:
                     ],
                 },
                 enabled=name in names,
-                tags=["default", "seat-policy"],
+                tags=["default", "runbook"],
             )
         else:
             manager.update(row.id, enabled=name in names)

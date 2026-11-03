@@ -1,5 +1,5 @@
-version: "2.0.1"
-tags: [roles, seat, enforcement, gobby, seat-policy]
+version: "2.0.2"
+tags: [roles, runbook, enforcement, gobby]
 
 rules:
   inject-seat-common:

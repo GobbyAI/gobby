@@ -1,5 +1,5 @@
-version: "2.0.0"
-tags: [roles, seat, enforcement, gobby, seat-policy, default]
+version: "3.0.0"
+tags: [roles, runbook, enforcement, gobby]
 
 # The native question dialog freezes a seat's pane until someone answers it, and no
 # seat can answer another seat's dialog. Every definition selects this rule through

@@ -24,7 +24,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `restraint` | `restraint/` | 3 | Block first code write/edit until restraint is loaded, opt-out phrases, per-turn reinforcement |
 | `development-discipline` | `development-discipline/` | 1 | Block the first checkout-touching tool call under a claimed code/refactor/test task until developer test and structural guidance is loaded |
 | `review-learning` | `review-learning/` | 2 | Inject confirmed planning and review lessons into matching work |
-| `roles` | `roles/` | 29 | Definition-selected seat guidance and restrictions on spawning, pipeline launch, project creation, user questions, task closure, database queries and write scopes. Exclusions declare exemptions. Team managers use their declared spawn/resume scopes within the admitted team. Closing definitions declare reasons, task scopes and review requirements. Optional documentation, research, digest and Prometheus scopes are selected by name. Operator exemptions use stored identity; definition names grant no authority. |
+| `roles` | `roles/` | 31 | Definition-selected seat guidance and restrictions on spawning, pipeline launch, project creation, user questions, task closure, database queries and write scopes. Exclusions declare exemptions. Team managers use their declared spawn/resume scopes within the admitted team. Closing definitions declare reasons, task scopes and review requirements. Optional documentation, research, digest and Prometheus scopes are selected by name. Operator exemptions use stored identity; definition names grant no authority. |
 
 Definitions may explicitly select `name:no-git-push` or `name:no-agent-spawn`.
 These strict policies cover persona and spawned sessions, including team managers.
@@ -91,6 +91,7 @@ Tags serve two purposes:
 |-----|---------|
 | `gobby` | **Provenance** — rule ships with Gobby. All bundled rules get this tag. |
 | `default` | **Baseline** — selected by the interactive definition and used when no enabled definition resolves. |
+| `runbook` | **Runbook seats** — restrictions, routing and guidance that exist only for runbook seats. Runbook seat definitions select it; the `default` definition never does, and a `runbook` rule never also carries `default`. |
 | Group tags | **Identity** — rule belongs to a functional group. Workers cherry-pick these. |
 
 The `default` agent uses `rule_selectors: {include: ["tag:default"]}` to load interactive-session rules. Worker agents select the group tags needed for their role.
@@ -100,7 +101,7 @@ definitions receive only enabled `default`-tagged rules; cached
 `_active_rule_names` cannot preserve an exclusion or activate an opt-in rule.
 An enabled definition may intentionally select an empty set.
 
-Standing definitions explicitly select `tag:seat-policy`. Their exclusions grant
+Runbook seat definitions explicitly select `tag:runbook`. Their exclusions grant
 spawn, pipeline, question, project-creation and closure permissions. Write scopes
 (`research-artifact-write-scope`, `documentation-write-scope`, `digest-write-scope`)
 and `prometheus-query-only` are selected by name. Database-query permission is an

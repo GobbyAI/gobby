@@ -5,7 +5,7 @@ description: |
   the created task tree and its dependencies, repairs structural drift, saves
   findings, and reports to its spawner.
 
-version: "1.5"
+version: "1.5.1"
 enabled: true
 priority: 20
 # Launch configuration selects the provider and model for this role.
@@ -188,6 +188,15 @@ workflows:
       - "name:seat-no-task-close"
       - "name:seat-no-project-create"
       - "tag:default"
+      - "name:agent-workspace-read-scope"
+      - "name:agent-workspace-write-scope"
+      - "name:inject-agent-workspace"
+      - "name:reset-agent-workspace-on-context-loss"
+      - "name:block-temp-scratchpad-writes"
+      - "name:block-update-task"
+      - "name:query-readonly-seat-scope"
+      - "name:seat-no-ask-user-question"
+      - "name:no-comms-attach"
       - "tag:worker-safety"
       - "name:no-send-keys"
     exclude:

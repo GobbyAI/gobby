@@ -1,5 +1,5 @@
 name: security-auditor
-version: "2.2.0"
+version: "2.3.0"
 description: Audits security boundaries and independently reviews exact security candidates.
 tags:
 - gobby
@@ -52,15 +52,6 @@ prompts:
     Consume pending handoffs after compaction; compact in place under context
     pressure with gobby-sessions:set_handoff(clear_session=false).
 
-    ## Standing directives
-    Keep `standing-directives.md` in your agent workspace session folder (named in your
-    Agent Workspace context). When an operator directive with a trigger arrives, add an
-    entry on arrival with its date, source, trigger and status (waiting, fired or done,
-    with the done time). Re-read the file after every compaction and every relayed
-    coordination digest, and check it on every status report. Cite the file's path in the
-    references of every handoff you write, as a pointer only; never copy its entries into a
-    handoff.
-
     ## Boundary audit
     Audit brownfield code to map trust boundaries, or establish them for greenfield.
     Write a security_paths draft in your own agents_workspaces session folder only.
@@ -92,15 +83,6 @@ prompts:
     Consume pending handoffs after compaction; compact in place under context
     pressure with gobby-sessions:set_handoff(clear_session=false).
 
-    ## Standing directives
-    Keep `standing-directives.md` in your agent workspace session folder (named in your
-    Agent Workspace context). When an operator directive with a trigger arrives, add an
-    entry on arrival with its date, source, trigger and status (waiting, fired or done,
-    with the done time). Re-read the file after every compaction and every relayed
-    coordination digest, and check it on every status report. Cite the file's path in the
-    references of every handoff you write, as a pointer only; never copy its entries into a
-    handoff.
-
     ## Boundary audit
     Audit brownfield code to map trust boundaries, or establish them for greenfield.
     Write a security_paths draft in your own agents_workspaces session folder only.
@@ -113,7 +95,7 @@ workflows:
   rule_selectors:
     include:
     - tag:default
-    - tag:seat-policy
+    - tag:runbook
     - tag:worker-safety
     - tag:task-closure-general
     - tag:task-security
@@ -121,6 +103,8 @@ workflows:
     - name:no-git-push
     - name:reviewer-write-scope
     exclude: []
+  variables:
+    _standing_directives: true
 task_attestation_kinds:
   security-review:
     allowed_results:

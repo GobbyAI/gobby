@@ -1,5 +1,5 @@
-version: "1.0.0"
-tags: [roles, seat, enforcement, gobby]
+version: "1.0.1"
+tags: [roles, enforcement, gobby]
 
 # Selected by name. A write with no resolvable target path fails closed.
 rules:

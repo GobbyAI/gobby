@@ -4,7 +4,7 @@ description: |
   Epic-level reviewer. Reviews the approved plan, aggregate implementation diff,
   and child validation evidence of an open or closed epic.
 
-version: "1.1"
+version: "1.1.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -89,6 +89,15 @@ workflows:
       - "name:seat-no-task-close"
       - "name:seat-no-project-create"
       - "tag:default"
+      - "name:agent-workspace-read-scope"
+      - "name:agent-workspace-write-scope"
+      - "name:inject-agent-workspace"
+      - "name:reset-agent-workspace-on-context-loss"
+      - "name:block-temp-scratchpad-writes"
+      - "name:block-update-task"
+      - "name:query-readonly-seat-scope"
+      - "name:seat-no-ask-user-question"
+      - "name:no-comms-attach"
       - "tag:worker-safety"
       - "name:no-send-keys"
 step_workflow:
