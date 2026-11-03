@@ -155,7 +155,13 @@ def _literal_sed_window_line_count(token: str, quiet: bool) -> int | None:
 def count_option_line_count(parts: list[str]) -> int | None:
     if not parts or shell_command_name(parts[0]) not in {"head", "tail"}:
         return None
+    byte_value = False
     for index, part in enumerate(parts[1:], start=1):
+        # A separate -c value such as `-1` is a byte count, not a line count.
+        if byte_value:
+            byte_value = False
+            continue
+        byte_value = part in {"-c", "--bytes"}
         if part in {"-n", "--lines"}:
             if index + 1 < len(parts):
                 return _positive_int(parts[index + 1])

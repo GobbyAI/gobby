@@ -232,6 +232,18 @@ def test_xargs_runtime_shell_argv_fails_closed(tmp_path: Path, command: str) -> 
     assert "a.py" not in data.get("canonical_write_file_paths", [])
 
 
+@pytest.mark.parametrize(
+    "command",
+    ["xargs -I cat cat f < list", "xargs -Iat cat < list", "xargs -I '' head -n 5 < list"],
+)
+def test_xargs_replacement_in_reader_name_is_unresolved(tmp_path: Path, command: str) -> None:
+    # GNU xargs may substitute into the utility name, so the reader is unknown.
+    data = metadata(command, tmp_path)
+    assert data["canonical_read_only"] is False
+    assert data["canonical_unresolved_execution"] is True
+    assert "canonical_code_navigation_action" not in data
+
+
 def test_xargs_shell_unknown_program_retains_output_scope(tmp_path: Path) -> None:
     data = metadata("echo touch a.py | xargs bash > result.txt", tmp_path)
     assert data["canonical_write_file_paths"] == ["result.txt"]

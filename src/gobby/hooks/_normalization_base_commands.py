@@ -299,12 +299,11 @@ def unresolved_execution_metadata(
     )
 
 
-_XARGS_STDIN_FLAGS = frozenset({"-0", "--null", "-r", "--no-run-if-empty", "-i", "--replace"})
+_XARGS_STDIN_FLAGS = frozenset({"-0", "--null", "-r", "--no-run-if-empty"})
 # Batching options only regroup stdin into reader invocations; the value is separate or attached.
 _XARGS_BATCH_FLAGS = frozenset(
     {
         "-n",
-        "-I",
         "-L",
         "-P",
         "-s",
@@ -339,16 +338,27 @@ def _count_only_reader(reader: list[str]) -> bool:
     return counts == 1 and index == len(reader)
 
 
-def xargs_reader(parts: list[str]) -> list[str] | None:
+def xargs_reader(parts: list[str]) -> tuple[list[str], bool] | None:
     """The reader xargs runs directly on stdin-supplied files: cat, head, tail or nl.
 
     These xargs flags only split stdin, substitute file names or skip empty input. None of
-    the readers can write or execute, so any options keep them reads.
+    the readers can write or execute, so any options keep them reads. The flag reports
+    replace mode, where a file name can land in any reader word, so no bound holds.
     """
     index = 1
+    replacement: str | None = None
     while index < len(parts):
         flag = parts[index]
-        if flag in _XARGS_STDIN_FLAGS or re.match(r"-i.|--replace=", flag):
+        if flag == "-I":
+            replacement = parts[index + 1] if index + 1 < len(parts) else ""
+            index += 2
+        elif flag in {"-i", "--replace"}:
+            replacement, index = "{}", index + 1
+        elif flag.startswith("--replace="):
+            replacement, index = flag.partition("=")[2], index + 1
+        elif flag.startswith(("-I", "-i")):
+            replacement, index = flag[2:], index + 1
+        elif flag in _XARGS_STDIN_FLAGS:
             index += 1
         elif flag in _XARGS_BATCH_FLAGS:
             index += 2
@@ -357,7 +367,12 @@ def xargs_reader(parts: list[str]) -> list[str] | None:
         else:
             break
     reader = parts[index:]
-    return reader if reader[:1] in (["cat"], ["head"], ["tail"], ["nl"]) else None
+    if reader[:1] not in (["cat"], ["head"], ["tail"], ["nl"]):
+        return None
+    # GNU xargs may substitute into the utility name itself.
+    if replacement is not None and replacement in reader[0]:
+        return None
+    return reader, replacement is not None
 
 
 def classify_base_command(
@@ -507,15 +522,17 @@ def classify_base_command(
             )
         return search
 
-    reader = xargs_reader(parts) if cmd == "xargs" else None
-    if reader is not None:
+    xargs_read = xargs_reader(parts) if cmd == "xargs" else None
+    if xargs_read is not None:
+        reader, replaced = xargs_read
         # Only direct readers are proven read-only; nested wrappers may write their own outputs.
         # Stdin supplies file operands, not source contents; their scope is unknown.
         line_count = count_option_line_count(reader)
         byte_count = count_option_byte_count(reader)
         # One count bound with no operands holds per file; anything else may read whole files.
         narrow = (
-            reader[0] in {"head", "tail"}
+            not replaced
+            and reader[0] in {"head", "tail"}
             and _count_only_reader(reader)
             and (
                 (line_count is not None and line_count <= MAX_NARROW_SOURCE_LINES)

@@ -1162,6 +1162,13 @@ def test_a_path_git_refuses_does_not_hide_later_answers(repo: Path) -> None:
         ("xargs -I {} head -n 10 {} < list", True),
         ("xargs -i head -n 10 {} < list", True),
         ("xargs --replace=F tail -n 10 F < list", True),
+        # A substituted count word can become a file name; replace mode stays broad.
+        ("xargs -I -n head -n 10 < list", True),
+        ("xargs -I -c head -c 100 < list", True),
+        ("xargs -I --lines=10 head --lines=10 < list", True),
+        ("xargs -iX head -n 10 < list", True),
+        ("xargs head -c -1 < list", True),
+        ("head -c -1 src/long.py", True),
         ("xargs nl < list", True),
         ("xargs cat -n < list", True),
         ("cat src/long.py | head -n 10 - - - - - >&2", True),

