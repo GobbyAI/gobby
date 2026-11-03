@@ -47,7 +47,7 @@ async def test_storage_backed_dedupe_ignores_large_unrelated_window_without_task
     try:
         first = await service.record(
             source_kind="agent_review",
-            source="code-reviewer",
+            source="fixture-definition-e08ba693",
             source_review="review-1",
             decision="confirmed",
             finding=_finding(),
@@ -60,7 +60,7 @@ async def test_storage_backed_dedupe_ignores_large_unrelated_window_without_task
             "review-lesson",
             "confirmed",
             "source-kind:agent_review",
-            "source:code-reviewer",
+            "source:fixture-definition-e08ba693",
             "pattern:durable-write-after-state-change",
             fingerprint_tag(first["finding_fingerprint"]),
             occurrence_tag(first["occurrence_key"]),
@@ -84,7 +84,7 @@ async def test_storage_backed_dedupe_ignores_large_unrelated_window_without_task
 
         duplicate = await service.record(
             source_kind="agent_review",
-            source="code-reviewer",
+            source="fixture-definition-e08ba693",
             source_review="review-1",
             decision="confirmed",
             finding=_finding(),
@@ -92,7 +92,7 @@ async def test_storage_backed_dedupe_ignores_large_unrelated_window_without_task
         )
         second = await service.record(
             source_kind="agent_review",
-            source="code-reviewer",
+            source="fixture-definition-e08ba693",
             source_review="review-2",
             decision="confirmed",
             finding=_finding(),

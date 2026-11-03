@@ -80,7 +80,7 @@ async def test_unselected_runbook_does_not_gate_landing(case: LandingCase) -> No
     assert case.git("rev-parse", "trunk") == sha
 
 
-@pytest.mark.parametrize("name", ["researcher", "custom-lander"])
+@pytest.mark.parametrize("name", ["fixture-definition-3588bb72", "custom-lander"])
 @pytest.mark.parametrize("granted", [True, False])
 async def test_landing_requires_declared_permission(
     case: LandingCase, name: str, granted: bool
@@ -89,7 +89,11 @@ async def test_landing_requires_declared_permission(
     task = case.reviewed(sha)
     caller = case.session(name)
     grant_step_writes(
-        case.db, caller, case.project_id, name, ("closing",),
+        case.db,
+        caller,
+        case.project_id,
+        name,
+        ("closing",),
         capabilities=("land_tasks",) if granted else (),
     )
     result = await case.land(task, sha, caller=caller)

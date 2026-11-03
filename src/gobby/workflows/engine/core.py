@@ -614,7 +614,7 @@ class RuleEngine(
                     variables["force_allow_stop"] = False
                     if variables.get("task_claimed"):
                         logger.warning(
-                            "force_allow_stop suppressed - task_claimed=True, deferring to require-task-close rule (session %s)",
+                            "force_allow_stop suppressed - task_claimed=True, deferring to task completion policy rule (session %s)",
                             session_id,
                         )
                     else:

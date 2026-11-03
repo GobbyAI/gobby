@@ -136,6 +136,7 @@ class RuleDefinitionManager:
         tags: list[str] | None = None,
         source: DefinitionSource = "installed",
     ) -> RuleDefinitionRow:
+        self._validate(name, definition_json)
         validate_registry_regexes(self.db, name, definition_json)
         definition_id = new_definition_id()
         now = utc_now()
@@ -178,6 +179,12 @@ class RuleDefinitionManager:
             touch_revision(txn, "rules")
         return self.get(definition_id)
 
+    @staticmethod
+    def _validate(name: str, definition: Mapping[str, Any] | str) -> None:
+        from gobby.workflows.rule_validation import validate_rule
+
+        validate_rule(definition, name=name).raise_for_errors()
+
     def get(self, definition_id: str, include_deleted: bool = False) -> RuleDefinitionRow:
         return RuleDefinitionRow.from_row(
             fetch_definition_row(
@@ -214,6 +221,12 @@ class RuleDefinitionManager:
     def update_from_sync(self, definition_id: str, **fields: Any) -> RuleDefinitionRow:
         return self._write_update(definition_id, fields, allowed=_SYNC_FIELDS, from_sync=True)
 
+    def restore_from_sync(self, definition_id: str, **fields: Any) -> RuleDefinitionRow:
+        """Restore and validate the effective incoming definition in one transaction."""
+        return self._write_update(
+            definition_id, fields, allowed=_SYNC_FIELDS, from_sync=True, restore=True
+        )
+
     def _write_update(
         self,
         definition_id: str,
@@ -221,12 +234,19 @@ class RuleDefinitionManager:
         *,
         allowed: frozenset[str],
         from_sync: bool = False,
+        restore: bool = False,
     ) -> RuleDefinitionRow:
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown definition field(s): {', '.join(sorted(unknown))}")
         with self.db.transaction() as txn:
-            current = _lock_live_row(txn, definition_id)
+            if restore:
+                current = RuleDefinitionRow.from_row(
+                    restore_definition(txn, _TABLE, definition_id, what=_WHAT)
+                )
+                touch_revision(txn, "rules")
+            else:
+                current = _lock_live_row(txn, definition_id)
             if "definition_json" in fields:
                 validate_registry_regexes(
                     self.db, str(fields.get("name", current.name)), fields["definition_json"]
@@ -234,8 +254,10 @@ class RuleDefinitionManager:
             incoming: Mapping[str, Any] = fields
             if from_sync:
                 incoming = prepare_sync_values(current.__dict__, fields, allowed=allowed)
-                if not incoming:
-                    return current
+            self._validate(
+                str(incoming.get("name", current.name)),
+                incoming.get("definition_json", current.definition_json),
+            )
             values: dict[str, Any] = {}
             for key, value in incoming.items():
                 if key in {"sources", "tags"}:
@@ -263,6 +285,8 @@ class RuleDefinitionManager:
     def toggle_enabled(self, definition_id: str) -> RuleDefinitionRow:
         now = utc_now()
         with self.db.transaction() as txn:
+            current = _lock_live_row(txn, definition_id)
+            self._validate(current.name, current.definition_json)
             row = txn.execute(
                 """
                 UPDATE rule_definitions
@@ -292,10 +316,7 @@ class RuleDefinitionManager:
         return deleted
 
     def restore(self, definition_id: str) -> RuleDefinitionRow:
-        with self.db.transaction() as txn:
-            row = restore_definition(txn, _TABLE, definition_id, what=_WHAT)
-            touch_revision(txn, "rules")
-        return RuleDefinitionRow.from_row(row)
+        return self._write_update(definition_id, {}, allowed=_UPDATE_FIELDS, restore=True)
 
     def purge_deleted(self, older_than_days: int = 30) -> int:
         with self.db.transaction() as txn:

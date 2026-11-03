@@ -18,7 +18,6 @@ from pydantic import ValidationError
 from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.delivery_disposition import (
     DispositionAmbiguousError,
     prepare_rule_definition_for_persist,
@@ -367,40 +366,23 @@ def _sync_single_rule(
     protected, but a soft-deleted user/custom row expresses no continuing
     intent for the name: it is hard-deleted so the template can adopt it.
     """
-    # Build the RuleDefinitionBody dict
-    body_dict: dict[str, Any] = {
-        "event": rule_data.get("event"),
-    }
-    if "effects" in rule_data:
-        body_dict["effects"] = rule_data["effects"]
-    elif "effect" in rule_data:
-        body_dict["effects"] = [rule_data["effect"]]
-    if rule_data.get("when"):
-        body_dict["when"] = rule_data["when"]
-    if rule_data.get("match"):
-        body_dict["match"] = rule_data["match"]
-    group = rule_data.get("group", file_group)
-    if group:
-        body_dict["group"] = group
-    if rule_data.get("agent_scope"):
-        body_dict["agent_scope"] = rule_data["agent_scope"]
-    if rule_data.get("mandatory") is True:
-        body_dict["mandatory"] = True
-    audience = rule_data.get("audience", file_audience)
-    if audience:
-        body_dict["audience"] = audience
-    if rule_data.get("tools"):
-        body_dict["tools"] = rule_data["tools"]
+    from gobby.workflows.rule_validation import validate_rule
+    from gobby.workflows.rule_validation_yaml import normalize_rule_yaml_entry
 
     definition_data = {
-        **body_dict,
         "description": rule_data.get("description"),
         "enabled": rule_data.get("enabled", True),
         "priority": rule_data.get("priority", 100),
         "tags": file_tags if file_tags is not None else [],
+        **rule_data,
+    }
+    defaults = {
+        key: value
+        for key, value in {"group": file_group, "audience": file_audience}.items()
+        if value is not None
     }
     try:
-        body_dict, metadata = split_rule_definition_data(definition_data)
+        body_dict, metadata = normalize_rule_yaml_entry(definition_data, defaults=defaults)
     except ValidationError as ve:
         raise ValueError(f"Invalid rule definition: {ve}") from ve
 
@@ -411,6 +393,12 @@ def _sync_single_rule(
         definition_json = prepare_rule_definition_for_persist(rule_name, definition_json)
     except DispositionAmbiguousError as exc:
         raise ValueError(str(exc)) from exc
+    validation = validate_rule(definition_json, name=rule_name)
+    validation.raise_for_errors()
+    if validation.warnings:
+        result.setdefault("warnings", []).extend(
+            f"Rule {rule_name!r} {issue.field}: {issue.message}" for issue in validation.warnings
+        )
     priority = metadata["priority"]
     description = metadata["description"]
     enabled = metadata["enabled"]
@@ -429,7 +417,6 @@ def _sync_single_rule(
 
     if existing is not None and existing.deleted_at is not None:
         if override_bundled or _is_sync_managed_rule(existing, sync_tag, project_id):
-            manager.restore(existing.id)
             update_fields = _build_rule_update_fields(
                 existing=existing,
                 definition_json=definition_json,
@@ -440,8 +427,7 @@ def _sync_single_rule(
                 tags=tags,
                 project_id=project_id,
             )
-            if update_fields:
-                manager.update_from_sync(existing.id, **update_fields)
+            manager.restore_from_sync(existing.id, **update_fields)
             result["updated"] += 1
             return
         logger.info(

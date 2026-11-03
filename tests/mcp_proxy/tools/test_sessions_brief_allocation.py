@@ -143,7 +143,7 @@ def test_list_sessions_filters_by_agent_type(
         "lane-manager": manager.register(
             external_id="agent-type-a", machine_id=MACHINE_ID, source="codex", project_id=None
         ),
-        "reporter": manager.register(
+        "fixture-definition-41d6d532": manager.register(
             external_id="agent-type-b", machine_id=MACHINE_ID, source="codex", project_id=None
         ),
     }

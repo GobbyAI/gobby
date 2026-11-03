@@ -32,7 +32,7 @@ def test_startup_reports_unmarked_global_agent_copy_without_changing_bundled_row
 ) -> None:
     payload = {
         "type": "agent",
-        "name": "orchestrator",
+        "name": "fixture-coordinator",
         "prompts": {"agent": "Coordinate tasks."},
         "workflows": {"rule_selectors": {"include": []}},
         "task_step_writes": ["implementation"],
@@ -43,7 +43,7 @@ def test_startup_reports_unmarked_global_agent_copy_without_changing_bundled_row
     bundled = manager.update(row.id, tags=["gobby"])
     agents = tmp_path / "global" / "agents"
     agents.mkdir(parents=True)
-    copied = agents / "orchestrator.yaml"
+    copied = agents / "fixture-coordinator.yaml"
     copied.write_text(
         yaml.safe_dump({**payload, "task_step_writes": [], "read_all_agent_workspaces": False})
     )

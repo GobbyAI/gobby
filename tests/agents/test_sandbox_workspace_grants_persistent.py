@@ -33,7 +33,7 @@ from tests.fixtures.team_case import TeamWorld, make_team_world
 
 pytestmark = pytest.mark.unit
 
-ARCHIVIST = "archivist"
+ARCHIVIST = "fixture-definition-599e0437"
 
 
 @pytest.fixture
@@ -56,7 +56,7 @@ def world(
 
 
 def _persistent_seat(db: HubDatabase, session_id: str) -> None:
-    """Make ``session_id`` a session of the persistent archivist definition."""
+    """Bind the session to the persistent fixture definition."""
     SessionVariableManager(db).merge_variables(session_id, {"_agent_type": ARCHIVIST})
 
 

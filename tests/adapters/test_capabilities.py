@@ -371,7 +371,7 @@ def test_claude_reason_passthrough_records_no_degradation(
 ) -> None:
     calls = _capture_degradations(monkeypatch)
     reason = (
-        "Rule enforced by Gobby: [require-code-index-skill]\n"
+        "Rule enforced by Gobby: [fixture-skill-gate]\n"
         'Call get_skill(name="code-index") on gobby-skills directly through mcp__gobby__call_tool'
     )
 

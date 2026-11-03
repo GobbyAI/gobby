@@ -196,7 +196,9 @@ def _team_caller(db: HubDatabase, caller_session_id: str) -> Caller:
         or session.project_id is None
     ):
         raise TeamAdmissionRefused(
-            "team_caller_invalid", f"caller session {caller_session_id} is not a pipeline child"
+            "team_caller_invalid",
+            f"caller session {caller_session_id} is not a pipeline child: admit_team admits "
+            "only a team pipeline's admission step; launch the team with run_pipeline",
         )
     executions = LocalPipelineExecutionManager(db, session.project_id)
     execution_id = session.external_id.removeprefix(_PIPELINE_PREFIX)

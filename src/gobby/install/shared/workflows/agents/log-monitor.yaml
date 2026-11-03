@@ -6,7 +6,7 @@ description: |
   status and the log window, reports Systems nominal or EVENT=ALARM to
   Triage, copies the Assistant on alarms, and never acts. Launches only
   on the operator's go.
-version: "1.0"
+version: "2.1.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
@@ -59,7 +59,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
       - "tag:context-handoff"
       - "tag:memory-lifecycle"
@@ -153,6 +153,9 @@ step_workflow:
         - server: gobby-agents
           tool: send_message
           action: advance_seat
+          protocol:
+            report_prefixes: ["Systems nominal", "EVENT=ALARM "]
+            report_step: report
     - name: report
       mcp_error_policy: stay
       description: "Report the window"
@@ -172,6 +175,9 @@ step_workflow:
         - server: gobby-agents
           tool: send_message
           action: advance_seat
+          protocol:
+            report_prefixes: ["Systems nominal", "EVENT=ALARM "]
+            report_step: report
       transitions:
         - to: tick
           when: "not vars.tick_done"

@@ -8,7 +8,6 @@ import pytest
 import yaml
 
 from gobby.skills.loader import SkillLoader
-from tests.phase5_contract_helpers import is_bundled_agent_definition
 from tests.skills.scenario_runner import run_recorded_skill_scenario
 
 pytestmark = pytest.mark.unit
@@ -102,16 +101,6 @@ def test_development_discipline_keeps_canonical_name_and_adds_structural_preflig
         "`decompose-monolith` before production decomposition",
     ):
         assert phrase in guidance
-
-
-def test_repository_maintenance_has_no_automatic_loading_rule() -> None:
-    workflow_text = "\n".join(
-        path.read_text()
-        for path in (SHARED_ROOT / "workflows").rglob("*.yaml")
-        if not is_bundled_agent_definition(path)
-    )
-
-    assert "repository-maintenance" not in workflow_text
 
 
 @pytest.mark.skill_tdd

@@ -7,11 +7,9 @@ import json
 import threading
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.receipt_effects import worker_staging_scope
@@ -37,7 +35,7 @@ async def test_prompt_submit_memory_read_ignores_large_unrelated_defaults(
     session_manager: SessionManager,
     sample_project: dict[str, Any],
 ) -> None:
-    """Exercise the shipped rule and bridge with real, warmed scoped SQL reads.
+    """Exercise generic MCP dispatch with real, warmed scoped SQL reads.
 
     Setup and the cache warmup are outside the measured hook. The synthetic memory
     collaborator performs the real session read before its controlled recall delay;
@@ -63,24 +61,22 @@ async def test_prompt_submit_memory_read_ignores_large_unrelated_defaults(
     variables.merge_variables(
         session_id, {"recall_limit": 5, "unrelated_transcript": "x" * 2_000_000}
     )
-    rule_path = (
-        Path(__file__).resolve().parents[3]
-        / "src/gobby/install/shared/workflows/rules/memory-lifecycle"
-        / "surface-memories-on-turn-start.yaml"
-    )
-    rule_file = yaml.safe_load(rule_path.read_text())
-    rule = rule_file["rules"]["surface-memories-on-turn-start"]
     RuleDefinitionManager(temp_db).create(
-        name="surface-memories-on-turn-start",
+        name="synthetic-scoped-read-dispatch",
         definition_json=RuleDefinitionBody(
             event=RuleTriggerEvent.TURN_START,
-            when=rule["when"],
-            effects=[RuleEffect.model_validate(effect) for effect in rule["effects"]],
+            effects=[
+                RuleEffect(
+                    type="mcp_call",
+                    server="gobby-memory",
+                    tool="surface_memories",
+                    arguments={"text": "{{ event.data.get('prompt') }}", "trigger": "turn"},
+                    inject_result=True,
+                )
+            ],
         ).model_dump(),
-        priority=rule["priority"],
         enabled=True,
-        # Sync installs the file's tags on the row; the baseline selection needs `default`.
-        tags=rule_file["tags"],
+        tags=["default"],
     )
     calls: list[dict[str, Any]] = []
     origin_thread = threading.get_ident()

@@ -26,7 +26,7 @@ class TestLoadAgentBody:
             checkout_mode="worktree",
             base_branch="main",
             timeout=120.0,
-            workflows=make_agent_workflows(rules=["require-task-before-edit", "require-commit"]),
+            workflows=make_agent_workflows(rules=["fixture-definition-55b74807", "require-commit"]),
         )
         manager.create(
             name=body.name,
@@ -41,7 +41,7 @@ class TestLoadAgentBody:
         assert result.provider == "claude"
         assert result.model == "claude-sonnet-4-6"
         assert result.checkout_mode == "worktree"
-        assert result.workflows.rules == ["require-task-before-edit", "require-commit"]
+        assert result.workflows.rules == ["fixture-definition-55b74807", "require-commit"]
 
     def test_returns_none_for_missing_agent(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._factory import _load_agent_body
@@ -61,7 +61,10 @@ class TestLoadAgentBody:
 
         RuleDefinitionManager(db).create(
             name="test-rule-not-agent",
-            definition_json={"event": "before_tool", "effect": {"type": "block"}},
+            definition_json={
+                "event": "before_tool",
+                "effects": [{"type": "block", "reason": "Fixture refusal"}],
+            },
         )
 
         result = _load_agent_body("test-rule-not-agent", db)

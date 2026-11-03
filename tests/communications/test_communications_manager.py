@@ -78,7 +78,7 @@ async def test_operator_dm_clears_topic_thread_without_detaching(
         project_id=str(sample_project["id"]),
         agent_depth=1,
     )
-    agent_type = "archivist" if attachment else "assistant"
+    agent_type = "fixture-definition-599e0437" if attachment else "fixture-helper"
     AgentDefinitionManager(temp_db).create(
         name=agent_type,
         definition_json={
@@ -3648,7 +3648,10 @@ async def test_handle_inbound_deduplicates_platform_message_and_returns_it_for_a
 
     assert handled == [store.get_message_by_platform_id.return_value]
     store.get_message_by_platform_id.assert_called_once_with(
-        channel.name, duplicate.platform_message_id
+        channel.name,
+        duplicate.platform_message_id,
+        direction="inbound",
+        platform_destination=None,
     )
     store.create_message.assert_not_called()
     manager._identity_manager.resolve_identity.assert_not_called()
@@ -3949,11 +3952,15 @@ async def test_telegram_reply_targets_live_origin_or_attached_session_with_share
         channel_name: str,
         platform_message_id: str,
         *,
+        direction: str | None = None,
         platform_destination: str | None = None,
     ) -> CommsMessage | None:
         if channel_name != channel.name or platform_destination != "2222222":
             return None
-        return outbound_by_platform_id.get(platform_message_id)
+        message = outbound_by_platform_id.get(platform_message_id)
+        if message is None or direction not in (None, message.direction):
+            return None
+        return message
 
     store.get_message_by_platform_id.side_effect = get_message_by_platform_id
     sessions = MagicMock()

@@ -31,8 +31,8 @@ def case(temp_db: HubDatabase, sample_project: dict[str, object], tmp_path: Path
 
 
 def _seat_definition(seat: str) -> AgentDefinitionBody:
-    """A team manager closes without claiming; a developer implements and auto-claims."""
-    if seat == "dev-team-lead":
+    """A team manager closes without claiming; a fixture-worker implements and auto-claims."""
+    if seat == "fixture-definition-f0ad0fd9":
         return make_agent_definition(
             name=seat,
             prompts={"agent": "Synthetic team manager."},
@@ -43,7 +43,7 @@ def _seat_definition(seat: str) -> AgentDefinitionBody:
         )
     return make_agent_definition(
         name=seat,
-        prompts={"agent": "Synthetic developer."},
+        prompts={"agent": "Synthetic fixture-worker."},
         model="claude-sonnet-5",
         task_attestation_writes=["implementation"],
     )
@@ -113,7 +113,7 @@ async def test_explicit_spawn_task_is_claimed_despite_closing_grants(
     task = tasks.create_task(
         case.project_id, "Manager binding", validation_criteria="Stay independent"
     )
-    manager = await _spawn_task_seat(case, task, mock_runner, "dev-team-lead")
+    manager = await _spawn_task_seat(case, task, mock_runner, "fixture-definition-f0ad0fd9")
 
     with case.db.transaction() as conn:
         claimants = claimant_sessions(conn, task.id)
@@ -130,13 +130,13 @@ async def test_spawned_task_holder_can_land_its_own_candidate(
     task = tasks.create_task(
         case.project_id, "Manager landing", validation_criteria="Land reviewed SHA"
     )
-    manager = await _spawn_task_seat(case, task, mock_runner, "dev-team-lead")
+    manager = await _spawn_task_seat(case, task, mock_runner, "fixture-definition-f0ad0fd9")
     case.link(task, sha)
     grant_step_writes(
         case.db,
         manager,
         case.project_id,
-        "dev-team-lead",
+        "fixture-definition-f0ad0fd9",
         ("closing",),
         capabilities=("land_tasks",),
     )
@@ -156,7 +156,7 @@ async def test_spawned_developer_still_auto_claims(
     task = tasks.create_task(
         case.project_id, "Developer claim", validation_criteria="Own implementation"
     )
-    developer = await _spawn_task_seat(case, task, mock_runner, "developer")
+    developer = await _spawn_task_seat(case, task, mock_runner, "fixture-worker")
 
     assert tasks.get_task(task.id).claimed_by_session_id == developer
     with case.db.transaction() as conn:
@@ -193,7 +193,9 @@ async def test_assignment_without_claim_preserves_ownership(
     )
     if owned:
         tasks.claim_task(task.id, session_id=case.creator)
-    child = await _spawn_task_seat(case, task, mock_runner, "code-reviewer", claim=False)
+    child = await _spawn_task_seat(
+        case, task, mock_runner, "fixture-definition-e08ba693", claim=False
+    )
     assert tasks.get_task(task.id).claimed_by_session_id == (case.creator if owned else None)
     with case.db.transaction() as conn:
         assert child not in claimant_sessions(conn, task.id)

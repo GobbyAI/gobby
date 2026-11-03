@@ -1,10 +1,8 @@
 """Project creation requires operator identity or a definition's explicit exemption."""
 
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
-import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -12,7 +10,6 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.condition_helpers_sessions import session_condition_helpers
-from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -22,8 +19,8 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     ("role", "state", "depth", "parent", "allowed"),
     [
-        (None, "missing", 0, False, True),
-        ("default", "missing", 0, True, True),
+        (None, "missing", 0, False, False),
+        ("default", "missing", 0, True, False),
         (None, "missing", 1, False, False),
         ("default", "missing", 1, True, False),
         ("retired-seat", "missing", 0, False, False),
@@ -31,7 +28,7 @@ pytestmark = pytest.mark.unit
         ("custom-coordinator", "enabled", 0, True, True),
     ],
 )
-async def test_project_creation_identity_and_definition_exemption(
+async def test_definition_selectors_control_synthetic_rule_selection(
     temp_db: HubDatabase,
     role: str | None,
     state: str,
@@ -39,20 +36,12 @@ async def test_project_creation_identity_and_definition_exemption(
     parent: bool,
     allowed: bool,
 ) -> None:
-    bundle = (
-        Path(__file__).parents[2]
-        / "src/gobby/install/shared/workflows/rules/roles/spawned-session-policy.yaml"
-    )
-    document = yaml.safe_load(bundle.read_text())
     rules = RuleDefinitionManager(temp_db)
-    for name, data in document["rules"].items():
-        body, metadata = split_rule_definition_data(data)
-        rules.create(
-            name,
-            RuleDefinitionBody.model_validate(body).model_dump(),
-            tags=document["tags"],
-            priority=metadata["priority"],
-        )
+    rules.create(
+        "synthetic-identity-selector",
+        {"event": "before_tool", "effects": [{"type": "block", "reason": "Synthetic selection"}]},
+        tags=["default"],
+    )
     sessions = SessionManager(temp_db)
     parent_id = sessions.register_session(
         external_id="policy-parent",
@@ -77,7 +66,7 @@ async def test_project_creation_identity_and_definition_exemption(
                 "workflows": {
                     "rule_selectors": {
                         "include": ["tag:default"],
-                        "exclude": ["name:non-operator-no-project-create"],
+                        "exclude": ["name:synthetic-identity-selector"],
                     }
                 },
             },

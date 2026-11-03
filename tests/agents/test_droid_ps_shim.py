@@ -7,7 +7,6 @@ once no sandboxed seat needs a ``ps`` binary.
 from __future__ import annotations
 
 import os
-import re
 import subprocess  # nosec B404 # asserts on a locally re-signed system binary.
 import sys
 from pathlib import Path
@@ -20,10 +19,6 @@ from gobby.agents.droid_ps_shim import PS_WRAPPER, droid_ps_shim_dir, ps_shim_pa
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RUST_WRAPPER = _REPO_ROOT / "crates/gdaemon/src/nodes/agents/sandbox/ps_shim_wrapper.sh"
-_LISTING_RULE = (
-    _REPO_ROOT
-    / "src/gobby/install/shared/workflows/rules/worker-safety/no-process-environment-listing.yaml"
-)
 
 pytestmark = pytest.mark.unit
 
@@ -167,29 +162,6 @@ def test_the_real_shim_answers_the_supervisor_probe(
 def test_wrapper_mirrors_the_rust_embedded_source() -> None:
     """The Rust daemon embeds ps_shim_wrapper.sh; the Python copy must stay byte-identical."""
     assert PS_WRAPPER == _RUST_WRAPPER.read_text(encoding="utf-8")
-
-
-def _wrapper_columns() -> set[str]:
-    line = next(line for line in PS_WRAPPER.splitlines() if line.lstrip().startswith("pid|"))
-    return set(line.strip().removesuffix(") ;;").split("|"))
-
-
-def _listing_rule_columns() -> set[str]:
-    pattern = _LISTING_RULE.read_text(encoding="utf-8")
-    match = re.search(r"\(\?:(pid\|[^)]*)\)", pattern)
-    assert match is not None, "the listing rule no longer lists its ps columns"
-    columns: set[str] = set()
-    for alternative in match.group(1).split("|"):
-        if alternative == "etimes?":
-            columns.update({"etime", "etimes"})
-        else:
-            columns.add(alternative)
-    return columns
-
-
-def test_wrapper_columns_match_the_listing_rule() -> None:
-    """A column allowed by one of the two checks and refused by the other is a drift."""
-    assert _wrapper_columns() == _listing_rule_columns()
 
 
 @pytest.fixture

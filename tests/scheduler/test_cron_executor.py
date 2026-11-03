@@ -291,7 +291,7 @@ async def test_execute_agent_spawn_forwards_definition(
     """Cron preserves the definition's identity and restrictions at the spawn boundary."""
     body = AgentDefinitionBody.model_validate(
         {
-            "name": "reporter",
+            "name": "fixture-definition-41d6d532",
             "provider": "codex",
             "timeout": 900,
             "prompts": {"agent": "Deliver the status report."},
@@ -312,7 +312,7 @@ async def test_execute_agent_spawn_forwards_definition(
     )
     config: dict[str, Any] = {
         "prompt": "Report mode: delta",
-        "agent_definition": "reporter",
+        "agent_definition": "fixture-definition-41d6d532",
         "timeout_seconds": 900,
     }
     if provider_override is not None:
@@ -340,14 +340,16 @@ async def test_execute_agent_spawn_forwards_definition(
         result = await executor.execute(job, run)
 
     assert result.status == "dispatched"
-    resolve.assert_called_once_with("reporter", temp_db, project_id=job.project_id)
+    resolve.assert_called_once_with(
+        "fixture-definition-41d6d532", temp_db, project_id=job.project_id
+    )
     spawn.assert_awaited_once()
     assert spawn.call_args is not None
     kwargs = spawn.call_args.kwargs
     assert kwargs.get("agent_body") is body
-    assert kwargs.get("agent_lookup_name") == "reporter"
+    assert kwargs.get("agent_lookup_name") == "fixture-definition-41d6d532"
     assert kwargs.get("initial_variables") == {
-        "_agent_type": "reporter",
+        "_agent_type": "fixture-definition-41d6d532",
         "_agent_rules": ["reporting-rule"],
         "status_only": True,
     }

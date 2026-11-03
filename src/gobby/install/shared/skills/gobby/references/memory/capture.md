@@ -4,7 +4,9 @@ Load before creating or changing memory. Search first; inspect existing entries
 and their rationale. Capture only an explicit durable remember request or
 non-obvious knowledge useful across unrelated future sessions. Do not turn a
 one-time instruction into a permanent preference. Avoid secrets and facts already
-obvious from instructions, code, tests, or Git.
+obvious from instructions, code, tests, or Git. Never capture one seat's instructions,
+task progress or temporary state; those belong in the seat's handoff or its
+`standing-directives.md`.
 
 Use `gobby-memory:create_memory` with content and a rationale explaining why a
 future unrelated session should receive it. Content is capped at 3,000 characters;
@@ -35,4 +37,6 @@ On a cap, scope, or type error, correct the input rather than retrying unchanged
 Guide: [What belongs in memory](../../../../../../../../docs/guides/memory.md#what-belongs-in-memory)
 and [MCP tools](../../../../../../../../docs/guides/memory.md#mcp-tools).
 
-_Last verified: 2026-09-12_
+_Version: 1.1.0_
+
+_Last verified: 2026-11-02_

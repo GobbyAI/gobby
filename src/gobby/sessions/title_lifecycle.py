@@ -73,7 +73,7 @@ def latest_open_claimed_task(
 
 
 def definition_display_name(agent_name: str) -> str:
-    """The seat title for an agent definition: its name, title-cased (dev-team-lead -> Dev Team Lead)."""
+    """Title-case a definition name, for example example-worker becomes Example Worker."""
     return agent_name.replace("-", " ").title()
 
 

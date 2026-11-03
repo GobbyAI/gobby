@@ -1895,7 +1895,7 @@ class TestMCPToolsWrapper:
         _, mock_proxy, run_tool = self._register_tools()
         arguments = {
             "source_kind": "agent_review",
-            "source": "code-reviewer",
+            "source": "fixture-definition-e08ba693",
             "source_review": "review-123",
             "decision": "confirmed",
             "finding": {

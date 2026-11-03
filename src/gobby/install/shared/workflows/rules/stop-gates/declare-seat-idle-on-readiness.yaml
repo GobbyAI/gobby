@@ -1,4 +1,5 @@
-tags: [stop-gates, enforcement, lifecycle, gobby, default]
+version: "2.0.0"
+tags: [stop-gates, enforcement, lifecycle, gobby, runbook]
 
 rules:
   declare-seat-idle-on-readiness:

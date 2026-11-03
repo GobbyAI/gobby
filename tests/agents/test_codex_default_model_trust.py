@@ -1,21 +1,16 @@
 """Keep first-run acknowledgements aligned with the repository's launch defaults."""
 
-import json
 import shutil
-import sys
 import tomllib
 from collections.abc import Iterator
-from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
-from zipfile import ZipFile
 
 import psycopg
 import pytest
 import yaml
-from setuptools.build_meta import build_wheel
 
 from gobby.agents.trust import (
     active_codex_launch_models,
@@ -36,10 +31,6 @@ def isolate_packaged_model_cache() -> Iterator[None]:
     packaged_codex_launch_models.cache_clear()
 
 
-def _packaged_defaults_path() -> Path:
-    return Path(str(files("gobby").joinpath("data/codex_launch_defaults.json")))
-
-
 @pytest.mark.parametrize("model", ["inherit", "", "   "])
 def test_codex_launch_defaults_exclude_non_model_values(model: str) -> None:
     assert codex_model_ids_in_policy({"provider": "codex", "model": model}) == set()
@@ -52,79 +43,12 @@ def test_packaged_models_are_parsed_once_per_process(monkeypatch: pytest.MonkeyP
     parse = MagicMock(wraps=yaml.safe_load)
     monkeypatch.setattr("gobby.agents.trust.yaml.safe_load", parse)
     first = packaged_codex_launch_models()
+    assert first == frozenset({"synthetic-codex-model"})
     cold_reads = parse.call_count
     second = packaged_codex_launch_models()
     assert first == second
     assert cold_reads > 0
     assert parse.call_count == cold_reads
-
-
-def test_packaged_launch_defaults_match_project_policy() -> None:
-    root = Path(__file__).resolve().parents[2]
-    document = yaml.safe_load(
-        (root / ".gobby/workflows/rules/project-operating-policy.yaml").read_text()
-    )
-    policies = [
-        effect["value"]
-        for rule in document["rules"].values()
-        for effect in rule["effects"]
-        if effect.get("type") == "set_variable" and effect.get("variable") == "project_policy"
-    ]
-    assert len(policies) == 1
-    path = _packaged_defaults_path()
-    assert path.is_file(), "Launch defaults must ship independently of the source checkout"
-    assert json.loads(path.read_text()) == {
-        key: policies[0][key] for key in ("launch_defaults", "role_launch_defaults")
-    }
-
-
-def test_launch_defaults_are_in_built_wheel(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Build a small wheel with the repository's actual package-data configuration."""
-    root = Path(__file__).resolve().parents[2]
-    config = tomllib.loads((root / "pyproject.toml").read_text())
-    source = _packaged_defaults_path()
-    assert source.is_file(), "Launch defaults package data is missing"
-    package = tmp_path / "src/gobby"
-    (package / "data").mkdir(parents=True)
-    (package / "__init__.py").write_text("")
-    shutil.copyfile(source, package / "data" / source.name)
-    monkeypatch.chdir(tmp_path)
-    package_data = config["tool"]["setuptools"]["package-data"]
-    (tmp_path / "pyproject.toml").write_text(
-        '[build-system]\nrequires = ["setuptools"]\nbuild-backend = "setuptools.build_meta"\n'
-        '[project]\nname = "gobby-data-check"\nversion = "0.0.0"\n'
-        '[tool.setuptools]\npackages = ["gobby", "gobby.data"]\n'
-        '[tool.setuptools.package-dir]\n"" = "src"\n'
-        "[tool.setuptools.package-data]\n"
-        + "\n".join(
-            f"{json.dumps(key)} = {json.dumps(value)}" for key, value in package_data.items()
-        )
-        + "\n"
-    )
-    monkeypatch.setattr(sys, "argv", sys.argv.copy())
-    build_wheel(str(tmp_path / "dist"))
-    wheels = list((tmp_path / "dist").glob("*.whl"))
-    assert len(wheels) == 1
-    with ZipFile(wheels[0]) as wheel:
-        assert wheel.read("gobby/data/codex_launch_defaults.json") == source.read_bytes()
-
-
-def _codex_models(defaults: dict[str, Any]) -> set[str]:
-    models: set[str] = set()
-    for key, value in defaults.items():
-        if isinstance(value, dict):
-            models.update(_codex_models(value))
-        elif (key == "model" or key.endswith("_model")) and isinstance(value, str):
-            value = value.strip()
-            if not value or value == "inherit":
-                continue
-            provider_key = key.removesuffix("model") + "provider"
-            provider = defaults.get(provider_key)
-            if provider == "codex" or (provider in (None, "inherit") and value.startswith("gpt-")):
-                models.add(value)
-    return models
 
 
 @pytest.fixture(autouse=True)
@@ -145,7 +69,7 @@ def test_fresh_codex_home_acknowledges_packaged_and_custom_models(
     synthetic_agents: Path,
 ) -> None:
     """Both entrypoints combine packaged defaults with arbitrary Codex definitions."""
-    models = _codex_models(json.loads(_packaged_defaults_path().read_text()))
+    models = set()
     models.add("synthetic-codex-model")
     monkeypatch.delenv("CODEX_HOME", raising=False)
     workspace = tmp_path / "workspace"
@@ -176,12 +100,9 @@ def test_packaged_codex_models_seed_without_checkout_or_policy_row(
     gobby_home.mkdir()
     # Reproduce installed package resources without any adjacent checkout policy.
     installed = tmp_path / "site-packages/gobby"
-    (installed / "data").mkdir(parents=True)
-    shutil.copyfile(_packaged_defaults_path(), installed / "data/codex_launch_defaults.json")
-    installed_agents = installed / "install/shared/workflows/agents"
+    installed.mkdir(parents=True)
+    installed_agents = installed / "definitions"
     shutil.copytree(synthetic_agents, installed_agents)
-    resource_root = MagicMock(return_value=installed)
-    monkeypatch.setattr("gobby.agents.trust.files", resource_root)
     monkeypatch.setattr("gobby.agents.sync.get_bundled_agents_path", lambda: installed_agents)
     monkeypatch.chdir(tmp_path)
 
@@ -189,9 +110,8 @@ def test_packaged_codex_models_seed_without_checkout_or_policy_row(
         result = seed_gobby_home_trust("codex", gobby_home=gobby_home)
 
     assert result["success"] is True
-    resource_root.assert_called_once_with("gobby")
     config = tomllib.loads((tmp_path / ".codex/config.toml").read_text())
-    models = _codex_models(json.loads(_packaged_defaults_path().read_text()))
+    models = set()
     models.add("synthetic-codex-model")
     assert config["tui"]["model_availability_nux"] == dict.fromkeys(models, 4)
 

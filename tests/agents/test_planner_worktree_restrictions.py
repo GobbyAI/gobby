@@ -20,9 +20,9 @@ from tests.fixtures.postgres import TEST_USER_ID
 pytestmark = pytest.mark.unit
 
 PLANNERS = (
-    "plan-writer",
-    "plan-enhancer",
-    "plan-adversary",
+    "fixture-definition-cf5ba898",
+    "fixture-definition-caf83459",
+    "fixture-definition-86a2d70b",
 )
 
 
@@ -34,7 +34,7 @@ def _parse_row(payload: object) -> AgentDefinitionBody:
 
 @pytest.fixture
 def seeded_agents(temp_db: HubDatabase) -> AgentDefinitionManager:
-    """Synthetic planner seats carrying the worktree blocks, and an unrestricted developer."""
+    """Synthetic planner seats carrying the worktree blocks, and an unrestricted fixture-worker."""
     for name in PLANNERS:
         seed_seat(
             temp_db,
@@ -43,11 +43,11 @@ def seeded_agents(temp_db: HubDatabase) -> AgentDefinitionManager:
             blocked_tools=["EnterWorktree"],
             blocked_mcp_tools=["gobby-worktrees:create_worktree"],
         )
-    seed_seat(temp_db, "developer")
+    seed_seat(temp_db, "fixture-worker")
     return AgentDefinitionManager(temp_db)
 
 
-@pytest.mark.parametrize("name", (*PLANNERS, "developer"))
+@pytest.mark.parametrize("name", (*PLANNERS, "fixture-worker"))
 @pytest.mark.parametrize("tool", ("EnterWorktree", "create_worktree"))
 def test_spawn_activated_session_worktree_enforcement(
     temp_db: HubDatabase,
@@ -95,7 +95,7 @@ def test_spawn_activated_session_worktree_enforcement(
     response = RuleEngine(temp_db)._check_agent_tool_enforcement(
         event, session.id, variables.get_variables(session.id)
     )
-    if name == "developer":
+    if name == "fixture-worker":
         assert response is None
     else:
         assert response is not None, (name, tool)

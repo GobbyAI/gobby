@@ -63,12 +63,12 @@ def _paused_seat(
         parent_session_id=root.id,
         provider="claude",
         prompt="work",
-        agent_name="developer",
+        agent_name="fixture-worker",
         child_session_id=seat.id,
     )
     assert runs.cancel(run.id) is not None
     assert session_manager.update_terminal_pickup_metadata(seat.id, agent_run_id=run.id)
-    SessionVariableManager(db).set_variable(seat.id, "_agent_type", "developer")
+    SessionVariableManager(db).set_variable(seat.id, "_agent_type", "fixture-worker")
     session_manager.update_status(seat.id, "paused")
 
     terminals = TerminalManager(db)
@@ -145,7 +145,7 @@ def test_paused_seat_liveness_follows_the_running_host_epoch(
             project_id,
             None,
             run_storage,
-            "developer",
+            "fixture-worker",
             live_host_epoch=live_epoch,
         )
         assert resumed.id == seat_id
@@ -157,6 +157,6 @@ def test_paused_seat_liveness_follows_the_running_host_epoch(
                 project_id,
                 None,
                 run_storage,
-                "developer",
+                "fixture-worker",
                 live_host_epoch=live_epoch,
             )

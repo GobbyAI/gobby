@@ -28,12 +28,11 @@ from gobby.hooks.events import (
 )
 from gobby.hooks.hook_manager import HookManager
 from gobby.servers.websocket.chat import ChatMixin
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime, WorkflowEvaluationTimeout
 from gobby.workflows.hooks import WorkflowHookHandler
-from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
@@ -875,13 +874,26 @@ class TestFireLifecycleRequireUvRule:
     """_fire_lifecycle should use real synced rules for shell command policy."""
 
     @pytest.mark.asyncio
-    async def test_real_synced_require_uv_blocks_package_management_without_rewrite(
+    async def test_normalized_exec_command_reaches_a_synthetic_block_without_rewrite(
         self, host: ChatMixinHost, rules_db: HubDatabase
     ) -> None:
         """Web chat normalizes exec_command to Bash and returns a plain block."""
-        sync_bundled_rules(rules_db, get_bundled_rules_path())
+        RuleDefinitionManager(rules_db).create(
+            "synthetic-web-command",
+            {
+                "event": "before_tool",
+                "effects": [
+                    {
+                        "type": "block",
+                        "tools": ["Bash"],
+                        "command_pattern": "^synthetic-command$",
+                        "reason": "Synthetic command blocked",
+                    }
+                ],
+            },
+            tags=["default"],
+        )
         _seed_session_row(rules_db)
-        SessionVariableManager(rules_db).merge_variables(SESSION_ID, {"require_uv": True})
 
         host._chat_sessions["conv-1"] = _make_session()
         host.workflow_handler = WorkflowHookHandler(
@@ -894,7 +906,7 @@ class TestFireLifecycleRequireUvRule:
                 HookEventType.BEFORE_TOOL,
                 {
                     "tool_name": "exec_command",
-                    "tool_input": {"command": "python3.13 -m pip install requests"},
+                    "tool_input": {"command": "synthetic-command"},
                 },
             )
         finally:
@@ -903,9 +915,7 @@ class TestFireLifecycleRequireUvRule:
         assert result is not None
         assert result["decision"] == "block"
         assert result["reason"] == (
-            "Rule enforced by Gobby: [require-uv]\n"
-            "Use `uv pip …` or `uv run python -m pip …` — "
-            "uv manages this project's Python environment."
+            "Rule enforced by Gobby: [synthetic-web-command]\nSynthetic command blocked"
         )
         assert "modified_input" not in result
         assert "auto_approve" not in result

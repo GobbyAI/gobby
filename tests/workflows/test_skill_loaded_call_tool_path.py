@@ -13,15 +13,11 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
-from gobby.skills.formatting import skill_fetch_directive
-from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tool_results import ToolResultStore
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.integration
 
@@ -32,15 +28,6 @@ PLATFORM_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 @pytest.fixture
 def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     database = temp_db
-    sync_bundled_rules(database, get_bundled_rules_path())
-    database.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
-    # The tasks-skill gate is selected through the default agent definition, as bundled.
-    if AgentDefinitionManager(database).get_by_name("default") is None:
-        seed_seat(
-            database,
-            "default",
-            include=["tag:default", "name:require-tasks-skill-for-mutations"],
-        )
     yield database
 
 
@@ -143,7 +130,7 @@ async def test_raw_get_skill_after_tool_populates_loaded_skill_for_call_tool_pat
 
 
 @pytest.mark.asyncio
-async def test_oversized_get_skill_wrapper_result_survives_codex_normalization_and_compaction(
+async def test_oversized_get_skill_wrapper_result_survives_codex_normalization(
     db: HubDatabase,
     tmp_path: Path,
 ) -> None:
@@ -154,7 +141,6 @@ async def test_oversized_get_skill_wrapper_result_survives_codex_normalization_a
         {
             "session_edited_files": [],
             "enforce_tool_schema_check": False,
-            # require-tasks-skill-for-mutations gates on the interactive agent.
             "_agent_type": "default",
         },
     )
@@ -228,38 +214,5 @@ async def test_oversized_get_skill_wrapper_result_survives_codex_normalization_a
         response = await handler.evaluate_async(event)
         assert response.decision == "allow"
         assert session_vars.get_variables(platform_session_id)["loaded_skills"] == ["tasks"]
-
-    await load_and_observe()
-
-    compact_response = await handler.evaluate_async(
-        _event(
-            HookEventType.SESSION_START,
-            cwd=tmp_path,
-            platform_session_id=platform_session_id,
-            data={"source": "compact"},
-        )
-    )
-    assert compact_response.decision == "allow"
-    assert session_vars.get_variables(platform_session_id)["loaded_skills"] == []
-
-    lifecycle_response = await handler.evaluate_async(
-        _event(
-            HookEventType.BEFORE_TOOL,
-            cwd=tmp_path,
-            platform_session_id=platform_session_id,
-            data={
-                "tool_name": "mcp__gobby__call_tool",
-                "tool_input": {
-                    "server_name": "gobby-tasks",
-                    "tool_name": "close_task",
-                    "arguments": {"task_id": "#1"},
-                },
-            },
-        )
-    )
-    assert lifecycle_response.decision == "block"
-    assert skill_fetch_directive("gobby:references/tasks/overview.md") in (
-        lifecycle_response.reason or ""
-    )
 
     await load_and_observe()

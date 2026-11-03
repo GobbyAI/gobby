@@ -55,7 +55,7 @@ async def test_live_policy_refreshes_once_after_import(
     )
     assert session_id
     variables = SessionVariableManager(temp_db)
-    variables.merge_variables(session_id, {"_agent_type": "test-writer"})
+    variables.merge_variables(session_id, {"_agent_type": "fixture-definition-c02389e4"})
     handler = WorkflowHookHandler(rule_engine=RuleEngine(temp_db), session_manager=sessions)
 
     async def turn() -> HookResponse:

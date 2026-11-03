@@ -59,7 +59,7 @@ async def test_pipeline_spawn_refuses_unresolved_supplied_caller(
         (True, None, "pipeline-caller", False),
         (True, "trusted", "pipeline-caller", False),
         (True, "trusted", "default", True),
-        (True, "none", "orchestrator", True),
+        (True, "none", "fixture-coordinator", True),
         (True, "trusted", "root", False),
         (True, "none", "root", False),
     ],
@@ -643,7 +643,8 @@ class TestExecuteMCPStep:
         mock_proxy = AsyncMock()
         mock_proxy.call_tool = AsyncMock(return_value=reply)
         step = PipelineStep(
-            id="dev-team-lead", mcp=MCPStepConfig(server="gobby-agents", tool="spawn_agent")
+            id="fixture-definition-f0ad0fd9",
+            mcp=MCPStepConfig(server="gobby-agents", tool="spawn_agent"),
         )
 
         with pytest.raises(RuntimeError) as failed:
