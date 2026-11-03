@@ -778,6 +778,31 @@ async def test_daemon_start_rearms_waits_whose_deadline_lapsed_while_down(
 
 
 @pytest.mark.asyncio
+async def test_failed_rearm_still_starts_delivery(
+    harness: CoordinationHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(machine_id: str, grace_seconds: int = 900) -> int:
+        raise RuntimeError(f"hub unavailable for {machine_id}")
+
+    monkeypatch.setattr(harness.manager, "rearm_lapsed", refuse)
+    row = harness.wait(reply=True, timeout=60)
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    service = CoordinationWaitService(
+        harness.manager,
+        CompletionEventRegistry(wake_callback=wake),
+        require_machine_id(),
+        lambda: connection_for(harness),
+    )
+    await service.start()
+    try:
+        harness.reply()
+        assert harness.row(row["id"])["outcome"] == "replied"
+        assert service._listener is not None and not service._listener.done()
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
 async def test_failed_delivery_retains_outcome_for_recovery(harness: CoordinationHarness) -> None:
     row = harness.wait()
     harness.release()

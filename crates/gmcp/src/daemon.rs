@@ -166,7 +166,7 @@ impl Dialer {
         options: RequestOptions<'_>,
     ) -> Value {
         // A hold call that never reached the daemon waits out a planned restart.
-        let deadline = Instant::now() + options.timeout;
+        let deadline = Instant::now() + crate::restart_hold::retry_budget(path, options.timeout);
         loop {
             match self.request_inner(method, path, body, &options) {
                 Ok(Answer::Final(value)) => return value,

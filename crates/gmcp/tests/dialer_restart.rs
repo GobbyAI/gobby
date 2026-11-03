@@ -418,10 +418,12 @@ fn write_restart_marker(root: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The HTTP timeout is shorter than the restart below: a hold call must ride out
+/// the restart window, not just its own timeout.
 fn held_call_options() -> RequestOptions<'static> {
     RequestOptions {
         preflight: true,
-        timeout: Duration::from_secs(10),
+        timeout: Duration::from_millis(800),
         ..Default::default()
     }
 }

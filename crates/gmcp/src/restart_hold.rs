@@ -5,7 +5,7 @@
 //! disk; every other call still reports DAEMON_UNAVAILABLE at once.
 
 use serde_json::Value;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MARKER: &str = "shutdown_intent_active.json";
 const DEFAULT_ALLOW_SECONDS: f64 = 120.0;
@@ -22,6 +22,16 @@ const HOLD_CALLS: [(&str, &str); 5] = [
 /// True when a call to `path` should wait for the daemon instead of failing.
 pub(crate) fn retries(path: &str) -> bool {
     is_hold_path(path) && restart_in_progress()
+}
+
+/// How long a call may keep retrying: a hold call covers the whole restart window
+/// even when its own HTTP timeout is shorter; the fresh marker still bounds it.
+pub(crate) fn retry_budget(path: &str, timeout: Duration) -> Duration {
+    if is_hold_path(path) {
+        timeout.max(Duration::from_secs_f64(allow_seconds()))
+    } else {
+        timeout
+    }
 }
 
 fn is_hold_path(path: &str) -> bool {
@@ -45,7 +55,12 @@ fn restart_in_progress() -> bool {
     let restart = marker["intent"]
         .as_str()
         .is_some_and(|intent| intent.eq_ignore_ascii_case("restart"));
-    let Some(written) = marker["timestamp"].as_f64() else {
+    // ghook accepts the timestamp as a number or a numeric string; match it.
+    let written = &marker["timestamp"];
+    let Some(written) = written
+        .as_f64()
+        .or_else(|| written.as_str().and_then(|text| text.trim().parse().ok()))
+    else {
         return false;
     };
     let now = SystemTime::now()
@@ -65,7 +80,19 @@ fn allow_seconds() -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::is_hold_path;
+    use super::{is_hold_path, retry_budget};
+    use std::time::Duration;
+
+    #[test]
+    fn hold_calls_budget_the_restart_window() {
+        let short = Duration::from_secs(1);
+        let hold = "/api/mcp/gobby-agents/tools/send_message/";
+        assert!(retry_budget(hold, short) > short);
+        assert_eq!(
+            retry_budget("/api/mcp/gobby-tasks/tools/claim_task/", short),
+            short
+        );
+    }
 
     #[test]
     fn only_hold_tool_paths_retry() {

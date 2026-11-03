@@ -46,8 +46,9 @@ _BUSY_RULE_IDS = ("turn_in_flight", "active_work")
 
 
 _HELD_RECOVERY = (
-    "The composer holds unsubmitted daemon text, such as a staged /compact. Clear it with "
-    "send_keys(keys='ctrl_u', literal=false), or rerun set_handoff to resubmit it."
+    "The composer holds unsubmitted daemon text, such as a staged /compact. Clear all of it "
+    "with one clear key, such as send_keys(keys='ctrl_u', literal=false), or rerun "
+    "set_handoff to resubmit it."
 )
 _DRAFT_RECOVERY = (
     "Keys never clear an operator draft or an unconfirmed composer. Once the pane shows "

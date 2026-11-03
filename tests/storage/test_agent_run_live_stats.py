@@ -722,6 +722,33 @@ def test_open_tool_call_keeps_a_build_or_permit_wait_live(
     assert observe(started + timedelta(minutes=45)).stall_suspected is True
 
 
+def test_calls_without_request_ids_each_keep_their_own_open_entry(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    liveness_run: AgentRun,
+) -> None:
+    """A provider without tool ids runs two calls at once; one finishing leaves the other open."""
+    child = liveness_run.child_session_id
+    assert child is not None
+    session_manager.update_session_status(child, "active")
+    started = datetime(2026, 1, 1, tzinfo=UTC)
+    reducer = TurnLifecycleReducer(session_manager)
+    unpaired = TurnEvidence(source="test", event_time=started)
+    reducer.resumed_work(child, unpaired, tool="start")
+    reducer.resumed_work(child, unpaired, tool="start")
+    reducer.resumed_work(child, unpaired, tool="finish")
+
+    def observe(at: datetime) -> AgentRun:
+        with patch("gobby.storage.agents._liveness.utc_now", return_value=at):
+            observed = agent_manager.get(liveness_run.id)
+        assert observed is not None
+        return observed
+
+    assert observe(started + timedelta(minutes=45)).stall_suspected is False
+    reducer.resumed_work(child, unpaired, tool="finish")
+    assert observe(started + timedelta(minutes=45)).stall_suspected is True
+
+
 @pytest.mark.parametrize("owner_is_parent", [True, False])
 def test_coordination_wait_identifies_parent_and_expires(
     agent_manager: LocalAgentRunManager,

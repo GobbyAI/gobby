@@ -171,7 +171,7 @@ class TurnLifecycleState:
             "cursor": self.cursor,
             "provider_error": self.provider_error.to_dict() if self.provider_error else None,
             "started_at": datetime_to_iso(self.started_at),
-            "open_tools": {tool_id: datetime_to_iso(at) for tool_id, at in self.open_tools},
+            "open_tools": [[tool_id, datetime_to_iso(at)] for tool_id, at in self.open_tools],
         }
 
     @classmethod
@@ -240,10 +240,13 @@ def _optional_str(value: object) -> str | None:
 
 
 def _open_tools(value: object) -> tuple[tuple[str, datetime], ...]:
-    if not isinstance(value, Mapping):
+    if not isinstance(value, list):
         return ()
     tools: list[tuple[str, datetime]] = []
-    for tool_id, raw_at in value.items():
+    for entry in value:
+        if not isinstance(entry, list) or len(entry) != 2:
+            continue
+        tool_id, raw_at = entry
         try:
             started = parse_stored_datetime(raw_at)
         except ValueError:
@@ -403,7 +406,14 @@ class TurnLifecycleReducer:
 
         def mutate(current: TurnLifecycleState, _status: str) -> tuple[TurnLifecycleState, str]:
             tool_id = evidence.request_id or ""
-            open_tools = tuple(entry for entry in current.open_tools if entry[0] != tool_id)
+            open_tools = current.open_tools
+            # Calls without a request id cannot be paired: each start adds an entry and
+            # each finish removes one. A repeated start for a known id replaces its entry.
+            match = next(
+                (i for i, (open_id, _) in enumerate(open_tools) if open_id == tool_id), None
+            )
+            if tool is not None and match is not None and (tool == "finish" or tool_id):
+                open_tools = open_tools[:match] + open_tools[match + 1 :]
             if tool == "start":
                 open_tools = (*open_tools, (tool_id, to_aware_utc(evidence.event_time)))
             updated = self._with_evidence(
