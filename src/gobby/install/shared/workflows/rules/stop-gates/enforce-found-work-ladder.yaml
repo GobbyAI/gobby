@@ -1,3 +1,4 @@
+version: "2.0.0"
 tags: [stop-gates, enforcement, lifecycle, found-work, gobby, default]
 
 rules:
@@ -61,6 +62,11 @@ rules:
     priority: 44
     when: >
       unclaimed_found_work
+      and any(
+        not task_state_in(ref, 'blocked')
+        and not all_tasks_have_label(ref, 'operator-directed')
+        for ref in unclaimed_found_work_tasks
+      )
       and not variables.get('plan_mode')
       and not variables.get('is_spawned_agent')
       and not has_active_agent_wait()
@@ -69,8 +75,13 @@ rules:
     effects:
       - type: block
         reason: >-
-          Found-work ladder: this session filed {{ unclaimed_found_work_tasks | join(', ') }} and
+          Found-work ladder: this session filed
+          {% for ref in unclaimed_found_work_tasks
+             if not task_state_in(ref, 'blocked')
+             and not all_tasks_have_label(ref, 'operator-directed') -%}
+          {{ ref }}{% if not loop.last %}, {% endif %}{% endfor %} and
           left them unclaimed. Claim and finish each one now (claim_task, fix, close),
           record a handoff to a live session with delegate_task, or — edge case only — label it
           needs-decision/needs-planning/clean-window with the reason in its description. Filing is not a terminal
-          state.
+          state. Tasks blocked by open dependencies and filings labeled operator-directed
+          are excluded; use that label only for tasks the operator explicitly asked to file.
