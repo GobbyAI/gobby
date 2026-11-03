@@ -76,6 +76,11 @@ registration, and omitting `owner_session` waits on the session that spawned
 you. Messages already sent never resolve it, so send the question and register
 in the same turn. A registered wait holds off idle and stuck cleanup until it
 resolves, times out, or is cancelled.
+To yield while your own provider background task runs (a background shell,
+monitor or workflow that re-invokes you when it finishes), register
+`background_task_id=<the provider's task id>` with no `owner_session` and a
+timeout that covers the job's next report. Your next prompt clears it; expiry
+wakes you to check the job and register again if it still runs.
 The default timeout is 900 seconds, maximum 3600. While waiting, repeating the same
 owner and condition returns the original wait and expiry. After completion,
 repeating the same owner and condition creates a new wait. Preserve `wait_id` and
@@ -103,5 +108,5 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Version: 1.2.0_
+_Version: 1.3.0_
 _Last verified: 2026-11-02_
