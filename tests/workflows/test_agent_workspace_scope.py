@@ -118,6 +118,9 @@ def _scope_engine(db: HubDatabase, modes: tuple[str, ...]) -> RuleEngine:
             },
             tags=["default", "runbook"],
         )
+    # A named seat must resolve its definition; an unresolved one fails closed.
+    for seat in ("fixture-seat", *(name for name in SEATS if name is not None)):
+        seed_seat(db, seat, include=["tag:runbook"])
     return RuleEngine(db)
 
 

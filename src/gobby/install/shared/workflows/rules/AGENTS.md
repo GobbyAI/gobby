@@ -90,15 +90,19 @@ Tags serve two purposes:
 | Tag | Meaning |
 |-----|---------|
 | `gobby` | **Provenance** — rule ships with Gobby. All bundled rules get this tag. |
-| `default` | **Baseline** — selected by the interactive definition and used when no enabled definition resolves. |
+| `default` | **Baseline** — selected by the interactive definition and used by a session bound to no named definition. |
 | `runbook` | **Runbook seats** — restrictions, routing and guidance that exist only for runbook seats. Runbook seat definitions select it; the `default` definition never does, and a `runbook` rule never also carries `default`. |
 | Group tags | **Identity** — rule belongs to a functional group. Workers cherry-pick these. |
 
 The `default` agent uses `rule_selectors: {include: ["tag:default"]}` to load interactive-session rules. Worker agents select the group tags needed for their role.
 
-The current enabled definition supplies rule selection. Missing or disabled
-definitions receive only enabled `default`-tagged rules; cached
-`_active_rule_names` cannot preserve an exclusion or activate an opt-in rule.
+The current enabled definition supplies rule selection. A session with no
+named definition (absent, empty or `default` agent type, and no `default` row)
+receives only enabled `default`-tagged rules. A named definition that is missing
+or disabled fails closed: the engine blocks every tool call with
+`unresolved-agent-definition`, keeps only mandatory rules, and still lets the
+turn end. Cached `_active_rule_names` cannot preserve an exclusion or activate
+an opt-in rule.
 An enabled definition may intentionally select an empty set.
 
 Runbook seat definitions explicitly select `tag:runbook`. Their exclusions grant
@@ -106,8 +110,8 @@ spawn, pipeline, question, project-creation and closure permissions. Write scope
 (`research-artifact-write-scope`, `documentation-write-scope`, `digest-write-scope`)
 and `prometheus-query-only` are selected by name. Database-query permission is an
 explicit exclusion of `query-readonly-seat-scope`. Baseline session rules
-keep unresolved children and missing or disabled named definitions bounded while
-leaving the operator's unspawned terminal open. Project creation uses the stored
+keep unresolved children bounded while leaving the operator's unspawned terminal
+open; missing or disabled named definitions are blocked by the engine instead. Project creation uses the stored
 operator identity; parent lineage alone never identifies a spawned child. Closing definitions
 also declare their permitted reasons and task scopes for MCP enforcement.
 
