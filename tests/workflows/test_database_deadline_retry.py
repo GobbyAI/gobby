@@ -26,7 +26,11 @@ from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.observer_context_usage import detect_context_compact_guidance
 from gobby.workflows.observer_plan_mode import resolve_plan_mode
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.templates import TemplateEngine
+
+# Sessions bound to no definition run only rules carrying the default baseline tag.
+BASELINE_TAG = "default"
 
 
 @pytest.fixture
@@ -35,7 +39,8 @@ def real_deadline_handler(
 ) -> Iterator[tuple[WorkflowHookHandler, MagicMock, MagicMock]]:
     tasks = MagicMock()
     tasks.get_task.return_value = None
-    variables = MagicMock()
+    # The spec makes the async settle hooks (#25292) awaitable, as in production.
+    variables = MagicMock(spec=SessionVariableManager)
     variables.get_variables.return_value = {
         "session_edited_files": [],
         "_variable_defaults_loaded": True,
@@ -92,6 +97,7 @@ def test_real_rule_condition_deadline_retries_without_committing_effects(
             ],
         ).model_dump_json(),
         enabled=True,
+        tags=[BASELINE_TAG],
     )
     event = _deadline_event(event_type, tmp_path)
     stored = deepcopy(variables.get_variables.return_value)
@@ -142,6 +148,7 @@ def test_real_set_variable_deadline_retries_without_saving_raw_or_partial_values
             ],
         ).model_dump_json(),
         enabled=True,
+        tags=[BASELINE_TAG],
     )
     event = _deadline_event(event_type, tmp_path)
     stored = deepcopy(variables.get_variables.return_value)
@@ -323,7 +330,8 @@ def test_database_timeout_reaches_evaluator_and_next_delivery_can_retry(
     response = HookResponse(decision="allow", context="load the plan skill")
     rule_engine = MagicMock()
     rule_engine.evaluate = AsyncMock(return_value=response)
-    session_vars = MagicMock()
+    # The spec makes the async settle hooks (#25292) awaitable, as in production.
+    session_vars = MagicMock(spec=SessionVariableManager)
     session_vars.get_variables.return_value = {
         "session_edited_files": [],
         "is_spawned_agent": stage == "step",

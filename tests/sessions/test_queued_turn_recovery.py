@@ -432,9 +432,9 @@ async def test_queued_stop_recovers_native_composer_and_pending_wake(
                 activity_probe=probe_terminal_activity,
                 run_db=_run_db,
             )
-            assert reason == "paused"
-            paused = seat.sessions.get(seat.session_id)
-            assert paused is not None and paused.status == "paused"
+            assert reason == "idle"
+            recovered = seat.sessions.get(seat.session_id)
+            assert recovered is not None and recovered.status == "idle"
     finally:
         await coordinator.close()
         retries = list(dispatcher._composer_retries.values())

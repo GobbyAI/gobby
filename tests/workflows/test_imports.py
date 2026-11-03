@@ -835,4 +835,10 @@ def test_shipped_project_operating_policy_imports(
         row = manager.get_by_name(name, project_id=project.id)
         assert row is not None
         assert row.enabled
-        assert {"default", "seat"} <= set(row.tags or [])
+        assert {"default", "project-policy"} <= set(row.tags or [])
+    # Runbook-only policy reaches runbook seats through its tag, never through default.
+    runbook = manager.get_by_name("runbook-seat-policy", project_id=project.id)
+    assert runbook is not None
+    assert runbook.enabled
+    assert {"runbook", "project-policy"} <= set(runbook.tags or [])
+    assert "default" not in (runbook.tags or [])

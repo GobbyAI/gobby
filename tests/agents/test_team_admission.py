@@ -178,6 +178,7 @@ async def test_idempotent_team_admission(world: TeamWorld) -> None:
         "branch": branch,
         "worktree": team.worktree_id,
         "project_path": team.worktree_path,
+        "main_project_path": str(world.case.repo),
     }
     # The refused execution stays refused, and nothing new was created.
     with pytest.raises(TeamAdmissionRefused) as again:

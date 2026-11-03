@@ -17,6 +17,9 @@ from gobby.agents.trust import (
     seed_gobby_home_trust,
 )
 
+# Codex model ids from active project policy; bundled definitions name none since #25568.
+POLICY_CODEX_MODELS = ("gpt-6.1-sol",)
+
 
 @pytest.fixture(autouse=True)
 def isolated_claude_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -235,7 +238,7 @@ class TestCodexTrust:
         workspace.mkdir()
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            pre_approve_directory("codex", workspace)
+            pre_approve_directory("codex", workspace, POLICY_CODEX_MODELS)
 
         parsed = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text())
         assert parsed["tui"]["screen_reader_detection_done"] is True
@@ -254,7 +257,7 @@ class TestCodexTrust:
         )
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            pre_approve_directory("codex", workspace)
+            pre_approve_directory("codex", workspace, POLICY_CODEX_MODELS)
 
         parsed = tomllib.loads(config_file.read_text(encoding="utf-8"))
         assert parsed["tui"]["screen_reader_detection_done"] is True
@@ -288,9 +291,9 @@ class TestCodexTrust:
         config_file.write_text('[tui]\ntheme = "dark"\n', encoding="utf-8")
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            pre_approve_directory("codex", workspace)
+            pre_approve_directory("codex", workspace, POLICY_CODEX_MODELS)
             first = config_file.read_text(encoding="utf-8")
-            pre_approve_directory("codex", workspace)
+            pre_approve_directory("codex", workspace, POLICY_CODEX_MODELS)
 
         parsed = tomllib.loads(config_file.read_text(encoding="utf-8"))
         assert parsed["tui"]["theme"] == "dark"
@@ -338,7 +341,7 @@ class TestCodexTrust:
         )
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            pre_approve_directory("codex", workspace)
+            pre_approve_directory("codex", workspace, POLICY_CODEX_MODELS)
 
         parsed = tomllib.loads(config_file.read_text(encoding="utf-8"))
         assert parsed["tui"]["model_availability_nux"]["gpt-6.1-sol"] == expected
