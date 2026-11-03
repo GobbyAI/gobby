@@ -505,11 +505,12 @@ class TestCreateTask:
         assert "id" in data
 
     @pytest.mark.integration
-    def test_create_requires_validation_criteria(self, client: TestClient) -> None:
+    def test_create_allows_missing_validation_criteria(self, client: TestClient) -> None:
+        # Closure policy, not task creation, decides what evidence a task needs.
         response = client.post("/api/tasks", json={"title": "Missing contract"})
 
-        assert response.status_code == 400
-        assert "validation_criteria" in response.json()["detail"]
+        assert response.status_code == 201
+        assert response.json()["validation_criteria"] is None
 
     def test_create_with_all_fields(self, client: TestClient) -> None:
         response = client.post(
