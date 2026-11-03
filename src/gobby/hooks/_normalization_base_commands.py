@@ -14,6 +14,7 @@ from gobby.hooks._normalization_git import (
     classify_git_mutation,
     classify_search_segment,
     git_command_is_read_only,
+    git_mutation_cwd,
 )
 from gobby.hooks._normalization_interpreter_segments import _python_write_segment
 from gobby.hooks._normalization_operands import (
@@ -349,9 +350,11 @@ def classify_base_command(
             cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin
         )
         if not git_command_is_read_only(parts):
-            git_metadata = replace(
-                git_metadata, extra={**(git_metadata.extra or {}), "canonical_git_mutation": True}
-            )
+            extra = {**(git_metadata.extra or {}), "canonical_git_mutation": True}
+            # Shell-write attribution snapshots the checkout Git writes, not the shell's cwd.
+            if (git_cwd := git_mutation_cwd(parts, cwd, base_cwd)) is not None:
+                extra["canonical_git_mutation_cwds"] = [git_cwd]
+            git_metadata = replace(git_metadata, extra=extra)
         else:
             git_metadata = replace(git_metadata, read_only=True)
         return git_metadata

@@ -176,6 +176,7 @@ def _merge_code_navigation_extra(metadata: list[_ShellSegmentMetadata]) -> dict[
         "canonical_git_force_checkout_roots",
         "canonical_git_sequencer_scope_paths",
         "canonical_git_operation_roots",
+        "canonical_git_mutation_cwds",
     ):
         values = [path for extra in extras for path in extra.get(key, [])]
         if values:
