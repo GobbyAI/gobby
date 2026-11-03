@@ -1696,7 +1696,7 @@ async def test_predecessor_case_alias_keeps_live_holder_and_sequence_guards(
             folder=folder,
             persistent=True,
         )
-        alias = alias_root / project_id / "ASSISTANT" / f"SESSION-{seq}" / "notes.md"
+        alias = alias_root / project_id / "FIXTURE-HELPER" / f"SESSION-{seq}" / "notes.md"
         response = await _decide(workspace_read_engine, _read(alias, tmp_path), variables, caller)
         assert response.decision == decision, (seq, response.reason)
         if decision == "block":

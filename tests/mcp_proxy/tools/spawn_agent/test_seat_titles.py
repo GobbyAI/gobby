@@ -1,7 +1,7 @@
 """Caller-supplied titles never replace a defined seat's pane or session title.
 
 Contract: docs/contracts/seat-titles.md, rule 1 and the spawn_agent caller rule. A
-seat's title is its agent definition display name (dev-team-lead -> Dev Team Lead), whether
+seat's title is its agent definition display name (fixture-worker -> Fixture Worker), whether
 or not the caller passes a title.
 """
 

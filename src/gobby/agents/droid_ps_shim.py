@@ -5,7 +5,7 @@ setuid ``/bin/ps``, so without it a sandboxed seat cannot run ``ps`` at all.
 
 TODO(#22407): Droid's supervisor, the upstream defect that first needed this shim,
 SIGKILLs its process group when its ``ps`` probe fails. Drop Droid's dependency once
-Factory ships a fix. Reviewer seats keep the shim for stall diagnosis (#25069).
+Factory ships a fix. Sandboxed seats keep the shim for stall diagnosis (#25069).
 Upstream issue: https://github.com/Factory-AI/factory/issues/33
 
 Droid runs every ``Execute`` command under an inline bash supervisor that probes

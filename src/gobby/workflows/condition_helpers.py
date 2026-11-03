@@ -38,7 +38,7 @@ _GIT_GLOBAL_FLAGS = frozenset(
     {"--no-pager", "--paginate", "-p", "--bare", "--literal-pathspecs", "--no-optional-locks"}
 )
 # Git subcommands that record reviewable content. Kept in sync with the
-# command_pattern in the configured review rule.
+# command_pattern in the selected review rule; resolve its source through the rule registry.
 _REVIEW_GATED_GIT_SUBCOMMANDS = frozenset({"commit", "merge", "rebase", "cherry-pick", "revert"})
 _TASK_COMMIT_PROJECT_PATH_GUARD_FILE_SUFFIXES = frozenset(
     {
@@ -515,8 +515,7 @@ def shell_command_runs_ocr_review(command: Any) -> bool:
 def shell_command_consumes_code_review(command: Any) -> bool:
     """Return whether any segment runs a git operation that spends a code review.
 
-    Paired with the ``command_pattern`` in
-    The configured review rule: ``set_variable`` effects
+    Paired with the ``command_pattern`` in the configured review rule. ``set_variable`` effects
     take no command selectors, so the after_tool tracker matches here in ``when``
     while the block effect matches with a regex.
 

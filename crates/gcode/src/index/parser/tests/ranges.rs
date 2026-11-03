@@ -1,68 +1,40 @@
 use super::common::parse_source;
 
 const WORKFLOW_YAML: &str = concat!(
-    "tags: [task-enforcement, enforcement, tasks, gobby, default]\n",
-    "\n",
     "rules:\n",
-    "  track-task-claim:\n",
-    "    description: \"Log task claim events (state managed by detect_task_claim observer)\"\n",
+    "  fixture-observer:\n",
     "    event: after_tool\n",
-    "    enabled: true\n",
-    "    priority: 30\n",
-    "    when: \"event.data.get('mcp_tool') in ['claim_task', 'create_task'] and not event.data.get('error')\"\n",
-    "    effects:\n",
-    "      - type: observe\n",
+    "    effects: []\n",
     "\n",
-    "  nudge-native-tracker-after-claim:\n",
-    "    description: \"Define Gobby and provider-native task ownership after a successful claim\"\n",
-    "    event: after_tool\n",
-    "    enabled: true\n",
-    "    priority: 28\n",
+    "  fixture-folded-rule:\n",
+    "    event: before_tool\n",
     "    when: >\n",
-    "      event.data.get('mcp_server') == 'gobby-tasks'\n",
-    "      and event.data.get('mcp_tool') in ('claim_task', 'create_task')\n",
-    "      and isinstance(event.data.get('tool_output'), dict)\n",
-    "      and (\n",
-    "        event.data.get('tool_output', {}).get('task_id')\n",
-    "          in (variables.get('claimed_tasks') or {})\n",
-    "        or event.data.get('tool_output', {}).get('id')\n",
-    "          in (variables.get('claimed_tasks') or {})\n",
-    "        or (\n",
-    "          isinstance(event.data.get('tool_output', {}).get('result'), dict)\n",
-    "          and (\n",
-    "            event.data.get('tool_output', {}).get('result', {}).get('task_id')\n",
-    "              in (variables.get('claimed_tasks') or {})\n",
-    "            or event.data.get('tool_output', {}).get('result', {}).get('id')\n",
-    "              in (variables.get('claimed_tasks') or {})\n",
-    "          )\n",
-    "        )\n",
-    "      )\n",
+    "      variables.get('fixture_ready')\n",
+    "      and not event.data.get('error')\n",
     "    effects:\n",
     "      - type: inject_context\n",
     "        template: >-\n",
-    "          Gobby task = deliverable; provider-native tracker = implementation substeps.\n",
-    "          For multi-step work, initialize the native tracker now and keep every owned\n",
-    "          finding there until it is fixed before this task closes.\n",
+    "          First fixture line.\n",
+    "          Second fixture line.\n",
+    "          Final fixture line.\n",
 );
 
 #[test]
 fn workflow_yaml_symbol_range_ends_on_last_included_line() {
-    let parsed = parse_source("track-task-claim.yaml", WORKFLOW_YAML, &[]);
+    let parsed = parse_source("fixture-ranges.yaml", WORKFLOW_YAML, &[]);
     let symbol = parsed
         .symbols
         .iter()
-        .find(|symbol| symbol.name == "nudge-native-tracker-after-claim")
+        .find(|symbol| symbol.name == "fixture-folded-rule")
         .expect("workflow rule symbol");
 
     assert_eq!(
         symbol.byte_start,
-        WORKFLOW_YAML
-            .find("nudge-native-tracker-after-claim")
-            .expect("rule key")
+        WORKFLOW_YAML.find("fixture-folded-rule").expect("rule key")
     );
     assert_eq!(symbol.byte_end, WORKFLOW_YAML.len());
-    assert_eq!(symbol.line_start, 13);
-    assert_eq!(symbol.line_end, 42);
+    assert_eq!(symbol.line_start, 6);
+    assert_eq!(symbol.line_end, 16);
 }
 
 #[test]

@@ -889,7 +889,7 @@ class TestTranslateFromHookResponse:
             'call_tool("gobby-skills", "get_skill", {"name": "code-index"}). Then continue.'
         )
         reason = (
-            "Rule enforced by Gobby: [require-code-index-skill]\n"
+            "Rule enforced by Gobby: [fixture-skill-gate]\n"
             f"{directive} "
             'After loading, retry with `gcode grep "pattern" [PATH...] -m 50`, '
             '`gcode search-content "query" [PATH...]`, `gcode outline path/to/file`, '
@@ -910,7 +910,7 @@ class TestTranslateFromHookResponse:
             "`gcode symbol <id>` to retrieve a target symbol before broad source reads."
         )
         reason = (
-            "Rule enforced by Gobby: [prefer-gcode-for-source-read]\n"
+            "Rule enforced by Gobby: [fixture-source-gate]\n"
             f"{guidance} Keep follow-up line reads to 40 lines or fewer."
         )
         response = HookResponse(
@@ -926,7 +926,7 @@ class TestTranslateFromHookResponse:
         reason = (
             "Rule enforced by Gobby: [aggregated:2-gates]\n"
             "Multiple gates blocked while retrying Edit.\n"
-            '1. [require-code-index-skill] Call get_skill(name="code-index") on '
+            '1. [fixture-skill-gate] Call get_skill(name="code-index") on '
             "gobby-skills directly through mcp__gobby__call_tool. Then continue.\n"
             '2. [prefer-gcode-for-code-search] Use `gcode grep "pattern" [PATH...] '
             "-m 50` for exact text search."
@@ -948,7 +948,7 @@ class TestTranslateFromHookResponse:
             '1. [prefer-gcode-for-code-search] Use `gcode grep "pattern" -m 50` or '
             "`gcode search-content` — the code index has full access to this repo "
             "and returns ranked, token-cheap results.\n"
-            "2. [no-force-kill] Force-killing processes is not allowed. "
+            "2. [fixture-process-gate] Force-killing processes is not allowed. "
             "Use graceful signals."
         )
         response = HookResponse(
@@ -1084,7 +1084,7 @@ class TestTranslateFromHookResponse:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="allow")
         response.add_context(
-            ("rule:inject-seat-common", "s" * 2_166),
+            ("rule:fixture-seat-context", "s" * 2_166),
             ("rule:project-operating-policy", "o" * 4_094),
             ("mcp:gobby-memory/surface_memories", "m" * 1_628),
         )

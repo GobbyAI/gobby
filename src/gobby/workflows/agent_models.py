@@ -185,8 +185,8 @@ class AgentDefinitionBody(BaseModel):
     # Orchestration
     workflows: AgentWorkflows
     enabled: bool = True
-    # Agents a spawned run of this definition may spawn, enforced by the bundled
-    # Spawn policy: [SPAWN_ANY_AGENT] for any, named agents, or
+    # Definitions a spawned run may spawn, enforced by configured rules:
+    # [SPAWN_ANY_AGENT] for any, named definitions, or
     # empty (the default) for none.
     spawnable_agents: list[str] = Field(default_factory=list)
     # Existing seats this definition may resume within its admitted team. Fresh

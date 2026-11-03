@@ -1,4 +1,4 @@
-"""Inline Python write scope as block-unresolved-scope-shell-write sees it (#23759)."""
+"""Inline Python write scope under generic shell-write admission (#23759)."""
 
 from __future__ import annotations
 

@@ -332,11 +332,9 @@ DERIVE = ("gobby-plans", "derive_plan_handoff_manifest")
 APPLY = ("gobby-plans", "apply_plan_handoff_manifest")
 
 
-# Inline stop gate: a reduced copy of the stop condition, not the bundled
-# require-step-completion rule. Stop tests here check the engine's stop handling only.
+# Synthetic stop gate for the engine's stop handling.
 _STOP_RULE = "inline-seat-stop-gate"
-# Inline copy of the readiness condition. The bundled declare-seat-idle-on-readiness
-# rule is not loaded by any test here.
+# Synthetic readiness condition.
 _READY_RULE = "inline-seat-readiness"
 _READY_WHEN = (
     "variables.get('current_step_idle') and not variables.get('task_claimed') "
@@ -1135,7 +1133,7 @@ async def test_monitor_windows_complete_from_durable_reports(
 
 
 @pytest.mark.parametrize("target_form", ["uuid", "local_ref"])
-async def test_metrics_monitor_window_needs_both_delivered_recipients(
+async def test_report_window_needs_both_delivered_recipients(
     temp_db: HubDatabase, target_form: str
 ) -> None:
     run = SeatRun(temp_db, "fixture-definition-961ad2d0")
@@ -1160,20 +1158,20 @@ async def test_metrics_monitor_window_needs_both_delivered_recipients(
             {"success": succeeded, "message_ids": [message.id]},
         )
 
-    # A failed triage delivery opens no window.
+    # A failed coordinator delivery opens no window.
     await deliver(COORDINATOR_ID, succeeded=False)
     assert run.step == "tick"
     assert run.vars["tick_window"] is None
-    # A delivered triage report opens the window and still waits on the log monitor.
+    # A delivered coordinator report opens the window and still waits on the peer.
     await deliver(COORDINATOR_ID)
     assert run.step == "report"
     assert "fixture-definition-0f916789" in run.vars["_reported_to"]
-    # A failed log-monitor delivery and a non-recipient target leave the window open.
+    # A failed peer delivery and a non-recipient target leave the window open.
     await deliver(PEER_ID, succeeded=False)
     await deliver(OWNER_ID)
     assert run.step == "report"
     assert "fixture-definition-cf1e3dd7" not in run.vars["_reported_to"]
-    # Only a delivered log-monitor report completes the window.
+    # Only a delivered peer report completes the window.
     await deliver(PEER_ID)
     assert run.step == "tick"
     assert run.vars["tick_done"] is False

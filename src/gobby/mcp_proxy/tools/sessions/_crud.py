@@ -173,7 +173,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
                     machine_id: Filter by client machine id
                     limit: Max results (default 20)
                     agent_type: Filter by the agent definition the session is typed with
-        (its _agent_type variable), e.g. "example-worker"
+                        (its _agent_type variable), e.g. "example-worker"
 
                 Returns:
                     List of sessions and count

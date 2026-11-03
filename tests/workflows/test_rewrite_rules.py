@@ -1,4 +1,4 @@
-"""Tests for rewrite_input rules and require-uv block regression coverage."""
+"""Tests for synthetic rewrite_input and block-rule behavior."""
 
 from __future__ import annotations
 

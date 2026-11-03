@@ -1,4 +1,4 @@
-"""The limit-spawnable-agents rule on a real proxied spawn_agent call."""
+"""Synthetic spawn-admission policy on a real proxied spawn_agent call."""
 
 from __future__ import annotations
 

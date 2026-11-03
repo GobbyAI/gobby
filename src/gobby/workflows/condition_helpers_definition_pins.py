@@ -1,9 +1,10 @@
-"""Detect newly introduced test dependencies on bundled workflow definitions."""
+"""Detect new bundled-definition dependencies in tests and engine source."""
 
 import ast
 import re
 from collections import Counter
 from collections.abc import Mapping
+from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -42,10 +43,19 @@ _TEMPLATE_TREE = "install/shared/workflows"
 def discover_definition_names(templates: Path | None = None) -> frozenset[str]:
     """Read identifiers from the shipped catalog, never from a name allowlist."""
     root = templates or Path(str(files("gobby").joinpath(_TEMPLATE_TREE)))
-    names: set[str] = set()
+    snapshot = []
     for path in sorted(root.rglob("*.yaml")):
-        if "deprecated" in path.relative_to(root).parts:
-            continue
+        if "deprecated" not in path.relative_to(root).parts:
+            stat = path.stat()
+            snapshot.append((path, stat.st_mtime_ns, stat.st_size))
+    return _catalog_names(tuple(snapshot))
+
+
+@lru_cache(maxsize=4)
+def _catalog_names(snapshot: tuple[tuple[Path, int, int], ...]) -> frozenset[str]:
+    """Cache YAML parsing while invalidating on catalog additions, edits and removals."""
+    names: set[str] = set()
+    for path, _, _ in snapshot:
         data = yaml.safe_load(path.read_text())
         if not isinstance(data, dict):
             continue
@@ -144,7 +154,7 @@ def _selection_values(
 
 def _prose_nodes(node: ast.AST) -> set[ast.AST]:
     """Prose containers do not exempt executable expressions embedded in them."""
-    if isinstance(node, ast.Call | ast.Subscript):
+    if isinstance(node, ast.Call | ast.Subscript | ast.Compare):
         return set()
     result = {node}
     for child in ast.iter_child_nodes(node):
@@ -152,8 +162,38 @@ def _prose_nodes(node: ast.AST) -> set[ast.AST]:
     return result
 
 
+@lru_cache(maxsize=4)
+def _distinctive_name_pattern(names: frozenset[str]) -> re.Pattern[str]:
+    choices = "|".join(re.escape(name) for name in sorted(names) if not name.isidentifier())
+    return re.compile(r"(?<![\w-])(?:" + choices + r")(?![\w-])" if choices else r"(?!)")
+
+
+def _definition_field(node: ast.AST, bindings: dict[str, ast.AST]) -> bool:
+    if isinstance(node, ast.Name):
+        field = node.id
+    elif isinstance(node, ast.Attribute):
+        field = node.attr
+    elif isinstance(node, ast.Subscript):
+        field = _string(node.slice, bindings)
+    elif (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and node.args
+    ):
+        field = _string(node.args[0], bindings)
+    else:
+        return False
+    return field.lstrip("_") in _SELECTION_FIELDS
+
+
 def definition_pins(source: str, names: frozenset[str]) -> list[str]:
-    """Find selections and template reads, excluding prose and protocol role fields."""
+    """Find definition mentions, selections and template reads, allowing ordinary role data."""
+    # Compound identifiers are distinctive even in prose. Single words need selection
+    # context because they can also be protocol roles or ordinary English.
+    mentions = [
+        f"definition:{match.group()}" for match in _distinctive_name_pattern(names).finditer(source)
+    ]
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -163,7 +203,7 @@ def definition_pins(source: str, names: frozenset[str]) -> list[str]:
             r"\b(" + "|".join(sorted(_SELECTION_FIELDS)) + r")[\"']?\s*[:=]\s*[\"']([^\"']+)[\"']"
         )
         pins.extend(f"definition:{m[2]}" for m in re.finditer(pattern, source) if m[2] in names)
-        return pins
+        return mentions + pins
     bindings: dict[str, ast.AST] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
@@ -193,7 +233,7 @@ def definition_pins(source: str, names: frozenset[str]) -> list[str]:
             for key, prompt_expression in zip(node.keys, node.values, strict=True):
                 if isinstance(key, ast.Constant) and key.value == "prompts":
                     prose.update(_prose_nodes(prompt_expression))
-    pins = []
+    pins = mentions
     for node in ast.walk(tree):
         if node in prose:
             continue
@@ -273,8 +313,19 @@ def definition_pins(source: str, names: frozenset[str]) -> list[str]:
                 for target in targets
             ):
                 pins.extend(_selection_values(node.value, bindings, names))
+        elif isinstance(node, ast.Compare):
+            operands = [node.left, *node.comparators]
+            if any(_definition_field(operand, bindings) for operand in operands):
+                for operand in operands:
+                    pins.extend(_selection_values(operand, bindings, names))
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
             value = node.value.replace("\\", "/")
+            parts = value.split("/")
+            pins.extend(
+                f"definition:{name}"
+                for name, folder in zip(parts, parts[1:], strict=False)
+                if name in names and re.fullmatch(r"session-\d+", folder)
+            )
             if _TEMPLATE_TREE in value and names.intersection(re.split(r"[/.*?\[\]]", value)):
                 pins.append(f"template:{value[value.index(_TEMPLATE_TREE) :]}")
             if "\n" in node.value:
@@ -289,7 +340,7 @@ def _load_yaml(source: str) -> Any:
         return None
 
 
-def _test_path(root: Path, raw: Any) -> Path | None:
+def _guarded_path(root: Path, raw: Any) -> Path | None:
     if not isinstance(raw, str):
         return None
     path = (root / raw).resolve()
@@ -297,7 +348,11 @@ def _test_path(root: Path, raw: Any) -> Path | None:
         relative = path.relative_to(root)
     except ValueError:
         return None
-    return path if "tests" in relative.parts[:-1] else None
+    parts = relative.parts
+    if not parts:
+        return None
+    in_tests = len(parts) > 1 and parts[0] == "tests"
+    return path if in_tests or path.suffix in {".py", ".rs"} else None
 
 
 def _read(path: Path) -> str:
@@ -373,6 +428,18 @@ def projected_definition_pins(
     payload = tool_input if isinstance(tool_input, Mapping) else {}
     if not payload and event_data and isinstance(event_data.get("tool_input"), Mapping):
         payload = event_data["tool_input"]
+    # Shell normalization supplies paths but cannot project arbitrary command output.
+    # This guard only judges structured content; deletes, moves and shell cleanup must
+    # remain available. The same applies to provider aliases before normalization.
+    shell_payload = any(isinstance(payload.get(key), str) for key in ("command", "cmd"))
+    structured_payload = any(
+        key in payload
+        for key in ("content", "edits", "changes", "patch", "old_string", "old_str", "old_text")
+    )
+    if not structured_payload and (
+        (event_data and event_data.get("tool_name") == "Bash") or shell_payload
+    ):
+        return []
     before: dict[Path, str] = {}
     after: dict[Path, str] = {}
     failures: list[str] = []
@@ -386,10 +453,10 @@ def projected_definition_pins(
     patch = tool_input if isinstance(tool_input, str) else payload.get("patch")
     if isinstance(patch, str):
         for kind, raw, destination, hunks in _patches(patch):
-            origin_test = _test_path(root, raw)
+            origin_test = _guarded_path(root, raw)
             if origin_test is not None:
                 handled.add(origin_test)
-            target = _test_path(root, destination or raw)
+            target = _guarded_path(root, destination or raw)
             if target is None:
                 continue
             handled.add(target)
@@ -413,7 +480,7 @@ def projected_definition_pins(
         for change in changes if isinstance(changes, list) else [payload]:
             if not isinstance(change, Mapping):
                 continue
-            target = _test_path(root, change.get("file_path") or change.get("path"))
+            target = _guarded_path(root, change.get("file_path") or change.get("path"))
             if target is None:
                 continue
             handled.add(target)
@@ -432,7 +499,7 @@ def projected_definition_pins(
     canonical_paths = event_data.get("canonical_file_paths", []) if event_data else []
     if isinstance(canonical_paths, list):
         for raw in canonical_paths:
-            target = _test_path(root, raw)
+            target = _guarded_path(root, raw)
             if target is not None and target not in handled:
                 failures.append(f"{target.relative_to(root)}: use a projectable write")
     catalog = (

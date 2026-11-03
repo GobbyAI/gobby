@@ -1,6 +1,6 @@
 """The SRT run's socket root reaches the rule engine as a daemon-written session variable (#25365).
 
-block-temp-scratchpad-writes admits writes under the socket root that a macOS SRT launch
+Configured write-scope rules admit writes under the socket root that a macOS SRT launch
 granted its own run. The variable is recorded from the launch that granted it, withdrawn
 when a relaunch grants none, reserved from agent writes, and carried to a sandboxed clear
 successor. That successor runs in the same process under the same grant.

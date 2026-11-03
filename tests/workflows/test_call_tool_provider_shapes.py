@@ -1,7 +1,7 @@
 """Provider call_tool wrapper shapes against the schema-lease gate.
 
 Every provider hook path must hand the rule engine the call_tool target the proxy
-dispatches, so ``track-schema-lookup`` leases, ``require-current-context-schema-before-call``
+dispatches, so schema-lookup leases and schema-before-call checks
 checks, and the gate's block reason all use one ``server:tool`` key.
 """
 

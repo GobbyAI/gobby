@@ -41,7 +41,7 @@ async def test_release_manager_step_renders_definition_defaults_for_null_inputs(
 ) -> None:
     from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
-    # Synthetic seat and pipeline step shaped like the release-manager step of a support
+    # Synthetic seat and pipeline step shaped like an administrative step of a support
     # runbook. The seat names no model, so the definition defaults come from the test.
     agent_body = AgentDefinitionBody.model_validate(
         {

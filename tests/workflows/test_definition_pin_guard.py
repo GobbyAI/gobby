@@ -6,8 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows import condition_helpers_definition_pins
@@ -21,6 +23,84 @@ from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condit
 
 pytestmark = pytest.mark.unit
 NAMES = frozenset({"fixture-agent", "fixture-rule", "fixture-pipeline", "fixture-workflow"})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm tests/test_example.py",
+        "git rm tests/test_example.py",
+        "git mv tests/test_example.py tests/test_renamed.py",
+        "git restore tests/test_example.py",
+        "git checkout -- tests/test_example.py",
+        "sed -i '' 's/old/new/' tests/test_example.py",
+        "cp tests/test_example.py tests/test_copy.py",
+        "mkdir -p tests/pkg",
+        "touch tests/pkg/__init__.py",
+    ],
+)
+def test_shell_file_operations_do_not_require_structured_edit_payloads(
+    tmp_path: Path, command: str
+) -> None:
+    target = tmp_path / "tests/test_example.py"
+    target.parent.mkdir()
+    target.write_text('spawn(agent="fixture-agent")\n')
+    data = normalize_tool_fields(
+        {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(tmp_path)}
+    )
+    assert projected_definition_pins(data["tool_input"], tmp_path, data, names=NAMES) == []
+
+
+def test_nested_test_directory_does_not_extend_scope_to_other_file_types(tmp_path: Path) -> None:
+    assert (
+        projected_definition_pins(
+            {"file_path": "crates/example/tests/data.txt", "content": 'agent="fixture-agent"'},
+            tmp_path,
+            names=NAMES,
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/example.py",
+        "scripts/check.py",
+        "crates/example/src/lib.rs",
+        "crates/example/tests/check.rs",
+    ],
+)
+def test_production_sources_cannot_add_definition_dependencies(tmp_path: Path, path: str) -> None:
+    assert projected_definition_pins(
+        {"file_path": path, "content": 'agent="fixture-agent"'}, tmp_path, names=NAMES
+    )
+
+
+@pytest.mark.parametrize(
+    "source", ["# Refer to fixture-rule for authority.", 'let reason = "[fixture-rule] retry";']
+)
+def test_distinctive_definition_identifiers_are_pins_even_in_prose(source: str) -> None:
+    assert definition_pins(source, NAMES)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('agent_name == "fixtureword"', True),
+        ('session.agent_type in {"fixtureword"}', True),
+        ('variables.get("_agent_type") != "fixtureword"', True),
+        ('state["_agent_type"] == "fixtureword"', True),
+        ('path = "fixtureword/session-1/notes.md"', True),
+        ('AgentPromptBlocks(agent="text" if agent_name == "fixtureword" else "")', True),
+        ('role == "fixtureword"', False),
+        ('message.role == "fixtureword"', False),
+    ],
+)
+def test_single_word_selections_and_workspace_paths_need_semantic_context(
+    source: str, expected: bool
+) -> None:
+    assert bool(definition_pins(source, frozenset({"fixtureword"}))) is expected
 
 
 def test_condition_helper_uses_current_project_and_event(
@@ -50,6 +130,22 @@ def test_catalog_discovers_each_definition_kind_from_fixture_yaml(tmp_path: Path
     (tmp_path / "pipelines/p.yaml").write_text("name: fixture-pipeline\ntype: pipeline\n")
     (tmp_path / "w.yaml").write_text("name: fixture-workflow\ntype: workflow\nsteps: []\n")
     assert discover_definition_names(tmp_path) == NAMES
+
+
+def test_catalog_cache_tracks_fixture_edits_additions_and_removals(tmp_path: Path) -> None:
+    path = tmp_path / "fixture.yaml"
+    path.write_text("name: fixture-agent\n")
+    with patch.object(yaml, "safe_load", wraps=yaml.safe_load) as load:
+        assert discover_definition_names(tmp_path) == {"fixture-agent"}
+        assert discover_definition_names(tmp_path) == {"fixture-agent"}
+        assert load.call_count == 1
+        path.write_text("name: fixture-pipeline\n")
+        assert discover_definition_names(tmp_path) == {"fixture-pipeline"}
+        added = tmp_path / "added.yaml"
+        added.write_text("name: fixture-workflow\n")
+        assert discover_definition_names(tmp_path) == {"fixture-pipeline", "fixture-workflow"}
+        path.unlink()
+        assert discover_definition_names(tmp_path) == {"fixture-workflow"}
 
 
 @pytest.mark.parametrize(
@@ -89,27 +185,27 @@ def test_definition_selection_is_a_pin(source: str) -> None:
 @pytest.mark.parametrize(
     "source",
     [
-        'messages = [{"role": "assistant", "content": "fixture-agent"}]',
-        'messages = [{"role": "fixture-agent", "content": "text"}]',
-        'messages = [{"type": "message", "name": "fixture-agent"}]',
-        'create_task(category="fixture-agent")',
-        'InternalToolRegistry(name="fixture-rule")',
-        'get_registry("fixture-rule")',
-        'registry = InternalToolRegistry(name="fixture-rule")\nregistry.get_tool("fixture-agent")',
-        'coordinator.cache_agent_message("session-1", "fixture-agent")',
-        'AgentPromptBlocks("fixture-agent")',
-        'AgentPromptBlocks(agent="fixture-agent")',
-        'body = {"prompts": {"agent": "fixture-agent"}}',
-        'messages = AgentMessageManager()\nmessages.create("fixture-agent")',
-        'print("name:fixture-rule")',
-        'messages = [{"role": "assistant", "content": "name:fixture-rule"}]',
-        'pipeline_step = "fixture-workflow"',
-        'print("fixture-agent")',
+        'messages = [{"role": "assistant", "content": "fixtureword"}]',
+        'messages = [{"role": "fixtureword", "content": "text"}]',
+        'messages = [{"type": "message", "name": "fixtureword"}]',
+        'create_task(category="fixtureword")',
+        'InternalToolRegistry(name="fixtureword")',
+        'get_registry("fixtureword")',
+        'registry = InternalToolRegistry(name="fixtureword")\nregistry.get_tool("fixtureword")',
+        'coordinator.cache_agent_message("session-1", "fixtureword")',
+        'AgentPromptBlocks("fixtureword")',
+        'AgentPromptBlocks(agent="fixtureword")',
+        'body = {"prompts": {"agent": "fixtureword"}}',
+        'messages = AgentMessageManager()\nmessages.create("fixtureword")',
+        'print("name:fixtureword")',
+        'messages = [{"role": "assistant", "content": "name:fixtureword"}]',
+        'pipeline_step = "fixtureword"',
+        'print("fixtureword")',
         'spawn(agent="fixture-user-defined")',
     ],
 )
 def test_ordinary_words_and_unrelated_namespaces_are_allowed(source: str) -> None:
-    assert definition_pins(source, NAMES) == []
+    assert definition_pins(source, NAMES | {"fixtureword"}) == []
 
 
 def test_new_pin_is_blocked_and_existing_pin_can_be_edited(tmp_path: Path) -> None:
@@ -136,10 +232,10 @@ def test_new_pin_is_blocked_and_existing_pin_can_be_edited(tmp_path: Path) -> No
     assert "tests/test_example.py" in blocked[0]
 
 
-def test_role_data_and_writes_outside_tests_are_unaffected(tmp_path: Path) -> None:
+def test_role_data_and_writes_outside_source_scope_are_unaffected(tmp_path: Path) -> None:
     for path, content in (
         ("tests/test_messages.py", 'messages = [{"role": "assistant"}]'),
-        ("src/example.py", 'spawn(agent="fixture-agent")'),
+        ("docs/example.md", 'spawn(agent="fixture-agent")'),
     ):
         assert (
             projected_definition_pins(
@@ -277,7 +373,9 @@ def test_canonical_move_paths_are_not_unknown_writes(tmp_path: Path, destination
     )
 
 
-@pytest.mark.parametrize("case", ["new-pin", "existing-pin", "role-data", "outside-tests"])
+@pytest.mark.parametrize(
+    "case", ["new-pin", "existing-pin", "role-data", "outside-source", "source-pin", "rust-pin"]
+)
 async def test_synthetic_rule_blocks_only_new_test_dependencies(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
@@ -301,8 +399,12 @@ async def test_synthetic_rule_blocks_only_new_test_dependencies(
             ],
         },
     )
-    target = tmp_path / ("src/example.py" if case == "outside-tests" else "tests/test_example.py")
-    target.parent.mkdir()
+    target = tmp_path / {
+        "outside-source": "docs/example.md",
+        "source-pin": "src/example.py",
+        "rust-pin": "crates/example/src/lib.rs",
+    }.get(case, "tests/test_example.py")
+    target.parent.mkdir(parents=True)
     original = 'spawn(agent="fixture-agent")\n' if case == "existing-pin" else ""
     target.write_text(original)
     content = 'messages = [{"role": "assistant", "content": "hello"}]\n'
@@ -310,6 +412,8 @@ async def test_synthetic_rule_blocks_only_new_test_dependencies(
         content = original + (
             "# fixture cleanup\n" if original else 'spawn(agent="fixture-agent")\n'
         )
+    if case == "rust-pin":
+        content = 'let agent = "fixture-agent";\n'
     event = HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id="11111111-1111-4111-8111-111111111111",
@@ -324,7 +428,8 @@ async def test_synthetic_rule_blocks_only_new_test_dependencies(
     engine = RuleEngine(temp_db)
     with patch.object(engine, "_resolve_project_info", return_value={"path": str(tmp_path)}):
         response = await engine.evaluate(event, session_id=event.session_id, variables={})
-    assert response.decision == ("block" if case == "new-pin" else "allow")
-    if case == "new-pin":
+    blocked = case in {"new-pin", "source-pin", "rust-pin"}
+    assert response.decision == ("block" if blocked else "allow")
+    if blocked:
         assert "fixture-agent" in (response.reason or "")
         assert "inline fixture" in (response.reason or "")

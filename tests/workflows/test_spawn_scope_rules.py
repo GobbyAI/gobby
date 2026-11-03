@@ -962,10 +962,10 @@ _REFUSED_RESUMES = pytest.mark.parametrize(
     ],
     ids=[
         "other-team-seat",
-        "orchestrator-seat",
+        "coordinator-seat",
         "fresh-spawn",
-        "retyped-to-release-manager",
-        "retyped-to-dev-team-lead",
+        "retyped-to-another-definition",
+        "retyped-to-a-third-definition",
         "not-a-team-manager",
     ],
 )

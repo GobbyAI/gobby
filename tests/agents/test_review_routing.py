@@ -119,7 +119,7 @@ async def test_reviewer_agent_admission(world: TeamWorld) -> None:
 
 @pytest.mark.asyncio
 async def test_research_spike_admits_a_research_reviewer_devteam(world: TeamWorld) -> None:
-    # The researcher claims its spike; the DevTeam bound to it takes research-reviewer.
+    # The owner claims its spike; the bound team takes the declared reviewer definition.
     spike = LocalTaskManager(world.case.db).create_task(
         world.case.project_id,
         "Research the debt",

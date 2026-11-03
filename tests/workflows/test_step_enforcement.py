@@ -2037,7 +2037,7 @@ class TestStepTransitions:
         """Session-scoped variables must NOT drive workflow transitions.
 
         Regression for session #3277: the parent planner handed a claimed
-        task to the spawned plan-adversary, which made
+        task to the spawned reviewer, which made
         _session_start.py write ``task_claimed=True`` into the child's
         session variables. Before the fix, the merge order in
         ``_process_step_after_tool`` let that session value shadow the
@@ -2242,7 +2242,7 @@ class TestStepTransitions:
         """Operator tool send_keys must bypass step MCP allow-lists.
 
         Regression for the dogfood block on session #3277: the developer
-        tried to interrogate a stuck plan-adversary via
+        tried to interrogate a stuck reviewer via
         ``gobby-sessions:send_keys`` from the web app, but the adversary's
         ``terminate`` step only whitelists ``gobby-agents:kill_agent``.
         Operator/debug channels must be exempt so humans can always reach
@@ -2445,7 +2445,7 @@ async def test_spawned_agent_operator_tools_follow_the_payload_identity(
 ) -> None:
     """A spawned agent is not a subagent; only a payload-named native subagent is blocked.
 
-    Withholding terminal tools from a spawned agent is the no-send-keys rule's
+        Withholding terminal tools from a spawned agent is a configured rule's
     capability decision, not operator-tool enforcement's.
     """
     _setup_operator_tool_session(db, manager, instance_mgr, None)
@@ -3363,7 +3363,7 @@ class TestProviderToolNameNormalization:
     """Grok and other runtimes emit Gobby proxy tools without the mcp__ prefix.
 
     Enforcement must compare canonical spellings; exact-match killed four
-    plan-adversary runs in load_skill (rule step-native-tool-allowlist).
+        A synthetic reviewer runs in load_skill under its native-tool allowlist.
     """
 
     @pytest.mark.asyncio

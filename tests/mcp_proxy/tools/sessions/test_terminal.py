@@ -489,7 +489,7 @@ class TestRegisterTerminalTools:
         write_coordinator.write.assert_not_called()
 
     def test_send_keys_does_not_refuse_autonomous_agent_caller(self) -> None:
-        """Whether a spawned agent may send keys is the no-send-keys rule's decision."""
+        """Configured rules decide whether a spawned agent may send keys."""
         registry = _TestRegistry(name="test", description="test")
         caller = MagicMock(
             id="caller-session",

@@ -585,7 +585,7 @@ async def test_team_planning_arrange_tiles_the_tab_a_seat_pane_joins(
     assert arrange.mcp is not None and arrange.mcp.arguments is not None
     registry = _registry(stack)
     session = stack.sessions.register(
-        external_id=f"team-planning-arrange-{'-'.join(seats)}",
+        external_id=f"fixture-team-arrange-{'-'.join(seats)}",
         machine_id=LOCAL_MACHINE_ID,
         source="claude",
         project_id=stack.project_id,
@@ -596,7 +596,7 @@ async def test_team_planning_arrange_tiles_the_tab_a_seat_pane_joins(
         machine_id=LOCAL_MACHINE_ID,
         iat=0,
         exp=0,
-        agent_run_id="team-planning-arrange-run",
+        agent_run_id="fixture-team-arrange-run",
     )
     with _principal(None), session_context_for_test(session.id):
         [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]

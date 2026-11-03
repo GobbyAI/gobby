@@ -289,7 +289,7 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
         new_callable=AsyncMock,
         return_value=True,
     ) as complete:
-        await engine._complete_agent_workflow_run(CHILD_SESSION_ID, "tech-writer-steps", {})
+        await engine._complete_agent_workflow_run(CHILD_SESSION_ID, "fixture-author-steps", {})
         await terminal_delivery.drain_shielded_terminal_deliveries()
 
     complete.assert_awaited_once()
@@ -349,7 +349,7 @@ async def test_workflow_terminate_on_parked_daemon_stop_run_retains_state_and_sk
         new_callable=AsyncMock,
         return_value=True,
     ) as complete:
-        await engine._complete_agent_workflow_run(CHILD_SESSION_ID, "tech-writer-steps", {})
+        await engine._complete_agent_workflow_run(CHILD_SESSION_ID, "fixture-author-steps", {})
 
     runner.agent_lifecycle_monitor.complete_workflow_run.assert_not_awaited()
     complete.assert_not_awaited()

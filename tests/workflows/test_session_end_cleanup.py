@@ -111,7 +111,7 @@ def test_session_end_deletes_workflow_instances_for_ending_session(db: HubDataba
     _save(
         instance_manager,
         session_id=S1,
-        workflow_name="plan-adversary-steps",
+        workflow_name="fixture-review-steps",
     )
 
     handler = _SessionEndHandler(db)
@@ -129,7 +129,7 @@ def test_session_end_only_deletes_instances_for_target_session(db: HubDatabase) 
     _save(
         instance_manager,
         session_id=S1,
-        workflow_name="plan-adversary-steps",
+        workflow_name="fixture-review-steps",
     )
     _save(
         instance_manager,

@@ -90,7 +90,7 @@ async def test_per_class_recording_is_memory_only() -> None:
     task_manager = FakeTaskManager()
     service = _service(memory_manager, task_manager)
     class_cases = [
-        ("plan-review", "plan_review", "plan-adversary-reviewer", "reviewer-miss"),
+        ("fixture-review", "plan_review", "fixture-reviewer", "reviewer-miss"),
         ("plan-review", "plan_review", "fixture-definition-cf5ba898", "cross-section"),
         ("epic-qa", "qa_rejection", "epic-qa-reviewer", "qa-miss"),
         ("epic-qa", "qa_rejection", "epic-validation-reviewer", "validation-miss"),
