@@ -249,6 +249,10 @@ def record_attestation(
                 f"Invalid result {submission.result!r} for {submission.kind}; "
                 f"allowed results: {', '.join(kind.allowed_results)}. {kind.guidance}"
             )
+        if refusal := task_scope_refusal(task, session_id, body.task_attestation_scope, db=db):
+            raise AttestationError(refusal)
+        if task.closed_at is not None:
+            raise AttestationError("closed tasks cannot receive new attestations")
         reference = submission.reference
         if shape_refusal := attestation_shape_refusal(
             kind=submission.kind,
@@ -261,10 +265,6 @@ def record_attestation(
             rules=RuleDefinitionManager(db).list_effective(task.project_id),
         ):
             raise AttestationError(shape_refusal)
-        if refusal := task_scope_refusal(task, session_id, body.task_attestation_scope, db=db):
-            raise AttestationError(refusal)
-        if task.closed_at is not None:
-            raise AttestationError("closed tasks cannot receive new attestations")
         if submission.supersedes_id is not None:
             previous = next((r for r in records if r.id == submission.supersedes_id), None)
             if previous is None or previous.kind != submission.kind:

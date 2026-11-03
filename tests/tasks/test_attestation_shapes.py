@@ -138,6 +138,20 @@ def test_acceptable_and_uncovered_shapes_are_recorded(
     ]
 
 
+def test_closed_task_refusal_precedes_the_shape_refusal(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    author = _author(temp_db, sample_project["id"])
+    task = LocalTaskManager(temp_db).create_task(sample_project["id"], "Bake a cake")
+    with temp_db.transaction() as conn:
+        conn.execute(
+            "UPDATE tasks SET closed_at = now(), closed_reason = 'done' WHERE id = %s", (task.id,)
+        )
+    with pytest.raises(AttestationError) as refused:
+        _submit(temp_db, author, task.id, "bake", "pass")
+    assert str(refused.value) == "closed tasks cannot receive new attestations"
+
+
 def test_declared_negative_result_stays_recordable(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
