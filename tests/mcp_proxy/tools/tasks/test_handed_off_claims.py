@@ -84,6 +84,7 @@ async def test_handed_off_claim_lets_the_session_claim_another_task(
         "task_id": nxt.id,
         "ref": f"#{nxt.seq_num}",
         "title": "Next",
+        "review_fail_count": 0,
     }
     assert manager.get_task(landed.id).claimed_by_session_id == canonical_task_session.id
     assert manager.get_task(nxt.id).claimed_by_session_id == canonical_task_session.id
@@ -271,6 +272,7 @@ async def test_reclaiming_the_sole_survivor_restores_claim_and_edit_attribution(
         "task_id": landed.id,
         "ref": f"#{landed.seq_num}",
         "title": "Landed",
+        "review_fail_count": 0,
     }
     state = _variables(temp_db, canonical_task_session)
     assert state["active_task_id"] == landed.id
@@ -297,6 +299,7 @@ async def test_a_reclaim_activates_one_of_several_handed_off_claims(
         "task_id": second.id,
         "ref": f"#{second.seq_num}",
         "title": "Second",
+        "review_fail_count": 0,
     }
     assert _variables(temp_db, canonical_task_session)["active_task_id"] == second.id
 
@@ -320,6 +323,7 @@ async def test_reclaim_selects_a_task_while_another_claim_remains_active(
         "task_id": landed.id,
         "ref": f"#{landed.seq_num}",
         "title": "Landed",
+        "review_fail_count": 0,
     }
     assert _variables(temp_db, canonical_task_session)["active_task_id"] == landed.id
     assert manager.get_task(active.id).claimed_by_session_id == canonical_task_session.id
