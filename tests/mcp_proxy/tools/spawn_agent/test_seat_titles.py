@@ -1,7 +1,7 @@
 """Caller-supplied titles never replace a defined seat's pane or session title.
 
 Contract: docs/contracts/seat-titles.md, rule 1 and the spawn_agent caller rule. A
-seat's title is its agent definition display name (dev-team-lead -> Dev Team Lead), whether
+seat's title is its agent definition display name (fixture-worker -> Fixture Worker), whether
 or not the caller passes a title.
 """
 
@@ -56,7 +56,7 @@ async def _spawn_developer(
         "_load_agent_body",
         Mock(
             return_value=AgentDefinitionBody(
-                name="developer",
+                name="fixture-worker",
                 prompts=AgentPromptBlocks(agent="Developer seat"),
                 workflows=AgentWorkflows(rule_selectors=AgentSelector()),
             )
@@ -70,8 +70,8 @@ async def _spawn_developer(
         Mock(), session_manager=session_manager, db=session_manager.db
     )
     arguments: dict[str, Any] = {
-        "prompt": "Write the developer seat's change.",
-        "agent": "developer",
+        "prompt": "Write the fixture-worker seat's change.",
+        "agent": "fixture-worker",
         "execution_mode": "interactive",
         "checkout_mode": "none",
         "project_path": str(project_path),
@@ -100,7 +100,7 @@ async def test_caller_title_does_not_replace_a_defined_seat_title(
         project_path=tmp_path,
     )
 
-    assert child.title == "Developer"
+    assert child.title == "Fixture Worker"
     assert child.title_source == "definition"
 
 
@@ -115,5 +115,5 @@ async def test_defined_seat_without_caller_title_takes_its_definition_name(
         session_manager, sample_project, monkeypatch, title=None, project_path=tmp_path
     )
 
-    assert child.title == "Developer"
+    assert child.title == "Fixture Worker"
     assert child.title_source == "definition"

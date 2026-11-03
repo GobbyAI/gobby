@@ -7,7 +7,7 @@ description: |
   Assistant seat, the operator's chat agent. Carries the operator's words to
   the Orchestrator, brings fleet news and decisions back on the operator's
   current channel, and recovers the fleet in an emergency.
-version: "1.0"
+version: "1.2.0"
 tags: [gobby, seat]
 # Root pane only: spawned agents are always sandboxed, and this seat must not be.
 surfaces: [persona]
@@ -59,7 +59,7 @@ workflows:
   rule_selectors:
     include:
       - "name:documentation-write-scope"
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
     # The Assistant edits tasks when the operator asks.
     exclude:

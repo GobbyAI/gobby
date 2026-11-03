@@ -1,5 +1,5 @@
-version: "1.0.0"
-tags: [roles, seat, enforcement, gobby]
+version: "2.0.0"
+tags: [roles, enforcement, gobby]
 rules:
   consolidation-read-only-shell:
     description: Permit proven read-only evidence checks for consolidation.

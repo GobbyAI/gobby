@@ -295,7 +295,7 @@ class VectorStore:
     async def delete(
         self,
         memory_id: str | None = None,
-        filters: dict[str, str] | None = None,
+        filters: dict[str, str] | Filter | None = None,
         collection_name: str | None = None,
     ) -> None:
         """Delete a point by memory ID or filter."""

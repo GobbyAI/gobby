@@ -117,7 +117,7 @@ class LocalPlanManager:
         # Every plans/coverage consumer canonicalizes the ref unprefixed — the manifest
         # path via `_sanitize(kind="root_task_ref")` and expansion QA — so store that
         # form instead of whichever spelling the caller used. A prefixed row makes ManifestIdentity report a foreign owner for the
-        # manifest its own path resolves to, which blocks the expansion-QA gate.
+        # manifest its own path resolves to, which blocks expansion validation.
         root_task_ref = _normalize_ref(root_task_ref)
         record_id = str(uuid.uuid4())
 

@@ -467,7 +467,7 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
                 .execute(
                     "INSERT INTO agent_runs(id, parent_session_id, child_session_id, machine_id,
                      provider, prompt, agent_name, status)
-                 VALUES ($1, $2, $2, $3, 'codex', 'review fixture', 'code-reviewer', 'running')",
+                 VALUES ($1, $2, $2, $3, 'codex', 'review fixture', 'synthetic-reviewer', 'running')",
                     &[&reviewer_run_id, &managed.session_id, &managed.machine_id],
                 )
                 .expect("bind existing session to reviewer seat");

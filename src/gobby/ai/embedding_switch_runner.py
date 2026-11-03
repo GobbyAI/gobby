@@ -492,6 +492,9 @@ class EmbeddingSwitchRunner:
             (tool_id,),
         )
         if row is None:
+            await vector_store.delete(
+                filters={"source_id": tool_id}, collection_name=collection_name
+            )
             await vector_store.delete(tool_id, collection_name=collection_name)
             return 0
         config = self._runtime_config()
@@ -542,6 +545,16 @@ class EmbeddingSwitchRunner:
         }
         collection_kind = collection_kinds.get(change.source_kind)
         if collection_kind is None:
+            return
+        if change.source_kind == "tool":
+            await vector_store.delete(
+                filters={"source_id": change.source_id},
+                collection_name=build_physical_names(journal)[collection_kind],
+            )
+            await vector_store.delete(
+                change.source_id,
+                collection_name=build_physical_names(journal)[collection_kind],
+            )
             return
         point_id = change.source_id
         await vector_store.delete(

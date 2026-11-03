@@ -5,7 +5,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MEMORY_GUIDE = ROOT / "docs/guides/memory.md"
 HOOK_GUIDE = ROOT / "docs/guides/hook-schemas.md"
-MEMORY_RULES = ROOT / "src/gobby/install/shared/workflows/rules/memory-lifecycle"
 
 
 def _text(path: Path) -> str:
@@ -63,16 +62,3 @@ def test_hook_guide_maps_stop_failure_and_grok_hooks() -> None:
     ):
         assert f"`{native_hook}`" in mapping
     assert mapping.count("| `StopFailure` | `stop_failure` | `turn_end` |") == 1
-
-
-def test_adjacent_guides_name_memory_lifecycle_gates() -> None:
-    for relative_path in (
-        "docs/guides/rules.md",
-        "docs/guides/skills.md",
-        "docs/guides/agents.md",
-    ):
-        guide = _text(ROOT / relative_path)
-        assert "memory-lifecycle" in guide
-        assert "surface-memories" in guide
-        assert "guard-plan-memory-writes" in guide
-        assert "review-closed-task-memories" in guide

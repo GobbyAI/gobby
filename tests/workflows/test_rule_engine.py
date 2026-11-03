@@ -30,7 +30,6 @@ from gobby.workflows.definitions import (
     RuleDefinitionBody,
     RuleEffect,
     RuleTriggerEvent,
-    split_rule_definition_data,
 )
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.effects import MAX_OBSERVATIONS
@@ -670,6 +669,72 @@ class TestBlockEffect:
         await _assert_evaluation(db, event, "block", expected_reason_contains="First block")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source", "finding", "evidence", "decision"),
+    [
+        ("fixture-review", {}, {}, "block"),
+        ("fixture-review", {"topic": " ", "explanation": "detail"}, {"receipt": "r1"}, "block"),
+        ("fixture-review", {"topic": "sample"}, {"receipt": "r1"}, "block"),
+        ("fixture-review", {"topic": "sample", "explanation": "detail"}, {}, "block"),
+        (
+            "fixture-review",
+            {"topic": "sample", "explanation": "detail"},
+            {"receipt": "r1"},
+            "allow",
+        ),
+        (
+            "fixture-review",
+            {"topic": "sample", "diagnosis": "detail"},
+            {"revision": "v1"},
+            "allow",
+        ),
+        ("fixture-other", {}, {}, "allow"),
+    ],
+)
+async def test_nested_evidence_condition_blocks_only_incomplete_selected_input(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    source: str,
+    finding: dict[str, str],
+    evidence: dict[str, str],
+    decision: str,
+) -> None:
+    """Synthetic YAML conditions can require nested findings and alternative receipts."""
+    _insert_rule(
+        manager,
+        "fixture-nested-evidence",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            when="""
+                tool_input.get('source') == 'fixture-review'
+                and (
+                    not all(
+                        str((tool_input.get('finding') or {}).get(field) or '').strip()
+                        for field in ('topic',)
+                    )
+                    or not any(
+                        str((tool_input.get('finding') or {}).get(field) or '').strip()
+                        for field in ('explanation', 'diagnosis')
+                    )
+                    or not any(
+                        (tool_input.get('evidence') or {}).get(field)
+                        for field in ('receipt', 'revision')
+                    )
+                )
+            """,
+            effects=[RuleEffect(type="block", reason="Fixture evidence is incomplete")],
+        ),
+    )
+    event = _make_event(
+        data={
+            "tool_name": "fixture_record",
+            "tool_input": {"source": source, "finding": finding, "evidence": evidence},
+        }
+    )
+    await _assert_evaluation(db, event, decision)
+
+
 class TestSetVariableEffect:
     @pytest.mark.asyncio
     async def test_set_variable_literal(
@@ -1024,25 +1089,19 @@ class TestInjectContextEffect:
     async def test_installed_user_profile_rule_renders_seeded_content(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
-        """The bundled profile rule renders content seeded by session start."""
-        from pathlib import Path
-
-        import yaml
-
-        rule_path = (
-            Path(__file__).parents[2]
-            / "src/gobby/install/shared/workflows/rules/context-handoff/inject-user-profile.yaml"
-        )
-        document = yaml.safe_load(rule_path.read_text())
-        rule_data = document["rules"]["inject-user-profile"]
-        body_data, metadata = split_rule_definition_data(rule_data)
+        """An arbitrary template renders content seeded by session start."""
         _insert_rule(
             manager,
-            "inject-user-profile",
-            RuleDefinitionBody.model_validate(body_data),
-            priority=metadata["priority"],
-            enabled=metadata["enabled"],
-            tags=document["tags"],
+            "synthetic-session-content",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.SESSION_START,
+                effects=[
+                    RuleEffect(
+                        type="inject_context", template="Profile: {{ user_profile_content }}"
+                    )
+                ],
+            ),
+            tags=["default"],
         )
 
         event = _make_event(
@@ -1059,7 +1118,7 @@ class TestInjectContextEffect:
             },
         )
 
-        assert "## Global User Profile" in (response.context or "")
+        assert "Profile: " in (response.context or "")
         assert "Prefers concise status updates." in (response.context or "")
 
     @pytest.mark.asyncio
@@ -2351,16 +2410,16 @@ class TestMcpCallTemplateRendering:
 
         _insert_rule(
             manager,
-            "pipeline-auto-run",
+            "synthetic-background-template",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.SESSION_START,
-                when="variables.get('_assigned_pipeline')",
+                when="variables.get('fixture_target')",
                 effects=[
                     RuleEffect(
                         type="mcp_call",
                         server="gobby-workflows",
                         tool="run_pipeline",
-                        arguments={"name": "{{ _assigned_pipeline }}"},
+                        arguments={"name": "{{ fixture_target }}"},
                         background=True,
                     ),
                 ],
@@ -2369,7 +2428,7 @@ class TestMcpCallTemplateRendering:
 
         event = _make_event(HookEventType.SESSION_START)
         engine = RuleEngine(db)
-        variables: dict[str, Any] = {"_assigned_pipeline": "my-deploy-pipeline"}
+        variables: dict[str, Any] = {"fixture_target": "fixture-value"}
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
@@ -2378,7 +2437,7 @@ class TestMcpCallTemplateRendering:
         call = mcp_calls[0]
         assert call["server"] == "gobby-workflows"
         assert call["tool"] == "run_pipeline"
-        assert call["arguments"]["name"] == "my-deploy-pipeline"
+        assert call["arguments"]["name"] == "fixture-value"
         assert call["background"] is True
 
     @pytest.mark.asyncio
@@ -2700,7 +2759,7 @@ class TestEditWritePending:
     ) -> None:
         """Edit blocked by a declarative rule should clear edit_write_pending.
 
-        Regression test: when require-task-before-edit blocks an Edit,
+        Regression test: when fixture-definition-55b74807 blocks an Edit,
         edit_write_pending stayed True, causing edit-write-recovery to
         loop on every stop attempt.
         """
@@ -3271,14 +3330,14 @@ class TestRuleEngineHelpers:
     def test_is_expression_true(self) -> None:
         """Expression-like strings should be detected."""
         engine = RuleEngine.__new__(RuleEngine)
-        assert engine._is_expression("variables.get('x')") is True
-        assert engine._is_expression("len(items)") is True
-        assert engine._is_expression("a + b") is True
-        assert engine._is_expression("x and y") is True
-        assert engine._is_expression("x not y") is True
-        assert engine._is_expression("assistant_response_matches_any(['In summary'])") is True
+        assert engine.is_expression("variables.get('x')") is True
+        assert engine.is_expression("len(items)") is True
+        assert engine.is_expression("a + b") is True
+        assert engine.is_expression("x and y") is True
+        assert engine.is_expression("x not y") is True
+        assert engine.is_expression("assistant_response_matches_any(['In summary'])") is True
         assert (
-            engine._is_expression(
+            engine.is_expression(
                 """
                 assistant_response_matches_any([
                     'In summary',
@@ -3291,9 +3350,9 @@ class TestRuleEngineHelpers:
     def test_is_expression_false(self) -> None:
         """Literal strings should not be detected as expressions."""
         engine = RuleEngine.__new__(RuleEngine)
-        assert engine._is_expression("hello world") is False
-        assert engine._is_expression("42") is False
-        assert engine._is_expression("true") is False
+        assert engine.is_expression("hello world") is False
+        assert engine.is_expression("42") is False
+        assert engine.is_expression("true") is False
 
     def test_coerce_rendered_value(self) -> None:
         """Test _coerce_rendered_value for bool, int, float, string."""
@@ -4007,7 +4066,7 @@ class TestAgentScope:
         )
 
         engine = RuleEngine(db)
-        variables: dict[str, Any] = {"_agent_type": "researcher"}
+        variables: dict[str, Any] = {"_agent_type": "fixture-definition-3588bb72"}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert variables.get("matched") is True
@@ -4022,7 +4081,7 @@ class TestAgentScope:
             "scoped-rule",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
-                agent_scope=["researcher"],
+                agent_scope=["fixture-definition-3588bb72"],
                 effects=[RuleEffect(type="set_variable", variable="matched", value=True)],
             ),
         )
@@ -4266,10 +4325,9 @@ class TestVerboseOnceBlockReason:
     @staticmethod
     def _full_reason() -> str:
         return (
-            "This project is indexed with gcode. Use gcode for code navigation:\n"
-            "- gcode outline path/to/file — symbol map (much cheaper than Read)\n"
-            "- gcode search 'query' — find symbols by name\n"
-            "- gcode symbol <full-uuid> — fetch exact source from a search/outline UUID"
+            "Fixture requires a recovery action.\n"
+            "Call fixture_repair() before retrying.\n"
+            "Keep this second detail in the first response."
         )
 
     @pytest.mark.asyncio
@@ -4278,7 +4336,7 @@ class TestVerboseOnceBlockReason:
     ) -> None:
         _insert_rule(
             manager,
-            "require-code-index-skill",
+            "synthetic-multiline-block",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason=self._full_reason())],
@@ -4291,11 +4349,11 @@ class TestVerboseOnceBlockReason:
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
-        assert "gcode outline" in (response.reason or "")
+        assert "fixture_repair()" in (response.reason or "")
         assert self._TERSE_HINT not in (response.reason or "")
         shown = variables["_block_reasons_shown"]
         assert len(shown) == 1
-        assert shown[0].startswith("require-code-index-skill:")
+        assert shown[0].startswith("synthetic-multiline-block:")
 
     @pytest.mark.asyncio
     async def test_second_block_same_rule_collapses_to_terse(
@@ -4303,7 +4361,7 @@ class TestVerboseOnceBlockReason:
     ) -> None:
         _insert_rule(
             manager,
-            "require-code-index-skill",
+            "synthetic-multiline-block",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason=self._full_reason())],
@@ -4319,10 +4377,9 @@ class TestVerboseOnceBlockReason:
         assert second.decision == "block"
         assert second.reason is not None
         assert second.reason.startswith(
-            f"Rule enforced by Gobby: [require-code-index-skill] {self._TERSE_HINT}"
+            f"Rule enforced by Gobby: [synthetic-multiline-block] {self._TERSE_HINT}"
         )
-        assert "\nRecovery directive: Use gcode for code navigation:" in second.reason
-        assert "gcode outline path/to/file" in second.reason
+        assert "\nRecovery directive: Call fixture_repair() before retrying." in second.reason
 
     @pytest.mark.asyncio
     async def test_parallel_extra_skill_blocks_share_one_batch_recovery_event(
@@ -4330,15 +4387,15 @@ class TestVerboseOnceBlockReason:
     ) -> None:
         _insert_rule(
             manager,
-            "require-claimed-task-extra-skills",
+            "synthetic-parallel-recovery",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
-                when="missing_claimed_task_extra_skills() != []",
+                when="variables.get('fixture_skills') != []",
                 effects=[
                     RuleEffect(
                         type="block",
                         reason=(
-                            "{{ skill_fetch_batch_directive(missing_claimed_task_extra_skills()) }}"
+                            "{{ skill_fetch_batch_directive(variables.get('fixture_skills')) }}"
                         ),
                     )
                 ],
@@ -4346,7 +4403,7 @@ class TestVerboseOnceBlockReason:
         )
         engine = RuleEngine(db)
         variables: dict[str, Any] = {
-            "claimed_task_extra_skills": ["rust", "context7"],
+            "fixture_skills": ["rust", "context7"],
             "loaded_skills": [],
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
@@ -4371,7 +4428,7 @@ class TestVerboseOnceBlockReason:
     ) -> None:
         _insert_rule(
             manager,
-            "require-code-index-skill",
+            "synthetic-multiline-block",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
                 when="event.data.get('tool_name') == 'Read'",
@@ -4380,17 +4437,14 @@ class TestVerboseOnceBlockReason:
         )
         _insert_rule(
             manager,
-            "require-uv",
+            "synthetic-second-block",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
                 when="event.data.get('tool_name') == 'Bash'",
                 effects=[
                     RuleEffect(
                         type="block",
-                        reason=(
-                            "Use `uv pip …` or `uv run python -m pip …` — "
-                            "uv manages this project's Python environment."
-                        ),
+                        reason=("Call fixture_second_repair() before retrying."),
                     )
                 ],
             ),
@@ -4410,13 +4464,13 @@ class TestVerboseOnceBlockReason:
         )
 
         assert first.decision == "block"
-        assert "gcode outline" in (first.reason or "")
+        assert "fixture_repair()" in (first.reason or "")
         assert self._TERSE_HINT not in (first.reason or "")
         assert second.decision == "block"
-        assert "uv manages this project's Python environment" in (second.reason or "")
+        assert "fixture_second_repair()" in (second.reason or "")
         assert self._TERSE_HINT not in (second.reason or "")
         shown_rules = {entry.split(":", 1)[0] for entry in variables["_block_reasons_shown"]}
-        assert shown_rules == {"require-code-index-skill", "require-uv"}
+        assert shown_rules == {"synthetic-multiline-block", "synthetic-second-block"}
 
     @pytest.mark.asyncio
     async def test_turn_start_clears_shown_set(
@@ -4424,7 +4478,7 @@ class TestVerboseOnceBlockReason:
     ) -> None:
         _insert_rule(
             manager,
-            "require-code-index-skill",
+            "synthetic-multiline-block",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason=self._full_reason())],
@@ -4437,7 +4491,7 @@ class TestVerboseOnceBlockReason:
         await engine.evaluate(block_event, session_id=SESSION_ID, variables=variables)
         await engine.evaluate(block_event, session_id=SESSION_ID, variables=variables)
         assert any(
-            entry.startswith("require-code-index-skill:")
+            entry.startswith("synthetic-multiline-block:")
             for entry in variables["_block_reasons_shown"]
         )
 
@@ -4452,5 +4506,5 @@ class TestVerboseOnceBlockReason:
         # Next block in the new turn re-teaches with the full reason.
         third = await engine.evaluate(block_event, session_id=SESSION_ID, variables=variables)
         assert third.decision == "block"
-        assert "gcode outline" in (third.reason or "")
+        assert "fixture_repair()" in (third.reason or "")
         assert self._TERSE_HINT not in (third.reason or "")

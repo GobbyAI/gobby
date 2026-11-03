@@ -27,8 +27,8 @@ EXTERNAL_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 PROJECT_ID = "33333333-3333-4333-8333-333333333333"
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 STOP_GATE_NAMES = (
-    "review-gobby-session-feedback-on-stop",
-    "require-task-close",
+    "fixture-definition-84d7bb04",
+    "fixture-definition-e022ee05",
     "require-epic-tree-close",
 )
 _STOP_GATE_WHEN = (
@@ -65,6 +65,7 @@ def _insert_turn_end_rules(db: HubDatabase) -> None:
     manager = RuleDefinitionManager(db)
     manager.create(
         name="observe-interrupt-fact",
+        tags=["default"],
         definition_json=RuleDefinitionBody(
             event=RuleTriggerEvent.TURN_END,
             when="variables.get('turn_interrupt_initiated')",
@@ -80,7 +81,7 @@ def _insert_turn_end_rules(db: HubDatabase) -> None:
     )
     for priority, rule_name in enumerate(STOP_GATE_NAMES, start=10):
         effects = [RuleEffect(type="block", reason=f"{rule_name} blocked turn end")]
-        if rule_name == "require-task-close":
+        if rule_name == "fixture-definition-e022ee05":
             effects.insert(
                 0,
                 RuleEffect(
@@ -91,6 +92,7 @@ def _insert_turn_end_rules(db: HubDatabase) -> None:
             )
         manager.create(
             name=rule_name,
+            tags=["default"],
             definition_json=RuleDefinitionBody(
                 event=RuleTriggerEvent.TURN_END,
                 when=_STOP_GATE_WHEN,

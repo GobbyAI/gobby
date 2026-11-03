@@ -44,6 +44,7 @@ def _store_agent(service: ExpansionService, name: str, description: str) -> None
         name=name,
         description=description,
         surfaces=["spawn"],
+        task_categories=["code"],
     )
     AgentDefinitionManager(service.db).create(
         name=name,
@@ -303,7 +304,7 @@ def test_normalize_preserves_registry_agent_selection_and_additional_skills(
     assert leaf["additional_skills"] == ["playwright-cli"]
 
 
-def test_normalize_defaults_ambiguous_automated_leaf_to_developer_with_audit_marker(
+def test_normalize_leaves_unmatched_leaf_unassigned_with_audit_marker(
     service: ExpansionService,
     sample_project: dict[str, Any],
 ) -> None:
@@ -328,17 +329,17 @@ def test_normalize_defaults_ambiguous_automated_leaf_to_developer_with_audit_mar
     )
 
     leaf = spec["tasks"][0]
-    assert leaf["assigned_agent"] == "developer"
+    assert leaf["assigned_agent"] is None
     assert leaf["additional_skills"] == []
     assert "## Agent Selection" in leaf["description"]
-    assert "Defaulted to `developer`" in leaf["description"]
+    assert "Unassigned: no unique enabled spawn definition" in leaf["description"]
 
 
-def test_normalize_selects_best_fit_agent_from_registry(
+def test_normalize_selects_unique_declared_category_match(
     service: ExpansionService,
     sample_project: dict[str, Any],
 ) -> None:
-    _store_agent(service, "developer", "Backend, frontend and Rust implementation")
+    _store_agent(service, "fixture-worker", "Backend, frontend and Rust implementation")
     epic = _parent(service, sample_project)
 
     spec = service.normalize_compiled_spec(
@@ -362,16 +363,16 @@ def test_normalize_selects_best_fit_agent_from_registry(
     )
 
     leaf = spec["tasks"][0]
-    assert leaf["assigned_agent"] == "developer"
+    assert leaf["assigned_agent"] == "fixture-worker"
     assert leaf["additional_skills"] == []
     assert "## Agent Selection" not in leaf["description"]
 
 
-def test_normalize_selects_developer_from_web_tsx_signals(
+def test_normalize_selects_declared_match_independently_of_web_tsx_path(
     service: ExpansionService,
     sample_project: dict[str, Any],
 ) -> None:
-    _store_agent(service, "developer", "Backend, frontend and Rust implementation")
+    _store_agent(service, "fixture-worker", "Backend, frontend and Rust implementation")
     epic = _parent(service, sample_project)
 
     spec = service.normalize_compiled_spec(
@@ -394,4 +395,4 @@ def test_normalize_selects_developer_from_web_tsx_signals(
         plan_file=None,
     )
 
-    assert spec["tasks"][0]["assigned_agent"] == "developer"
+    assert spec["tasks"][0]["assigned_agent"] == "fixture-worker"

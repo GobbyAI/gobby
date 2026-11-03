@@ -49,10 +49,13 @@ async def _decide(
         definition_json=RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
             when=when,
+            mandatory=True,
             effects=[RuleEffect(type="block", reason="condition held")],
         ).model_dump_json(),
         priority=10,
         enabled=True,
+        # The caller passes no agent definition, so only default-tagged rules run.
+        tags=["default"],
     )
     response = await (engine or RuleEngine(db)).evaluate(
         event, session_id=SESSION_ID, variables=variables

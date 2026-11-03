@@ -1,7 +1,7 @@
 name: triage-agent
 capabilities: [accept_resume_retype]
 description: Structured GitHub issue triage judgment agent
-version: "1.0"
+version: "1.0.1"
 enabled: true
 surfaces: [spawn]
 provider: inherit
@@ -53,6 +53,15 @@ workflows:
       - "name:seat-no-task-close"
       - "name:seat-no-project-create"
       - "tag:default"
+      - "name:agent-workspace-read-scope"
+      - "name:agent-workspace-write-scope"
+      - "name:inject-agent-workspace"
+      - "name:reset-agent-workspace-on-context-loss"
+      - "name:block-temp-scratchpad-writes"
+      - "name:block-update-task"
+      - "name:query-readonly-seat-scope"
+      - "name:seat-no-ask-user-question"
+      - "name:no-comms-attach"
       - "tag:worker-safety"
       - "name:no-send-keys"
     exclude:

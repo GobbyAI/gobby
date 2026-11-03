@@ -5,7 +5,7 @@ description: |
   against the project's .impeccable.md design contract. Reports findings with
   screenshots and evidence, then gives LAND or BOUNCE on design grounds.
   Read-only.
-version: "2.0.0"
+version: "2.0.1"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
@@ -54,7 +54,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"

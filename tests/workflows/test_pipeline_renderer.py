@@ -100,7 +100,7 @@ class TestRenderMcpArgumentsDropNone:
                 server="gobby-agents",
                 tool="spawn_agent",
                 arguments={
-                    "agent": "epic-reviewer",
+                    "agent": "fixture-definition-b155e932",
                     "task_id": "${{ inputs.task_id }}",
                     "provider": "${{ inputs.provider }}",
                     "model": "${{ inputs.model }}",
@@ -116,7 +116,7 @@ class TestRenderMcpArgumentsDropNone:
         rendered = renderer.render_step(step, context)
 
         assert rendered.mcp.arguments == {
-            "agent": "epic-reviewer",
+            "agent": "fixture-definition-b155e932",
             "task_id": "#18705",
             "provider": "codex",
         }

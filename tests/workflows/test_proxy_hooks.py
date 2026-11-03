@@ -13,7 +13,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
 
 from gobby.hooks.effect_deadline import (
     BLOCKING_EFFECT_BUDGET_SECONDS,
@@ -27,16 +26,11 @@ from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTrig
 from gobby.workflows.engine import proxy_hooks
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "proxy-hook-test-session"
-RTK_RULE_PATH = (
-    Path(__file__).parents[2]
-    / "src/gobby/install/shared/workflows/rules/integrations/rtk-command-rewrite.yaml"
-)
 
 
 @pytest.fixture
@@ -265,44 +259,6 @@ def test_proxy_effect_contract_rejects_non_before_tool_event() -> None:
             event=RuleTriggerEvent.AFTER_TOOL,
             effects=[_proxy_effect()],
         )
-
-
-def test_bundled_rtk_rule_is_disabled_and_permission_neutral() -> None:
-    document = yaml.safe_load(RTK_RULE_PATH.read_text(encoding="utf-8"))
-    definition = document["rules"]["rtk-command-rewrite"]
-
-    assert definition["enabled"] is False
-    assert definition["priority"] == 90
-    assert "default" in document["tags"]
-    assert definition["event"] == "before_tool"
-    assert definition["tools"] == ["Bash"]
-    assert definition["effects"] == [{"type": "proxy_hook", "handler": "rtk", "timeout_seconds": 2}]
-    RuleDefinitionBody.model_validate(
-        {key: value for key, value in definition.items() if key in {"event", "tools", "effects"}}
-    )
-
-
-def test_bundled_rtk_rule_syncs_as_disabled_installed_row(
-    db: HubDatabase,
-    manager: RuleDefinitionManager,
-) -> None:
-    result = sync_bundled_rules(db, get_bundled_rules_path())
-
-    assert result["errors"] == []
-    row = manager.get_by_name("rtk-command-rewrite", project_id=None)
-    assert row is not None
-    assert row.source == "installed"
-    assert row.enabled is False
-    assert row.priority == 90
-    # Agent rule selectors activate rules by tag (every bundled agent includes
-    # "tag:default"); without it the engine drops the rule before evaluation.
-    assert "default" in (row.tags or [])
-    body = RuleDefinitionBody.model_validate(row.definition_json)
-    assert body.group == "integrations"
-    assert body.tools == ["Bash"]
-    assert body.effects is not None
-    [effect] = body.effects
-    assert (effect.type, effect.handler, effect.timeout_seconds) == ("proxy_hook", "rtk", 2)
 
 
 @pytest.mark.parametrize(

@@ -93,7 +93,7 @@ def require_claim_authority(
 
     Returns None when authorized: the task is unclaimed, the caller is the
     claiming session, caller and owner share the task's agent-run
-    delegation lineage, or the caller is the Orchestrator. A claimed task
+    delegation lineage, or the caller has coordination authority. A claimed task
     with no session context is refused; unclaimed tasks stay open to
     operator and scripted flows that run without session context.
     """

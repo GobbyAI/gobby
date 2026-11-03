@@ -127,10 +127,14 @@ how the system behaves so you can work with it instead of being surprised by it.
     agents to spawn in worktrees outside of 0.5.0 unless they're their parent's
     worktree unless they're developer agents or associated. Admin roles,
     researchers, planners, these don't need separate worktrees."
-16. No hardcoded definition names. Code never grants, refuses, exempts or routes by the
-    name of an agent definition (other than `default`), a rule, a step workflow or a
-    pipeline. Code only validates and processes their YAML through the engine; their
-    authorities and exemptions are declared in that YAML.
+16. No bundled definition names in code. A `.py` or `.rs` file never mentions the name
+    of a bundled agent definition, rule, step workflow or pipeline — not in logic,
+    constants, comments, docstrings, string literals, log or error messages, or tests.
+    The only exception is `default`. Any such mention is a violation. Code only
+    validates and processes their YAML through the engine; their authorities,
+    exemptions and routing are declared in that YAML. Tests enumerate bundled YAML
+    generically (syntax validation plus engine dry run) and use synthetic definitions
+    for behavior.
 17. Version every bundled definition change. Any commit that changes a bundled rule,
     skill, skill reference, pipeline or agent definition under `src/gobby/install/shared/`
     bumps that file's semver in the same commit, so a later improvement loop can tell

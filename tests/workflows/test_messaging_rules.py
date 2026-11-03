@@ -66,6 +66,7 @@ def _insert_rule(
 ) -> str:
     row = manager.create(
         name=name,
+        tags=["default"],
         definition_json=body.model_dump_json(),
         priority=priority,
         enabled=True,
@@ -73,44 +74,9 @@ def _insert_rule(
     return row.id
 
 
-def _sync_bundled(db: HubDatabase) -> None:
-    """Sync bundled rules from the real rules directory."""
-    from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-
-    sync_bundled_rules(db, get_bundled_rules_path())
-    db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # deliver-pending-messages
 # ═══════════════════════════════════════════════════════════════════════
-
-
-class TestRetiredDeliveryRule:
-    """Authoritative bundled sync retires the removed delivery consumer."""
-
-    def test_sync_soft_deletes_installed_delivery_rule(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        body = RuleDefinitionBody(
-            event=RuleTriggerEvent.TURN_START,
-            effects=[RuleEffect(type="block", reason="legacy delivery")],
-        )
-        manager.create(
-            name="deliver-pending-messages",
-            definition_json=body.model_dump_json(),
-            enabled=True,
-            priority=10,
-            source="installed",
-            tags=["gobby"],
-        )
-
-        _sync_bundled(db)
-
-        assert manager.get_by_name("deliver-pending-messages") is None
-        retired = manager.get_by_name("deliver-pending-messages", include_deleted=True)
-        assert retired is not None
-        assert retired.deleted_at is not None
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -203,184 +169,9 @@ def _make_event_with_metadata(
     )
 
 
-def _notify_unread_mail_body() -> RuleDefinitionBody:
-    """Build the notify-unread-mail rule body matching the YAML template."""
-    return RuleDefinitionBody(
-        event=RuleTriggerEvent.BEFORE_TOOL,
-        agent_scope=["*"],
-        when=(
-            "has_pending_messages(event.metadata.get('_platform_session_id', '')) "
-            "and not is_message_delivery_tool(event.data.get('mcp_tool'))"
-        ),
-        effects=[
-            RuleEffect(
-                type="inject_context",
-                template=(
-                    "You have {{ pending_message_count(event.metadata.get('_platform_session_id', '')) }}"
-                    " undelivered inter-session message(s).\n"
-                    "Please read them soon with gobby-agents.get_inter_session_messages."
-                ),
-            )
-        ],
-    )
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # notify-unread-mail
 # ═══════════════════════════════════════════════════════════════════════
-
-
-class TestNotifyUnreadMail:
-    """notify-unread-mail injects context nudge when agent has pending messages."""
-
-    @pytest.mark.asyncio
-    async def test_injects_context_when_messages_pending(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        target_session = str(uuid.uuid4())
-        _insert_undelivered_message(db, target_session)
-        _insert_rule(manager, "notify-unread-mail", _notify_unread_mail_body(), priority=8)
-
-        engine = RuleEngine(db)
-        event = _make_event_with_metadata(
-            HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Edit"},
-            metadata={"_platform_session_id": target_session},
-        )
-        variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "allow"
-        assert "undelivered" in (response.context or "").lower()
-
-    @pytest.mark.asyncio
-    async def test_no_context_while_retrieving_messages(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        """No nudge when the agent is already reading its mail."""
-        target_session = str(uuid.uuid4())
-        _insert_undelivered_message(db, target_session)
-        _insert_rule(manager, "notify-unread-mail", _notify_unread_mail_body(), priority=8)
-
-        engine = RuleEngine(db)
-        event = _make_event_with_metadata(
-            HookEventType.BEFORE_TOOL,
-            data={
-                "tool_name": "mcp__gobby__call_tool",
-                "mcp_tool": "get_inter_session_messages",
-            },
-            metadata={"_platform_session_id": target_session},
-        )
-        variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "allow"
-        assert not response.context  # no nudge when already reading mail
-
-    @pytest.mark.asyncio
-    async def test_no_context_when_no_messages(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        target_session = str(uuid.uuid4())
-        _create_session(db, target_session)
-        _insert_rule(manager, "notify-unread-mail", _notify_unread_mail_body(), priority=8)
-
-        engine = RuleEngine(db)
-        event = _make_event_with_metadata(
-            HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Edit"},
-            metadata={"_platform_session_id": target_session},
-        )
-        variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "allow"
-        assert not response.context
-
-    @pytest.mark.asyncio
-    async def test_no_context_when_messages_already_delivered(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        target_session = str(uuid.uuid4())
-        _insert_delivered_message(db, target_session)
-        _insert_rule(manager, "notify-unread-mail", _notify_unread_mail_body(), priority=8)
-
-        engine = RuleEngine(db)
-        event = _make_event_with_metadata(
-            HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Edit"},
-            metadata={"_platform_session_id": target_session},
-        )
-        variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "allow"
-        assert not response.context
-
-    @pytest.mark.asyncio
-    async def test_skipped_for_root_sessions(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        """Root sessions (no _agent_type) should not get nudge from agent_scope: ['*']."""
-        target_session = str(uuid.uuid4())
-        _insert_undelivered_message(db, target_session)
-        _insert_rule(manager, "notify-unread-mail", _notify_unread_mail_body(), priority=8)
-
-        engine = RuleEngine(db)
-        event = _make_event_with_metadata(
-            HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Edit"},
-            metadata={"_platform_session_id": target_session},
-        )
-        # No _agent_type — this is a root session
-        variables: dict[str, Any] = {}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "allow"
-        assert not response.context
-
-    @pytest.mark.asyncio
-    async def test_no_context_when_platform_session_id_absent(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        """Non-platform sessions (no _platform_session_id) get no nudge."""
-        target_session = str(uuid.uuid4())
-        _insert_undelivered_message(db, target_session)
-        _insert_rule(manager, "notify-unread-mail", _notify_unread_mail_body(), priority=8)
-
-        engine = RuleEngine(db)
-        event = _make_event_with_metadata(
-            HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Edit"},
-            metadata={},  # no _platform_session_id key
-        )
-        variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "allow"
-        assert not response.context
-
-    @pytest.mark.asyncio
-    async def test_context_renders_message_count(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
-        """Injected context should include the count from pending_message_count."""
-        target_session = str(uuid.uuid4())
-        _insert_undelivered_message(db, target_session)
-        _insert_undelivered_message(db, target_session)
-        _insert_rule(manager, "notify-unread-mail", _notify_unread_mail_body(), priority=8)
-
-        engine = RuleEngine(db)
-        event = _make_event_with_metadata(
-            HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Edit"},
-            metadata={"_platform_session_id": target_session},
-        )
-        variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert response.decision == "allow"
-        assert "2 undelivered" in (response.context or "")
 
 
 # ═══════════════════════════════════════════════════════════════════════

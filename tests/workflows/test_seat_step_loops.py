@@ -63,7 +63,7 @@ _CANDIDATE_DEFAULTS = {
 
 async def test_candidate_message_does_not_bind_or_move_claim(temp_db: HubDatabase) -> None:
     """Legacy-looking messages cannot advance a workflow or transfer its task claim."""
-    run = SeatRun(temp_db, "code-reviewer")
+    run = SeatRun(temp_db, "fixture-definition-e08ba693")
     await run.load(*run.vars["required_skills"])
     task = run.task()
     before = LocalTaskManager(temp_db).get_task(task.id)
@@ -80,17 +80,30 @@ SESSION_ID = "33333333-3333-4333-8333-333333333333"
 PROJECT_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 
 
-def _advance(server: str, tool: str) -> dict[str, str]:
+def _advance(server: str, tool: str) -> dict[str, Any]:
     """Route one successful call through the engine's seat protocol handler."""
-    return {"server": server, "tool": tool, "action": "advance_seat"}
+    return {
+        "server": server,
+        "tool": tool,
+        "action": "advance_seat",
+        "protocol": {
+            "report_prefixes": ["Fixture stable", "FIXTURE_EVENT=ALERT "],
+            "report_step": "report",
+            "consensus_pattern": r"FIXTURE_EVENT=(AGREED|AGREED_WITHDRAWN) SHA=([0-9a-f]{40})(?:\s|$)",
+            "consensus_step": "review",
+            "withdrawal_step": "stamp",
+            "consensus_event": "AGREED",
+            "withdrawal_event": "AGREED_WITHDRAWN",
+        },
+    }
 
 
 # Synthetic seat definitions: only the variables, transitions and handlers the tests assert.
 _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
-    "code-reviewer": {
-        "name": "code-reviewer",
+    "fixture-definition-e08ba693": {
+        "name": "fixture-definition-e08ba693",
         "task_attestation_writes": ["independent-review"],
-        "prompts": {"agent": "Synthetic code-reviewer seat."},
+        "prompts": {"agent": "Synthetic fixture-definition-e08ba693 seat."},
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         "step_workflow": {
             "variables": {
@@ -141,10 +154,10 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
             ],
         },
     },
-    "developer": {
-        "name": "developer",
+    "fixture-worker": {
+        "name": "fixture-worker",
         "task_attestation_writes": ["implementation"],
-        "prompts": {"agent": "Synthetic developer seat."},
+        "prompts": {"agent": "Synthetic fixture-worker seat."},
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         "step_workflow": {
             "variables": {
@@ -228,10 +241,10 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
             ],
         },
     },
-    "plan-adversary": {
-        "name": "plan-adversary",
+    "fixture-definition-86a2d70b": {
+        "name": "fixture-definition-86a2d70b",
         "capabilities": ["track_plan_consensus"],
-        "prompts": {"agent": "Synthetic plan-adversary seat."},
+        "prompts": {"agent": "Synthetic fixture-definition-86a2d70b seat."},
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         "step_workflow": {
             "variables": {
@@ -260,10 +273,10 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
             ],
         },
     },
-    "log-monitor": {
-        "name": "log-monitor",
-        "monitor_report_recipients": ["triage"],
-        "prompts": {"agent": "Synthetic log-monitor seat."},
+    "fixture-definition-cf1e3dd7": {
+        "name": "fixture-definition-cf1e3dd7",
+        "monitor_report_recipients": ["fixture-definition-0f916789"],
+        "prompts": {"agent": "Synthetic fixture-definition-cf1e3dd7 seat."},
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         "step_workflow": {
             "variables": {
@@ -278,10 +291,10 @@ _SYNTHETIC_SEATS: dict[str, dict[str, Any]] = {
             ],
         },
     },
-    "metrics-monitor": {
-        "name": "metrics-monitor",
-        "monitor_report_recipients": ["triage", "log-monitor"],
-        "prompts": {"agent": "Synthetic metrics-monitor seat."},
+    "fixture-definition-961ad2d0": {
+        "name": "fixture-definition-961ad2d0",
+        "monitor_report_recipients": ["fixture-definition-0f916789", "fixture-definition-cf1e3dd7"],
+        "prompts": {"agent": "Synthetic fixture-definition-961ad2d0 seat."},
         "workflows": {"rule_selectors": {"include": [], "exclude": []}},
         "step_workflow": {
             "variables": {
@@ -319,11 +332,9 @@ DERIVE = ("gobby-plans", "derive_plan_handoff_manifest")
 APPLY = ("gobby-plans", "apply_plan_handoff_manifest")
 
 
-# Inline stop gate: a reduced copy of the stop condition, not the bundled
-# require-step-completion rule. Stop tests here check the engine's stop handling only.
+# Synthetic stop gate for the engine's stop handling.
 _STOP_RULE = "inline-seat-stop-gate"
-# Inline copy of the readiness condition. The bundled declare-seat-idle-on-readiness
-# rule is not loaded by any test here.
+# Synthetic readiness condition.
 _READY_RULE = "inline-seat-readiness"
 _READY_WHEN = (
     "variables.get('current_step_idle') and not variables.get('task_claimed') "
@@ -346,7 +357,7 @@ def _set(server: str, tool: str, variable: str, value: Any) -> dict[str, Any]:
     }
 
 
-def _seat(steps: dict[str, dict[str, list[Any]]], base: str = "developer") -> dict[str, Any]:
+def _seat(steps: dict[str, dict[str, list[Any]]], base: str = "fixture-worker") -> dict[str, Any]:
     """A copy of a synthetic seat with inline entries added to named steps.
 
     List-valued step keys are extended; a key absent from the base is created.
@@ -480,9 +491,9 @@ class SeatRun:
             (SESSION_ID, "ext-seat", "21000000-0000-4000-8000-000000000001", "claude", project_id),
         )
         for other_id, role in (
-            (OWNER_ID, "developer"),
-            (COORDINATOR_ID, "orchestrator"),
-            (PEER_ID, "code-reviewer"),
+            (OWNER_ID, "fixture-worker"),
+            (COORDINATOR_ID, "fixture-coordinator"),
+            (PEER_ID, "fixture-definition-e08ba693"),
         ):
             db.execute(
                 "INSERT INTO sessions "
@@ -501,9 +512,9 @@ class SeatRun:
         )
         # The coordinator's review grant lets negative cases store its approvals.
         AgentDefinitionManager(db).create(
-            "orchestrator",
+            "fixture-coordinator",
             {
-                "name": "orchestrator",
+                "name": "fixture-coordinator",
                 "version": "1.0",
                 "prompts": {"agent": "Coordinate the seat protocol."},
                 "workflows": {"rule_selectors": {"include": []}},
@@ -628,7 +639,7 @@ class SeatRun:
 async def test_inline_before_tool_rule_refuses_native_latch_reset(
     temp_db: HubDatabase,
 ) -> None:
-    run = SeatRun(temp_db, "developer", definition=_LATCH_SEAT)
+    run = SeatRun(temp_db, "fixture-worker", definition=_LATCH_SEAT)
     instance = run.instances.get_for_session(SESSION_ID)
     assert instance is not None
     instance.variables["candidate_sent"] = True
@@ -672,11 +683,11 @@ async def test_inline_before_tool_rule_refuses_native_latch_reset(
     ],
 )
 @pytest.mark.parametrize("envelope", ["direct", "content", "structured"])
-@pytest.mark.parametrize("name", ["developer", "code-reviewer"])
+@pytest.mark.parametrize("name", ["fixture-worker", "fixture-definition-e08ba693"])
 async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id(
     temp_db: HubDatabase, tmp_path: Path, envelope: str, name: str, content: str, ready: bool
 ) -> None:
-    idle_step = "claim" if name == "developer" else "await"
+    idle_step = "claim" if name == "fixture-worker" else "await"
     run = SeatRun(temp_db, name, definition=_idle_seat(name, idle_step))
     await run.load(*run.vars["required_skills"])
     run.session_vars.update({"current_step_idle": True, "task_claimed": False})
@@ -729,7 +740,11 @@ async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id
 async def test_reviewer_registered_coordination_wait_allows_stop_with_external_session_id(
     temp_db: HubDatabase, tmp_path: Path, step: str
 ) -> None:
-    run = SeatRun(temp_db, "code-reviewer", definition=_seat({}, base="code-reviewer"))
+    run = SeatRun(
+        temp_db,
+        "fixture-definition-e08ba693",
+        definition=_seat({}, base="fixture-definition-e08ba693"),
+    )
     await run.load(*run.vars["required_skills"])
     instance = run.instances.get_for_session(SESSION_ID)
     assert instance is not None
@@ -750,13 +765,13 @@ async def test_reviewer_registered_coordination_wait_allows_stop_with_external_s
 @pytest.mark.parametrize(
     "name, step",
     [
-        ("developer", "claim"),
-        ("developer", "implement"),
-        ("developer", "submit"),
-        ("code-reviewer", "await"),
-        ("code-reviewer", "review"),
-        ("code-reviewer", "verdict"),
-        ("plan-adversary", "review"),
+        ("fixture-worker", "claim"),
+        ("fixture-worker", "implement"),
+        ("fixture-worker", "submit"),
+        ("fixture-definition-e08ba693", "await"),
+        ("fixture-definition-e08ba693", "review"),
+        ("fixture-definition-e08ba693", "verdict"),
+        ("fixture-definition-86a2d70b", "review"),
     ],
 )
 @pytest.mark.parametrize("wait_state", ["active", "replied", "cancelled"])
@@ -816,7 +831,7 @@ async def test_standing_seat_wait_through_call_tool_controls_stop(
     "content, failure",
     [
         ("EVENT=SEAT_READY NOTE=idle", ""),
-        ("Systems nominal | ready", ""),
+        ("Fixture stable | ready", ""),
         ("EVENT=SEAT_READY NOTE=busy", ""),
         ("EVENT=SEAT_READY NOTE=idle", "direct"),
         ("EVENT=SEAT_READY NOTE=idle", "content"),
@@ -828,7 +843,7 @@ async def test_standing_seat_wait_through_call_tool_controls_stop(
 async def test_inline_readiness_rule_declares_idle_only_for_a_ready_report(
     temp_db: HubDatabase, content: str, failure: str
 ) -> None:
-    run = SeatRun(temp_db, "developer", definition=_seat({}))
+    run = SeatRun(temp_db, "fixture-worker", definition=_seat({}))
     await run.load(*run.vars["required_skills"])
     _create_rule(
         run,
@@ -875,18 +890,18 @@ async def test_inline_readiness_rule_declares_idle_only_for_a_ready_report(
     )
 
 
-@pytest.mark.parametrize("name", ["plan-adversary", "fixture-plan-review"])
+@pytest.mark.parametrize("name", ["fixture-definition-86a2d70b", "fixture-plan-review"])
 @pytest.mark.parametrize("grant", [True, False])
 @pytest.mark.parametrize("monitor", [True, False])
 async def test_consensus_tracking_requires_declared_capability(
     temp_db: HubDatabase, name: str, grant: bool, monitor: bool
 ) -> None:
-    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["plan-adversary"]))
+    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["fixture-definition-86a2d70b"]))
     definition.update(name=name, capabilities=["track_plan_consensus"] if grant else [])
     definition["monitor_report_recipients"] = ["fixture-observer"] if monitor else []
     run = SeatRun(temp_db, name, definition=definition)
     await run.load(*run.vars["required_skills"])
-    await run.send(f"EVENT=CONSENSUS SHA={SHA} NOTE=approved")
+    await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA} NOTE=approved")
     assert run.vars["consensus"] is grant
     assert run.step == ("stamp" if grant else "review")
 
@@ -895,7 +910,7 @@ async def test_consensus_tracking_requires_declared_capability(
 async def test_monitor_routing_uses_declared_recipients(
     temp_db: HubDatabase, target_enabled: bool
 ) -> None:
-    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["metrics-monitor"]))
+    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["fixture-definition-961ad2d0"]))
     targets = ["fixture-observer-a", "fixture-observer-b"]
     definition.update(name="fixture-monitor", monitor_report_recipients=targets)
     run = SeatRun(temp_db, "fixture-monitor", definition=definition)
@@ -916,15 +931,124 @@ async def test_monitor_routing_uses_declared_recipients(
     assert recipient_definition is not None
     if not target_enabled:
         definitions.update(recipient_definition.id, enabled=False)
-        await run.send("Systems nominal | custom window", COORDINATOR_ID)
+        await run.send("Fixture stable | custom window", COORDINATOR_ID)
         assert run.step == "tick"
         assert run.vars["tick_window"] is None
         definitions.update(recipient_definition.id, enabled=True)
-    await run.send("Systems nominal | custom window", COORDINATOR_ID)
+    await run.send("Fixture stable | custom window", COORDINATOR_ID)
     assert run.step == "report"
-    await run.send("Systems nominal | custom window", PEER_ID)
+    await run.send("Fixture stable | custom window", PEER_ID)
     assert run.step == "tick"
     assert run.vars["tick_done"] is False
+
+
+@pytest.mark.parametrize(
+    "protocol",
+    [
+        {},
+        {"report_prefixes": ["Fixture heartbeat"]},
+        {"report_prefixes": [""], "report_step": "fixture-publish"},
+        {"consensus_pattern": "("},
+        {
+            "consensus_pattern": "fixture-without-captures",
+            "consensus_step": "fixture-check",
+            "withdrawal_step": "fixture-confirm",
+            "consensus_event": "fixture-accept",
+            "withdrawal_event": "fixture-withdraw",
+        },
+    ],
+)
+def test_message_protocol_rejects_incomplete_or_invalid_configuration(
+    protocol: dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError):
+        AgentStepWorkflowBody.model_validate(
+            {
+                "steps": [
+                    {
+                        "name": "fixture-check",
+                        "on_mcp_success": [
+                            {
+                                "server": "gobby-agents",
+                                "tool": "send_message",
+                                "action": "advance_seat",
+                                "protocol": protocol,
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+
+
+async def test_reporting_protocol_uses_declared_phrases_and_step_names(
+    temp_db: HubDatabase,
+) -> None:
+    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["fixture-definition-961ad2d0"]))
+    definition.update(
+        name="fixture-custom-protocol", monitor_report_recipients=["fixture-observer"]
+    )
+    renames = {"tick": "fixture-sample", "report": "fixture-publish"}
+    for step in definition["step_workflow"]["steps"]:
+        step["name"] = renames.get(step["name"], step["name"])
+        for transition in step.get("transitions", []):
+            transition["to"] = renames.get(transition["to"], transition["to"])
+        for handler in step.get("on_mcp_success", []):
+            if handler.get("action") == "advance_seat":
+                handler["protocol"] = {
+                    "report_prefixes": ["Fixture heartbeat"],
+                    "report_step": "fixture-publish",
+                }
+    run = SeatRun(temp_db, "fixture-custom-protocol", definition=definition)
+    _declare_report_recipient(run, COORDINATOR_ID, "fixture-observer")
+    await run.load(*run.vars["required_skills"])
+    await run.send("Fixture heartbeat | custom window", COORDINATOR_ID)
+    assert run.vars["tick_window"] is not None
+    assert run.vars["_window_report"] == "Fixture heartbeat | custom window"
+    assert run.vars["tick_done"] is False
+
+
+async def test_consensus_protocol_uses_declared_events_steps_and_commit_binding(
+    temp_db: HubDatabase,
+) -> None:
+    protocol = {
+        "consensus_pattern": r"ACK (accepted|revoked) COMMIT=([0-9a-f]{40})(?:\s|$)",
+        "consensus_step": "fixture-check",
+        "withdrawal_step": "fixture-confirm",
+        "consensus_event": "accepted",
+        "withdrawal_event": "revoked",
+    }
+    handler = {"server": SEND[0], "tool": SEND[1], "action": "advance_seat", "protocol": protocol}
+    definition = {
+        "name": "fixture-consensus",
+        "capabilities": ["track_plan_consensus"],
+        "prompts": {"agent": "Exercise the configured receipt protocol."},
+        "workflows": {"rule_selectors": {"include": []}},
+        "step_workflow": {
+            "variables": {"consensus": False, "bounced": False, "consensus_sha": None},
+            "steps": [
+                {
+                    "name": "fixture-check",
+                    "on_mcp_success": [handler],
+                    "transitions": [{"to": "fixture-confirm", "when": "vars.consensus"}],
+                },
+                {
+                    "name": "fixture-confirm",
+                    "on_mcp_success": [handler],
+                    "transitions": [{"to": "fixture-check", "when": "vars.bounced"}],
+                },
+            ],
+        },
+    }
+    run = SeatRun(temp_db, "fixture-consensus", definition=definition)
+    await run.send(f"ACK accepted COMMIT={SHA}")
+    assert run.step == "fixture-confirm"
+    assert run.vars["consensus_sha"] == SHA
+    await run.send(f"ACK revoked COMMIT={REPLACEMENT_SHA}")
+    assert run.step == "fixture-confirm"
+    await run.send(f"ACK revoked COMMIT={SHA}")
+    assert run.step == "fixture-check"
+    assert run.vars["consensus"] is False
 
 
 def _declare_report_recipient(run: SeatRun, recipient: str, name: str) -> None:
@@ -942,26 +1066,26 @@ def _declare_report_recipient(run: SeatRun, recipient: str, name: str) -> None:
     SessionVariableManager(run.db).set_variable(recipient, "_agent_type", name)
 
 
-@pytest.mark.parametrize("name", ["log-monitor", "metrics-monitor"])
+@pytest.mark.parametrize("name", ["fixture-definition-cf1e3dd7", "fixture-definition-961ad2d0"])
 async def test_monitor_name_has_no_undeclared_reporting_handler(
     temp_db: HubDatabase, name: str
 ) -> None:
     definition = json.loads(json.dumps(_SYNTHETIC_SEATS[name]))
     definition["monitor_report_recipients"] = []
     run = SeatRun(temp_db, name, definition=definition)
-    _declare_report_recipient(run, COORDINATOR_ID, "triage")
+    _declare_report_recipient(run, COORDINATOR_ID, "fixture-definition-0f916789")
     await run.load(*run.vars["required_skills"])
-    await run.send("Systems nominal | ignored window", COORDINATOR_ID)
+    await run.send("Fixture stable | ignored window", COORDINATOR_ID)
     assert run.vars["tick_window"] is None
     assert run.step == "tick"
 
 
 async def test_monitor_fanout_counts_every_delivered_recipient(temp_db: HubDatabase) -> None:
-    run = SeatRun(temp_db, "metrics-monitor")
-    _declare_report_recipient(run, COORDINATOR_ID, "triage")
-    _declare_report_recipient(run, PEER_ID, "log-monitor")
+    run = SeatRun(temp_db, "fixture-definition-961ad2d0")
+    _declare_report_recipient(run, COORDINATOR_ID, "fixture-definition-0f916789")
+    _declare_report_recipient(run, PEER_ID, "fixture-definition-cf1e3dd7")
     await run.load(*run.vars["required_skills"])
-    window = "Systems nominal | shared fanout window"
+    window = "Fixture stable | shared fanout window"
     messages = InterSessionMessageManager(temp_db)
     message_ids = [
         messages.create_message(SESSION_ID, recipient, window).id
@@ -973,45 +1097,50 @@ async def test_monitor_fanout_counts_every_delivered_recipient(temp_db: HubDatab
         {"success": True, "message_ids": message_ids},
     )
     assert run.vars["tick_done"] is False
-    assert set(run.vars["_reported_to"]) == {"triage", "log-monitor"}
+    assert set(run.vars["_reported_to"]) == {
+        "fixture-definition-0f916789",
+        "fixture-definition-cf1e3dd7",
+    }
     assert set(message_ids).issubset(run.vars["_seat_consumed_messages"])
     assert run.step == "tick"
 
 
-@pytest.mark.parametrize("name", ["log-monitor", "metrics-monitor"])
+@pytest.mark.parametrize("name", ["fixture-definition-cf1e3dd7", "fixture-definition-961ad2d0"])
 async def test_monitor_windows_complete_from_durable_reports(
     temp_db: HubDatabase, name: str
 ) -> None:
     run = SeatRun(temp_db, name)
-    _declare_report_recipient(run, PEER_ID, "log-monitor")
+    _declare_report_recipient(run, PEER_ID, "fixture-definition-cf1e3dd7")
     # Monitors report to Triage; a report to the Orchestrator completes nothing.
-    SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "orchestrator")
+    SessionVariableManager(run.db).set_variable(
+        COORDINATOR_ID, "_agent_type", "fixture-coordinator"
+    )
     await run.load(*run.vars["required_skills"])
-    await run.send("Systems nominal | sample window", COORDINATOR_ID)
+    await run.send("Fixture stable | sample window", COORDINATOR_ID)
     assert run.step == "tick" and run.vars["tick_window"] is None
-    _declare_report_recipient(run, COORDINATOR_ID, "triage")
+    _declare_report_recipient(run, COORDINATOR_ID, "fixture-definition-0f916789")
     for _ in range(2):
-        await run.send("Systems nominal | sample window", COORDINATOR_ID)
-        if name == "metrics-monitor":
+        await run.send("Fixture stable | sample window", COORDINATOR_ID)
+        if name == "fixture-definition-961ad2d0":
             assert run.step == "report"
-            await run.send("Systems nominal | a different window", PEER_ID)
+            await run.send("Fixture stable | a different window", PEER_ID)
             assert run.step == "report"
-            assert "log-monitor" not in run.vars["_reported_to"]
-            await run.send("Systems nominal | sample window", PEER_ID)
+            assert "fixture-definition-cf1e3dd7" not in run.vars["_reported_to"]
+            await run.send("Fixture stable | sample window", PEER_ID)
         assert run.step == "tick"
         assert run.vars["tick_done"] is False
         assert run.vars["tick_window"]
 
 
 @pytest.mark.parametrize("target_form", ["uuid", "local_ref"])
-async def test_metrics_monitor_window_needs_both_delivered_recipients(
+async def test_report_window_needs_both_delivered_recipients(
     temp_db: HubDatabase, target_form: str
 ) -> None:
-    run = SeatRun(temp_db, "metrics-monitor")
-    _declare_report_recipient(run, COORDINATOR_ID, "triage")
-    _declare_report_recipient(run, PEER_ID, "log-monitor")
+    run = SeatRun(temp_db, "fixture-definition-961ad2d0")
+    _declare_report_recipient(run, COORDINATOR_ID, "fixture-definition-0f916789")
+    _declare_report_recipient(run, PEER_ID, "fixture-definition-cf1e3dd7")
     await run.load(*run.vars["required_skills"])
-    window = "Systems nominal | sample window"
+    window = "Fixture stable | sample window"
 
     def target(recipient: str) -> str:
         # The engine reads the stored recipient, so the argument form must not matter.
@@ -1029,40 +1158,40 @@ async def test_metrics_monitor_window_needs_both_delivered_recipients(
             {"success": succeeded, "message_ids": [message.id]},
         )
 
-    # A failed triage delivery opens no window.
+    # A failed coordinator delivery opens no window.
     await deliver(COORDINATOR_ID, succeeded=False)
     assert run.step == "tick"
     assert run.vars["tick_window"] is None
-    # A delivered triage report opens the window and still waits on the log monitor.
+    # A delivered coordinator report opens the window and still waits on the peer.
     await deliver(COORDINATOR_ID)
     assert run.step == "report"
-    assert "triage" in run.vars["_reported_to"]
-    # A failed log-monitor delivery and a non-recipient target leave the window open.
+    assert "fixture-definition-0f916789" in run.vars["_reported_to"]
+    # A failed peer delivery and a non-recipient target leave the window open.
     await deliver(PEER_ID, succeeded=False)
     await deliver(OWNER_ID)
     assert run.step == "report"
-    assert "log-monitor" not in run.vars["_reported_to"]
-    # Only a delivered log-monitor report completes the window.
+    assert "fixture-definition-cf1e3dd7" not in run.vars["_reported_to"]
+    # Only a delivered peer report completes the window.
     await deliver(PEER_ID)
     assert run.step == "tick"
     assert run.vars["tick_done"] is False
 
 
 async def test_plan_adversary_consensus_withdrawal_reopens_review(temp_db: HubDatabase) -> None:
-    run = SeatRun(temp_db, "plan-adversary")
+    run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
     assert run.step == "review"
-    await run.send(f"EVENT=CONSENSUS SHA={SHA} NOTE=approved")
+    await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA} NOTE=approved")
     assert run.step == "stamp"
-    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={REPLACEMENT_SHA} NOTE=invalid")
+    await run.send(f"FIXTURE_EVENT=AGREED_WITHDRAWN SHA={REPLACEMENT_SHA} NOTE=invalid")
     assert run.step == "stamp"
-    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA} NOTE=unresolved")
+    await run.send(f"FIXTURE_EVENT=AGREED_WITHDRAWN SHA={SHA} NOTE=unresolved")
     assert run.step == "review"
     assert run.vars["consensus"] is False
 
 
 async def test_plan_adversary_unbound_stamp_can_withdraw(temp_db: HubDatabase) -> None:
-    run = SeatRun(temp_db, "plan-adversary")
+    run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
     instance = run.instances.get_for_session(SESSION_ID)
     assert instance is not None
@@ -1072,11 +1201,11 @@ async def test_plan_adversary_unbound_stamp_can_withdraw(temp_db: HubDatabase) -
     instance.variables.pop("consensus_sha", None)
     run.instances.save(instance)
 
-    await run.incoming(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA}")
+    await run.incoming(f"FIXTURE_EVENT=AGREED_WITHDRAWN SHA={SHA}")
     assert run.step == "stamp"
-    await run.send("EVENT=CONSENSUS_WITHDRAWN SHA=invalid")
+    await run.send("FIXTURE_EVENT=AGREED_WITHDRAWN SHA=invalid")
     assert run.step == "stamp"
-    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA} NOTE=re-review needed")
+    await run.send(f"FIXTURE_EVENT=AGREED_WITHDRAWN SHA={SHA} NOTE=re-review needed")
     assert run.step == "review"
     assert run.vars["consensus"] is False
 
@@ -1086,10 +1215,10 @@ async def test_plan_adversary_unbound_stamp_can_withdraw(temp_db: HubDatabase) -
 async def test_plan_adversary_consensus_variables_are_handler_owned(
     temp_db: HubDatabase, step: str, name: str, value: object
 ) -> None:
-    run = SeatRun(temp_db, "plan-adversary")
+    run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
     if step == "stamp":
-        await run.send(f"EVENT=CONSENSUS SHA={SHA}")
+        await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA}")
         # Only the handler's own write lands: the consensus pair holds the handler-written SHA.
         assert run.vars["consensus"] is True
         assert run.vars["consensus_sha"] == SHA
@@ -1105,24 +1234,24 @@ async def test_plan_adversary_consensus_variables_are_handler_owned(
 @pytest.mark.parametrize(
     "content",
     [
-        "EVENT=CONSENSUS",
-        "EVENT=CONSENSUS ROUND=1",
-        f"Cannot send EVENT=CONSENSUS SHA={SHA}; no committed entry exists.",
-        f"EVENT=CONSENSUS_EXTRA SHA={SHA}",
-        "EVENT=CONSENSUS SHA=not-a-commit",
-        "EVENT=CONSENSUS SHA=",
-        "EVENT=CONSENSUS SHA=abcdef",
-        f"EVENT=CONSENSUS SHA={SHA[:7]}",
-        f"EVENT=CONSENSUS SHA={SHA[:39]}",
-        f"EVENT=CONSENSUS SHA={SHA}a",
-        f"EVENT=CONSENSUS\nSHA={SHA}",
-        f"Evidence follows.\nEVENT=CONSENSUS SHA={SHA}",
+        "FIXTURE_EVENT=AGREED",
+        "FIXTURE_EVENT=AGREED ROUND=1",
+        f"Cannot send FIXTURE_EVENT=AGREED SHA={SHA}; no committed entry exists.",
+        f"FIXTURE_EVENT=AGREED_EXTRA SHA={SHA}",
+        "FIXTURE_EVENT=AGREED SHA=not-a-commit",
+        "FIXTURE_EVENT=AGREED SHA=",
+        "FIXTURE_EVENT=AGREED SHA=abcdef",
+        f"FIXTURE_EVENT=AGREED SHA={SHA[:7]}",
+        f"FIXTURE_EVENT=AGREED SHA={SHA[:39]}",
+        f"FIXTURE_EVENT=AGREED SHA={SHA}a",
+        f"FIXTURE_EVENT=AGREED\nSHA={SHA}",
+        f"Evidence follows.\nFIXTURE_EVENT=AGREED SHA={SHA}",
     ],
 )
 async def test_plan_adversary_rejects_malformed_consensus(
     temp_db: HubDatabase, content: str
 ) -> None:
-    run = SeatRun(temp_db, "plan-adversary")
+    run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
     await run.send(content)
     assert run.step == "review"
@@ -1133,9 +1262,9 @@ async def test_plan_adversary_rejects_malformed_consensus(
 async def test_plan_adversary_consensus_preserves_whitespace_delimiters(
     temp_db: HubDatabase, suffix: str
 ) -> None:
-    run = SeatRun(temp_db, "plan-adversary")
+    run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
-    await run.send(f"EVENT=CONSENSUS SHA={SHA}{suffix}")
+    await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA}{suffix}")
     assert run.step == "stamp"
     assert run.vars["consensus"] is True
     assert run.vars["consensus_sha"] == SHA
@@ -1145,19 +1274,19 @@ async def test_plan_adversary_consensus_preserves_whitespace_delimiters(
 async def test_plan_adversary_withdrawal_preserves_whitespace_delimiters(
     temp_db: HubDatabase, suffix: str
 ) -> None:
-    run = SeatRun(temp_db, "plan-adversary")
+    run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
-    await run.send(f"EVENT=CONSENSUS SHA={SHA}")
+    await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA}")
     assert run.step == "stamp"
-    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA}{suffix}")
+    await run.send(f"FIXTURE_EVENT=AGREED_WITHDRAWN SHA={SHA}{suffix}")
     assert run.step == "review"
     assert run.vars["consensus"] is False
 
 
 async def test_plan_adversary_failed_consensus_send_stays_in_review(temp_db: HubDatabase) -> None:
-    run = SeatRun(temp_db, "plan-adversary")
+    run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
-    content = f"EVENT=CONSENSUS SHA={SHA}"
+    content = f"FIXTURE_EVENT=AGREED SHA={SHA}"
     message = InterSessionMessageManager(temp_db).create_message(
         SESSION_ID, COORDINATOR_ID, content
     )
@@ -1173,14 +1302,14 @@ async def test_plan_adversary_failed_consensus_send_stays_in_review(temp_db: Hub
 async def test_plan_adversary_old_stamp_snapshot_uses_current_withdrawal(
     temp_db: HubDatabase,
 ) -> None:
-    run = SeatRun(temp_db, "plan-adversary")
+    run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
-    await run.send(f"EVENT=CONSENSUS SHA={SHA}")
+    await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA}")
     assert run.step == "stamp"
     instance = run.instances.get_for_session(SESSION_ID)
     assert instance is not None
     definitions = AgentDefinitionManager(temp_db)
-    definition = definitions.get_by_name("plan-adversary")
+    definition = definitions.get_by_name("fixture-definition-86a2d70b")
     assert definition is not None
     definitions.set_step_workflow_from_sync(
         definition.id, instance.snapshot.model_dump(mode="json")
@@ -1191,7 +1320,7 @@ async def test_plan_adversary_old_stamp_snapshot_uses_current_withdrawal(
     old_stamp.transitions = []
     run.instances.replace_for_session(instance)
 
-    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA}")
+    await run.send(f"FIXTURE_EVENT=AGREED_WITHDRAWN SHA={SHA}")
 
     assert run.step == "review"
     assert run.vars["consensus"] is False
@@ -1203,7 +1332,7 @@ async def test_plan_adversary_old_stamp_snapshot_uses_current_withdrawal(
 
 
 async def test_developer_claim_keeps_ref_when_task_card_is_offloaded(temp_db: HubDatabase) -> None:
-    run = SeatRun(temp_db, "developer")
+    run = SeatRun(temp_db, "fixture-worker")
     await run.load(*run.vars["required_skills"])
     task = run.task(owner=SESSION_ID)
     ref = f"#{task.seq_num}"
@@ -1234,7 +1363,7 @@ async def test_developer_claim_keeps_ref_when_task_card_is_offloaded(temp_db: Hu
 async def test_candidate_looking_text_is_retrieved_without_protocol_effects(
     temp_db: HubDatabase, prefix: str, event: str, sha: str
 ) -> None:
-    run = SeatRun(temp_db, "code-reviewer")
+    run = SeatRun(temp_db, "fixture-definition-e08ba693")
     await run.load(*run.vars["required_skills"])
     task = run.task()
     suffix = f"RUN=r WT=t COMMIT={sha}" if event == "CANDIDATE" else f"SHA={sha}"
@@ -1254,13 +1383,13 @@ async def test_candidate_looking_text_is_retrieved_without_protocol_effects(
 
 
 async def test_seat_consumed_messages_keeps_last_64(temp_db: HubDatabase) -> None:
-    run = SeatRun(temp_db, "plan-adversary")
+    run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
     message_ids = []
     for index in range(70):
-        event = "CONSENSUS" if index % 2 == 0 else "CONSENSUS_WITHDRAWN"
+        event = "AGREED" if index % 2 == 0 else "AGREED_WITHDRAWN"
         message = InterSessionMessageManager(temp_db).create_message(
-            SESSION_ID, COORDINATOR_ID, f"EVENT={event} SHA={SHA} NOTE=bounded"
+            SESSION_ID, COORDINATOR_ID, f"FIXTURE_EVENT={event} SHA={SHA} NOTE=bounded"
         )
         message_ids.append(message.id)
         await run.call(
@@ -1291,12 +1420,12 @@ async def test_spawned_proxy_and_provider_complete_step_once(
     omit_input: bool,
     explicit_ref: bool,
 ) -> None:
-    run = SeatRun(temp_db, "code-reviewer")
+    run = SeatRun(temp_db, "fixture-definition-e08ba693")
     await run.load(*run.vars["required_skills"])
     instance = run.instances.get_for_session(SESSION_ID)
     assert instance is not None
     # A counter detects duplicate handlers even when seat-message dedup masks them.
-    definition = AgentDefinitionManager(temp_db).get_by_name("code-reviewer")
+    definition = AgentDefinitionManager(temp_db).get_by_name("fixture-definition-e08ba693")
     assert definition is not None
     body = instance.snapshot.model_dump()
     body["variables"]["completion_count"] = 0
@@ -1311,7 +1440,7 @@ async def test_spawned_proxy_and_provider_complete_step_once(
         }
     )
     AgentDefinitionManager(temp_db).upsert_with_steps(
-        "code-reviewer", definition.definition_json, body
+        "fixture-definition-e08ba693", definition.definition_json, body
     )
     instance.variables["completion_count"] = 0
     run.instances.save(instance)
@@ -1423,17 +1552,17 @@ async def test_stale_step_completion_logs_warning(
     caplog: pytest.LogCaptureFixture,
     transition: bool,
 ) -> None:
-    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["plan-adversary"]))
+    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["fixture-definition-86a2d70b"]))
     if not transition:
         definition["step_workflow"]["steps"][0]["transitions"] = []
-    run = SeatRun(temp_db, "plan-adversary", definition=definition)
+    run = SeatRun(temp_db, "fixture-definition-86a2d70b", definition=definition)
     await run.load(*run.vars["required_skills"])
 
     def stale(*args: Any, **kwargs: Any) -> None:
         raise StaleStepInstanceWriteError("concurrent seat completion")
 
     monkeypatch.setattr(AgentStepInstanceManager, "save", stale)
-    await run.send(f"EVENT=CONSENSUS SHA={SHA} NOTE=approved")
+    await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA} NOTE=approved")
     assert run.step == "review"
     assert "Stale step completion write" in caplog.text
 
@@ -1441,7 +1570,7 @@ async def test_stale_step_completion_logs_warning(
 async def test_stale_consensus_transition_keeps_its_message_replayable(
     temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    run = SeatRun(temp_db, "plan-adversary")
+    run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     save = AgentStepInstanceManager.save
     lost: list[str] = []
 
@@ -1458,7 +1587,7 @@ async def test_stale_consensus_transition_keeps_its_message_replayable(
 
     monkeypatch.setattr(AgentStepInstanceManager, "save", lose_first_transition)
     message = InterSessionMessageManager(temp_db).create_message(
-        SESSION_ID, COORDINATOR_ID, f"EVENT=CONSENSUS SHA={SHA} NOTE=approved"
+        SESSION_ID, COORDINATOR_ID, f"FIXTURE_EVENT=AGREED SHA={SHA} NOTE=approved"
     )
     arguments = {"target": "session", "target_id": COORDINATOR_ID, "content": message.content}
     output = {"success": True, "message_ids": [message.id]}

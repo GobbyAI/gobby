@@ -9,6 +9,7 @@ import os
 from collections.abc import Sequence
 from typing import Any
 
+from gobby.communications import transcript_order
 from gobby.sessions.context_usage import context_window_from_raw_message
 from gobby.sessions.message_stats import (
     MessageStats,
@@ -57,26 +58,24 @@ class ProcessorStatsMixin:
         complete: bool,
     ) -> None:
         if complete and rendered.get("role") == "assistant" and self.communications_manager:
-            blocks = rendered.get("content_blocks", [])
-            text = "\n\n".join(
+            texts = [
                 block["content"]
-                for block in blocks
+                for block in rendered.get("content_blocks", [])
                 if isinstance(block, dict)
                 and block.get("type") == "text"
                 and isinstance(block.get("content"), str)
-            )
+                and block["content"].strip()
+            ]
             message_id = rendered.get("id")
             eligible = self._mirror_eligible_ids.get(session_id, set())
             if (
-                text.strip()
+                texts
                 and isinstance(message_id, str)
                 and message_id
                 and (session_id not in self._mirror_start_offsets or message_id in eligible)
             ):
                 try:
-                    await self.communications_manager.mirror_session_message(
-                        session_id, message_id, text
-                    )
+                    await self._mirror_text_blocks(session_id, message_id, texts)
                 except Exception:
                     # The durable delivery ledger retries independently. A
                     # failed mirror must not suppress stats or websocket events.
@@ -94,6 +93,49 @@ class ProcessorStatsMixin:
                 "complete": complete,
             }
         )
+
+    async def _mirror_text_blocks(
+        self: ProcessorHost,
+        session_id: str,
+        message_id: str,
+        texts: list[str],
+    ) -> None:
+        """Mirror each text block of a completed turn in order, one outbound row each.
+
+        The final block keeps the turn's message id, so its ledger row marks the
+        whole turn as delivered. A single-block turn keeps its id unchanged. The
+        first failed block stops the turn: it and every later block are held in the
+        ledger (a recorded row is kept), and the retry loop sends each only after
+        the block before it is delivered. Holding stops at the first block that
+        cannot be recorded. The failure is re-raised after the hold.
+        """
+        manager = self.communications_manager
+        if manager is None:
+            return
+        last = len(texts) - 1
+        keys = [
+            message_id if index == last else f"{message_id}#{index}" for index in range(last + 1)
+        ]
+        for index, text in enumerate(texts):
+            order = {"transcript_turn_id": message_id, "transcript_block_index": index}
+            try:
+                await manager.mirror_session_message(session_id, keys[index], text, order)
+            except Exception:
+                for held in range(index, last + 1):
+                    try:
+                        await transcript_order.hold_transcript_message(
+                            manager,
+                            session_id,
+                            keys[held],
+                            texts[held],
+                            {"transcript_turn_id": message_id, "transcript_block_index": held},
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Holding transcript block %s failed", keys[held], exc_info=True
+                        )
+                        break
+                raise
 
     def _accumulate_stats(
         self: ProcessorHost, session_id: str, records: Sequence[StatsRecord]
