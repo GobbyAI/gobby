@@ -425,23 +425,31 @@ def test_script_write_in_task_worktree_is_owned_before_next_mutation(
 
 
 @pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("symlinked", [False, True])
 def test_leading_cd_script_owns_only_its_task_worktree_changes(
     mock_dependencies: dict[str, Any],
     checkout: Checkout,
     task_worktree: Checkout,
     failed: bool,
+    symlinked: bool,
 ) -> None:
     """A main-checkout hook cwd must not hide the script's proven task checkout."""
     script = checkout.repo.parent / "rewrite from outside.py"
+    cd_target = task_worktree.repo
+    output_prefix = ""
+    if symlinked:
+        cd_target = checkout.repo / "linked-output"
+        cd_target.symlink_to(task_worktree.repo / "pkg", target_is_directory=True)
+        output_prefix = "../"
     script.write_text(
         "from pathlib import Path\nimport sys\n"
-        "Path('base.txt').write_text('script write\\n')\n"
-        "Path('generated.txt').write_text('new output\\n')\n"
+        f"Path('{output_prefix}base.txt').write_text('script write\\n')\n"
+        f"Path('{output_prefix}generated.txt').write_text('new output\\n')\n"
         f"sys.exit({int(failed)})\n",
         encoding="utf-8",
     )
     command = (
-        f"cd -- {shlex.quote(str(task_worktree.repo))} && "
+        f"cd -- {shlex.quote(str(cd_target))} && "
         f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}"
     )
     event = replace(
@@ -455,6 +463,11 @@ def test_leading_cd_script_owns_only_its_task_worktree_changes(
     normalize_tool_fields(event.data)
     handlers = _handlers(mock_dependencies, checkout.db)
     assert not _shell_write_refused(handlers, event)
+    snapshots = (
+        SessionVariableManager(checkout.db)
+        .get_variables(checkout.session_id)
+        .get("claimed_shell_snapshots", {})
+    )
     result = subprocess.run(command, shell=True, cwd=checkout.repo, check=False)
     assert result.returncode == int(failed)
     handlers.handle_after_tool(
@@ -473,6 +486,9 @@ def test_leading_cd_script_owns_only_its_task_worktree_changes(
         assert path not in checkout.ledger()
     assert "stale.txt" not in task_worktree.ledger()
     assert UNOWNED in task_worktree.rule_3_reason("stale.txt")
+    assert {snapshot["checkout_root"] for snapshot in snapshots.values()} == {
+        str(task_worktree.repo)
+    }
 
 
 @pytest.mark.parametrize("operation", ["format", "check --fix"])

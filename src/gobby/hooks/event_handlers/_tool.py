@@ -105,7 +105,7 @@ def _call_worktree_root(event: HookEvent) -> str | None:
         command = tool_input.get("command", tool_input.get("cmd"))
         if isinstance(command, str):
             cwd = literal_shell_workdir(command) or cwd
-    root = checkout_root(Path(cwd)) if cwd is not None else None
+    root = checkout_root(Path(cwd).resolve(strict=False)) if cwd is not None else None
     return normalize_task_checkout_root(str(root)) if root is not None else None
 
 
@@ -600,8 +600,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
     def _snapshot_shell_writes(self, event: HookEvent, session_id: str) -> None:
         """Remember the claimed-task ledger paths this Bash call may rewrite, before it runs."""
         db = getattr(self._session_manager, "db", None)
-        cwd = effective_tool_cwd(event.cwd, event.data)
-        root = checkout_root(Path(cwd)) if cwd is not None else None
+        root = _call_worktree_root(event)
         if db is None or root is None:
             return
         call_id = tool_execution_id(event)
