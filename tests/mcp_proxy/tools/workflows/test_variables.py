@@ -39,7 +39,7 @@ def _make_mocks(
     session_manager.resolve_session_reference.return_value = "uuid-session-1"
 
     instance_manager = MagicMock()
-    instance_manager.get_for_session.return_value = instance
+    instance_manager.get_active_for_session.return_value = instance
     instance_manager.merge_variables.return_value = instance
 
     session_var_manager = MagicMock()
@@ -359,7 +359,7 @@ class TestGetVariableScoped:
         assert result["success"] is True
         assert result["value"] is True
         assert result["exists"] is True
-        mocks["instance_manager"].get_for_session.assert_called_once_with("uuid-session-1")
+        mocks["instance_manager"].get_active_for_session.assert_called_once_with("uuid-session-1")
 
     def test_get_variable_without_workflow_reads_from_session_variables(self) -> None:
         """get_variable() without workflow reads from session_variables."""

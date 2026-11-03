@@ -1146,3 +1146,50 @@ def test_a_path_git_refuses_does_not_hide_later_answers(repo: Path) -> None:
     assert not navigation_requires_index(
         data, {"turn_written_paths": [str(repo / "a-sub/file.py")]}
     )
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("xargs -n1 head -n 100 < list", True),
+        ("xargs head -n 100 < list", True),
+        ("xargs -n 1 tail -n 100 < list", True),
+        ("xargs -n1 head -n 10 < list", False),
+        ("xargs -0 head -n40 < list", False),
+        ("xargs head -n 10 -n 5000 < list", True),
+        ("xargs head -n 10 -- < list", True),
+        ("xargs -I{} head -n 5000 {} < list", True),
+        ("xargs -I {} head -n 10 {} < list", True),
+        ("xargs -i head -n 10 {} < list", True),
+        ("xargs --replace=F tail -n 10 F < list", True),
+        # A substituted count word can become a file name; replace mode stays broad.
+        ("xargs -I -n head -n 10 < list", True),
+        ("xargs -I -c head -c 100 < list", True),
+        ("xargs -I --lines=10 head --lines=10 < list", True),
+        ("xargs -iX head -n 10 < list", True),
+        ("xargs head -c -1 < list", True),
+        ("head -c -1 src/long.py", True),
+        # head obeys its last count option, including bundled short options.
+        ("head -qc -1 src/long.py", True),
+        ("head -n 5 -c -1 src/long.py", True),
+        ("head -c 10 -n 5000 src/long.py", True),
+        ("head -n 5 -n 5000 src/long.py", True),
+        ("head -n 5000 -n 5 src/long.py", False),
+        # getopt_long accepts unambiguous long-option abbreviations.
+        ("head -n 5 --line=5000 src/long.py", True),
+        ("head -n 5 --l 5000 src/long.py", True),
+        ("head -c 100 --byt=99999 src/long.py", True),
+        ("head -qn5 src/long.py", False),
+        ("xargs nl < list", True),
+        ("xargs cat -n < list", True),
+        ("cat src/long.py | head -n 10 - - - - - >&2", True),
+        ("cat src/long.py | head -n 10 /dev/stdin /dev/fd/0 - /dev/stdin /dev/stdin >&2", True),
+        ("cat src/long.py | head -n 10 /dev/stdin /dev/stdin /dev/stdin /dev/stdin >&2", False),
+        ("head -n 100 /dev/stdin < src/long.py", True),
+        ("cat src/long.py | head -n 10 - >&2", False),
+        ("cat src/long.py | head -n 10 /dev/stdin >&2", False),
+        ("cat src/long.py | head -n 10 >&2", False),
+    ],
+)
+def test_per_file_and_repeated_stdin_bounds(repo: Path, command: str, blocked: bool) -> None:
+    assert broad_read_blocked(repo, command) is blocked
