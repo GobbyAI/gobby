@@ -38,10 +38,12 @@ async def _evaluate(
     RuleDefinitionManager(db).create(
         name="tool-input-rule",
         definition_json=RuleDefinitionBody(
-            event=RuleTriggerEvent.BEFORE_TOOL, when=when, effects=[effect]
+            event=RuleTriggerEvent.BEFORE_TOOL, when=when, effects=[effect], mandatory=True
         ).model_dump_json(),
         priority=10,
         enabled=True,
+        # No agent definition resolves with empty variables, so only default-tagged rules run.
+        tags=["default"],
     )
     return await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
 

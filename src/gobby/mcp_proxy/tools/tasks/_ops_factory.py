@@ -77,7 +77,7 @@ def create_task_ops_registry(
     # Merge ops affected files tools (set, get, find_overlaps, wire_from_run)
     registry.merge_from(create_ops_affected_files_registry(ctx))
 
-    # Merge artifact mutation tools for merge/expansion-qa/epic-reviewer agents
+    # Merge artifact mutation tools for callers admitted by artifact policy
     registry.merge_from(create_ops_artifact_registry(ctx))
 
     # Merge reindex tool (1 tool)

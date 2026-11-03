@@ -46,7 +46,7 @@ async def test_compact_snapshot_joins_current_claims_for_entire_fleet(
             child_session_id=child.id,
             provider="codex",
             prompt="standing seat",
-            agent_name="developer",
+            agent_name="fixture-worker",
         )
         storage.start(run.id)
         task = tasks.create_task(
@@ -129,7 +129,7 @@ async def test_compact_snapshot_drops_transferred_claim_and_stale_spawn_binding(
         child_session_id=sessions[1].id,
         provider="codex",
         prompt="standing",
-        agent_name="developer",
+        agent_name="fixture-worker",
         task_id=old.id,
     )
     storage.start(run.id)

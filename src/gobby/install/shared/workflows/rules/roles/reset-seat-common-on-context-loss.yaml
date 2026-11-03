@@ -1,4 +1,5 @@
-tags: [roles, seat, enforcement, gobby, seat-policy]
+version: "2.0.0"
+tags: [roles, runbook, enforcement, gobby]
 
 rules:
   reset-seat-common-on-context-loss:

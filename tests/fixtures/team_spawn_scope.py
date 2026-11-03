@@ -37,7 +37,12 @@ def _define_agent(
     AgentDefinitionManager(db).create(name, body)
 
 
-TEAM_SEAT_TYPES = ("test-writer", "developer", "code-reviewer", "custom-maker")
+TEAM_SEAT_TYPES = (
+    "fixture-definition-c02389e4",
+    "fixture-worker",
+    "fixture-definition-e08ba693",
+    "custom-maker",
+)
 
 
 @dataclass
@@ -70,9 +75,12 @@ async def teams(
     own, other = runbooks
     built = _Teams(
         db=temp_db,
-        manager=running_seat(world, own, "dev-team-lead"),
-        seats={name: running_seat(world, own, name) for name in (*TEAM_SEAT_TYPES, "orchestrator")},
-        outsider=running_seat(world, other, "developer"),
+        manager=running_seat(world, own, "fixture-definition-f0ad0fd9"),
+        seats={
+            name: running_seat(world, own, name)
+            for name in (*TEAM_SEAT_TYPES, "fixture-coordinator")
+        },
+        outsider=running_seat(world, other, "fixture-worker"),
     )
     for runbook in runbooks:
         world.finish(runbook)

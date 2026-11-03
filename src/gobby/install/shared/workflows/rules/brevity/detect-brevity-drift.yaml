@@ -1,8 +1,9 @@
+version: "1.0.1"
 tags: [brevity, gobby, default]
 
 rules:
   detect-brevity-literal-drift:
-    description: "Persist banned brevity literal matches after an assistant response"
+    description: "Persist banned brevity literal matches after a model response"
     event: turn_end
     enabled: true
     priority: 30
@@ -50,7 +51,7 @@ rules:
         value: "banned literal phrase"
 
   detect-brevity-contrastive-drift:
-    description: "Persist conservative negation-contrastive matches after an assistant response"
+    description: "Persist conservative negation-contrastive matches after a model response"
     event: turn_end
     enabled: true
     priority: 31

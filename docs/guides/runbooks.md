@@ -92,7 +92,13 @@ after associated seats end, without force. Superseded evidence remains in histor
 
 For an epic retain the primary pair and shared tree; the lead schedules ready
 leaves and parallel child teams through the same pipeline using parent_team_id.
-Child leads land into epic main under clean-tree coordination. The lead's named
+An epic has one lead. A run with parent_team_id launches developer and reviewer
+seats in its child tree but no lead: the guard maps its dev-team-lead seat to the
+epic team's live lead, connect-epic-lead messages that lead the child's team, tree
+and seats, and at validate the daemon hands the epic lead the leaf's claim. The
+epic lead lands the leaf into the epic branch under clean-tree coordination,
+validates, closes it and removes the clean child tree. Once every descendant is
+closed, an epic team seat may claim the epic root for final validation. The lead's named
 integration-leaf step provides a claimable task for implementation repairs and
 final integration checks; the lead performs base merges. Final review is independent
 of all descendant code/test authors and binds the candidate and subtree_revision.

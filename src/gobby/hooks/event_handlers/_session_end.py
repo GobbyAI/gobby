@@ -197,7 +197,7 @@ class SessionEndMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning("Failed to unregister session from message processor: %s", e)
 
-        # Release any interactive plan-adversary lock labels owned by this
+        # Release any session-owned planning lock labels owned by this
         # session. The skill's terminal cleanup handles this on every clean
         # exit; this sweep is the safety net for sessions that die before
         # reaching terminal cleanup (browser tab closed, tmux pane killed,

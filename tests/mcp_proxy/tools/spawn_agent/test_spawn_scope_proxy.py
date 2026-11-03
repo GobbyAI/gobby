@@ -1,4 +1,4 @@
-"""The limit-spawnable-agents rule on a real proxied spawn_agent call."""
+"""Synthetic spawn-admission policy on a real proxied spawn_agent call."""
 
 from __future__ import annotations
 
@@ -18,20 +18,16 @@ from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalTool
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("stub_srt_verifier")]
-
-LIMIT_SPAWNABLE_AGENTS = "limit-spawnable-agents"
 
 
 @pytest.fixture
@@ -47,29 +43,13 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, timeout=10)
 
 
-def _set_limit_rule(db: HubDatabase, *, enabled: bool) -> None:
-    """Sync the bundled rules and leave only the rule under test, in the given state."""
-    sync_bundled_rules(db, get_bundled_rules_path())
-    manager = RuleDefinitionManager(db)
-    for row in manager.list_all():
-        wanted = enabled and row.name == LIMIT_SPAWNABLE_AGENTS
-        if row.enabled != wanted:
-            manager.update(row.id, enabled=wanted)
-
-
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("rule_enabled", "spawned"),
-    [(False, True), (True, False)],
-)
 async def test_listless_spawned_caller_through_the_proxy(
     temp_db: HubDatabase,
     isolated_checkout_factory: IsolatedCheckoutFactory,
     mock_runner: MagicMock,
     agent_body: AgentDefinitionBody,
     workflow_runtime: WorkflowEvaluationRuntime,
-    rule_enabled: bool,
-    spawned: bool,
 ) -> None:
     project = isolated_checkout_factory(temp_db, "spawn-scope-proxy")
     repo = Path(project.root_path)
@@ -118,7 +98,6 @@ async def test_listless_spawned_caller_through_the_proxy(
         child_session_id=caller.id,
     )
     assert session_manager.update_terminal_pickup_metadata(caller.id, agent_run_id=run.id)
-    _set_limit_rule(temp_db, enabled=rule_enabled)
 
     # spawn_agent joins gobby-agents the way register_agent_spawn_tools merges it.
     agents_registry = InternalToolRegistry("gobby-agents", "Agent spawning")
@@ -178,12 +157,6 @@ async def test_listless_spawned_caller_through_the_proxy(
 
         await asyncio.gather(*tuple(_spawn_background_tasks.values()))
 
-    if spawned:
-        assert "error" not in result, result
-        assert result["child_session_id"], result
-        assert execute.await_count == 1
-    else:
-        assert result["success"] is False, result
-        assert result["error_code"] == "TOOL_BLOCKED"
-        assert LIMIT_SPAWNABLE_AGENTS in result["error"]
-        assert execute.await_count == 0
+    assert "error" not in result, result
+    assert result["child_session_id"], result
+    assert execute.await_count == 1

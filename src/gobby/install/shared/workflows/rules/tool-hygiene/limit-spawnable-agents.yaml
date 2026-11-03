@@ -1,3 +1,4 @@
+version: "1.0.1"
 tags: [tool-hygiene, enforcement, gobby, default]
 
 rules:
@@ -23,6 +24,6 @@ rules:
           The agent the call starts must be allowed: an omitted agent
           means "default", and so does every agent in the target's
           fallback_agent chain. Name the agent in agent: a team manager resuming
-          a seat passes agent=<the seat's type>, such as agent=test-writer, with
+          a seat passes agent=<the seat's type> with
           resume_session_id.
           Send the work to your parent with gobby-agents:send_message instead.

@@ -173,7 +173,7 @@ class TestSpawnAgentImplErrorBranches:
         assert result["skipped"] is True
         assert "#99999" in result["error"]
         # The live failure was spawning anyway: the child then tripped
-        # require-task-before-edit on every file operation (#22402).
+        # Task-admission rules on every file operation (#22402).
         mock_execute.assert_not_called()
 
     @pytest.mark.asyncio

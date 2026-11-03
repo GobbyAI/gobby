@@ -39,7 +39,7 @@ class OperatorEnvironment:
     adapter: MagicMock
     project_id: str
 
-    def assistant(self, definition: str = "assistant") -> Session:
+    def assistant(self, definition: str = "fixture-helper") -> Session:
         session = self.sessions.register("assistant-seat", None, "claude", self.project_id)
         SessionVariableManager(self.sessions.db).set_variable(session.id, "_agent_type", definition)
         return session
@@ -58,7 +58,7 @@ class OperatorEnvironment:
 
 @pytest.fixture
 def operator_dm(temp_db: HubDatabase, sample_project: dict[str, str]) -> OperatorEnvironment:
-    seed_seat(temp_db, "assistant", capabilities=["auto_attach_operator_conversations"])
+    seed_seat(temp_db, "fixture-helper", capabilities=["auto_attach_operator_conversations"])
     sessions = SessionManager(temp_db)
     project_id = sample_project["id"]
     old = sessions.register("expired-identity", None, "codex", project_id)
@@ -109,7 +109,7 @@ def operator_dm(temp_db: HubDatabase, sample_project: dict[str, str]) -> Operato
     )
 
 
-@pytest.mark.parametrize("definition", ["assistant", "custom-inbox"])
+@pytest.mark.parametrize("definition", ["fixture-helper", "custom-inbox"])
 @pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize("granted", [False, True])
 def test_automatic_operator_target_uses_definition_capability(
@@ -117,7 +117,7 @@ def test_automatic_operator_target_uses_definition_capability(
 ) -> None:
     env = operator_dm
     definitions = AgentDefinitionManager(env.sessions.db)
-    row = definitions.get_by_name("assistant")
+    row = definitions.get_by_name("fixture-helper")
     assert row is not None
     body = dict(row.definition_json)
     body["name"] = definition
@@ -182,7 +182,7 @@ def test_web_chat_cannot_take_operator_attachment(operator_dm: OperatorEnvironme
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("definition", ["assistant", "custom-inbox"])
+@pytest.mark.parametrize("definition", ["fixture-helper", "custom-inbox"])
 @pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize("granted", [False, True])
 async def test_deleted_telegram_target_falls_back_by_capability(
@@ -190,7 +190,7 @@ async def test_deleted_telegram_target_falls_back_by_capability(
 ) -> None:
     env = operator_dm
     definitions = AgentDefinitionManager(env.sessions.db)
-    row = definitions.get_by_name("assistant")
+    row = definitions.get_by_name("fixture-helper")
     assert row is not None
     body = dict(row.definition_json)
     body["name"] = definition
@@ -199,7 +199,9 @@ async def test_deleted_telegram_target_falls_back_by_capability(
     holder = env.sessions.register("selected-for-fallback", None, "codex", env.project_id)
     env.manager.attach_conversation(env.channel.name, "dm:42", holder.id)
     seat = env.assistant(definition)
-    env.sessions.update_title(seat.id, "Assistant" if definition == "assistant" else "Help desk")
+    env.sessions.update_title(
+        seat.id, "Assistant" if definition == "fixture-helper" else "Help desk"
+    )
     assert env.sessions.delete(holder.id)
 
     await fallback_telegram_targets(
@@ -282,7 +284,9 @@ async def test_committed_operator_input_is_not_replayed_to_replacement(
     assert len(mailbox_store.get_messages(assistant.id)) == 1
     env.sessions.update_status(assistant.id, "expired")
     replacement = env.sessions.register("replacement", None, "claude", env.project_id)
-    SessionVariableManager(env.sessions.db).set_variable(replacement.id, "_agent_type", "assistant")
+    SessionVariableManager(env.sessions.db).set_variable(
+        replacement.id, "_agent_type", "fixture-helper"
+    )
     env.adapter.poll = AsyncMock(side_effect=[[], asyncio.CancelledError()])
     await env.manager._polling_manager._poll_loop(env.channel.name, env.adapter, 0)
     assert mailbox_store.get_messages(replacement.id) == []

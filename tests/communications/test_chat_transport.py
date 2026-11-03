@@ -484,7 +484,7 @@ async def test_backend_honors_explicit_surface_context() -> None:
     await backend.run_turn(
         _context(
             responder_config={
-                "agent": "researcher",
+                "agent": "fixture-definition-3588bb72",
                 "chat_mode": "plan",
                 "project_id": "project-1",
             }
@@ -495,7 +495,7 @@ async def test_backend_honors_explicit_surface_context() -> None:
         {
             "conversation_id": "session-1",
             "chat_mode": "plan",
-            "agent_name": "researcher",
+            "agent_name": "fixture-definition-3588bb72",
             "project_id": "project-1",
         }
     ]

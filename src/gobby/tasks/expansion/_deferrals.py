@@ -38,7 +38,7 @@ def create_placeholder_deferral_tasks(
     ``(depends: ...)`` annotation (a cross-plan ``#N`` ref resolves to that task),
     and a ``blocked_by`` edge from the root epic so
     it sits in the epic's dependency closure. A numeric ``task_ref`` is left alone;
-    expansion-qa reports a dangling one as ``task_missing``.
+    Expansion validation reports a dangling one as ``task_missing``.
 
     ``created_task_map`` maps each compiled leaf's stable spec id to the task it
     produced in this run; every leaf exists before this runs.

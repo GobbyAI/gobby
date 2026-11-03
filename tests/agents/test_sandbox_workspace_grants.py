@@ -18,7 +18,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import yaml
 
 from gobby.agents import resume_executor
 from gobby.agents.agent_workspaces import (
@@ -40,13 +39,10 @@ from gobby.agents.srt_settings import render_srt_settings
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
-from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
-from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.agents.test_resume_executor import (
@@ -62,7 +58,7 @@ from tests.fixtures.team_teardown_case import admitted_team, seated_team
 
 pytestmark = pytest.mark.unit
 
-DEVELOPER = "developer"
+DEVELOPER = "fixture-worker"
 
 
 def _associated_checkout(
@@ -70,7 +66,7 @@ def _associated_checkout(
 ) -> tuple[SpawnRequest, PreparedSpawn, Worktree]:
     db = world.case.db
     project = world.case.project_id
-    developer = world.case.session("developer")
+    developer = world.case.session("fixture-worker")
     folder = session_workspace_dir(project, "default", _seq(db, developer))
     folder.mkdir(parents=True)
     task = world.case.task("Shared candidate")
@@ -101,20 +97,9 @@ def _associated_checkout(
 async def _workspace_decision(
     world: TeamWorld, request: SpawnRequest, tool_name: str, tool_input: dict[str, str]
 ) -> str:
-    template = (
-        Path(__file__).parents[2]
-        / "src/gobby/install/shared/workflows/rules/roles/agent-workspace-scope.yaml"
-    )
-    document = yaml.safe_load(template.read_text())
-    for rule in ("agent-workspace-read-scope", "agent-workspace-write-scope"):
-        body, metadata_fields = split_rule_definition_data(document["rules"][rule])
-        RuleDefinitionManager(world.case.db).create(
-            name=rule,
-            definition_json=RuleDefinitionBody.model_validate(body).model_dump_json(),
-            priority=metadata_fields["priority"],
-            enabled=True,
-            tags=document["tags"],
-        )
+    from gobby.storage.sessions import SessionManager
+    from gobby.workflows.safe_evaluator import build_condition_helpers
+
     seat = request.session_id
     assert seat is not None
     own = session_workspace_dir(
@@ -131,11 +116,17 @@ async def _workspace_decision(
         metadata={"_platform_session_id": seat},
         data=data,
     )
-    result = await RuleEngine(world.case.db).evaluate(event, session_id=seat, variables=variables)
-    return result.decision
+    helpers = build_condition_helpers(session_manager=SessionManager(world.case.db))
+    violation = any(
+        helpers[f"agent_workspace_{operation}_violation"](event.data, tool_input, variables, seat)
+        for operation in ("read", "write")
+    )
+    return "block" if violation else "allow"
 
 
-@pytest.mark.parametrize("definition", ["code-reviewer", "test-writer"])
+@pytest.mark.parametrize(
+    "definition", ["fixture-definition-e08ba693", "fixture-definition-c02389e4"]
+)
 async def test_associated_seat_can_launch_in_developer_task_worktree(
     world: TeamWorld, definition: str
 ) -> None:
@@ -161,7 +152,9 @@ async def test_associated_seat_can_launch_in_developer_task_worktree(
     _assert_only_own_folders(filesystem, paths, {own, worktree})
 
 
-@pytest.mark.parametrize("definition", ["code-reviewer", "test-writer"])
+@pytest.mark.parametrize(
+    "definition", ["fixture-definition-e08ba693", "fixture-definition-c02389e4"]
+)
 @pytest.mark.parametrize(
     ("tool", "field", "relative", "expected"),
     [
@@ -202,7 +195,7 @@ async def test_associated_checkout_hook_boundaries(
     ["unassigned", "no-current-run", "other-child", "task", "project", "machine", "inactive"],
 )
 async def test_unrelated_assignment_does_not_grant_checkout(world: TeamWorld, invalid: str) -> None:
-    request, context, registered = _associated_checkout(world, "code-reviewer")
+    request, context, registered = _associated_checkout(world, "fixture-definition-e08ba693")
     db = world.case.db
     if invalid == "unassigned":
         db.execute(
@@ -244,7 +237,7 @@ async def test_unrelated_assignment_does_not_grant_checkout(world: TeamWorld, in
 
 @pytest.mark.parametrize("path_kind", ["alias", "bare-seat", "nested"])
 def test_assignment_requires_exact_canonical_checkout(world: TeamWorld, path_kind: str) -> None:
-    request, context, registered = _associated_checkout(world, "code-reviewer")
+    request, context, registered = _associated_checkout(world, "fixture-definition-e08ba693")
     worktree = Path(request.cwd)
     if path_kind == "alias":
         invalid_path = worktree.parent / "alias"
@@ -261,7 +254,7 @@ def test_assignment_requires_exact_canonical_checkout(world: TeamWorld, path_kin
 
 
 async def test_explicit_worktree_assignment_does_not_require_run_task(world: TeamWorld) -> None:
-    request, context, _ = _associated_checkout(world, "code-reviewer")
+    request, context, _ = _associated_checkout(world, "fixture-definition-e08ba693")
     world.case.db.execute(
         "UPDATE agent_runs SET task_id = NULL WHERE id = %s", (context.agent_run_id,)
     )

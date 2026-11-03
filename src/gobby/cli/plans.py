@@ -226,7 +226,7 @@ def review_evidence_command(
 @plans.command("review-runs")
 @click.argument("planning_task_ref")
 def review_runs_command(planning_task_ref: str) -> None:
-    """Show the expansion-QA review-runs handoff surface."""
+    """Show the plan expansion review-runs handoff surface."""
 
     click.echo(
         "Run expansion QA coverage via gobby-tasks-ops:run_expansion_qa_coverage "

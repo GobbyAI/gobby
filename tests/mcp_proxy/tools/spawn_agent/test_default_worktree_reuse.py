@@ -33,7 +33,7 @@ async def test_default_body_merges_and_binds_reused_worktree(
     git(source, "config", "user.email", "test@example.com")
     git(source, "config", "user.name", "Default Test")
     git(source, "commit", "--allow-empty", "-m", "initial")
-    child = tmp_path / "developer"
+    child = tmp_path / "fixture-worker"
     git(source, "worktree", "add", "-b", "candidate", str(child))
     (child / "candidate.txt").write_text("candidate\n")
     git(child, "add", ".")

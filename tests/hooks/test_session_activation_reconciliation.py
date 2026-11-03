@@ -491,8 +491,9 @@ def test_reconciliation_refreshes_stale_active_rule_names(
 
     variables = _variables(db, session_id)
     assert result.changed is True
-    expected = "opt-in-rule" if definition_state == "enabled" else "new-default-rule"
-    assert variables["_active_rule_names"] == [expected]
+    # A named seat whose definition is gone fails closed instead of taking the baseline.
+    expected = ["opt-in-rule"] if definition_state == "enabled" else []
+    assert variables["_active_rule_names"] == expected
 
 
 def test_reconciliation_caches_active_rule_names_for_same_agent_and_project(
@@ -1571,3 +1572,44 @@ def test_active_rule_resolution_rejects_invalid_selectors(
     )
     with pytest.raises(ValueError, match="Invalid active agent definition"):
         _resolve_active_rule_names(db, "invalid-selectors", project_id)
+
+
+@pytest.mark.parametrize(
+    ("agent_name", "expected"),
+    [
+        ("", {"baseline-rule"}),
+        ("ghost-seat", {"mandatory-rule"}),
+        ("disabled-seat", {"mandatory-rule"}),
+    ],
+)
+def test_unresolved_named_seat_projects_no_baseline_rules(
+    db: HubDatabase, project_id: str, agent_name: str, expected: set[str]
+) -> None:
+    # #25617: a named seat whose definition is gone gains no default-tagged authority.
+    AgentDefinitionManager(db).create(
+        name="disabled-seat",
+        source="custom",
+        definition_json=_selector_agent_json("baseline"),
+        enabled=False,
+    )
+    rules = RuleDefinitionManager(db)
+    for name, tags, mandatory in (
+        ("baseline-rule", ["default"], False),
+        ("mandatory-rule", [], True),
+    ):
+        rules.create(
+            name=name,
+            source="custom",
+            tags=tags,
+            definition_json=json.dumps(
+                {
+                    "event": "before_tool",
+                    "mandatory": mandatory,
+                    "effects": [{"type": "set_variable", "variable": name, "value": True}],
+                }
+            ),
+        )
+
+    from gobby.hooks.session_activation import _resolve_active_rule_names
+
+    assert _resolve_active_rule_names(db, agent_name, project_id) == expected

@@ -1,4 +1,4 @@
-version: "2.1.0"
+version: "2.1.1"
 tags: [task-closure-general]
 
 rules:
@@ -129,4 +129,4 @@ rules:
     when: *epic_independence
     effects:
       - type: block
-        reason: The final epic reviewer must be independent of every descendant implementation author.
+        reason: The final epic review must come from a session independent of every descendant implementation author.

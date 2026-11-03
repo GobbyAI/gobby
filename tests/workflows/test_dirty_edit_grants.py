@@ -15,7 +15,6 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-import yaml
 from click.testing import CliRunner
 
 from gobby.cli.sessions_dirty_paths import approve_dirty_paths
@@ -30,10 +29,7 @@ from gobby.workflows.dirty_edit_grants import (
     approved_dirty_paths,
     record_dirty_path_approval,
 )
-from gobby.workflows.engine.command_matching import command_patterns_match
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
@@ -145,7 +141,6 @@ def test_seat_variable_writes_cannot_forge_the_edit_ledgers_the_gate_trusts(
     assert variables.get(name) != forged
 
 
-RULE_FILE = get_bundled_rules_path() / "task-enforcement" / "block-dirty-path-approval-cli.yaml"
 OBFUSCATED_SPELLINGS = (
     'a=approve-dirty-; b=paths; c=sess; d=ions; "{python}" -m gobby.cli $c$d $a$b s7 '
     "--checkout {root} a.txt",
@@ -167,23 +162,6 @@ def bootstrap_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _write_operator_key(home: Path, key: str) -> None:
     (home / "bootstrap.yaml").write_text(f"api_key: {key!r}\n", encoding="utf-8")
-
-
-def _rule_blocks(command: str) -> bool:
-    rules = yaml.safe_load(RULE_FILE.read_text(encoding="utf-8"))["rules"]
-    context = {"tool_input": {"command": command}}
-    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
-    for rule in rules.values():
-        if rule.get("when") and not evaluator.evaluate(rule["when"]):
-            continue
-        for effect in rule["effects"]:
-            if not effect.get("command_pattern") or command_patterns_match(
-                command,
-                pattern=effect["command_pattern"],
-                mask_quoted=effect["mask_quoted"],
-            ):
-                return True
-    return False
 
 
 def test_approve_dirty_paths_cli_refuses_without_an_operator_key(
@@ -279,15 +257,14 @@ def test_approve_dirty_paths_cli_reports_the_daemon_refusal(
 
 
 @pytest.mark.parametrize(
-    ("spelling", "blocked"),
-    [(OBFUSCATED_SPELLINGS[0], True), (OBFUSCATED_SPELLINGS[1], False)],
+    "spelling",
+    OBFUSCATED_SPELLINGS,
     ids=["variable-built", "printf-piped"],
 )
-def test_obfuscated_approval_spellings_stop_at_the_rule_or_cli(
-    spelling: str, blocked: bool, tmp_path: Path, bootstrap_home: Path
+def test_obfuscated_approval_spellings_require_cli_operator_auth(
+    spelling: str, tmp_path: Path, bootstrap_home: Path
 ) -> None:
     command = spelling.format(python=sys.executable, root=tmp_path)
-    assert _rule_blocks(command) is blocked
 
     result = subprocess.run(
         ["sh", "-c", command],

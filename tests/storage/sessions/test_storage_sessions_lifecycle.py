@@ -126,7 +126,7 @@ class TestSessionManagerLifecycle:
         workflow_manager.save(
             make_step_instance(
                 session.id,
-                agent_name="developer",
+                agent_name="fixture-worker",
                 current_step="implement",
             )
         )
@@ -144,7 +144,7 @@ class TestSessionManagerLifecycle:
         assert reactivated.agent_run_id == run.id
         instance = workflow_manager.get_for_session(session.id)
         assert instance is not None
-        assert instance.agent_name == "developer"
+        assert instance.agent_name == "fixture-worker"
         preserved_run = run_manager.get(run.id)
         assert preserved_run is not None
         assert preserved_run.child_session_id == session.id

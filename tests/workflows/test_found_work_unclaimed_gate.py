@@ -9,12 +9,16 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.found_work_gate import (
     FOUND_WORK_GATE_ARMED_AT_VARIABLE,
@@ -22,13 +26,37 @@ from gobby.workflows.found_work_gate import (
     FoundWorkStopFacts,
 )
 from gobby.workflows.hooks import WorkflowHookHandler
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
 MACHINE_ID = "20000000-0000-4000-8000-000000000012"
 TEST_ARMED_AT = datetime(2001, 1, 1, tzinfo=UTC).isoformat()
+
+
+@pytest.fixture
+def filing_rule_engine(temp_db: HubDatabase) -> RuleEngine:
+    """Dry-run bundled filing policy under synthetic identities in the isolated hub."""
+    root = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/rules"
+    bodies: list[RuleDefinitionBody] = []
+    for path in sorted(root.rglob("*.yaml")):
+        if "deprecated" in path.parts:
+            continue
+        document = yaml.safe_load(path.read_text())
+        for definition in document.get("rules", {}).values():
+            if "unclaimed_found_work" in definition.get("when", ""):
+                bodies.append(
+                    RuleDefinitionBody.model_validate(
+                        {key: definition[key] for key in ("event", "when", "effects")}
+                    )
+                )
+    assert bodies, "Bundled filing policy must be exercised"
+    for index, body in enumerate(bodies):
+        RuleDefinitionManager(temp_db).create(
+            name=f"synthetic-filing-policy-{index}",
+            tags=["default"],
+            definition_json=body.model_dump(mode="json"),
+        )
+    return RuleEngine(temp_db, task_manager=LocalTaskManager(temp_db))
 
 
 @pytest.fixture(autouse=True)
@@ -211,6 +239,86 @@ async def test_query_returns_only_unclaimed_unlabeled_tasks_created_by_session(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("filing_kind", "include_actionable", "expected_decision"),
+    [
+        ("blocked", False, "allow"),
+        ("operator-directed", False, "allow"),
+        ("ordinary", False, "block"),
+        ("blocked", True, "block"),
+        ("operator-directed", True, "block"),
+    ],
+)
+async def test_filing_policy_filters_each_task(
+    temp_db: HubDatabase,
+    task_context: tuple[LocalTaskManager, str, str, str],
+    filing_rule_engine: RuleEngine,
+    filing_kind: str,
+    include_actionable: bool,
+    expected_decision: str,
+) -> None:
+    tasks, project_id, owner_id, other_id = task_context
+    filing = tasks.create_task(
+        project_id=project_id,
+        title="Filed work",
+        created_in_session_id=owner_id,
+        labels=[filing_kind] if filing_kind == "operator-directed" else [],
+    )
+    if filing_kind == "blocked":
+        blocker = tasks.create_task(
+            project_id=project_id, title="Open dependency", created_in_session_id=other_id
+        )
+        TaskDependencyManager(temp_db).add_dependency(filing.id, blocker.id)
+    actionable = None
+    if include_actionable:
+        actionable = tasks.create_task(
+            project_id=project_id, title="Actionable finding", created_in_session_id=owner_id
+        )
+    refs = _analyzer(temp_db).unclaimed_found_work(owner_id, armed_at=TEST_ARMED_AT)
+    assert f"#{filing.seq_num}" in refs
+
+    response = await filing_rule_engine.evaluate(
+        event=_event(owner_id),
+        session_id=owner_id,
+        variables={},
+        eval_context={"unclaimed_found_work": bool(refs), "unclaimed_found_work_tasks": list(refs)},
+    )
+
+    assert response.decision == expected_decision
+    if actionable is not None:
+        assert f"#{actionable.seq_num}" in (response.reason or "")
+        assert f"#{filing.seq_num}" not in (response.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_filing_policy_rearms_after_dependency_closes(
+    temp_db: HubDatabase,
+    task_context: tuple[LocalTaskManager, str, str, str],
+    filing_rule_engine: RuleEngine,
+) -> None:
+    tasks, project_id, owner_id, other_id = task_context
+    filing = tasks.create_task(
+        project_id=project_id, title="Blocked finding", created_in_session_id=owner_id
+    )
+    blocker = tasks.create_task(
+        project_id=project_id, title="Open dependency", created_in_session_id=other_id
+    )
+    TaskDependencyManager(temp_db).add_dependency(filing.id, blocker.id)
+    context = {"unclaimed_found_work": True, "unclaimed_found_work_tasks": [f"#{filing.seq_num}"]}
+    before = await filing_rule_engine.evaluate(
+        event=_event(owner_id), session_id=owner_id, variables={}, eval_context=context
+    )
+    assert before.decision == "allow"
+
+    tasks.close_task(blocker.id)
+    after = await filing_rule_engine.evaluate(
+        event=_event(owner_id), session_id=owner_id, variables={}, eval_context=context
+    )
+    assert after.decision == "block"
+    assert f"#{filing.seq_num}" in (after.reason or "")
+
+
+@pytest.mark.asyncio
 async def test_taskless_session_does_not_report_created_tasks(
     temp_db: HubDatabase,
     task_context: tuple[LocalTaskManager, str, str, str],
@@ -261,71 +369,10 @@ async def test_explicit_user_filing_instruction_exempts_unclaimed_tasks(
 
 
 @pytest.mark.asyncio
-async def test_bundled_rule_blocks_interactive_sessions(temp_db: HubDatabase) -> None:
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-    variables: dict[str, Any] = {
-        "_memory_initial_stop_checked": True,
-        "is_spawned_agent": False,
-        "stop_attempts": 0,
-    }
-
-    response = await RuleEngine(temp_db).evaluate(
-        _event("11111111-1111-4111-8111-111111111111"),
-        session_id="11111111-1111-4111-8111-111111111111",
-        variables=variables,
-        eval_context={
-            "unclaimed_found_work": True,
-            "unclaimed_found_work_tasks": ["#21484", "#21485"],
-        },
-    )
-
-    assert response.decision == "block"
-    assert "#21484, #21485" in (response.reason or "")
-    assert "Filing is not a terminal state" in (response.reason or "")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("agent_type", ["orchestrator", "custom-coordinator"])
-@pytest.mark.parametrize("exempt", [False, True])
-async def test_bundled_rule_uses_definition_exemptions(
-    temp_db: HubDatabase, agent_type: str, exempt: bool
-) -> None:
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-    seed_seat(
-        temp_db,
-        agent_type,
-        include=["tag:default"],
-        exclude=["name:block-unclaimed-found-work"] if exempt else [],
-    )
-    variables: dict[str, Any] = {
-        "_agent_type": agent_type,
-        "_memory_initial_stop_checked": True,
-        "is_spawned_agent": False,
-        "stop_attempts": 0,
-    }
-    session_id = "11111111-1111-4111-8111-111111111111"
-
-    response = await RuleEngine(temp_db).evaluate(
-        _event(session_id),
-        session_id=session_id,
-        variables=variables,
-        eval_context={
-            "unclaimed_found_work": True,
-            "unclaimed_found_work_tasks": ["#21484"],
-        },
-    )
-
-    assert (response.decision == "block") is not exempt
-    if not exempt:
-        assert "Filing is not a terminal state" in (response.reason or "")
-
-
-@pytest.mark.asyncio
 async def test_workflow_handler_feeds_unclaimed_fact_for_spawned_claimed_session(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
     handler = WorkflowHookHandler(rule_engine=RuleEngine(temp_db))
     variables = {
         "_memory_initial_stop_checked": True,
@@ -529,7 +576,6 @@ async def test_user_deferral_latches_past_the_turn_that_carried_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A deferral survives compaction, whose next prompt is harness text."""
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
     handler = WorkflowHookHandler(rule_engine=RuleEngine(temp_db))
     variables: dict[str, Any] = {
         "_memory_initial_stop_checked": True,

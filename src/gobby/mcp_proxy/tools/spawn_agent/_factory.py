@@ -245,14 +245,22 @@ def _load_agent_body(
         AgentDefinitionBody if found, None otherwise.
 
     Raises:
-        AgentResolutionError: The stored definition names ``terminal_backend``.
+        AgentResolutionError: The stored definition names ``terminal_backend``, or a named
+            definition is disabled (its seat would fail closed on every tool call).
     """
     if db is None:
         return None
 
-    from gobby.workflows.agent_resolver import resolve_agent
+    from gobby.workflows.agent_resolver import resolve_agent, resolve_agent_with_row
+    from gobby.workflows.selectors import binds_named_definition
 
-    return resolve_agent(name, db, cli_source=cli_source, project_id=project_id)
+    found = resolve_agent_with_row(name, db, cli_source=cli_source, project_id=project_id)
+    if found is None:
+        return resolve_agent(name, db, cli_source=cli_source, project_id=project_id)
+    body, row = found
+    if not row.enabled and binds_named_definition(name):
+        raise AgentResolutionError(f"Agent definition '{name}' is disabled")
+    return body
 
 
 def create_spawn_agent_registry(
