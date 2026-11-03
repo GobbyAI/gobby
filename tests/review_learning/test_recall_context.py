@@ -68,7 +68,7 @@ async def test_record_rejects_unresolvable_explicit_session(
     with pytest.raises(RuntimeError, match="could not resolve explicit session"):
         await service.record(
             source_kind="agent_review",
-            source="code-reviewer",
+            source="fixture-definition-e08ba693",
             source_review="review-1",
             decision="confirmed",
             finding={

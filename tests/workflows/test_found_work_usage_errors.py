@@ -7,8 +7,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-import yaml
-from jinja2.sandbox import SandboxedEnvironment
 
 from gobby.config.validation_detection import classify_validation_segments
 from gobby.tasks.transcript_evidence_models import (
@@ -17,7 +15,6 @@ from gobby.tasks.transcript_evidence_models import (
 )
 from gobby.workflows.engine.blocked_tool_recovery import recovery_directive_suffix
 from gobby.workflows.found_work_gate import unresolved_validation_failures
-from gobby.workflows.sync_rules import get_bundled_rules_path
 
 pytestmark = pytest.mark.unit
 
@@ -225,17 +222,15 @@ def test_real_failure_of_the_sessions_own_validation_still_blocks(
 
 
 def test_terminal_failure_recovery_directive_keeps_the_whole_command() -> None:
-    rule = "block-terminal-validation-failure"
-    path = get_bundled_rules_path() / "stop-gates" / "enforce-found-work-ladder.yaml"
-    template = yaml.safe_load(path.read_text())["rules"][rule]["effects"][0]["reason"]
     command = (
         "GOBBY_TEST_PROTECT=1 uv run --project /Users/josh/.gobby/worktrees/gobby/lane-6-x "
         "--directory /private/tmp/claude-501/s/scratchpad/cand_23719 pytest "
         "tests/config/test_validation_detection.py -q"
     )
-    reason = f"Rule enforced by Gobby: [{rule}]\n" + SandboxedEnvironment().from_string(
-        template
-    ).render(terminal_validation_failure_commands=[command])
+    reason = (
+        f"Rule enforced by Gobby: [synthetic-recovery]\nRun `{command}`. "
+        "Call link_task_to_session(action=discovered)."
+    )
 
     suffix = recovery_directive_suffix(reason)
 

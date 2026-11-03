@@ -38,30 +38,30 @@ from tests.fixtures.postgres import TEST_USER_ID
 
 
 def synthetic_manager_body() -> dict[str, Any]:
-    """A synthetic team manager: the grants and spawn scope of the bundled dev-team-lead.yaml."""
+    """A minimal manager fixture declaring its grants and spawn scope."""
     return {
-        "name": "dev-team-lead",
+        "name": "fixture-definition-f0ad0fd9",
         "version": "1.0",
         "capabilities": ["manage_task_claims", "land_tasks", "accept_resume_retype"],
         "surfaces": ["spawn"],
         "send_message_targets": ["parent", "session", "project"],
         "spawnable_agents": [
-            "developer",
-            "test-writer",
-            "code-reviewer",
-            "docs-reviewer",
-            "research-reviewer",
-            "researcher",
+            "fixture-worker",
+            "fixture-definition-c02389e4",
+            "fixture-definition-e08ba693",
+            "fixture-definition-3d77e16a",
+            "fixture-definition-82cde3b3",
+            "fixture-definition-3588bb72",
         ],
         "resumable_team_agents": [
-            "test-writer",
-            "developer",
-            "code-reviewer",
-            "docs-reviewer",
-            "research-reviewer",
-            "researcher",
+            "fixture-definition-c02389e4",
+            "fixture-worker",
+            "fixture-definition-e08ba693",
+            "fixture-definition-3d77e16a",
+            "fixture-definition-82cde3b3",
+            "fixture-definition-3588bb72",
         ],
-        "prompts": {"agent": "Run the dev-team-lead seat."},
+        "prompts": {"agent": "Run the fixture-definition-f0ad0fd9 seat."},
         "workflows": {
             "rule_selectors": {"include": []},
             "variables": {"team_manager": True},
@@ -75,7 +75,10 @@ TITLE = "Scroll and type during daemon outage window"
 SLUG = "scroll-and-type-during-daemon-outage-win"
 RUNBOOK = PipelineDefinition(
     name="team-runbook",
-    steps=[PipelineStep(id=ADMISSION_STEP, exec="true"), PipelineStep(id="developer", exec="true")],
+    steps=[
+        PipelineStep(id=ADMISSION_STEP, exec="true"),
+        PipelineStep(id="fixture-worker", exec="true"),
+    ],
 )
 
 
@@ -182,11 +185,11 @@ class TeamWorld:
         )
 
     async def spawn(self, caller: Session, **target: Any) -> dict[str, Any]:
-        """Spawn the caller runbook's developer seat through spawn_agent."""
+        """Spawn the caller runbook's fixture-worker seat through spawn_agent."""
         arguments = {
-            "prompt": "Run the developer seat",
+            "prompt": "Run the fixture-worker seat",
             "parent_session_id": caller.id,
-            "reserved_run_id": step_invocation_id(execution_id(caller), "developer"),
+            "reserved_run_id": step_invocation_id(execution_id(caller), "fixture-worker"),
             **target,
         }
         with session_context_for_test(caller.id):

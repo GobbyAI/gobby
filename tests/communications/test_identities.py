@@ -310,7 +310,7 @@ async def test_inbound_metadata_selects_conversation_scoped_session(
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_inbound_access_policy_rejection_logs_at_debug(
+async def test_inbound_access_policy_rejection_logs_at_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     channel = ChannelConfig(
@@ -341,18 +341,7 @@ async def test_inbound_access_policy_rejection_logs_at_debug(
 
     assert handled == [message]
     records = [
-        record
-        for record in caplog.records
-        if record.message.startswith("Ignoring inbound message rejected by access policy")
+        record for record in caplog.records if record.message.startswith("Rejected inbound message")
     ]
     assert len(records) == 1
-    assert records[0].levelno == logging.DEBUG
-
-    caplog.clear()
-    with caplog.at_level(logging.INFO, logger=logger_name):
-        await InboundCommunications(manager).handle_messages("telegram", [message])
-
-    assert not any(
-        record.message.startswith("Ignoring inbound message rejected by access policy")
-        for record in caplog.records
-    )
+    assert records[0].levelno == logging.WARNING

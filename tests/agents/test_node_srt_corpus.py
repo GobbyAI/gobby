@@ -62,7 +62,7 @@ _DARWIN_WRITE_PATHS = (
 # The seat whose agent workspace folders the spawn grants (#25148): its own
 # ``<definition>/session-<seq>/`` and its team's ``epics/epic-<seq>/`` folder.
 _WORKSPACE_CASE = "claude-agent-workspace"
-_WORKSPACE_DEFINITION = "developer"
+_WORKSPACE_DEFINITION = "fixture-worker"
 _WORKSPACE_SESSION_SEQ = 7
 _WORKSPACE_EPIC_SEQ = 3
 # Variables the oracle reads from the process environment. Each case pins them

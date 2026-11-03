@@ -101,7 +101,7 @@ def create_session_messages_registry(
     if session_manager is not None and db is not None:
         register_claim_hold_tools(registry, session_manager, db)
 
-    # --- Read-only daemon DB query (scoped to Assistant and Orchestrator by rule) ---
+    # --- Read-only daemon DB query (scoped by installed policy) ---
     if db is not None:
         register_readonly_query_tools(registry, db)
 

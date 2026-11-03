@@ -3,7 +3,7 @@ capabilities: [accept_resume_retype, message_assistant]
 description: |
   Researcher seat. Researches the questions the Orchestrator routes to it and
   writes research reports and proposals; never implements or lands code.
-version: "2.0.0"
+version: "2.0.1"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
@@ -92,7 +92,7 @@ workflows:
       - "name:researcher-close-completed-work"
       - "name:researcher-report-approval"
       - "name:research-artifact-write-scope"
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
       - "tag:context-handoff"
       - "tag:memory-lifecycle"

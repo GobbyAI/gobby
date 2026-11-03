@@ -25,7 +25,6 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests._timing import drain_asyncio_tasks
 from tests.fixtures.postgres import TEST_USER_ID
 
@@ -540,8 +539,6 @@ class TestWebChatLifecycle:
         RuleEngine, and _LifecycleHost before firing the AFTER_TOOL close_task hook.
         Expected outcome: no automatic session handoff call.
         """
-        sync_bundled_rules(temp_db, get_bundled_rules_path())
-
         # session_variables.session_id targets the native-uuid sessions.id
         # column, so the DB-backed session id must be a valid UUID string and
         # the row must exist to satisfy the FK.

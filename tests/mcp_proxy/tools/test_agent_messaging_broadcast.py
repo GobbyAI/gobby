@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.agents.team_communications import RecipientPolicy
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.inter_session_messages import InterSessionMessage
 
@@ -110,6 +111,18 @@ def mock_db() -> MagicMock:
     db.fetchone = MagicMock(return_value=None)
     db.execute = MagicMock()
     return db
+
+
+@pytest.fixture(autouse=True)
+def admit_recipients(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Admit every recipient: the mock DB holds no seat rows to resolve senders against.
+
+    These tests cover broadcast shape; admission runs against the real database in its own suites.
+    """
+    monkeypatch.setattr(
+        "gobby.sessions.mailbox.recipient_policy",
+        lambda db, sender_id, recipient_ids: RecipientPolicy(frozenset()),
+    )
 
 
 @pytest.fixture

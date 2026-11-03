@@ -114,6 +114,7 @@ const CREATE_REFUSED_KEYS = new Set([
   "read_all_agent_workspaces",
   "task_step_writes",
   "task_attestation_writes",
+  "task_attestation_kinds",
   "task_attestation_scope",
   "task_land_scope",
   "task_claim_scope",

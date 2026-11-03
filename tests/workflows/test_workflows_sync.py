@@ -293,7 +293,7 @@ rules:
         manager = RuleDefinitionManager(db)
         manager.create(
             name="collision-rule",
-            definition_json='{"event": "before_tool", "effects": [{"type": "log", "message": "v1"}]}',
+            definition_json='{"event": "before_tool", "effects": [{"type": "block", "reason": "v1"}]}',
             source="installed",
             tags=["gobby"],
         )
@@ -307,9 +307,9 @@ rules:
 rules:
   collision-rule:
     event: before_tool
-    effect:
-      type: log
-      message: "user version"
+    effects:
+      - type: block
+        reason: "user version"
 """
         )
 
@@ -803,7 +803,7 @@ steps:
                 "type": "pipeline",
                 "description": "Old dispatch pipeline",
                 "enabled": True,
-                "inputs": {"agent": {"type": "string", "default": "developer"}},
+                "inputs": {"agent": {"type": "string", "default": "fixture-worker"}},
                 "steps": [
                     {
                         "id": "spawn",

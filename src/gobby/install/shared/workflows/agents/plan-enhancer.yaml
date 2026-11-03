@@ -5,7 +5,7 @@ description: |
   reads the writer's plan, and sends ranked Better/Bigger edits to the writer
   over send_message. Never edits the plan, approves or rejects.
 
-version: "1.2.0"
+version: "1.3.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -56,15 +56,16 @@ prompts:
     answer over send_message. Call end_agent_run only when plan-writer or the
     coordinator tells you the run is finished.
 
-    For standing coordination, register separate reply waits for the live Writer
-    and the report_to coordination route, retain both wait IDs, then yield. If the
-    Writer was not launched in this invocation, discover its current session via
-    report_to first. On a reply from either source, cancel the other active wait
-    before processing the message. Also cancel outstanding waits before ending.
-    A delivered enhancement does not rearm an old wait. Register fresh waits only
-    when actually awaiting a revision, question or completion directive; on timeout
-    cancel the other wait, report the unresolved dependency once through report_to,
-    and do not automatically start another hourly timeout cycle.
+    For standing coordination, register separate reply waits for each live planning
+    seat (the Plan Writer and the Plan Adversary) and for the report_to coordination
+    route, retain every wait ID, then yield. If a seat was not launched in this
+    invocation, discover its current session via report_to first. On a reply from
+    any of these sources, cancel the other active waits before processing the
+    message. Also cancel outstanding waits before ending. A delivered enhancement
+    does not rearm an old wait. Register fresh waits only when actually awaiting a
+    revision, question or completion directive; on timeout cancel the other waits,
+    report the unresolved dependency once through report_to, and do not
+    automatically start another hourly timeout cycle.
 
     Boundaries:
     - You are advisory only. The plan file and `## M1 Task Manifest` are not
@@ -79,7 +80,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
@@ -150,8 +151,8 @@ step_workflow:
         Read the plan off the local filesystem, send plan-writer ranked
         Better/Bigger edits over send_message, and stay live for revisions and
         questions. Call end_agent_run only when told the run is finished.
-        Use the two-owner wait protocol above: cancel the unused subscription
-        before processing either reply, and never automatically rearm a timeout.
+        Use the wait protocol above: cancel the other waits before processing any
+        reply, and never automatically rearm a timeout.
         Include current_state summarizing the enhancement and next_steps naming
         the writer's or coordinator's remaining actions in the handoff.
       allowed_tools: "all"

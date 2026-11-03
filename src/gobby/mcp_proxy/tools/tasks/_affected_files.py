@@ -32,7 +32,7 @@ __all__ = [
 def create_core_affected_files_registry(ctx: "RegistryContext") -> InternalToolRegistry:
     """Create a registry with core affected file tools (gobby-tasks).
 
-    Only includes update_observed_files — used by orchestrator hot path.
+    Only includes update_observed_files — used by coordination hot path.
     """
 
     registry = InternalToolRegistry(

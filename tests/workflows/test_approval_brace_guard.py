@@ -198,13 +198,37 @@ def test_language_heredoc_rejects_non_allowlisted_launchers(
         "uv run python -",
         "uv run python3 -",
         "cd /repo/gobby && uv run python -",
+        "python3 -I -",
+        "python3 -I - before.json after.json",
+        "uv run python -B -u - tests/a.py",
+        "cd /repo/gobby && python3 -I - t14-before.json",
     ],
 )
 def test_python_heredoc_source_allowlisted_shapes(
     guard: Callable[[str], bool], delimiter: str, launcher: str
 ) -> None:
-    command = launcher + f" <<{delimiter}\n" + 'spec = {"example": "gobby", "items": {1, 2}}\nPY'
-    assert not guard(command)
+    # The last line would expand to the approval command if read as shell words.
+    body = 'spec = {"example": "gobby", "items": {1, 2}}\ngobby sessions approve-dirty-{paths,x}\n'
+    assert not guard(launcher + f" <<{delimiter}\n" + body + "PY")
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "python3 - g{o..o}bby",
+        "python3 -I - {gobby,x}",
+        "python3 - $(gobby sessions approve-dirty-paths)",
+        "python3 - *.json",
+        "python3 -c pass -",
+        "python3 - a | sh",
+        "python3 - a ; sh",
+        "python3 - a > out.txt; sh",
+        "python3 - ~/x.json",
+    ],
+)
+def test_python_heredoc_arguments_stay_shell_words(launcher: str) -> None:
+    body = " <<'PY'\nspec = {1, 2}\ngobby sessions approve-dirty-{paths,files}\nPY"
+    assert approval_command_word_expansion(launcher + body)
 
 
 @pytest.mark.parametrize(

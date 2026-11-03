@@ -1257,7 +1257,7 @@ class TestSpawnAgentPreRegistration:
 
             assert result["success"] is True
             assert result["status"] == "starting"
-            mock_runner.cancel_run.assert_called_once_with(ANY)
+            mock_runner.cancel_run.assert_called_once_with(ANY, terminal_reason="spawn_rollback")
             mock_runner.run_storage.fail.assert_not_called()
             cancelled_run_id = mock_runner.cancel_run.call_args.args[0]
             assert isinstance(cancelled_run_id, str)
@@ -1575,7 +1575,7 @@ class TestSpawnAgentPreRegistration:
             assert result["success"] is True
             assert result["status"] == "starting"
             mock_runner.run_storage.start.assert_called_once()
-            mock_runner.cancel_run.assert_called_once_with(ANY)
+            mock_runner.cancel_run.assert_called_once_with(ANY, terminal_reason="spawn_rollback")
             mock_runner.run_storage.fail.assert_not_called()
             mock_fire_agent_event.assert_not_called()
 
@@ -1631,7 +1631,7 @@ class TestSpawnAgentPreRegistration:
 
             assert result["success"] is True
             assert result["status"] == "starting"
-            mock_runner.cancel_run.assert_called_once_with(ANY)
+            mock_runner.cancel_run.assert_called_once_with(ANY, terminal_reason="spawn_rollback")
             mock_runner.run_storage.fail.assert_not_called()
             mock_fire_agent_event.assert_not_called()
 
@@ -1808,7 +1808,7 @@ class TestSpawnAgentPreRegistration:
             mock_runner.run_storage.fail.assert_not_called()
         else:
             mock_runner.run_storage.start.assert_not_called()
-            mock_runner.cancel_run.assert_called_once_with(ANY)
+            mock_runner.cancel_run.assert_called_once_with(ANY, terminal_reason="spawn_rollback")
             mock_runner.run_storage.fail.assert_not_called()
 
     @pytest.mark.asyncio

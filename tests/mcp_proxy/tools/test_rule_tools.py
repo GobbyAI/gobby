@@ -215,7 +215,11 @@ class TestGetRule:
 
     def test_malformed_stored_body_returns_structured_error(self, def_manager, rule_tools) -> None:
         rule_id = _create_test_rule(def_manager, name="broken-rule")
-        def_manager.update(rule_id, definition_json="[]")
+        with def_manager.db.transaction() as conn:
+            conn.execute(
+                "UPDATE rule_definitions SET definition_json = %s WHERE id = %s",
+                ("[]", rule_id),
+            )
 
         result = rule_tools["get_rule"](name="broken-rule")
 

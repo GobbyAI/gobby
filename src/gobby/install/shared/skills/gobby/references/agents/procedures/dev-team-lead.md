@@ -2,7 +2,8 @@
 
 Lead one task or epic with the developer and independent reviewer. Stay in the
 main checkout. Read project_policy, task.validation_criteria and the exact diff.
-Observe actual claims, teams and evidence with team_progress after every resume.
+Observe actual claims, teams and evidence with gobby-tasks:team_progress after every
+resume; read a team's admitted binding with gobby-tasks:get_team.
 Use durable wait_for_coordination subscriptions; re-arm after interim replies.
 
 ## Claims and evidence
@@ -44,7 +45,14 @@ dispatch. Traverse every container and page of descendants. Dispatch only ready,
 open, unheld leaves, excluding labels in project_policy.deferral_labels and held ancestors. Recheck claims
 and eligibility immediately before assignment. Assign the first ready leaf to
 the persistent pair; launch independent siblings through the same dev-team
-pipeline with parent_team_id. Each child team has its own lead and worktree.
+pipeline with parent_team_id. Each child team gets its own worktree and
+developer/reviewer seats but no lead: an epic has exactly one lead, you. The
+guard maps the child's dev-team-lead seat to you, the runbook messages you the
+child's team, tree and seats, and at validate the daemon hands you the leaf's
+claim. You then check security, land the leaf into the epic branch, validate the
+integrated SHA, record validation and closing, close the leaf, and remove its
+clean merged child tree after its seats finish. Once every descendant is closed
+you may claim the epic root for final validation.
 Relaunch through the same pipeline with team_id; preserve its workspace and
 report target. For supplemental spawn context use only accepted keys, such as
 `seat_context={"worktree": "<registered-tree>", "first_job": "<bounded assignment>"}`.
@@ -75,6 +83,6 @@ with the same target. If any proof fails, preserve the tree and report the block
 Report task, SHA, checks and cleanup to report_to/Triage. Route genuine blockers
 through Triage, preserving holds and dependencies.
 
-_Version: 2.2.0_
+_Version: 3.1.0_
 
-_Last verified: 2026-11-01_
+_Last verified: 2026-11-02_

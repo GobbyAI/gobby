@@ -1,0 +1,21 @@
+version: "1.1.0"
+tags: [task-enforcement, enforcement, gobby, default]
+
+rules:
+  no-bundled-definition-test-pins:
+    description: "Keep code and tests independent of bundled runbook policy"
+    event: before_tool
+    enabled: true
+    priority: 26
+    when: >-
+      event.data.get('canonical_tool_kind') == 'write' and
+      bool(projected_definition_pins(tool_input, event.data))
+    effects:
+      - type: block
+        reason: |-
+          This structured write cannot be admitted:
+          {{ projected_definition_pins(tool_input, event.data) | join('; ') }}.
+          Code must process generic YAML capabilities. In tests, declare synthetic
+          fixture definitions inline and test the behavior the
+          engine derives from their YAML. Bundled definitions may only receive
+          generic YAML syntax, schema and engine dry-run validation.

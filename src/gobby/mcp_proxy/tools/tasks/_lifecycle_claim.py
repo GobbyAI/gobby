@@ -128,11 +128,18 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 TaskToolErrorCode.TASK_CLOSED,
             )
 
-        # An epic team's own root is not work: its seats claim the open leaves below it instead.
+        # An epic team's own root is not work while leaves stay open: its seats claim those
+        # leaves. Once every descendant is closed, the root is the final epic validation.
         from gobby.agents.team_lifecycle import task_team
+        from gobby.agents.team_scope import open_descendants
 
         seat = seat_team(ctx.task_manager.db, resolved_session_id)
-        if seat is not None and seat.mode == EPIC_MODE and seat.task_id == resolved_id:
+        if (
+            seat is not None
+            and seat.mode == EPIC_MODE
+            and seat.task_id == resolved_id
+            and open_descendants(ctx.task_manager.db, resolved_id)
+        ):
             return task_error(
                 f"Task {resolved_id} is the epic root of team {seat.team_id}; "
                 "claim one of its open leaves",
@@ -141,7 +148,7 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             )
 
         # A descendant of an active epic team is claimed by that team's seats only. A planning
-        # child is exempt, so the plan writer seat the team-planning runbook launches can claim it.
+        # child is exempt, so a planning workflow's child can claim it.
         # The current holder keeps re-claiming its leaf even after its spawn chain left the team.
         current_owner = get_claimed_session_id(task)
         epic_team = epic_team_above(ctx.task_manager.db, resolved_id)

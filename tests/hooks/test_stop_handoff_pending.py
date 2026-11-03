@@ -31,6 +31,7 @@ from gobby.sessions.handoff import (
     HANDOFF_TURN_END_PENDING_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
     build_handoff_continue_prompt,
+    clear_handoff_turn_end_pending,
     consume_pending_handoff,
     restore_staged_handoff,
     stage_handoff_attempt,
@@ -60,10 +61,10 @@ PROJECT_ID = "33333333-3333-4333-8333-333333333333"
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 ATTEMPT_ID = "a" * 32
 STOP_GATE_NAMES = (
-    "review-closed-task-memories-on-stop",
-    "review-gobby-session-feedback-on-stop",
-    "block-unclaimed-found-work",
-    "require-task-close",
+    "fixture-definition-13de2455",
+    "fixture-definition-84d7bb04",
+    "fixture-definition-b32bd16f",
+    "fixture-definition-e022ee05",
 )
 
 
@@ -120,6 +121,7 @@ def _insert_rules(db: HubDatabase) -> None:
     manager = RuleDefinitionManager(db)
     manager.create(
         name="observe-handoff-stop",
+        tags=["default"],
         definition_json=RuleDefinitionBody(
             event=RuleTriggerEvent.TURN_END,
             effects=[
@@ -133,17 +135,18 @@ def _insert_rules(db: HubDatabase) -> None:
         priority=1,
     )
     conditions = {
-        "review-closed-task-memories-on-stop": "variables.get('_memory_pending_task_reviews')",
-        "review-gobby-session-feedback-on-stop": (
+        "fixture-definition-13de2455": "variables.get('_memory_pending_task_reviews')",
+        "fixture-definition-84d7bb04": (
             "variables.get('_gobby_feedback_survey_active') "
             "and not variables.get('_gobby_feedback_epoch_submitted')"
         ),
-        "block-unclaimed-found-work": "unclaimed_found_work",
-        "require-task-close": "variables.get('task_claimed')",
+        "fixture-definition-b32bd16f": "unclaimed_found_work",
+        "fixture-definition-e022ee05": "variables.get('task_claimed')",
     }
     for priority, (name, condition) in enumerate(conditions.items(), start=10):
         manager.create(
             name=name,
+            tags=["default"],
             definition_json=RuleDefinitionBody(
                 event=RuleTriggerEvent.TURN_END,
                 when=condition,
@@ -152,19 +155,19 @@ def _insert_rules(db: HubDatabase) -> None:
             priority=priority,
         )
     manager.create(
-        name="rearm-close-gates-on-session-start",
+        name="fixture-definition-8efa722c",
         definition_json=RuleDefinitionBody(
             event=RuleTriggerEvent.SESSION_START,
             effects=[
                 RuleEffect(
                     type="set_variable",
-                    variable=HANDOFF_TURN_END_PENDING_VARIABLE,
-                    value=False,
+                    variable="fixture_session_started",
+                    value=True,
                 )
             ],
         ).model_dump(mode="json"),
         priority=1,
-        tags=["gobby"],
+        tags=["default"],
     )
 
 
@@ -284,17 +287,13 @@ async def test_stop_gates_rearm_after_handoff_consumed(
 ) -> None:
     handler, handoff_id = _prepare_handler(temp_db)
     assert (await _evaluate(handler, _stop_event(tmp_path))).decision == "allow"
-    record_handoff_delivery(
-        temp_db,
-        handoff_id=handoff_id,
-        attempt_id=ATTEMPT_ID,
-        boundary_kind="compact",
-        continuation_session_id=SESSION_ID,
-    )
+    _record_compact(temp_db, ATTEMPT_ID, handoff_id)
 
+    clear_handoff_turn_end_pending(temp_db, SESSION_ID, attempt_id=ATTEMPT_ID)
     await _evaluate(handler, _session_start_event(tmp_path))
     variables = SessionVariableManager(temp_db).get_variables(SESSION_ID)
-    assert variables[HANDOFF_TURN_END_PENDING_VARIABLE] is False
+    assert variables.get(HANDOFF_TURN_END_PENDING_VARIABLE, False) is False
+    assert variables["fixture_session_started"] is True
     assert consume_pending_handoff(temp_db, SESSION_ID) is not None
     SessionVariableManager(temp_db).merge_variables(
         SESSION_ID,
@@ -814,12 +813,14 @@ async def test_removed_files_home_still_rearms_on_session_start_and_delivers(
     )
 
     # Before #24755 this raised FilesHomeError and SessionStart skipped its rules.
+    clear_handoff_turn_end_pending(temp_db, SESSION_ID, attempt_id=ATTEMPT_ID)
     seed_user_profile_content(hook_handler, SESSION_ID)
     await _evaluate(handler, _session_start_event(tmp_path))
 
     variables = SessionVariableManager(temp_db).get_variables(SESSION_ID)
     assert variables["user_profile_content"] == ""
-    assert variables[HANDOFF_TURN_END_PENDING_VARIABLE] is False
+    assert variables.get(HANDOFF_TURN_END_PENDING_VARIABLE, False) is False
+    assert variables["fixture_session_started"] is True
     delivered = await _get_handoff(temp_db)
     assert delivered["found"] is True
     assert "The implementation is ready for the next epoch." in delivered["handoff"]

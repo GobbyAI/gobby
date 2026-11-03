@@ -217,7 +217,7 @@ async def test_close_collapses_all_team_seats(
     rejoined = world.child(team.task)
     await world.admit(rejoined, team.task, team.binding.team_id)
     world.finish(rejoined)
-    seats = [*team.seats, seat(world, rejoined, team.binding, "code-reviewer")]
+    seats = [*team.seats, seat(world, rejoined, team.binding, "fixture-definition-e08ba693")]
     bystander = await admitted_team(world, "Open team keeps working")
     sha = land(world, team, "collapse.py")
     closed = close(world, team, sha)
@@ -510,8 +510,8 @@ async def test_teardown_does_not_escalate_when_every_seat_ended_cooperatively(
     relaunched = runs.create(
         parent_session_id=team.runbook.id,
         provider="claude",
-        prompt="Resume the test-writer seat.",
-        agent_name="test-writer",
+        prompt="Resume the fixture-definition-c02389e4 seat.",
+        agent_name="fixture-definition-c02389e4",
         child_session_id=team.seats[1],
     )
     for run in runs.list_by_parent(team.runbook.id):
@@ -653,7 +653,7 @@ async def test_treeless_team_closes_its_seats_without_deleting_a_tree(
     runbook = world.child(task)
     binding = await world.admit(runbook, task, checkout_mode="none")
     world.finish(runbook)
-    researcher = seat(world, runbook, binding, "researcher", manages=task)
+    researcher = seat(world, runbook, binding, "fixture-definition-3588bb72", manages=task)
     team = Team(task, runbook, binding, [researcher])
     closed = close(world, team, commit(team, "report.md"))
     deleted: list[TeamBinding] = []
@@ -705,7 +705,7 @@ async def test_close_ends_task_bound_dispatched_seat_outside_tree_and_preserves_
         "UPDATE agent_runs SET task_id = %s WHERE child_session_id = %s",
         (other_task.id, other),
     )
-    reassigned = running_seat(world, team.runbook, "developer")
+    reassigned = running_seat(world, team.runbook, "fixture-worker")
     LocalTaskManager(db).claim_task(other_task.id, reassigned.id, force=True)
     terminations = Terminations(db)
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)

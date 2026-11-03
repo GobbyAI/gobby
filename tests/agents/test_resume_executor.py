@@ -326,7 +326,7 @@ async def test_grok_resume_records_actual_terminal_lifetime(
     prepare = _patch_common(monkeypatch, spawner=spawner, finalize=AsyncMock())
 
     result = await resume_executor.resume_agent_run(
-        _original_run(provider="grok", agent_name="security-auditor"),
+        _original_run(provider="grok", agent_name="fixture-definition-fc0c281e"),
         resume_metadata=metadata,
         runner=runner,
         session_manager=MagicMock(),

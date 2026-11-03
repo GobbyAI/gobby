@@ -181,8 +181,8 @@ async def test_descendant_claims_scoped_to_team(world: TeamWorld) -> None:
     leaf, deep = new_task(world, LEAF_TITLE, parent=epic), new_task(world, "Deep", parent=phase)
     runbook = world.child(epic)
     team = await world.admit(runbook, epic)
-    team_seat = world.case.session("developer", parent=runbook.id)
-    outsider = world.case.session("developer", parent=world.case.creator)
+    team_seat = world.case.session("fixture-worker", parent=runbook.id)
+    outsider = world.case.session("fixture-worker", parent=world.case.creator)
 
     async def claim(session_id: str, task: Task) -> dict[str, Any]:
         with session_context_for_test(session_id):
@@ -214,7 +214,7 @@ async def test_team_seat_cannot_claim_its_epic_root(world: TeamWorld) -> None:
     leaf = new_task(world, LEAF_TITLE, parent=epic)
     runbook = world.child(epic)
     await world.admit(runbook, epic)
-    seat = world.case.session("test-writer", parent=runbook.id)
+    seat = world.case.session("fixture-definition-c02389e4", parent=runbook.id)
 
     async def claim(task: Task) -> dict[str, Any]:
         with session_context_for_test(seat):
@@ -231,6 +231,50 @@ async def test_team_seat_cannot_claim_its_epic_root(world: TeamWorld) -> None:
 
 
 @pytest.mark.asyncio
+async def test_team_seat_claims_its_epic_root_once_every_descendant_closes(
+    world: TeamWorld,
+) -> None:
+    """The epic root becomes the final validation only after its last open descendant closes."""
+    db = world.case.db
+    tasks = LocalTaskManager(db)
+    tools = create_task_registry(tasks)
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    runbook = world.child(epic)
+    await world.admit(runbook, epic)
+    seat = world.case.session("fixture-definition-c02389e4", parent=runbook.id)
+    # Selected policy reserves the bound root for explicit completion, as epic closure does.
+    owner = AgentSessions(db, world.case.project_id).add(
+        "bound-root-owner",
+        definition_fields={"workflows": {"rule_selectors": {"include": ["tag:root-close"]}}},
+    )
+    RuleDefinitionManager(db).create(
+        "explicit-bound-root-close",
+        {
+            "event": "task_close",
+            "when": f"task['id'] == '{epic.id}' and facts.get('closure_intent') == 'ancestor'",
+            "effects": [{"type": "block", "reason": "Close the bound root explicitly."}],
+        },
+        project_id=world.case.project_id,
+        tags=["root-close"],
+    )
+
+    async def claim() -> dict[str, Any]:
+        with session_context_for_test(seat):
+            return cast(dict[str, Any], await tools.call("claim_task", {"task_id": epic.id}))
+
+    refused = await claim()
+    assert refused.get("error_code") == "TASK_CLAIM_CONFLICT", refused
+    assert "claim one of its open leaves" in str(refused.get("error")), refused
+
+    tasks.close_task(leaf.id, reason="done", closed_in_session_id=owner)
+    assert tasks.get_task(epic.id).closed_at is None
+    reply = await claim()
+    assert reply.get("success") is True, reply
+    assert tasks.get_task(epic.id).claimed_by_session_id == seat
+
+
+@pytest.mark.asyncio
 async def test_planning_child_of_epic_is_claimable_by_non_team_session(world: TeamWorld) -> None:
     """A planning-category child under a live epic team is claimable by a plan writer seat."""
     tasks = LocalTaskManager(world.case.db)
@@ -240,7 +284,7 @@ async def test_planning_child_of_epic_is_claimable_by_non_team_session(world: Te
     await world.admit(world.child(epic), epic)
     # The runbook creates the planning child after the team is live, under the team's leaf.
     planning = new_task(world, "Plan the leaf", parent=leaf, category="planning")
-    writer = world.case.session("plan-writer", parent=world.case.creator)
+    writer = world.case.session("fixture-definition-cf5ba898", parent=world.case.creator)
 
     async def claim(session_id: str, task: Task) -> dict[str, Any]:
         with session_context_for_test(session_id):
@@ -266,8 +310,8 @@ async def test_dispatched_seat_resolves_its_team_and_claims_its_leaf(world: Team
     leaf = new_task(world, LEAF_TITLE, parent=epic)
     runbook = world.child(epic)
     team = await world.admit(runbook, epic)
-    manager = world.case.session("dev-team-lead", parent=runbook.id)
-    seat = world.case.session("developer", parent=manager)
+    manager = world.case.session("fixture-definition-f0ad0fd9", parent=runbook.id)
+    seat = world.case.session("fixture-worker", parent=manager)
 
     binding = seat_team(db, seat)
     assert binding is not None and binding.team_id == team.team_id
@@ -291,7 +335,7 @@ async def test_authorized_coordinator_releases_an_epic_leaf_claim(world: TeamWor
     manager = AgentSessions(db, world.case.project_id).add(
         "claim-coordinator", capabilities=("manage_task_claims",)
     )
-    holder = world.case.session("test-writer", parent=runbook.id)
+    holder = world.case.session("fixture-definition-c02389e4", parent=runbook.id)
     with session_context_for_test(holder):
         claimed = cast(dict[str, Any], await tools.call("claim_task", {"task_id": leaf.id}))
     assert claimed.get("success") is True, claimed
@@ -321,7 +365,7 @@ async def test_scoped_coordinator_cannot_release_an_excluded_epic_leaf_claim(
     leaf = new_task(world, LEAF_TITLE, parent=epic)
     runbook = world.child(epic)
     await world.admit(runbook, epic)
-    holder = world.case.session("test-writer", parent=runbook.id)
+    holder = world.case.session("fixture-definition-c02389e4", parent=runbook.id)
     tasks.claim_task(leaf.id, holder, force=True)
 
     other_epic = new_task(world, "Another team's epic", epic=True)

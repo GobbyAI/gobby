@@ -476,7 +476,7 @@ async def test_plan_tool_schemas_and_happy_path(
     routing = {
         "1.1": {
             "category": "docs",
-            "assigned_agent": "tech-writer",
+            "assigned_agent": "fixture-definition-76c4b50c",
             "tdd": False,
         }
     }

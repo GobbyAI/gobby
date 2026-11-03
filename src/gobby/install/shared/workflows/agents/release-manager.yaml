@@ -3,7 +3,7 @@ capabilities: [promote_workspace_binaries, follow_relaunch, accept_resume_retype
 description: |
   Release Manager seat. Rebuilds and promotes the Rust binaries whose crates
   changed. The Orchestrator owns every daemon restart and activation.
-version: "1.2.0"
+version: "1.4.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
@@ -40,7 +40,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"

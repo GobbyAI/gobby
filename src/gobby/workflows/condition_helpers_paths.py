@@ -103,7 +103,7 @@ def agent_workspace_write_dirs(variables: Mapping[str, Any]) -> list[str]:
 
 
 def temp_write_admitted_dirs(variables: Mapping[str, Any]) -> list[str]:
-    """Directories whose writes block-temp-scratchpad-writes admits: the seat's workspace
+    """Directories admitted for temporary writes: the seat's workspace
     folders and the Unix-socket root its SRT run was granted."""
     dirs = agent_workspace_write_dirs(variables)
     root = variables.get(SRT_RUN_SOCKET_ROOT_VARIABLE)

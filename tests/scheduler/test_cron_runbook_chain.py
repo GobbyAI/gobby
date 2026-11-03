@@ -69,7 +69,7 @@ def _spawn_pipeline() -> PipelineDefinition:
                 mcp=MCPStepConfig(
                     server="gobby-agents",
                     tool="spawn_agent",
-                    arguments={"agent": "developer", "prompt": f"leaf {index}"},
+                    arguments={"agent": "fixture-worker", "prompt": f"leaf {index}"},
                 ),
             )
             for index in (1, 2)

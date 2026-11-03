@@ -185,8 +185,8 @@ class AgentDefinitionBody(BaseModel):
     # Orchestration
     workflows: AgentWorkflows
     enabled: bool = True
-    # Agents a spawned run of this definition may spawn, enforced by the bundled
-    # limit-spawnable-agents rule: [SPAWN_ANY_AGENT] for any, named agents, or
+    # Definitions a spawned run may spawn, enforced by configured rules:
+    # [SPAWN_ANY_AGENT] for any, named definitions, or
     # empty (the default) for none.
     spawnable_agents: list[str] = Field(default_factory=list)
     # Existing seats this definition may resume within its admitted team. Fresh
@@ -196,7 +196,7 @@ class AgentDefinitionBody(BaseModel):
     blocked_tools: list[str] = Field(default_factory=list)
     blocked_mcp_tools: list[str] = Field(default_factory=list)
     # send_message target modes a spawned agent of this type may use, enforced by
-    # the bundled rule scope-spawned-agent-send-message
+    # the selected messaging policy
     send_message_targets: list[SendMessageTarget] = Field(default_factory=_parent_only)
     # Grants only the configured, enrolled operator destination, never arbitrary recipients.
     operator_messaging: StrictBool = False

@@ -21,13 +21,13 @@ if TYPE_CHECKING:
 def agent_activation_refusal() -> str | None:
     """Refuse a daemon activation step from a spawned agent.
 
-    The operator, persona and Orchestrator panes carry no agent run id and pass. A
+    The operator, persona and unspawned coordination panes carry no agent run id and pass. A
     spawned agent is refused, whatever environment it carries.
     """
     if os.environ.get("GOBBY_AGENT_RUN_ID", "").strip():
         return (
             "spawned_agent_refused: spawned agents may not stop, start, restart or cut over "
-            "the daemon; the Orchestrator owns activation"
+            "the daemon; activation follows the configured owner"
         )
     return None
 

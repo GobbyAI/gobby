@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from enum import Enum
 from pathlib import PurePosixPath, PureWindowsPath
@@ -210,7 +211,7 @@ class RuleEffect(BaseModel):
     # backtick stay visible: command substitution in them still executes.
     mask_quoted: bool = False
     # Match command_pattern against the command `uv run …` executes. A rule
-    # whose required form is `uv run` (require-uv) turns this off.
+    # whose required form is `uv run` turns this off.
     resolve_uv_run: bool = True
 
     # set_variable — update session/workflow state
@@ -615,6 +616,47 @@ class WorkflowTransition(BaseModel):
     on_transition: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class SeatMessageProtocol(BaseModel):
+    """YAML-owned message syntax and step routing for receipt-driven handlers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    report_prefixes: list[str] | None = None
+    report_step: str | None = None
+    consensus_pattern: str | None = None
+    consensus_step: str | None = None
+    withdrawal_step: str | None = None
+    consensus_event: str | None = None
+    withdrawal_event: str | None = None
+
+    @model_validator(mode="after")
+    def validate_protocol(self) -> SeatMessageProtocol:
+        reporting = self.report_prefixes is not None or self.report_step is not None
+        if reporting and (
+            not self.report_prefixes or not all(self.report_prefixes) or not self.report_step
+        ):
+            raise ValueError("Reporting requires nonempty report_prefixes and report_step")
+        consensus = (
+            self.consensus_pattern,
+            self.consensus_step,
+            self.withdrawal_step,
+            self.consensus_event,
+            self.withdrawal_event,
+        )
+        if any(value is not None for value in consensus):
+            if not all(consensus):
+                raise ValueError("Consensus requires a pattern, steps and event identifiers")
+            try:
+                pattern = re.compile(self.consensus_pattern or "")
+            except re.error as exc:
+                raise ValueError(f"Invalid consensus_pattern: {exc}") from exc
+            if pattern.groups < 2:
+                raise ValueError("consensus_pattern must capture an event and a commit SHA")
+        elif not reporting:
+            raise ValueError("A message protocol must declare reporting or consensus behavior")
+        return self
+
+
 class WorkflowStep(BaseModel):
     """A single step in a step workflow with tool enforcement."""
 
@@ -647,6 +689,14 @@ class WorkflowStep(BaseModel):
     on_mcp_error: list[dict[str, Any]] = Field(default_factory=list)
     # Explicit fallback: an unhandled MCP failure leaves the workflow on this step.
     mcp_error_policy: Literal["stay"] | None = None
+
+    @field_validator("on_mcp_before", "on_mcp_success", "on_mcp_error")
+    @classmethod
+    def validate_message_protocols(cls, handlers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        for handler in handlers:
+            if handler.get("action") == "advance_seat":
+                SeatMessageProtocol.model_validate(handler.get("protocol"))
+        return handlers
 
 
 class WorkflowDefinition(BaseModel):

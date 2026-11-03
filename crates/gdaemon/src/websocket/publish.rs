@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use axum::body::Body;
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
+use bytes::Bytes;
 use http_body_util::{BodyExt, LengthLimitError, Limited};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -88,7 +89,15 @@ async fn publish(
         Ok(body) => body,
         Err(refusal) => return refusal,
     };
-    let Some(request) = parse_object::<PublishRequest>(&body) else {
+    // The parse scales with the body, so it runs on the blocking pool. Parsed
+    // on the worker, it holds that worker for the whole body and delays every
+    // request that arrives with it.
+    let parsed =
+        match tokio::task::spawn_blocking(move || parse_object::<PublishRequest>(&body)).await {
+            Ok(parsed) => parsed,
+            Err(_) => return status_only(StatusCode::INTERNAL_SERVER_ERROR),
+        };
+    let Some(request) = parsed else {
         return status_only(StatusCode::BAD_REQUEST);
     };
     // A stale generation has no bound of its own; the commit refuses it with 409.
@@ -138,7 +147,7 @@ async fn read_bounded(
     headers: &HeaderMap,
     body: Body,
     limit: usize,
-) -> Result<Vec<u8>, Response<Body>> {
+) -> Result<Bytes, Response<Body>> {
     let declared = headers
         .get(CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
@@ -147,7 +156,7 @@ async fn read_bounded(
         return Err(status_only(StatusCode::PAYLOAD_TOO_LARGE));
     }
     match Limited::new(body, limit).collect().await {
-        Ok(collected) => Ok(collected.to_bytes().to_vec()),
+        Ok(collected) => Ok(collected.to_bytes()),
         Err(error) if error.is::<LengthLimitError>() => {
             Err(status_only(StatusCode::PAYLOAD_TOO_LARGE))
         }

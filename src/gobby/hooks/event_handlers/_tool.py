@@ -21,6 +21,7 @@ from gobby.hooks.dispatchers import run_coro_blocking
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse, tool_execution_id
 from gobby.hooks.normalization import is_shell_tool
+from gobby.hooks.shell_execution import literal_shell_workdir
 from gobby.hooks.terminal_handoff_delivery import schedule_terminal_handoff_delivery
 from gobby.hooks.tool_error_tracker import is_wrapper_echo_event, track_tool_outcome
 from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
@@ -99,6 +100,11 @@ def _background_output_path(data: dict[str, Any]) -> str | None:
 def _call_worktree_root(event: HookEvent) -> str | None:
     """The checkout a Bash call runs in, normalized the way the task ledgers key it."""
     cwd = effective_tool_cwd(event.cwd, event.data)
+    tool_input = event.data.get("tool_input")
+    if isinstance(tool_input, dict):
+        command = tool_input.get("command", tool_input.get("cmd"))
+        if isinstance(command, str):
+            cwd = literal_shell_workdir(command) or cwd
     root = checkout_root(Path(cwd)) if cwd is not None else None
     return normalize_task_checkout_root(str(root)) if root is not None else None
 

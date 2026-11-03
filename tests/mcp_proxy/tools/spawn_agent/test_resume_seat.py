@@ -75,12 +75,12 @@ def _ended_run(
     *,
     terminal_id: str | None = None,
 ) -> AgentRun:
-    """A cancelled developer run with ``metadata`` as its resume payload."""
+    """A cancelled fixture-worker run with ``metadata`` as its resume payload."""
     run = h.runs.create(
         parent_session_id=h.parent_id,
         provider="claude",
         prompt="Run the seat",
-        agent_name="developer",
+        agent_name="fixture-worker",
         resume_metadata_json=metadata,
     )
     if terminal_id is not None:
@@ -157,12 +157,12 @@ def test_own_pane_without_any_recorded_title_uses_the_session_title(placed: _Har
     h = placed
     lane = _held_seat(h, "Lane 1", state="exited")
     session = _seat_session(h, _ended_run(h, None, terminal_id=lane.terminal_id))
-    h.sessions.update(session.id, title="Lane 1 developer")
+    h.sessions.update(session.id, title="Lane 1 fixture-worker")
     titled = h.sessions.get(session.id)
     assert titled is not None
 
     assert resumed_seat_plan(titled, h.runs, h.workspaces)[0] == {
-        "split": {"pane": lane.id, "axis": "down", "title": "Lane 1 developer"}
+        "split": {"pane": lane.id, "axis": "down", "title": "Lane 1 fixture-worker"}
     }
 
 

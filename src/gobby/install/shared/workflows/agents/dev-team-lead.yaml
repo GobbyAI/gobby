@@ -6,8 +6,9 @@ capabilities:
 - merge_base_commits
 - team_main_checkout
 - write_session_variables
-description: Leads single-task and epic DevTeams; lands, validates, closes and cleans up.
-version: "2.2.0"
+description: Leads single-task and epic DevTeams, including every leaf team of its epic; lands,
+  validates, closes and cleans up.
+version: "3.1.1"
 tags:
 - gobby
 - seat
@@ -41,12 +42,10 @@ blocked_tools:
 - KillShell
 - MultiEdit
 - NotebookEdit
-- Write
 - apply_patch
 - edit_file
 - notebook_edit
 - replace
-- write_file
 task_attestation_writes:
 - validation
 - closing
@@ -60,6 +59,8 @@ prompts:
     Read project_policy and load gobby:references/agents/procedures/dev-team-lead.md
     through get_skill_file completely before work and after compaction.
     The daemon moves claims through implement, review and validate from pipeline YAML.
+    An epic has one lead: you. Leaf teams you launch with parent_team_id launch no lead;
+    the daemon hands you each leaf's claim at validate, and you complete the leaf.
     Never write another seat's evidence or approve your own implementation.
 
     ## Validate and complete
@@ -67,7 +68,8 @@ prompts:
     for trust-boundary work; security_paths independently forces security approval at land.
     Only the operator or an authorized policy owner removes security-review. Request
     an independent security-auditor's approval for the exact candidate when required.
-    Land the linked reviewed candidate with land_commit under the declared authority.
+    Land the linked reviewed candidate with land_commit under the declared authority;
+    an epic's leaves land into the epic branch.
     You perform base merges; developers never merge. If the candidate changes, obtain
     fresh checks and independent review. After landing run focused validation on the
     integrated SHA. Record validation with stage: validate and criteria: [{criterion, met, how}],
@@ -75,7 +77,7 @@ prompts:
     the current preview revision. Preserve task protection and security requirements.
 
     ## Coordination
-    Monitor team_progress and real claims. Register
+    Monitor gobby-tasks:team_progress and real claims. Register
     wait_for_coordination(owner_session=<seat>, reply=true, timeout=900) for replies;
     re-arm event-driven waits. Send readiness/blockers to report_to/Triage; obey HOLD/GO.
     After closure request cooperative seat completion, verify no live use and delete
@@ -89,6 +91,8 @@ prompts:
     Read project_policy and load gobby:references/agents/procedures/dev-team-lead.md
     through get_skill_file completely before work and after compaction.
     The daemon moves claims through implement, review and validate from pipeline YAML.
+    An epic has one lead: you. Leaf teams you launch with parent_team_id launch no lead;
+    the daemon hands you each leaf's claim at validate, and you complete the leaf.
     Never write another seat's evidence or approve your own implementation.
 
     ## Validate and complete
@@ -96,7 +100,8 @@ prompts:
     for trust-boundary work; security_paths independently forces security approval at land.
     Only the operator or an authorized policy owner removes security-review. Request
     an independent security-auditor's approval for the exact candidate when required.
-    Land the linked reviewed candidate with land_commit under the declared authority.
+    Land the linked reviewed candidate with land_commit under the declared authority;
+    an epic's leaves land into the epic branch.
     You perform base merges; developers never merge. If the candidate changes, obtain
     fresh checks and independent review. After landing run focused validation on the
     integrated SHA. Record validation with stage: validate and criteria: [{criterion, met, how}],
@@ -104,7 +109,7 @@ prompts:
     the current preview revision. Preserve task protection and security requirements.
 
     ## Coordination
-    Monitor team_progress and real claims. Register
+    Monitor gobby-tasks:team_progress and real claims. Register
     wait_for_coordination(owner_session=<seat>, reply=true, timeout=900) for replies;
     re-arm event-driven waits. Send readiness/blockers to report_to/Triage; obey HOLD/GO.
     After closure request cooperative seat completion, verify no live use and delete
@@ -119,12 +124,13 @@ workflows:
     - tag:task-closure-coding
     - tag:task-closure-independent-review
     - tag:task-security
-    - tag:seat-policy
+    - tag:runbook
     - name:require-seat-procedure
     - tag:default
     - tag:worker-safety
     - tag:task-integrated-validation
     - name:no-git-push
+    - name:team-lead-write-scope
     exclude:
     - name:block-spawned-agent-create-task
     - name:block-unclaimed-found-work
@@ -149,13 +155,17 @@ step_workflow:
     mcp_error_policy: stay
     description: Reconcile and staff ready epic leaves
     status_message: |
-      Follow the epic launch assignment. Persist epic_assignment (team, root,
-      workspace, static developer/reviewer, epic worktree, report target and
-      unchanged model defaults) with set_variable(scope="step"). You stay in
+      Single-task team (mode single): persist no epic_assignment and dispatch no
+      leaves. Set phase=wait; claim_flow delivers the reviewed candidate, then
+      integration and completion.
+
+      Epic team (mode epic): follow the epic launch assignment. Persist epic_assignment
+      (team, root, workspace, static developer/reviewer, epic worktree, report target
+      and unchanged model defaults) with set_variable(scope="step"). You stay in
       main and edit no implementation code. The epic assignment is not a claim.
       For ordinary non-epic coordination follow the launch prompt and procedure.
 
-      Before dispatch and after every resume/event, read team_progress and
+      Before dispatch and after every resume/event, read gobby-tasks:team_progress and
       reconcile real task claims, task sessions, live agent runs, existing child
       teams, pending pipeline executions and durable messages. Persist observed
       leaf_assignments; observations override stale local intent. A partial
@@ -181,7 +191,9 @@ step_workflow:
       parent_team_id=<epic team>, workspace, report_to=<your session>, and the
       unchanged developer/reviewer model defaults from epic_assignment. There
       is no epic-specific pair count cap. Each admission creates a child tree
-      from the epic branch. Existing project resource admission still applies.
+      from the epic branch and launches no lead: you lead every leaf team, and
+      the daemon hands you its claim at validate. Existing project resource
+      admission still applies.
       Resume incomplete launches or use team_id plus seats for a missing seat.
       Do not hand-spawn a duplicate developer/reviewer outside the admitted team.
 
@@ -194,13 +206,11 @@ step_workflow:
       lane. On restart reconcile any outstanding permit and landing receipt before
       resuming edits. Defer checkout_dirty/checkout_busy and re-arm a coordination wait.
       Never touch its in-flight edits. The implementation owner fixes conflicts.
-      Each child lead removes its clean merged tree after its seats finish;
-      the persistent pair retains the epic tree. A stuck leaf holds only itself
+      After a leaf closes and its seats finish, you remove its clean merged
+      child tree; the persistent pair retains the epic tree. A stuck leaf holds only itself
       and dependents; ready siblings continue and completed children stay closed.
       On HOLD start no new work. Persist phase=wait when work remains; use
       phase=integration only after all descendants are closed and cleanup is safe.
-
-      For a single task, wait for claim_flow to deliver its reviewed candidate, then use integration and completion.
     transitions:
     - to: wait
       when: vars.phase == 'wait'

@@ -84,8 +84,12 @@ class InboundCommunications:
                 message.channel_id = channel.id
 
                 if not await manager.admit_inbound_message(channel, message):
-                    logger.debug(
-                        "Ignoring inbound message rejected by access policy on channel %s",
+                    logger.warning(
+                        "Rejected inbound message %s from sender %s in chat %s on channel %s "
+                        "by access policy",
+                        message.platform_message_id,
+                        message.identity_id,
+                        message.metadata_json.get("chat_id"),
                         channel.name,
                     )
                     handled.append(message)
@@ -122,10 +126,14 @@ class InboundCommunications:
                             logger.exception("Failed to handle reaction: %s", e)
 
                 if message.platform_message_id and not reaction_dedupe_checked:
+                    # Platform ids are destination-local, and an inbound update can only
+                    # duplicate a prior inbound one. Matching outbound rows would drop it.
                     existing = await asyncio.to_thread(
                         manager._store.get_message_by_platform_id,
                         channel_name,
                         message.platform_message_id,
+                        platform_destination=message.metadata_json.get("platform_destination"),
+                        direction="inbound",
                     )
                     if existing is not None:
                         handled.append(existing)
@@ -185,6 +193,7 @@ class InboundCommunications:
                         channel_name,
                         reply_id,
                         platform_destination=chat_id,
+                        direction="outbound",
                     )
                     if source is not None and source.direction == "outbound" and source.session_id:
                         source_session = await asyncio.to_thread(

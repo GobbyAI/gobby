@@ -395,7 +395,7 @@ class TestEnforcementBlockScoping:
         engine = RuleEngine(db)
         variables = self._enforcing_variables(
             _last_blocked_tool="Edit",
-            _last_blocked_rule_name="require-python-skill",
+            _last_blocked_rule_name="fixture-definition-06531cd3",
             _last_blocked_reason="Load the python skill.",
             consecutive_tool_blocks=2,
             max_consecutive_blocked_tool_attempts=5,
