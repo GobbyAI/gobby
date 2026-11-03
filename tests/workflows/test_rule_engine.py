@@ -669,6 +669,72 @@ class TestBlockEffect:
         await _assert_evaluation(db, event, "block", expected_reason_contains="First block")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source", "finding", "evidence", "decision"),
+    [
+        ("fixture-review", {}, {}, "block"),
+        ("fixture-review", {"topic": " ", "explanation": "detail"}, {"receipt": "r1"}, "block"),
+        ("fixture-review", {"topic": "sample"}, {"receipt": "r1"}, "block"),
+        ("fixture-review", {"topic": "sample", "explanation": "detail"}, {}, "block"),
+        (
+            "fixture-review",
+            {"topic": "sample", "explanation": "detail"},
+            {"receipt": "r1"},
+            "allow",
+        ),
+        (
+            "fixture-review",
+            {"topic": "sample", "diagnosis": "detail"},
+            {"revision": "v1"},
+            "allow",
+        ),
+        ("fixture-other", {}, {}, "allow"),
+    ],
+)
+async def test_nested_evidence_condition_blocks_only_incomplete_selected_input(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    source: str,
+    finding: dict[str, str],
+    evidence: dict[str, str],
+    decision: str,
+) -> None:
+    """Synthetic YAML conditions can require nested findings and alternative receipts."""
+    _insert_rule(
+        manager,
+        "fixture-nested-evidence",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            when="""
+                tool_input.get('source') == 'fixture-review'
+                and (
+                    not all(
+                        str((tool_input.get('finding') or {}).get(field) or '').strip()
+                        for field in ('topic',)
+                    )
+                    or not any(
+                        str((tool_input.get('finding') or {}).get(field) or '').strip()
+                        for field in ('explanation', 'diagnosis')
+                    )
+                    or not any(
+                        (tool_input.get('evidence') or {}).get(field)
+                        for field in ('receipt', 'revision')
+                    )
+                )
+            """,
+            effects=[RuleEffect(type="block", reason="Fixture evidence is incomplete")],
+        ),
+    )
+    event = _make_event(
+        data={
+            "tool_name": "fixture_record",
+            "tool_input": {"source": source, "finding": finding, "evidence": evidence},
+        }
+    )
+    await _assert_evaluation(db, event, decision)
+
+
 class TestSetVariableEffect:
     @pytest.mark.asyncio
     async def test_set_variable_literal(
