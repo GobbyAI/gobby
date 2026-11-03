@@ -163,7 +163,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
             if event.wait_kind is not None:
                 self._enter_turn_wait(event, event.wait_kind)
             else:
-                self._resume_turn_lifecycle(event)
+                self._resume_turn_lifecycle(event, tool="start")
         else:
             self.logger.debug("BEFORE_TOOL: %s", tool_name)
 
@@ -178,14 +178,16 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 input_data.get("arguments", input_data.get("tool_input"))
             )
             if wrapper_error is not None:
-                return HookResponse(decision="block", reason=wrapper_error)
+                return self._refuse_started_tool(
+                    event, HookResponse(decision="block", reason=wrapper_error)
+                )
 
         # Intercept Skill tool calls to resolve gobby skills
         if tool_name == "Skill":
             try:
                 skill_response = self._resolve_skill_tool_call(input_data, project_id, session_id)
                 if skill_response is not None:
-                    return skill_response
+                    return self._refuse_started_tool(event, skill_response)
             except SkillResolutionError:
                 self.logger.warning(
                     "Failed to resolve Skill tool call; allowing native handler",
@@ -265,6 +267,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         self.logger.warning(
                             "Failed to release rejected tool binding", exc_info=True
                         )
+                self._resume_turn_lifecycle(event, tool="finish")
                 return HookResponse(
                     decision="block",
                     reason=(
@@ -486,7 +489,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         status = "FAIL" if is_failure else "OK"
         if session_id:
             self.logger.debug("AFTER_TOOL [%s]: %s, session %s", status, tool_name, session_id)
-            self._resume_turn_lifecycle(event)
+            self._resume_turn_lifecycle(event, tool="finish")
             if not is_wrapper_echo_event(event):
                 try:
                     db = getattr(self._session_manager, "db", None)
