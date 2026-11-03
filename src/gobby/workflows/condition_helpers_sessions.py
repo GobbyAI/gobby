@@ -307,9 +307,9 @@ def spawn_target_allowed(
 ) -> bool:
     """Whether the caller may start every agent the gobby-agents ``tool_name`` call can.
 
-    A root session (no agent run, depth 0) spawns anything. A spawned caller's
-    definition comes from its agent run record, and its ``spawnable_agents``
-    decides: any agent, the listed agents, or none. Every effective target must
+    An unseated operator session spawns anything. Every seated caller's stored
+    ``spawnable_agents`` decides: any agent, the listed agents, or none.
+    Spawned callers are verified against their agent run. Every effective target must
     be allowed. Without a resolved target project, a before_tool rule checks
     only requested names. Admission passes the launch's target project to check
     its fallback chain as well. A team manager may also resume an existing seat of
@@ -318,9 +318,16 @@ def spawn_target_allowed(
     """
     if session_manager is None:
         raise RuntimeError("spawn target scope needs a session manager")
+    from gobby.workflows.agent_resolver import session_agent_definition
+
     caller, agent_name = _spawn_caller(session_manager, caller_ref)
     if agent_name is None:
-        return True
+        if operator_session(session_manager, caller_ref):
+            return True
+        stored = session_agent_definition(session_manager.db, caller)
+        if stored is None:
+            return False
+        agent_name = stored[0].name
     if tool_name != "spawn_agent":
         raise ValueError(f"spawn target scope does not cover tool {tool_name!r}")
     if _manager_resumes_own_seat(session_manager, caller, agent_name, agent, resume_session_id):
@@ -477,10 +484,18 @@ def session_condition_helpers(
 ) -> dict[str, Callable[..., Any]]:
     """Bind the session-scope helpers to the evaluator's session manager."""
     from gobby.workflows.condition_helpers_pods import dev_pod_launch_refusal
+    from gobby.workflows.condition_helpers_spawn import spawn_capabilities_allowed
     from gobby.workflows.engine.idle_declaration import readiness_message_completed
 
     return {
         "operator_session": lambda caller_id: operator_session(session_manager, caller_id),
+        "spawn_capabilities_allowed": lambda caller_id,
+        agent,
+        project_path=None,
+        parent_session_id=None,
+        authority_capability=None: spawn_capabilities_allowed(
+            session_manager, caller_id, agent, project_path, parent_session_id, authority_capability
+        ),
         "session_has_capability": lambda caller_id, capability: (
             session_manager is not None
             and isinstance(caller_id, str)
