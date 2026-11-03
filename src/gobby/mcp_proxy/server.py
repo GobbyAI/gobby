@@ -29,12 +29,15 @@ from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.wait_tools import call_with_wait_heartbeat, prepare_client_guard
+from gobby.sessions.clear_run_lineage import current_run_session_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tool_results import ToolResultStore
 from gobby.utils import project_context as project_context_utils
 from gobby.utils.session_context import (
     SeededContextTokens,
     get_current_session_id,
+    get_request_principal,
+    is_daemon_execution,
     reset_seeded_contexts,
     resolve_and_seed_contexts,
 )
@@ -319,6 +322,19 @@ class GobbyDaemonTools:
         # Propagate only the resolved platform UUID. Falling back to the raw
         # ref would re-poison workflow checks and tool filters.
         effective_session_id = tokens.resolved_session_id
+        if effective_session_id and not await self._speaks_for_caller(effective_session_id):
+            reset_seeded_contexts(tokens)
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Error: session_id '{session_id}' is not the authenticated "
+                        "caller's session. Pass your own session, or name a target "
+                        "session in arguments.session_id.",
+                    )
+                ],
+                is_error=True,
+            )
 
         try:
             guard = prepare_client_guard(tool_name=tool_name, arguments=arguments)
@@ -424,6 +440,37 @@ class GobbyDaemonTools:
             session_ref_origin="ambient",
             db=db,
         )
+
+    async def _speaks_for_caller(self, session_id: str) -> bool:
+        """Whether the authenticated caller may act as ``session_id``.
+
+        The operator and daemon-run actions may delegate any session. A managed
+        capability speaks only for its own session or its run's /clear successor.
+        An unseeded or rejected principal speaks for no session.
+        """
+        if is_daemon_execution():
+            return True
+        try:
+            principal = await get_request_principal()
+        except LookupError:
+            return False
+        if principal is None:
+            return True
+        if principal is False:
+            return False
+        if session_id == principal.session_id:
+            return True
+        db = self._session_manager.db if self._session_manager else None
+        if db is None or principal.agent_run_id is None:
+            return False
+        successor = await asyncio.to_thread(
+            current_run_session_id,
+            db,
+            agent_run_id=principal.agent_run_id,
+            session_id=principal.session_id,
+            project_id=principal.project_id,
+        )
+        return session_id == successor
 
     async def _record_schema_lease(
         self, server_name: str, tool_name: str, session_id: str | None
