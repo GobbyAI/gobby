@@ -115,7 +115,7 @@ def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
                     ):
                         cwd = arguments.get("cwd")
                         validated[parsed.tool_use_id] = cwd if isinstance(cwd, str) else None
-    except (OSError, UnicodeError, ValueError) as exc:
+    except (OSError, UnicodeError, ValueError, RecursionError) as exc:
         return _PendingLookup(None, f"rollout unreadable or malformed: {exc}")
     chain = parser.snapshot_state()["execution_chain"]
     # Process IDs describe commands that already started. Losing old process
@@ -316,7 +316,16 @@ class CodexHooksAdapter(BaseAdapter):
             elif current_tool_cwd(input_data) is None:
                 shell_cwd_unproven = True
             else:
-                _pending_shell_workdir(input_data, correlation=shell_correlation)
+                path = input_data.get("transcript_path")
+                command = shell_input.get("command", shell_input.get("cmd"))
+                if isinstance(path, str) and isinstance(command, str):
+                    lookup = _pending_shell_lookup(path, command)
+                    if (
+                        lookup.workdir is not None
+                        and lookup.outer_call_id is not None
+                        and current_tool_cwd(input_data) == Path(lookup.workdir)
+                    ):
+                        shell_correlation["outer_call_id"] = lookup.outer_call_id
 
         if hook_type == "PostToolUse" and is_shell_tool(input_data.get("tool_name")):
             command_result = _command_execution_result(input_data)

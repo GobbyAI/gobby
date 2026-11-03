@@ -167,7 +167,6 @@ def cleanup_task_tool_bindings(
     """Clear abandoned calls before a turn/session boundary's rule evaluation."""
     if not session_id or manager is None or event.metadata.get("_native_subagent_binding"):
         return
-    TaskToolBindings(manager, session_id).reconcile_native_failures(event)
     boundaries = {
         HookEventType.STOP: "turn_end",
         HookEventType.AFTER_AGENT: "turn_end",

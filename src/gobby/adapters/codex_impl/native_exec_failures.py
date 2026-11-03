@@ -68,6 +68,6 @@ def failed_native_outer_calls(transcript_path: str, candidates: set[str]) -> fro
                     and detail.startswith("Script error:\nexec_command failed: CreateProcess")
                 ):
                     failed.add(call_id)
-    except (OSError, UnicodeError, ValueError):
+    except (OSError, UnicodeError, ValueError, RecursionError):
         return frozenset()
     return frozenset(failed - repeated)

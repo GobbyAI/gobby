@@ -10,6 +10,7 @@ from unittest.mock import Mock
 import pytest
 
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+from gobby.adapters.codex_impl.native_exec_failures import failed_native_outer_calls
 from gobby.config.app import DaemonConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.hook_manager import HookManager
@@ -18,7 +19,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.task_tool_bindings import TaskToolBindings, cleanup_task_tool_bindings
+from gobby.workflows.task_tool_bindings import TaskToolBindings
 
 pytestmark = pytest.mark.unit
 
@@ -39,6 +40,7 @@ pytestmark = pytest.mark.unit
         ("printed_receipt_then_error", False),
         ("throw_after_unprinted_result", False),
         ("non_startup_failure", False),
+        ("computed_simple_cell", False),
     ],
 )
 def test_native_terminal_failure_releases_only_proven_call(
@@ -63,6 +65,8 @@ def test_native_terminal_failure_releases_only_proven_call(
     elif case == "throw_after_unprinted_result":
         call = call.replace("text(await ", "const result=await ").replace("));", ");")
         call += 'throw new Error("synthetic failure");'
+    elif case == "computed_simple_cell":
+        call = call.replace('cmd:"pwd"', "cmd:globalThis.command")
     transcript = tmp_path / "rollout.jsonl"
     records: list[dict[str, Any]] = [
         {
@@ -168,7 +172,7 @@ def test_native_terminal_failure_releases_only_proven_call(
     )
     assert next_call is not None
     assert next_call.event_type == HookEventType.BEFORE_TOOL
-    cleanup_task_tool_bindings(next_call, variables, canonical_task_session.id, {})
+    bindings.reconcile_native_failures(next_call)
     if drop:
         bindings.assert_can_select(second.id)
         state = variables.get_variables(canonical_task_session.id)
@@ -192,6 +196,14 @@ def test_native_terminal_failure_releases_only_proven_call(
         try:
             manager._handle_after_daemon_ready(late)
             dispatch.assert_not_called()
+            with monkeypatch.context() as unavailable:
+                unavailable.setattr(
+                    TaskToolBindings,
+                    "reconcile_native_failures",
+                    Mock(side_effect=RuntimeError("synthetic reconciliation outage")),
+                )
+                manager._handle_after_daemon_ready(late)
+                dispatch.assert_not_called()
         finally:
             manager.shutdown()
         bindings.complete(late)
@@ -230,3 +242,9 @@ def test_successful_native_post_does_not_read_rollout(
     read.assert_not_called()
     bindings.complete(post)
     assert not bindings.is_abandoned(post)
+
+
+def test_nested_rollout_is_not_abandonment_evidence(tmp_path: Path) -> None:
+    transcript = tmp_path / "nested.jsonl"
+    transcript.write_text('{"nested":' + "[" * 200_000 + "0" + "]" * 200_000 + "}\n")
+    assert failed_native_outer_calls(str(transcript), {"outer-synthetic"}) == frozenset()
