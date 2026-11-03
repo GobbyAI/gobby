@@ -248,6 +248,20 @@ def test_fifo_target_is_rejected_without_reading(tmp_path: Path) -> None:
     assert "regular file" in failures[0]
 
 
+def test_directory_targets_do_not_leak_descriptors(tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "fixtures"
+    target.mkdir(parents=True)
+    descriptors_before = len(os.listdir("/dev/fd"))
+    for _ in range(20):
+        failures = projected_definition_pins(
+            {"file_path": str(target), "content": "# synthetic replacement\n"},
+            tmp_path,
+            names=NAMES,
+        )
+        assert len(failures) == 1
+    assert len(os.listdir("/dev/fd")) == descriptors_before
+
+
 @pytest.mark.parametrize("extra_bytes", [0, 1])
 def test_source_read_size_boundary(tmp_path: Path, extra_bytes: int) -> None:
     target = tmp_path / "tests" / "test_large.py"

@@ -364,13 +364,16 @@ def _read(path: Path) -> str:
         descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     except FileNotFoundError:
         return ""
-    with os.fdopen(descriptor, "rb") as stream:
-        metadata = os.fstat(stream.fileno())
+    try:
+        metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
             raise ValueError("target must be a regular file")
         if metadata.st_size > _MAX_SOURCE_BYTES:
             raise ValueError("target is too large to inspect (maximum 2 MiB)")
-        content = stream.read(_MAX_SOURCE_BYTES + 1)
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            content = stream.read(_MAX_SOURCE_BYTES + 1)
+    finally:
+        os.close(descriptor)
     if len(content) > _MAX_SOURCE_BYTES:
         raise ValueError("target is too large to inspect (maximum 2 MiB)")
     return content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
