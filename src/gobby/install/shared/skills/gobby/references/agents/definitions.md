@@ -5,6 +5,10 @@ why a definition is unavailable. Begin with `gobby-workflows:list_agent_definiti
 and `get_agent_definition`; inspect enabled state, project scope, sources,
 surfaces, and the returned prompt blocks. Installed rows are authoritative.
 
+MCP creation, toggling, deletion and rule/variable/step updates require the
+`manage_workflow_definitions` capability or the operator's terminal. Other seats
+can inspect and evaluate definitions; route mutations to an authorized session.
+
 Use `evaluate_agent` for definition diagnostics and `get_step_status` for the
 current session instance. Create a distinct user definition
 with `create_agent_definition`; use `toggle_agent_definition`,
@@ -48,4 +52,5 @@ validation failures warrant correcting the named field, not removing the gate.
 Guide: [Definition storage](../../../../../../../../docs/guides/agents.md#definition-storage)
 and [inline steps](../../../../../../../../docs/guides/agents.md#inline-step-workflows).
 
-_Last verified: 2026-10-10_
+_Version: 1.0.0_
+_Last verified: 2026-11-03_

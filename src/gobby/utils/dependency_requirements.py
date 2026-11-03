@@ -341,15 +341,44 @@ def required_dependency_errors(report: DependencyReport) -> list[str]:
     ]
 
 
+# The last healthy Node.js probe, keyed by the resolved executable's file identity.
+_healthy_node: tuple[tuple[str, int, int, int, int], DependencyStatus] | None = None
+
+
+def _executable_identity(executable: str) -> tuple[str, int, int, int, int] | None:
+    raw_path = shutil.which(executable)
+    if raw_path is None:
+        return None
+    try:
+        path = Path(raw_path).resolve(strict=True)
+        metadata = path.stat()
+    except (OSError, RuntimeError):
+        return None
+    return (str(path), metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
+
+
 def node_dependency_status() -> DependencyStatus:
-    """Return the shared Node.js runtime contract used by managed SRT."""
-    return _command_status(
+    """Return the shared Node.js runtime contract used by managed SRT.
+
+    An unchanged binary that already probed healthy keeps that status, so a probe
+    that times out under machine load cannot lock out sandboxed launches (#25631).
+    Any change to the resolved executable probes again.
+    """
+    global _healthy_node
+
+    identity = _executable_identity("node")
+    if identity is not None and _healthy_node is not None and _healthy_node[0] == identity:
+        return _healthy_node[1]
+    status = _command_status(
         name="Node.js",
         executable="node",
         arguments=("--version",),
         minimum_version=NODE_MIN_VERSION,
         install_action=f"Install Node.js {NODE_MIN_VERSION} or newer and retry.",
     )
+    if identity is not None and status.state == "healthy" and status.path == identity[0]:
+        _healthy_node = (identity, status)
+    return status
 
 
 def _python_status() -> DependencyStatus:
@@ -391,6 +420,18 @@ def _command_status(
         output: str | None = result.stdout.strip() or result.stderr.strip()
         if result.returncode != 0:
             output = None
+    except subprocess.TimeoutExpired:
+        return DependencyStatus(
+            state="invalid",
+            installed_version=None,
+            minimum_version=minimum_version,
+            expected_version=None,
+            path=path,
+            error=(
+                f"{name} version check timed out after 10s at {path}; the machine may be "
+                "overloaded. Retry when load drops."
+            ),
+        )
     except (OSError, RuntimeError, subprocess.SubprocessError):
         path = str(Path(raw_path).resolve(strict=False))
         output = None
