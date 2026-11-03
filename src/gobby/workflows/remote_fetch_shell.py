@@ -108,13 +108,16 @@ def _possible_fetch(command: str) -> bool:
     return bool(re.search(r"\b(?:curl|wget)\b", decoded))
 
 
+_CAPTURE_PREFIX = "__gobby_fetch_capture_"
+
+
 def _capture_words(
     command: str, preflight: _DescriptorHazard | None = None
 ) -> tuple[str, dict[str, _Capture]]:
     """Replace expansions by opaque words while preserving each owning argument."""
     scan = scan_shell_command(command)
     heredocs = {body.start: body.end for body in scan.heredocs}
-    prefix = "__gobby_fetch_capture_"
+    prefix = _CAPTURE_PREFIX
     while prefix in command:
         prefix += "_"
     captures: dict[str, _Capture] = {}
@@ -252,10 +255,39 @@ def _execution_words(values: list[str]) -> list[str]:
     return words
 
 
+_AWK = frozenset({"awk", "gawk", "mawk", "nawk"})
+# Pipes, redirections, @load/@include/indirect calls and system() run or write from awk.
+_AWK_EFFECT = re.compile(r"[|>@]|\bsystem\b")
+
+
+def _awk_program_index(words: list[str]) -> int | None:
+    """Index of a literal awk program that only reads its input and prints, else None."""
+    index = 1
+    while index < len(words):
+        word = words[index]
+        if word in {"-F", "-v"}:
+            index += 2
+        elif re.match(r"-[Fv].", word) or word.startswith(("--field-separator=", "--assign=")):
+            index += 1
+        elif word == "--":
+            index += 1
+            break
+        elif word.startswith("-"):
+            return None
+        else:
+            break
+    # An expanded program is unproven text: it could call system() on the fetched data.
+    if index >= len(words) or _CAPTURE_PREFIX in words[index] or _AWK_EFFECT.search(words[index]):
+        return None
+    return index
+
+
 def _data_consumer(words: list[str]) -> bool:
     if not words or not _standard_word(words[0]):
         return False
     name = shell_command_name(words[0])
+    if name in _AWK:
+        return _awk_program_index(words) is not None
     if name == "printf":
         for word in words[1:]:
             if word == "--" or not word.startswith("-"):
@@ -323,6 +355,10 @@ def _data_argument(words: list[str], index: int) -> bool:
     if not words or index == 0 or not _standard_word(words[0]):
         return False
     name = shell_command_name(words[0])
+    if name in _AWK:
+        # The program operand is code; only words after it are data.
+        program = _awk_program_index(words)
+        return program is not None and index > program
     if _data_consumer(words):
         return True
     if name == "for" and words[2:3] == ["in"]:

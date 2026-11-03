@@ -1,5 +1,6 @@
 """Event helpers for rule-engine evaluation."""
 
+import uuid
 from typing import Any
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -153,10 +154,29 @@ def _resolve_rule_events(
     return deduped
 
 
+# Identifies this daemon process. Hooks are not spooled while the daemon is down, so a
+# pending mutation recorded by another process may have finished unobserved.
+ENGINE_PROCESS_TOKEN = uuid.uuid4().hex
+_EDIT_WRITE_PENDING_PROCESS = "_edit_write_pending_process"
+
+
+def mark_edit_write_pending(variables: dict[str, Any]) -> None:
+    """Record a pre-tool file mutation whose post-tool outcome this process must observe."""
+    variables["edit_write_pending"] = True
+    variables[_EDIT_WRITE_PENDING_PROCESS] = ENGINE_PROCESS_TOKEN
+
+
+def edit_write_outcome_lost(variables: dict[str, Any]) -> bool:
+    """True when a different daemon process recorded the pending mutation."""
+    recorded = variables.get(_EDIT_WRITE_PENDING_PROCESS)
+    return recorded is not None and recorded != ENGINE_PROCESS_TOKEN
+
+
 def _clear_edit_write_state(variables: dict[str, Any]) -> None:
     """Clear edit/write pending state and stop-block counter."""
     variables["edit_write_pending"] = False
     variables["edit_write_stop_blocks"] = 0
+    variables.pop(_EDIT_WRITE_PENDING_PROCESS, None)
 
 
 def _is_write_like_event_data(event_data: dict[str, Any]) -> bool:

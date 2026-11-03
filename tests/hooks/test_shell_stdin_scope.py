@@ -248,3 +248,13 @@ def test_zsh_correct_all_keeps_script_operand(
     data = metadata(f"zsh {option} {script}{stdin}", tmp_path)
     assert data["canonical_write_file_paths"] == ["b.py"]
     assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize("options", ["-O", "-eO", "-O -o pipefail"])
+@pytest.mark.parametrize(
+    "stdin", [" <<'EOF'\ntouch a.py\nEOF", " <<< 'touch a.py'", " -s <<< 'touch a.py'"]
+)
+def test_zsh_correct_all_flag_proves_stdin(tmp_path: Path, options: str, stdin: str) -> None:
+    data = metadata(f"zsh {options}{stdin}", tmp_path)
+    assert data["canonical_write_file_paths"] == ["a.py"]
+    assert not data.get("canonical_repo_mutation_scope_unknown")

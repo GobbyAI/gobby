@@ -1140,3 +1140,24 @@ def test_a_path_git_refuses_does_not_hide_later_answers(repo: Path) -> None:
     assert not navigation_requires_index(
         data, {"turn_written_paths": [str(repo / "a-sub/file.py")]}
     )
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("xargs -n1 head -n 100 < list", True),
+        ("xargs head -n 100 < list", True),
+        ("xargs -n 1 tail -n 100 < list", True),
+        ("xargs -n1 head -n 10 < list", False),
+        ("xargs -0 head -n40 < list", False),
+        ("cat src/long.py | head -n 10 - - - - - >&2", True),
+        ("cat src/long.py | head -n 10 /dev/stdin /dev/fd/0 - /dev/stdin /dev/stdin >&2", True),
+        ("cat src/long.py | head -n 10 /dev/stdin /dev/stdin /dev/stdin /dev/stdin >&2", False),
+        ("head -n 100 /dev/stdin < src/long.py", True),
+        ("cat src/long.py | head -n 10 - >&2", False),
+        ("cat src/long.py | head -n 10 /dev/stdin >&2", False),
+        ("cat src/long.py | head -n 10 >&2", False),
+    ],
+)
+def test_per_file_and_repeated_stdin_bounds(repo: Path, command: str, blocked: bool) -> None:
+    assert broad_read_blocked(repo, command) is blocked

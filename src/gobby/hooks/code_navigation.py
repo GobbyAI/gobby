@@ -55,6 +55,9 @@ GCODE_SEARCH_COMMANDS = frozenset(
 )
 MAX_NARROW_SOURCE_LINES = 40
 MAX_NARROW_SOURCE_BYTES = 4096
+# Operands that name the reader's own stdin rather than a file.
+STDIN_OPERANDS = frozenset({"-", "/dev/stdin", "/dev/fd/0"})
+HEAD_TAIL_VALUE_OPTIONS = frozenset({"-n", "-c", "--lines", "--bytes"})
 _FIND_FILESYSTEM_ONLY_PREDICATES = frozenset(
     {
         "-amin",

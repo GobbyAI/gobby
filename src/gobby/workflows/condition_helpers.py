@@ -18,6 +18,7 @@ from gobby.config.shell_lexing import shell_command_segments
 from gobby.config.validation_detection import (
     is_validation_command as _config_is_validation_command,
 )
+from gobby.hooks._normalization_base_commands import _UV_VALUE_OPTIONS
 from gobby.tasks.state_semantics import projected_task_state
 from gobby.tasks.transcript_outcomes import (
     wrapped_validation_command as _tasks_wrapped_validation_command,
@@ -503,7 +504,7 @@ def shell_command_runs_ocr_review(command: Any) -> bool:
         return False
 
     for segment in shell_command_segments(command):
-        tokens = _strip_shell_command_prefixes(segment)
+        tokens = _strip_uv_run(_strip_shell_command_prefixes(segment))
         if not tokens or _executable_name(tokens[0]) != "ocr":
             continue
         for index in range(1, len(tokens) - 1):
@@ -534,6 +535,21 @@ def shell_command_consumes_code_review(command: Any) -> bool:
         _git_subcommand(segment) in _REVIEW_GATED_GIT_SUBCOMMANDS
         for segment in shell_command_segments(command)
     )
+
+
+def _strip_uv_run(tokens: list[str]) -> list[str]:
+    """Return the command ``uv run [options]`` launches, or ``tokens`` unchanged."""
+    if len(tokens) < 2 or _executable_name(tokens[0]) != "uv" or tokens[1] != "run":
+        return tokens
+    index = 2
+    while index < len(tokens) and tokens[index].startswith("-"):
+        word = tokens[index]
+        index += 1
+        if word == "--":
+            break
+        if "=" not in word and word in _UV_VALUE_OPTIONS:
+            index += 1
+    return tokens[index:]
 
 
 def _strip_shell_command_prefixes(tokens: list[str]) -> list[str]:

@@ -712,3 +712,30 @@ def test_git_global_options_preserve_search_classification(
     assert data["canonical_tool_kind"] == "search"
     assert data["canonical_code_navigation_action"] == "search"
     assert bool(data.get("canonical_search_revision_scoped")) == bool(revision)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/usr/bin/time -l ls",
+        "/usr/bin/time -lp ls",
+        "/usr/bin/time -v ls",
+        "/usr/bin/time -f %e ls",
+        "time -p ls",
+    ],
+)
+def test_external_time_report_flags_keep_read_only_command(tmp_path: Path, command: str) -> None:
+    data = _metadata(command, tmp_path)
+    assert data["canonical_read_only"] is True
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize("command", ["/usr/bin/time -o out.txt ls", "/usr/bin/time -a -o o ls"])
+def test_external_time_output_file_stays_unresolved_write(tmp_path: Path, command: str) -> None:
+    data = _metadata(command, tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_external_time_report_flags_preserve_wrapped_write(tmp_path: Path) -> None:
+    data = _metadata("/usr/bin/time -l touch a.py", tmp_path)
+    assert data["canonical_write_file_paths"] == ["a.py"]

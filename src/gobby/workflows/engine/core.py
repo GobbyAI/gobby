@@ -77,6 +77,8 @@ from gobby.workflows.engine.event_utils import (
     _is_write_like_event_data,
     _project_id_from_event,
     _resolve_rule_events,
+    edit_write_outcome_lost,
+    mark_edit_write_pending,
 )
 from gobby.workflows.engine.proxy_hooks import ProxyHooksMixin
 from gobby.workflows.engine.templating import TemplatingMixin, is_resolved_project
@@ -457,7 +459,7 @@ class RuleEngine(
                 # Track edit/write attempts — set pending on pre-tool
                 if is_before_tool:
                     if _is_write_like_event_data(event.data):
-                        variables["edit_write_pending"] = True
+                        mark_edit_write_pending(variables)
 
                 elif raw_event_value == HookEventType.POST_TOOL_BATCH.value:
                     # This agent context's response closed its tool batch, so the
@@ -647,7 +649,9 @@ class RuleEngine(
                 # Block stop when edit/write is pending (failed or in-flight)
                 elif is_turn_end and variables.get("edit_write_pending"):
                     edit_stop_blocks = variables.get("edit_write_stop_blocks", 0)
-                    if edit_stop_blocks < 3:  # Circuit breaker
+                    if edit_write_outcome_lost(variables):
+                        _clear_edit_write_state(variables)
+                    elif edit_stop_blocks < 3:  # Circuit breaker
                         variables["edit_write_stop_blocks"] = edit_stop_blocks + 1
                         override_decision = "block"
                         override_reason = (

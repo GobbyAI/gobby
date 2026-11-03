@@ -42,6 +42,10 @@ from gobby.hooks._python_pipeline_classifier import (
 )
 from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.code_navigation import (
+    HEAD_TAIL_VALUE_OPTIONS,
+    MAX_NARROW_SOURCE_BYTES,
+    MAX_NARROW_SOURCE_LINES,
+    STDIN_OPERANDS,
     count_option_byte_count,
     count_option_line_count,
     find_navigation_metadata,
@@ -313,8 +317,32 @@ _XARGS_BATCH_FLAGS = frozenset(
 )
 
 
-def xargs_runs_cat(parts: list[str]) -> bool:
-    """True when xargs directly runs cat; these flags only split stdin or skip empty input."""
+_COUNT_VALUE_OPTIONS = frozenset({"-n", "-c", "--lines", "--bytes"})
+_COUNT_FLAG_OPTIONS = frozenset({"-q", "-v", "--quiet", "--silent", "--verbose"})
+
+
+def _count_only_reader(reader: list[str]) -> bool:
+    """True when head/tail carries exactly one count option and no operands or follow mode."""
+    counts = 0
+    index = 1
+    while index < len(reader):
+        word = reader[index]
+        if word in _COUNT_VALUE_OPTIONS:
+            counts, index = counts + 1, index + 2
+        elif re.fullmatch(r"-[nc]\d+|-\d+|--(?:lines|bytes)=\d+", word):
+            counts, index = counts + 1, index + 1
+        elif word in _COUNT_FLAG_OPTIONS:
+            index += 1
+        else:
+            return False
+    return counts == 1 and index == len(reader)
+
+
+def xargs_reader(parts: list[str]) -> list[str] | None:
+    """The reader xargs runs directly on stdin-supplied files: cat, or count-bounded head/tail.
+
+    These xargs flags only split stdin or skip empty input; the reader bound applies per file.
+    """
     index = 1
     while index < len(parts):
         flag = parts[index]
@@ -326,7 +354,10 @@ def xargs_runs_cat(parts: list[str]) -> bool:
             index += 1
         else:
             break
-    return parts[index : index + 1] == ["cat"]
+    reader = parts[index:]
+    if reader[:1] == ["cat"] or (reader[:1] in (["head"], ["tail"]) and _count_only_reader(reader)):
+        return reader
+    return None
 
 
 def classify_base_command(
@@ -478,13 +509,26 @@ def classify_base_command(
             )
         return search
 
-    if cmd == "xargs" and xargs_runs_cat(parts):
-        # Only direct cat is proven read-only; nested wrappers may write their own outputs.
+    reader = xargs_reader(parts) if cmd == "xargs" else None
+    if reader is not None:
+        # Only direct readers are proven read-only; nested wrappers may write their own outputs.
         # Stdin supplies file operands, not source contents; their scope is unknown.
-        navigation = {
+        line_count = count_option_line_count(reader)
+        byte_count = count_option_byte_count(reader)
+        narrow = (line_count is not None and line_count <= MAX_NARROW_SOURCE_LINES) or (
+            byte_count is not None and byte_count <= MAX_NARROW_SOURCE_BYTES
+        )
+        navigation: dict[str, object] = {
             "canonical_code_navigation_action": "read",
-            "canonical_code_navigation_broad": True,
-            "canonical_source_read_scope": "full_file",
+            "canonical_code_navigation_broad": not narrow,
+            "canonical_narrow_source_context": narrow,
+            "canonical_source_read_scope": (
+                "line_range"
+                if line_count is not None
+                else "byte_range"
+                if byte_count is not None
+                else "full_file"
+            ),
             "_canonical_code_navigation_scope_unknown": True,
         }
         return _ShellSegmentMetadata(
@@ -507,12 +551,17 @@ def classify_base_command(
 
     if cmd in {"cat", "head", "tail", "bat", "nl", "less"}:
         if cmd in {"head", "tail"}:
-            option_args = {"-n", "-c", "--lines", "--bytes"}
+            option_args = set(HEAD_TAIL_VALUE_OPTIONS)
             if cmd == "tail":
                 option_args.update(
                     {"-b", "-s", "--sleep-interval", "--pid", "--max-unchanged-stats"}
                 )
-            positional = _shell_positional_args_after(parts, 1, option_args=option_args)
+            # Stdin operands re-read the input stream; the filter bound counts them.
+            positional = [
+                operand
+                for operand in _shell_positional_args_after(parts, 1, option_args=option_args)
+                if operand not in STDIN_OPERANDS
+            ]
         else:
             positional = _shell_positional_args(parts)
         paths = _rebase_navigation_shell_paths(

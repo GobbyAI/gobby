@@ -120,7 +120,12 @@ def _safe_stdin_options(options: list[str], shell: str) -> bool:
         flags = option[1:]
         if not flags or not set(flags) <= set("seuxvoO"):
             return False
-        if "O" in flags and shell not in {"bash", "sh"}:
+        if shell == "zsh":
+            # zsh -O is the operand-free CORRECT_ALL flag, not bash's -O shopt_name.
+            flags = flags.replace("O", "")
+            if not flags:
+                continue
+        elif "O" in flags and shell not in {"bash", "sh"}:
             return False
         if "o" in flags or "O" in flags:
             # Value-taking flags must end the cluster. Startup and grammar
