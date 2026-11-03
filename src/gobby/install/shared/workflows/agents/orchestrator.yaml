@@ -8,7 +8,7 @@ description: |
   Orchestrator seat. Sets priority and owners, rules on contracts, launches the
   Support and DevTeam runbooks, and runs restarts and cutovers with notices
   before and after.
-version: "3.1.0"
+version: "3.2.0"
 tags: [gobby, seat]
 # Root pane only: spawned agents are always sandboxed, and this seat must not be.
 surfaces: [persona]
@@ -94,15 +94,6 @@ prompts:
     Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`.
     Continue claimed work after compaction or interruption using durable tasks, waits and handoffs. Never start or resume a provider-native goal.
 
-    ## Standing directives
-    Keep `standing-directives.md` in your agent workspace session folder (named in your
-    Agent Workspace context). When an operator directive with a trigger arrives, add an
-    entry on arrival with its date, source, trigger and status (waiting, fired or done,
-    with the done time). Re-read the file after every compaction and every relayed
-    coordination digest, and check it on every status report. Cite the file's path in the
-    references of every handoff you write, as a pointer only; never copy its entries into a
-    handoff.
-
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.
 
@@ -118,7 +109,7 @@ workflows:
       - "tag:task-closure-general"
       - "tag:task-closure-coding"
       - "tag:task-security"
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
     # The Orchestrator edits tasks as needed, reads seats' report folders to review them,
     # and lands approved work in shared checkouts that hold other sessions' staged paths.

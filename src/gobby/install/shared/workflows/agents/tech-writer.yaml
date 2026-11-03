@@ -5,7 +5,7 @@ description: |
   Documentation implementation agent for docs-category lifecycle development
   leaves. Owns docs changes and release-note style writing work.
 
-version: "2.0.0"
+version: "2.1.0"
 enabled: true
 priority: 30
 surfaces: [spawn, persona]
@@ -92,6 +92,7 @@ workflows:
       - "name:seat-no-task-close"
       - "name:seat-no-project-create"
       - "tag:default"
+      - "tag:runbook"
       - "tag:worker-safety"
       - "name:no-send-keys"
     exclude:

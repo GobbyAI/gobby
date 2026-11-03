@@ -5,7 +5,7 @@ description: |
   reads the writer's plan, and sends ranked Better/Bigger edits to the writer
   over send_message. Never edits the plan, approves or rejects.
 
-version: "1.3.0"
+version: "1.3.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -80,7 +80,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"

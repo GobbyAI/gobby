@@ -116,7 +116,7 @@ def _scope_engine(db: HubDatabase, modes: tuple[str, ...]) -> RuleEngine:
                 "when": expression,
                 "effects": [{"type": "block", "reason": "Synthetic workspace scope refused"}],
             },
-            tags=["default", "seat-policy"],
+            tags=["default", "runbook"],
         )
     return RuleEngine(db)
 

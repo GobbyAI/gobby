@@ -8,7 +8,7 @@ capabilities:
 - write_session_variables
 description: Leads single-task and epic DevTeams, including every leaf team of its epic; lands,
   validates, closes and cleans up.
-version: "3.1.0"
+version: "3.1.1"
 tags:
 - gobby
 - seat
@@ -124,7 +124,7 @@ workflows:
     - tag:task-closure-coding
     - tag:task-closure-independent-review
     - tag:task-security
-    - tag:seat-policy
+    - tag:runbook
     - name:require-seat-procedure
     - tag:default
     - tag:worker-safety

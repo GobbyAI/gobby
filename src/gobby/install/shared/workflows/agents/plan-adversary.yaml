@@ -5,7 +5,7 @@ description: |
   passes it, reaches consensus with the writer over send_message, and stamps
   the M1 task manifest on consensus. Never edits the plan narrative.
 
-version: "3.0.0"
+version: "3.0.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -103,7 +103,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"

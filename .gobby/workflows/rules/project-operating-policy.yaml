@@ -1,12 +1,15 @@
-tags: [default, seat, project-policy]
+version: "1.1.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
 # only; this rule carries how this repository runs them. Lanes are retired
 # (operator ruling, 2026-10-23); work groups under the domain roots in project_policy.roots.
+# The general policy reaches every session through the default tag; the runbook
+# policy reaches only definitions that select the runbook tag.
 rules:
   project-operating-policy:
     description: "Inject general project operating policy for every session"
+    tags: [default, project-policy]
     event: turn_start
     enabled: true
     priority: 21
@@ -216,13 +219,13 @@ rules:
         template: |
           ## General Project Operating Policy
           - Read project_policy for domain roots, integration branch, operator route, quiet hours and release guidance.
-          - Integration 0.5.0. Push: the operator and sessions running the default agent definition may push. Other seats push only for the exact SHA the operator approves, and only the Orchestrator runs git push origin <sha>:refs/heads/0.5.0.
+          - Integration 0.5.0. Push: the operator and sessions running the default agent definition may push. Other definitions follow their runbook push policy.
           - Claim before editing; preserve foreign files and stage only owned task paths.
           - Follow TDD where applicable, focused validation and OCR self-review. Record truthful completion evidence and close with the commit SHA.
           - Direct integration commits require the active definition's capability and declared path coverage. Otherwise follow the configured landing workflow.
           - The operator alone moves protected/operator-placed tasks. Preserve the deferred-by-josh label.
           - Honor project_policy.quiet_hours; read release_guidance before crate releases.
-          - Friction: work around it and report it to Triage; the Orchestrator appends it to #25580 for Consolidator review. Only friction that blocks work or landing and can't be worked around gets its own task.
+          - Friction: work around it and file it as a task under the Friction epic #25603.
       - type: set_variable
         delivery: on_receipt
         variable: _project_policy_injected
@@ -233,18 +236,14 @@ rules:
         value: '{{ rule_digest }}'
 
   runbook-seat-policy:
-    description: "Inject coordination guidance only for configured runbook seats"
+    description: "Inject coordination guidance for every runbook seat"
+    tags: [runbook, project-policy]
     event: turn_start
     enabled: true
     priority: 22
     when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-team-lead',
-        'test-writer', 'developer', 'code-reviewer', 'researcher', 'archivist',
-        'log-monitor', 'plan-writer', 'plan-enhancer', 'plan-adversary', 'triage',
-        'release-manager', 'reporter', 'security-auditor', 'debugger',
-        'design-reviewer', 'recovery-steward', 'consolidator']
-      and (not variables.get('_runbook_policy_injected')
-        or variables.get('_runbook_policy_revision') != '{{ rule_digest }}')
+      not variables.get('_runbook_policy_injected')
+      or variables.get('_runbook_policy_revision') != '{{ rule_digest }}'
     effects:
       - type: inject_context
         delivery: on_receipt
@@ -266,6 +265,7 @@ rules:
           - Quiet hours (project_policy.quiet_hours, for the Game Goblins jobs): no restart/cutover, low load; never rerun.
           - Crate release: read project_policy.release_guidance first.
           - Place panes by project_policy.workspace_layout.
+          - Friction: work around it and report it to Triage; the Orchestrator files it as a task under the Friction epic #25603.
       - type: set_variable
         delivery: on_receipt
         variable: _runbook_policy_injected
@@ -277,6 +277,7 @@ rules:
 
   reset-project-operating-policy-on-context-loss:
     description: "Re-arm the project operating policy after context loss"
+    tags: [default, project-policy]
     event: session_start
     enabled: true
     # Same condition and priority as reset-seat-common-on-context-loss.

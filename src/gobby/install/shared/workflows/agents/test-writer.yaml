@@ -1,5 +1,5 @@
 name: test-writer
-version: "2.0.0"
+version: "2.0.1"
 description: Writes focused failing tests and records test evidence for the assigned task.
 tags: [gobby, seat]
 capabilities: [accept_resume_retype, release_own_claim]
@@ -67,7 +67,7 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:worker-safety"
       - "tag:task-closure-general"
       - "tag:task-closure-coding"

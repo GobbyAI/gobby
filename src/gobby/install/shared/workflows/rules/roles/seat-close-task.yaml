@@ -1,5 +1,5 @@
-version: "2.0.0"
-tags: [roles, seat, enforcement, gobby, seat-policy]
+version: "3.0.0"
+tags: [roles, runbook, enforcement, gobby]
 
 # Closing definitions exclude this blocker and declare close reasons/scopes in
 # their definition. The MCP authority check enforces those narrower permissions.

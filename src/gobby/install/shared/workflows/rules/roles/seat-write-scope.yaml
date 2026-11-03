@@ -1,5 +1,5 @@
-version: "2.1.0"
-tags: [roles, seat, enforcement, gobby]
+version: "3.0.0"
+tags: [roles, enforcement, gobby]
 
 # Writes with no resolvable target path fail closed: both helpers return False
 # for an empty path set.
