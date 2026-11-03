@@ -236,7 +236,11 @@ _COMMAND_STARTS = _SHELL_SEPARATORS | frozenset(
 _CD_COMMANDS = frozenset({"cd", "chdir", "pushd", "popd"})
 # Commands that run a body in the current shell, which may move it. The body is unknown.
 _EVALUATORS = frozenset({"eval", "source", ".", "exec", "alias", "trap"})
-_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=")
+# A command name the hook cannot read literally (expanded, quoted or globbed) may be `cd`.
+_DYNAMIC_NAME = re.compile(r"[$`\\'\"\[\]*?{}]")
+# zsh `set -J` or `setopt -J` turns on AUTO_CD.
+_AUTOCD_FLAG = re.compile(r"[-+][A-Za-z]*J[A-Za-z]*")
 
 
 def _anchored(words: list[str], directory: Path | None, moved: bool) -> list[str]:
@@ -282,13 +286,18 @@ def _redirect_at(tokens: list[str], index: int) -> bool:
     return token.startswith(("<", ">")) or (token.isdigit() and following.startswith(("<", ">")))
 
 
+_LIST_JOINS = frozenset({"&&", "||", "|", "|&"})
+
+
 def _backgrounded(tokens: list[str], start: int) -> bool:
     """Whether the and-or list running through `tokens[start:]` ends at `&`.
 
-    The list ends at a top-level `;` or newline. An `&` anywhere before that counts, even
-    inside a group, so a misread nesting only keeps more places.
+    The list ends at a top-level `;` or newline, except a newline after `&&`, `||`, `|` or
+    `|&`, which continues it. An `&` anywhere before the end counts, even inside a group, so
+    a misread nesting only keeps more places.
     """
     depth = 0
+    previous = ""
     for token in tokens[start:]:
         if token in {"(", "{"}:
             depth += 1
@@ -296,8 +305,10 @@ def _backgrounded(tokens: list[str], start: int) -> bool:
             depth -= 1
         elif token == "&":
             return True
-        elif depth <= 0 and token in {";", "\n"}:
+        elif depth <= 0 and (token == ";" or (token == "\n" and previous not in _LIST_JOINS)):
             return False
+        if token != "\n":
+            previous = token
     return False
 
 
@@ -358,7 +369,10 @@ def _cd_anchored_words(
     words: list[str] = []
     cdpath = any("CDPATH" in token for token in tokens)
     case_seen = "case" in tokens
-    autocd = any("autocd" in token.lower().replace("_", "") for token in tokens)
+    autocd = any("autocd" in token.lower().replace("_", "") for token in tokens) or (
+        not {"set", "setopt"}.isdisjoint(tokens)
+        and any(_AUTOCD_FLAG.fullmatch(token) for token in tokens)
+    )
     command_word = 0
     for index, token in enumerate(tokens):
         if index == skip:
@@ -404,8 +418,12 @@ def _cd_anchored_words(
             if at_start and _ASSIGNMENT.match(token):
                 # A `NAME=value` prefix keeps the next word in command position.
                 command_word = index + 1
-            elif at_start and (token in _EVALUATORS or token.startswith(("`", "$(")) or autocd):
-                # An evaluator body or a substituted command name may move the shell. Under
+            elif at_start and (
+                token in _EVALUATORS
+                or (token not in {"[", "[["} and _DYNAMIC_NAME.search(token) is not None)
+                or autocd
+            ):
+                # An evaluator body or a dynamic command name may move the shell. Under
                 # AUTO_CD any command word may name a directory, even a link the command makes.
                 places = places | frozenset({None})
             elif at_start:

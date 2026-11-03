@@ -1406,6 +1406,12 @@ def test_reported_grep_from_a_workspace_cwd_follows_its_leading_cd(
         ("cd inner && true & cat ../session-99/notes.md", True),
         ("cd inner && sleep 0 & wait; cat ../session-99/notes.md", True),
         ("cd inner && (true; true) &\ncat ../session-99/notes.md", True),
+        # A newline after `&&`, `||` or `|` continues the list up to its `&`.
+        ("cd inner &&\ntrue &\ncat ../session-99/notes.md", True),
+        ("cd inner/deep &&\ncd .. & cat ../session-99/notes.md", True),
+        ("cd inner &&\ntrue ||\ntrue & cat ../session-99/notes.md", True),
+        ("cd {hop} &&\n(true) & cat ../session-99/notes.md", True),
+        ("cd inner &&\ntrue\ncat ../notes.md", False),
         ("cd inner && true; cat ../notes.md", False),
         # A redirection after the target is not a second operand.
         ("cd inner 2>/dev/null && cat notes.md", False),
@@ -1630,8 +1636,17 @@ def test_widened_cwd_forms_keep_foreign_reads_refused(
         ("cd {checkout}; setopt autocd; {own}; cat ../session-99/notes.md", True),
         # An assignment prefix keeps the next word in command position.
         ('cd {checkout}; FOO=1 trap "cd {own}" DEBUG; cat ../session-99/notes.md', True),
-        # A substituted command name may be `cd`.
+        ('cd {checkout}; a[1]=x trap "cd {own}" DEBUG; cat ../session-99/notes.md', True),
+        # A substituted, quoted or variable command name may be `cd`.
         ("cd {checkout}; `echo cd` {own}; cat ../session-99/notes.md", True),
+        ("cd {checkout}; $'cd' {own}; cat ../session-99/notes.md", True),
+        ("cd {checkout}; $'chdir' {own}; cat ../session-99/notes.md", True),
+        ("cd {checkout}; c=cd; $c {own}; cat ../session-99/notes.md", True),
+        # zsh `-J` is AUTO_CD.
+        ("cd {checkout}; set -J; ln -s {own} lnk; lnk; cat ../session-99/notes.md", True),
+        ("cd {checkout}; setopt -J; ln -s {own} lnk; lnk; cat ../session-99/notes.md", True),
+        # A test bracket is a plain command and leaves the narrowed checkout alone.
+        ("cd {checkout} && [ -d .gobby ] && grep -n x .gobby/plans/task-25460.md", False),
         # AUTO_CD enters a link made in the same command, which does not exist yet.
         ("cd {checkout}; setopt autocd; ln -s {own} lnk; lnk; cat ../session-99/notes.md", True),
         (
