@@ -48,9 +48,17 @@ REVIEWER_VARIABLES: dict[str, Any] = {
 }
 
 
-def _protocol(tool: str) -> dict[str, str]:
+def _protocol(tool: str) -> dict[str, Any]:
     """Route one successful call through the engine's seat protocol handler."""
-    return {"server": "gobby-agents", "tool": tool, "action": "advance_seat"}
+    return {
+        "server": "gobby-agents",
+        "tool": tool,
+        "action": "advance_seat",
+        "protocol": {
+            "report_prefixes": ["Fixture stable", "FIXTURE_EVENT=ALERT "],
+            "report_step": "report",
+        },
+    }
 
 
 def _seat(
@@ -457,8 +465,8 @@ async def test_candidate_message_does_not_mutate_arbitrary_reference_values(
 @pytest.mark.parametrize(
     ("content", "resets"),
     [
-        ("Systems nominal | window 14:00-14:10 | 3 warnings in 2 families, all mapped", True),
-        ("EVENT=ALARM WINDOW=14:00-14:10 NOTE=hooks.log errors", True),
+        ("Fixture stable | window 14:00-14:10 | 3 warnings in 2 families, all mapped", True),
+        ("FIXTURE_EVENT=ALERT WINDOW=14:00-14:10 NOTE=hooks.log errors", True),
         ("Status: tick in progress for 14:00-14:10", False),
     ],
     ids=["nominal", "alarm", "status-reply"],

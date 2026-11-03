@@ -7,11 +7,11 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from gobby.storage.agent_definitions import AgentDefinitionManager
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.servers.http import HTTPServer
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.local_token import AgentApiTokenClaims
@@ -348,6 +348,7 @@ def test_http_setter_enforces_real_caller_authority(
         {
             "name": "fixture-helper",
             "prompts": {"agent": "Maintain assigned session state."},
+            "workflows": {"rule_selectors": {"include": []}},
             "capabilities": ["write_session_variables"],
         },
         project_id=_PROJECT,
@@ -380,7 +381,7 @@ def test_http_setter_enforces_real_caller_authority(
         json={"name": "candidate_sent", "value": False},
     )
     assert response.status_code == 200
-    assert response.json()["success"] is allowed
+    assert response.json()["success"] is allowed, response.json()
     stored = variables.get_variables(target)
     if allowed:
         assert stored["candidate_sent"] is False

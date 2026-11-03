@@ -81,7 +81,9 @@ class TestAgentDefinitionsList:
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_lists_agent_definitions(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:
         manager = MagicMock()
-        manager.list_resolved.return_value = [_agent_row("fixture-worker", description="Build features")]
+        manager.list_resolved.return_value = [
+            _agent_row("fixture-worker", description="Build features")
+        ]
         mock_get_manager.return_value = manager
 
         result = runner.invoke(cli, ["agents", "list"])
@@ -191,7 +193,9 @@ class TestAgentDefinitionsShow:
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_show_agent_definition(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:
         manager = MagicMock()
-        manager.get_by_name.return_value = _agent_row("fixture-worker", description="Build features")
+        manager.get_by_name.return_value = _agent_row(
+            "fixture-worker", description="Build features"
+        )
         mock_get_manager.return_value = manager
 
         result = runner.invoke(cli, ["agents", "show", "fixture-worker"])
@@ -206,7 +210,9 @@ class TestAgentDefinitionsShow:
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_show_json_output(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:
         manager = MagicMock()
-        manager.get_by_name.return_value = _agent_row("fixture-worker", surfaces=["spawn", "persona"])
+        manager.get_by_name.return_value = _agent_row(
+            "fixture-worker", surfaces=["spawn", "persona"]
+        )
         mock_get_manager.return_value = manager
 
         result = runner.invoke(cli, ["agents", "show", "fixture-worker", "--json"])

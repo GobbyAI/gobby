@@ -142,7 +142,9 @@ async def test_commit_only_when_dirty_with_guards(gobby_home: Path) -> None:
         *(commit_workspace(PROJECT, "pre_compact") for _ in range(5)), return_exceptions=True
     )
     assert not [result for result in results if isinstance(result, BaseException)], results
-    assert {f"developer/session-12/burst-{index}.md" for index in range(5)} <= _tracked(PROJECT)
+    assert {f"fixture-worker/session-12/burst-{index}.md" for index in range(5)} <= _tracked(
+        PROJECT
+    )
 
 
 class _Executor:

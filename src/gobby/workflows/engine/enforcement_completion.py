@@ -370,6 +370,7 @@ class EnforcementCompletionMixin:
                     variables,
                     tool_input,
                     tool_output,
+                    handler.get("protocol"),
                 )
                 for changed_name, changed_value in changes.items():
                     instance.variables[changed_name] = changed_value

@@ -80,9 +80,22 @@ SESSION_ID = "33333333-3333-4333-8333-333333333333"
 PROJECT_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 
 
-def _advance(server: str, tool: str) -> dict[str, str]:
+def _advance(server: str, tool: str) -> dict[str, Any]:
     """Route one successful call through the engine's seat protocol handler."""
-    return {"server": server, "tool": tool, "action": "advance_seat"}
+    return {
+        "server": server,
+        "tool": tool,
+        "action": "advance_seat",
+        "protocol": {
+            "report_prefixes": ["Fixture stable", "FIXTURE_EVENT=ALERT "],
+            "report_step": "report",
+            "consensus_pattern": r"FIXTURE_EVENT=(AGREED|AGREED_WITHDRAWN) SHA=([0-9a-f]{40})(?:\s|$)",
+            "consensus_step": "review",
+            "withdrawal_step": "stamp",
+            "consensus_event": "AGREED",
+            "withdrawal_event": "AGREED_WITHDRAWN",
+        },
+    }
 
 
 # Synthetic seat definitions: only the variables, transitions and handlers the tests assert.
@@ -820,7 +833,7 @@ async def test_standing_seat_wait_through_call_tool_controls_stop(
     "content, failure",
     [
         ("EVENT=SEAT_READY NOTE=idle", ""),
-        ("Systems nominal | ready", ""),
+        ("Fixture stable | ready", ""),
         ("EVENT=SEAT_READY NOTE=busy", ""),
         ("EVENT=SEAT_READY NOTE=idle", "direct"),
         ("EVENT=SEAT_READY NOTE=idle", "content"),
@@ -890,7 +903,7 @@ async def test_consensus_tracking_requires_declared_capability(
     definition["monitor_report_recipients"] = ["fixture-observer"] if monitor else []
     run = SeatRun(temp_db, name, definition=definition)
     await run.load(*run.vars["required_skills"])
-    await run.send(f"EVENT=CONSENSUS SHA={SHA} NOTE=approved")
+    await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA} NOTE=approved")
     assert run.vars["consensus"] is grant
     assert run.step == ("stamp" if grant else "review")
 
@@ -920,15 +933,124 @@ async def test_monitor_routing_uses_declared_recipients(
     assert recipient_definition is not None
     if not target_enabled:
         definitions.update(recipient_definition.id, enabled=False)
-        await run.send("Systems nominal | custom window", COORDINATOR_ID)
+        await run.send("Fixture stable | custom window", COORDINATOR_ID)
         assert run.step == "tick"
         assert run.vars["tick_window"] is None
         definitions.update(recipient_definition.id, enabled=True)
-    await run.send("Systems nominal | custom window", COORDINATOR_ID)
+    await run.send("Fixture stable | custom window", COORDINATOR_ID)
     assert run.step == "report"
-    await run.send("Systems nominal | custom window", PEER_ID)
+    await run.send("Fixture stable | custom window", PEER_ID)
     assert run.step == "tick"
     assert run.vars["tick_done"] is False
+
+
+@pytest.mark.parametrize(
+    "protocol",
+    [
+        {},
+        {"report_prefixes": ["Fixture heartbeat"]},
+        {"report_prefixes": [""], "report_step": "fixture-publish"},
+        {"consensus_pattern": "("},
+        {
+            "consensus_pattern": "fixture-without-captures",
+            "consensus_step": "fixture-check",
+            "withdrawal_step": "fixture-confirm",
+            "consensus_event": "fixture-accept",
+            "withdrawal_event": "fixture-withdraw",
+        },
+    ],
+)
+def test_message_protocol_rejects_incomplete_or_invalid_configuration(
+    protocol: dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError):
+        AgentStepWorkflowBody.model_validate(
+            {
+                "steps": [
+                    {
+                        "name": "fixture-check",
+                        "on_mcp_success": [
+                            {
+                                "server": "gobby-agents",
+                                "tool": "send_message",
+                                "action": "advance_seat",
+                                "protocol": protocol,
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+
+
+async def test_reporting_protocol_uses_declared_phrases_and_step_names(
+    temp_db: HubDatabase,
+) -> None:
+    definition = json.loads(json.dumps(_SYNTHETIC_SEATS["fixture-definition-961ad2d0"]))
+    definition.update(
+        name="fixture-custom-protocol", monitor_report_recipients=["fixture-observer"]
+    )
+    renames = {"tick": "fixture-sample", "report": "fixture-publish"}
+    for step in definition["step_workflow"]["steps"]:
+        step["name"] = renames.get(step["name"], step["name"])
+        for transition in step.get("transitions", []):
+            transition["to"] = renames.get(transition["to"], transition["to"])
+        for handler in step.get("on_mcp_success", []):
+            if handler.get("action") == "advance_seat":
+                handler["protocol"] = {
+                    "report_prefixes": ["Fixture heartbeat"],
+                    "report_step": "fixture-publish",
+                }
+    run = SeatRun(temp_db, "fixture-custom-protocol", definition=definition)
+    _declare_report_recipient(run, COORDINATOR_ID, "fixture-observer")
+    await run.load(*run.vars["required_skills"])
+    await run.send("Fixture heartbeat | custom window", COORDINATOR_ID)
+    assert run.vars["tick_window"] is not None
+    assert run.vars["_window_report"] == "Fixture heartbeat | custom window"
+    assert run.vars["tick_done"] is False
+
+
+async def test_consensus_protocol_uses_declared_events_steps_and_commit_binding(
+    temp_db: HubDatabase,
+) -> None:
+    protocol = {
+        "consensus_pattern": r"ACK (accepted|revoked) COMMIT=([0-9a-f]{40})(?:\s|$)",
+        "consensus_step": "fixture-check",
+        "withdrawal_step": "fixture-confirm",
+        "consensus_event": "accepted",
+        "withdrawal_event": "revoked",
+    }
+    handler = {"server": SEND[0], "tool": SEND[1], "action": "advance_seat", "protocol": protocol}
+    definition = {
+        "name": "fixture-consensus",
+        "capabilities": ["track_plan_consensus"],
+        "prompts": {"agent": "Exercise the configured receipt protocol."},
+        "workflows": {"rule_selectors": {"include": []}},
+        "step_workflow": {
+            "variables": {"consensus": False, "bounced": False, "consensus_sha": None},
+            "steps": [
+                {
+                    "name": "fixture-check",
+                    "on_mcp_success": [handler],
+                    "transitions": [{"to": "fixture-confirm", "when": "vars.consensus"}],
+                },
+                {
+                    "name": "fixture-confirm",
+                    "on_mcp_success": [handler],
+                    "transitions": [{"to": "fixture-check", "when": "vars.bounced"}],
+                },
+            ],
+        },
+    }
+    run = SeatRun(temp_db, "fixture-consensus", definition=definition)
+    await run.send(f"ACK accepted COMMIT={SHA}")
+    assert run.step == "fixture-confirm"
+    assert run.vars["consensus_sha"] == SHA
+    await run.send(f"ACK revoked COMMIT={REPLACEMENT_SHA}")
+    assert run.step == "fixture-confirm"
+    await run.send(f"ACK revoked COMMIT={SHA}")
+    assert run.step == "fixture-check"
+    assert run.vars["consensus"] is False
 
 
 def _declare_report_recipient(run: SeatRun, recipient: str, name: str) -> None:
@@ -955,7 +1077,7 @@ async def test_monitor_name_has_no_undeclared_reporting_handler(
     run = SeatRun(temp_db, name, definition=definition)
     _declare_report_recipient(run, COORDINATOR_ID, "fixture-definition-0f916789")
     await run.load(*run.vars["required_skills"])
-    await run.send("Systems nominal | ignored window", COORDINATOR_ID)
+    await run.send("Fixture stable | ignored window", COORDINATOR_ID)
     assert run.vars["tick_window"] is None
     assert run.step == "tick"
 
@@ -965,7 +1087,7 @@ async def test_monitor_fanout_counts_every_delivered_recipient(temp_db: HubDatab
     _declare_report_recipient(run, COORDINATOR_ID, "fixture-definition-0f916789")
     _declare_report_recipient(run, PEER_ID, "fixture-definition-cf1e3dd7")
     await run.load(*run.vars["required_skills"])
-    window = "Systems nominal | shared fanout window"
+    window = "Fixture stable | shared fanout window"
     messages = InterSessionMessageManager(temp_db)
     message_ids = [
         messages.create_message(SESSION_ID, recipient, window).id
@@ -996,17 +1118,17 @@ async def test_monitor_windows_complete_from_durable_reports(
         COORDINATOR_ID, "_agent_type", "fixture-coordinator"
     )
     await run.load(*run.vars["required_skills"])
-    await run.send("Systems nominal | sample window", COORDINATOR_ID)
+    await run.send("Fixture stable | sample window", COORDINATOR_ID)
     assert run.step == "tick" and run.vars["tick_window"] is None
     _declare_report_recipient(run, COORDINATOR_ID, "fixture-definition-0f916789")
     for _ in range(2):
-        await run.send("Systems nominal | sample window", COORDINATOR_ID)
+        await run.send("Fixture stable | sample window", COORDINATOR_ID)
         if name == "fixture-definition-961ad2d0":
             assert run.step == "report"
-            await run.send("Systems nominal | a different window", PEER_ID)
+            await run.send("Fixture stable | a different window", PEER_ID)
             assert run.step == "report"
             assert "fixture-definition-cf1e3dd7" not in run.vars["_reported_to"]
-            await run.send("Systems nominal | sample window", PEER_ID)
+            await run.send("Fixture stable | sample window", PEER_ID)
         assert run.step == "tick"
         assert run.vars["tick_done"] is False
         assert run.vars["tick_window"]
@@ -1020,7 +1142,7 @@ async def test_metrics_monitor_window_needs_both_delivered_recipients(
     _declare_report_recipient(run, COORDINATOR_ID, "fixture-definition-0f916789")
     _declare_report_recipient(run, PEER_ID, "fixture-definition-cf1e3dd7")
     await run.load(*run.vars["required_skills"])
-    window = "Systems nominal | sample window"
+    window = "Fixture stable | sample window"
 
     def target(recipient: str) -> str:
         # The engine reads the stored recipient, so the argument form must not matter.
@@ -1061,11 +1183,11 @@ async def test_plan_adversary_consensus_withdrawal_reopens_review(temp_db: HubDa
     run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
     assert run.step == "review"
-    await run.send(f"EVENT=CONSENSUS SHA={SHA} NOTE=approved")
+    await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA} NOTE=approved")
     assert run.step == "stamp"
-    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={REPLACEMENT_SHA} NOTE=invalid")
+    await run.send(f"FIXTURE_EVENT=AGREED_WITHDRAWN SHA={REPLACEMENT_SHA} NOTE=invalid")
     assert run.step == "stamp"
-    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA} NOTE=unresolved")
+    await run.send(f"FIXTURE_EVENT=AGREED_WITHDRAWN SHA={SHA} NOTE=unresolved")
     assert run.step == "review"
     assert run.vars["consensus"] is False
 
@@ -1081,11 +1203,11 @@ async def test_plan_adversary_unbound_stamp_can_withdraw(temp_db: HubDatabase) -
     instance.variables.pop("consensus_sha", None)
     run.instances.save(instance)
 
-    await run.incoming(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA}")
+    await run.incoming(f"FIXTURE_EVENT=AGREED_WITHDRAWN SHA={SHA}")
     assert run.step == "stamp"
-    await run.send("EVENT=CONSENSUS_WITHDRAWN SHA=invalid")
+    await run.send("FIXTURE_EVENT=AGREED_WITHDRAWN SHA=invalid")
     assert run.step == "stamp"
-    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA} NOTE=re-review needed")
+    await run.send(f"FIXTURE_EVENT=AGREED_WITHDRAWN SHA={SHA} NOTE=re-review needed")
     assert run.step == "review"
     assert run.vars["consensus"] is False
 
@@ -1098,7 +1220,7 @@ async def test_plan_adversary_consensus_variables_are_handler_owned(
     run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
     if step == "stamp":
-        await run.send(f"EVENT=CONSENSUS SHA={SHA}")
+        await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA}")
         # Only the handler's own write lands: the consensus pair holds the handler-written SHA.
         assert run.vars["consensus"] is True
         assert run.vars["consensus_sha"] == SHA
@@ -1114,18 +1236,18 @@ async def test_plan_adversary_consensus_variables_are_handler_owned(
 @pytest.mark.parametrize(
     "content",
     [
-        "EVENT=CONSENSUS",
-        "EVENT=CONSENSUS ROUND=1",
-        f"Cannot send EVENT=CONSENSUS SHA={SHA}; no committed entry exists.",
-        f"EVENT=CONSENSUS_EXTRA SHA={SHA}",
-        "EVENT=CONSENSUS SHA=not-a-commit",
-        "EVENT=CONSENSUS SHA=",
-        "EVENT=CONSENSUS SHA=abcdef",
-        f"EVENT=CONSENSUS SHA={SHA[:7]}",
-        f"EVENT=CONSENSUS SHA={SHA[:39]}",
-        f"EVENT=CONSENSUS SHA={SHA}a",
-        f"EVENT=CONSENSUS\nSHA={SHA}",
-        f"Evidence follows.\nEVENT=CONSENSUS SHA={SHA}",
+        "FIXTURE_EVENT=AGREED",
+        "FIXTURE_EVENT=AGREED ROUND=1",
+        f"Cannot send FIXTURE_EVENT=AGREED SHA={SHA}; no committed entry exists.",
+        f"FIXTURE_EVENT=AGREED_EXTRA SHA={SHA}",
+        "FIXTURE_EVENT=AGREED SHA=not-a-commit",
+        "FIXTURE_EVENT=AGREED SHA=",
+        "FIXTURE_EVENT=AGREED SHA=abcdef",
+        f"FIXTURE_EVENT=AGREED SHA={SHA[:7]}",
+        f"FIXTURE_EVENT=AGREED SHA={SHA[:39]}",
+        f"FIXTURE_EVENT=AGREED SHA={SHA}a",
+        f"FIXTURE_EVENT=AGREED\nSHA={SHA}",
+        f"Evidence follows.\nFIXTURE_EVENT=AGREED SHA={SHA}",
     ],
 )
 async def test_plan_adversary_rejects_malformed_consensus(
@@ -1144,7 +1266,7 @@ async def test_plan_adversary_consensus_preserves_whitespace_delimiters(
 ) -> None:
     run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
-    await run.send(f"EVENT=CONSENSUS SHA={SHA}{suffix}")
+    await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA}{suffix}")
     assert run.step == "stamp"
     assert run.vars["consensus"] is True
     assert run.vars["consensus_sha"] == SHA
@@ -1156,9 +1278,9 @@ async def test_plan_adversary_withdrawal_preserves_whitespace_delimiters(
 ) -> None:
     run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
-    await run.send(f"EVENT=CONSENSUS SHA={SHA}")
+    await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA}")
     assert run.step == "stamp"
-    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA}{suffix}")
+    await run.send(f"FIXTURE_EVENT=AGREED_WITHDRAWN SHA={SHA}{suffix}")
     assert run.step == "review"
     assert run.vars["consensus"] is False
 
@@ -1166,7 +1288,7 @@ async def test_plan_adversary_withdrawal_preserves_whitespace_delimiters(
 async def test_plan_adversary_failed_consensus_send_stays_in_review(temp_db: HubDatabase) -> None:
     run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
-    content = f"EVENT=CONSENSUS SHA={SHA}"
+    content = f"FIXTURE_EVENT=AGREED SHA={SHA}"
     message = InterSessionMessageManager(temp_db).create_message(
         SESSION_ID, COORDINATOR_ID, content
     )
@@ -1184,7 +1306,7 @@ async def test_plan_adversary_old_stamp_snapshot_uses_current_withdrawal(
 ) -> None:
     run = SeatRun(temp_db, "fixture-definition-86a2d70b")
     await run.load(*run.vars["required_skills"])
-    await run.send(f"EVENT=CONSENSUS SHA={SHA}")
+    await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA}")
     assert run.step == "stamp"
     instance = run.instances.get_for_session(SESSION_ID)
     assert instance is not None
@@ -1200,7 +1322,7 @@ async def test_plan_adversary_old_stamp_snapshot_uses_current_withdrawal(
     old_stamp.transitions = []
     run.instances.replace_for_session(instance)
 
-    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA}")
+    await run.send(f"FIXTURE_EVENT=AGREED_WITHDRAWN SHA={SHA}")
 
     assert run.step == "review"
     assert run.vars["consensus"] is False
@@ -1267,9 +1389,9 @@ async def test_seat_consumed_messages_keeps_last_64(temp_db: HubDatabase) -> Non
     await run.load(*run.vars["required_skills"])
     message_ids = []
     for index in range(70):
-        event = "CONSENSUS" if index % 2 == 0 else "CONSENSUS_WITHDRAWN"
+        event = "AGREED" if index % 2 == 0 else "AGREED_WITHDRAWN"
         message = InterSessionMessageManager(temp_db).create_message(
-            SESSION_ID, COORDINATOR_ID, f"EVENT={event} SHA={SHA} NOTE=bounded"
+            SESSION_ID, COORDINATOR_ID, f"FIXTURE_EVENT={event} SHA={SHA} NOTE=bounded"
         )
         message_ids.append(message.id)
         await run.call(
@@ -1442,7 +1564,7 @@ async def test_stale_step_completion_logs_warning(
         raise StaleStepInstanceWriteError("concurrent seat completion")
 
     monkeypatch.setattr(AgentStepInstanceManager, "save", stale)
-    await run.send(f"EVENT=CONSENSUS SHA={SHA} NOTE=approved")
+    await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA} NOTE=approved")
     assert run.step == "review"
     assert "Stale step completion write" in caplog.text
 
@@ -1467,7 +1589,7 @@ async def test_stale_consensus_transition_keeps_its_message_replayable(
 
     monkeypatch.setattr(AgentStepInstanceManager, "save", lose_first_transition)
     message = InterSessionMessageManager(temp_db).create_message(
-        SESSION_ID, COORDINATOR_ID, f"EVENT=CONSENSUS SHA={SHA} NOTE=approved"
+        SESSION_ID, COORDINATOR_ID, f"FIXTURE_EVENT=AGREED SHA={SHA} NOTE=approved"
     )
     arguments = {"target": "session", "target_id": COORDINATOR_ID, "content": message.content}
     output = {"success": True, "message_ids": [message.id]}

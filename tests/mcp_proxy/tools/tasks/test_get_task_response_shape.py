@@ -15,7 +15,7 @@ pytestmark = pytest.mark.unit
 
 def test_no_legacy_fields(task_registry, mock_task_manager) -> None:
     task = Task(
-        id="task-1",
+        id="11111111-1111-4111-8111-111111111111",
         project_id="project-1",
         title="A ready task",
         priority=2,
@@ -26,7 +26,9 @@ def test_no_legacy_fields(task_registry, mock_task_manager) -> None:
     )
     mock_task_manager.get_task.return_value = task
 
-    result = task_registry.call_sync("get_task", {"task_id": "task-1"})
+    result = task_registry.call_sync(
+        "get_task", {"task_id": "11111111-1111-4111-8111-111111111111"}
+    )
 
     assert "status" not in result
     assert "lifecycle" not in result

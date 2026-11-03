@@ -199,7 +199,9 @@ async def test_deleted_telegram_target_falls_back_by_capability(
     holder = env.sessions.register("selected-for-fallback", None, "codex", env.project_id)
     env.manager.attach_conversation(env.channel.name, "dm:42", holder.id)
     seat = env.assistant(definition)
-    env.sessions.update_title(seat.id, "Assistant" if definition == "fixture-helper" else "Help desk")
+    env.sessions.update_title(
+        seat.id, "Assistant" if definition == "fixture-helper" else "Help desk"
+    )
     assert env.sessions.delete(holder.id)
 
     await fallback_telegram_targets(
@@ -282,7 +284,9 @@ async def test_committed_operator_input_is_not_replayed_to_replacement(
     assert len(mailbox_store.get_messages(assistant.id)) == 1
     env.sessions.update_status(assistant.id, "expired")
     replacement = env.sessions.register("replacement", None, "claude", env.project_id)
-    SessionVariableManager(env.sessions.db).set_variable(replacement.id, "_agent_type", "fixture-helper")
+    SessionVariableManager(env.sessions.db).set_variable(
+        replacement.id, "_agent_type", "fixture-helper"
+    )
     env.adapter.poll = AsyncMock(side_effect=[[], asyncio.CancelledError()])
     await env.manager._polling_manager._poll_loop(env.channel.name, env.adapter, 0)
     assert mailbox_store.get_messages(replacement.id) == []

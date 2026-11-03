@@ -100,7 +100,7 @@ async def test_caller_title_does_not_replace_a_defined_seat_title(
         project_path=tmp_path,
     )
 
-    assert child.title == "Developer"
+    assert child.title == "Fixture Worker"
     assert child.title_source == "definition"
 
 
@@ -115,5 +115,5 @@ async def test_defined_seat_without_caller_title_takes_its_definition_name(
         session_manager, sample_project, monkeypatch, title=None, project_path=tmp_path
     )
 
-    assert child.title == "Developer"
+    assert child.title == "Fixture Worker"
     assert child.title_source == "definition"

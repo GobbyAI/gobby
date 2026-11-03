@@ -31,9 +31,20 @@ EVIDENCE_TOOLS = (
 )
 
 
-def _protocol(tool: str) -> dict[str, str]:
+def _protocol(tool: str) -> dict[str, Any]:
     """Route one successful call through the engine's seat protocol handler."""
-    return {"server": "gobby-agents", "tool": tool, "action": "advance_seat"}
+    return {
+        "server": "gobby-agents",
+        "tool": tool,
+        "action": "advance_seat",
+        "protocol": {
+            "consensus_pattern": r"FIXTURE_EVENT=(AGREED|AGREED_WITHDRAWN) SHA=([0-9a-f]{40})(?:\s|$)",
+            "consensus_step": "review",
+            "withdrawal_step": "stamp",
+            "consensus_event": "AGREED",
+            "withdrawal_event": "AGREED_WITHDRAWN",
+        },
+    }
 
 
 # A synthetic adversary: the consensus transition and the derive gate are the only
@@ -111,10 +122,10 @@ WRITER_LOAD_GATE: dict[str, Any] = {
 async def test_adversary_stamps_only_after_consensus(temp_db: HubDatabase) -> None:
     run = SeatRun(temp_db, "fixture-definition-86a2d70b", definition=CONSENSUS_ADVERSARY)
     assert not await run.admits(*DERIVE)
-    await run.send("EVENT=CONSENSUS SHA=abc NOTE=unresolved")
+    await run.send("FIXTURE_EVENT=AGREED SHA=abc NOTE=unresolved")
     assert run.step == "review"
     assert run.vars["consensus"] is False
-    await run.send(f"EVENT=CONSENSUS SHA={SHA} NOTE=approved")
+    await run.send(f"FIXTURE_EVENT=AGREED SHA={SHA} NOTE=approved")
     assert run.step == "stamp"
     assert run.vars["consensus"] is True
     assert run.vars["consensus_sha"] == SHA
