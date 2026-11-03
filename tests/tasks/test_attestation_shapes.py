@@ -58,17 +58,25 @@ def _shaped_rules(db: HubDatabase, project_id: str) -> None:
 
 
 def _author(
-    db: HubDatabase, project_id: str, *, selected: bool = True, kinds: dict[str, Any] | None = None
+    db: HubDatabase,
+    project_id: str,
+    *,
+    selected: bool = True,
+    kinds: dict[str, Any] | None = None,
+    scope: dict[str, Any] | None = None,
 ) -> str:
     _shaped_rules(db, project_id)
     include = ["tag:bakery-land"] if selected else []
+    fields: dict[str, Any] = {
+        "workflows": {"rule_selectors": {"include": include}},
+        "task_attestation_kinds": kinds or {},
+    }
+    if scope is not None:
+        fields["task_attestation_scope"] = scope
     return AgentSessions(db, project_id).add(
         "baker-selected" if selected else "baker-unselected",
         ["*"],
-        definition_fields={
-            "workflows": {"rule_selectors": {"include": include}},
-            "task_attestation_kinds": kinds or {},
-        },
+        definition_fields=fields,
     )
 
 
@@ -150,6 +158,19 @@ def test_closed_task_refusal_precedes_the_shape_refusal(
     with pytest.raises(AttestationError) as refused:
         _submit(temp_db, author, task.id, "bake", "pass")
     assert str(refused.value) == "closed tasks cannot receive new attestations"
+
+
+def test_scope_refusal_precedes_the_shape_refusal(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    author = _author(temp_db, sample_project["id"], scope={"own_claim_only": True})
+    task = LocalTaskManager(temp_db).create_task(sample_project["id"], "Bake a cake")
+    with pytest.raises(AttestationError) as refused:
+        _submit(temp_db, author, task.id, "bake", "pass")
+    message = str(refused.value)
+    assert "scope" in message
+    assert "Accepted shape" not in message
+    assert list_attestations(temp_db, task.id) == []
 
 
 def test_declared_negative_result_stays_recordable(
