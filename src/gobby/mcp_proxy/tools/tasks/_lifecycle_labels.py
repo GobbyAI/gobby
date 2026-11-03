@@ -29,7 +29,9 @@ def register_add_label(registry: InternalToolRegistry, ctx: RegistryContext) -> 
             current_task = ctx.task_manager.get_task(resolved_id)
             if current_task is None:
                 return {"error": f"Task {task_id} not found"}
-            denied = require_claim_authority(ctx.task_manager, current_task, "add_label")
+            denied = require_claim_authority(
+                ctx.task_manager, current_task, "add_label", allow_team_label_additions=True
+            )
             if denied:
                 return denied
             label_error = live_session_label_change_error(

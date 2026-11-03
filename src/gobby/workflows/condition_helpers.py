@@ -18,6 +18,7 @@ from gobby.config.shell_lexing import shell_command_segments
 from gobby.config.validation_detection import (
     is_validation_command as _config_is_validation_command,
 )
+from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.state_semantics import projected_task_state
 from gobby.tasks.transcript_outcomes import (
     wrapped_validation_command as _tasks_wrapped_validation_command,
@@ -25,6 +26,43 @@ from gobby.tasks.transcript_outcomes import (
 from gobby.utils.python_source import parse_agent_source
 
 logger = logging.getLogger(__name__)
+
+
+def task_label_update_allowed(
+    task_manager: LocalTaskManager | None, session_id: Any, tool_input: Any
+) -> bool:
+    """Allow only label patches admitted by the caller's stored team grant."""
+    if task_manager is None or not isinstance(session_id, str) or not session_id:
+        return False
+    if not isinstance(tool_input, Mapping):
+        return False
+    labels = tool_input.get("labels")
+    reference = tool_input.get("task_id")
+    if (
+        not isinstance(reference, str)
+        or not isinstance(labels, list)
+        or any(not isinstance(label, str) for label in labels)
+        or any(
+            value is not None
+            for key, value in tool_input.items()
+            if key not in {"task_id", "labels", "server_name", "tool_name"}
+        )
+    ):
+        return False
+    from gobby.storage.sessions import SessionManager
+    from gobby.tasks.lifecycle_access import can_add_team_task_labels
+
+    try:
+        caller = SessionManager(task_manager.db).get(session_id)
+        if caller is None or caller.project_id is None:
+            return False
+        task_id = task_manager.resolve_task_reference(reference, caller.project_id)
+        return can_add_team_task_labels(task_manager.db, caller.id, task_manager.get_task(task_id))
+    except Exception:
+        # This predicate controls an exception to a blocking rule: unavailable
+        # authority must leave the block armed, including on storage failures.
+        logger.exception("Unable to resolve task label authority")
+        return False
 
 
 TaskIdRef = str | int | UUID | bytes | bytearray | memoryview

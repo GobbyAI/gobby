@@ -25,6 +25,15 @@ from tests.fixtures.agent_sessions import AgentSessions
 pytestmark = pytest.mark.unit
 
 
+def test_reference_mismatch_names_stage_and_accepted_reference(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    task_id, recipient = _exercise_claim_flow(
+        temp_db, sample_project, "original", False, scenario="reference-conflict"
+    )
+    assert LocalTaskManager(temp_db).get_task(task_id).claimed_by_session_id == recipient
+
+
 @pytest.mark.parametrize("wildcard", [False, True])
 def test_explicit_writer_requires_kind_metadata_but_wildcard_remains_open(
     temp_db: HubDatabase, sample_project: dict[str, Any], wildcard: bool
@@ -252,6 +261,47 @@ def _exercise_claim_flow(
                 ("2026-01-01T00:00:00+00:00", task.id, "task_claim_flow"),
             )
 
+    if scenario == "reference-conflict":
+        first, _ = record_attestation(
+            temp_db,
+            task_id=task.id,
+            session_id=maker,
+            submission=AttestationSubmission(
+                kind="recipe",
+                result="approved",
+                summary="Fixture base evidence.",
+                reference={"scheme": "git", "value": "1" * 40},
+            ),
+        )
+        count = len(list_attestations(temp_db, task.id))
+        with pytest.raises(ValueError, match=f"claim_flow.*implement.*git:{'2' * 40}"):
+            record_attestation(
+                temp_db,
+                task_id=task.id,
+                session_id=maker,
+                submission=AttestationSubmission(
+                    kind="checks",
+                    result="approved",
+                    summary="Fixture candidate evidence.",
+                    reference={"scheme": "git", "value": "2" * 40},
+                ),
+            )
+        assert len(list_attestations(temp_db, task.id)) == count
+        assert tasks.get_task(task.id).claimed_by_session_id == maker
+        record_attestation(
+            temp_db,
+            task_id=task.id,
+            session_id=maker,
+            submission=AttestationSubmission(
+                kind="recipe",
+                result="approved",
+                summary="Fixture pre-change evidence has no candidate reference.",
+                supersedes_id=first.id,
+            ),
+        )
+        attest(maker, "checks")
+        assert tasks.get_task(task.id).claimed_by_session_id == reviewer
+        return task.id, reviewer
     if scenario == "null-last":
         attest(maker, "checks")
         assert tasks.get_task(task.id).claimed_by_session_id == maker

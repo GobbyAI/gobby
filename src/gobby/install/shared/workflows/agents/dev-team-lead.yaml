@@ -1,5 +1,6 @@
 name: dev-team-lead
 capabilities:
+- add_team_task_labels
 - manage_task_claims
 - land_tasks
 - accept_resume_retype
@@ -7,7 +8,7 @@ capabilities:
 - team_main_checkout
 description: Leads single-task and epic DevTeams, including every leaf team of its epic; lands,
   validates, closes and cleans up.
-version: "4.0.0"
+version: "4.1.0"
 tags:
 - gobby
 - seat
