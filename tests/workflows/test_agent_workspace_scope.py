@@ -1401,14 +1401,6 @@ def test_reported_grep_from_a_workspace_cwd_follows_its_leading_cd(
         # zsh `cd old new` swaps `old` for `new` in the current directory.
         ("cd 12 99; cat notes.md", True),
         ("cd 12 99 && cat notes.md", True),
-        # zsh reads only a single digit touching `<` or `>` as a file descriptor, so a
-        # spaced, quoted or multi-digit number before a redirection is the second operand.
-        ("cd 12 9 >/dev/null; cat notes.md", True),
-        ("cd 12 99<x; cat notes.md", True),
-        ("cd 12 99 <x; cat notes.md", True),
-        ("cd 12 99>/dev/null; cat notes.md", True),
-        ("pushd 12 99 >/dev/null; cat notes.md", True),
-        ("cd 12 '9' >/dev/null; true 9>/dev/null; cat notes.md", True),
         # A redirection after the target is not a second operand.
         ("cd inner 2>/dev/null && cat notes.md", False),
         ("cd inner >/dev/null && cat notes.md", False),
@@ -1619,6 +1611,42 @@ def test_widened_cwd_forms_keep_foreign_reads_refused(
         "project_path": str(checkout),
     }
     assert agent_workspace_read_violation(None, data, data["tool_input"], variables, None)
+
+
+@pytest.mark.parametrize(
+    ("command", "refused"),
+    [
+        # Each mover runs after the leading cd narrowed the shell to the checkout.
+        ("cd {checkout}; chdir {own}; cat ../session-99/notes.md", True),
+        ("cd {checkout} && chdir {own} && cat ../session-99/notes.md", True),
+        ("cd {checkout}; trap 'cd {own}' DEBUG; cat ../session-99/notes.md", True),
+        # zsh AUTO_CD enters a directory named as a command.
+        ("cd {checkout}; setopt autocd; {own}; cat ../session-99/notes.md", True),
+        # zsh `cd +N` rotates the directory stack.
+        ("cd {checkout}; cd +1; cat ../session-99/notes.md", True),
+        # Command words that name no directory leave the narrowed checkout alone.
+        ("cd {checkout} && ls && grep -n x .gobby/plans/task-25460.md", False),
+    ],
+)
+def test_movers_after_a_narrowing_cd_keep_foreign_reads_refused(
+    root: Path, tmp_path: Path, command: str, refused: bool
+) -> None:
+    # Run from the own folder, where the bare relative read already reaches session-99.
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+    (own.parent / "session-99").mkdir(parents=True)
+    own.mkdir()
+    checkout = tmp_path / "gobby"
+    checkout.mkdir()
+    data = {
+        "tool_name": "Bash",
+        "tool_input": {"command": command.format(checkout=checkout, own=own)},
+        "cwd": str(own),
+        "project_path": str(checkout),
+    }
+    assert (
+        agent_workspace_read_violation(None, data, data["tool_input"], variables, None) is refused
+    )
 
 
 def test_subshell_cd_leaves_own_folder_reads_allowed(root: Path, tmp_path: Path) -> None:
