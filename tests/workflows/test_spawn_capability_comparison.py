@@ -276,10 +276,9 @@ def test_explicit_project_identity_controls_definition_lookup(
 
 @pytest.mark.parametrize("project_path", [None, "", "  "])
 @pytest.mark.parametrize("parent_ref", [None, ""])
-def test_blank_optional_inputs_use_ambient_project(
+def test_blank_optional_inputs_use_caller_project(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
     project_path: str | None,
     parent_ref: str | None,
 ) -> None:
@@ -290,10 +289,6 @@ def test_blank_optional_inputs_use_ambient_project(
         "fixture-target",
         {"capabilities": ["fixture_read"]},
         project_id=project_id,
-    )
-    monkeypatch.setattr(
-        "gobby.workflows.condition_helpers_spawn.get_project_context",
-        lambda path=None: {"id": project_id},
     )
     assert spawn_capabilities_allowed(sessions, caller, "fixture-target", project_path, parent_ref)
 
@@ -412,3 +407,24 @@ def test_unavailable_caller_definition_grants_no_capabilities(
     assert not spawn_capabilities_allowed(
         sessions, caller, "fixture-target", parent_session_id=caller
     )
+
+
+@pytest.mark.parametrize(("granted", "allowed"), [(["fixture_read"], True), ([], False)])
+def test_hook_path_without_ambient_project_uses_the_caller_project(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    granted: list[str],
+    allowed: bool,
+) -> None:
+    """Rule evaluation has no per-call project context; the verified caller supplies it."""
+    monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+    project_id = str(sample_project["id"])
+    sessions, caller = _caller(temp_db, project_id, granted, spawned=True)
+    _define(
+        AgentDefinitionManager(temp_db),
+        "fixture-target",
+        {"capabilities": ["fixture_read"]},
+        project_id=project_id,
+    )
+    assert spawn_capabilities_allowed(sessions, caller, "fixture-target") is allowed
