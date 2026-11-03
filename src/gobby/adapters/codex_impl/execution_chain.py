@@ -537,18 +537,17 @@ def extract_direct_exec_running_session_id(value: Any) -> str | None:
 
 
 def extract_yielded_cell_id(data: Mapping[str, Any]) -> str | None:
-    """Read the functions wrapper correlation token without inferring outcome."""
+    """Read the functions wrapper correlation token without inferring outcome.
+
+    The wrapper writes it as the output's first line; any later line is printed stdout.
+    """
     output = data.get("tool_output", data.get("tool_response"))
-    yielded_cells: set[str] = set()
     for text in _iter_output_text(output):
         for line in text.splitlines():
-            first_nonblank = line.strip()
-            if not first_nonblank:
-                continue
-            match = _YIELDED_CELL_RE.fullmatch(first_nonblank)
-            if match:
-                yielded_cells.add(match.group(1))
-    return next(iter(yielded_cells)) if len(yielded_cells) == 1 else None
+            if line.strip():
+                match = _YIELDED_CELL_RE.fullmatch(line.strip())
+                return match.group(1) if match else None
+    return None
 
 
 def extract_wait_cell_id(data: Mapping[str, Any]) -> str | None:
@@ -569,6 +568,8 @@ class PendingExecution:
     direct: bool = False
     expects_serialized_result: bool = False
     workdir: str | None = None
+    # Set per registered call: a poll's mode can differ from the launch it continues.
+    code_mode_call: bool = False
 
     def to_state(self) -> dict[str, Any]:
         return {
@@ -579,6 +580,7 @@ class PendingExecution:
             "direct": self.direct,
             "expects_serialized_result": self.expects_serialized_result,
             "workdir": self.workdir,
+            "code_mode_call": self.code_mode_call,
         }
 
     @classmethod
@@ -595,12 +597,16 @@ class PendingExecution:
             return None
         direct = value.get("direct", False)
         expects_serialized_result = value.get("expects_serialized_result", False)
-        if not isinstance(direct, bool) or not isinstance(expects_serialized_result, bool):
+        code_mode_call = value.get("code_mode_call", False)
+        if not all(
+            isinstance(flag, bool) for flag in (direct, expects_serialized_result, code_mode_call)
+        ):
             return None
         return cls(
             outer_call_id=outer_call_id,
             direct=direct,
             expects_serialized_result=expects_serialized_result,
+            code_mode_call=code_mode_call,
             **optional,
         )
 
@@ -692,16 +698,17 @@ class ExecutionChainCorrelator:
                     execution = self._cells.get(cell_id)
         if execution is None:
             return False
-        self._set_pending(self._calls, call_id, execution)
+        code_mode = name in FUNCTIONS_EXEC_NAMES or name in WAIT_NAMES
+        self._set_pending(self._calls, call_id, replace(execution, code_mode_call=code_mode))
         return True
 
     def resolve_output(self, call_id: str, output: Any) -> ExecutionResolution:
         execution = self._calls.pop(call_id, None)
         if execution is None:
             return ExecutionResolution("unrelated")
-        # Only a code-mode cell yields one; a direct command's stdout is command text.
+        # Only a code-mode call yields one; a direct call's stdout is command text.
         yielded_cell = (
-            None if execution.direct else extract_yielded_cell_id({"tool_output": output})
+            extract_yielded_cell_id({"tool_output": output}) if execution.code_mode_call else None
         )
         if yielded_cell is not None:
             pending = replace(execution, cell_id=yielded_cell)
