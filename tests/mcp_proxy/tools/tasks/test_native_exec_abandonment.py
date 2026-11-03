@@ -21,7 +21,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.task_tool_bindings import TaskToolBindings
+from gobby.workflows.task_tool_bindings import TaskToolBindings, pending_fencing_calls
 
 pytestmark = pytest.mark.unit
 
@@ -103,8 +103,7 @@ def test_native_terminal_failure_releases_only_proven_call(
         )
         assert other is not None
         bindings.start(other)
-    with pytest.raises(ValueError, match="in flight|pending|running|bound"):
-        bindings.assert_can_select(second.id)
+    assert pending_fencing_calls(variables.get_variables(canonical_task_session.id), second.id)
     variables.merge_variables(
         canonical_task_session.id,
         {
@@ -176,8 +175,8 @@ def test_native_terminal_failure_releases_only_proven_call(
     assert next_call.event_type == HookEventType.BEFORE_TOOL
     bindings.reconcile_native_failures(next_call)
     if drop:
-        bindings.assert_can_select(second.id)
         state = variables.get_variables(canonical_task_session.id)
+        assert pending_fencing_calls(state, second.id) == []
         assert "inner-1" not in (state.get("claimed_shell_snapshots") or {})
         assert "inner-1" not in (state.get("worktree_shell_calls") or {})
         assert not state.get("task_edited_files")
@@ -211,8 +210,8 @@ def test_native_terminal_failure_releases_only_proven_call(
         bindings.complete(late)
         assert bindings.is_abandoned(late)
     else:
-        with pytest.raises(ValueError, match="in flight|pending|running|bound"):
-            bindings.assert_can_select(second.id)
+        state = variables.get_variables(canonical_task_session.id)
+        assert pending_fencing_calls(state, second.id)
 
 
 def test_successful_native_post_does_not_read_rollout(
