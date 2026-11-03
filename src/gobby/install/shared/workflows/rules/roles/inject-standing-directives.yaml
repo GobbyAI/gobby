@@ -3,11 +3,11 @@ tags: [roles, runbook, enforcement, gobby]
 
 rules:
   inject-standing-directives:
-    description: "Inject the standing-directives procedure once per context epoch for definitions that keep one"
+    description: "Inject the standing-directives procedure once per context epoch for every runbook seat"
     event: turn_start
     enabled: true
     priority: 21
-    when: "variables.get('_standing_directives') and not variables.get('_standing_directives_injected')"
+    when: "not variables.get('_standing_directives_injected')"
     effects:
       - type: inject_context
         delivery: on_receipt

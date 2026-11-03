@@ -55,5 +55,4 @@ workflows:
       - "tag:memory-lifecycle"
       - "tag:worker-safety"
       - "name:no-send-keys"
-  variables:
-    _standing_directives: true
+  variables: {}

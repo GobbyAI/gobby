@@ -67,5 +67,4 @@ workflows:
     exclude:
       - "name:block-unclaimed-found-work"
   variables:
-    _standing_directives: true
     _seat_procedure: gobby:references/agents/procedures/triage.md

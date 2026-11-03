@@ -65,5 +65,4 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
   variables:
-    _standing_directives: true
     _seat_procedure: gobby:references/agents/procedures/recovery-steward.md

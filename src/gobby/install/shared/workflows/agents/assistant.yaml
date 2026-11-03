@@ -72,6 +72,5 @@ workflows:
       - "name:non-operator-no-project-create"
       - "name:block-update-task"
   variables:
-    _standing_directives: true
     _seat_references:
       - gobby:references/agents/gclient.md

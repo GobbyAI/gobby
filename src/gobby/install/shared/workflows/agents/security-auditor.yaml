@@ -103,8 +103,6 @@ workflows:
     - name:no-git-push
     - name:reviewer-write-scope
     exclude: []
-  variables:
-    _standing_directives: true
 task_attestation_kinds:
   security-review:
     allowed_results:

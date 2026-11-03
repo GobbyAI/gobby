@@ -56,8 +56,7 @@ workflows:
     include: ["tag:default", "tag:runbook", "tag:worker-safety", "tag:task-closure-general", "name:consolidator-close-dispositions", "name:consolidation-read-only-shell", "name:workspace-only-write-scope", "name:no-send-keys"]
     # The Consolidator applies Orchestrator-directed folds, so it may update tasks.
     exclude: ["name:block-update-task", "name:seat-no-task-close", "name:unassigned-session-no-task-close"]
-  variables:
-    _standing_directives: true
+  variables: {}
 
 # Task inspection and proposals, with skill and continuity support.
 step_workflow:

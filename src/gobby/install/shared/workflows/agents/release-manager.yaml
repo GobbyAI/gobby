@@ -47,5 +47,4 @@ workflows:
     exclude:
       - "name:block-unclaimed-found-work"
     # Daemon management stays blocked: the Orchestrator owns restarts and activation.
-  variables:
-    _standing_directives: true
+  variables: {}

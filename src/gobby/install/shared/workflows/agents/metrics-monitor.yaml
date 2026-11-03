@@ -72,8 +72,6 @@ workflows:
       - "name:no-send-keys"
     exclude:
       - "name:no-comms-attach"
-  variables:
-    _standing_directives: true
 
 step_workflow:
   variables:

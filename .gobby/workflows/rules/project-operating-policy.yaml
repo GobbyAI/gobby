@@ -236,19 +236,14 @@ rules:
         value: '{{ rule_digest }}'
 
   runbook-seat-policy:
-    description: "Inject coordination guidance only for configured runbook seats"
+    description: "Inject coordination guidance for every runbook seat"
     tags: [runbook, project-policy]
     event: turn_start
     enabled: true
     priority: 22
     when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-team-lead',
-        'test-writer', 'developer', 'code-reviewer', 'researcher', 'archivist',
-        'log-monitor', 'plan-writer', 'plan-enhancer', 'plan-adversary', 'triage',
-        'release-manager', 'reporter', 'security-auditor', 'debugger',
-        'design-reviewer', 'recovery-steward', 'consolidator']
-      and (not variables.get('_runbook_policy_injected')
-        or variables.get('_runbook_policy_revision') != '{{ rule_digest }}')
+      not variables.get('_runbook_policy_injected')
+      or variables.get('_runbook_policy_revision') != '{{ rule_digest }}'
     effects:
       - type: inject_context
         delivery: on_receipt
