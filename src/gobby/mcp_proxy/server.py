@@ -412,7 +412,7 @@ class GobbyDaemonTools:
             server_name, tool_name, project_id=self._caller_project_ref()
         )
         if result.get("success") is True and isinstance(result.get("tool"), dict):
-            await self._record_schema_lease(server_name, tool_name, resolved_session_id)
+            self._record_schema_lease(server_name, tool_name, resolved_session_id)
         return result
 
     async def _seed_call_context(
@@ -499,29 +499,17 @@ class GobbyDaemonTools:
         )
         return session_id == successor
 
-    async def _record_schema_lease(
+    def _record_schema_lease(
         self, server_name: str, tool_name: str, session_id: str | None
     ) -> None:
-        """Latch the lease on the session call_tool enforces for this ref.
+        """Latch the lease on the session call_tool enforces.
 
-        The lease is recorded while the ref is seeded as call_tool seeds it. An explicit
-        ref that call_tool refuses records nothing. An omitted ref leases the ambient
-        session, which enforcement also resolves.
+        ``session_id`` is the gated caller session already resolved to its UUID, or
+        None when the caller named none; then the ambient session, which enforcement
+        also uses, holds the lease.
         """
-        tokens = await self._seed_call_context(session_id)
+        lease_session_id = session_id or get_current_session_id()
         try:
-            if session_id:
-                lease_session_id = tokens.resolved_session_id
-                if lease_session_id is None:
-                    logger.warning(
-                        "Schema lease not recorded for %s:%s: session_id %r did not resolve",
-                        server_name,
-                        tool_name,
-                        session_id,
-                    )
-                    return
-            else:
-                lease_session_id = get_current_session_id()
             record_schema_shown(
                 self.tool_proxy,
                 lease_session_id,
@@ -530,8 +518,6 @@ class GobbyDaemonTools:
             )
         except ValueError as exc:
             logger.warning("Schema lease not recorded for %s:%s: %s", server_name, tool_name, exc)
-        finally:
-            reset_seeded_contexts(tokens)
 
     async def read_mcp_resource(self, server_name: str, resource_uri: str) -> Any:
         """Read resource."""
@@ -695,26 +681,32 @@ class GobbyDaemonTools:
         """Set a variable. Session-scoped by default. Pass scope='step' for the session instance."""
         if not self._session_manager or not self._session_manager.db:
             return {"success": False, "error": "Session manager not available"}
-        resolved_session_id, refusal = await self._resolve_caller_session(session_id)
-        if refusal is not None:
-            return {"success": False, "error": refusal}
 
         from gobby.mcp_proxy.tools.workflows._variables import set_variable as _set_var
         from gobby.workflows.step_instances import AgentStepInstanceManager
 
-        instance_manager = (
-            AgentStepInstanceManager(self._session_manager.db) if scope == "step" else None
-        )
-        return await asyncio.to_thread(
-            _set_var,
-            self._session_manager,
-            self._session_manager.db,
-            name,
-            value,
-            resolved_session_id or "",
-            scope=scope,
-            instance_manager=instance_manager,
-        )
+        # Keep the gated session seeded through the write: its authority check reads
+        # the calling session from context, and /mcp seeds none of its own.
+        tokens = await self._seed_call_context(session_id)
+        try:
+            refusal = await self._caller_session_refusal(session_id, tokens)
+            if refusal is not None:
+                return {"success": False, "error": refusal}
+            instance_manager = (
+                AgentStepInstanceManager(self._session_manager.db) if scope == "step" else None
+            )
+            return await asyncio.to_thread(
+                _set_var,
+                self._session_manager,
+                self._session_manager.db,
+                name,
+                value,
+                (tokens.resolved_session_id if session_id else None) or "",
+                scope=scope,
+                instance_manager=instance_manager,
+            )
+        finally:
+            reset_seeded_contexts(tokens)
 
     async def get_variable(
         self,

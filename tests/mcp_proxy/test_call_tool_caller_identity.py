@@ -280,6 +280,23 @@ async def test_tool_refuses_rejected_principal(tools: GobbyDaemonTools, tool: _T
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool", _session_tools())
+async def test_tool_refuses_unresolvable_session_id(tools: GobbyDaemonTools, tool: _Tool) -> None:
+    unresolved = (None, None, None, None)
+    with (
+        tool.patched(tools),
+        bound_principal(None),
+        patch("gobby.utils.session_context._resolve_context_values", return_value=unresolved),
+    ):
+        result = await tool.invoke(tools, "#404")
+
+    assert isinstance(result, dict)
+    assert result["success"] is False
+    assert "session_id '#404' not found" in result["error"]
+    tool.downstream.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", _session_tools())
 async def test_tool_runs_for_callers_own_session_as_resolved_uuid(
     tools: GobbyDaemonTools, tool: _Tool
 ) -> None:
