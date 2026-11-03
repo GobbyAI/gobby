@@ -297,10 +297,12 @@ class TaskToolBindings:
             return
         state = self.manager.get_variable_subset(self.session_id, ("task_tool_bindings",))
         calls = _bindings(state)
+        current_key = _matching_key(event, state)
         candidates = {
             call["native_outer_call_id"]
-            for call in calls.values()
-            if isinstance(call.get("native_outer_call_id"), str)
+            for key, call in calls.items()
+            if key != current_key
+            and isinstance(call.get("native_outer_call_id"), str)
             and call.get("pending") is True
             and not call.get("background")
             and not call.get("aliases")

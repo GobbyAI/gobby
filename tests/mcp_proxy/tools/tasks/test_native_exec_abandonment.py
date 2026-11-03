@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
@@ -10,7 +11,7 @@ import pytest
 
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.config.app import DaemonConfig
-from gobby.hooks.events import HookEventType
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
@@ -198,3 +199,34 @@ def test_native_terminal_failure_releases_only_proven_call(
     else:
         with pytest.raises(ValueError, match="in flight|pending|running|bound"):
             bindings.assert_can_select(second.id)
+
+
+def test_successful_native_post_does_not_read_rollout(
+    temp_db: HubDatabase,
+    canonical_task_session: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bindings = TaskToolBindings(SessionVariableManager(temp_db), canonical_task_session.id)
+    before = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=canonical_task_session.external_id,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        request_id="inner-normal",
+        data={"tool_name": "Bash", "transcript_path": str(tmp_path / "rollout.jsonl")},
+        metadata={
+            "_native_hook_type": "PreToolUse",
+            "_native_shell_outer_call_id": "outer-normal",
+        },
+    )
+    bindings.start(before)
+    post = replace(
+        before, event_type=HookEventType.AFTER_TOOL, metadata={"_native_hook_type": "PostToolUse"}
+    )
+    read = Mock(side_effect=AssertionError("A successful post must not scan its own rollout"))
+    monkeypatch.setattr(Path, "open", read)
+    bindings.reconcile_native_failures(post)
+    read.assert_not_called()
+    bindings.complete(post)
+    assert not bindings.is_abandoned(post)
