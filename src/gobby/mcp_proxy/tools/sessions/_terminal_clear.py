@@ -538,7 +538,6 @@ async def deliver_staged_clear_session(
             turn_settled=_turn_settled_observer(source, session),
             composer_read=composer_reader(db, cli_source),
             seat_left=lambda: recorded_seat_left(session),
-            composer_policy="wipe",
         )
     except Exception as exc:
         logger.warning("Failed sending /clear for session %s", resolved_session_id, exc_info=True)

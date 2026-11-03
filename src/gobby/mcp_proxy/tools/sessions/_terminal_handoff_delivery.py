@@ -257,7 +257,6 @@ async def deliver_staged_compact_handoff(
             composer_read=composer_reader(db, source),
             on_command_submitting=command_submitting,
             seat_left=lambda: recorded_seat_left(session),
-            composer_policy="wipe",
         )
         if not ok and not _compact_receipt_exists(db, handoff_record_id, attempt_id):
             failure_result = {"compacted": False, "reason": reason}

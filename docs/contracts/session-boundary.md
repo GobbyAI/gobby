@@ -188,11 +188,14 @@ compaction and clear remain synchronous because they do not replace a terminal c
 
 Before compact staging, `set_handoff` validates bounded handoff content and checks
 the separate feedback submission. A staging failure can be retried without
-resubmitting feedback. `set_handoff` owns the composer: after the interrupt, compact
-dispatch wipes whatever the composer holds, an operator draft or stuck continuation
-text included, and only then submits `/compact`. Each wipe pass sizes its backspaces
-to the draft the frame shows; a draft that survives every pass fails the delivery
-with `error_code: "composer_not_clean"` and nothing is typed. Other composer writers
+resubmitting feedback. `set_handoff` owns the composer: no composer state withholds
+the interrupt, and after it compact dispatch wipes whatever the composer holds, an
+operator draft or stuck continuation text included, and only then submits `/compact`.
+Each wipe pass sizes its backspaces to the draft the frame shows and sends nothing
+into a frame that reads empty. Only a polled frame showing the composer empty ends
+the wipe: text that survives every pass, or a frame that never reads, fails the
+delivery with `error_code: "composer_not_clean"` and nothing is typed. A CLI with no
+composer reader (Grok) gets one blind drain pass. Other composer writers
 (`send_keys`, wakes, the continuation pull) keep refusing operator drafts.
 A session whose recorded CLI process no longer owns its terminal gets no keys.
 Ownership is re-read immediately before every key and text write of compact and

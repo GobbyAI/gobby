@@ -11,7 +11,6 @@ import pytest
 
 from gobby.agents.idle_detector import IdleDetector
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
-    ComposerPolicy,
     _send_terminal_compaction_command,
 )
 from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
@@ -110,7 +109,11 @@ def _host_gap(ledger: ComposerLedger, _text: str) -> None:
 
 
 async def _send(
-    pane: _WipePane, composer_read: ComposerReader, *, policy: ComposerPolicy
+    pane: _WipePane,
+    composer_read: ComposerReader,
+    *,
+    turn_settled: Callable[[], bool] = lambda: True,
+    observe_interrupt: Callable[[], bool | None] | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
     return await _send_terminal_compaction_command(
         pane,
@@ -119,16 +122,14 @@ async def _send(
         cli_source=pane.cli,
         mark_continuation_pending=MagicMock(return_value=True),
         clear_continuation_pending=MagicMock(return_value=True),
-        observe_interrupt=None,
-        turn_settled=lambda: True,
+        observe_interrupt=observe_interrupt,
+        turn_settled=turn_settled,
         settle_seconds=0.0,
         composer_read=composer_read,
-        composer_policy=policy,
     )
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
+_SEEDS = pytest.mark.parametrize(
     ("seed", "text"),
     [
         (_operator_draft, "half-typed operator draft"),
@@ -137,11 +138,16 @@ async def _send(
     ],
     ids=["operator-draft", "stuck-continuation-untracked", "stuck-continuation-host-gap"],
 )
-@pytest.mark.parametrize(
+_CLIS = pytest.mark.parametrize(
     ("cli", "composer_read"),
     [("claude", _CLAUDE_READ), ("codex", _CODEX_READ)],
     ids=["claude", "codex"],
 )
+
+
+@pytest.mark.asyncio
+@_SEEDS
+@_CLIS
 async def test_set_handoff_wipes_any_composer_text_then_compacts(
     composer_ledger: ComposerLedger,
     seed: Callable[[ComposerLedger, str], None],
@@ -153,7 +159,7 @@ async def test_set_handoff_wipes_any_composer_text_then_compacts(
     seed(composer_ledger, text)
     pane = _WipePane(composer_ledger, cli, text)
 
-    result = await _send(pane, composer_read, policy="wipe")
+    result = await _send(pane, composer_read)
 
     assert result[0] is True, result
     assert pane.composer == ""
@@ -163,19 +169,57 @@ async def test_set_handoff_wipes_any_composer_text_then_compacts(
 
 
 @pytest.mark.asyncio
-async def test_other_compaction_callers_keep_operator_draft_protection(
+@_SEEDS
+@_CLIS
+@pytest.mark.parametrize("confirmed", [False, True], ids=["blind-interrupt", "confirmed-interrupt"])
+async def test_set_handoff_during_a_live_turn_interrupts_wipes_then_compacts(
+    composer_ledger: ComposerLedger,
+    seed: Callable[[ComposerLedger, str], None],
+    text: str,
+    cli: str,
+    composer_read: ComposerReader,
+    confirmed: bool,
+) -> None:
+    """A turn that never settles is interrupted even with text in the composer."""
+    composer_ledger.record_spawn(_TARGET, "")
+    seed(composer_ledger, text)
+    pane = _WipePane(composer_ledger, cli, text)
+
+    result = await _send(
+        pane,
+        composer_read,
+        turn_settled=lambda: False,
+        observe_interrupt=(lambda: True) if confirmed else None,
+    )
+
+    assert result[0] is True, result
+    assert pane.keys[0] == "escape"
+    assert pane.composer == ""
+    assert pane.submitted == ["/compact"]
+    assert pane.typed == ["/compact\n"]
+
+
+class _UnreadablePane(_WipePane):
+    """A composer whose frame no reader can classify."""
+
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
+        return "  gobby | ~/Projects/gobby…\n✻ Crunching…\n  gobby | ~/Projects/gobby…"
+
+
+@pytest.mark.asyncio
+async def test_wipe_types_nothing_when_no_frame_proves_the_composer_empty(
     composer_ledger: ComposerLedger,
 ) -> None:
+    """An unreadable frame never resets the ledger, so leftover text is never typed into."""
     composer_ledger.record_spawn(_TARGET, "")
-    _operator_draft(composer_ledger, "keep me")
-    pane = _WipePane(composer_ledger, "claude", "keep me")
+    _operator_draft(composer_ledger, "operator draft")
+    pane = _UnreadablePane(composer_ledger, "codex", "operator draft")
 
-    result = await _send(pane, _CLAUDE_READ, policy="protect")
+    result = await _send(pane, _CODEX_READ)
 
     assert result[0] is False
-    assert result[3] == {"error_code": "composer_occupied", "continuation_pending": False}
-    assert pane.composer == "keep me"
-    assert pane.keys == []
+    assert result[3] is not None
+    assert result[3]["error_code"] == "composer_not_clean"
     assert pane.typed == []
 
 
@@ -188,7 +232,7 @@ async def test_wipe_fails_closed_when_text_survives_every_pass(
     _operator_draft(composer_ledger, "sticky")
     pane = _StickyPane(composer_ledger, "claude", "sticky")
 
-    result = await _send(pane, _CLAUDE_READ, policy="wipe")
+    result = await _send(pane, _CLAUDE_READ)
 
     assert result[0] is False
     assert result[3] is not None

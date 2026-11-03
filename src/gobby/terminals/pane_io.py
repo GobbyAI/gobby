@@ -464,30 +464,34 @@ async def wipe_composer(
     Only a caller that owns the composer outright uses this: set_handoff discards any
     draft or stuck continuation text so its command lands alone. Each pass leads the
     standard drain with one backspace per character of the draft the frame shows,
-    since Codex binds no line kill. A ``left`` or ``unreadable`` read after a pass
-    resets the ledger entry; a draft that survives every pass fails the wipe so the
-    caller types nothing into it. Without a reader one blind pass is trusted, as in
-    ``clear_composer``.
+    since Codex binds no line kill; a frame that reads empty gets no keys, though the
+    polled read must still confirm it. Only a ``left`` read after a pass resets the
+    ledger entry; text that survives every pass, or a frame that never reads empty,
+    fails the wipe so the caller types nothing into it. Without a reader one blind
+    pass is trusted, as in ``clear_composer``.
     """
     window = max(SUBMIT_VERIFY_SECONDS if verify_seconds is None else verify_seconds, 0.0)
     verdict: ComposerVerdict | None = None
     for _ in range(_WIPE_PASSES):
         shown = ""
+        drain = composer_drain_keys(pane.target, cli_source)
         if composer_read is not None:
             read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
             shown = (read.line or "") if read.state == "draft" else ""
+            if read.state == "empty":
+                drain = ()
         backspace: NamedKey = "backspace"
-        for key in (*(backspace,) * len(shown), *composer_drain_keys(pane.target, cli_source)):
+        for key in (*(backspace,) * len(shown), *drain):
             ok, reason = await pane.send_key(key)
             if not ok:
                 return DrainResult(False, reason)
         if composer_read is not None:
             verdict = await composer_verdict(pane, shown, composer_read, window_seconds=window)
-            if verdict in {"held", "changed"}:
+            if verdict != "left":
                 continue
         record_composer_wipe(pane.target)
         return DrainResult(True, verdict=verdict)
-    return DrainResult(False, "the composer still shows a draft after the wipe", verdict)
+    return DrainResult(False, "no frame showed the composer empty after the wipe", verdict)
 
 
 async def composer_gate_for_write(
