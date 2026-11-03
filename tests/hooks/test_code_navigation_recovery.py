@@ -13,6 +13,7 @@ from gobby.hooks._normalization_segments import _split_shell_segments
 from gobby.hooks._normalization_shell import scan_shell_command
 from gobby.hooks.code_navigation_recovery import navigation_requires_index
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.workflows.evaluation_context import freeze_evaluation_value
 
 pytestmark = pytest.mark.unit
 
@@ -980,12 +981,14 @@ def test_sibling_checkout_navigation_respects_spawned_scope(
     assert navigation_requires_index(mixed, variables)
 
 
-def test_one_event_asks_git_once_for_all_its_paths(
+def test_rule_condition_asks_git_once_per_call_without_writing_the_event(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # #22815: the adapter, the workflow hook and the rule engine each normalize
+    # #22815: the adapter, the workflow hook and the rule engine each normalized
     # the same event, and each pass asked Git once per path. #22829: normalizing
-    # runs on event loops, so only the rule condition asks, once per event.
+    # runs on event loops, so only the rule condition asks. #25630: rule
+    # conditions see read-only event data, so the condition batches its paths
+    # into one ask and never stores the answer on the event.
     spawns: list[list[str]] = []
     run = subprocess.run
 
@@ -997,12 +1000,15 @@ def test_one_event_asks_git_once_for_all_its_paths(
     monkeypatch.setattr(subprocess, "run", counting_run)
     data = event(repo, "rg VALUE custom-output src/constants.py src/short.py")
     normalize_tool_fields(data)
+    frozen = freeze_evaluation_value(data)
 
     assert spawns == []
-    assert navigation_requires_index(data, {})
-    assert navigation_requires_index(data, {})
+    assert navigation_requires_index(frozen, {})
     assert len(spawns) == 1
-    assert not navigation_requires_index(event(repo, "rg VALUE custom-output"), {})
+    assert frozen == freeze_evaluation_value(data)
+    assert not navigation_requires_index(
+        freeze_evaluation_value(event(repo, "rg VALUE custom-output")), {}
+    )
     assert len(spawns) == 2
 
 

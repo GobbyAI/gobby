@@ -3,6 +3,13 @@
 A status tick arrives as a message from the status-wake pipeline. Run this procedure at once.
 A tick never waits for the operator.
 
+## Seat recovery
+
+Never spawn seats. When the Orchestrator needs to be stopped or respawned, send
+the operator the reason and supporting evidence, request that action, and wait.
+The operator performs the shutdown and relaunch. Do not activate another
+definition or restart the counterpart yourself.
+
 ## Cadence and mode
 
 Read `project_policy` with `get_variable(name="project_policy")` on every tick. Use
@@ -93,5 +100,5 @@ Rules for every report:
    retry applies.
 4. On the send path, never resend a confirmed delivery.
 
-_Version: 1.1.0_
+_Version: 2.0.0_
 _Last verified: 2026-11-02_
