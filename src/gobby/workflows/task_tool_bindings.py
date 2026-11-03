@@ -66,12 +66,29 @@ def _continuation_alias(event: HookEvent) -> str | None:
     return f"{event.source.value}:{kind}:{token}" if token is not None else None
 
 
+def _code_mode_call(event: HookEvent) -> bool:
+    name = event.data.get("_original_tool_name") or event.metadata.get("original_tool_name")
+    return (name or event.data.get("tool_name")) in FUNCTIONS_EXEC_NAMES | WAIT_NAMES
+
+
 def _exec_results(event: HookEvent, output: Any) -> list[dict[str, Any]]:
     """Decode printed results only for code-mode cells; other output is command text."""
-    name = event.data.get("_original_tool_name") or event.metadata.get("original_tool_name")
-    if (name or event.data.get("tool_name")) in FUNCTIONS_EXEC_NAMES:
+    if _code_mode_call(event):
         return decoded_exec_results(output)
     return structured_exec_results(output)
+
+
+def _natively_exited(event: HookEvent) -> bool:
+    """A command whose own completion carries an exit code no longer runs.
+
+    Code-mode cells are excluded: a cell can exit while an exec it printed still runs.
+    """
+    canonical = event.data.get("tool_result")
+    return (
+        isinstance(canonical, dict)
+        and definitive_exit_code(canonical) is not None
+        and not _code_mode_call(event)
+    )
 
 
 def _returned_aliases(event: HookEvent, *, shell_call: bool) -> list[str]:
@@ -82,7 +99,7 @@ def _returned_aliases(event: HookEvent, *, shell_call: bool) -> list[str]:
         aliases.add(f"{event.source.value}:cell:{cell}")
     # MCP results also carry session_id. Only a call that began as shell work
     # can return an execution session, including polls after reconstruction.
-    if shell_call:
+    if shell_call and not _natively_exited(event):
         session = extract_direct_exec_running_session_id(output)
         if session is not None:
             aliases.add(f"{event.source.value}:session:{session}")
