@@ -9,6 +9,7 @@ from gobby.hooks.pending_messages import (
     PENDING_MESSAGE_INLINE_LIMIT,
     render_pending_messages,
 )
+from gobby.storage.sessions import system_session_id
 
 
 @dataclass
@@ -164,3 +165,55 @@ def test_every_injected_line_carries_its_message_id_regardless_of_length() -> No
     )
     assert "(message_id=boundary-id, type=message" in lines[1]
     assert 'get_inter_session_message(message_id="long-id")' in lines[2]
+
+
+def _telegram(metadata: str, *, from_session: str | None = None) -> Message:
+    return Message(
+        id="tg-1",
+        content="are you there?",
+        message_type="telegram_message",
+        from_session=from_session or system_session_id(),
+        metadata_json=metadata,
+    )
+
+
+def test_attached_telegram_message_says_typed_reply_is_mirrored() -> None:
+    message = _telegram(
+        '{"channel":"ops-dm","sender_username":"op","operator_comms":true,"wake_requested":true}'
+    )
+
+    context = render_pending_messages([message], resolve_sender=_sender_label).context
+
+    assert context is not None
+    assert context.startswith("[Pending Telegram messages]:")
+    assert "- Telegram @op: are you there?" in context
+    assert "attached to this Telegram conversation" in context
+    assert "mirrored there automatically" in context
+    assert "from_session=" not in context
+    assert "send_operator_message" not in context
+    assert "P2P" not in context
+
+
+def test_unattached_telegram_message_names_the_channel_reply_path() -> None:
+    message = _telegram('{"channel":"ops-dm","sender":"77"}')
+
+    context = render_pending_messages([message], resolve_sender=_sender_label).context
+
+    assert context is not None
+    assert "- Telegram: are you there?" in context
+    assert "not attached" in context
+    assert 'gobby-communications:send_message(channel="ops-dm")' in context
+    assert "mirrored there automatically" not in context
+    assert "send_operator_message" not in context
+
+
+def test_session_authored_telegram_type_keeps_session_attribution() -> None:
+    message = _telegram('{"operator_comms":true}', from_session="sender-12345678")
+
+    context = render_pending_messages([message], resolve_sender=_sender_label).context
+
+    assert context is not None
+    assert "Session sender-12345678: are you there?" in context
+    assert "from_session=sender-12345678" in context
+    assert "Telegram @" not in context
+    assert "attached to this Telegram conversation" not in context

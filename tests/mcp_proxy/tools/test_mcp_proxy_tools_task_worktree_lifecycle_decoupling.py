@@ -11,9 +11,9 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.closure_policy import ClosureDecision
 from gobby.utils.daemon_git import GitOk
 from gobby.utils.session_context import session_context_for_test
+from tests.mcp_proxy.tools.tasks.test_close_task_flow import _approved_closure
 
 pytestmark = pytest.mark.unit
 
@@ -116,9 +116,7 @@ async def test_close_task_does_not_mutate_worktree_status(
         ),
         patch(
             "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_closure",
-            return_value=SimpleNamespace(
-                decision=ClosureDecision(True, (), "policy-revision", "snapshot-revision")
-            ),
+            side_effect=_approved_closure,
         ),
         patch(
             "gobby.mcp_proxy.tools.tasks._lifecycle_close.session_agent_definition",

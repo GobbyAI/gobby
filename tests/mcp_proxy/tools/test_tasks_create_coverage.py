@@ -591,10 +591,10 @@ class TestCreateTaskTool:
         assert call_kwargs["labels"] == ["urgent", "bug"]
 
     @pytest.mark.asyncio
-    async def test_create_code_task_requires_validation_criteria(
+    async def test_create_code_task_without_validation_criteria_is_left_to_policy(
         self, mock_task_manager: MagicMock
     ) -> None:
-        """Test that code tasks are rejected without validation_criteria."""
+        """Selected closure policy, not creation, decides whether criteria are required."""
         registry = create_task_registry(mock_task_manager)
 
         result = await registry.call(
@@ -605,8 +605,10 @@ class TestCreateTaskTool:
             },
         )
 
-        assert "validation_criteria" in result["error"]
-        mock_task_manager.create_task_with_decomposition.assert_not_called()
+        assert "error" not in result
+        mock_task_manager.create_task_with_decomposition.assert_called_once()
+        create_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+        assert create_kwargs["validation_criteria"] is None
 
     @pytest.mark.asyncio
     async def test_create_code_task_with_validation_criteria_succeeds(
@@ -639,25 +641,25 @@ class TestCreateTaskTool:
         assert call_kwargs["validation_criteria"] == "Tests pass and feature works"
 
     @pytest.mark.asyncio
-    async def test_create_rejects_malformed_test_reference(
+    async def test_create_stores_path_only_test_reference_verbatim(
         self, mock_task_manager: MagicMock
     ) -> None:
+        """Criteria text is not parsed at creation; expansion owns the reference grammar."""
         registry = create_task_registry(mock_task_manager)
 
         result = await registry.call(
             "create_task",
             {
-                "title": "Reject malformed acceptance reference",
+                "title": "Keep authored acceptance reference",
                 "category": "code",
                 "validation_criteria": "- test: `tests/tasks/test_validation.py`",
                 "implementation_domain": "backend",
             },
         )
 
-        assert result["error"] == (
-            "tests/tasks/test_validation.py: malformed test reference; expected path::test_symbol"
-        )
-        mock_task_manager.create_task_with_decomposition.assert_not_called()
+        assert "error" not in result
+        create_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+        assert create_kwargs["validation_criteria"] == "- test: `tests/tasks/test_validation.py`"
 
     @pytest.mark.asyncio
     async def test_create_preserves_pipeline_validation_text(
@@ -808,8 +810,11 @@ class TestCreateTaskTool:
             },
         )
 
-        assert "expected path::test_symbol" in criteria_result["error"]
-        mock_task_manager.update_task.assert_not_called()
+        assert criteria_result == {}
+        mock_task_manager.update_task.assert_called_once_with(
+            task_id,
+            validation_criteria="test: `tests/tasks/test_validation.py`",
+        )
 
     async def test_update_preserves_daemon_lifecycle_instructions(
         self, mock_task_manager: MagicMock
@@ -847,7 +852,7 @@ class TestCreateTaskTool:
     async def test_create_non_code_task_without_validation_criteria(
         self, mock_task_manager: MagicMock
     ) -> None:
-        """Every non-epic category is rejected without validation_criteria."""
+        """A non-code task without criteria is created; selected policy owns the requirement."""
         registry = create_task_registry(mock_task_manager)
 
         mock_task = MagicMock()
@@ -866,8 +871,10 @@ class TestCreateTaskTool:
             },
         )
 
-        assert "validation_criteria" in result["error"]
-        mock_task_manager.create_task_with_decomposition.assert_not_called()
+        assert "error" not in result
+        assert result["id"] == "550e8400-e29b-41d4-a716-446655440006"
+        create_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+        assert create_kwargs["validation_criteria"] is None
 
     @pytest.mark.asyncio
     async def test_create_task_with_all_optional_fields(
