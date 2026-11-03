@@ -747,7 +747,7 @@ def test_codex_functions_exec_session_collision_fails_closed() -> None:
     "tool_output",
     [
         "\nScript running with cell ID 52\nWall time: 10.01 seconds\nOutput:\nstill running",
-        "Wrapper status: running\nScript running with cell ID 52",
+        "Script running with cell ID 52\nWall time: 1 seconds\nOutput:\nScript running with cell ID 53",
         {
             "content": [
                 {
@@ -772,21 +772,15 @@ def test_codex_yielded_cell_sentinel_accepts_raw_and_structured_output(
     [
         "Script running with cell ID 52 plus commentary",
         {"content": [{"type": "input_text", "text": "still running"}]},
+        # The wrapper writes the token first; a later line is printed stdout.
+        "Wrapper status: running\nScript running with cell ID 52",
+        "Script completed\nWall time 0.1 seconds\nOutput:\nScript running with cell ID 52",
     ],
 )
 def test_codex_yielded_cell_sentinel_rejects_prose_and_unstructured_output(
     tool_output: object,
 ) -> None:
     assert extract_yielded_cell_id({"tool_output": tool_output}) is None
-
-
-def test_codex_yielded_cell_sentinel_rejects_ambiguous_markers() -> None:
-    assert (
-        extract_yielded_cell_id(
-            {"tool_output": ("Script running with cell ID 52\nScript running with cell ID 53")}
-        )
-        is None
-    )
 
 
 def test_codex_execution_ambiguity_eviction_is_fifo() -> None:
@@ -803,3 +797,83 @@ def test_codex_execution_ambiguity_eviction_is_fifo() -> None:
             correlator.resolve_output(call_id, f"Script running with cell ID {cell_id}")
 
     assert correlator.snapshot_state()["ambiguous_cells"] == ["newest", "third"]
+
+
+def test_codex_direct_exec_stdout_cannot_yield_a_cell() -> None:
+    # #25614: a direct command's stdout is command text; only code-mode cells yield.
+    correlator = ExecutionChainCorrelator()
+    assert correlator.register_call("direct", "exec_command", {"cmd": "cat fixture.txt"})
+    output = (
+        "Chunk ID: direct-1\nWall time: 0.1 seconds\nProcess exited with code 0\nOutput:\n"
+        "Script running with cell ID spoof\n"
+    )
+
+    resolution = correlator.resolve_output("direct", output)
+
+    assert resolution.state == "terminal"
+    assert correlator.snapshot_state()["ambiguous_cells"] == []
+
+
+def test_codex_code_mode_poll_of_a_direct_launch_yields_its_cell() -> None:
+    # #25614: the current call's mode decides, not the launch it polls.
+    correlator = ExecutionChainCorrelator()
+    assert correlator.register_call("launch", "exec_command", {"cmd": "uv run pytest tests/a.py"})
+    running = "Chunk ID: d-1\nWall time: 0.1 seconds\nProcess running with session ID 9\nOutput:\n"
+    assert correlator.resolve_output("launch", running).state == "pending"
+    assert correlator.register_call(
+        "poll", "functions.exec", 'await tools.write_stdin({session_id:9, chars:""});'
+    )
+
+    resolution = correlator.resolve_output("poll", "Script running with cell ID poll-cell")
+
+    assert resolution.state == "pending"
+    assert correlator.register_call("wait", "functions.wait", {"cell_id": "poll-cell"})
+    printed_exit = [
+        {"type": "text", "text": "Script completed\nWall time: 0.1 seconds\nOutput:\n"},
+        {"type": "text", "text": '{"exit_code":0,"output":"passed"}'},
+    ]
+    assert correlator.resolve_output("wait", printed_exit).state == "terminal"
+    assert not correlator.register_call("again", "functions.wait", {"cell_id": "poll-cell"})
+
+
+def test_codex_yield_token_is_read_only_from_the_first_text_item() -> None:
+    output = [
+        {"type": "input_text", "text": "\n"},
+        {"type": "input_text", "text": "Script running with cell ID late"},
+    ]
+
+    assert extract_yielded_cell_id({"tool_output": output}) is None
+
+
+def test_codex_direct_poll_of_a_code_mode_launch_cannot_yield_a_cell() -> None:
+    correlator = ExecutionChainCorrelator()
+    assert correlator.register_call(
+        "launch",
+        "functions.exec",
+        'const r = await tools.exec_command({cmd:"zsh",tty:true}); text(r);',
+    )
+    ready = [{"type": "input_text", "text": json.dumps({"session_id": 901, "output": "ready"})}]
+    assert correlator.resolve_output("launch", ready).state == "pending"
+    assert correlator.register_call("poll", "write_stdin", {"session_id": 901, "chars": ""})
+
+    correlator.resolve_output("poll", "Script running with cell ID spoof")
+
+    assert not correlator.register_call("wait", "functions.wait", {"cell_id": "spoof"})
+
+
+def test_codex_completed_cell_printing_a_yield_line_is_terminal() -> None:
+    # #25614: printed stdout after a completed wrapper header is not a yield.
+    correlator = ExecutionChainCorrelator()
+    assert correlator.register_call(
+        "cell", "functions.exec", 'await tools.exec_command({cmd:"cat fixture.txt"});'
+    )
+    output = [
+        {"type": "input_text", "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"},
+        {"type": "input_text", "text": "Script running with cell ID zz\n"},
+    ]
+
+    resolution = correlator.resolve_output("cell", output)
+
+    assert extract_yielded_cell_id({"tool_output": output}) is None
+    assert resolution.state == "terminal"
+    assert not correlator.register_call("wait", "functions.wait", {"cell_id": "zz"})

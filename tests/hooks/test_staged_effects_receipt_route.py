@@ -1,6 +1,6 @@
 """Full-route regression for on_receipt staged effects (#21424).
 
-Drives the real ``review-closed-task-memories-before-handoff`` gate over the
+Drives a synthetic receipt-staged gate over the
 production path end to end: an HTTP POST to ``/api/hooks/execute``, the real
 ``ClaudeCodeAdapter`` and ``HookManager``, ``run_adapter_hook`` on the bounded
 adapter executor, rule evaluation on the isolated ``WorkflowEvaluationRuntime``
@@ -48,20 +48,15 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.session_feedback_survey import GOBBY_PROJECT_NAME
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.fixtures.agent_definitions import seed_seat
 from tests.servers.conftest import authenticate_test_server
 
 pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_MEMORY_LIFECYCLE_RULES = (
-    REPO_ROOT / "src/gobby/install/shared/workflows/rules/memory-lifecycle/"
-    "review-task-memories-after-close.yaml"
-)
 
-RULE_NAME = "review-closed-task-memories-before-handoff"
-ACK_VARIABLE = "_memory_review_stop_delivered"
+RULE_NAME = "synthetic-receipt-acknowledgment"
+ACK_VARIABLE = "synthetic_delivery_acknowledged"
 
 # Pre-seeded by the postgres fixture; sessions.machine_id carries an FK.
 TEST_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
@@ -76,24 +71,29 @@ def _local_machine_identity() -> Iterator[None]:
 
 @pytest.fixture
 def receipts_db(temp_db: HubDatabase) -> HubDatabase:
-    """temp_db with the real gate installed; hook_receipt_effects ships in the baseline."""
+    """An independent receipt-producing rule on the real hook route."""
     with temp_db.transaction() as conn:
         table = conn.execute("SELECT to_regclass('hook_receipt_effects') AS oid").fetchone()
     assert table is not None and table["oid"] is not None, (
         "baseline is missing hook_receipt_effects"
     )
 
-    result = sync_bundled_rules(temp_db, get_bundled_rules_path())
-    assert result["success"], result["errors"]
-    # The session's active-rule set is resolved from its agent definition, so a
-    # synthetic seat that selects the gate stands in for the agent registry.
+    RuleDefinitionManager(temp_db).create(
+        RULE_NAME,
+        {
+            "event": "before_tool",
+            "when": f"not variables.get('{ACK_VARIABLE}')",
+            "effects": [
+                {
+                    "type": "block",
+                    "reason": "Acknowledge synthetic delivery",
+                    "acknowledge_variable": ACK_VARIABLE,
+                    "delivery": "on_receipt",
+                }
+            ],
+        },
+    )
     seed_seat(temp_db, "default", include=[f"name:{RULE_NAME}"])
-
-    # Guard: the whole test is vacuous if the bundled gate is renamed or moved,
-    # so pin that the named rule really landed and is live.
-    row = RuleDefinitionManager(temp_db).get_by_name(RULE_NAME)
-    assert row is not None, f"{RULE_NAME} not synced from {_MEMORY_LIFECYCLE_RULES}"
-    assert row.enabled is True
     return temp_db
 
 
@@ -154,9 +154,9 @@ def _create_session(db: HubDatabase, session_id: str) -> None:
             (session_id, session_id, TEST_MACHINE_ID, "claude", project_id),
         )
 
+    # set_handoff also has discipline and current-epoch survey gates; these tests
 
-# set_handoff is also gated by require-handoff-discipline and by the
-# current-epoch survey (require-handoff-feedback-before-authoring); these tests
+
 # exercise only the memory-review gate, so every session arrives with both
 # satisfied.
 _OTHER_HANDOFF_GATES_SATISFIED: dict[str, Any] = {

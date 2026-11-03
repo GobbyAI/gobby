@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from contextlib import nullcontext
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,10 +16,13 @@ from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.sessions.model_family import normalize_model
 from gobby.sessions.transcripts import get_parser
+from gobby.sessions.usage_calls import api_call_count
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import (
     TokenEvent,
     TokenEventStore,
+    canonicalize_event_timestamp,
     token_event_retention_cutoff,
     token_event_retention_transaction,
 )
@@ -69,6 +75,7 @@ def _messages_to_events(
     last_model: str | None = None
     events: list[TokenEvent] = []
 
+    seen_keys: set[str] = set()
     for message in messages:
         if message.model:
             last_model = message.model
@@ -82,6 +89,15 @@ def _messages_to_events(
             and usage.cache_read_tokens == 0
         ):
             continue
+        if message.message_id is None:
+            raise click.ClickException(
+                f"Session {session_id} has token usage without a message id; "
+                "the audit cannot key it"
+            )
+        # The first occurrence wins, as the ledger's (session_id, message_id) conflict does.
+        if message.message_id in seen_keys:
+            continue
+        seen_keys.add(message.message_id)
         events.append(
             TokenEvent(
                 session_id=session_id,
@@ -98,6 +114,7 @@ def _messages_to_events(
                 context_window=context_window,
                 event_at=message.timestamp,
                 metadata={"content_type": message.content_type},
+                api_calls=api_call_count(source, message),
             )
         )
 
@@ -120,6 +137,132 @@ def _session_totals(session: Any) -> dict[str, int]:
     }
 
 
+@dataclass(frozen=True)
+class SessionAudit:
+    """One session's audit: stored rows against the transcript and sessions.usage_*."""
+
+    session_id: str
+    stale_rows: int
+    missing_rows: int
+    usage_mismatch: bool
+    repaired: bool = False
+
+    @property
+    def missing(self) -> bool:
+        return self.missing_rows > 0 or self.usage_mismatch
+
+
+_COMPARED_COLUMNS = (
+    "api_calls",
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+)
+
+
+def _read_stored_rows(db: HubDatabase, session_id: str) -> list[Mapping[str, Any]]:
+    return db.fetchall(
+        """
+        SELECT id, message_id, api_calls, event_at, input_tokens, output_tokens,
+               cache_creation_tokens, cache_read_tokens
+        FROM token_events
+        WHERE session_id = %s
+        """,
+        (session_id,),
+    )
+
+
+def _differs(row: Mapping[str, Any], event: TokenEvent) -> bool:
+    return any(row[column] != getattr(event, column) for column in _COMPARED_COLUMNS)
+
+
+def _expired(value: datetime | str | None, cutoff: datetime) -> bool:
+    return canonicalize_event_timestamp(value) < cutoff
+
+
+def _audit_session(db: HubDatabase, session_id: str, *, fix: bool) -> SessionAudit:
+    # With --fix, the shared retention lock spans the read and the writes, so a prune cannot
+    # archive a row between them. Stored rows are read before the transcript: a line the
+    # processor ingests in between is then absent from `stored`, so --fix never deletes it.
+    with token_event_retention_transaction(db) if fix else nullcontext():
+        stored = _read_stored_rows(db, session_id)
+        session_manager = SessionManager(db)
+        session = session_manager.get(session_id)
+        if session is None:
+            raise click.ClickException(f"Session {session_id} not found")
+        derived, last_model = _messages_to_events(
+            session_id, session, _load_session_messages(session_id, session)
+        )
+
+        # Retention archives events older than the cutoff into token_event_retention_totals
+        # and deletes their rows. An expired event that is not stored may already be archived,
+        # so it is never re-inserted. An expired stored row is live usage: it is repaired in
+        # place when its key matches, and otherwise kept, since no replacement is known to be
+        # unarchived.
+        cutoff = token_event_retention_cutoff()
+        derived_by_key = {
+            event.message_id: event for event in derived if event.message_id is not None
+        }
+        stored_keys = {row["message_id"] for row in stored if row["message_id"] is not None}
+        # A row with no message_id matches no transcript key, so it is drift that --fix replaces.
+        absent = [
+            row
+            for row in stored
+            if row["message_id"] not in derived_by_key and not _expired(row["event_at"], cutoff)
+        ]
+        differing = [
+            row
+            for row in stored
+            if row["message_id"] in derived_by_key
+            and _differs(row, derived_by_key[row["message_id"]])
+        ]
+        missing = [
+            event
+            for event in derived
+            if event.message_id not in stored_keys and not _expired(event.event_at, cutoff)
+        ]
+        repairable = [
+            event
+            for event in derived
+            if event.message_id in stored_keys or not _expired(event.event_at, cutoff)
+        ]
+        # Lifetime totals include the retention archive, which the stored rows do not.
+        usage_mismatch = TokenEventStore(db).get_session_totals(session_id) != _session_totals(
+            session
+        )
+        stale_rows = len(absent) + len(differing)
+
+        repaired = False
+        if fix and (stale_rows or missing or usage_mismatch):
+            store = TokenEventStore(db)
+            doomed = [row["id"] for row in absent]
+            if doomed:
+                db.execute("DELETE FROM token_events WHERE id = ANY(%s)", (doomed,))
+            store.repair_keyed_events(repairable)
+            repaired_totals = store.get_session_totals(session_id)
+            session_manager.update_usage(
+                session_id=session_id,
+                input_tokens=repaired_totals["input_tokens"],
+                output_tokens=repaired_totals["output_tokens"],
+                cache_creation_tokens=repaired_totals["cache_creation_tokens"],
+                cache_read_tokens=repaired_totals["cache_read_tokens"],
+                context_window=(
+                    session.context_window if isinstance(session.context_window, int) else None
+                ),
+                model=last_model,
+            )
+            repaired = True
+
+    return SessionAudit(
+        session_id=session_id,
+        stale_rows=stale_rows,
+        missing_rows=len(missing),
+        usage_mismatch=usage_mismatch,
+        repaired=repaired,
+    )
+
+
 @tokens.command("audit")
 @click.option("--session", "session_ref", help="Session UUID/#ref/prefix to audit.")
 @click.option("--all", "audit_all", is_flag=True, help="Audit all sessions with transcripts.")
@@ -138,9 +281,6 @@ def audit_tokens(
     project_id = resolve_project_ref(project_ref) if project_ref else None
 
     with nullcontext(require_cli_database()) as db:
-        session_manager = SessionManager(db)
-        store = TokenEventStore(db)
-
         if audit_all:
             query = """
                 SELECT id
@@ -160,71 +300,37 @@ def audit_tokens(
             session_ids = [resolve_session_id(session_ref, project_id=project_id)]
 
         audited = 0
-        drifted = 0
-        repaired = 0
+        stale_sessions = 0
+        missing_sessions = 0
+        repaired_sessions = 0
 
         for session_id in session_ids:
-            session = session_manager.get(session_id)
-            if session is None:
-                click.echo(f"{session_id}: session not found", err=True)
-                continue
-
             try:
-                messages = _load_session_messages(session_id, session)
+                audit = _audit_session(db, session_id, fix=fix)
             except click.ClickException as exc:
                 click.echo(f"{session_id}: {exc.message}", err=True)
                 continue
 
-            transcript_events, last_model = _messages_to_events(session_id, session, messages)
-            transcript_totals = {
-                "input_tokens": sum(event.input_tokens for event in transcript_events),
-                "output_tokens": sum(event.output_tokens for event in transcript_events),
-                "cache_creation_tokens": sum(
-                    event.cache_creation_tokens for event in transcript_events
-                ),
-                "cache_read_tokens": sum(event.cache_read_tokens for event in transcript_events),
-            }
-            stored_totals = store.get_session_totals(session_id)
-            cached_totals = _session_totals(session)
-
-            drift = transcript_totals != stored_totals or transcript_totals != cached_totals
             audited += 1
-            if drift:
-                drifted += 1
-                click.echo(f"{session_id}: drift detected")
-                click.echo(f"  {_format_totals('transcript', transcript_totals)}")
-                click.echo(f"  {_format_totals('token_events', stored_totals)}")
-                click.echo(f"  {_format_totals('session', cached_totals)}")
+            if audit.stale_rows:
+                stale_sessions += 1
+            if audit.missing:
+                missing_sessions += 1
+            if audit.repaired:
+                repaired_sessions += 1
+            if not audit.stale_rows and not audit.missing:
+                if not fix:
+                    click.echo(f"{session_id}: ok")
+                continue
+            click.echo(
+                f"{session_id}: stale={audit.stale_rows} missing={audit.missing_rows} "
+                f"usage_mismatch={audit.usage_mismatch}"
+            )
+            if audit.repaired:
+                click.echo("  repaired")
 
-                if fix:
-                    with token_event_retention_transaction(db):
-                        cutoff = token_event_retention_cutoff()
-                        store.delete_session_events(session_id, retention_cutoff=cutoff)
-                        store.record_batch(transcript_events, retention_cutoff=cutoff)
-                        repaired_totals = store.get_session_totals(session_id)
-                        session_manager.update_usage(
-                            session_id=session_id,
-                            input_tokens=repaired_totals["input_tokens"],
-                            output_tokens=repaired_totals["output_tokens"],
-                            cache_creation_tokens=repaired_totals["cache_creation_tokens"],
-                            cache_read_tokens=repaired_totals["cache_read_tokens"],
-                            context_window=(
-                                session.context_window
-                                if isinstance(session.context_window, int)
-                                else None
-                            ),
-                            model=last_model,
-                        )
-                    repaired += 1
-                    click.echo("  repaired")
-            elif not fix:
-                click.echo(f"{session_id}: ok")
-
-        click.echo(
-            f"audited={audited} drifted={drifted} repaired={repaired}"
-            if fix
-            else f"audited={audited} drifted={drifted}"
-        )
+        summary = f"audited={audited} stale={stale_sessions} missing={missing_sessions}"
+        click.echo(f"{summary} repaired={repaired_sessions}" if fix else summary)
 
 
 @tokens.command("stats")

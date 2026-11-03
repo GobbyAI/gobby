@@ -39,13 +39,16 @@ def test_relaunch_seeds_only_absent_step_instance(
     if existing:
         instances.save(
             make_step_instance(
-                session.id, agent_name="developer", current_step="implement", variables={"keep": 1}
+                session.id,
+                agent_name="fixture-worker",
+                current_step="implement",
+                variables={"keep": 1},
             )
         )
         previous = instances.get_for_session(session.id)
         assert previous is not None
     body = make_agent_definition(
-        name="developer",
+        name="fixture-worker",
         prompts={"agent": "Continue"},
         step_workflow=AgentStepWorkflowBody(steps=[WorkflowStep(name="claim")]),
     )
@@ -363,7 +366,7 @@ def test_relaunch_binding_is_atomic_and_hooks_reuse_session(
     instances.save(
         make_step_instance(
             target.id,
-            agent_name="developer",
+            agent_name="fixture-worker",
             current_step="implement",
             variables={"ticket": "keep"},
         )

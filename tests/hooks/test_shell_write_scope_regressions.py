@@ -1,6 +1,5 @@
 """Literal operands retain their scope without treating scripts or data as paths."""
 
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -8,13 +7,8 @@ import pytest
 
 from gobby.hooks import _normalization_canonical, _normalization_compound
 from gobby.hooks._normalization_shell import ShellScan, scan_shell_command
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.provider_launch_guard import blocks_direct_provider_launch
-from gobby.storage.definitions.rules import RuleDefinitionManager
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_rule_file
 
 pytestmark = pytest.mark.unit
 
@@ -752,57 +746,6 @@ def test_launches_remain_blocked_next_to_malformed_data(provider: str) -> None:
     )
 
 
-@pytest.fixture
-def scope_engine(hub_db: HubDatabase) -> RuleEngine:
-    for relative in (
-        "task-enforcement/block-unresolved-scope-shell-write.yaml",
-        "task-enforcement/require-task-before-edit.yaml",
-        "skill-discovery/require-python-skill.yaml",
-    ):
-        result = sync_rule_file(hub_db, get_bundled_rules_path() / relative, tag="gobby")
-        assert result["success"] is True
-    hub_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
-    for name in ("require-task-before-edit", "require-python-skill"):
-        row = RuleDefinitionManager(hub_db).get_by_name(name)
-        assert row is not None and row.enabled
-    return RuleEngine(hub_db)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "command,blocked",
-    [
-        ("git add -A > out.txt", True),
-        ("git add -A > /tmp/scratch/out.txt", True),
-        ("sed 's/a/b/' /tmp/scratch/in.py > /tmp/scratch/out.py", False),
-        ("sed -e 's/a/b/' /tmp/scratch/in.py > /tmp/scratch/out.py", False),
-        ("sed 's/a/b/' in.py > out.py", True),
-        ('sed "$PROGRAM" /tmp/scratch/in.py > /tmp/scratch/out.py', True),
-        ('sed -e "$PROGRAM" /tmp/scratch/in.py > /tmp/scratch/out.py', True),
-        ("cd /tmp; eval 'f() { touch a.py; }'; cd -; f", True),
-        ("source /tmp/functions.sh; f", True),
-        ("select d in x; do cd /tmp; break; done; touch a.py", True),
-    ],
-)
-async def test_literal_write_scope_enforcement_without_claim(
-    tmp_path: Path, scope_engine: RuleEngine, command: str, blocked: bool
-) -> None:
-    data = _metadata(command, tmp_path)
-    event = HookEvent(
-        event_type=HookEventType.BEFORE_TOOL,
-        session_id=SESSION,
-        source=SessionSource.CODEX,
-        timestamp=datetime.now(UTC),
-        data=data,
-    )
-    result = await scope_engine.evaluate(
-        event,
-        session_id=SESSION,
-        variables={"require_task_before_edit": True, "task_claimed": False, "loaded_skills": []},
-    )
-    assert result.decision == ("block" if blocked else "allow"), result.reason
-
-
 @pytest.mark.parametrize("operation", ["rm", "mv"])
 @pytest.mark.parametrize("flag", ["-n", "--dry-run"])
 def test_git_dry_run_is_read_only(tmp_path: Path, operation: str, flag: str) -> None:
@@ -884,37 +827,6 @@ def test_literal_eval_keeps_followup_external_scope(tmp_path: Path) -> None:
     assert metadata["canonical_tool_kind"] == "write"
     assert not metadata.get("canonical_repo_mutation")
     assert not metadata.get("canonical_repo_mutation_scope_unknown")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("loader", ["source", "."])
-@pytest.mark.parametrize("claimed", [False, True])
-async def test_source_refusal_names_execution_route(
-    tmp_path: Path, scope_engine: RuleEngine, loader: str, claimed: bool
-) -> None:
-    script = tmp_path / "setup.sh"
-    script.write_text("printf ready\n")
-    data = _metadata(f"{loader} {script}", tmp_path)
-    event = HookEvent(
-        event_type=HookEventType.BEFORE_TOOL,
-        session_id=SESSION,
-        source=SessionSource.CODEX,
-        timestamp=datetime.now(UTC),
-        data=data,
-    )
-    response = await scope_engine.evaluate(
-        event,
-        session_id=SESSION,
-        variables={
-            "require_task_before_edit": True,
-            "task_claimed": claimed,
-            "loaded_skills": ["python", "restraint"],
-        },
-    )
-
-    assert response.decision == "block"
-    assert "uv run" in (response.reason or "")
-    assert "literal script path" in (response.reason or "")
 
 
 @pytest.mark.parametrize(

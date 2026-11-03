@@ -34,6 +34,7 @@ from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.sessions.usage_calls import api_call_count
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
@@ -506,6 +507,7 @@ class TranscriptProcessingMixin:
                 context_window=message_context_window,
                 event_at=canonicalize_event_timestamp(event_timestamp),
                 metadata=metadata,
+                api_calls=api_call_count(session_source, msg),
             )
             occupancy_snapshot: ContextUsageSnapshot | None
             if session_source == "grok":

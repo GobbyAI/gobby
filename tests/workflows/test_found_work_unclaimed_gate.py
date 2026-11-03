@@ -22,8 +22,6 @@ from gobby.workflows.found_work_gate import (
     FoundWorkStopFacts,
 )
 from gobby.workflows.hooks import WorkflowHookHandler
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -261,71 +259,10 @@ async def test_explicit_user_filing_instruction_exempts_unclaimed_tasks(
 
 
 @pytest.mark.asyncio
-async def test_bundled_rule_blocks_interactive_sessions(temp_db: HubDatabase) -> None:
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-    variables: dict[str, Any] = {
-        "_memory_initial_stop_checked": True,
-        "is_spawned_agent": False,
-        "stop_attempts": 0,
-    }
-
-    response = await RuleEngine(temp_db).evaluate(
-        _event("11111111-1111-4111-8111-111111111111"),
-        session_id="11111111-1111-4111-8111-111111111111",
-        variables=variables,
-        eval_context={
-            "unclaimed_found_work": True,
-            "unclaimed_found_work_tasks": ["#21484", "#21485"],
-        },
-    )
-
-    assert response.decision == "block"
-    assert "#21484, #21485" in (response.reason or "")
-    assert "Filing is not a terminal state" in (response.reason or "")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("agent_type", ["orchestrator", "custom-coordinator"])
-@pytest.mark.parametrize("exempt", [False, True])
-async def test_bundled_rule_uses_definition_exemptions(
-    temp_db: HubDatabase, agent_type: str, exempt: bool
-) -> None:
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-    seed_seat(
-        temp_db,
-        agent_type,
-        include=["tag:default"],
-        exclude=["name:block-unclaimed-found-work"] if exempt else [],
-    )
-    variables: dict[str, Any] = {
-        "_agent_type": agent_type,
-        "_memory_initial_stop_checked": True,
-        "is_spawned_agent": False,
-        "stop_attempts": 0,
-    }
-    session_id = "11111111-1111-4111-8111-111111111111"
-
-    response = await RuleEngine(temp_db).evaluate(
-        _event(session_id),
-        session_id=session_id,
-        variables=variables,
-        eval_context={
-            "unclaimed_found_work": True,
-            "unclaimed_found_work_tasks": ["#21484"],
-        },
-    )
-
-    assert (response.decision == "block") is not exempt
-    if not exempt:
-        assert "Filing is not a terminal state" in (response.reason or "")
-
-
-@pytest.mark.asyncio
 async def test_workflow_handler_feeds_unclaimed_fact_for_spawned_claimed_session(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
     handler = WorkflowHookHandler(rule_engine=RuleEngine(temp_db))
     variables = {
         "_memory_initial_stop_checked": True,
@@ -529,7 +466,6 @@ async def test_user_deferral_latches_past_the_turn_that_carried_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A deferral survives compaction, whose next prompt is harness text."""
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
     handler = WorkflowHookHandler(rule_engine=RuleEngine(temp_db))
     variables: dict[str, Any] = {
         "_memory_initial_stop_checked": True,

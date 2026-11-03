@@ -737,7 +737,7 @@ async def test_edit_agent_menu_replaces_keyboard_with_live_callbacks(
         id="menu-source",
         channel_id="telegram-channel",
         direction="outbound",
-        content="Active agent: Assistant\nChoose an agent:",
+        content="Active agent: Fixture Helper\nChoose an agent:",
         platform_message_id="12345",
         metadata_json={"platform_destination": "chat999", "callback_action": "agent_target"},
         created_at=datetime.now(UTC),

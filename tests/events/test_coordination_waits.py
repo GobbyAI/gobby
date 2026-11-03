@@ -516,7 +516,7 @@ async def test_interactive_grok_seat_waits_then_wakes_on_owner_message(
         parent_session_id=harness.owner,
         child_session_id=harness.waiter,
         provider="grok",
-        agent_name="security-auditor",
+        agent_name="fixture-definition-fc0c281e",
         prompt="Wait for work",
         resume_metadata_json={"execution_mode": "interactive", "provider_cli_mode": "terminal"},
     )
@@ -574,7 +574,7 @@ async def test_timed_out_reply_wait_wakes_a_codex_seat(harness: CoordinationHarn
         parent_session_id=harness.owner,
         child_session_id=harness.waiter,
         provider="codex",
-        agent_name="recovery-steward",
+        agent_name="fixture-definition-248cadd1",
         prompt="Patrol live seats",
         resume_metadata_json={"execution_mode": "interactive", "provider_cli_mode": "terminal"},
     )

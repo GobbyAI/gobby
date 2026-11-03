@@ -293,7 +293,7 @@ async def test_submit_large_markdown_review_through_api(
         child_session_id=session_id,
         provider="claude",
         prompt="Review feedback",
-        agent_name="feedback-reviewer",
+        agent_name="fixture-definition-f2ad149e",
     )
     report = tmp_path / "reports" / "feedback.md"
     store.assign_reviewer(run_id, agent.id, str(report))

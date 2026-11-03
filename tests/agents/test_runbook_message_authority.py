@@ -167,25 +167,33 @@ async def test_resolved_role_routing(
     orchestrator = _seat(
         session_manager,
         project,
-        "orchestrator",
-        "orchestrator",
+        "fixture-coordinator",
+        "fixture-coordinator",
         capabilities=("send_reports",),
         required_senders=("send_reports",),
     )
     assistant = _seat(
-        session_manager, project, "assistant", "assistant", capabilities=("send_reports",)
+        session_manager, project, "fixture-helper", "fixture-helper", capabilities=("send_reports",)
     )
     operator = _seat(session_manager, project, "operator", "default")
     triage = _seat(
         session_manager,
         project,
-        "triage",
-        "triage",
+        "fixture-definition-0f916789",
+        "fixture-definition-0f916789",
         parent=orchestrator,
         capabilities=("send_reports",),
     )
-    manager = _seat(session_manager, project, "dev-team-lead", "dev-team-lead", parent=orchestrator)
-    developer = _seat(session_manager, project, "developer", "developer", parent=orchestrator)
+    manager = _seat(
+        session_manager,
+        project,
+        "fixture-definition-f0ad0fd9",
+        "fixture-definition-f0ad0fd9",
+        parent=orchestrator,
+    )
+    developer = _seat(
+        session_manager, project, "fixture-worker", "fixture-worker", parent=orchestrator
+    )
     worker = _seat(session_manager, project, "worker", "default", parent=orchestrator)
     pending = LocalAgentRunManager(temp_db).create(
         parent_session_id=orchestrator, provider="codex", prompt="pending seat"
@@ -250,28 +258,30 @@ async def test_declared_standing_seats_relaunch_and_direct_messages_wake(
         session_manager,
         project,
         "orchestrator-old",
-        "orchestrator",
+        "fixture-coordinator",
         capabilities=("follow_relaunch",),
         required_senders=("send_reports",),
     )
     session_manager.update_status(stale_orchestrator, "expired")
-    orchestrator = _seat(session_manager, project, "orchestrator-new", "orchestrator")
+    orchestrator = _seat(session_manager, project, "orchestrator-new", "fixture-coordinator")
     stale_triage = _seat(
         session_manager,
         project,
         "triage-old",
-        "triage",
+        "fixture-definition-0f916789",
         parent=orchestrator,
         capabilities=("follow_relaunch", "send_reports"),
     )
     session_manager.update_status(stale_triage, "expired")
-    triage = _seat(session_manager, project, "triage-new", "triage", parent=orchestrator)
+    triage = _seat(
+        session_manager, project, "triage-new", "fixture-definition-0f916789", parent=orchestrator
+    )
     stale_developer = _seat(
-        session_manager, project, "developer-old", "developer", parent=orchestrator
+        session_manager, project, "developer-old", "fixture-worker", parent=orchestrator
     )
     session_manager.update_status(stale_developer, "expired")
     developer = _seat(
-        session_manager, project, "developer-other-team", "developer", parent=orchestrator
+        session_manager, project, "developer-other-team", "fixture-worker", parent=orchestrator
     )
     wakes = _Wakes()
     mailbox = _mailbox(temp_db, session_manager, wakes)
@@ -328,7 +338,7 @@ async def test_declared_standing_seats_relaunch_and_direct_messages_wake(
     assert other_team.recipient_session_ids == [stale_developer]
 
     # Two live Orchestrators make the binding ambiguous, so the stale ref is kept.
-    _seat(session_manager, project, "orchestrator-second", "orchestrator")
+    _seat(session_manager, project, "orchestrator-second", "fixture-coordinator")
     ambiguous = await mailbox.send(
         from_session_id=triage,
         target="session",
@@ -348,9 +358,15 @@ async def test_recipient_permissions_follow_definitions_not_names(
         session_manager, project, "gate", "custom-inbox", required_senders=("send_reports",)
     )
     admitted = _seat(
-        session_manager, project, "reporter", "custom-reporter", capabilities=("send_reports",)
+        session_manager,
+        project,
+        "fixture-definition-41d6d532",
+        "custom-reporter",
+        capabilities=("send_reports",),
     )
-    refused = _seat(session_manager, project, "ordinary", "triage", parent=recipient)
+    refused = _seat(
+        session_manager, project, "ordinary", "fixture-definition-0f916789", parent=recipient
+    )
     wakes = _Wakes()
     mailbox = _mailbox(temp_db, session_manager, wakes)
 
@@ -432,16 +448,22 @@ async def test_unavailable_recipient_definition_refuses_delivery(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("broken_role", ["reporter", "inbox"])
+@pytest.mark.parametrize("broken_role", ["fixture-definition-41d6d532", "inbox"])
 async def test_retired_definition_fields_refuse_delivery_without_aborting_fanout(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
-    broken_role: Literal["reporter", "inbox"],
+    broken_role: Literal["fixture-definition-41d6d532", "inbox"],
 ) -> None:
     project = sample_project["id"]
-    sender = _seat(session_manager, project, "reporter", "reporter", capabilities=("send_reports",))
+    sender = _seat(
+        session_manager,
+        project,
+        "fixture-definition-41d6d532",
+        "fixture-definition-41d6d532",
+        capabilities=("send_reports",),
+    )
     recipient = _seat(
         session_manager, project, "inbox", "inbox", required_senders=("send_reports",)
     )
@@ -484,7 +506,7 @@ async def test_spawned_child_has_no_operator_message_exemption(
     temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:
     project = sample_project["id"]
-    parent = _seat(session_manager, project, "parent", "reporter")
+    parent = _seat(session_manager, project, "parent", "fixture-definition-41d6d532")
     child = session_manager.register(
         external_id="unseated-child",
         source="codex",

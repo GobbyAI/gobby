@@ -118,7 +118,7 @@ class TestHookResponseConverters:
             {
                 "decision": "block",
                 "reason": (
-                    "Rule enforced by Gobby: [require-uv]\n"
+                    "Rule enforced by Gobby: [fixture-command-gate]\n"
                     "Use `uv pip …` or `uv run python -m pip …` — "
                     "uv manages this project's Python environment."
                 ),
@@ -130,7 +130,7 @@ class TestHookResponseConverters:
         assert res["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "updatedInput" not in res["hookSpecificOutput"]
         assert res["hookSpecificOutput"]["permissionDecisionReason"].startswith(
-            "Rule enforced by Gobby: [require-uv]"
+            "Rule enforced by Gobby: [fixture-command-gate]"
         )
         assert "reason" not in res
 

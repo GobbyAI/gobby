@@ -1,5 +1,5 @@
 name: docs-reviewer
-version: "2.0.0"
+version: "2.0.1"
 description: Independently reviews task evidence and may land and close approved work.
 tags: [gobby, seat]
 capabilities: [accept_resume_retype, land_tasks]
@@ -72,7 +72,7 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:worker-safety"
       - "tag:task-closure-general"
       - "tag:task-closure-coding"

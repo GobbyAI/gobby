@@ -126,10 +126,10 @@ def _upsert_rule(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
     RuleDefinitionBody.model_validate(body)
     manager = RuleDefinitionManager(db)
     name = str(data["name"])
-    data = prepare_rule_definition_for_persist(name, data)
+    body = prepare_rule_definition_for_persist(name, body)
     existing = manager.get_by_name(name, project_id=project_id)
     fields = {
-        "definition_json": data,
+        "definition_json": body,
         "description": data.get("description", ""),
         "enabled": normalize_workflow_definition_enabled(data),
         "priority": data.get("priority", 100),

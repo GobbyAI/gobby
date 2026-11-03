@@ -241,12 +241,12 @@ def test_register_existing_session_backfills_terminal_context(
         source="codex",
         project_id=project_id,
         terminal_context=terminal_context,
-        workflow_name="developer",
+        workflow_name="fixture-worker",
     )
 
     assert updated.id == created.id
     assert updated.terminal_context == terminal_context
-    assert updated.workflow_name == "developer"
+    assert updated.workflow_name == "fixture-worker"
 
 
 def test_register_existing_session_merges_cwd_without_losing_tmux_context(

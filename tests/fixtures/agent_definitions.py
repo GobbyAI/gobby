@@ -69,8 +69,8 @@ def synthetic_developer_body() -> AgentDefinitionBody:
     }
     return AgentDefinitionBody.model_validate(
         {
-            "name": "developer",
-            "prompts": {"agent": "Synthetic developer seat."},
+            "name": "fixture-worker",
+            "prompts": {"agent": "Synthetic fixture-worker seat."},
             "workflows": {"rule_selectors": {"include": [], "exclude": []}},
             "step_workflow": {
                 "variables": {

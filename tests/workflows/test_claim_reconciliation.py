@@ -15,7 +15,6 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000012"
@@ -66,15 +65,6 @@ def claim_context(
         category="code",
         implementation_domain="backend",
         validation_criteria="Claim hydration tests pass.",
-    )
-
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-    temp_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
-    temp_db.execute(
-        """
-        UPDATE rule_definitions
-        SET enabled = CASE WHEN name = 'require-task-before-edit' THEN TRUE ELSE FALSE END
-        """
     )
 
     variable_manager = SessionVariableManager(temp_db)

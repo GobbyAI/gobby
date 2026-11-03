@@ -22,7 +22,7 @@ MACHINE_ID = f"{TEST_MACHINE_ID_PREFIX}000000000002"
 
 
 def _claimed_with_tree(temp_db: HubDatabase, sample_project: dict[str, Any]) -> tuple[str, str]:
-    holder = AgentSessions(temp_db, sample_project["id"]).add("developer")
+    holder = AgentSessions(temp_db, sample_project["id"]).add("fixture-worker")
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(sample_project["id"], "Developer tree work")
     manager.claim_task(task.id, holder)

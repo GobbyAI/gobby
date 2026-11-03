@@ -1216,7 +1216,7 @@ async def _run_post_launch_failure_case(
         _spawn_background_tasks,
         spawn_agent_impl,
     )
-    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.agents import AgentRunTerminalReason, LocalAgentRunManager
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 
@@ -1244,8 +1244,8 @@ async def _run_post_launch_failure_case(
     runner.agent_lifecycle_monitor = None
     runner.task_manager = task_manager
 
-    def cancel_run(run_id: str) -> bool:
-        return run_storage.cancel(run_id) is not None
+    def cancel_run(run_id: str, *, terminal_reason: AgentRunTerminalReason | None = None) -> bool:
+        return run_storage.cancel(run_id, terminal_reason=terminal_reason) is not None
 
     runner.cancel_run.side_effect = cancel_run
     live: dict[str, Any] = {}

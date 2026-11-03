@@ -712,7 +712,7 @@ class TestLaunchDefaults:
             active_values={
                 "launch_defaults.proj-1": {
                     "code": {
-                        "agent_name": "developer",
+                        "agent_name": "fixture-worker",
                         "checkout_mode": "worktree",
                         "model": "sonnet",
                     }
@@ -725,14 +725,14 @@ class TestLaunchDefaults:
         data = response.json()
         assert "code" in data["defaults"]
         code_defaults = data["defaults"]["code"]
-        assert code_defaults["agent_name"] == "developer"
+        assert code_defaults["agent_name"] == "fixture-worker"
         assert code_defaults["checkout_mode"] == "worktree"
         assert code_defaults["model"] == "sonnet"
 
     def test_specialized_launch_defaults_writer_is_removed(self, client: TestClient) -> None:
         response = client.put(
             "/api/agents/launch-defaults",
-            json={"project_id": "proj-2", "category": "code", "agent_name": "developer"},
+            json={"project_id": "proj-2", "category": "code", "agent_name": "fixture-worker"},
         )
 
         assert response.status_code == 405
@@ -769,7 +769,7 @@ class TestPromptPreview:
     ) -> None:
         task = _create_task(task_manager, test_project.id, "Coordinate release")
         body = make_agent_definition(
-            name="comms-agent",
+            name="fixture-definition-d838ecc9",
             surfaces=["persona"],
             prompts={"persona": "Coordinate interactively."},
         )
@@ -779,7 +779,7 @@ class TestPromptPreview:
         )
 
         response = client.post(
-            f"/api/agents/spawn/prompt-preview?task_id={task.id}&agent_name=comms-agent"
+            f"/api/agents/spawn/prompt-preview?task_id={task.id}&agent_name=fixture-definition-d838ecc9"
         )
 
         assert response.status_code == 400

@@ -488,7 +488,7 @@ async def test_resume_by_reference_routes_to_owner(
     impl.assert_not_awaited()
 
 
-@pytest.mark.parametrize("requested", ["orchestrator", "custom-seat"])
+@pytest.mark.parametrize("requested", ["fixture-coordinator", "custom-seat"])
 @pytest.mark.parametrize("granted", [False, True])
 @pytest.mark.parametrize("enabled", [False, True])
 async def test_remote_resume_retype_uses_definition_grant(
@@ -597,7 +597,7 @@ async def test_remote_child_binds_run_and_variables(
         temp_db,
         routed=_routed(remote_machine),
         request=_request(
-            remote_parent, sample_project["id"], initial_variables={"_agent_type": "developer"}
+            remote_parent, sample_project["id"], initial_variables={"_agent_type": "fixture-worker"}
         ),
         daemon_config=DaemonConfig(),
         runner=runner,
@@ -612,7 +612,7 @@ async def test_remote_child_binds_run_and_variables(
     variables = SessionVariableManager(temp_db).get_variable_subset(
         result["child_session_id"], ("_agent_type",)
     )
-    assert variables == {"_agent_type": "developer"}
+    assert variables == {"_agent_type": "fixture-worker"}
 
 
 @pytest.mark.parametrize("claim", [True, False])
@@ -1875,7 +1875,7 @@ async def test_remote_interactive_definition_launches_interactive(
 ) -> None:
     """The definition's run lifetime, model and effort reach the node, not the raw request."""
     body = make_agent_definition(
-        name="developer",
+        name="fixture-worker",
         prompts={"agent": "Review the branch"},
         model="claude-opus-4-7",
         execution_mode="interactive",
@@ -1952,7 +1952,7 @@ async def test_remote_foreign_model_refused(
     """A definition model with no equivalent on the target provider refuses before any row."""
     before = _row_counts(temp_db)
     body = make_agent_definition(
-        name="developer", prompts={"agent": "Review the branch"}, model="opus"
+        name="fixture-worker", prompts={"agent": "Review the branch"}, model="opus"
     )
 
     refused = await spawn_remote_route(

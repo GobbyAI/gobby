@@ -337,7 +337,7 @@ _CLAUDE_USER_REJECTED = (
     "(eg. if it was a file edit, the new_string was NOT written to the file). "
     "STOP what you are doing and wait for the user to tell you how to proceed."
 )
-_HOOK_BLOCKED = "Rule enforced by Gobby: [require-task-close]\nTask #16260 is still open."
+_HOOK_BLOCKED = "Rule enforced by Gobby: [fixture-close-gate]\nTask #16260 is still open."
 _PERMISSION_DENIED = "Permission to use Bash has been denied."
 
 

@@ -4,17 +4,12 @@ Parse-only shells, ``sed -n`` with bound or arithmetic addresses, and inline
 Python that only reads stay unblocked; their write-capable variants stay writes.
 """
 
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_rule_file
 
 pytestmark = pytest.mark.unit
 
@@ -219,49 +214,3 @@ def test_inline_python_unproven_writes_stay_unknown(repo: Path, script: str) -> 
 
     assert data["canonical_tool_kind"] == "write"
     assert data["canonical_repo_mutation_scope_unknown"] is True
-
-
-@pytest.fixture
-def scope_engine(hub_db: HubDatabase) -> RuleEngine:
-    path = get_bundled_rules_path() / "task-enforcement/block-unresolved-scope-shell-write.yaml"
-    assert sync_rule_file(hub_db, path, tag="gobby")["success"] is True
-    hub_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
-    return RuleEngine(hub_db)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "command,blocked",
-    [
-        (f"bash -n {SCRIPT}", False),
-        (f"/bin/bash -n {{root}}/{SCRIPT}", False),
-        (f"sh -n {SCRIPT}", False),
-        (f"zsh -n {SCRIPT}", False),
-        ('a=10; b=20; sed -n "${a},${b}p" src/x.py', False),
-        ('N=5; sed -n "$N"p src/x.py', False),
-        (
-            'f=notes.md; n=$(grep -n "^## T" $f | cut -d: -f1); sed -n "$((n+1)),$((n+8))p" $f',
-            False,
-        ),
-        (TARFILE_READ, False),
-        (PSUTIL_INVENTORY, False),
-        (PSUTIL_INVENTORY_REFLECTED, True),
-        ('sed -n "${a},${b}p" src/x.py', True),
-        ("a='1w out.txt'; sed -n \"${a}\" src/x.py", True),
-        ("uv run python -c \"import tarfile; tarfile.open('x.tgz').extractall()\"", True),
-    ],
-)
-async def test_unresolved_scope_rule_blocks_only_unproven_writes(
-    repo: Path, scope_engine: RuleEngine, command: str, blocked: bool
-) -> None:
-    event = HookEvent(
-        event_type=HookEventType.BEFORE_TOOL,
-        session_id=SESSION,
-        source=SessionSource.CLAUDE,
-        timestamp=datetime.now(UTC),
-        data=_metadata(command.format(root=repo) if "{root}" in command else command, repo),
-    )
-
-    result = await scope_engine.evaluate(event, session_id=SESSION, variables={})
-
-    assert result.decision == ("block" if blocked else "allow"), result.reason

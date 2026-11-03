@@ -58,7 +58,6 @@ _STOP_REPLAY_HOOK_TYPES: Final = frozenset(
         "stop_failure",
     }
 )
-_FOUND_WORK_STOP_RULE: Final = "[block-terminal-validation-failure]"
 _BLOCK_DECISIONS: Final = frozenset({"block", "deny"})
 
 
@@ -758,10 +757,7 @@ def _is_stop_or_turn_end_block(record: Mapping[str, Any], response: Mapping[str,
     if not _response_is_block(response):
         return False
     hook_type = _normalized_hook_type(record.get("hook_type"))
-    if hook_type in _STOP_REPLAY_HOOK_TYPES:
-        return True
-    reason = response.get("reason")
-    return isinstance(reason, str) and _FOUND_WORK_STOP_RULE in reason
+    return hook_type in _STOP_REPLAY_HOOK_TYPES
 
 
 def _should_replay_processed_response(

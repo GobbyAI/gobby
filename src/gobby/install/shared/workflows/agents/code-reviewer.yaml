@@ -1,5 +1,5 @@
 name: code-reviewer
-version: "2.0.1"
+version: "2.0.2"
 description: Independently reviews the exact candidate and validates its task criteria.
 tags:
 - gobby
@@ -85,7 +85,7 @@ workflows:
   rule_selectors:
     include:
     - tag:default
-    - tag:seat-policy
+    - tag:runbook
     - tag:worker-safety
     - tag:task-closure-general
     - tag:task-closure-coding

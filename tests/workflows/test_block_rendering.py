@@ -4,20 +4,15 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
-import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.skills.formatting import SKILL_BLOCK_ATOMICITY_NOTICE
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
-from gobby.workflows.engine.blocked_tool_recovery import (
-    _ACTION_WORD_RE as ACTION_WORD_RE,
-)
 from gobby.workflows.engine.blocked_tool_recovery import (
     _BACKTICK_FORM_RE as BACKTICK_FORM_RE,
 )
@@ -30,7 +25,6 @@ from gobby.workflows.engine.blocked_tool_recovery import (
 from gobby.workflows.engine.core import RuleEngine
 
 SESSION_ID = str(uuid.uuid4())
-RULES_ROOT = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/rules"
 TERSE_REASON = (
     "Rule enforced by Gobby: [repeat-block] (full reason shown earlier this turn — scroll up)."
 )
@@ -62,6 +56,7 @@ def _insert_block_rule(
 ) -> None:
     manager.create(
         name="repeat-block",
+        tags=["default"],
         definition_json=RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason=reason)],
@@ -123,22 +118,6 @@ async def test_no_directive_collapses_clean(
     assert collapsed == TERSE_REASON
 
 
-def _enabled_actionable_reasons() -> list[tuple[str, str]]:
-    inventory: list[tuple[str, str]] = []
-    for path in sorted(RULES_ROOT.rglob("*.yaml")):
-        document = cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")))
-        for rule_name, rule in document.get("rules", {}).items():
-            if not isinstance(rule, dict) or not rule.get("enabled", True):
-                continue
-            for effect in rule.get("effects", []):
-                if not isinstance(effect, dict) or effect.get("type") != "block":
-                    continue
-                reason = effect.get("reason")
-                if isinstance(reason, str) and ACTION_WORD_RE.search(reason):
-                    inventory.append((str(rule_name), reason))
-    return inventory
-
-
 def _assert_complete_calls(directive: str) -> None:
     for match in CALL_FORM_RE.finditer(directive):
         assert _balanced_call_end(directive, match.start()) is not None, directive
@@ -147,14 +126,13 @@ def _assert_complete_calls(directive: str) -> None:
 def test_directive_forms_survive_collapse() -> None:
     from gobby.workflows.engine.blocked_tool_recovery import recovery_directive_suffix
 
-    inventory = _enabled_actionable_reasons()
-    assert inventory
-
-    # A corpus survey: it can only require forms that some enabled bundled rule
-    # actually uses. "set_variable" was dropped when 66dbca284 (#19408) retired
-    # require-memory-review-before-status, the only rule whose block reason
-    # carried a set_variable(...) directive. The collapse logic for it is still
-    # exercised below whenever a reason reintroduces the form.
+    inventory = [
+        ("single", "Use call_tool(server_name='example', tool_name='retry', arguments={})."),
+        ("multiline", "Use call_tool(\nserver_name='example',\ntool_name='retry', arguments={})."),
+        ("direct", "Use inspect_task(value='ready')."),
+        ("command", "Run `example retry --scoped`."),
+        ("alternative", "Run `example retry` or `example inspect`."),
+    ]
     forms = {
         "single_line_call_tool": False,
         "multiline_call_tool": False,

@@ -687,7 +687,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "additional_skills": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Skill names to load alongside the assigned agent's defaults (e.g. ['tech-writer']).",
+                    "description": "Skill names to load alongside the assigned agent's defaults (e.g. ['example-documentation']).",
                     "default": None,
                 },
                 "affected_files": {

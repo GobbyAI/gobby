@@ -4,7 +4,7 @@ description: |
   Taskless nightly reviewer that clusters session feedback and returns a
   Markdown report and validated findings for human-reviewed tasks.
 
-version: "4.0"
+version: "4.0.1"
 enabled: true
 priority: 20
 surfaces: [spawn]
@@ -62,6 +62,15 @@ workflows:
       - "name:seat-no-task-close"
       - "name:seat-no-project-create"
       - "tag:default"
+      - "name:agent-workspace-read-scope"
+      - "name:agent-workspace-write-scope"
+      - "name:inject-agent-workspace"
+      - "name:reset-agent-workspace-on-context-loss"
+      - "name:block-temp-scratchpad-writes"
+      - "name:block-update-task"
+      - "name:query-readonly-seat-scope"
+      - "name:seat-no-ask-user-question"
+      - "name:no-comms-attach"
       - "tag:worker-safety"
       - "name:no-send-keys"
     exclude:

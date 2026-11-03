@@ -112,7 +112,12 @@ def test_parse_sticker_rejects_conflicting_format_flags_safely() -> None:
         {},
     )
 
-    assert messages == []
+    # The invalid sticker is never attached; the operator sees it as unsupported.
+    assert [(m.content_type, m.content) for m in messages] == [
+        ("unsupported", "[Unsupported Telegram message: sticker]")
+    ]
+    assert "telegram_attachments" not in messages[0].metadata_json
+    assert messages[0].metadata_json["telegram_unsupported_kinds"] == ["sticker"]
 
 
 @pytest.mark.asyncio

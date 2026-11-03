@@ -1,4 +1,5 @@
-tags: [tool-hygiene, default, enforcement, gobby]
+version: "2.0.0"
+tags: [tool-hygiene, runbook, enforcement, gobby]
 
 rules:
   no-comms-attach:

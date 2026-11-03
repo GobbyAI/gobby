@@ -380,13 +380,13 @@ class TestPipelinesShow:
         _daemon_catalog_unavailable.return_value = [
             {
                 "id": "pipeline-expand-task",
-                "name": "expand-task",
+                "name": "fixture-definition-b825bd86",
                 "project_id": None,
                 "enabled": True,
                 "version": "1.0",
                 "definition_json": json.dumps(
                     {
-                        "name": "expand-task",
+                        "name": "fixture-definition-b825bd86",
                         "description": "Expand a task",
                         "steps": steps,
                     }
@@ -401,7 +401,9 @@ class TestPipelinesShow:
             ) as get_loader,
             patch("gobby.cli.pipelines._get_project_id", return_value="project-uuid"),
         ):
-            result = runner.invoke(cli, ["pipelines", "show", "expand-task", "--json"])
+            result = runner.invoke(
+                cli, ["pipelines", "show", "fixture-definition-b825bd86", "--json"]
+            )
 
         assert result.exit_code == 0
         output = json.loads(result.output)

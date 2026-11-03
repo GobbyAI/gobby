@@ -2107,6 +2107,7 @@ class TestProcessSessionTranscriptTokenPreservation:
 
         msg = MagicMock(spec=ParsedMessage)
         msg.model = "claude-sonnet-4-6"
+        msg.raw_json = {}
         msg.usage = TokenUsage(input_tokens=8000, output_tokens=3000)
 
         with patch("gobby.sessions.transcript_processing.get_parser") as MockParser:

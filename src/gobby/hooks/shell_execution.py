@@ -7,11 +7,68 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.hooks._normalization_bindings import _raw_shell_word_is_literal
+from gobby.hooks._normalization_env import env_directory_operands
+from gobby.hooks._normalization_segments import _split_shell_segments
+from gobby.hooks._normalization_shell import _literal_cd_target, scan_shell_command
 from gobby.hooks._path_scope import resolve_tool_path
 from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.checkout_reads import node_origin, path_facts
 from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import _SHELLS
+
+
+def literal_shell_workdir(command: str) -> str | None:
+    """Prove the directory of ``cd /literal && one-command`` without executing it.
+
+    Extra control flow, substitutions and directory-changing wrappers stay unproven.
+    """
+    # The command classifier uses this module's bounded script reader during import.
+    from gobby.hooks._normalization_base_commands import unwrap_execution_command
+
+    try:
+        scan = scan_shell_command(command)
+    except ValueError:
+        return None
+    segments = _split_shell_segments(scan.tokens)
+    if scan.heredocs or len(segments) != 2 or segments[1].separator_before != "&&":
+        return None
+    first, second = segments
+    first_words = [token.value for token in first.tokens]
+    if first_words[:1] != ["cd"] or not (
+        len(first_words) == 2 or (len(first_words) == 3 and first_words[1] == "--")
+    ):
+        return None
+    target = _literal_cd_target(first_words)
+    if target is None or not Path(target).is_absolute():
+        return None
+    if len(scan.tokens) != len(first.tokens) + len(second.tokens) + 1:
+        return None
+    for token, (start, end) in zip(scan.tokens, scan.spans, strict=True):
+        if not _raw_shell_word_is_literal(command[start:end]):
+            return None
+        if not token.quoted and any(char in token.value for char in "(){}"):
+            return None
+    words = [token.value for token in second.tokens]
+    assignments: set[str] = set()
+    while words:
+        if env_directory_operands(words) or starts_elsewhere(words):
+            return None
+        unwrapped = _unwrap(words, assignments=assignments)
+        if not assignments.isdisjoint({"UV_WORKING_DIR", "UV_ENV_FILE"}):
+            return None
+        execution = unwrap_execution_command(unwrapped, None)
+        if execution.parts is None or execution.cwd is not None or not execution.directory_proven:
+            return None
+        if execution.parts == words:
+            break
+        words = execution.parts
+    if not words or words[0].rsplit("/", 1)[-1] in {"cd", "pushd", "popd", "eval"}:
+        return None
+    if shell_execution(words) is not None:
+        return None
+    return target
+
 
 SHELL_WRAPPER_DEPTH = 8
 shell_startup_unproven: ContextVar[bool] = ContextVar("shell_startup_unproven", default=False)

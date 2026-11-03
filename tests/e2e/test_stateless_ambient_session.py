@@ -13,7 +13,6 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
-from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, issue_agent_api_token
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.e2e.conftest import CLIEventSimulator, DaemonInstance, daemon_health_unavailable
@@ -230,7 +229,6 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
 
     manager = SessionManager(postgres_db)
     variable_manager = SessionVariableManager(postgres_db)
-    audit_manager = WorkflowAuditManager(postgres_db)
     session_a = _session_for(manager, external_a, cli_source)
     async with _gmcp_proxy(daemon_instance, terminal_context) as proxy:
         ambient_a = await proxy.list_tools(TARGET_SERVER)
@@ -268,31 +266,6 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
         refreshed_a = manager.get(session_a.id)
         assert refreshed_a is not None
         assert refreshed_a.to_dict() == expired_a
-
-        variable_manager.set_variable(session_b.id, "enforce_tool_schema_check", True)
-        variable_manager.set_variable(session_b.id, "unlocked_tools", [])
-        blocked = await proxy.call_tool(
-            TARGET_SERVER,
-            TARGET_TOOL,
-            {},
-            preflight_enabled=False,
-        )
-        assert blocked.get("success") is False
-
-        b_blocks = audit_manager.get_entries(
-            session_id=session_b.id,
-            event_type="rule_eval",
-            result="block",
-        )
-        a_blocks = audit_manager.get_entries(
-            session_id=session_a.id,
-            event_type="rule_eval",
-            result="block",
-        )
-        assert any(
-            entry.rule_id == "require-current-context-schema-before-call" for entry in b_blocks
-        )
-        assert a_blocks == []
 
         schema = await proxy.get_tool_schema(TARGET_SERVER, TARGET_TOOL)
         assert schema.get("success") is True

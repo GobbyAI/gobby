@@ -55,7 +55,7 @@ def _event(session_id: str, project_id: str, *, repair_ready: bool) -> HookEvent
     )
 
 
-@pytest.mark.parametrize("rule_name", ["fixture-recovery", "require-code-index-skill"])
+@pytest.mark.parametrize("rule_name", ["fixture-recovery", "fixture-definition-b0e4868c"])
 @pytest.mark.parametrize("declared", [False, True])
 @pytest.mark.parametrize("blocked_again", [False, True])
 @pytest.mark.asyncio

@@ -249,7 +249,12 @@ def _build(
     runner.agent_lifecycle_monitor = None
     runner.config_runtime = None
     # Rollback cancels the run row as the real runner does.
-    runner.cancel_run.side_effect = lambda run_id: runner.run_storage.cancel(run_id) is not None
+    runner.cancel_run.side_effect = (
+        lambda run_id, *, terminal_reason: runner.run_storage.cancel(
+            run_id, terminal_reason=terminal_reason
+        )
+        is not None
+    )
     checkout_mode = _Isolation(worktree.id, str(tmp_path / "placed-wt"))
     the_reserver = reserver or AgentPaneReserver(
         workspaces=workspaces,
@@ -1158,7 +1163,7 @@ async def test_duplicate_placed_request_precedence(placed: _Harness) -> None:
         child_session_id=None,
         parent_session_id="someone-else",
         task_id=task.id,
-        agent_name="developer",
+        agent_name="fixture-worker",
     )
     runs = MagicMock(wraps=h.runs)
     runs.has_active_run_for_task.return_value = True
@@ -1212,7 +1217,7 @@ async def test_placed_task_refusal_reaches_pipeline_error(placed: _Harness) -> N
 
     proxy = SimpleNamespace(call_tool=call)
     step = PipelineStep(
-        id="dev-team-lead",
+        id="fixture-definition-f0ad0fd9",
         mcp=MCPStepConfig(
             server="gobby-agents",
             tool="spawn_agent",
@@ -1569,17 +1574,17 @@ class _TmuxCommandRecorder:
 
 @pytest.mark.parametrize(
     ("defined", "expected"),
-    [(True, "Developer"), (False, "Task #25128 - seat slug")],
+    [(True, "Fixture Worker"), (False, "Task #25128 - seat slug")],
 )
 async def test_split_pane_takes_the_definition_name_for_a_defined_seat(
     placed: _Harness, defined: bool, expected: str
 ) -> None:
     h = placed
     beside = _held_seat(h, "beside", state="exited")
-    overrides: dict[str, Any] = {"agent_lookup_name": "developer"}
+    overrides: dict[str, Any] = {"agent_lookup_name": "fixture-worker"}
     if defined:
         overrides["agent_body"] = make_agent_definition(
-            name="developer", model="claude-sonnet-5", prompts={"agent": "Work the seat"}
+            name="fixture-worker", model="claude-sonnet-5", prompts={"agent": "Work the seat"}
         )
     result = await _spawn(h, _split(beside.id, title="Task #25128 - seat slug"), **overrides)
 

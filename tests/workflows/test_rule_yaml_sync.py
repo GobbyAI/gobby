@@ -58,13 +58,13 @@ class TestSingleRuleYaml:
         (rules_dir / "simple.yaml").write_text(
             """
 rules:
-  no-push:
+  synthetic-sync-entry:
     event: before_tool
     effect:
       type: block
       tools: [Bash]
-      command_pattern: "git\\\\s+push"
-      reason: "No pushing allowed."
+      command_pattern: "fixture\\\\s+command"
+      reason: "Synthetic sync fixture."
 """
         )
         result = sync_bundled_rules(db, rules_dir)
@@ -74,7 +74,7 @@ rules:
 
         rows = manager.list_all()
         assert len(rows) == 1
-        assert rows[0].name == "no-push"
+        assert rows[0].name == "synthetic-sync-entry"
         assert rows[0].source == "installed"
 
     def test_rule_definition_json_is_valid(

@@ -87,16 +87,16 @@ def _epic(world: TeamWorld, title: str) -> tuple[Task, Task]:
 
 
 async def _epic_team(world: TeamWorld, title: str) -> tuple[Team, Task, str]:
-    """An epic team with its four runbook seats plus one sub-worktree developer."""
+    """An epic team with its four runbook seats plus one sub-worktree fixture-worker."""
     epic, leaf = _epic(world, title)
     team = await seated_team(world, epic, world.child(epic))
     manager = team.seats[0]
-    sub_developer = world.case.session("developer", parent=manager)
+    sub_developer = world.case.session("fixture-worker", parent=manager)
     LocalAgentRunManager(world.case.db).create(
         parent_session_id=manager,
         provider="claude",
         prompt="Implement the leaf in its sub-worktree.",
-        agent_name="developer",
+        agent_name="fixture-worker",
         child_session_id=sub_developer,
         task_id=leaf.id,
     )
@@ -114,7 +114,7 @@ def _variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
 
 async def _write_decision(engine: RuleEngine, world: TeamWorld, session_id: str, path: Path) -> str:
     variables = _variables(world.case.db, session_id)
-    variables.setdefault("_agent_type", "developer")
+    variables.setdefault("_agent_type", "fixture-worker")
     event = HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id=session_id,
@@ -149,7 +149,7 @@ async def test_epic_folder_scoped_to_team(world: TeamWorld, engine: RuleEngine) 
         assert "_agent_workspace_epic_dir" not in _variables(db, stranger)
         SessionVariableManager(db).merge_variables(
             stranger,
-            {"_agent_workspace_dir": str(epic_dir.parents[1] / "developer" / "session-1")},
+            {"_agent_workspace_dir": str(epic_dir.parents[1] / "fixture-worker" / "session-1")},
         )
         decision = await _write_decision(engine, world, stranger, epic_dir / "decisions.md")
         assert decision == "block", stranger

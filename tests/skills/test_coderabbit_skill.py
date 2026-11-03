@@ -125,13 +125,7 @@ def test_coderabbit_skill_hides_review_learning() -> None:
 
 def test_reference_contract_4_3_1() -> None:
     """Every retained method resolves operational loads without retired entrypoints."""
-    retained = set(
-        "brevity restraint proportionality elicit ideate research architecture prd code-review "
-        "decompose-monolith repository-maintenance test-driven-development triage-judgment "
-        "impeccable tech-writer bridge browser-testing coderabbit context7 gusto bash c cpp "
-        "csharp dart elixir go java javascript json kotlin lua objc php python ruby rust scala "
-        "swift typescript yaml".split()
-    )
+    retained = {path.parent.name for path in SKILLS_ROOT.glob("*/SKILL.md")} - {"gobby", "annotate"}
     retired = set(
         "tasks live-session plan plan-draft plan-enhance plan-mechanic plan-review expand "
         "expansion-agent-selection build build-coordinator handoff-discipline persona memory "
@@ -140,9 +134,7 @@ def test_reference_contract_4_3_1() -> None:
         "development-discipline channel-parity".split()
     )
     reference_count = 0
-    # Gusto is an installed user-owned skill, not a bundled entrypoint.
-    # Upgrade preservation of user rows belongs to the isolated migration tests.
-    for name in sorted(retained - {"gusto"}):
+    for name in sorted(retained):
         parsed = parse_skill_file(SKILLS_ROOT / name / "SKILL.md")
         assert parsed.name == name
         for path in (SKILLS_ROOT / name).rglob("*.md"):
@@ -154,7 +146,7 @@ def test_reference_contract_4_3_1() -> None:
             for reference in re.findall(r"gobby:(references/[a-z-]+/[a-z-]+\.md)", content):
                 reference_count += 1
                 assert (SKILLS_ROOT / "gobby" / reference).is_file(), (path, reference)
-    assert len(retained) == 41
+    assert retained.isdisjoint(retired)
     assert reference_count >= 8
     # Methodology stays reusable; only the host-specific procedures moved.
     assert "Plan Mode Gate" in _body()

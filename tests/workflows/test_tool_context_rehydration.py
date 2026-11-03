@@ -13,7 +13,6 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from gobby.workflows.tool_context import _MAX_PENDING_TOOL_CONTEXTS_PER_SESSION
 
 pytestmark = pytest.mark.unit
@@ -61,14 +60,6 @@ async def test_normalization_after_rehydration_runs_off_loop(
 PLATFORM_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 EXTERNAL_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 
-PROGRESSIVE_DISCOVERY_RULES = {
-    "require-current-context-schema-before-call",
-    "track-schema-lookup",
-    "track-servers-listed",
-    "track-listed-servers",
-    "reset-progressive-discovery",
-}
-
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -86,15 +77,6 @@ def clean_dirty_files(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def handler(db: HubDatabase) -> WorkflowHookHandler:
-    sync_bundled_rules(db, get_bundled_rules_path())
-    db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
-    db.execute("UPDATE rule_definitions SET enabled = FALSE ")
-    for name in PROGRESSIVE_DISCOVERY_RULES:
-        db.execute(
-            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
-            (name,),
-        )
-
     return WorkflowHookHandler(rule_engine=RuleEngine(db))
 
 
@@ -329,7 +311,7 @@ async def test_cli_after_tool_rehydrates_schema_lookup_context(
     schema_input: dict[str, Any],
     source: SessionSource,
 ) -> None:
-    """CLI AFTER_TOOL events can omit tool_input; schema lookup still unlocks the tool."""
+    """CLI AFTER_TOOL events can omit tool_input; native context restores it."""
     session_vars = SessionVariableManager(db)
     session_vars.merge_variables(PLATFORM_SESSION_ID, {"listed_servers": ["gobby-tasks"]})
 
@@ -366,10 +348,6 @@ async def test_cli_after_tool_rehydrates_schema_lookup_context(
     assert after_event.data["call_id"] == f"call-{mcp_tool}"
     assert after_event.metadata["_tool_context_rehydrated"] is True
     assert after_event.metadata["_tool_context_rehydrated_source"] == source.value
-
-    unlocked_tools = session_vars.get_variables(PLATFORM_SESSION_ID).get("unlocked_tools", [])
-    assert f"gobby-tasks:{mcp_tool}" in unlocked_tools
-    assert all(not key.startswith(f"gobby-tasks:{mcp_tool}:") for key in unlocked_tools)
 
     call_event = _event(
         HookEventType.BEFORE_TOOL,

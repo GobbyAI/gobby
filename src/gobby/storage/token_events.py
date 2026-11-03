@@ -57,6 +57,7 @@ class TokenEvent:
     context_window: int | None = None
     metadata: dict[str, Any] | None = None
     model_family: str | None = None
+    api_calls: int | None = None
 
     def normalized_model_family(self) -> str | None:
         return self.model_family or normalize_model(self.model)
@@ -155,13 +156,28 @@ _TOKEN_EVENT_COLUMNS = (
     "context_window",
     "event_at",
     "metadata",
+    "api_calls",
 )
 _TOKEN_EVENT_VALUES_ROW = "(" + ", ".join(["%s"] * len(_TOKEN_EVENT_COLUMNS)) + ")"
 _TOKEN_EVENT_CONFLICT_CLAUSE = (
     "ON CONFLICT (session_id, message_id) WHERE message_id IS NOT NULL DO NOTHING"
 )
+_TOKEN_EVENT_REPAIR_UPDATE_COLUMNS = (
+    "model",
+    "model_family",
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+    "api_calls",
+    "event_at",
+)
+_TOKEN_EVENT_REPAIR_CONFLICT_CLAUSE = (
+    "ON CONFLICT (session_id, message_id) WHERE message_id IS NOT NULL DO UPDATE SET "
+    + ", ".join(f"{column} = EXCLUDED.{column}" for column in _TOKEN_EVENT_REPAIR_UPDATE_COLUMNS)
+)
 
-# Rows per INSERT statement in record_batch. 14 parameters per row keeps this
+# Rows per INSERT statement in record_batch. 15 parameters per row keeps this
 # far under the 65,535-parameter statement limit while bounding statement size.
 RECORD_BATCH_CHUNK_SIZE = 500
 
@@ -183,6 +199,7 @@ def _record_params(event: TokenEvent) -> tuple[Any, ...]:
         event.context_window,
         canonicalize_event_timestamp(event.event_at),
         json.dumps(event.metadata) if event.metadata is not None else None,
+        event.api_calls,
     )
 
 
@@ -272,6 +289,29 @@ class TokenEventStore:
                     chunk_seen.add(key)
                     flags[start + offset] = key in inserted_keys
             return flags
+
+    def repair_keyed_events(self, events: Sequence[TokenEvent]) -> None:
+        """Write keyed events, overwriting any stored row with the same key in place.
+
+        Unlike ``record_batch``, a conflicting row takes the event's values and keeps
+        its ``id``. Callers screen ``events`` for retention and key uniqueness: a key
+        repeated within one statement fails the upsert. Unkeyed events are skipped.
+        """
+        keyed = [event for event in events if event.message_id is not None]
+        for start in range(0, len(keyed), RECORD_BATCH_CHUNK_SIZE):
+            chunk = keyed[start : start + RECORD_BATCH_CHUNK_SIZE]
+            params: list[Any] = []
+            for event in chunk:
+                params.extend(_record_params(event))
+            values = ", ".join([_TOKEN_EVENT_VALUES_ROW] * len(chunk))
+            self.db.execute(
+                f"""
+                INSERT INTO token_events ({", ".join(_TOKEN_EVENT_COLUMNS)})
+                VALUES {values}
+                {_TOKEN_EVENT_REPAIR_CONFLICT_CLAUSE}
+                """,
+                params,
+            )
 
     def delete_session_events(
         self,
@@ -368,7 +408,8 @@ class TokenEventStore:
                 context_window,
                 event_at,
                 created_at,
-                metadata
+                metadata,
+                api_calls
             FROM token_events
             WHERE session_id = %s
               {since_sql}
@@ -588,6 +629,7 @@ class TokenEventStore:
             "event_at": _row_value(row, "event_at"),
             "created_at": _row_value(row, "created_at"),
             "metadata": parsed_metadata,
+            "api_calls": _row_value(row, "api_calls"),
         }
 
 
