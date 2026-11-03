@@ -1,3 +1,4 @@
+version: "1.1.0"
 tags: [session-feedback, lifecycle, gobby, default]
 
 rules:
@@ -49,6 +50,7 @@ rules:
         and item.get('closure_id') not in (variables.get('_gobby_feedback_surveyed_closures') or [])
         for item in variables.get('_memory_pending_task_reviews') or []
       )
+      and not has_durable_stop_wait()
     effects:
       - type: block
         reason: |

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from enum import Enum
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Literal
@@ -475,6 +475,54 @@ class RuleEffect(BaseModel):
                     )
 
 
+class AttestationReferenceShape(BaseModel):
+    """The evidence reference a closure rule can accept."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scheme: str = Field(min_length=1)
+    value_pattern: str = Field(min_length=1)
+
+    @field_validator("value_pattern")
+    @classmethod
+    def _compiles(cls, value: str) -> str:
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError(f"value_pattern is not a valid regex: {exc}") from exc
+        return value
+
+
+class AttestationShape(BaseModel):
+    """What a closure rule can accept for these kinds, enforced when evidence is recorded."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kinds: list[str] = Field(min_length=1)
+    result: str | None = Field(default=None, min_length=1)
+    reference: AttestationReferenceShape | None = None
+    # Expression over `task` alone; the shape applies to every task when omitted.
+    applies_when: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _constrains(self) -> AttestationShape:
+        if self.result is None and self.reference is None:
+            raise ValueError("attestation_shape must declare a result or reference")
+        if self.applies_when is not None:
+            from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+
+            try:
+                SafeExpressionEvaluator.validate_syntax(
+                    self.applies_when, set(ATTESTATION_SHAPE_FUNCTIONS)
+                )
+            except (SyntaxError, ValueError) as exc:
+                raise ValueError(f"applies_when is not a valid expression: {exc}") from exc
+        return self
+
+
+ATTESTATION_SHAPE_FUNCTIONS: dict[str, Callable[..., Any]] = {"len": len, "any": any, "all": all}
+
+
 class RuleDefinitionBody(BaseModel):
     """Stored as definition_json on rule_definitions."""
 
@@ -490,11 +538,18 @@ class RuleDefinitionBody(BaseModel):
     agent_scope: list[str] | None = None  # Only active for these agent types
     # Active for every definition; no rule_selectors include or exclude removes it.
     mandatory: bool = False
+    # Closure rules only: record_attestation refuses evidence this shape can never accept.
+    attestation_shape: AttestationShape | None = None
 
     @model_validator(mode="after")
     def _validate_effects(self) -> RuleDefinitionBody:
         if not self.effects or len(self.effects) == 0:
             raise ValueError("'effects' is required and must be non-empty")
+        if self.attestation_shape is not None and self.event not in {
+            RuleTriggerEvent.TASK_CLOSE,
+            RuleTriggerEvent.TASK_LAND,
+        }:
+            raise ValueError("attestation_shape is restricted to task_close and task_land rules")
         block_count = sum(e.type == "block" for e in self.effects)
         if block_count > 1:
             raise ValueError("At most one 'block' effect is allowed per rule")

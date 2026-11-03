@@ -856,9 +856,7 @@ async def test_second_consecutive_delivery_failure_abandons_terminal_handoff(
 
 
 @pytest.mark.asyncio
-async def test_composer_occupied_delivery_failure_tells_the_agent_to_wait_for_the_operator() -> (
-    None
-):
+async def test_composer_occupied_delivery_failure_tells_the_agent_to_retry_the_wipe() -> None:
     claimed = ClaimedHandoffDelivery(SESSION_ID, ATTEMPT_ID, "handoff-1", False)
     restore = MagicMock(return_value=True)
 
@@ -875,7 +873,7 @@ async def test_composer_occupied_delivery_failure_tells_the_agent_to_wait_for_th
             new=AsyncMock(
                 return_value={
                     "compacted": False,
-                    "reason": "composer holds an operator draft",
+                    "reason": "text reached the composer after the wipe",
                     "error_code": "composer_occupied",
                 }
             ),
@@ -897,8 +895,8 @@ async def test_composer_occupied_delivery_failure_tells_the_agent_to_wait_for_th
     failure = restore.call_args.kwargs["failure_result"]
     assert failure["error_code"] == "composer_occupied"
     assert failure["delivery_failed"] is True
-    assert "unsent draft" in failure["retry_guidance"]
-    assert "retry gobby-sessions:set_handoff" in failure["retry_guidance"]
+    assert "after the daemon cleared it" in failure["retry_guidance"]
+    assert "Retry gobby-sessions:set_handoff" in failure["retry_guidance"]
 
 
 # --- set_handoff -> compaction -> continuation through the terminal runtime (#22441) ---

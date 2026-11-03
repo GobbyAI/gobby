@@ -131,7 +131,9 @@ a staging retry does not require duplicate feedback.
 On continuation, call `get_handoff()` without lookup arguments. It atomically
 consumes the pending compact or direct-predecessor clear marker. This call is
 allowed and required during a restart or cutover hold: do not wait for DAEMON BACK,
-because shutdown waits for the acknowledgment. Keep other held work paused. A second read,
+because shutdown waits for the acknowledgment. `wait_for_coordination` and
+`send_message` stay allowed during the hold, and `set_handoff` stays allowed until
+shutdown admission closes; keep other held task work paused. A second read,
 manual compact/clear, or absent marker returns empty. Do not pass `session_id`,
 search for another session's summary, or create an archival summary to recover
 it. Separately, a parent or its bound clear successor may idempotently read a
@@ -144,6 +146,6 @@ failed recovery marker.
 
 Guide: [Creating and reading handoffs](../../../../../../../../docs/guides/sessions.md#creating-and-reading-handoffs).
 
-_Version: 1.2.0_
+_Version: 1.3.0_
 
 _Last verified: 2026-11-02_

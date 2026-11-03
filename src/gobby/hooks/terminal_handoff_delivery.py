@@ -78,11 +78,11 @@ _COMPACT_EXPIRED_GUIDANCE = (
     "pressure still requires a handoff; do not submit /compact yourself."
 )
 _COMPOSER_OCCUPIED_ERROR_CODE = "composer_occupied"
+# set_handoff wipes the composer first, so this means someone typed after the wipe.
 _COMPOSER_OCCUPIED_GUIDANCE = (
-    "Terminal handoff delivery was withheld: the operator has an unsent draft in the "
-    "composer. Nothing was interrupted. Tell the operator the handoff is waiting on "
-    "their draft, then retry gobby-sessions:set_handoff once they have sent or "
-    "cleared it."
+    "Terminal handoff delivery was withheld: new text reached the composer after the "
+    "daemon cleared it, so the command was not typed. Retry gobby-sessions:set_handoff "
+    "once; it clears the composer again."
 )
 # The recorded CLI no longer owns its pane: no terminal can take the command, so the
 # attempt settles without counting toward abandonment and stays readable (#23095).
