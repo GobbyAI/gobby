@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
+from gobby.agents.worktree_reuse import DeferredBaseSync, ReusedWorktreeSyncResult
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.storage.hub.protocol import HubDatabase
@@ -108,9 +108,13 @@ def _spawn_registry(
 
 @contextmanager
 def _spawn_flow(
-    agent_body: AgentDefinitionBody, checkout: IsolatedCheckoutProject
+    agent_body: AgentDefinitionBody,
+    checkout: IsolatedCheckoutProject,
+    sync_result: ReusedWorktreeSyncResult | None = None,
 ) -> Iterator[AsyncMock]:
     """Patch the spawn internals past agent load, worktree sync, and execution."""
+    if sync_result is None:
+        sync_result = ReusedWorktreeSyncResult("merged", "refs/heads/main", "base-sha")
     execute_spawn = AsyncMock(
         return_value=MagicMock(
             success=True,
@@ -134,9 +138,7 @@ def _spawn_flow(
         ),
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
-            new=AsyncMock(
-                return_value=ReusedWorktreeSyncResult("merged", "refs/heads/main", "base-sha")
-            ),
+            new=AsyncMock(return_value=sync_result),
         ),
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",
@@ -191,6 +193,47 @@ class TestSpawnAgentResolvesWorktreeReferences:
         assert result["worktree_id"] == _FULL_ID
         assert execute_spawn.await_args is not None
         assert execute_spawn.await_args.args[0].worktree_id == _FULL_ID
+
+    @pytest.mark.asyncio
+    async def test_deferred_base_sync_reaches_seat_and_caller(
+        self,
+        storage: LocalWorktreeManager,
+        mock_runner: MagicMock,
+        agent_body: AgentDefinitionBody,
+        checkout: IsolatedCheckoutProject,
+    ) -> None:
+        """A WIP tree is handed over: the seat's banner and the response name the pending base."""
+        deferred = ReusedWorktreeSyncResult(
+            "deferred",
+            "refs/heads/main",
+            "fork-sha",
+            DeferredBaseSync(reason="uncommitted_changes", pending_base_sha="base-sha"),
+        )
+        registry = _spawn_registry(mock_runner, storage, _git_manager())
+        with _spawn_flow(agent_body, checkout, deferred) as execute_spawn:
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Continue the assigned task",
+                    "provider": "claude",
+                    "parent_session_id": "parent-1",
+                    "worktree_id": _FULL_ID,
+                },
+            )
+            await _drain_spawn_background_tasks()
+        assert result["success"] is True, result
+        assert result["status"] == "starting"
+        assert result["deferred_base_sync"] == {
+            "reason": "uncommitted_changes",
+            "pending_base_sha": "base-sha",
+            "detail": None,
+        }
+        assert execute_spawn.await_args is not None
+        prompt = execute_spawn.await_args.args[0].prompt
+        assert "Base sync deferred" in prompt
+        assert "it holds uncommitted work" in prompt
+        assert "`git merge base-sha`" in prompt
+        assert "Continue the assigned task" in prompt
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(("worktree_ref", "error_needle"), _UNRESOLVABLE_REFS)

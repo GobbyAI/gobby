@@ -1216,12 +1216,16 @@ class TestCleanupFailedSpawnWakesWaiter:
         assert harness.registry.is_registered("run-123") is False
 
 
-async def test_dirty_reused_worktree_refusal_surfaces_verbatim(
+async def test_reused_worktree_failed_merge_abort_surfaces_verbatim(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
+    """WIP and aborted conflicts defer; only an unrecoverable sync, such as a failed abort, refuses."""
     from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
-    refusal = "Cannot reuse worktree with uncommitted changes; commit, stash, or inspect it first"
+    refusal = (
+        "Failed to merge base refs/heads/main into reused worktree: "
+        "Merge conflict: CONFLICT (content) in a.py; abort failed"
+    )
     runner = MagicMock()
     runner.can_spawn.return_value = (True, "ok", 0)
     worktree_path = tmp_path_factory.mktemp("dirty-worktree")

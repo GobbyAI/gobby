@@ -924,6 +924,8 @@ async def spawn_agent_impl(
                 "clone_id": isolation_ctx.clone_id,
                 "reasoning": reasoning.to_dict(),
             }
+            if "deferred_base_sync" in isolation_ctx.extra:
+                response["deferred_base_sync"] = isolation_ctx.extra["deferred_base_sync"]
             return await spawn_phase.start_background(_spawn_background_tasks, response)
         except asyncio.CancelledError:
             await run_to_completion(
