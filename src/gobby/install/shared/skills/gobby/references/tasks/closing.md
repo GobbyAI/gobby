@@ -38,8 +38,9 @@ which reasons need disposition evidence, references or other requirements.
 Kinds declare allowed_results and guidance in task_attestation_kinds. The server refuses other results with that guidance.
 A selected closure rule may declare an `attestation_shape` (kinds, result, reference scheme and
 value pattern, task applicability). Recording refuses evidence that shape can never accept and
-names the accepted shape; a result the author's definition declares for the kind stays
-recordable, so negative evidence such as `rejected` is never refused. The engine does not interpret
+names the accepted shape. A result the author's definition declares for the kind in
+task_attestation_kinds stays recordable, such as `rejected`; a definition that declares no kinds
+can record only the shape's result for shaped kinds. The engine does not interpret
 an `implementation`, `test`, `independent-review` or `closing` record as special authority.
 The selected `task_close` and `task_land` rules inspect the task, authenticated
 caller, repository facts and append-only attestation history. Rules can require
