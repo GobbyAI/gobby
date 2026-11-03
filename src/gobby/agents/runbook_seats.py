@@ -83,6 +83,7 @@ def check_runbook_seats(
     require_report_to: bool = False,
     skip_live_seats: bool = False,
     team_id: str | None = None,
+    parent_team_id: str | None = None,
     tab_title: str | None = None,
     task: str | None = None,
     seat_models: Mapping[str, str | None] | None = None,
@@ -104,7 +105,10 @@ def check_runbook_seats(
     project. ``live`` maps each such seat to that session. With ``team_id``, ``live`` covers
     every catalogue seat whose agent runs for that team, whether requested or not, so a fresh
     reviewer's request still reports its team's live Dev Team Lead; only runs admitted to that team
-    count. ``tab_title`` names the runbook tab; with ``task`` it becomes ``<tab_title> - #<seq>``.
+    count. With ``parent_team_id``, or a ``team_id`` admitted under a parent team, seats whose
+    agent definition declares ``team_manager`` are not launched: ``live`` maps them to the parent
+    team's live session, so a leaf pod runs under its epic's single manager. ``tab_title`` names
+    the runbook tab; with ``task`` it becomes ``<tab_title> - #<seq>``.
     ``tab_exists`` says whether the workspace has that tab; two such tabs refuse.
     ``seat_models`` maps each seat to the model its launch takes; with it, a launching seat that
     has no model there and none on its agent definition refuses.
@@ -119,6 +123,13 @@ def check_runbook_seats(
         if team_uuid is None:
             raise RunbookSeatRefusal(f"team {team_id} requires a full execution UUID for team_id")
         team_id = str(team_uuid)
+    if parent_team_id is not None:
+        parent_uuid = parse_uuid_reference(parent_team_id)
+        if parent_uuid is None:
+            raise RunbookSeatRefusal(
+                f"team {parent_team_id} requires a full execution UUID for parent_team_id"
+            )
+        parent_team_id = str(parent_uuid)
     try:
         return _admit(
             stores,
@@ -128,6 +139,7 @@ def check_runbook_seats(
             workspace=workspace,
             skip_live_seats=skip_live_seats,
             team_id=team_id,
+            parent_team_id=parent_team_id,
             tab_title=tab_title,
             task=task,
             seat_models=seat_models,
@@ -184,6 +196,7 @@ def _admit(
     workspace: str,
     skip_live_seats: bool,
     team_id: str | None,
+    parent_team_id: str | None,
     tab_title: str | None,
     task: str | None,
     seat_models: Mapping[str, str | None] | None,
@@ -229,27 +242,34 @@ def _admit(
         if binding is not None:
             tab_task = binding.task_id
             if binding.parent_team_id is not None:
+                parent_team_id = binding.parent_team_id
                 if binding.tab_title is not None:
                     tab_title = binding.tab_title
                     tab_task = None  # The stored title already includes the task suffix.
-                managers = {
-                    seat.name
-                    for seat in catalogue
-                    if (
-                        resolved := resolve_agent_with_row(
-                            seat.agent, stores.tasks.db, project_id=project_id
-                        )
-                    )
-                    is not None
-                    and resolved[1].enabled
-                    and resolved[0].enabled
-                    and resolved[0].workflows.variables.get("team_manager") is True
-                }
-                seats = tuple(seat for seat in seats if seat.name not in managers)
-                parent_live = _live_seats(
-                    stores, session, catalogue, team_id=binding.parent_team_id
+    if parent_team_id is not None:
+        # A pod's manager seats belong to its parent team: launch none, map the parent's.
+        managers = {
+            seat.name
+            for seat in catalogue
+            if (
+                resolved := resolve_agent_with_row(
+                    seat.agent, stores.tasks.db, project_id=project_id
                 )
-                live.update({name: parent_live[name] for name in managers if name in parent_live})
+            )
+            is not None
+            and resolved[1].enabled
+            and resolved[0].enabled
+            and resolved[0].workflows.variables.get("team_manager") is True
+        }
+        requested_managers = {seat.name for seat in seats if seat.name in managers}
+        seats = tuple(seat for seat in seats if seat.name not in managers)
+        parent_live = _live_seats(stores, session, catalogue, team_id=parent_team_id)
+        missing = sorted(requested_managers - parent_live.keys())
+        if missing:
+            raise RunbookSeatRefusal(
+                f"parent team {parent_team_id} has no live {', '.join(missing)} seat to lead this run"
+            )
+        live.update({name: parent_live[name] for name in managers if name in parent_live})
     launch = tuple(seat.name for seat in seats if not (skip_live_seats and seat.name in live))
     if report_to is not None:
         launching = tuple(seat for seat in seats if seat.name in launch)

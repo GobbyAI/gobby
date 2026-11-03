@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from gobby.adapters.codex_impl.cell_shell_reach import may_reach_shell, static_code
-from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls
+from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls, repeated_spans
 from gobby.config.validation_detection import classify_validation_segments
 from gobby.config.validation_outcomes import runner_reported_failures, runner_reported_success
 from gobby.hooks.normalization import normalize_tool_display_fields
@@ -38,12 +38,9 @@ _FUNCTIONS_EXEC_TERMINAL_RE = re.compile(
     r"Output:\r?\n\Z"
 )
 _EXEC_COMMAND_CALL_RE = re.compile(r"\btools\.exec_command\s*\(")
+_CONCURRENT_EXEC_RE = re.compile(r"\bPromise\.(?:all|allSettled|race|any)\s*\(")
 _EXEC_COMMAND_LITERAL_RE = re.compile(
     r'(?:^|[{,])\s*(?:cmd|"cmd")\s*:\s*("(?:\\.|[^"\\])*")',
-    re.DOTALL,
-)
-_EXEC_WORKDIR_LITERAL_RE = re.compile(
-    r'(?:^|[{,])\s*(?:workdir|"workdir")\s*:\s*("(?:\\.|[^"\\])*")',
     re.DOTALL,
 )
 _EXEC_RESULT_CALL_RE = re.compile(r"\btools\.(?:exec_command|write_stdin)\s*\(")
@@ -53,9 +50,6 @@ _TOOL_RESULT_BINDING_RE = re.compile(
 )
 _OUTPUT_CALL_RE = re.compile(r"(?<![$\w.])(?:text|console\.[$\w]+)\s*\(")
 _STRINGIFY_RE = re.compile(r"JSON\.stringify\s*\(")
-_REPEATED_EXEC_SCAFFOLD_RE = re.compile(
-    r"\b(?:do|for|while)\b|\.(?:forEach|map|reduce)\s*\(|\bPromise\.(?:all|allSettled|race|any)\s*\("
-)
 _WRITE_STDIN_CALL_RE = re.compile(r"\btools\.write_stdin\s*\(")
 _WRITE_STDIN_ARGS_RE = re.compile(
     r"""\btools\.write_stdin\s*\(\s*\{((?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^}"'])*)\}\s*\)""",
@@ -80,20 +74,29 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
     if call is None:
         return None
     matches = _EXEC_COMMAND_LITERAL_RE.findall(call)
-    if len(matches) != 1:
-        return None
-    scaffold = arguments.replace(matches[0], '""', 1)
-    # The literal workdir is data too, so a path such as task-for-x is not a loop.
-    workdirs = _EXEC_WORKDIR_LITERAL_RE.findall(call)
-    if len(workdirs) == 1:
-        scaffold = scaffold.replace(workdirs[0], '""', 1)
-    if _REPEATED_EXEC_SCAFFOLD_RE.search(scaffold):
+    if len(matches) != 1 or _exec_call_may_repeat(arguments):
         return None
     try:
         command = json.loads(matches[0])
     except (TypeError, ValueError):
         return None
     return command if isinstance(command, str) and command else None
+
+
+def _exec_call_may_repeat(arguments: str) -> bool:
+    """Return whether the one exec_command call may run zero or many times, or is unbounded.
+
+    A template substitution hides code from the blanked view, and a concurrent Promise
+    wrapper is refused whole, so both fail closed as in cell_shell_reach.
+    """
+    code = static_code(arguments)
+    if code is None or "${" in arguments or _CONCURRENT_EXEC_RE.search(code):
+        return True
+    spans = repeated_spans(code)
+    call = _EXEC_COMMAND_CALL_RE.search(code)
+    if spans is None or call is None:
+        return True
+    return any(start <= call.start() < end for start, end in spans)
 
 
 def _single_exec_command_argument(arguments: str) -> str | None:

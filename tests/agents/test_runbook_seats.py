@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -19,6 +19,7 @@ from gobby.agents.runbook_seats import (
     RunbookSeatStores,
     check_runbook_seats,
 )
+from gobby.agents.team_admission_records import TeamBinding
 from gobby.mcp_proxy.tools import runbook_seat_tools
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.mcp_proxy.tools.runbook_seat_tools import runbook_seat_stores
@@ -59,6 +60,7 @@ def _install_agent(
     enabled: bool = True,
     capabilities: tuple[str, ...] = (),
     message_sender_capabilities: tuple[str, ...] = (),
+    variables: dict[str, Any] | None = None,
 ) -> None:
     AgentDefinitionManager(db).create(
         name=name,
@@ -67,7 +69,7 @@ def _install_agent(
             "version": "1.0",
             "enabled": enabled,
             "prompts": {"agent": "Coordinate the assigned work."},
-            "workflows": {"rule_selectors": {"include": []}},
+            "workflows": {"rule_selectors": {"include": []}, "variables": variables or {}},
             "capabilities": list(capabilities),
             "message_sender_capabilities": list(message_sender_capabilities),
         },
@@ -826,3 +828,84 @@ def test_report_to_session_ref_resolves_before_the_guard(
     assert result["success"] is False
     assert result["error_code"] == "runbook_seat_refused"
     assert f"report_to {report} does not admit seat 'lead'" in result["error"]
+
+
+MANAGED_CATALOGUE: list[dict[str, Any]] = [
+    {"name": "dev-team-lead", "title": "Dev Team Lead", "agent": "manager-agent"},
+    {"name": "dev", "title": "Dev", "agent": "dev-agent"},
+]
+
+
+def _epic_team(env: _Env, task: Task) -> tuple[str, str]:
+    """Admit an epic team with a live manager seat under its runbook; return its id and lead."""
+    _install_agent(env.db, "manager-agent", env.project_id, variables={"team_manager": True})
+    executions = LocalPipelineExecutionManager(env.db, env.project_id)
+    epic = executions.create_execution(
+        "epic-runbook",
+        definition_json=json.dumps(
+            {"name": "epic-runbook", "steps": [{"id": "admit", "exec": "true"}]}
+        ),
+        inputs_json=json.dumps({"workspace": env.workspace_id}),
+        project_id=env.project_id,
+    )
+    binding = TeamBinding(epic.id, task.id, env.project_id, "epic", "main", None, None)
+    step = executions.create_step_execution(epic.id, "admit")
+    executions.update_step_execution(
+        step.id, status=StepStatus.COMPLETED, output_json=json.dumps({"team": asdict(binding)})
+    )
+    runbook = SessionManager(env.db).register(
+        external_id=f"pipeline-{epic.id}",
+        machine_id=AGENT_TEST_MACHINE_ID,
+        source="pipeline",
+        project_id=env.project_id,
+        parent_session_id=env.parent_session_id,
+    )
+    executions.update_execution_session(epic.id, runbook.id)
+    executions.update_execution_status(epic.id, ExecutionStatus.RUNNING)
+    lead, _ = _seat_session(env, "manager-agent")
+    env.db.execute("UPDATE sessions SET parent_session_id = %s WHERE id = %s", (runbook.id, lead))
+    return epic.id, lead
+
+
+def _pod_check(env: _Env, parent_team_id: str | None) -> AdmittedSeats:
+    return check_runbook_seats(
+        env.stores,
+        caller_session_id=_pipeline_child(env),
+        workspace=env.workspace_id,
+        requested="dev-team-lead,dev",
+        catalogue=MANAGED_CATALOGUE,
+        parent_team_id=parent_team_id,
+    )
+
+
+def test_a_pod_launches_no_manager_and_maps_its_epic_lead(env: _Env) -> None:
+    """A leaf run under an epic team launches no lead; the epic's live lead holds that seat."""
+    epic_id, lead = _epic_team(env, _team_task(env, "Epic"))
+
+    pod = _pod_check(env, epic_id)
+
+    assert (pod.launch, dict(pod.live)) == (("dev",), {"dev-team-lead": lead})
+    assert [seat.name for seat in pod.seats] == ["dev"]
+
+
+def test_a_standalone_run_launches_its_own_manager(env: _Env) -> None:
+    """Without a parent team, the manager seat launches like any other seat."""
+    _epic_team(env, _team_task(env, "Epic"))
+
+    standalone = _pod_check(env, None)
+
+    assert (standalone.launch, dict(standalone.live)) == (("dev-team-lead", "dev"), {})
+
+
+def test_a_pod_under_a_team_with_no_live_lead_is_refused(env: _Env) -> None:
+    """A leaf run never starts leaderless: no live parent lead refuses the launch."""
+    epic_id, lead = _epic_team(env, _team_task(env, "Epic"))
+    env.db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (lead,))
+
+    with pytest.raises(RunbookSeatRefusal, match="no live dev-team-lead seat"):
+        _pod_check(env, epic_id)
+
+
+def test_a_partial_parent_team_id_is_refused(env: _Env) -> None:
+    with pytest.raises(RunbookSeatRefusal, match="full execution UUID for parent_team_id"):
+        _pod_check(env, "abc123")

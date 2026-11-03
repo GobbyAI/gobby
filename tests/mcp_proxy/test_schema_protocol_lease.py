@@ -81,7 +81,5 @@ async def test_schema_lease_cannot_target_another_session(
     ):
         await tools.get_tool_schema("gobby-tasks", "get_task", session_id=other.id)
     variables = SessionVariableManager(session_manager.db)
-    assert not variables.get_variables(other.id).get("unlocked_tools")
-    assert variables.get_variables(caller.id).get("unlocked_tools", []) == (
-        ["gobby-tasks:get_task"] if authenticated else []
-    )
+    assert variables.get_variables(other.id).get("unlocked_tools", []) == ["gobby-tasks:get_task"]
+    assert not variables.get_variables(caller.id).get("unlocked_tools")

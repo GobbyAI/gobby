@@ -1548,15 +1548,29 @@ class _RecordingVectorStore:
     ) -> None:
         self.points[memory_id] = (embedding, payload)
 
+    async def delete(self, *, filters: Any, collection_name: str | None = None) -> None:
+        from qdrant_client.local.payload_filters import check_filter
+
+        for point_id, (_embedding, payload) in list(self.points.items()):
+            if check_filter(filters, payload, point_id, {}):
+                self.points.pop(point_id)
+
     async def search_with_payload(
         self,
         query_embedding: list[float],
         limit: int,
-        filters: dict[str, Any] | None = None,
+        filters: Any = None,
         collection_name: str | None = None,
     ) -> list[tuple[str, float, dict[str, Any]]]:
         matches = []
+        from qdrant_client.local.payload_filters import check_filter
+        from qdrant_client.models import Filter
+
         for point_id, (_embedding, payload) in self.points.items():
+            if isinstance(filters, Filter):
+                if check_filter(filters, payload, point_id, {}):
+                    matches.append((point_id, 0.9, payload))
+                continue
             if filters and any(
                 str(payload.get(key)) != str(value) for key, value in filters.items()
             ):
@@ -1632,7 +1646,11 @@ def test_refresh_embeddings_carry_scoped_server_identity(
         assert response.json()["success"] is True
 
         cached = {tool.name: tool.id for tool in storage.get_cached_tools(server_id)}
-        _embedding, payload = vector_store.points[cached["list_repos"]]
+        from gobby.mcp_proxy.semantic_search import tool_embedding_id
+
+        canonical_id = tool_embedding_id(server_id, "list_repos")
+        _embedding, payload = vector_store.points[canonical_id]
+        assert payload["source_id"] == cached["list_repos"]
         assert payload["server_id"] == server_id
         assert payload["server_name"] == "github"
         assert payload["project_id"] == project_id
@@ -1641,7 +1659,7 @@ def test_refresh_embeddings_carry_scoped_server_identity(
             semantic.search_tools(query="repos", project_id=project_id, mcp_manager=manager)
         )
 
-    assert [result.tool_id for result in results] == [cached["list_repos"]]
+    assert [result.tool_id for result in results] == [canonical_id]
     assert results[0].server_name == "github"
     assert results[0].tool_name == "list_repos"
 

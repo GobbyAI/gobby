@@ -712,12 +712,10 @@ async def test_text_tool_text_waits_for_whole_turn_completion(
     send.assert_not_awaited()
     assert (await target.complete_turn(session_id, suffix)).flushed
     assert (await target.complete_turn(session_id)).flushed
-    send.assert_awaited_once()
+    assert [call.args[0].content for call in send.call_args_list] == [prefix, suffix]
     rows = manager.store.list_messages(session_id=session_id)
-    assert len(rows) == 1
-    assert rows[0].content == prefix + "\n\n" + suffix
-    assert rows[0].status == "sent"
-    assert send.call_args.args[0].content == rows[0].content
+    assert sorted(row.content for row in rows) == sorted([prefix, suffix])
+    assert {row.status for row in rows} == {"sent"}
 
 
 @pytest.mark.parametrize("delivered", [False, True])
@@ -991,8 +989,7 @@ async def test_lagged_tool_result_keeps_pending_completion(
     with transcript.open("a") as stream:
         stream.write(native_line("assistant", "a2", "Final."))
     await target._process_all_sessions()
-    send.assert_awaited_once()
-    assert send.call_args.args[0].content.endswith("Final.")
+    assert [call.args[0].content for call in send.call_args_list] == ["Working.", "Final."]
 
 
 @pytest.mark.parametrize("next_id", ["a2", "a2b"])

@@ -1,4 +1,4 @@
-version: "2.0.1"
+version: "2.0.2"
 tags: [roles, seat, enforcement, gobby, seat-policy]
 
 # Definitions select this policy group and exclude the permissions they grant.
@@ -41,8 +41,8 @@ rules:
       tool_input.get('server_name') == 'gobby-workflows'
       and (tool_input.get('tool_name') == 'run_pipeline'
         or str(tool_input.get('tool_name') or '').startswith('pipeline:'))
-      and not dev_pod_launch_allowed(event.metadata.get('_platform_session_id'),
-        tool_input.get('tool_name'), tool_input, ['dev-team'])
+      and dev_pod_launch_refusal(event.metadata.get('_platform_session_id'),
+        tool_input.get('tool_name'), tool_input, ['dev-team']) is not None
     effects:
       - type: block
         reason: >-
@@ -50,7 +50,9 @@ rules:
           or a relaunch with team_id. Otherwise only the Orchestrator launches pipelines, and
           the Assistant while the Orchestrator is down: a pipeline's steps run outside seat
           rules. Runbooks launch from the operator's surfaces or the Orchestrator; send the
-          request to Triage.
+          request to Triage. Refusal: {{ dev_pod_launch_refusal(
+          event.metadata.get('_platform_session_id'), tool_input.get('tool_name'), tool_input,
+          ['dev-team']) }}
 
   # One block effect per rule, so the shell's pipeline and spawn launches are
   # separate rules: the pipeline half exempts the Orchestrator and Assistant.

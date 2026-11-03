@@ -28,6 +28,10 @@ from gobby.utils.uuid_validation import parse_uuid_reference
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_attachments import (
+    AttachmentDraft,
+    InterSessionAttachmentManager,
+)
 from gobby.storage.inter_session_messages import (
     InterSessionMessage,
     InterSessionMessageManager,
@@ -115,6 +119,7 @@ class MailboxService:
         self._message_manager = message_manager
         self._session_manager = session_manager
         self._wake_dispatcher = wake_dispatcher
+        self._attachment_manager = InterSessionAttachmentManager(db)
 
     async def send(
         self,
@@ -131,6 +136,7 @@ class MailboxService:
         project_id: str | None = None,
         preserve_content: bool = False,
         replace_composer: bool = False,
+        attachment: AttachmentDraft | None = None,
     ) -> MailboxSendResult:
         """Send a mailbox message to an explicit resolved target selector.
 
@@ -223,17 +229,19 @@ class MailboxService:
                     resolution=resolution,
                     wake_requested=wake,
                 )
-                messages.append(
-                    self._message_manager.create_message(
-                        from_session=from_session_id,
-                        to_session=recipient_id,
-                        content=content,
-                        priority=priority,
-                        message_type=message_type,
-                        metadata_json=metadata_json,
-                        message_id=message_id,
-                    )
+                message = self._message_manager.create_message(
+                    from_session=from_session_id,
+                    to_session=recipient_id,
+                    content=content,
+                    priority=priority,
+                    message_type=message_type,
+                    metadata_json=metadata_json,
+                    message_id=message_id,
                 )
+                messages.append(message)
+                # Same transaction as the message row: no recipient wakes before its copy exists.
+                if attachment is not None:
+                    self._attachment_manager.create(message.id, attachment)
 
         wake_results: list[dict[str, Any]] = []
         if wake:

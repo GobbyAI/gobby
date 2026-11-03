@@ -504,7 +504,7 @@ class TestAgentDefinitionStorage:
         )
         rule_manager.create(
             name="test-rule-list",
-            definition_json={"event": "before_tool", "effect": {"type": "block"}},
+            definition_json={"event": "before_tool", "effects": [{"type": "block"}]},
         )
 
         agents = manager.list_all()

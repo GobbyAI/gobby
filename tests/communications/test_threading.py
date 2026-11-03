@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
+from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 
 TEST_TIMESTAMP = datetime(2024, 1, 1, tzinfo=UTC)
 
@@ -39,9 +41,16 @@ def _channel(
 def _store(channels: list[ChannelConfig] | None = None) -> MagicMock:
     store = MagicMock()
     store.list_channels.return_value = channels or []
-    store.create_message.return_value = None
+    store.create_message.side_effect = lambda message: message
     store.get_identity_by_external.return_value = None
     return store
+
+
+def _session_store() -> MagicMock:
+    """Every looked-up session is live, so an identity's linked session is reused."""
+    session_store = MagicMock()
+    session_store.get.return_value = SimpleNamespace(status=LIVE_SESSION_STATUS_ORDER[0])
+    return session_store
 
 
 def _adapter() -> MagicMock:
@@ -54,11 +63,12 @@ def _adapter() -> MagicMock:
     adapter.shutdown = AsyncMock()
     adapter.parse_webhook.return_value = []
     adapter.verify_webhook.return_value = True
+    adapter.download_inbound_attachments = AsyncMock(return_value=[])
     return adapter
 
 
 async def _make_manager(store: MagicMock) -> CommunicationsManager:
-    manager = CommunicationsManager(_config(), store, MagicMock(), MagicMock())
+    manager = CommunicationsManager(_config(), store, MagicMock(), _session_store())
     mock_adapter = _adapter()
     mock_adapter_cls = MagicMock(return_value=mock_adapter)
     with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):

@@ -1,4 +1,5 @@
 tags: [roles, seat, enforcement, gobby, default]
+version: "1.1.0"
 
 # The seat's workspace folder (addendum 9.3). Injected once per context epoch, with the
 # predecessor-read note for persistent seats only. The reset re-arms it after clear or compact,
@@ -19,6 +20,7 @@ rules:
           ## Agent Workspace
           Your session folder: {{ variables.get('_agent_workspace_dir') }}
           Write literal paths only, under that folder or your run's assigned registered task worktree. The worktree grant does not include its containing seat folder.
+          The workspace folder holds working artifacts only. A handoff holds continuation state and points to files. Anything another seat needs goes in a message, a send_attachment or a task; durable outcomes go to tasks, memory, git or plans.
           {% if variables.get('_agent_workspace_epic_dir') %}
           Your epic folder, shared by your team: {{ variables.get('_agent_workspace_epic_dir') }}
           Write literal paths only, under that folder, one file per topic. Append to an existing file with Edit.
