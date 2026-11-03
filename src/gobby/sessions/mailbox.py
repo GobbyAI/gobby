@@ -46,6 +46,13 @@ if TYPE_CHECKING:
 ACTIVE_AGENT_RUN_STATUSES = ("queued", "pending", "running")
 DELIVERABLE_SESSION_STATUSES = LIVE_SESSION_STATUS_ORDER
 MESSAGE_TARGETS = ("global", "project", "parent", "session", "agent")
+SYSTEM_SESSION_REPLY_REFUSAL = (
+    "The system session delivers daemon and Telegram messages but has no reader, so "
+    "nothing sent to it is delivered. To answer a Telegram message while this session is "
+    "attached to that conversation, type the reply normally: it is mirrored there "
+    "automatically. When not attached, reply with gobby-communications:send_message on "
+    "the message's channel."
+)
 
 logger = logging.getLogger(__name__)
 
@@ -399,6 +406,9 @@ class MailboxService:
         project_id: str | None,
         allow_cross_project: bool = False,
     ) -> str:
+        if to_session_id == system_session_id():
+            # The daemon's sender has no mailbox reader, so a reply here reaches no one.
+            raise ValueError(SYSTEM_SESSION_REPLY_REFUSAL)
         recipient: Session | None = self._session_manager.get(to_session_id)
         if recipient is None:
             raise ValueError(f"Recipient session not found: {to_session_id}")

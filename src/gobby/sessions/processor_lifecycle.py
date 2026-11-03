@@ -299,6 +299,7 @@ class ProcessorLifecycleMixin:
         self._restored_render_sessions.discard(session_id)
         self._mirror_start_offsets.pop(session_id, None)
         self._mirror_eligible_ids.pop(session_id, None)
+        self._mirror_eligible_lines.pop(session_id, None)
         self._pending_turn_completions.pop(session_id, None)
         if was_registered:
             logger.debug("Unregistered session %s", session_id)
@@ -325,6 +326,7 @@ class ProcessorLifecycleMixin:
         self._stats.pop(session_id, None)
         self._restored_render_sessions.discard(session_id)
         self._mirror_eligible_ids.pop(session_id, None)
+        self._mirror_eligible_lines.pop(session_id, None)
         self._pending_turn_completions.pop(session_id, None)
         try:
             self._mirror_start_offsets[session_id] = await asyncio.to_thread(

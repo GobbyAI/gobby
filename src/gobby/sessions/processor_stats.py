@@ -58,30 +58,34 @@ class ProcessorStatsMixin:
         complete: bool,
     ) -> None:
         if complete and rendered.get("role") == "assistant" and self.communications_manager:
+            blocks = [
+                block for block in rendered.get("content_blocks", []) if isinstance(block, dict)
+            ]
+            raw_id = rendered.get("id")
+            message_id = raw_id if isinstance(raw_id, str) else ""
+            confirmed = self._mirror_eligible_ids.get(session_id, set())
+            lines = self._mirror_eligible_lines.get(session_id, set())
+            # A provider-confirmed completion mirrors its whole turn; otherwise only
+            # text from records written after the mirror floor is eligible.
+            whole_turn = session_id not in self._mirror_start_offsets or message_id in confirmed
             texts = [
                 block["content"]
-                for block in rendered.get("content_blocks", [])
-                if isinstance(block, dict)
-                and block.get("type") == "text"
+                for block in blocks
+                if block.get("type") == "text"
                 and isinstance(block.get("content"), str)
                 and block["content"].strip()
+                and (whole_turn or block.get("source_line") in lines)
             ]
-            message_id = rendered.get("id")
-            eligible = self._mirror_eligible_ids.get(session_id, set())
-            if (
-                texts
-                and isinstance(message_id, str)
-                and message_id
-                and (session_id not in self._mirror_start_offsets or message_id in eligible)
-            ):
-                try:
+            try:
+                if texts and message_id:
                     await self._mirror_text_blocks(session_id, message_id, texts)
-                except Exception:
-                    # The durable delivery ledger retries independently. A
-                    # failed mirror must not suppress stats or websocket events.
-                    logger.warning("Transcript mirror failed for %s", message_id, exc_info=True)
-                finally:
-                    eligible.discard(message_id)
+            except Exception:
+                # The durable delivery ledger retries independently. A
+                # failed mirror must not suppress stats or websocket events.
+                logger.warning("Transcript mirror failed for %s", message_id, exc_info=True)
+            finally:
+                confirmed.discard(message_id)
+                lines.difference_update(block.get("source_line") for block in blocks)
         if self.websocket_server is None:
             return
         await self._feed_attached_session_tts(session_id, rendered, complete=complete)
