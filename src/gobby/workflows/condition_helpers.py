@@ -18,7 +18,7 @@ from gobby.config.shell_lexing import shell_command_segments
 from gobby.config.validation_detection import (
     is_validation_command as _config_is_validation_command,
 )
-from gobby.hooks._normalization_base_commands import _UV_VALUE_OPTIONS
+from gobby.hooks._normalization_base_commands import UV_VALUE_OPTIONS
 from gobby.tasks.state_semantics import projected_task_state
 from gobby.tasks.transcript_outcomes import (
     wrapped_validation_command as _tasks_wrapped_validation_command,
@@ -547,7 +547,7 @@ def _strip_uv_run(tokens: list[str]) -> list[str]:
         index += 1
         if word == "--":
             break
-        if "=" not in word and word in _UV_VALUE_OPTIONS:
+        if "=" not in word and word in UV_VALUE_OPTIONS:
             index += 1
     return tokens[index:]
 

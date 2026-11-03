@@ -279,6 +279,13 @@ def _awk_program_index(words: list[str]) -> int | None:
     # An expanded program is unproven text: it could call system() on the fetched data.
     if index >= len(words) or _CAPTURE_PREFIX in words[index] or _AWK_EFFECT.search(words[index]):
         return None
+    # Words arrive dequoted, so a tilde or glob may have expanded to a file's text.
+    # Whitespace or a literal `$` (unquoted `$` arrives as a capture) proves quoting.
+    program = words[index]
+    if program.startswith("~") or (
+        re.search(r"[*?\[]", program) and not re.search(r"[\s$]", program)
+    ):
+        return None
     return index
 
 
