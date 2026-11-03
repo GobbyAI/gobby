@@ -1,4 +1,4 @@
-version: "1.1.0"
+version: "1.1.1"
 tags: [task-enforcement, enforcement, tasks, gobby, default]
 
 rules:
@@ -21,7 +21,7 @@ rules:
           and requires_task_for_any_touched_file(
             tool_input, source, variables.get('plan_mode'), event.data,
             session_has_capability(event.metadata.get('_platform_session_id'), 'write_plan_artifacts_without_task'),
-            ['./\.gobby/reports/gobby-digest-[0-9]{4}-[0-9]{2}-[0-9]{2}\.md']
+            ['./[.]gobby/reports/gobby-digest-[0-9]{4}-[0-9]{2}-[0-9]{2}[.]md']
               if session_has_capability(event.metadata.get('_platform_session_id'), 'write_digest_without_task')
               else []
           )

@@ -10,6 +10,7 @@ from gobby.workflows.sync_rules import _iter_active_rule_files, get_bundled_rule
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.filterwarnings("error::SyntaxWarning")
 @pytest.mark.parametrize(
     "yaml_file",
     [path for _, path in _iter_active_rule_files(get_bundled_rules_paths())],
