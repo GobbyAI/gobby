@@ -152,7 +152,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
     for yaml_file in sorted(agents_path.glob("*.yaml")):
         try:
             raw_content = yaml_file.read_text(encoding="utf-8")
-            data = yaml.load(raw_content, Loader=_AgentDefinitionLoader)
+            data = _AgentDefinitionLoader(raw_content).get_single_data()
 
             if not isinstance(data, dict):
                 logger.warning("Skipping non-dict YAML file: %s", yaml_file)
