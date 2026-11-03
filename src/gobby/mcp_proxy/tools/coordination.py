@@ -42,7 +42,11 @@ def register_coordination_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "Default timeout 900 seconds, maximum 3600. While waiting, repeating the same "
             "owner and condition returns the original wait and expiry. After completion, "
             "repeating the same owner and condition creates a new wait. Use a fresh key for "
-            "a separate keyed hold. Completion uses protected wake delivery."
+            "a separate keyed hold. Completion uses protected wake delivery. To yield while "
+            "your own provider background task runs (a background shell, monitor or workflow "
+            "that re-invokes you when it finishes), pass background_task_id=<the provider's "
+            "task id> and omit owner_session: the wait holds your turn until your next prompt "
+            "or the timeout."
         ),
     )
     async def wait_for_coordination(
@@ -50,6 +54,7 @@ def register_coordination_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         coordination_key: str | None = None,
         statuses: list[str] | None = None,
         reply: bool = False,
+        background_task_id: str | None = None,
         timeout: float = 900,
         brief: bool = True,
     ) -> dict[str, Any]:
@@ -64,7 +69,12 @@ def register_coordination_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         if refusal is not None:
             return refusal
         try:
-            owner = _resolve_owner(ctx, waiter, owner_session, reply=reply)
+            if background_task_id is not None:
+                if owner_session is not None:
+                    raise ValueError("Omit owner_session with background_task_id: you own it")
+                owner = waiter
+            else:
+                owner = _resolve_owner(ctx, waiter, owner_session, reply=reply)
             row = await asyncio.to_thread(
                 CoordinationWaitManager(ctx.db).register,
                 waiter,
@@ -72,6 +82,7 @@ def register_coordination_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 coordination_key=coordination_key,
                 statuses=statuses,
                 reply=reply,
+                background_task_id=background_task_id,
                 timeout=timeout,
             )
             payload = coordination_wait_payload(row)

@@ -23,6 +23,7 @@ from gobby.skills.capability_routing import (
     standalone_menu,
 )
 from gobby.skills.formatting import skill_fetch_directive
+from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.hook_receipts import retire_session_hook_effects
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.agent_resolver import resolve_cold_start_command
@@ -184,6 +185,14 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     )
                 except (psycopg.Error, KeyError, TypeError, ValueError) as e:
                     self.logger.warning("Failed to reset subagent count on BEFORE_AGENT: %s", e)
+                # The next parent prompt is the provider's completion notification for
+                # a background task the session yielded on, or the operator taking over.
+                try:
+                    CoordinationWaitManager(self._session_manager.db).clear_background_waits(
+                        session_id
+                    )
+                except psycopg.Error as e:
+                    self.logger.warning("Failed to clear background task waits: %s", e)
             elif self._session_manager:
                 self._ensure_bound_grok_native_subagent(event, session_id)
 
