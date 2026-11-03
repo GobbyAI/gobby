@@ -20,6 +20,7 @@ from gobby.adapters.codex_impl.execution_chain import (
     structured_exec_results,
 )
 from gobby.adapters.codex_impl.native_exec_failures import failed_native_outer_calls
+from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource, tool_execution_id
 from gobby.tasks.transcript_background import background_job_receipt
 from gobby.workflows.git_operation_ownership import OPERATIONS_VARIABLE, retire_operation_calls
@@ -286,6 +287,8 @@ class TaskToolBindings:
 
     def reconcile_native_failures(self, event: HookEvent) -> None:
         """Drop uniquely proven abandoned native calls, preserving all edit ownership."""
+        if node_origin():
+            return
         if event.source != SessionSource.CODEX or event.metadata.get("_native_hook_type") not in {
             "PreToolUse",
             "PostToolUse",

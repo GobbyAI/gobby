@@ -1,5 +1,6 @@
 """A terminal native wrapper failure releases only its uniquely correlated inner call."""
 
+import asyncio
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ import pytest
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.codex_impl.native_exec_failures import failed_native_outer_calls
 from gobby.config.app import DaemonConfig
+from gobby.hooks.checkout_reads import delivery_scope, node_origin
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -248,3 +250,56 @@ def test_nested_rollout_is_not_abandonment_evidence(tmp_path: Path) -> None:
     transcript = tmp_path / "nested.jsonl"
     transcript.write_text('{"nested":' + "[" * 200_000 + "0" + "]" * 200_000 + "}\n")
     assert failed_native_outer_calls(str(transcript), {"outer-synthetic"}) == frozenset()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["pre_explicit", "pre_inferred", "post_reconcile"])
+async def test_node_native_hooks_never_open_hub_transcripts(
+    temp_db: HubDatabase,
+    canonical_task_session: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    bindings = TaskToolBindings(SessionVariableManager(temp_db), canonical_task_session.id)
+    bindings.start(
+        HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=canonical_task_session.external_id,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            request_id="pending-inner",
+            data={"tool_name": "Bash"},
+            metadata={"_native_shell_outer_call_id": "pending-outer"},
+        )
+    )
+    monkeypatch.setattr(
+        "gobby.hooks.checkout_reads.get_machine_id",
+        lambda: "00000000-0000-0000-0000-000000000111",
+    )
+    remote = "00000000-0000-0000-0000-000000000222"
+    raw: dict[str, Any] = {
+        "session_id": canonical_task_session.external_id,
+        "machine_id": remote,
+        "cwd": str(tmp_path),
+        "tool_name": "Bash",
+        "tool_use_id": "unrelated-inner",
+        "tool_input": {"command": "pwd"},
+        "transcript_path": str(tmp_path / "node-supplied-transcript"),
+    }
+    if case == "pre_explicit":
+        raw["tool_input"]["workdir"] = str(tmp_path)
+    read = Mock(side_effect=AssertionError("The hub must never open a node transcript"))
+    with monkeypatch.context() as guarded:
+        guarded.setattr(Path, "open", read)
+        with delivery_scope(remote, asyncio.get_running_loop(), str(tmp_path)):
+            assert node_origin()
+            event = CodexHooksAdapter().translate_to_hook_event(
+                {
+                    "hook_type": "PostToolUse" if case == "post_reconcile" else "PreToolUse",
+                    "input_data": raw,
+                }
+            )
+            assert event is not None
+            bindings.reconcile_native_failures(event)
+    read.assert_not_called()

@@ -315,7 +315,7 @@ class CodexHooksAdapter(BaseAdapter):
                     shell_cwd_unproven = True
             elif current_tool_cwd(input_data) is None:
                 shell_cwd_unproven = True
-            else:
+            elif not node_origin():
                 path = input_data.get("transcript_path")
                 command = shell_input.get("command", shell_input.get("cmd"))
                 if isinstance(path, str) and isinstance(command, str):
