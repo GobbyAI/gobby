@@ -20,8 +20,19 @@ use crate::models::Symbol;
 /// the typed `IndexedSourceChanged`, which callers treat as a deferral rather
 /// than an error.
 fn indexed_source(root: &Path, symbol: &Symbol) -> anyhow::Result<String> {
-    let bytes = std::fs::read(root.join(&symbol.file_path))
-        .with_context(|| format!("indexed source {} is unreadable", symbol.file_path))?;
+    let bytes = match std::fs::read(root.join(&symbol.file_path)) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(VectorLifecycleError::IndexedSourceMissing {
+                file_path: symbol.file_path.clone(),
+            }
+            .into());
+        }
+        Err(error) => {
+            return Err(anyhow::Error::new(error)
+                .context(format!("indexed source {} is unreadable", symbol.file_path)));
+        }
+    };
     let found = gobby_core::indexing::content_hash(&bytes);
     if found != symbol.file_content_hash {
         return Err(VectorLifecycleError::IndexedSourceChanged {
