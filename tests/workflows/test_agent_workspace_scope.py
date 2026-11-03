@@ -1411,7 +1411,14 @@ def test_reported_grep_from_a_workspace_cwd_follows_its_leading_cd(
         ("cd inner/deep &&\ncd .. & cat ../session-99/notes.md", True),
         ("cd inner &&\ntrue ||\ntrue & cat ../session-99/notes.md", True),
         ("cd {hop} &&\n(true) & cat ../session-99/notes.md", True),
+        # A comment before the newline does not end the joined list.
+        ("cd inner && # c\ntrue & cat ../session-99/notes.md", True),
+        ("cd inner/deep && # c\ncd .. &\ncat ../session-99/notes.md", True),
+        ("cd {hop} && # c\n(true) & cat ../session-99/notes.md", True),
+        ("cd inner && true || # c; d\ntrue & cat ../session-99/notes.md", True),
+        ("cd inner && true | # c\ncat & cat ../session-99/notes.md", True),
         ("cd inner &&\ntrue\ncat ../notes.md", False),
+        ("cd inner && true # c\ncat ../notes.md", False),
         ("cd inner && true; cat ../notes.md", False),
         # A redirection after the target is not a second operand.
         ("cd inner 2>/dev/null && cat notes.md", False),

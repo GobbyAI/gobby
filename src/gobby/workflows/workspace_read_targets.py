@@ -293,18 +293,27 @@ def _backgrounded(tokens: list[str], start: int) -> bool:
     """Whether the and-or list running through `tokens[start:]` ends at `&`.
 
     The list ends at a top-level `;` or newline, except a newline after `&&`, `||`, `|` or
-    `|&`, which continues it. An `&` anywhere before the end counts, even inside a group, so
-    a misread nesting only keeps more places.
+    `|&`, which continues it. A `#` comment up to the newline is skipped when finding what
+    precedes it, and ends nothing. An `&` anywhere before the end counts, even inside a group
+    or what looks like a comment, so a misread nesting or quote only keeps more places.
     """
     depth = 0
     previous = ""
+    comment = False
     for token in tokens[start:]:
+        if token == "&":
+            return True
+        if token == "\n" and comment:
+            comment = False
+        elif comment:
+            continue
+        elif token.startswith("#"):
+            comment = True
+            continue
         if token in {"(", "{"}:
             depth += 1
         elif token in {")", "}"}:
             depth -= 1
-        elif token == "&":
-            return True
         elif depth <= 0 and (token == ";" or (token == "\n" and previous not in _LIST_JOINS)):
             return False
         if token != "\n":
