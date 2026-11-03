@@ -48,6 +48,60 @@ from gobby.workflows.templates import TemplateEngine
 logger = logging.getLogger(__name__)
 
 
+def build_rule_condition_helpers(
+    ctx: dict[str, Any],
+    *,
+    task_manager: Any = None,
+    session_manager: Any = None,
+) -> dict[str, Callable[..., Any]]:
+    """Construct the hook engine's helper registry without invoking any helper."""
+    funcs = build_condition_helpers(
+        task_manager=task_manager, context=ctx, session_manager=session_manager
+    )
+    funcs.update(
+        {
+            "isinstance": isinstance,
+            "is_tool_unlocked": lambda ti: is_tool_unlocked(ti, ctx.get("variables", {})),
+            "is_argumentless_proxy_tool": is_argumentless_proxy_tool,
+            "schema_lease_key": schema_lease_key,
+            "is_discovery_tool": is_discovery_tool,
+            "is_operator_tool": is_operator_tool,
+            "is_plan_file": is_plan_file,
+            "is_current_plan_artifact": lambda file_path, artifact_path: is_current_plan_artifact(
+                file_path, artifact_path, project_path=(ctx.get("project") or {}).get("path")
+            ),
+            "get_touched_file_paths": get_touched_file_paths,
+            "plan_write_paths_allowed": (
+                lambda tool_input, provider, artifact_path=None, require_current_artifact=False: (
+                    plan_write_paths_allowed(
+                        tool_input,
+                        provider,
+                        artifact_path,
+                        require_current_artifact,
+                        project_path=(ctx.get("project") or {}).get("path"),
+                        event_data=(
+                            ctx["event"].data if isinstance(ctx.get("event"), HookEvent) else None
+                        ),
+                    )
+                )
+            ),
+            "claimed_task_source_code_write": claimed_task_source_code_write,
+            "requires_task_for_any_touched_file": requires_task_for_any_touched_file,
+            "is_message_delivery_tool": is_message_delivery_tool,
+            "skill_fetch_batch_directive": skill_fetch_batch_directive,
+            "skill_fetch_directive": skill_fetch_directive,
+            "has_pending_messages": lambda session_id: False,
+            "pending_message_count": lambda session_id: 0,
+            "has_active_agent_wait": lambda: bool(ctx.get("_has_active_agent_wait", False)),
+            "has_active_coordination_wait": lambda: bool(
+                ctx.get("_has_active_coordination_wait", False)
+            ),
+            "has_durable_stop_wait": lambda: bool(ctx.get("_has_durable_stop_wait", False)),
+        }
+    )
+    return funcs
+
+
 def is_resolved_project(project: Any) -> bool:
     """Return whether a session's ``project`` variable can stand in for resolution.
 
@@ -237,50 +291,13 @@ class TemplatingMixin:
 
     def _build_allowed_funcs(self, ctx: dict[str, Any]) -> dict[str, Callable[..., Any]]:
         """Build the shared helper-function dict for condition evaluation and template rendering."""
-        funcs = build_condition_helpers(
+        funcs = build_rule_condition_helpers(
+            ctx,
             task_manager=getattr(self, "_task_manager", None),
-            context=ctx,
             session_manager=getattr(self, "_session_manager", None),
         )
-        funcs["isinstance"] = isinstance
-        funcs["is_tool_unlocked"] = lambda ti: is_tool_unlocked(ti, ctx.get("variables", {}))
-        funcs["is_argumentless_proxy_tool"] = is_argumentless_proxy_tool
-        funcs["schema_lease_key"] = schema_lease_key
-        funcs["is_discovery_tool"] = is_discovery_tool
-        funcs["is_operator_tool"] = is_operator_tool
-        funcs["is_plan_file"] = is_plan_file
-        funcs["is_current_plan_artifact"] = (
-            lambda file_path, artifact_path: is_current_plan_artifact(
-                file_path, artifact_path, project_path=(ctx.get("project") or {}).get("path")
-            )
-        )
-        funcs["get_touched_file_paths"] = get_touched_file_paths
-        funcs["plan_write_paths_allowed"] = (
-            lambda tool_input, provider, artifact_path=None, require_current_artifact=False: (
-                plan_write_paths_allowed(
-                    tool_input,
-                    provider,
-                    artifact_path,
-                    require_current_artifact,
-                    project_path=(ctx.get("project") or {}).get("path"),
-                    event_data=(
-                        ctx["event"].data if isinstance(ctx.get("event"), HookEvent) else None
-                    ),
-                )
-            )
-        )
-        funcs["claimed_task_source_code_write"] = claimed_task_source_code_write
-        funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
-        funcs["is_message_delivery_tool"] = is_message_delivery_tool
-        funcs["skill_fetch_batch_directive"] = skill_fetch_batch_directive
-        funcs["skill_fetch_directive"] = skill_fetch_directive
         funcs["has_pending_messages"] = self._has_pending_messages
         funcs["pending_message_count"] = self._pending_message_count
-        funcs["has_active_agent_wait"] = lambda: bool(ctx.get("_has_active_agent_wait", False))
-        funcs["has_active_coordination_wait"] = lambda: bool(
-            ctx.get("_has_active_coordination_wait", False)
-        )
-        funcs["has_durable_stop_wait"] = lambda: bool(ctx.get("_has_durable_stop_wait", False))
         return funcs
 
     def _render_template(

@@ -1,0 +1,45 @@
+version: "1.0.0"
+tags: [roles, runbook, enforcement, gobby]
+
+rules:
+  inject-standing-directives:
+    description: "Inject the standing-directives procedure once per context epoch for every runbook seat"
+    event: turn_start
+    enabled: true
+    priority: 21
+    when: "not variables.get('_standing_directives_injected')"
+    effects:
+      - type: inject_context
+        delivery: on_receipt
+        template: |
+          ## Standing directives
+          Keep `standing-directives.md` in your agent workspace session folder (named in your
+          Agent Workspace context). When an operator directive with a trigger arrives, add an
+          entry on arrival with its date, source, trigger and status (waiting, fired or done,
+          with the done time). Re-read the file after every compaction and every relayed
+          coordination digest, and check it on every status report. Cite the file's path in the
+          references of every handoff you write, as a pointer only; never copy its entries into a
+          handoff.
+
+          The file holds only what has no better home. Route each directive by kind:
+          - It must block or require an action every time: propose a rule.
+          - It orders work: record a task dependency.
+          - It is a fact or a pointer: put it in project_policy or the task's state.
+          - It is context for a pending trigger: keep it here.
+          - It is done: delete the entry, citing the evidence.
+      - type: set_variable
+        delivery: on_receipt
+        variable: _standing_directives_injected
+        value: true
+
+  reset-standing-directives-on-context-loss:
+    description: "Re-arm the standing-directives procedure after context loss"
+    event: session_start
+    enabled: true
+    # Same condition and priority as reset-seat-common-on-context-loss.
+    priority: 8
+    when: "event.data.get('source') in ['clear', 'compact'] or (event.data.get('source') == 'resume' and variables.get('pending_context_reset'))"
+    effects:
+      - type: set_variable
+        variable: _standing_directives_injected
+        value: false

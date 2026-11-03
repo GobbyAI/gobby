@@ -30,14 +30,18 @@ def _create(
     *,
     name: str = "block-edit",
     project_id: str | None = None,
-    event: str = "PreToolUse",
+    event: str = "before_tool",
     group: str = "safety",
     priority: int = 10,
     enabled: bool = True,
 ) -> RuleDefinitionRow:
     return _mgr(db).create(
         name=name,
-        definition_json={"event": event, "group": group, "action": "deny"},
+        definition_json={
+            "event": event,
+            "group": group,
+            "effects": [{"type": "block", "reason": "Synthetic decision"}],
+        },
         project_id=project_id,
         priority=priority,
         enabled=enabled,
@@ -49,7 +53,7 @@ def _create(
 def test_create_get_and_scope_fallback(definition_db: PostgresHubDatabase) -> None:
     manager = _mgr(definition_db)
     global_row = _create(definition_db, name="shared")
-    project_row = _create(definition_db, name="shared", project_id=_PROJECT, event="Stop")
+    project_row = _create(definition_db, name="shared", project_id=_PROJECT, event="turn_end")
 
     assert manager.get(global_row.id).name == "shared"
     fetched = manager.get_by_name("shared", project_id=_PROJECT)
@@ -103,11 +107,11 @@ def test_restore_collision_and_purge(definition_db: PostgresHubDatabase) -> None
 
 def test_list_by_event_and_group_priority_order(definition_db: PostgresHubDatabase) -> None:
     manager = _mgr(definition_db)
-    _create(definition_db, name="b-rule", event="PreToolUse", group="safety", priority=20)
-    _create(definition_db, name="a-rule", event="PreToolUse", group="safety", priority=10)
-    _create(definition_db, name="other", event="Stop", group="lifecycle", priority=1)
+    _create(definition_db, name="b-rule", event="before_tool", group="safety", priority=20)
+    _create(definition_db, name="a-rule", event="before_tool", group="safety", priority=10)
+    _create(definition_db, name="other", event="turn_end", group="lifecycle", priority=1)
 
-    by_event = manager.list_by_event("PreToolUse")
+    by_event = manager.list_by_event("before_tool")
     assert [row.name for row in by_event] == ["a-rule", "b-rule"]
     by_group = manager.list_by_group("lifecycle")
     assert [row.name for row in by_group] == ["other"]
@@ -148,10 +152,7 @@ def test_mutator_nested_rollback_leaves_revisions_untouched(
 
     with pytest.raises(RuntimeError, match="outer rollback"):
         with definition_db.transaction():
-            manager.create(
-                name="ephemeral",
-                definition_json={"event": "Stop"},
-            )
+            _create(definition_db, name="ephemeral", event="turn_end")
             raise RuntimeError("outer rollback")
 
     assert get_definitions_revision("rules") == before_local
@@ -168,14 +169,13 @@ def test_mutator_nested_rollback_leaves_revisions_untouched(
 def test_mutator_that_raises_after_write_start_does_not_bump(
     definition_db: PostgresHubDatabase,
 ) -> None:
-    manager = _mgr(definition_db)
     _create(definition_db, name="taken")
     before_local = get_definitions_revision("rules")
     fired: list[str] = []
     register_revision_listener("rules", lambda: fired.append("rules"))
 
     with pytest.raises(DefinitionNameConflictError):
-        manager.create(name="taken", definition_json={"event": "Stop"})
+        _create(definition_db, name="taken", event="turn_end")
 
     assert get_definitions_revision("rules") == before_local
     assert fired == []

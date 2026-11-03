@@ -24,6 +24,8 @@ from tests.agents import test_team_epic_dispatch as epic_dispatch
 from tests.agents.test_team_epic_dispatch import LEAF_TITLE, epic_team, new_task
 from tests.agents.test_team_epic_dispatch import world as world_fixture
 from tests.fixtures.team_case import TITLE, TeamWorld
+from tests.fixtures.team_spawn_scope import _define_agent, _Teams
+from tests.fixtures.team_spawn_scope import teams as teams_fixture
 from tests.mcp_proxy.tools.spawn_agent import test_placement as spawn_placement
 from tests.mcp_proxy.tools.spawn_agent.test_placement import placed as placed_fixture
 from tests.terminals.test_workspace_agent_panes import (
@@ -32,8 +34,6 @@ from tests.terminals.test_workspace_agent_panes import (
     _workspace,
 )
 from tests.terminals.test_workspace_agent_panes import harness as workspace_fixture
-from tests.fixtures.team_spawn_scope import _define_agent, _Teams
-from tests.fixtures.team_spawn_scope import teams as teams_fixture
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 harness = workspace_fixture
@@ -62,7 +62,11 @@ async def test_placed_resume_is_admitted_only_for_the_team_managers_own_seat(
     h = harness
     workspace = _workspace(h)
     _define_agent(
-        h.db, "dev-team-lead", None, variables={"team_manager": True}, resumable=("developer",)
+        h.db,
+        "fixture-definition-f0ad0fd9",
+        None,
+        variables={"team_manager": True},
+        resumable=("fixture-worker",),
     )
     placement = {"tab": {"workspace": workspace.id, "title": "seat"}}
 
@@ -76,11 +80,11 @@ async def test_placed_resume_is_admitted_only_for_the_team_managers_own_seat(
             project_id=h.project_id,
             project_context_authoritative=True,
             session_manager=h.sessions,
-            agent_name="developer",
+            agent_name="fixture-worker",
             resume_session_id=resume_session_id,
         )
 
-    admitted = await place(teams.seats["developer"].id)
+    admitted = await place(teams.seats["fixture-worker"].id)
     assert isinstance(admitted, PlacedLaunch), admitted
     assert admitted.resolved.workspace_id == workspace.id
 
@@ -105,7 +109,7 @@ async def _manager_spawns_developer(
 ) -> dict[str, Any]:
     # The procedure's own-team route: a primary seat joins the team tree, never a pod checkout.
     arguments: dict[str, Any] = {
-        "agent": "developer",
+        "agent": "fixture-worker",
         "parent_session_id": manager,
         "task_id": leaf.id,
         "prompt": "Work the leaf",
@@ -142,7 +146,7 @@ async def test_epic_manager_places_its_fresh_seat_into_its_own_team_tab(
                     "workspace": h.workspace.id,
                     "tab_title": target_tab,
                     "axis": "right",
-                    "title": "developer",
+                    "title": "fixture-worker",
                 }
             },
             reserver=h.reserver,
@@ -152,7 +156,7 @@ async def test_epic_manager_places_its_fresh_seat_into_its_own_team_tab(
             project_id=h.project_id,
             project_context_authoritative=True,
             session_manager=h.sessions,
-            agent_name="developer",
+            agent_name="fixture-worker",
         )
 
     admitted = await place(tab_title)
@@ -187,7 +191,7 @@ async def test_epic_manager_fresh_seat_stays_refused_outside_its_team(
             "workspace": h.workspace.id,
             "tab_title": title,
             "axis": "right",
-            "title": "developer",
+            "title": "fixture-worker",
         }
         result = await _manager_spawns_developer(team.manager, h, leaf, {"split": split})
         assert result["success"] is False, (title, result)
@@ -211,7 +215,7 @@ async def test_epic_manager_spawn_seats_its_developer_in_its_own_team_tab(
     placed_harness: spawn_placement._Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A real spawn_agent from an epic Dev Team Lead lands its developer in its own team tab."""
+    """A real spawn_agent from an epic Dev Team Lead lands its fixture-worker in its own team tab."""
     _restore_real_spawn(monkeypatch)
     epic = new_task(world, TITLE, epic=True)
     leaf = new_task(world, LEAF_TITLE, parent=epic)
@@ -224,7 +228,7 @@ async def test_epic_manager_spawn_seats_its_developer_in_its_own_team_tab(
         "workspace": h.workspace.id,
         "tab_title": tab_title,
         "axis": "right",
-        "title": "developer",
+        "title": "fixture-worker",
     }
 
     reply = await _manager_spawns_developer(team.manager, h, leaf, {"split": split})

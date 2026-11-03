@@ -795,7 +795,7 @@ class TestSpawnAgentParamOverrides:
     @pytest.mark.asyncio
     async def test_one_shot_spawn_drops_interactive_guidance(self, mock_runner: MagicMock) -> None:
         body = make_agent_definition(
-            name="developer",
+            name="fixture-worker",
             provider="claude",
             model="claude-sonnet-5",
             execution_mode="interactive",
@@ -1473,7 +1473,7 @@ class TestSpawnAgentPromptPreamble:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         agent_body = make_agent_definition(
-            prompts={"agent": "## Role\nBackend developer\n\nWrite clean code."},
+            prompts={"agent": "## Role\nBackend fixture-worker\n\nWrite clean code."},
             name="dev",
             provider="claude",
             model="claude-sonnet-5",

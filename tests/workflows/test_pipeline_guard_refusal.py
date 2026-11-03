@@ -73,7 +73,7 @@ async def test_guard_logging_preserves_refusal_and_real_failure(
                     server="gobby-agents",
                     tool="check_runbook_seats",
                     arguments={
-                        "requested": "developer",
+                        "requested": "fixture-worker",
                         "catalogue": [],
                         "workspace": "${{ inputs.workspace }}",
                     },

@@ -1,6 +1,6 @@
 """The SRT run's socket root reaches the rule engine as a daemon-written session variable (#25365).
 
-block-temp-scratchpad-writes admits writes under the socket root that a macOS SRT launch
+Configured write-scope rules admit writes under the socket root that a macOS SRT launch
 granted its own run. The variable is recorded from the launch that granted it, withdrawn
 when a relaunch grants none, reserved from agent writes, and carried to a sandboxed clear
 successor. That successor runs in the same process under the same grant.
@@ -37,7 +37,7 @@ pytestmark = pytest.mark.unit
 
 SOCKET_ROOT_VARIABLE = "_agent_srt_socket_root"
 RUN_ROOT = "/private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-aaaa1111"
-SEAT = "developer"
+SEAT = "fixture-worker"
 
 
 @pytest.fixture

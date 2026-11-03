@@ -77,7 +77,7 @@ def test_start_expansion_schema_accepts_reset_output(temp_db: HubDatabase) -> No
 
 
 def test_start_expansion_schema_accepts_explicit_null_optionals(temp_db: HubDatabase) -> None:
-    """The expand-task pipeline sends explicit nulls for unset optional inputs."""
+    """Pipeline-style calls send explicit nulls for unset optional inputs."""
     from gobby.mcp_proxy.services.argument_validation import check_arguments
     from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 

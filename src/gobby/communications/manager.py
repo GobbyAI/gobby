@@ -10,6 +10,7 @@ from dataclasses import asdict, replace
 from threading import RLock
 from typing import TYPE_CHECKING, Any, cast
 
+from gobby.communications import transcript_order
 from gobby.communications.adapters import get_adapter_class
 from gobby.communications.adapters.base import BaseChannelAdapter
 from gobby.communications.adapters.telegram import TelegramAdapter
@@ -317,6 +318,10 @@ class CommunicationsManager:
                         thread_id=current.get("thread_id"),
                     )
                     continue
+                if await asyncio.to_thread(
+                    transcript_order.waits_for_earlier_block, self, session_id, message
+                ):
+                    continue
                 await self.send_message(
                     channel.name,
                     message.content,
@@ -336,7 +341,13 @@ class CommunicationsManager:
             for channel in tuple(self._channel_by_name.values())
         )
 
-    async def mirror_session_message(self, session_id: str, message_id: str, content: str) -> None:
+    async def mirror_session_message(
+        self,
+        session_id: str,
+        message_id: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         """Mirror completed transcript text to a session's live Telegram attachment."""
         for channel in tuple(self._channel_by_name.values()):
             if channel.channel_type != "telegram" or not channel.enabled:
@@ -348,6 +359,7 @@ class CommunicationsManager:
                 channel.name,
                 content,
                 session_id=session_id,
+                metadata=metadata,
                 idempotency_key=message_id,
             )
             if message.status != "sent":

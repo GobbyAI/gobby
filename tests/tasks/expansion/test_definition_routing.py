@@ -23,8 +23,8 @@ def test_definition_rejects_unknown_route_values(routing: dict[str, list[str]]) 
 @pytest.mark.parametrize("category", ["code", "config", "docs", "refactor", "test"])
 def test_expansion_selects_declared_category(category: str) -> None:
     definitions: list[dict[str, Any]] = [
-        {"name": "developer"},
-        {"name": "tech-writer"},
+        {"name": "fixture-worker"},
+        {"name": "fixture-definition-76c4b50c"},
         {"name": "custom-builder", "task_categories": [category]},
     ]
     agent, skills, description = _agent_selection_fields(
@@ -67,7 +67,7 @@ def test_expansion_uses_declared_domain(domain: str) -> None:
     "definitions",
     [
         [],
-        [{"name": "developer"}, {"name": "tech-writer"}],
+        [{"name": "fixture-worker"}, {"name": "fixture-definition-76c4b50c"}],
         [{"name": "off", "enabled": False, "task_categories": ["code"]}],
         [{"name": "interactive", "surfaces": ["persona"], "task_categories": ["code"]}],
         [{"name": "ui", "task_categories": ["code"], "implementation_domains": ["frontend"]}],

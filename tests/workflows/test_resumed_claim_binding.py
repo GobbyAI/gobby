@@ -46,7 +46,7 @@ def _claim_definition() -> dict[str, Any]:
 
 
 async def _developer_at_claim(temp_db: HubDatabase) -> tuple[SeatRun, Task]:
-    run = SeatRun(temp_db, "developer", definition=_claim_definition())
+    run = SeatRun(temp_db, "fixture-worker", definition=_claim_definition())
     await run.load(*run.vars["required_skills"])
     assert run.step == "claim"
     return run, run.task(owner=SESSION_ID)
@@ -90,7 +90,7 @@ async def test_resumed_seat_with_restored_selection_binds_on_already_claimed(
 async def test_bootstrap_admits_only_active_runs_owned_claim_and_binds_after_skills(
     temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    run = SeatRun(temp_db, "developer", definition=_claim_definition())
+    run = SeatRun(temp_db, "fixture-worker", definition=_claim_definition())
     task = run.task(owner=SESSION_ID)
     foreign_task = run.task()
     assert not await run.admits("gobby-tasks", "claim_task", {"task_id": task.id})
@@ -99,7 +99,7 @@ async def test_bootstrap_admits_only_active_runs_owned_claim_and_binds_after_ski
         parent_session_id=COORDINATOR_ID,
         provider="claude",
         prompt="Resume the claimed task",
-        agent_name="developer",
+        agent_name="fixture-worker",
         child_session_id=SESSION_ID,
         task_id=task.id,
     )
@@ -150,7 +150,7 @@ async def test_holder_outside_the_team_reclaims_and_advances_the_claim_step(
         parent_session_id=COORDINATOR_ID,
         provider="claude",
         prompt="Hold the claim outside the team",
-        agent_name="developer",
+        agent_name="fixture-worker",
         child_session_id=SESSION_ID,
         task_id=task.id,
     )

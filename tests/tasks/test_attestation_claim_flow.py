@@ -85,7 +85,11 @@ def _exercise_claim_flow(
     seats = AgentSessions(temp_db, project)
     maker = seats.add("baker", ["recipe", "checks"])
     reviewer = seats.add("taster", ["verdict", "checks"])
-    lead = seats.add("host", ["checks", "closing"])
+    pod = scenario == "pod"
+    manager = {"rule_selectors": {"include": []}, "variables": {"team_manager": True}}
+    lead = seats.add(
+        "host", ["checks", "closing"], definition_fields={"workflows": manager} if pod else None
+    )
     stages = {
         "implement": {"seat": "author", "done_when": ["recipe", "checks"], "next": "review"},
         "review": {
@@ -130,18 +134,53 @@ def _exercise_claim_flow(
         machine_id=require_machine_id(),
         project_id=project,
     )
-    binding = TeamBinding(execution.id, task.id, project, "cake", "main", None, None)
+    epic_id = None
+    if pod:
+        # The epic team's live manager holds the pod's lead stage; the pod launched no lead.
+        from gobby.storage.agents import LocalAgentRunManager
+
+        epic = executions.create_execution(
+            "cake-epic",
+            definition_json=json.dumps(
+                {"name": "cake-epic", "steps": [{"id": "admit", "exec": "true"}]}
+            ),
+        )
+        epic_id = epic.id
+        epic_session = SessionManager(temp_db).register(
+            external_id=f"pipeline-{epic.id}",
+            source="pipeline",
+            machine_id=require_machine_id(),
+            project_id=project,
+        )
+        epic_binding = TeamBinding(epic.id, task.id, project, "epic", "main", None, None)
+        step = executions.create_step_execution(epic.id, "admit")
+        executions.update_step_execution(
+            step.id,
+            status=StepStatus.COMPLETED,
+            output_json=json.dumps({"team": asdict(epic_binding)}),
+        )
+        epic_runs = LocalAgentRunManager(temp_db)
+        lead_run = epic_runs.create(
+            epic_session.id, "codex", "Lead", agent_name="host", child_session_id=lead
+        )
+        epic_runs.start(lead_run.id)
+        temp_db.execute(
+            "UPDATE sessions SET parent_session_id = %s WHERE id = %s", (epic_session.id, lead)
+        )
+    binding = TeamBinding(
+        execution.id, task.id, project, "cake", "main", None, None, parent_team_id=epic_id
+    )
     for name, output in (
         ("admit", {"team": asdict(binding)}),
         ("author", {"child_session_id": maker}),
         ("critic", {"child_session_id": reviewer}),
-        ("closer", {"child_session_id": lead}),
+        *(() if pod else (("closer", {"child_session_id": lead}),)),
     ):
         step = executions.create_step_execution(execution.id, name)
         executions.update_step_execution(
             step.id, status=StepStatus.COMPLETED, output_json=json.dumps(output)
         )
-    for session in (maker, reviewer, lead):
+    for session in (maker, reviewer) if pod else (maker, reviewer, lead):
         temp_db.execute(
             "UPDATE sessions SET parent_session_id = %s WHERE id = %s", (parent.id, session)
         )
@@ -252,7 +291,7 @@ def _exercise_claim_flow(
     return task.id, lead
 
 
-@pytest.mark.parametrize("scenario", ["readmitted", "future-ambiguous", "null-last"])
+@pytest.mark.parametrize("scenario", ["readmitted", "future-ambiguous", "null-last", "pod"])
 def test_claim_flow_only_considers_current_team_and_needed_seats(
     temp_db: HubDatabase, sample_project: dict[str, Any], scenario: str
 ) -> None:

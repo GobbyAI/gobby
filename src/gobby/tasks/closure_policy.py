@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import PurePosixPath
@@ -77,23 +78,7 @@ def evaluate_closure_policy(
     context["all_attestations"] = all_records
     context["attestations"] = active
 
-    def latest_attestation(kind: str) -> dict[str, Any]:
-        return next((record for record in reversed(active) if record["kind"] == kind), {})
-
-    evaluator = SafeExpressionEvaluator(
-        context,
-        {
-            "latest_attestation": latest_attestation,
-            "any": any,
-            "all": all,
-            "len": len,
-            "str": str,
-            "int": int,
-            "bool": bool,
-            "paths_match": paths_match,
-            "timestamp": lambda value: datetime.fromisoformat(value).timestamp(),
-        },
-    )
+    evaluator = SafeExpressionEvaluator(context, build_closure_condition_helpers(context))
     blockers = []
     for row in selected:
         try:
@@ -113,6 +98,32 @@ def evaluate_closure_policy(
         policy_revision,
         _digest({"snapshot": snapshot.model_dump(mode="json"), "policy": policy_revision}),
     )
+
+
+def build_closure_condition_helpers(context: dict[str, Any]) -> dict[str, Callable[..., Any]]:
+    """The closure engine's function contract; construction performs no queries."""
+
+    def latest_attestation(kind: str) -> dict[str, Any]:
+        return next(
+            (
+                record
+                for record in reversed(context.get("attestations", []))
+                if record["kind"] == kind
+            ),
+            {},
+        )
+
+    return {
+        "latest_attestation": latest_attestation,
+        "any": any,
+        "all": all,
+        "len": len,
+        "str": str,
+        "int": int,
+        "bool": bool,
+        "paths_match": paths_match,
+        "timestamp": lambda value: datetime.fromisoformat(value).timestamp(),
+    }
 
 
 def paths_match(paths: list[str], patterns: list[str]) -> bool:

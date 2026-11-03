@@ -67,7 +67,7 @@ async def test_epic_reviewer_end_agent_run_releases_only_its_successful_assigned
     run = runner.run_storage.create(
         parent_session_id=parent.id,
         child_session_id=child.id,
-        agent_name="epic-reviewer",
+        agent_name="fixture-definition-b155e932",
         provider="codex",
         prompt="Review the epic",
         task_id=epic.id,

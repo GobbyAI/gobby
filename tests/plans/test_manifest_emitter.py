@@ -145,7 +145,7 @@ def test_canonical_derivation_rejects_non_routing_input(
         ({"implementation_domain": 3}, "implementation_domain"),
         ({"category": "docs", "assigned_agent": 3}, "assigned_agent"),
         (
-            {"assigned_agent": "developer", "implementation_domain": "backend"},
+            {"assigned_agent": "fixture-worker", "implementation_domain": "backend"},
             "assigned_agent is forbidden for category code; use implementation_domain",
         ),
         (
@@ -153,11 +153,15 @@ def test_canonical_derivation_rejects_non_routing_input(
             "assigned_agent is forbidden for category code; use implementation_domain",
         ),
         (
-            {"category": "test", "assigned_agent": "developer", "implementation_domain": None},
+            {"category": "test", "assigned_agent": "fixture-worker", "implementation_domain": None},
             "implementation_domain is forbidden for category test; use assigned_agent",
         ),
         (
-            {"category": "test", "assigned_agent": "developer", "implementation_domain": "backend"},
+            {
+                "category": "test",
+                "assigned_agent": "fixture-worker",
+                "implementation_domain": "backend",
+            },
             "implementation_domain is forbidden for category test; use assigned_agent",
         ),
         (

@@ -326,7 +326,7 @@ def test_aged_stop_block_is_reevaluated_instead_of_replayed(
     terminal_response = {
         "continue": True,
         "decision": "block",
-        "reason": "Rule enforced by Gobby: [block-terminal-validation-failure]\nfix it",
+        "reason": "Rule enforced by Gobby: [fixture-stop-gate]\nfix it",
     }
     allow_response = {"continue": True, "decision": "allow"}
     envelope_id = "n-0000000000003-stop"

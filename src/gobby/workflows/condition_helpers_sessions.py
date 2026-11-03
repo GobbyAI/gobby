@@ -67,7 +67,7 @@ def send_keys_target_in_scope(
     the caller's own session, its project, and its agent tree in either direction.
     A missing or unresolvable caller, and an unresolvable target, pass here.
     ``send_keys`` refuses each with its own error. A spawned agent's calls are
-    scoped like any other caller's: the ``no-send-keys`` rule decides
+    scoped like any other caller's. The active definition's capabilities decide
     whether it may use these tools at all. For ``capture_output``, a request with
     no caller is the operator's, and the target lookup takes a session UUID, which
     resolves here by primary key. Any other failure raises, and a raising block
@@ -906,7 +906,7 @@ def session_condition_helpers(
     session_manager: SessionManager | None,
 ) -> dict[str, Callable[..., Any]]:
     """Bind the session-scope helpers to the evaluator's session manager."""
-    from gobby.workflows.condition_helpers_pods import dev_pod_launch_allowed
+    from gobby.workflows.condition_helpers_pods import dev_pod_launch_refusal
     from gobby.workflows.engine.idle_declaration import readiness_message_completed
 
     return {
@@ -926,8 +926,8 @@ def session_condition_helpers(
             and all(isinstance(path, str) for path in paths)
             and session_declared_paths_cover(session_manager.db, caller_id, paths)
         ),
-        "dev_pod_launch_allowed": lambda caller_id, tool_name, arguments, pod_pipelines: (
-            dev_pod_launch_allowed(session_manager, caller_id, tool_name, arguments, pod_pipelines)
+        "dev_pod_launch_refusal": lambda caller_id, tool_name, arguments, pod_pipelines: (
+            dev_pod_launch_refusal(session_manager, caller_id, tool_name, arguments, pod_pipelines)
         ),
         "seat_readiness_completed": lambda caller_id, output: readiness_message_completed(
             session_manager, caller_id, output

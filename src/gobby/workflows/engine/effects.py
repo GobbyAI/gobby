@@ -470,7 +470,7 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
             )
 
         # If value is a string that looks like an expression, evaluate it
-        if isinstance(value, str) and self._is_expression(value):
+        if isinstance(value, str) and self.is_expression(value):
             try:
                 evaluator = SafeExpressionEvaluator(
                     context=eval_context,
@@ -498,7 +498,8 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
             staged=staged,
         )
 
-    def _is_expression(self, value: str) -> bool:
+    @staticmethod
+    def is_expression(value: str) -> bool:
         """Heuristic: is this string an expression rather than a literal?"""
         normalized = SafeExpressionEvaluator._normalize_expr(value)
         expression_indicators = (

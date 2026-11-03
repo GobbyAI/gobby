@@ -49,7 +49,7 @@ class TestSessionManagerPruning:
         workflow_manager.save(
             make_step_instance(
                 session.id,
-                agent_name="developer",
+                agent_name="fixture-worker",
                 current_step="implement",
             )
         )
@@ -67,7 +67,7 @@ class TestSessionManagerPruning:
         assert updated.status == "expired"
         instance = workflow_manager.get_for_session(session.id)
         assert instance is not None
-        assert instance.agent_name == "developer"
+        assert instance.agent_name == "fixture-worker"
 
     def test_handoff_sweep_preserves_live_or_unconfirmed_native_terminal(
         self,
@@ -180,7 +180,7 @@ class TestSessionManagerPruning:
         workflow_manager.save(
             make_step_instance(
                 session.id,
-                agent_name="developer",
+                agent_name="fixture-worker",
                 current_step="implement",
             )
         )
@@ -223,7 +223,7 @@ class TestSessionManagerPruning:
             workflow_manager.save(
                 make_step_instance(
                     session_id,
-                    agent_name="developer",
+                    agent_name="fixture-worker",
                     current_step="implement",
                 )
             )

@@ -55,7 +55,7 @@ def test_task_readers_do_not_interpret_retired_workflow_records(
         "round_number": 1,
         "commit_sha": _APPROVED,
         "sequence": 1,
-        "agent_definition": "code-reviewer",
+        "agent_definition": "fixture-definition-e08ba693",
         "supplemental_review": False,
         "session_id": "reviewer-session",
     }

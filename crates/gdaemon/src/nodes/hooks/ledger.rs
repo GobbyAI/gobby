@@ -634,9 +634,7 @@ fn stop_block(record: &Value, response: &Value) -> bool {
     matches!(
         hook.as_str(),
         "stop" | "subagent_stop" | "subagent_end" | "session_end" | "turn_end" | "stop_failure"
-    ) || response["reason"]
-        .as_str()
-        .is_some_and(|reason| reason.contains("[block-terminal-validation-failure]"))
+    )
 }
 
 #[cfg(target_os = "macos")]

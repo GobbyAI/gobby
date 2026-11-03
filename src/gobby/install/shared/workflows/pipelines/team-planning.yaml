@@ -1,6 +1,6 @@
 name: team-planning
 type: pipeline
-version: "2.0.0"
+version: "2.2.0"
 description: |
   Planning runbook: launches the plan writer, plan enhancer and plan adversary seats into one
   'Team Planning - #<task>' tab in the shared checkout. Each seat runs its own agent definition, and
@@ -42,8 +42,8 @@ inputs:
     description: "Shared project checkout; no worktree is created"
   seats:
     type: string
-    default: plan-writer
-    description: "Comma-separated missing seats: plan-writer, plan-adversary, plan-enhancer"
+    default: plan-writer,plan-adversary,plan-enhancer
+    description: "Comma-separated seats to launch: plan-writer, plan-adversary, plan-enhancer; omit to launch all three"
   report_to:
     type: string
     required: true
@@ -122,7 +122,7 @@ steps:
       arguments:
         plan_id_or_ref: "${{ inputs.task }}"
         project: "${{ inputs.project_path }}"
-        required: false
+        required: "${{ 'plan-writer' not in inputs.seats.split(',') }}"
 
   # list_tasks returns at most limit rows, and open_count is the total of open children. The count
   # comes first so the next step can list every open child.
@@ -221,7 +221,7 @@ steps:
         checkout_mode: none
         project_path: "${{ inputs.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the plan enhancer seat for task ${{ inputs.task }} (${{ steps['target'].output.get('title') or inputs.task }}). Your plan file is ${{ (steps['registered-plan'].output.get('plan') or {}).get('plan_path') or ('.gobby/plans/task-' + (inputs.task | replace('#', '')) + '.md') }}. ${{ ('Your Plan Writer is session ' ~ steps['plan-writer'].output.get('child_session_id') ~ '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' ~ steps['plan-writer'].output.get('child_session_id') ~ '\").') if 'plan-writer' in inputs.seats.split(',') else '' }} ${{ ('Your Plan Adversary is session ' ~ steps['plan-adversary'].output.get('child_session_id') ~ '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' ~ steps['plan-adversary'].output.get('child_session_id') ~ '\").') if 'plan-adversary' in inputs.seats.split(',') else '' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Complete your installed required-skill bootstrap order before filesystem reads. For standing coordination, follow your installed two-owner wait protocol for the Plan Writer and report_to=\"${{ inputs.report_to }}\"; discover the Writer through report_to if it was not launched here. Cancel the unused wait when either source replies, and never automatically repeat an hourly timeout cycle. Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the plan enhancer seat for task ${{ inputs.task }} (${{ steps['target'].output.get('title') or inputs.task }}). Your plan file is ${{ (steps['registered-plan'].output.get('plan') or {}).get('plan_path') or ('.gobby/plans/task-' + (inputs.task | replace('#', '')) + '.md') }}. ${{ ('Your Plan Writer is session ' ~ steps['plan-writer'].output.get('child_session_id') ~ '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' ~ steps['plan-writer'].output.get('child_session_id') ~ '\").') if 'plan-writer' in inputs.seats.split(',') else '' }} ${{ ('Your Plan Adversary is session ' ~ steps['plan-adversary'].output.get('child_session_id') ~ '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' ~ steps['plan-adversary'].output.get('child_session_id') ~ '\").') if 'plan-adversary' in inputs.seats.split(',') else '' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Complete your installed required-skill bootstrap order before filesystem reads. For standing coordination, follow your installed wait protocol for each live planning seat and report_to=\"${{ inputs.report_to }}\"; discover a seat through report_to if it was not launched here. Cancel the other waits when any source replies, and never automatically repeat an hourly timeout cycle. Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': inputs.seat_pane or (steps['plan-writer'].output.pane_ref
           if 'plan-writer' in inputs.seats.split(',') else steps['plan-adversary'].output.pane_ref),

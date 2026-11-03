@@ -1,4 +1,4 @@
-"""Reused developer worktrees retain exact task checkpoint commits."""
+"""Reused fixture-worker worktrees retain exact task checkpoint commits."""
 
 import subprocess
 from pathlib import Path
@@ -36,7 +36,7 @@ async def test_reused_worktree_merges_base_without_rewriting_checkpoints(
     git(source, "config", "user.email", "test@example.com")
     git(source, "config", "user.name", "Reuse Test")
     git(source, "commit", "--allow-empty", "-m", "initial")
-    child = tmp_path / "developer"
+    child = tmp_path / "fixture-worker"
     git(source, "worktree", "add", "-b", "candidate", str(child))
     tasks = LocalTaskManager(temp_db)
     task = tasks.create_task(

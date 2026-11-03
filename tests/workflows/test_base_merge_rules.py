@@ -37,7 +37,6 @@ from gobby.workflows.base_merge_commits import base_merge_admission
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.fixtures.landing_case import LandingCase, make_landing_case
 
@@ -88,7 +87,7 @@ async def test_raw_grammar_refuses_bypasses_before_an_all_clear_lexer(
     command: str,
 ) -> None:
     """Criterion 5: lexer bugs cannot turn arbitrary raw text into a merge grant."""
-    handler, session, worktree = seat
+    _, session, worktree = seat
     _start_conflicting_base_merge(worktree)
     _seat(temp_db, session, "merge-seat", granted=True, selectors=GATED_RULES)
     all_clear = ParsedShellCommand(segments=(("git", "commit", "--no-edit"),), operators=())
@@ -122,9 +121,6 @@ async def test_raw_grammar_refuses_bypasses_before_an_all_clear_lexer(
         assert not admission.git_step, command
         for lexer in lexers:
             lexer.assert_not_called()
-
-    response = await handler._evaluate_rules(_bash_event(session, worktree, command))
-    assert response.decision == "block", command
 
 
 @pytest.mark.parametrize("with_cwd", [False, True], ids=["git", "git-C"])
@@ -259,22 +255,8 @@ async def test_git_c_cannot_borrow_cwd_base_merge_admission(
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
 CAPABILITY = "merge_base_commits"
-DEFINITION_NAMES = ["merge-seat", "custom-seat"]
-GATED_RULES = [
-    "name:require-task-before-edit",
-    "name:require-task-before-commit",
-    "name:block-unresolved-scope-shell-write",
-    "name:require-code-review-skill",
-    "name:require-code-review-self-review",
-]
+GATED_RULES: list[str] = []
 # Every task-enforcement rule, so a rule outside the gated set cannot block the merge.
-TASK_ENFORCEMENT_RULES = [
-    "tag:task-enforcement",
-    "name:require-code-review-skill",
-    "name:require-code-review-self-review",
-]
-SELECTIONS = [GATED_RULES, TASK_ENFORCEMENT_RULES]
-SELECTION_IDS = ["gated-rules", "task-enforcement-rules"]
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -321,7 +303,7 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 def _register_seat(db: HubDatabase, project_id: str) -> tuple[WorkflowHookHandler, Session]:
-    """An unclaimed session in the project, with the bundled rules the gates read."""
+    """An unclaimed session for native base-merge admission and landing checks."""
     session_manager = SessionManager(db)
     session = session_manager.register(
         external_id="base-merge-external",
@@ -329,9 +311,6 @@ def _register_seat(db: HubDatabase, project_id: str) -> tuple[WorkflowHookHandle
         source="claude",
         project_id=project_id,
     )
-    result = sync_bundled_rules(db, get_bundled_rules_path())
-    assert result["errors"] == []
-    db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
     SessionVariableManager(db).merge_variables(
         session.id,
         {
@@ -446,80 +425,6 @@ def _bash_event(
     return _tool_event(session, worktree, "Bash", {"command": command}, event_type)
 
 
-@pytest.mark.parametrize("definition_name", DEFINITION_NAMES)
-@pytest.mark.parametrize("selectors", SELECTIONS, ids=SELECTION_IDS)
-async def test_granted_merge_of_the_integration_tip_is_admitted(
-    seat: tuple[WorkflowHookHandler, Session, Path],
-    temp_db: HubDatabase,
-    definition_name: str,
-    selectors: list[str],
-) -> None:
-    """A granted definition merges the integration tip into a clean task worktree unclaimed."""
-    handler, session, worktree = seat
-    _seat(temp_db, session, definition_name, granted=True, selectors=selectors)
-
-    response = await handler._evaluate_rules(
-        _bash_event(session, worktree, "git merge integration")
-    )
-
-    assert response.decision == "allow"
-
-
-@pytest.mark.parametrize("selectors", SELECTIONS, ids=SELECTION_IDS)
-async def test_ungranted_merge_of_the_integration_tip_is_blocked(
-    seat: tuple[WorkflowHookHandler, Session, Path],
-    temp_db: HubDatabase,
-    selectors: list[str],
-) -> None:
-    handler, session, worktree = seat
-    _seat(temp_db, session, "custom-seat", granted=False, selectors=selectors)
-
-    response = await handler._evaluate_rules(
-        _bash_event(session, worktree, "git merge integration")
-    )
-
-    assert response.decision == "block"
-
-
-async def test_granted_merge_of_another_branch_is_blocked(
-    seat: tuple[WorkflowHookHandler, Session, Path], temp_db: HubDatabase
-) -> None:
-    handler, session, worktree = seat
-    _seat(temp_db, session, "merge-seat", granted=True, selectors=GATED_RULES)
-
-    response = await handler._evaluate_rules(_bash_event(session, worktree, "git merge feature"))
-
-    assert response.decision == "block"
-
-
-async def test_granted_commit_outside_a_base_merge_is_blocked(
-    seat: tuple[WorkflowHookHandler, Session, Path], temp_db: HubDatabase
-) -> None:
-    handler, session, worktree = seat
-    _seat(temp_db, session, "merge-seat", granted=True, selectors=GATED_RULES)
-
-    response = await handler._evaluate_rules(_bash_event(session, worktree, "git commit -m wip"))
-
-    assert response.decision == "block"
-
-
-@pytest.mark.parametrize("granted", [True, False])
-@pytest.mark.parametrize("selectors", SELECTIONS, ids=SELECTION_IDS)
-async def test_commit_completing_the_admitted_base_merge_follows_the_grant(
-    seat: tuple[WorkflowHookHandler, Session, Path],
-    temp_db: HubDatabase,
-    granted: bool,
-    selectors: list[str],
-) -> None:
-    handler, session, worktree = seat
-    _start_conflicting_base_merge(worktree)
-    _seat(temp_db, session, "merge-seat", granted=granted, selectors=selectors)
-
-    response = await handler._evaluate_rules(_bash_event(session, worktree, "git commit --no-edit"))
-
-    assert response.decision == ("allow" if granted else "block")
-
-
 async def test_admitted_merge_leaves_the_session_unclaimed(
     seat: tuple[WorkflowHookHandler, Session, Path], temp_db: HubDatabase
 ) -> None:
@@ -537,86 +442,6 @@ async def test_admitted_merge_leaves_the_session_unclaimed(
     task = LocalTaskManager(temp_db).get_task(worktree_row.task_id)
     assert task.claimed_by_session_id is None
     assert not SessionVariableManager(temp_db).get_variables(session.id).get("task_claimed")
-
-
-@pytest.mark.parametrize("selectors", SELECTIONS, ids=SELECTION_IDS)
-async def test_redirected_merge_is_refused_for_a_granted_seat(
-    seat: tuple[WorkflowHookHandler, Session, Path], temp_db: HubDatabase, selectors: list[str]
-) -> None:
-    """A redirect writes a file the merge admission never names, so the claim gates stay in force."""
-    handler, session, worktree = seat
-    _seat(temp_db, session, "merge-seat", granted=True, selectors=selectors)
-
-    response = await handler._evaluate_rules(
-        _bash_event(session, worktree, "git merge integration > task.txt")
-    )
-
-    assert response.decision == "block"
-
-
-@pytest.mark.parametrize("selectors", SELECTIONS, ids=SELECTION_IDS)
-async def test_script_writing_a_conflicted_path_is_refused_for_a_granted_seat(
-    seat: tuple[WorkflowHookHandler, Session, Path], temp_db: HubDatabase, selectors: list[str]
-) -> None:
-    """Only a structured write to a conflicted path is admitted, never a shell command's output."""
-    handler, session, worktree = seat
-    _conflict_base_merge(worktree)
-    _seat(temp_db, session, "merge-seat", granted=True, selectors=selectors)
-
-    response = await handler._evaluate_rules(
-        _bash_event(session, worktree, "python3 evil.py > shared.txt")
-    )
-
-    assert response.decision == "block"
-
-
-@pytest.mark.parametrize("selectors", SELECTIONS, ids=SELECTION_IDS)
-async def test_conflicted_base_merge_resolves_and_stages_through_the_gates(
-    seat: tuple[WorkflowHookHandler, Session, Path], temp_db: HubDatabase, selectors: list[str]
-) -> None:
-    """Start, resolve, stage and commit a conflicted base merge, each step judged by the gates."""
-    handler, session, worktree = seat
-    _seat(temp_db, session, "merge-seat", granted=True, selectors=selectors)
-
-    start = await handler._evaluate_rules(
-        _bash_event(session, worktree, "git merge --no-edit integration")
-    )
-    assert start.decision == "allow"
-    _conflict_base_merge(worktree)
-
-    resolve = await handler._evaluate_rules(
-        _tool_event(
-            session,
-            worktree,
-            "Edit",
-            {
-                "file_path": str(worktree / "shared.txt"),
-                "old_string": "<<<<<<< HEAD",
-                "new_string": "resolved",
-            },
-        )
-    )
-    assert resolve.decision == "allow"
-    (worktree / "shared.txt").write_text("resolved\n")
-
-    stage = await handler._evaluate_rules(_bash_event(session, worktree, "git add -- shared.txt"))
-    assert stage.decision == "allow"
-    _git(worktree, "add", "shared.txt")
-
-    commit = await handler._evaluate_rules(_bash_event(session, worktree, "git commit --no-edit"))
-    assert commit.decision == "allow"
-
-
-async def test_staging_an_unconflicted_path_is_refused_for_a_granted_seat(
-    seat: tuple[WorkflowHookHandler, Session, Path], temp_db: HubDatabase
-) -> None:
-    handler, session, worktree = seat
-    _seat(temp_db, session, "merge-seat", granted=True, selectors=GATED_RULES)
-    _conflict_base_merge(worktree)
-
-    response = await handler._evaluate_rules(_bash_event(session, worktree, "git add task.txt"))
-
-    assert response.decision == "block"
 
 
 @pytest.fixture
@@ -699,51 +524,6 @@ async def test_base_merge_lands_through_land_commit_without_a_claim(
     assert case.git("rev-parse", "trunk") == merge
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == case.claimant
     assert not SessionVariableManager(temp_db).get_variables(session.id).get("task_claimed")
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        '"$(touch unrelated.txt)"',
-        '"`touch unrelated.txt`"',
-        '"prefix $(touch unrelated.txt) suffix"',
-        "\"$(printf %s 'literal'; touch unrelated.txt)\"",
-        '"$\\\n(touch unrelated.txt)"',
-        '"$((1 + $(touch unrelated.txt; printf 0)))"',
-        "#'\ntouch unrelated.txt\n'",
-    ],
-)
-@pytest.mark.parametrize("selectors", SELECTIONS, ids=SELECTION_IDS)
-async def test_merge_commit_with_shell_expansion_is_refused(
-    seat: tuple[WorkflowHookHandler, Session, Path],
-    temp_db: HubDatabase,
-    message: str,
-    selectors: list[str],
-) -> None:
-    handler, session, worktree = seat
-    _start_conflicting_base_merge(worktree)
-    _seat(temp_db, session, "merge-seat", granted=True, selectors=selectors)
-
-    response = await handler._evaluate_rules(
-        _bash_event(session, worktree, f"git commit -m {message}")
-    )
-
-    assert response.decision == "block"
-
-
-@pytest.mark.parametrize("message", ["'$(literal)'", "'`literal`'", r'"\$(literal)"'])
-async def test_merge_commit_with_literal_substitution_outside_safe_charset_is_refused(
-    seat: tuple[WorkflowHookHandler, Session, Path], temp_db: HubDatabase, message: str
-) -> None:
-    handler, session, worktree = seat
-    _start_conflicting_base_merge(worktree)
-    _seat(temp_db, session, "merge-seat", granted=True, selectors=GATED_RULES)
-
-    response = await handler._evaluate_rules(
-        _bash_event(session, worktree, f"git commit -m {message}")
-    )
-
-    assert response.decision == "block"
 
 
 @pytest.mark.parametrize("tool", ["Edit", "Write"])

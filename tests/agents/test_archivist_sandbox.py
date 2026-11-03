@@ -18,7 +18,10 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("agent_name", ["archivist", "developer", "log-monitor", None])
+@pytest.mark.parametrize(
+    "agent_name",
+    ["fixture-definition-599e0437", "fixture-worker", "fixture-definition-cf1e3dd7", None],
+)
 async def test_spawn_never_grants_desktop_digests(
     agent_name: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

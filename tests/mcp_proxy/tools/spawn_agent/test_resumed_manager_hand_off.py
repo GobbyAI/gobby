@@ -104,20 +104,20 @@ async def crashed(
     task = case.task("Resumed manager hand-off")
     runbook = world.child(task)
     team = await world.admit(runbook, task)
-    manager = case.session("dev-team-lead", parent=runbook.id)
+    manager = case.session("fixture-definition-f0ad0fd9", parent=runbook.id)
     bind_task_manager(
         temp_db, manager=manager, parent=runbook.id, project_id=case.project_id, task=task
     )
     _seat(temp_db, manager, runbook.id, DEV_TEAM_LEAD, task_id=task.id, claim=False)
-    writer = case.session("test-writer", parent=runbook.id)
-    developer = case.session("developer", parent=runbook.id)
-    _seat(temp_db, writer, runbook.id, "test-writer")
-    _seat(temp_db, developer, runbook.id, "developer")
+    writer = case.session("fixture-definition-c02389e4", parent=runbook.id)
+    developer = case.session("fixture-worker", parent=runbook.id)
+    _seat(temp_db, writer, runbook.id, "fixture-definition-c02389e4")
+    _seat(temp_db, developer, runbook.id, "fixture-worker")
     tasks.claim_task(task.id, writer, force=True)
     for seat in (manager, developer):
         _park(temp_db, seat)
     # The Orchestrator, not the team runbook, resumes the crashed seats.
-    resumer = case.session("orchestrator")
+    resumer = case.session("fixture-coordinator")
     return CrashedTeam(case, tasks, task, team, resumer, manager, writer, developer)
 
 
@@ -164,7 +164,7 @@ async def test_seat_resumed_from_another_session_keeps_its_team(crashed: Crashed
     db = crashed.case.db
     assert seat_team(db, crashed.developer) == crashed.team
 
-    resumed = await _resume(crashed, crashed.developer, "developer")
+    resumed = await _resume(crashed, crashed.developer, "fixture-worker")
 
     assert resumed["success"] is True, resumed
     assert seat_team(db, crashed.developer) == crashed.team
@@ -175,7 +175,7 @@ async def test_seat_resumed_past_32_runs_keeps_its_team(crashed: CrashedTeam) ->
     """The Orchestrator resumes a seat 33 times; the runbook run is 33 links back on its chain."""
     db = crashed.case.db
     for _ in range(33):
-        resumed = await _resume(crashed, crashed.developer, "developer")
+        resumed = await _resume(crashed, crashed.developer, "fixture-worker")
         assert resumed["success"] is True, resumed
         _park(db, crashed.developer)
 
@@ -188,7 +188,10 @@ async def test_seat_resumed_past_32_runs_keeps_its_team(crashed: CrashedTeam) ->
 @pytest.mark.asyncio
 async def test_resumed_dev_team_lead_hands_off_to_a_resumed_seat(crashed: CrashedTeam) -> None:
     db = crashed.case.db
-    for seat, agent_name in ((crashed.manager, DEV_TEAM_LEAD), (crashed.developer, "developer")):
+    for seat, agent_name in (
+        (crashed.manager, DEV_TEAM_LEAD),
+        (crashed.developer, "fixture-worker"),
+    ):
         resumed = await _resume(crashed, seat, agent_name)
         assert resumed["success"] is True, resumed
     successor = LocalAgentRunManager(db).get_by_session(crashed.manager)

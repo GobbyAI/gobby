@@ -308,7 +308,7 @@ class TestMessageDeliveryOrdering:
         enricher = _make_enricher([msg])
         message_manager = cast(MagicMock, enricher._inter_session_msg_manager)
         subagent = _make_event(HookEventType.BEFORE_TOOL)
-        subagent.data = {"agent_id": "agent-sub-1", "agent_type": "review"}
+        subagent.data = {"agent_id": "agent-sub-1", "agent_type": "fixture-subagent"}
         subagent_response = HookResponse()
 
         enricher.enrich(subagent, subagent_response)

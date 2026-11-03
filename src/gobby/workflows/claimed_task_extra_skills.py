@@ -30,7 +30,7 @@ CLAIMED_TASK_IS_SOURCE_WORK_VARIABLE = "claimed_task_is_source_work"
 # Claiming one already owes those obligations, so the gate can teach them before the
 # work starts rather than at the first write, when the design is already settled.
 # The claimed category is the whole signal: a docs or research claim owes nothing
-# here, and require-task-before-edit still governs what it may write.
+# here; configured write-admission rules still govern what it may write.
 SOURCE_WORK_CATEGORIES = frozenset({"code", "refactor", "test"})
 TDD_SKILL = "test-driven-development"
 

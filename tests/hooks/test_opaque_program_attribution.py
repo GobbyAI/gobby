@@ -15,6 +15,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -22,12 +23,10 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import yaml
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.adapters.codex_impl.execution_chain import ExecutionChainCorrelator
@@ -44,9 +43,7 @@ from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.daemon_git import daemon_git
 from gobby.workflows.commit_guard import foreign_dirty_edit_conflict, foreign_staged_commit_conflict
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path
 from gobby.workflows.task_tool_bindings import TaskToolBindings, cleanup_task_tool_bindings
 from gobby.workflows.worktree_shell_attribution import (
     OVERLAPS_VARIABLE,
@@ -384,17 +381,7 @@ def test_native_write_keeps_ownership_during_foreign_bash(
 
 
 def _shell_write_refused(handlers: EventHandlers, event: HookEvent) -> bool:
-    """Include the bundled scope gate alongside the real before-tool handler."""
-    if handlers.handle_before_tool(event).decision != "allow":
-        return True
-    rule_path = (
-        get_bundled_rules_path() / "task-enforcement/block-unresolved-scope-shell-write.yaml"
-    )
-    rule = yaml.safe_load(rule_path.read_text())["rules"]["block-unresolved-scope-shell-write"]
-    evaluator = SafeExpressionEvaluator(
-        {"event": SimpleNamespace(data=event.data)}, build_condition_helpers()
-    )
-    return bool(rule["enabled"] and evaluator.evaluate(rule["when"]))
+    return handlers.handle_before_tool(event).decision != "allow"
 
 
 @pytest.mark.parametrize("prefix", ["python", "uv run python"])
@@ -435,6 +422,73 @@ def test_script_write_in_task_worktree_is_owned_before_next_mutation(
     for mutation in (f"git restore -- {rel_path}", f"git checkout -- {rel_path}", f"rm {rel_path}"):
         assert checkout.rule_3_reason(rel_path, command=mutation) == ""
     assert "stale.txt" not in checkout.ledger(), "Unchanged dirt must not be adopted"
+
+
+@pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("symlinked", [False, True])
+def test_leading_cd_script_owns_only_its_task_worktree_changes(
+    mock_dependencies: dict[str, Any],
+    checkout: Checkout,
+    task_worktree: Checkout,
+    failed: bool,
+    symlinked: bool,
+) -> None:
+    """A main-checkout hook cwd must not hide the script's proven task checkout."""
+    script = checkout.repo.parent / "rewrite from outside.py"
+    cd_target = task_worktree.repo
+    output_prefix = ""
+    if symlinked:
+        cd_target = checkout.repo / "linked-output"
+        cd_target.symlink_to(task_worktree.repo / "pkg", target_is_directory=True)
+        output_prefix = "../"
+    script.write_text(
+        "from pathlib import Path\nimport sys\n"
+        f"Path('{output_prefix}base.txt').write_text('script write\\n')\n"
+        f"Path('{output_prefix}generated.txt').write_text('new output\\n')\n"
+        f"sys.exit({int(failed)})\n",
+        encoding="utf-8",
+    )
+    command = (
+        f"cd -- {shlex.quote(str(cd_target))} && "
+        f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}"
+    )
+    event = replace(
+        checkout.tool_event(HookEventType.BEFORE_TOOL, command),
+        data={
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+            "project_path": str(checkout.repo),
+        },
+    )
+    normalize_tool_fields(event.data)
+    handlers = _handlers(mock_dependencies, checkout.db)
+    assert not _shell_write_refused(handlers, event)
+    snapshots = (
+        SessionVariableManager(checkout.db)
+        .get_variables(checkout.session_id)
+        .get("claimed_shell_snapshots", {})
+    )
+    result = subprocess.run(command, shell=True, cwd=checkout.repo, check=False)
+    assert result.returncode == int(failed)
+    handlers.handle_after_tool(
+        replace(
+            event,
+            event_type=HookEventType.AFTER_TOOL,
+            timestamp=datetime.now(UTC),
+            metadata={**event.metadata, "is_failure": failed},
+        )
+    )
+
+    for path in ("base.txt", "generated.txt"):
+        assert path in task_worktree.ledger()
+        assert path in task_worktree.task_ledger()
+        assert task_worktree.rule_3_reason(path) == ""
+        assert path not in checkout.ledger()
+    assert "stale.txt" not in task_worktree.ledger()
+    assert UNOWNED in task_worktree.rule_3_reason("stale.txt")
+    assert {snapshot["checkout_root"] for snapshot in snapshots.values()} == {
+        str(task_worktree.repo)
+    }
 
 
 @pytest.mark.parametrize("operation", ["format", "check --fix"])
@@ -967,11 +1021,7 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
         f"UV_PROJECT_ENVIRONMENT={tmp_path / '.venv'} PYTHONPATH=src "
         f"uv run --no-sync ruff format {operand}"
     )
-    arguments = (
-        'text(await tools.apply_patch("*** Begin Patch\\n*** End Patch"));\n'
-        f"text(await tools.exec_command({json.dumps({'cmd': command, 'workdir': str(checkout.repo)})}));\n"
-        'text(await tools.write_stdin({session_id:123,chars:"",max_output_tokens:1500}));'
-    )
+    arguments = f"text(await tools.exec_command({json.dumps({'cmd': command, 'workdir': str(checkout.repo)})}));\n"
     transcript = tmp_path / "rollout.jsonl"
     transcript.write_text(
         json.dumps(
@@ -1051,10 +1101,8 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
         project_id=checkout.project_id,
         metadata={"_platform_session_id": checkout.session_id},
     )
-    assert (
-        _handlers(mock_dependencies, checkout.db).handle_before_tool(outer_before).decision
-        == "allow"
-    )
+    outer_response = _handlers(mock_dependencies, checkout.db).handle_before_tool(outer_before)
+    assert outer_response.decision == "allow", outer_response.reason
     assert not manager.get_variables(checkout.session_id).get("worktree_shell_calls")
     before = adapter.translate_to_hook_event({"hook_type": "PreToolUse", "input_data": hook_input})
     assert before is not None
