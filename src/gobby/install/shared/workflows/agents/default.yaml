@@ -1,4 +1,4 @@
-version: "1.1.0"
+version: "1.2.0"
 name: default
 capabilities:
   - override_spawn_network
@@ -10,6 +10,7 @@ capabilities:
   - close_without_work
   - message_restricted_seats
   - manage_workflow_definitions
+  - activate_agent_definitions
 direct_integration_commit_paths: ["**"]
 task_attestation_writes: ["*"]
 respect_task_protections: true
