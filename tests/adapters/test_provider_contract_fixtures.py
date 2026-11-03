@@ -828,6 +828,21 @@ def test_codex_code_mode_poll_of_a_direct_launch_yields_its_cell() -> None:
 
     assert resolution.state == "pending"
     assert correlator.register_call("wait", "functions.wait", {"cell_id": "poll-cell"})
+    printed_exit = [
+        {"type": "text", "text": "Script completed\nWall time: 0.1 seconds\nOutput:\n"},
+        {"type": "text", "text": '{"exit_code":0,"output":"passed"}'},
+    ]
+    assert correlator.resolve_output("wait", printed_exit).state == "terminal"
+    assert not correlator.register_call("again", "functions.wait", {"cell_id": "poll-cell"})
+
+
+def test_codex_yield_token_is_read_only_from_the_first_text_item() -> None:
+    output = [
+        {"type": "input_text", "text": "\n"},
+        {"type": "input_text", "text": "Script running with cell ID late"},
+    ]
+
+    assert extract_yielded_cell_id({"tool_output": output}) is None
 
 
 def test_codex_direct_poll_of_a_code_mode_launch_cannot_yield_a_cell() -> None:

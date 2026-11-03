@@ -539,15 +539,12 @@ def extract_direct_exec_running_session_id(value: Any) -> str | None:
 def extract_yielded_cell_id(data: Mapping[str, Any]) -> str | None:
     """Read the functions wrapper correlation token without inferring outcome.
 
-    The wrapper writes it as the output's first line; any later line is printed stdout.
+    The wrapper writes it as the first text item's first line; anything later is stdout.
     """
     output = data.get("tool_output", data.get("tool_response"))
-    for text in _iter_output_text(output):
-        for line in text.splitlines():
-            if line.strip():
-                match = _YIELDED_CELL_RE.fullmatch(line.strip())
-                return match.group(1) if match else None
-    return None
+    header = next(iter(_iter_output_text(output)), "").strip()
+    match = _YIELDED_CELL_RE.fullmatch(header.splitlines()[0]) if header else None
+    return match.group(1) if match else None
 
 
 def extract_wait_cell_id(data: Mapping[str, Any]) -> str | None:
@@ -723,7 +720,8 @@ class ExecutionChainCorrelator:
         native_terminal = extract_direct_exec_terminal_result(output)
         if native_terminal is not None:
             results = [native_terminal]
-        elif execution.direct:
+        elif execution.direct and not execution.code_mode_call:
+            # A code-mode poll of a direct launch still prints its own result.
             results = []
         else:
             results = decoded_exec_results(
