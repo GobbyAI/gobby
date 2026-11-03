@@ -61,7 +61,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reason", ["done", "superseded", "moot", "abandoned"])
+@pytest.mark.parametrize("reason", ["done", "superseded", "moot", "abandoned", "wont_do"])
 async def test_closed_task_teardown_records_success_without_user_cancellation(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch, reason: str
 ) -> None:

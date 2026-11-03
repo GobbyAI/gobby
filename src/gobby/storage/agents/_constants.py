@@ -20,6 +20,7 @@ AgentRunTerminalReason = Literal[
     "task_closed:superseded",
     "task_closed:moot",
     "task_closed:abandoned",
+    "task_closed:wont_do",
     "task_closed:unspecified",
 ]
 TerminalAction = Literal["complete", "fail", "timeout", "cancel"]
@@ -36,6 +37,7 @@ DELIBERATE_STOP_TERMINAL_REASONS: tuple[AgentRunTerminalReason, ...] = (
     "task_closed:superseded",
     "task_closed:moot",
     "task_closed:abandoned",
+    "task_closed:wont_do",
     "task_closed:unspecified",
 )
 

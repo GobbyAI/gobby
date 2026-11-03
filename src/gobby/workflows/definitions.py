@@ -489,6 +489,8 @@ class RuleDefinitionBody(BaseModel):
     agent_scope: list[str] | None = None  # Only active for these agent types
     # Active for every definition; no rule_selectors include or exclude removes it.
     mandatory: bool = False
+    # Seats cannot toggle, edit or delete a protected rule; the operator principal still can.
+    protected: bool = False
 
     @model_validator(mode="after")
     def _validate_effects(self) -> RuleDefinitionBody:

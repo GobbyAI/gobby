@@ -68,12 +68,13 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
     content = SKILL_PATH.read_text()
     assert len(content) < 15_000
     steps = (
-        "1. Finish the task",
-        "2. Run focused validation after the final edit",
-        "3. Stage only task paths and commit",
-        "4. Call `close_task(",
-        "5. Repair every failed gate",
-        "6. After closing",
+        "1. Finish the implementation",
+        "2. Perform the validation",
+        "3. Record evidence with",
+        "4. For repository work, commit owned paths",
+        "5. Record any final evidence",
+        "6. Resolve every policy refusal",
+        "7. After `closed=true`",
     )
     positions = [content.index(step) for step in steps]
     assert positions == sorted(positions)
@@ -86,17 +87,11 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
         assert topic in overview
 
 
-def test_close_guidance_names_only_the_five_close_gates() -> None:
+def test_close_guidance_delegates_gates_to_selected_rules() -> None:
     content = SKILL_PATH.read_text()
     gate_rows = [line for line in content.splitlines() if line.startswith("| `")]
-    assert [line.split("`")[1] for line in gate_rows] == [
-        "children_closed",
-        "linked_commits",
-        "uncommitted_task_edits",
-        "integration_ancestry",
-        "step_records",
-    ]
-    assert "Leaves and epics use these gates" in content
+    assert gate_rows == []
+    assert "rules choose the evidence and conditions for closing" in content
     for retired in (
         "close_review_required",
         "reviewer_run_id",
@@ -214,7 +209,7 @@ def test_wait_guidance_is_event_driven_in_agent_and_task_contracts() -> None:
         assert expected in agents
     closing = SKILL_PATH.read_text()
     assert "does not score transcripts" in closing
-    assert "spawn a reviewer" in closing
+    assert "independent reviewers" in closing
     assert "`closed=true`" in closing
 
 

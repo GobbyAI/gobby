@@ -36,6 +36,10 @@ class ReservedRuleMutationError(ValueError):
     """An author attempted to alter runtime-owned variable authority."""
 
 
+class ProtectedRuleError(ValueError):
+    """A seat attempted to change a rule the operator protected."""
+
+
 @contextmanager
 def operator_rule_changes() -> Iterator[None]:
     """Used only after HTTP authentication proves an operator principal."""
@@ -87,6 +91,19 @@ def _reserved_rule_mutation_error(row: RuleDefinitionRow) -> str | None:
         return None
 
 
+def _protected_rule_error(row: RuleDefinitionRow) -> str | None:
+    """Protected rules admit only the operator principal; seats cannot toggle, edit or delete them."""
+    if _operator_rule_changes.get():
+        return None
+    try:
+        body = _rule_body(row)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if body.get("protected") is True:
+        return f"Rule '{row.name}' is protected; only the operator can change it"
+    return None
+
+
 @contextmanager
 def _locked_rule(
     manager: RuleDefinitionManager, definition_id: str
@@ -109,6 +126,8 @@ def update_rule_fields(
             raise DefinitionNotFoundError(f"Rule '{definition_id}' not found")
         if error := _reserved_rule_mutation_error(row):
             raise ReservedRuleMutationError(error)
+        if error := _protected_rule_error(row):
+            raise ProtectedRuleError(error)
         if "definition_json" in fields:
             body = fields["definition_json"]
             if isinstance(body, str):
@@ -306,6 +325,8 @@ def toggle_rule(
             return {"success": False, "error": f"Rule '{name}' not found"}
         if reserved_error := _reserved_rule_mutation_error(row):
             return {"success": False, "error": reserved_error}
+        if protected_error := _protected_rule_error(row):
+            return {"success": False, "error": protected_error}
         updated = def_manager.update(row.id, enabled=enabled)
     logger.info("Toggled rule '%s' enabled=%s", name, enabled)
 
@@ -384,7 +405,7 @@ def update_rule(
 
     try:
         updated = update_rule_fields(def_manager, row.id, fields)
-    except (DefinitionNotFoundError, ReservedRuleMutationError) as exc:
+    except (DefinitionNotFoundError, ReservedRuleMutationError, ProtectedRuleError) as exc:
         return {"success": False, "error": str(exc)}
     logger.info("Updated rule '%s' (fields=%s)", name, list(fields))
 
@@ -516,6 +537,8 @@ def delete_rule(
             return {"success": False, "error": f"Rule '{name}' not found"}
         if reserved_error := _reserved_rule_mutation_error(row):
             return {"success": False, "error": reserved_error}
+        if protected_error := _protected_rule_error(row):
+            return {"success": False, "error": protected_error}
         if "gobby" in (row.tags or []) and not force:
             return {
                 "success": False,

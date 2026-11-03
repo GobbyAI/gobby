@@ -177,6 +177,8 @@ timing.
 | `file_changed` | A watched file changed |
 | `worktree_create` | A worktree was created |
 | `worktree_remove` | A worktree was removed |
+| `task_close` | A task close is evaluated against the selected `task_close` rules |
+| `task_land` | A landing request is evaluated against the selected `task_land` rules |
 
 ### Raw Escape-Hatch Events
 

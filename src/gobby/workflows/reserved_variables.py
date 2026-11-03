@@ -1,7 +1,18 @@
 """Workflow variables owned by runtime enforcement and observers."""
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
+
+# The rule effect that performs a variable write; only a set_variable effect of an
+# installed row may write project_policy.
+RuleVariableWriter = Literal["set_variable", "success_variable", "acknowledge_variable", "runtime"]
+
+_MUTABLE_CONTAINERS = (dict, list, set)
+
+
+class RuleVariableAliasError(RuntimeError):
+    """A rule write reused a stored container that the rule context cannot see change."""
+
 
 HANDOFF_TURN_END_PENDING_VARIABLE = "_handoff_turn_end_pending"
 # The Unix-socket root an SRT launch granted its own run; only the launch records it.
@@ -83,11 +94,24 @@ def is_internal_rule(row: "RuleDefinitionRow") -> bool:
     )
 
 
-def rule_variable_is_writable(name: str, row: "RuleDefinitionRow | None") -> bool:
-    """Admit a target before evaluating its value or changing session state."""
+def rule_variable_is_writable(
+    name: str,
+    row: "RuleDefinitionRow | None",
+    *,
+    writer: RuleVariableWriter = "runtime",
+) -> bool:
+    """Admit a target before evaluating its value or changing session state.
+
+    Only trusted installed Gobby rules write runtime-managed names. An installed row may
+    also write ``project_policy``, but only through its own set_variable effect; its
+    mcp_call success_variable and block acknowledge_variable never reach the policy.
+    """
     if is_reserved_workflow_variable(name) and not (
         row is not None
-        and (is_internal_rule(row) or (name == "project_policy" and row.source == "installed"))
+        and (
+            is_internal_rule(row)
+            or (name == "project_policy" and row.source == "installed" and writer == "set_variable")
+        )
     ):
         logging.getLogger(__name__).warning(
             "Rule effect cannot write runtime-managed variable %r", name
@@ -104,10 +128,18 @@ def write_rule_variable(
     row: "RuleDefinitionRow | None",
     delivery: str = "eager",
     staged: dict[str, Any] | None = None,
+    writer: RuleVariableWriter = "runtime",
 ) -> bool:
     """Admit every rule-originated variable write before mutation or receipt staging."""
-    if not rule_variable_is_writable(name, row):
+    if not rule_variable_is_writable(name, row, writer=writer):
         return False
+    # The rule context refreshes a variable only when its object identity changes, so a
+    # container mutated in place and written back would leave the context stale.
+    if isinstance(value, _MUTABLE_CONTAINERS) and variables.get(name) is value:
+        raise RuleVariableAliasError(
+            f"Rule variable {name!r} was rewritten with the container it already holds; "
+            "write a replacement value so the rule context refreshes."
+        )
     variables[name] = value
     if delivery == "on_receipt" and staged is not None:
         staged[name] = value

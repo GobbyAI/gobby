@@ -291,6 +291,7 @@ def team_run_terminator(runner: GobbyRunner) -> TeamRunTerminator:
             "superseded": "task_closed:superseded",
             "moot": "task_closed:moot",
             "abandoned": "task_closed:abandoned",
+            "wont_do": "task_closed:wont_do",
         }
         result = await agent_cancellation.terminate_agent_run(
             run=run,

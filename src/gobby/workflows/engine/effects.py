@@ -182,6 +182,7 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                             row=row,
                             delivery=effect.delivery,
                             staged=staged_variable_updates,
+                            writer="success_variable",
                         )
                     if success and dr.get("result"):
                         if isinstance(event, HookEvent):
@@ -451,7 +452,9 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
         staged: dict[str, Any] | None = None,
     ) -> bool:
         """Apply a set_variable effect, handling expressions."""
-        if effect.variable is None or not rule_variable_is_writable(effect.variable, row):
+        if effect.variable is None or not rule_variable_is_writable(
+            effect.variable, row, writer="set_variable"
+        ):
             return False
         value = effect.value
 
@@ -467,6 +470,7 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                 row=row,
                 delivery=effect.delivery,
                 staged=staged,
+                writer="set_variable",
             )
 
         # If value is a string that looks like an expression, evaluate it
@@ -496,6 +500,7 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
             row=row,
             delivery=effect.delivery,
             staged=staged,
+            writer="set_variable",
         )
 
     def _is_expression(self, value: str) -> bool:

@@ -968,6 +968,7 @@ class EvaluationMixin:
                         row=gate.row,
                         delivery=gate.delivery,
                         staged=evaluation.staged_variable_updates,
+                        writer="acknowledge_variable",
                     )
             _apply_staged_effects_metadata(meta, evaluation)
             return HookResponse(

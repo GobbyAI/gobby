@@ -234,7 +234,8 @@ class TestSetVariableScoped:
         )
 
         assert result["success"] is False
-        assert "managed by the workflow runtime" in result["error"]
+        assert "reserved variable" in result["error"]
+        assert "set_variable remains available" in result["error"]
         mocks["session_var_manager"].set_variable.assert_not_called()
 
     def test_set_variable_blocks_open_tool_errors_in_workflow_scope(self) -> None:
@@ -253,7 +254,8 @@ class TestSetVariableScoped:
         )
 
         assert result["success"] is False
-        assert "managed by the workflow runtime" in result["error"]
+        assert "reserved variable" in result["error"]
+        assert "set_variable remains available" in result["error"]
         mocks["instance_manager"].merge_variables.assert_not_called()
 
     @pytest.mark.parametrize("scope", ["session", "step"])
@@ -276,13 +278,10 @@ class TestSetVariableScoped:
             session_var_manager=mocks["session_var_manager"],
         )
 
-        assert result == {
-            "success": False,
-            "error": (
-                "turn_interrupt_initiated is managed by the workflow runtime "
-                "and cannot be set directly."
-            ),
-        }
+        assert result["success"] is False
+        assert "turn_interrupt_initiated" in result["error"]
+        assert "reserved variable" in result["error"]
+        assert "set_variable remains available" in result["error"]
         mocks["session_var_manager"].set_variable.assert_not_called()
         mocks["instance_manager"].merge_variables.assert_not_called()
 
@@ -328,13 +327,10 @@ class TestSetVariableScoped:
             session_var_manager=mocks["session_var_manager"],
         )
 
-        assert result == {
-            "success": False,
-            "error": (
-                "_authored_merge_commits is managed by the workflow runtime "
-                "and cannot be set directly."
-            ),
-        }
+        assert result["success"] is False
+        assert "_authored_merge_commits" in result["error"]
+        assert "reserved variable" in result["error"]
+        assert "set_variable remains available" in result["error"]
         mocks["session_var_manager"].set_variable.assert_not_called()
         mocks["instance_manager"].merge_variables.assert_not_called()
 

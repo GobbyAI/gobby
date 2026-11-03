@@ -12,12 +12,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import ValidationError
 
 from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.strict_yaml import load_strict_yaml
 from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.delivery_disposition import (
     DispositionAmbiguousError,
@@ -214,7 +214,7 @@ def _sync_rule_file(
 ) -> None:
     try:
         raw_content = yaml_file.read_text(encoding="utf-8")
-        data = yaml.safe_load(raw_content)
+        data = load_strict_yaml(raw_content)
 
         if not isinstance(data, dict):
             logger.warning("Skipping non-dict YAML", extra={"file": str(yaml_file)})
@@ -386,6 +386,8 @@ def _sync_single_rule(
         body_dict["agent_scope"] = rule_data["agent_scope"]
     if rule_data.get("mandatory") is True:
         body_dict["mandatory"] = True
+    if rule_data.get("protected") is True:
+        body_dict["protected"] = True
     audience = rule_data.get("audience", file_audience)
     if audience:
         body_dict["audience"] = audience

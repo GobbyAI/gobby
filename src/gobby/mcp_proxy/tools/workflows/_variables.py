@@ -384,6 +384,14 @@ def get_variable_definition(
     return {"success": True, "variable": _variable_summary(row)}
 
 
+def _reserved_authoring_error(name: str) -> str:
+    """Refuse a definition for a runtime-owned name; seeded defaults would reach sessions."""
+    return (
+        f"Variable '{name}' is a reserved runtime name and cannot be authored as a definition. "
+        "Choose a different name."
+    )
+
+
 def create_variable(
     def_manager: SessionVariableDefaultManager,
     name: str,
@@ -409,6 +417,9 @@ def create_variable(
     Returns:
         Dict with success and created variable, or error
     """
+    if is_reserved_workflow_variable(name):
+        return {"success": False, "error": _reserved_authoring_error(name)}
+
     try:
         VariableDefinitionBody(variable=name, value=value, description=description)
     except Exception as e:
@@ -482,6 +493,9 @@ def update_variable(
     Returns:
         Dict with success and updated variable, or error
     """
+    if is_reserved_workflow_variable(name):
+        return {"success": False, "error": _reserved_authoring_error(name)}
+
     row = def_manager.get_by_name(name)
     if row is None:
         return {"success": False, "error": f"Variable '{name}' not found"}
