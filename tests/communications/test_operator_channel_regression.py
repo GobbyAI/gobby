@@ -346,6 +346,7 @@ class _Host(ProcessorStatsMixin):
         self.communications_manager = manager
         self.websocket_server = None
         self._mirror_eligible_ids: dict[str, set[str]] = {}
+        self._mirror_eligible_lines: dict[str, set[int]] = {}
         self._mirror_start_offsets: dict[str, int] = {}
 
 

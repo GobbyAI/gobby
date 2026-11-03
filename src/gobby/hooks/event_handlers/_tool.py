@@ -98,7 +98,20 @@ def _background_output_path(data: dict[str, Any]) -> str | None:
 
 
 def _call_worktree_root(event: HookEvent) -> str | None:
-    """The checkout a Bash call runs in, normalized the way the task ledgers key it."""
+    """The checkout a Bash call writes, normalized the way the task ledgers key it.
+
+    A Git mutation's proven checkout (``git -C <worktree> merge``) wins over the shell's cwd;
+    Git mutations in different checkouts leave the call with no single root.
+    """
+    git_cwds = event.data.get("canonical_git_mutation_cwds")
+    if isinstance(git_cwds, list) and git_cwds:
+        roots = {
+            checkout_root(Path(git_cwd).resolve(strict=False))
+            for git_cwd in git_cwds
+            if isinstance(git_cwd, str)
+        }
+        root = roots.pop() if len(roots) == 1 else None
+        return normalize_task_checkout_root(str(root)) if root is not None else None
     cwd = effective_tool_cwd(event.cwd, event.data)
     tool_input = event.data.get("tool_input")
     if isinstance(tool_input, dict):

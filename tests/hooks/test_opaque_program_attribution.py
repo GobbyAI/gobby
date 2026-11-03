@@ -34,6 +34,7 @@ from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.codex_impl.item_normalization import build_pre_tool_lifecycle_payload
 from gobby.hooks._path_scope import current_tool_cwd
 from gobby.hooks.event_handlers import EventHandlers
+from gobby.hooks.event_handlers._tool import _call_worktree_root
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
@@ -1972,3 +1973,77 @@ def test_opaque_program_runs_no_status(
 
     status.assert_not_awaited()
     assert checkout.ledger() == {"owned.txt"}
+
+
+@pytest.mark.parametrize("selector", ["cwd", "git-c"])
+def test_conflicted_merge_in_task_worktree_is_resolvable_by_its_session(
+    mock_dependencies: dict[str, Any], task_worktree: Checkout, selector: str
+) -> None:
+    """A claimant's own conflicted merge and checkout --theirs leave an owned resolution."""
+    linked = task_worktree
+    main = linked.repo.parent / "repo"
+    _git(linked.repo, "config", "user.email", "t@gobby.local")
+    _git(linked.repo, "config", "user.name", "T")
+    _git(linked.repo, "checkout", "-q", "-b", "incoming")
+    linked.write("base.txt", "incoming\n")
+    _git(linked.repo, "commit", "-qm", "incoming", "base.txt")
+    _git(linked.repo, "checkout", "-q", "task-script-writes")
+    linked.write("base.txt", "local\n")
+    _git(linked.repo, "commit", "-qm", "local", "base.txt")
+    handlers = _handlers(mock_dependencies, linked.db)
+
+    def run(command: str, request_id: str, *, failed: bool) -> None:
+        # ``git -C`` names the worktree while the shell itself runs in the main checkout.
+        cwd = linked.repo if selector == "cwd" else main
+        prefix = "git" if selector == "cwd" else f"git -C {shlex.quote(str(linked.repo))}"
+        text = f"{prefix} {command}"
+        events = []
+        for event_type in (HookEventType.BEFORE_TOOL, HookEventType.AFTER_TOOL):
+            data: dict[str, Any] = {
+                "tool_name": "Bash",
+                "tool_input": {"command": text, "cwd": str(cwd)},
+                "project_path": str(cwd),
+            }
+            normalize_tool_fields(data)
+            event = linked.tool_event(
+                event_type, text, failed=failed and event_type is HookEventType.AFTER_TOOL
+            )
+            events.append(replace(event, cwd=str(cwd), data=data, request_id=request_id))
+        assert handlers.handle_before_tool(events[0]).decision == "allow"
+        result = subprocess.run(
+            ["git", *shlex.split(command)],
+            cwd=linked.repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert (result.returncode != 0) is failed, result.stderr
+        handlers.handle_after_tool(events[1])
+
+    run("merge incoming --no-edit", "toolu_merge", failed=True)
+    run("checkout --theirs base.txt", "toolu_theirs", failed=False)
+
+    assert linked.rule_3_reason("base.txt") == ""
+    assert linked.rule_3_reason("base.txt", command="printf 'resolved\\n' > base.txt") == ""
+    # Another live session's later write to the conflicted file stays foreign.
+    linked.write("base.txt", "foreign resolution\n")
+    SessionVariableManager(linked.db).record_edited_files(
+        linked.foreign_session_id, ["base.txt"], checkout_root=str(linked.repo)
+    )
+    assert "base.txt" in linked.rule_3_reason("base.txt")
+
+
+def test_git_mutations_in_two_checkouts_leave_the_call_without_a_root(
+    task_worktree: Checkout,
+) -> None:
+    main = task_worktree.repo.parent / "repo"
+    worktree = shlex.quote(str(task_worktree.repo))
+    single = f"git -C {worktree} add base.txt"
+    split = f"git -C {shlex.quote(str(main))} add base.txt && {single}"
+    roots = [
+        _call_worktree_root(
+            replace(task_worktree.tool_event(HookEventType.BEFORE_TOOL, command), cwd=str(main))
+        )
+        for command in (single, split)
+    ]
+    assert roots == [str(task_worktree.repo), None]

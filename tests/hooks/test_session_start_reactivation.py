@@ -86,7 +86,7 @@ def seats(temp_db: HubDatabase) -> dict[str, AgentDefinitionBody]:
         name="seat-skill", description="Seat", content="# Seat", enabled=True
     )
     RuleDefinitionManager(temp_db).create(
-        name="seat-rule", definition_json={"event": "before_tool", "effects": []}
+        name="seat-rule", definition_json={"event": "before_tool", "effects": [{"type": "observe"}]}
     )
     bodies = {
         name: make_agent_definition(

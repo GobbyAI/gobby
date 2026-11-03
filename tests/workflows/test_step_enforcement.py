@@ -28,6 +28,7 @@ from gobby.workflows.enforcement.blocking import (
 from gobby.workflows.engine.blocked_tool_recovery import extract_rule_name
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
+from tests.fixtures.agent_definitions import seed_seat
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -305,6 +306,9 @@ async def test_codex_pre_tool_use_leaves_proxy_transition_notice_pending(
 
 @pytest.fixture
 def db(hub_db: "HubDatabase") -> "HubDatabase":
+    # Named seats must resolve their definitions, or they fail closed first.
+    for seat in ("synthetic-worker", "synthetic-coordinator", "synthetic-helper"):
+        seed_seat(hub_db, seat, include=["*"])
     return hub_db
 
 
@@ -781,7 +785,7 @@ async def test_agent_denials_carry_guidance_and_count(
     """Agent-level native and MCP blocks use the same guided terminal counter."""
     _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
     rule_engine, run_manager, run_id = _running_rule_engine(db)
-    variables["_agent_type"] = "backend-developer"
+    variables["_agent_type"] = "synthetic-worker"
 
     responses = [
         await rule_engine.evaluate(
@@ -2867,7 +2871,7 @@ class TestStepEnforcementAfterTransition:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("role", ["assistant", "orchestrator", "default"])
+    @pytest.mark.parametrize("role", ["synthetic-helper", "synthetic-coordinator", "default"])
     async def test_set_variable_allowed_in_restricted_step(
         self,
         role: str,

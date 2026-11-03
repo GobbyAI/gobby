@@ -25,7 +25,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import SessionManager, system_session_id
+from gobby.storage.sessions import SessionManager, ensure_system_session, system_session_id
 from tests._timing import drain_asyncio_tasks
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, insert_isolated_machine
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
@@ -861,6 +861,30 @@ class TestMailboxDirectSend:
                 content="Wrong scope",
                 project_id=other_project.id,
             )
+
+    @pytest.mark.asyncio
+    async def test_reply_to_system_sender_is_refused_with_the_reply_path(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        """A reply addressed to the daemon's Telegram sender names the path that reaches it."""
+        ensure_system_session(temp_db)
+        sender = _register_session(session_manager, sample_project["id"], "attached-seat")
+
+        with pytest.raises(ValueError) as refused:
+            await _mailbox(temp_db, session_manager).send(
+                from_session_id=sender.id,
+                target="session",
+                target_id=system_session_id(),
+                content="reply meant for Telegram",
+            )
+
+        error = str(refused.value)
+        assert "mirrored" in error
+        assert "gobby-communications:send_message" in error
+        assert InterSessionMessageManager(temp_db).get_messages(system_session_id()) == []
 
     @pytest.mark.asyncio
     async def test_wake_unavailable_preserves_delivery_shape(

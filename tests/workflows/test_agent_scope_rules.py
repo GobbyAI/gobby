@@ -19,6 +19,7 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -29,8 +30,10 @@ SESSION_ID = "11111111-1111-4111-8111-111111111111"
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
-    database = temp_db
-    return database
+    # Named seats must resolve their definitions; each selects every rule.
+    for seat in ("fixture-builder", "fixture-checker", "fixture-router"):
+        seed_seat(temp_db, seat, include=["*"])
+    return temp_db
 
 
 @pytest.fixture

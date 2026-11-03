@@ -19,6 +19,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.enforcement.blocking import is_message_delivery_tool
 from gobby.workflows.engine.core import RuleEngine
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -30,8 +31,9 @@ PLATFORM_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
-    database = temp_db
-    return database
+    # The synthetic seat must resolve its definition, or it fails closed first.
+    seed_seat(temp_db, "worker", include=["*"])
+    return temp_db
 
 
 @pytest.fixture

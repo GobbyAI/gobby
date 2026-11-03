@@ -1,10 +1,11 @@
 """Tests for auto-export to YAML and make_global_template in MCP tools."""
 
 import json
+from pathlib import Path
 
 import pytest
 
-from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.template_writer import read_template
 
@@ -14,11 +15,17 @@ def manager(temp_db: HubDatabase) -> RuleDefinitionManager:
     return RuleDefinitionManager(temp_db)
 
 
-def _create_rule_row(manager, name, *, tags=None, project_id=None):
+def _create_rule_row(
+    manager: RuleDefinitionManager,
+    name: str,
+    *,
+    tags: list[str] | None = None,
+    project_id: str | None = None,
+) -> RuleDefinitionRow:
     tags = tags or ["user"]
     definition = {
         "event": "before_tool",
-        "effects": [{"type": "inject_context", "content": "test"}],
+        "effects": [{"type": "inject_context", "template": "test"}],
     }
     return manager.create(
         name=name,
@@ -32,7 +39,7 @@ def _create_rule_row(manager, name, *, tags=None, project_id=None):
 class TestAutoExportProjectRule:
     """Auto-export project-scoped definitions to .gobby/workflows/."""
 
-    def test_export_creates_yaml(self, manager, tmp_path):
+    def test_export_creates_yaml(self, manager: RuleDefinitionManager, tmp_path: Path) -> None:
         from gobby.workflows.template_writer import write_rule_template
 
         row = _create_rule_row(manager, "my-custom-rule")
@@ -50,7 +57,7 @@ class TestAutoExportProjectRule:
         assert "my-custom-rule" in data["rules"]
         assert data["tags"] == ["user"]
 
-    def test_dev_mode_skips_export(self, tmp_path):
+    def test_dev_mode_skips_export(self, tmp_path: Path) -> None:
         """In dev mode, auto-export should be skipped."""
         from gobby.utils.dev import is_dev_mode
 
@@ -60,7 +67,7 @@ class TestAutoExportProjectRule:
 
         assert is_dev_mode(tmp_path) is True
 
-    def test_global_template_export(self, manager, tmp_path):
+    def test_global_template_export(self, manager: RuleDefinitionManager, tmp_path: Path) -> None:
         """make_global_template writes to ~/.gobby/workflows/."""
         from gobby.workflows.template_writer import write_rule_template
 
@@ -82,7 +89,7 @@ class TestAutoExportProjectRule:
 class TestNameCollisionOnExport:
     """User exports should not overwrite gobby templates."""
 
-    def test_rejects_gobby_named_export(self, temp_db):
+    def test_rejects_gobby_named_export(self, temp_db: HubDatabase) -> None:
         """Cannot create user rule with name matching a gobby template."""
         from gobby.storage.definitions.rules import RuleDefinitionManager
 
@@ -90,7 +97,7 @@ class TestNameCollisionOnExport:
             name="protected-rule",
             definition_json={
                 "event": "before_tool",
-                "effects": [{"type": "inject_context", "content": "x"}],
+                "effects": [{"type": "inject_context", "template": "x"}],
             },
             source="installed",
             tags=["gobby"],
@@ -105,14 +112,14 @@ class TestNameCollisionOnExport:
 class TestDeleteSyncsToDisk:
     """Deleting a definition should remove its YAML file."""
 
-    def test_delete_removes_yaml(self, tmp_path):
+    def test_delete_removes_yaml(self, tmp_path: Path) -> None:
         from gobby.workflows.template_writer import delete_template_file, write_rule_template
 
         write_rule_template(
             name="doomed-rule",
             definition={
                 "event": "before_tool",
-                "effects": [{"type": "inject_context", "content": "x"}],
+                "effects": [{"type": "inject_context", "template": "x"}],
             },
             output_dir=tmp_path / "rules",
         )
@@ -122,14 +129,14 @@ class TestDeleteSyncsToDisk:
         assert deleted is True
         assert not (tmp_path / "rules" / "doomed-rule.yaml").exists()
 
-    def test_update_overwrites_yaml(self, tmp_path):
+    def test_update_overwrites_yaml(self, tmp_path: Path) -> None:
         from gobby.workflows.template_writer import write_rule_template
 
         write_rule_template(
             name="evolving-rule",
             definition={
                 "event": "before_tool",
-                "effects": [{"type": "inject_context", "content": "v1"}],
+                "effects": [{"type": "inject_context", "template": "v1"}],
             },
             output_dir=tmp_path / "rules",
         )
@@ -138,10 +145,10 @@ class TestDeleteSyncsToDisk:
             name="evolving-rule",
             definition={
                 "event": "before_tool",
-                "effects": [{"type": "inject_context", "content": "v2"}],
+                "effects": [{"type": "inject_context", "template": "v2"}],
             },
             output_dir=tmp_path / "rules",
         )
 
         data = read_template(tmp_path / "rules" / "evolving-rule.yaml")
-        assert data["rules"]["evolving-rule"]["effects"][0]["content"] == "v2"
+        assert data["rules"]["evolving-rule"]["effects"][0]["template"] == "v2"
