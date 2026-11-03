@@ -140,6 +140,19 @@ def _is_mandatory(definition_json: dict[str, Any]) -> bool:
     return definition_json.get("mandatory") is True
 
 
+def is_mandatory_rule(rule: RuleDefinitionRow) -> bool:
+    return _is_mandatory(_rule_definition_json(rule))
+
+
+def binds_named_definition(agent_type: Any) -> bool:
+    """A session bound to a named definition must resolve it; only an unbound one gets baseline.
+
+    Absent, empty and ``default`` agent types are unbound. Any other name is a binding that
+    fails closed when its definition is missing or disabled.
+    """
+    return isinstance(agent_type, str) and agent_type not in ("", "default")
+
+
 def _match_skill(dim: str, val: str, skill: Skill) -> bool:
     if dim == "*":
         return True

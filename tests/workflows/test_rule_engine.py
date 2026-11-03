@@ -3742,8 +3742,10 @@ class TestLiveActiveRuleSelection:
                 "_agent_type": "fixture-policy",
                 "_active_rule_names": ["opt-in-rule"],
             }
-            await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-            assert variables.get("baseline-rule", False) is (not enabled)
+            response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+            # #25617: a disabled seat fails closed instead of gaining the baseline set.
+            assert (response.decision == "block") is (not enabled)
+            assert "baseline-rule" not in variables
             assert "opt-in-rule" not in variables
 
     @pytest.mark.asyncio
@@ -3956,16 +3958,17 @@ class TestLiveActiveRuleSelection:
         assert second is first
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("agent_name", [None, "missing-agent", "disabled-agent"])
+    @pytest.mark.parametrize("agent_name", [None, "default", "missing-agent", "disabled-agent"])
     @pytest.mark.parametrize("snapshot", [None, [], ["opt-in-rule"]])
-    async def test_unresolved_definition_uses_baseline_without_cached_authority(
+    async def test_unresolved_named_definition_fails_closed_without_cached_authority(
         self,
         db: HubDatabase,
         manager: RuleDefinitionManager,
         agent_name: str | None,
         snapshot: list[str] | None,
     ) -> None:
-        """Cached selections cannot grant or remove rules after a definition vanishes."""
+        """An unbound session keeps the baseline; a named seat whose definition vanished
+        is refused, and cached selections grant nothing either way."""
         if agent_name == "disabled-agent":
             AgentDefinitionManager(db).create(
                 name=agent_name,
@@ -4002,10 +4005,26 @@ class TestLiveActiveRuleSelection:
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
 
-        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        assert variables.get("baseline") is True
+        named = agent_name not in (None, "default")
+        assert response.decision == ("block" if named else "allow")
+        assert (f"'{agent_name}'" in (response.reason or "")) is named
+        assert variables.get("baseline") is (None if named else True)
         assert variables.get("opt_in") is None
+
+    @pytest.mark.asyncio
+    async def test_unresolved_named_definition_does_not_block_turn_end(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"_agent_type": "missing-agent"}
+
+        response = await engine.evaluate(
+            _make_event(HookEventType.STOP), session_id=SESSION_ID, variables=variables
+        )
+
+        assert response.decision == "allow"
 
     @pytest.mark.asyncio
     async def test_invalid_agent_definition_fails_loudly(
@@ -4065,6 +4084,7 @@ class TestAgentScope:
             ),
         )
 
+        _insert_agent(manager, "fixture-definition-3588bb72", include=["*"])
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"_agent_type": "fixture-definition-3588bb72"}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})

@@ -57,6 +57,10 @@ from gobby.workflows.engine.blocked_tool_recovery import (
     format_consecutive_tool_block_reason,
     is_blocked_tool_recovery_remediation,
 )
+from gobby.workflows.engine.definition_binding import (
+    UNRESOLVED_DEFINITION_RULE,
+    unresolved_definition_block,
+)
 from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.engine.enforcement import EnforcementMixin
 from gobby.workflows.engine.evaluation import EvaluationContext, EvaluationMixin
@@ -76,7 +80,7 @@ from gobby.workflows.engine.event_utils import (
 )
 from gobby.workflows.engine.proxy_hooks import ProxyHooksMixin
 from gobby.workflows.engine.templating import TemplatingMixin, is_resolved_project
-from gobby.workflows.selectors import rule_matches_agent
+from gobby.workflows.selectors import binds_named_definition, rule_matches_agent
 from gobby.workflows.session_feedback_survey import inject_survey_active
 from gobby.workflows.step_instances import AgentStepInstanceManager
 
@@ -532,15 +536,26 @@ class RuleEngine(
                         [rule_event.value for rule_event in resolved_rule_events],
                     )
 
-                # 4b. Agent-level tool enforcement (broadest scope, preempts everything)
+                # 4b. Agent-level tool enforcement (broadest scope, preempts everything).
+                # A named seat whose definition is gone acts on nothing; it may still stop.
                 if is_before_tool:
+                    agent_rule = UNRESOLVED_DEFINITION_RULE
                     agent_block = await offload(
-                        self._check_agent_tool_enforcement,
-                        event,
+                        unresolved_definition_block,
+                        self,
                         session_id,
                         variables,
-                        bool((eval_context or {}).get("base_merge_write")),
+                        _project_id_from_event(event),
                     )
+                    if agent_block is None:
+                        agent_rule = "agent-tool-enforcement"
+                        agent_block = await offload(
+                            self._check_agent_tool_enforcement,
+                            event,
+                            session_id,
+                            variables,
+                            bool((eval_context or {}).get("base_merge_write")),
+                        )
                     await self._flush_pending_terminal_denial(session_id)
                     if agent_block is not None:
                         if _is_write_like_event_data(event.data):
@@ -550,9 +565,9 @@ class RuleEngine(
                             evaluation,
                             span,
                             source="step-enforcement",
-                            rule_name="agent-tool-enforcement",
+                            rule_name=agent_rule,
                             fallback_reason=(
-                                "Rule enforced by Gobby: [agent-tool-enforcement]\n"
+                                f"Rule enforced by Gobby: [{agent_rule}]\n"
                                 "Agent-level tool enforcement blocked this tool for the "
                                 "current session."
                             ),
@@ -928,8 +943,12 @@ class RuleEngine(
             ]
 
         # The cached names are a projection, not authority after definition removal.
+        # Only an unbound session gets the baseline; a named one keeps mandatory rules only.
+        baseline = not binds_named_definition(variables.get("_agent_type"))
         return [
-            (row, body) for row, body in rules if body.mandatory or "default" in (row.tags or [])
+            (row, body)
+            for row, body in rules
+            if body.mandatory or (baseline and "default" in (row.tags or []))
         ]
 
     def _load_active_agent_definition(
