@@ -53,6 +53,40 @@ def test_srt_node_preflight_enforces_upstream_engine(
         assert "Install Node.js 22.12.0 or newer" in (status.error or "")
 
 
+def test_node_probe_timeout_reuses_the_verified_unchanged_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # #25631: under heavy load `node --version` can exceed its timeout. An unchanged
+    # binary that already verified healthy keeps its status; a changed one re-probes.
+    node = tmp_path / "node"
+    node.write_text("first")
+    monkeypatch.setattr(shutil, "which", lambda name: str(node))
+    calls: list[list[str]] = []
+
+    def healthy(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "v26.13.0\n", "")
+
+    def slow(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        raise subprocess.TimeoutExpired(command, 10)
+
+    monkeypatch.setattr(spawn, "run", healthy)
+    assert requirements.node_dependency_status().state == "healthy"
+    monkeypatch.setattr(spawn, "run", slow)
+    reused = requirements.node_dependency_status()
+    assert reused.state == "healthy"
+    assert reused.installed_version == "26.13.0"
+    assert len(calls) == 1
+
+    node.write_text("replaced binary")
+    changed = requirements.node_dependency_status()
+    assert len(calls) == 2
+    assert changed.state == "invalid"
+    assert "timed out" in (changed.error or "")
+    assert "version is invalid" not in (changed.error or "")
+
+
 def _raise_srt_runtime_error(message: str) -> None:
     raise SrtRuntimeError(message)
 
