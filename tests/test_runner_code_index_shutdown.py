@@ -149,7 +149,6 @@ async def test_shutdown_drains_code_index_before_config_becomes_unavailable(
     assert services.startup_ready is False
     assert services.shutdown_in_progress is True
     assert services.http_admission_closed is True
-    storage.mark_vectors_synced.assert_not_called()
     storage.mark_graph_synced.assert_not_called()
     assert pending_file.vectors_synced is False
     assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
@@ -157,4 +156,4 @@ async def test_shutdown_drains_code_index_before_config_becomes_unavailable(
     # The next worker can retry the same pending version after restart.
     gateway.vector_sync_file = AsyncMock(return_value={"success": True})
     await _sync_pass(storage, gateway, config, batch_size=1)
-    storage.mark_vectors_synced.assert_called_once_with(pending_file.id, pending_file.content_hash)
+    gateway.vector_sync_file.assert_awaited_once()

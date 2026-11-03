@@ -1,4 +1,4 @@
-version: "2.0.0"
+version: "2.1.0"
 tags: [task-closure-general]
 
 rules:
@@ -12,6 +12,13 @@ rules:
       (latest_attestation('implementation').get('result') != 'approved' or
        (latest_attestation('implementation').get('reference') or {}).get('scheme') != 'git' or
        (latest_attestation('implementation').get('reference') or {}).get('value') != facts.get('candidate_commit_sha'))
+    attestation_shape:
+      kinds: [implementation]
+      result: approved
+      reference: {scheme: git, value_pattern: '[0-9a-f]{40}'}
+      applies_when: >-
+        task.get('category') in ['code', 'config', 'docs', 'refactor', 'test'] and
+        'epic-devteam' not in (task.get('labels') or [])
     effects:
       - type: block
         reason: Record approved implementation evidence for this exact Git candidate before landing.

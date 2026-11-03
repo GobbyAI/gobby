@@ -261,6 +261,16 @@ def _write_source(root: Path) -> None:
     source_file.write_text("def greet(name: str) -> str:\n    return name\n")
 
 
+def _complete_vectors_as_gcode(storage: CodeIndexStorage, file: IndexedFile) -> None:
+    """Stand in for gcode's compare-and-set after a successful native vector sync."""
+    with storage.db.transaction() as conn:
+        conn.execute(
+            "UPDATE code_indexed_files SET vectors_synced = TRUE"
+            " WHERE id = %s AND content_hash = %s",
+            (file.id, file.content_hash),
+        )
+
+
 @pytest.mark.asyncio
 async def test_vector_source_changed_skip_keeps_file_pending(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -454,10 +464,7 @@ async def test_sync_worker_waits_for_daemon_readiness_before_vector_sync(
     await asyncio.wait_for(worker_task, timeout=1)
 
     assert gcode_gateway.vector_synced_files == [(tmp_path, pending_file.file_path)]
-    storage.mark_vectors_synced.assert_called_once_with(
-        pending_file.id,
-        pending_file.content_hash,
-    )
+    storage.mark_vectors_synced.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -505,10 +512,7 @@ async def test_sync_worker_keeps_vectors_live_when_graph_gateway_fails(
 
     assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)]
     assert gcode_gateway.vector_synced_files == [(tmp_path, pending_file.file_path)]
-    storage.mark_vectors_synced.assert_called_once_with(
-        pending_file.id,
-        pending_file.content_hash,
-    )
+    storage.mark_vectors_synced.assert_not_called()
     storage.clear_projection_cleanup_pending.assert_not_called()
     storage.mark_graph_sync_attempted.assert_called_once_with(pending_file.id)
     storage.mark_graph_synced.assert_not_called()
@@ -560,10 +564,7 @@ async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path)
 
     assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)]
     storage.mark_graph_sync_attempted.assert_called_once_with(pending_file.id)
-    storage.mark_graph_synced.assert_called_once_with(
-        pending_file.id,
-        pending_file.content_hash,
-    )
+    storage.mark_graph_synced.assert_not_called()
     storage.clear_projection_cleanup_pending.assert_not_called()
 
 
@@ -624,10 +625,10 @@ async def test_sync_worker_logs_throttled_warning_on_pool_outage(
 
 
 @pytest.mark.asyncio
-async def test_sync_file_marks_zero_symbol_file_graph_synced_without_gcode(
+async def test_sync_file_routes_zero_symbol_graph_language_file_to_gcode(
     tmp_path: Path,
 ) -> None:
-    """Content-only files have no graph projection work and should not call gcode."""
+    """Graph-language files reach gcode without symbols; gcode decides whether facts exist."""
     _write_source(tmp_path)
     pending_file = _indexed_file(vectors_synced=True, graph_synced=False, symbol_count=0)
     storage = MagicMock()
@@ -645,12 +646,9 @@ async def test_sync_file_marks_zero_symbol_file_graph_synced_without_gcode(
     )
 
     assert did_sync is True
-    assert gcode_gateway.synced_files == []
-    storage.mark_graph_sync_attempted.assert_not_called()
-    storage.mark_graph_synced.assert_called_once_with(
-        pending_file.id,
-        pending_file.content_hash,
-    )
+    assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)]
+    storage.mark_graph_sync_attempted.assert_called_once_with(pending_file.id)
+    storage.mark_graph_synced.assert_not_called()
     storage.clear_projection_cleanup_pending.assert_not_called()
 
 
@@ -683,10 +681,7 @@ async def test_sync_file_marks_non_graph_language_graph_synced_without_gcode(
     assert did_sync is True
     assert gcode_gateway.synced_files == []
     storage.mark_graph_sync_attempted.assert_not_called()
-    storage.mark_graph_synced.assert_called_once_with(
-        pending_file.id,
-        pending_file.content_hash,
-    )
+    storage.mark_graph_synced.assert_called_once_with(pending_file)
     storage.clear_projection_cleanup_pending.assert_not_called()
 
 
@@ -979,8 +974,8 @@ async def test_sync_file_warns_and_retries_when_indexed_row_still_exists(
 
 
 @pytest.mark.asyncio
-async def test_sync_file_skipped_response_marks_graph_synced(tmp_path: Path) -> None:
-    """The gcode skipped response is terminal for the daemon projection queue."""
+async def test_sync_file_skipped_response_leaves_completion_to_gcode(tmp_path: Path) -> None:
+    """A gcode skipped response ends the pass; Python writes no completion for it."""
     _write_source(tmp_path)
     pending_file = _indexed_file(vectors_synced=True, graph_synced=False)
     storage = MagicMock()
@@ -999,10 +994,7 @@ async def test_sync_file_skipped_response_marks_graph_synced(tmp_path: Path) -> 
     )
 
     assert did_sync is True
-    storage.mark_graph_synced.assert_called_once_with(
-        pending_file.id,
-        pending_file.content_hash,
-    )
+    storage.mark_graph_synced.assert_not_called()
     storage.clear_projection_cleanup_pending.assert_not_called()
 
 
@@ -1142,7 +1134,7 @@ async def test_sync_file_retries_transient_falkor_graph_error(
 
     assert did_sync is True
     assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)] * 2
-    storage.mark_graph_synced.assert_called_once_with(pending_file.id, pending_file.content_hash)
+    storage.mark_graph_synced.assert_not_called()
     assert any(
         record.levelno == logging.WARNING
         and "transient graph sync failure for src/app.py" in record.getMessage()
@@ -1218,6 +1210,7 @@ async def test_sync_file_delegates_vector_sync_to_gcode_gateway(
 
     assert did_sync is True
     assert gcode_gateway.vector_synced_files == [(tmp_path, file_path)]
+    _complete_vectors_as_gcode(code_storage, indexed_file)
     synced_file = code_storage.get_file(project_id, file_path)
     assert synced_file is not None
     assert synced_file.vectors_synced is True
@@ -1329,6 +1322,7 @@ async def test_grant_timeout_retries_and_keeps_exhausted_file_pending(
             file=queued[0],
         )
 
+    _complete_vectors_as_gcode(code_storage, pending)
     assert did_work is True
     synced = code_storage.get_file(PROJECT_ID, pending.file_path)
     assert synced is not None
@@ -1394,6 +1388,7 @@ async def test_hub_handshake_timeout_takes_the_fast_retry_with_one_warning(
             file=indexed_file,
         )
 
+    _complete_vectors_as_gcode(code_storage, indexed_file)
     assert did_sync is True
     assert gcode_gateway.vector_synced_files == [(tmp_path, "src/app.py")]
     synced_file = code_storage.get_file(PROJECT_ID, "src/app.py")
@@ -1614,7 +1609,6 @@ async def test_sync_file_routes_vector_storage_calls_through_run_db(
     assert run_db.calls == [
         "get_file",
         "mark_vector_sync_attempted",
-        "mark_vectors_synced",
     ]
     assert gcode_gateway.vector_synced_files == [(tmp_path, file_path)]
 
@@ -1671,7 +1665,7 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
     assert gcode_gateway.vector_synced_files == []
     storage.mark_vectors_synced.assert_not_called()
     storage.mark_graph_sync_attempted.assert_called_once_with(current_file.id)
-    storage.mark_graph_synced.assert_called_once_with(current_file.id, current_file.content_hash)
+    storage.mark_graph_synced.assert_not_called()
     storage.clear_projection_cleanup_pending.assert_not_called()
     assert gcode_gateway.synced_files == [(tmp_path, file_path)]
 
