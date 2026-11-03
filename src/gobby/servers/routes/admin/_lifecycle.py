@@ -108,7 +108,7 @@ async def _managed_activation_refusal(server: "HTTPServer", request: Request) ->
         return "the managed credential was rejected"
     return (
         "managed_activation_refused: managed callers may not stop, start, restart or cut over "
-        "the daemon; the Orchestrator owns activation"
+        "the daemon; activation follows the configured owner"
     )
 
 

@@ -703,11 +703,11 @@ def _compensate_delivery_failure(
         )
         return None
     # A missing seat is not a delivery the CLI refused, so it neither nears
-    # abandonment nor lifts require-handoff-at-context-limit for the next seat.
+    # abandonment nor lifts context-handoff policy for the next seat.
     if not seatless:
         updates: dict[str, Any] = {HANDOFF_DELIVERY_FAILURES_VARIABLE: failures}
         if abandoned:
-            # Lifts require-handoff-at-context-limit; the epoch reset clears it again.
+            # Lifts context-handoff policy; the epoch reset clears it again.
             updates[HANDOFF_UNAVAILABLE_VARIABLE] = True
         SessionVariableManager(db).merge_variables(claimed.session_id, updates)
     if error_code == "compact_failed":

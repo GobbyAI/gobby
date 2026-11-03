@@ -19,7 +19,7 @@ pytestmark = pytest.mark.unit
 _STOP_BLOCK = {
     "continue": True,
     "decision": "block",
-    "reason": "Rule enforced by Gobby: [block-terminal-validation-failure]\nfix it",
+    "reason": "Rule enforced by Gobby: [fixture-stop-gate]\nfix it",
 }
 _PRETOOL_BLOCK = {"continue": False, "decision": "block", "reason": "commit required"}
 
@@ -93,7 +93,7 @@ def test_session_start_epoch_drops_fresh_stop_block(tmp_path: Path) -> None:
     assert read_envelope_marker(envelope_id, processed_dir=processed_dir) is None
 
 
-def test_legacy_found_work_stop_without_hook_type_expires(tmp_path: Path) -> None:
+def test_untyped_block_keeps_ordinary_replay_semantics(tmp_path: Path) -> None:
     processed_dir = tmp_path / "processed"
     envelope_id = "n-0000000000005-legacy"
     mark_envelope_processed(
@@ -103,5 +103,5 @@ def test_legacy_found_work_stop_without_hook_type_expires(tmp_path: Path) -> Non
     )
     _age_marker(processed_dir, envelope_id, seconds=ENVELOPE_REPLAY_GRACE_SECONDS + 5)
 
-    assert envelope_terminal_response(envelope_id, processed_dir=processed_dir) is None
-    assert read_envelope_marker(envelope_id, processed_dir=processed_dir) is None
+    assert envelope_terminal_response(envelope_id, processed_dir=processed_dir) == _STOP_BLOCK
+    assert read_envelope_marker(envelope_id, processed_dir=processed_dir) is not None

@@ -48,7 +48,7 @@ async def agent_client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AgentRu
         machine_id="test-machine",
         provider="codex",
         prompt="Inspect the assigned task.",
-        agent_name="researcher",
+        agent_name="fixture-definition-3588bb72",
         status="running",
         created_at=now,
         updated_at=now,

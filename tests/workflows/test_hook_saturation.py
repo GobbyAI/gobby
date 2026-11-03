@@ -76,7 +76,7 @@ def _insert_optional_mcp_rule(
         ).model_dump(),
         priority=10,
         enabled=True,
-        tags=tags,
+        tags=["default", *(tags or [])],
     )
 
 
@@ -577,7 +577,7 @@ async def test_timed_out_recall_refired_after_fill_is_delivered_once(
 async def test_late_delivery_sets_the_rule_success_variable(
     temp_db: HubDatabase,
 ) -> None:
-    # Mirrors list-skill-hubs-once-per-session: without the success variable the
+    # Without the synthetic hub-discovery success variable the
     # rule fires again next turn and the model gets the same result twice.
     _insert_optional_mcp_rule(
         RuleDefinitionManager(temp_db),

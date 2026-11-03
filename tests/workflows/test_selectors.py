@@ -70,7 +70,7 @@ def test_match_rule_name() -> None:
 
 def test_match_rule_name_glob() -> None:
     rule = MagicMock()
-    rule.name = "require-task-close"
+    rule.name = "require-fixture-check"
     assert _match_rule("name", "require-*", rule, {}) is True
 
 
@@ -414,7 +414,7 @@ def test_resolve_rules_tag_exclude_sync() -> None:
 
     # A default-tagged rule (should be included)
     default_rule = MagicMock()
-    default_rule.name = "require-task-before-edit"
+    default_rule.name = "fixture-definition-55b74807"
     default_rule.tags = ["default", "gobby"]
     default_rule.definition_json = None
 
@@ -431,7 +431,7 @@ def test_resolve_rules_tag_exclude_sync() -> None:
     safety_rule.definition_json = None
 
     result = resolve_rules_for_agent(agent, [default_rule, sync_rule, safety_rule])
-    assert "require-task-before-edit" in result
+    assert "fixture-definition-55b74807" in result
     assert "block-git-push" in result
     assert "some-excluded-rule" not in result
 

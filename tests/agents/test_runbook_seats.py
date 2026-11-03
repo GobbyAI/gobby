@@ -241,7 +241,7 @@ def test_inferred_sibling_uses_completed_guard_workspace(env: _Env, same_workspa
     execution_id = session.external_id.removeprefix("pipeline-")
     env.db.execute(
         "UPDATE pipeline_executions SET inputs_json = %s WHERE id = %s",
-        (json.dumps({"seats": "developer"}), execution_id),
+        (json.dumps({"seats": "fixture-worker"}), execution_id),
     )
     workspace = (
         env.workspace_id
@@ -280,7 +280,7 @@ def test_inferred_sibling_without_successful_guard_refuses(
     execution_id = session.external_id.removeprefix("pipeline-")
     env.db.execute(
         "UPDATE pipeline_executions SET inputs_json = %s WHERE id = %s",
-        (json.dumps({"seats": "developer"}), execution_id),
+        (json.dumps({"seats": "fixture-worker"}), execution_id),
     )
     if isinstance(output, dict):
         output = {**output, "workspace": env.workspace_id}
@@ -770,13 +770,18 @@ def test_report_to_admits_a_seat_whose_capabilities_it_admits(env: _Env) -> None
         env.db, "report-agent", env.project_id, message_sender_capabilities=MESSAGE_RESTRICTED
     )
     _install_agent(env.db, "reporter-agent", env.project_id, capabilities=MESSAGE_RESTRICTED)
-    catalogue = [{"name": "reporter", "title": "Reporter", "agent": "reporter-agent"}]
+    catalogue = [
+        {"name": "fixture-definition-41d6d532", "title": "Reporter", "agent": "reporter-agent"}
+    ]
 
     admitted = _report_check(
-        env, _report_session(env, "report-agent"), requested="reporter", catalogue=catalogue
+        env,
+        _report_session(env, "report-agent"),
+        requested="fixture-definition-41d6d532",
+        catalogue=catalogue,
     )
 
-    assert admitted.launch == ("reporter",)
+    assert admitted.launch == ("fixture-definition-41d6d532",)
 
 
 def test_report_to_refuses_only_the_seats_it_does_not_admit(env: _Env) -> None:
@@ -785,17 +790,19 @@ def test_report_to_refuses_only_the_seats_it_does_not_admit(env: _Env) -> None:
     )
     _install_agent(env.db, "reporter-agent", env.project_id, capabilities=MESSAGE_RESTRICTED)
     catalogue = [
-        {"name": "reporter", "title": "Reporter", "agent": "reporter-agent"},
+        {"name": "fixture-definition-41d6d532", "title": "Reporter", "agent": "reporter-agent"},
         {"name": "lead", "title": "Lead", "agent": "lead-agent"},
     ]
     report = _report_session(env, "report-agent")
 
     with pytest.raises(RunbookSeatRefusal) as refused:
-        _report_check(env, report, requested="reporter,lead", catalogue=catalogue)
+        _report_check(
+            env, report, requested="fixture-definition-41d6d532,lead", catalogue=catalogue
+        )
 
     message = str(refused.value)
     assert f"report_to {report} does not admit seat 'lead'" in message
-    assert "seat 'reporter'" not in message
+    assert "seat 'fixture-definition-41d6d532'" not in message
 
 
 def test_report_to_session_ref_resolves_before_the_guard(
@@ -831,7 +838,7 @@ def test_report_to_session_ref_resolves_before_the_guard(
 
 
 MANAGED_CATALOGUE: list[dict[str, Any]] = [
-    {"name": "dev-team-lead", "title": "Dev Team Lead", "agent": "manager-agent"},
+    {"name": "fixture-definition-f0ad0fd9", "title": "Dev Team Lead", "agent": "manager-agent"},
     {"name": "dev", "title": "Dev", "agent": "dev-agent"},
 ]
 
@@ -872,7 +879,7 @@ def _pod_check(env: _Env, parent_team_id: str | None) -> AdmittedSeats:
         env.stores,
         caller_session_id=_pipeline_child(env),
         workspace=env.workspace_id,
-        requested="dev-team-lead,dev",
+        requested="fixture-definition-f0ad0fd9,dev",
         catalogue=MANAGED_CATALOGUE,
         parent_team_id=parent_team_id,
     )
@@ -884,7 +891,7 @@ def test_a_pod_launches_no_manager_and_maps_its_epic_lead(env: _Env) -> None:
 
     pod = _pod_check(env, epic_id)
 
-    assert (pod.launch, dict(pod.live)) == (("dev",), {"dev-team-lead": lead})
+    assert (pod.launch, dict(pod.live)) == (("dev",), {"fixture-definition-f0ad0fd9": lead})
     assert [seat.name for seat in pod.seats] == ["dev"]
 
 
@@ -894,7 +901,10 @@ def test_a_standalone_run_launches_its_own_manager(env: _Env) -> None:
 
     standalone = _pod_check(env, None)
 
-    assert (standalone.launch, dict(standalone.live)) == (("dev-team-lead", "dev"), {})
+    assert (standalone.launch, dict(standalone.live)) == (
+        ("fixture-definition-f0ad0fd9", "dev"),
+        {},
+    )
 
 
 def test_a_pod_under_a_team_with_no_live_lead_is_refused(env: _Env) -> None:
@@ -902,7 +912,7 @@ def test_a_pod_under_a_team_with_no_live_lead_is_refused(env: _Env) -> None:
     epic_id, lead = _epic_team(env, _team_task(env, "Epic"))
     env.db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (lead,))
 
-    with pytest.raises(RunbookSeatRefusal, match="no live dev-team-lead seat"):
+    with pytest.raises(RunbookSeatRefusal, match="no live fixture-definition-f0ad0fd9 seat"):
         _pod_check(env, epic_id)
 
 

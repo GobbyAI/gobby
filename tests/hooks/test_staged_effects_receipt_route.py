@@ -1,6 +1,6 @@
 """Full-route regression for on_receipt staged effects (#21424).
 
-Drives the real ``review-closed-task-memories-before-handoff`` gate over the
+Drives a synthetic receipt-staged gate over the
 production path end to end: an HTTP POST to ``/api/hooks/execute``, the real
 ``ClaudeCodeAdapter`` and ``HookManager``, ``run_adapter_hook`` on the bounded
 adapter executor, rule evaluation on the isolated ``WorkflowEvaluationRuntime``
@@ -154,9 +154,9 @@ def _create_session(db: HubDatabase, session_id: str) -> None:
             (session_id, session_id, TEST_MACHINE_ID, "claude", project_id),
         )
 
+    # set_handoff also has discipline and current-epoch survey gates; these tests
 
-# set_handoff is also gated by require-handoff-discipline and by the
-# current-epoch survey (require-handoff-feedback-before-authoring); these tests
+
 # exercise only the memory-review gate, so every session arrives with both
 # satisfied.
 _OTHER_HANDOFF_GATES_SATISFIED: dict[str, Any] = {

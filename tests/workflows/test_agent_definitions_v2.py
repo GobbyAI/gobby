@@ -96,8 +96,8 @@ class TestAgentDefinitionBodyModel:
     def test_minimal_creation(self) -> None:
         """Create with a name and the required default-surface prompt."""
 
-        body = make_agent_definition(name="developer", prompts={"agent": "Develop the task."})
-        assert body.name == "developer"
+        body = make_agent_definition(name="fixture-worker", prompts={"agent": "Develop the task."})
+        assert body.name == "fixture-worker"
         assert body.description is None
         assert body.surfaces == ["spawn"]
         assert body.prompts.agent == "Develop the task."
@@ -330,7 +330,7 @@ class TestAgentDefinitionBodySerialization:
         from gobby.workflows.definitions import AgentDefinitionBody
 
         original = make_agent_definition(
-            name="developer",
+            name="fixture-worker",
             description="Writes code",
             prompts={"agent": "Write clean code."},
             provider="claude",
@@ -338,7 +338,7 @@ class TestAgentDefinitionBodySerialization:
             checkout_mode="worktree",
             base_branch="main",
             timeout=120.0,
-            workflows=make_agent_workflows(rules=["require-task-before-edit", "require-commit"]),
+            workflows=make_agent_workflows(rules=["fixture-definition-55b74807", "require-commit"]),
             enabled=True,
         )
 
@@ -388,18 +388,18 @@ class TestAgentScopeOnRuleDefinitionBody:
         body = RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason="test")],
-            agent_scope=["developer"],
+            agent_scope=["fixture-worker"],
         )
-        assert body.agent_scope == ["developer"]
+        assert body.agent_scope == ["fixture-worker"]
 
     def test_agent_scope_with_multiple_agents(self) -> None:
         """agent_scope can include multiple agent names."""
         body = RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason="test")],
-            agent_scope=["developer", "qa"],
+            agent_scope=["fixture-worker", "qa"],
         )
-        assert body.agent_scope == ["developer", "qa"]
+        assert body.agent_scope == ["fixture-worker", "qa"]
         assert len(body.agent_scope) == 2
 
     def test_agent_scope_json_round_trip(self) -> None:
@@ -437,7 +437,7 @@ class TestAgentDefinitionStorage:
 
     def _make_agent_json(self, **overrides: Any) -> str:
         defaults: dict[str, Any] = {
-            "name": "developer",
+            "name": "fixture-worker",
             "prompts": {"agent": "Run the task."},
         }
         defaults.update(overrides)

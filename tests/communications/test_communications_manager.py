@@ -78,7 +78,7 @@ async def test_operator_dm_clears_topic_thread_without_detaching(
         project_id=str(sample_project["id"]),
         agent_depth=1,
     )
-    agent_type = "archivist" if attachment else "assistant"
+    agent_type = "fixture-definition-599e0437" if attachment else "fixture-helper"
     AgentDefinitionManager(temp_db).create(
         name=agent_type,
         definition_json={

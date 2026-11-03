@@ -359,7 +359,9 @@ def _close_reviewer_run(sandbox: dict[str, Any] | None) -> SimpleNamespace:
         (_close_reviewer_run({"backend": "none", "enforced": False}), False),
         (_close_reviewer_run(None), False),
         (
-            SimpleNamespace(provider="codex", agent_name="developer", resume_metadata_json=None),
+            SimpleNamespace(
+                provider="codex", agent_name="fixture-worker", resume_metadata_json=None
+            ),
             False,
         ),
         (SimpleNamespace(provider="grok", agent_name=None, resume_metadata_json=None), True),

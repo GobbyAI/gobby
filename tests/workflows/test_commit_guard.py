@@ -3171,7 +3171,7 @@ async def test_literal_patch_refuses_foreign_owned_sidecars(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("definition_name", ["orchestrator", "fixture-controller"])
+@pytest.mark.parametrize("definition_name", ["fixture-coordinator", "fixture-controller"])
 @pytest.mark.parametrize("exempt", [False, True])
 async def test_definition_exemption_controls_actual_foreign_staged_commit(
     guard_harness: GuardHarness, definition_name: str, exempt: bool

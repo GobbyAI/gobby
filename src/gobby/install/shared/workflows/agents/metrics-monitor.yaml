@@ -5,7 +5,7 @@ description: |
   Metrics Monitor seat. Observe daemon RSS, CPU and uptime through local Prometheus
   every ten minutes; report to Triage and Log Monitor, alarm on RSS sustained
   above 4 GB or restarts, and never act.
-version: "1.1.0"
+version: "2.0.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
@@ -151,6 +151,9 @@ step_workflow:
         - server: gobby-agents
           tool: send_message
           action: advance_seat
+          protocol:
+            report_prefixes: ["Systems nominal", "EVENT=ALARM "]
+            report_step: report
       transitions:
         - to: report
           when: "vars.tick_done"
@@ -174,6 +177,9 @@ step_workflow:
         - server: gobby-agents
           tool: send_message
           action: advance_seat
+          protocol:
+            report_prefixes: ["Systems nominal", "EVENT=ALARM "]
+            report_step: report
       transitions:
         - to: tick
           when: "not vars.tick_done"

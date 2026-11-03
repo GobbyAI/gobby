@@ -139,7 +139,7 @@ def add_messaging_tools(
             "when omitted. Spawned agents may omit target (defaults to parent). "
             "target='parent' reaches the session that spawned the sender, "
             "forbids target_id, and is available only to spawned agent sessions, which "
-            "cannot override from_session. The bundled rule scope-spawned-agent-send-message "
+            "cannot override from_session. The bundled rule definition-selected messaging policy "
             "limits a spawned agent to the target modes its agent definition lists in "
             "send_message_targets (default: parent only). "
             "Recipient admission follows installed definitions: message_sender_capabilities "
@@ -304,7 +304,7 @@ def add_messaging_tools(
                 }
 
             # Spawned agents send only as themselves. The bundled rule
-            # scope-spawned-agent-send-message limits which target modes they use.
+            # definition-selected messaging policy limits which target modes they use.
             caller_id = (
                 _resolve(ctx_session_id)
                 if ctx_session_id and ctx_session_id != from_session

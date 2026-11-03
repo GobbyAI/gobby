@@ -1,4 +1,4 @@
-"""Associated seats join a developer's exact candidate checkout."""
+"""Associated seats join a fixture-worker's exact candidate checkout."""
 
 import subprocess
 from pathlib import Path
@@ -23,7 +23,7 @@ def git(path: Path, *args: str) -> str:
 
 @pytest.mark.integration
 @pytest.mark.parametrize("reuse", ["explicit", "branch"])
-@pytest.mark.parametrize("role", ["code-reviewer", "test-writer"])
+@pytest.mark.parametrize("role", ["fixture-definition-e08ba693", "fixture-definition-c02389e4"])
 @pytest.mark.parametrize("state", ["behind", "diverged", "conflict"])
 async def test_associated_spawn_preserves_developer_head(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, role: str, state: str, reuse: str
@@ -36,7 +36,7 @@ async def test_associated_spawn_preserves_developer_head(
     (source / "shared.txt").write_text("initial\n")
     git(source, "add", ".")
     git(source, "commit", "-m", "initial")
-    child = tmp_path / "developer"
+    child = tmp_path / "fixture-worker"
     git(source, "worktree", "add", "-b", "candidate", str(child))
     if state != "behind":
         (child / ("shared.txt" if state == "conflict" else "candidate.txt")).write_text(
@@ -78,7 +78,9 @@ async def test_associated_spawn_preserves_developer_head(
         name=role,
         prompts=AgentPromptBlocks(agent="Observe the candidate"),
         model="gpt-5.4",
-        task_attestation_writes=["independent-review"] if role == "code-reviewer" else ["test"],
+        task_attestation_writes=["independent-review"]
+        if role == "fixture-definition-e08ba693"
+        else ["test"],
     )
 
     result = await spawn_agent_impl(

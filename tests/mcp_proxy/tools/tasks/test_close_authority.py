@@ -1,4 +1,4 @@
-"""Seat close authority and Consolidator fold protections."""
+"""Definition-declared close authority and task protections."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ def _protection_policy(closing: Closing, policy: dict[str, object]) -> None:
     marker.write_text(json.dumps({**data, "task_protection_policy": policy}))
 
 
-@pytest.mark.parametrize("name", ["consolidator", "fixture-backlog"])
+@pytest.mark.parametrize("name", ["fixture-backlog", "fixture-maintainer"])
 @pytest.mark.parametrize("operation", ["update_task", "close_task"])
 @pytest.mark.asyncio
 async def test_task_protection_is_declared_in_definition_and_project(
@@ -111,11 +111,11 @@ async def test_task_protection_is_declared_in_definition_and_project(
 
 
 @pytest.mark.asyncio
-async def test_consolidator_name_does_not_impose_undeclared_protection(closing: Closing) -> None:
+async def test_definition_name_does_not_impose_undeclared_protection(closing: Closing) -> None:
     closing.manager.release_task_claim(closing.task.id)
-    closing.manager.update_task(closing.task.id, labels=["deferred-by-josh"])
+    closing.manager.update_task(closing.task.id, labels=["fixture-protected"])
     seat = _seat(
-        closing.db, closing.project_id, "consolidator", capabilities=("close_without_work",)
+        closing.db, closing.project_id, "fixture-backlog", capabilities=("close_without_work",)
     )
     evaluation = await _evaluate(closing, seat, "moot")
     assert evaluation.ready
@@ -243,7 +243,7 @@ def closing(temp_db: HubDatabase, sample_git_project: dict[str, Any]) -> Closing
         require_machine_id(), project_id, str(sample_git_project["repo_path"])
     )
     manager = LocalTaskManager(temp_db)
-    developer = _seat(temp_db, project_id, "developer")
+    holder = _seat(temp_db, project_id, "fixture-holder")
     created = manager.create_task(
         project_id,
         "No-work candidate",
@@ -252,11 +252,11 @@ def closing(temp_db: HubDatabase, sample_git_project: dict[str, Any]) -> Closing
         implementation_domain="backend",
         validation_criteria="Close authority.",
     )
-    task = manager.claim_task(created.id, developer)
+    task = manager.claim_task(created.id, holder)
     result = Closing(temp_db, project_id, manager, RegistryContext(task_manager=manager), task)
     _protection_policy(
         result,
-        {"labels": ["deferred-by-josh"], "subtree_roots": ["#22978", "#22225"]},
+        {"labels": ["fixture-protected"], "subtree_roots": ["#901", "#902"]},
     )
     return result
 
@@ -274,22 +274,17 @@ async def _evaluate(closing: Closing, seat: str, reason: str) -> CloseEvaluation
         )
 
 
-@pytest.mark.parametrize("protection", ("foreign_claim", "deferred-by-josh", "22978", "22225"))
+@pytest.mark.parametrize("protection", ("foreign_claim", "fixture-protected", "901", "902"))
 @pytest.mark.parametrize("operation", ("update_task", "close_task"))
-@pytest.mark.parametrize("policy_source", ("fixture", "repository"))
 @pytest.mark.asyncio
-async def test_consolidator_cannot_mutate_protected_tasks(
-    closing: Closing, protection: str, operation: str, policy_source: str
+async def test_protected_definition_cannot_mutate_protected_tasks(
+    closing: Closing, protection: str, operation: str
 ) -> None:
-    if policy_source == "repository":
-        marker = Path(__file__).resolve().parents[4] / ".gobby" / "project.json"
-        policy = json.loads(marker.read_text()).get("task_protection_policy", {})
-        _protection_policy(closing, policy)
     if protection != "foreign_claim":
         closing.manager.release_task_claim(closing.task.id)
-    if protection == "deferred-by-josh":
-        closing.manager.update_task(closing.task.id, labels=["deferred-by-josh"])
-    elif protection in ("22978", "22225"):
+    if protection == "fixture-protected":
+        closing.manager.update_task(closing.task.id, labels=["fixture-protected"])
+    elif protection in ("901", "902"):
         root = closing.manager.create_task(
             closing.project_id,
             "Protected root",
@@ -332,7 +327,7 @@ async def test_consolidator_cannot_mutate_protected_tasks(
     assert after.claimed_by_session_id == before.claimed_by_session_id
 
 
-def test_consolidator_updates_unprotected_survivor(closing: Closing) -> None:
+def test_protected_definition_updates_unprotected_survivor(closing: Closing) -> None:
     closing.manager.release_task_claim(closing.task.id)
     seat = _protected_seat(closing, "fixture-backlog")
     update = create_crud_registry(closing.context).get_tool("update_task")
@@ -347,8 +342,8 @@ def test_consolidator_updates_unprotected_survivor(closing: Closing) -> None:
     )
 
 
-def _protected_epic(closing: Closing, protection: str, developer: str) -> str:
-    """An epic guarded by a deferred-by-josh label or a claim by the developer."""
+def _protected_epic(closing: Closing, protection: str, holder: str) -> str:
+    """An epic guarded by a fixture-protected label or a claim by the holder."""
     epic = closing.manager.create_task(
         closing.project_id,
         "Protected epic",
@@ -356,23 +351,23 @@ def _protected_epic(closing: Closing, protection: str, developer: str) -> str:
         category="code",
         validation_criteria="Protected ancestor.",
     )
-    if protection == "deferred-by-josh":
-        closing.manager.update_task(epic.id, labels=["deferred-by-josh"])
+    if protection == "fixture-protected":
+        closing.manager.update_task(epic.id, labels=["fixture-protected"])
     else:
-        closing.manager.claim_task(epic.id, developer)
+        closing.manager.claim_task(epic.id, holder)
     return epic.id
 
 
-@pytest.mark.parametrize("protection", ("deferred-by-josh", "foreign_claim"))
+@pytest.mark.parametrize("protection", ("fixture-protected", "foreign_claim"))
 @pytest.mark.parametrize("operation", ("update_task", "close_task"))
 @pytest.mark.asyncio
-async def test_consolidator_cannot_mutate_under_protected_ancestor(
+async def test_protected_definition_cannot_mutate_under_protected_ancestor(
     closing: Closing, protection: str, operation: str
 ) -> None:
-    developer = closing.task.claimed_by_session_id
-    assert developer is not None
+    holder = closing.task.claimed_by_session_id
+    assert holder is not None
     closing.manager.release_task_claim(closing.task.id)
-    epic_id = _protected_epic(closing, protection, developer)
+    epic_id = _protected_epic(closing, protection, holder)
     closing.manager.update_task(closing.task.id, parent_task_id=epic_id)
     before = closing.manager.get_task(closing.task.id)
     seat = _protected_seat(closing, "fixture-backlog")
@@ -390,7 +385,7 @@ async def test_consolidator_cannot_mutate_under_protected_ancestor(
             result = await close(
                 task_id=closing.task.id,
                 reason="moot",
-                changes_summary="Orchestrator directed approved proposal 3.",
+                changes_summary="Policy owner approved the requested change.",
             )
             assert not result.get("success"), result
     after = closing.manager.get_task(closing.task.id)
@@ -399,16 +394,16 @@ async def test_consolidator_cannot_mutate_under_protected_ancestor(
     assert closing.manager.get_task(epic_id).closed_at is None
 
 
-@pytest.mark.parametrize("protection", ("deferred-by-josh", "foreign_claim"))
+@pytest.mark.parametrize("protection", ("fixture-protected", "foreign_claim"))
 @pytest.mark.parametrize("direction", ("into", "out_of"))
 @pytest.mark.asyncio
-async def test_consolidator_cannot_reparent_across_protected_parent(
+async def test_protected_definition_cannot_reparent_across_protected_parent(
     closing: Closing, protection: str, direction: str
 ) -> None:
-    developer = closing.task.claimed_by_session_id
-    assert developer is not None
+    holder = closing.task.claimed_by_session_id
+    assert holder is not None
     closing.manager.release_task_claim(closing.task.id)
-    protected_id = _protected_epic(closing, protection, developer)
+    protected_id = _protected_epic(closing, protection, holder)
     if direction == "into":
         destination_id = protected_id
     else:

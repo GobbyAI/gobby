@@ -29,7 +29,7 @@ from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize("agent_type", ["plan-writer", "custom-seat"])
+@pytest.mark.parametrize("agent_type", ["fixture-definition-cf5ba898", "custom-seat"])
 @pytest.mark.parametrize("granted", [False, True])
 @pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize(

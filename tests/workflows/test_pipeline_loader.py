@@ -59,16 +59,16 @@ def test_workflow_loader_module_is_gone() -> None:
 
 @pytest.mark.asyncio
 async def test_load_and_discover_pipelines(temp_db: HubDatabase) -> None:
-    _seed_pipeline(temp_db, "review")
+    _seed_pipeline(temp_db, "fixture-validation-pipeline")
     _seed_pipeline(temp_db, "disabled-pipe", enabled=False)
     loader = PipelineLoader(db=temp_db)
-    loaded = await loader.load_pipeline("review")
+    loaded = await loader.load_pipeline("fixture-validation-pipeline")
     assert loaded is not None
-    assert loaded.name == "review"
+    assert loaded.name == "fixture-validation-pipeline"
     assert loaded.enabled is True
     discovered = await loader.discover_pipelines()
     names = {item.name for item in discovered}
-    assert "review" in names
+    assert "fixture-validation-pipeline" in names
     assert "disabled-pipe" not in names
 
 
@@ -198,8 +198,8 @@ async def test_validate_pipeline_for_agent_missing_is_invalid(temp_db: HubDataba
 
 @pytest.mark.asyncio
 async def test_validate_pipeline_for_agent_existing_is_valid(temp_db: HubDatabase) -> None:
-    _seed_pipeline(temp_db, "review")
+    _seed_pipeline(temp_db, "fixture-validation-pipeline")
     loader = PipelineLoader(db=temp_db)
-    ok, error = await loader.validate_pipeline_for_agent("review")
+    ok, error = await loader.validate_pipeline_for_agent("fixture-validation-pipeline")
     assert ok is True
     assert error is None

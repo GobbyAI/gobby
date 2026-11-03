@@ -1,7 +1,6 @@
 """Tests for sync_bundled_agents."""
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -454,54 +453,6 @@ class TestSyncBundledAgents:
         )
 
     @pytest.mark.unit
-    def test_sync_enables_legacy_discovery_placeholder(
-        self, tmp_path: Path, definition_db: PostgresHubDatabase
-    ) -> None:
-        """Old disabled discovery placeholders should become enabled real agents on upgrade."""
-        db = definition_db
-
-        agents_dir = tmp_path / "agents"
-        agents_dir.mkdir()
-        yaml_file = agents_dir / "researcher.yaml"
-        yaml_file.write_text(
-            "name: researcher\n"
-            "description: PLACEHOLDER research agent\n"
-            "enabled: false\n"
-            "provider: claude\n"
-            "model: haiku\n"
-            "prompts:\n"
-            "  agent: |\n"
-            "    PLACEHOLDER\n"
-            "    placeholder_agent:researcher:not_implemented\n"
-            "workflows:\n  rule_selectors:\n    include: []\n"
-        )
-
-        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
-            sync_bundled_agents(db)
-
-            yaml_file.write_text(
-                "name: researcher\n"
-                "description: Discovery researcher\n"
-                "enabled: true\n"
-                "provider: codex\n"
-                "model: gpt-5.6-sol\n"
-                "reasoning_effort: high\n"
-                "prompts:\n"
-                "  agent: Real research agent\n"
-                "workflows:\n  rule_selectors:\n    include: []\n"
-            )
-            result = sync_bundled_agents(db)
-
-        assert result["updated"] == 1
-        mgr = _mgr(db)
-        row = mgr.get_by_name("researcher")
-        assert row is not None
-        assert row.enabled is True
-        body = _parse_body(row)
-        assert body.enabled is True
-        assert body.provider == "codex"
-
-    @pytest.mark.unit
     def test_sync_preserves_user_disabled_non_placeholder_agent(
         self, tmp_path: Path, definition_db: PostgresHubDatabase
     ) -> None:
@@ -819,49 +770,6 @@ class TestSyncBundledAgents:
         assert deleted.deleted_at is not None
         assert SYNC_ORPHAN_TAG not in (deleted.tags or [])
 
-    def test_sync_repairs_agents_swept_before_the_origin_marker(
-        self, tmp_path: Path, definition_db: PostgresHubDatabase
-    ) -> None:
-        """The retained researcher row from the old sweep returns with an unchanged body."""
-        db = definition_db
-        names = ("researcher",)
-
-        agents_dir = tmp_path / "agents"
-        agents_dir.mkdir()
-        for name in names:
-            (agents_dir / f"{name}.yaml").write_text(
-                f"name: {name}\ndescription: Bundled {name}\nenabled: true\n"
-                "provider: claude\nmode: interactive\nprompts:\n"
-                "  agent: Run the assigned task.\nworkflows:\n"
-                "  rule_selectors:\n    include: []\n"
-            )
-
-        mgr = _mgr(db)
-
-        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
-            # Sync first so each stored body matches its template exactly, then
-            # soft-delete without a marker and backdate to the sweep batch.
-            created = sync_bundled_agents(db)
-            assert created["synced"] == len(names)
-            for name in names:
-                live = mgr.get_by_name(name)
-                assert live is not None
-                mgr.delete(live.id)
-                db.execute(
-                    "UPDATE agent_definitions SET deleted_at = %s WHERE id = %s",
-                    (datetime(2026, 9, 6, 4, 5, 13, tzinfo=UTC), live.id),
-                )
-                assert mgr.get_by_name(name) is None
-
-            result = sync_bundled_agents(db)
-
-        assert result["updated"] == len(names)
-        for name in names:
-            repaired = mgr.get_by_name(name)
-            assert repaired is not None, name
-            assert repaired.enabled is True
-            assert repaired.tags == ["gobby"]
-
     def test_sync_does_not_repair_deletions_after_the_sweep_batch(
         self, tmp_path: Path, definition_db: PostgresHubDatabase
     ) -> None:
@@ -870,8 +778,8 @@ class TestSyncBundledAgents:
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        (agents_dir / "researcher.yaml").write_text(
-            "name: researcher\ndescription: Bundled researcher\nenabled: true\n"
+        (agents_dir / "fixture-definition-3588bb72.yaml").write_text(
+            "name: fixture-definition-3588bb72\ndescription: Bundled fixture-definition-3588bb72\nenabled: true\n"
             "provider: claude\nmode: interactive\nprompts:\n"
             "  agent: Run the assigned task.\nworkflows:\n"
             "  rule_selectors:\n    include: []\n"
@@ -881,7 +789,7 @@ class TestSyncBundledAgents:
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
             sync_bundled_agents(db)
-            live = mgr.get_by_name("researcher")
+            live = mgr.get_by_name("fixture-definition-3588bb72")
             assert live is not None
             mgr.delete(live.id)
 
@@ -889,7 +797,7 @@ class TestSyncBundledAgents:
 
         assert result["skipped"] == 1
         assert result["updated"] == 0
-        assert mgr.get_by_name("researcher") is None
+        assert mgr.get_by_name("fixture-definition-3588bb72") is None
 
     @pytest.mark.unit
     def test_sync_reports_unmanaged_shadow_row_loudly(

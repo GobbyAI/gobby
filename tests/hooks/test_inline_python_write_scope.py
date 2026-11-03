@@ -1,4 +1,4 @@
-"""Inline Python write scope as block-unresolved-scope-shell-write sees it (#23759)."""
+"""Inline Python write scope under generic shell-write admission (#23759)."""
 
 from __future__ import annotations
 
@@ -12,25 +12,25 @@ from gobby.hooks._normalization_tools import _set_canonical_tool_metadata
 pytestmark = pytest.mark.unit
 
 
-# Lane 3's seat generator (#23752): an untrusted import, a local helper, and two
+# An untrusted generator with an import, a local helper, and two
 # literal absolute write targets inside the session's own worktree.
 _SEAT_GENERATOR = """\
 from pathlib import Path
 import yaml
 root = Path('{agents}')
 baseline = yaml.safe_load((root / 'default.yaml').read_text())['prompts']['persona']
-platform = baseline[baseline.index('## Platform Context'):].strip()
+platform = baseline[baseline.index('## Fixture Context'):].strip()
 def make(name: str, description: str) -> str:
     role = (Path('{roles}') / (name + '.md')).read_text().strip()
     text = f'name: {{name}}\\ndescription: |\\n  {{description}}\\n'
-    if name == 'inbox-manager':
-        for tool in yaml.safe_load((root / 'lane-manager.yaml').read_text())['blocked_tools']:
+    if name == 'fixture-second':
+        for tool in yaml.safe_load((root / 'fixture-policy.yaml').read_text())['blocked_tools']:
             text += f'  - "{{tool}}"\\n'
     prompt = '## Role\\n' + role + '\\n\\n' + platform
     text += ''.join('    ' + line + '\\n' if line else '\\n' for line in prompt.splitlines())
     return text + '  persona: *seat\\n'
-Path('{first}').write_text(make('merge-manager', 'Merge Manager seat.'))
-Path('{second}').write_text(make('inbox-manager', 'Inbox Manager seat.'))
+Path('{first}').write_text(make('fixture-first', 'First fixture.'))
+Path('{second}').write_text(make('fixture-second', 'Second fixture.'))
 """
 
 # 15399's read-only diagnostics: they import a private helper from a test module.
@@ -75,7 +75,7 @@ def _seat_generator_command(worktree: Path, first: Path, second: Path) -> str:
 
 def test_seat_generator_heredoc_attributes_its_literal_worktree_targets(worktree: Path) -> None:
     agents = worktree / "src/gobby/install/shared/workflows/agents"
-    first, second = agents / "merge-manager.yaml", agents / "inbox-manager.yaml"
+    first, second = agents / "fixture-first.yaml", agents / "fixture-second.yaml"
 
     data = _metadata(_seat_generator_command(worktree, first, second), worktree)
 
@@ -88,10 +88,10 @@ def test_seat_generator_heredoc_attributes_its_literal_worktree_targets(worktree
 def test_untrusted_inline_program_with_literal_worktree_target_is_attributed(
     worktree: Path,
 ) -> None:
-    target = worktree / "src/gobby/install/shared/workflows/agents/merge-manager.yaml"
+    target = worktree / "src/gobby/install/shared/workflows/agents/fixture-first.yaml"
     command = (
         'uv run python -c "import yaml; from pathlib import Path; '
-        f"Path('{target}').write_text(yaml.safe_dump({{'name': 'merge-manager'}}))\""
+        f"Path('{target}').write_text(yaml.safe_dump({{'name': 'fixture-first'}}))\""
     )
 
     data = _metadata(command, worktree)
@@ -115,8 +115,8 @@ def test_read_only_diagnostic_importing_a_private_helper_is_not_a_write(
 def test_untrusted_program_with_a_target_outside_the_project_still_blocks(
     worktree: Path,
 ) -> None:
-    inside = worktree / "src/gobby/install/shared/workflows/agents/merge-manager.yaml"
-    outside = worktree.parent / "scratch" / "inbox-manager.yaml"
+    inside = worktree / "src/gobby/install/shared/workflows/agents/fixture-first.yaml"
+    outside = worktree.parent / "scratch" / "fixture-second.yaml"
 
     data = _metadata(_seat_generator_command(worktree, inside, outside), worktree)
 

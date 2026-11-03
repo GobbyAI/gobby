@@ -186,7 +186,7 @@ class TestSessionVariableMirroring:
 
     The rule engine evaluates session_variables (higher precedence) over
     workflow_states. If task tools only write to workflow_states, the
-    require-task-close rule never blocks the stop hook.
+        task-close admission never blocks the stop hook.
     """
 
     @pytest.fixture(autouse=True)

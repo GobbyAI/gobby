@@ -1,6 +1,6 @@
-name: gobby-merge
+name: example-merge-flow
 type: pipeline
-version: "1.0"
+version: "2.0.0"
 description: |
   Robust local branch merge pipeline with AI conflict resolution, test validation,
   and automatic rollback on failure.
@@ -65,7 +65,7 @@ steps:
       server: gobby-workflows
       tool: fail_pipeline
       arguments:
-        message: "Worktree '${{ inputs.worktree_id }}' not found. The worktree must exist before running gobby-merge."
+        message: "Worktree '${{ inputs.worktree_id }}' not found. The worktree must exist before running example-merge-flow."
 
   - id: resolve_branches
     mcp:

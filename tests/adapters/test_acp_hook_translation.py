@@ -392,7 +392,7 @@ class TestTranslateFromHookResponse:
     def test_before_tool_block_decision_is_recoverable(self, adapter: ACPHookAdapter) -> None:
         """ACP adapter keeps the turn alive on a BeforeTool block (recoverable)."""
         reason = (
-            "Rule enforced by Gobby: [require-code-index-skill]\n"
+            "Rule enforced by Gobby: [fixture-skill-gate]\n"
             'Call get_skill(name="code-index") on gobby-skills directly through '
             "mcp__gobby__call_tool"
         )

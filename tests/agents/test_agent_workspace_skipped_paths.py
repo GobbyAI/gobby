@@ -19,7 +19,7 @@ def workspace_with_skips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tup
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
     project_id = "11111111-1111-4111-8111-111111111111"
     anchor = agent_workspaces.ensure_workspace(project_id)
-    folder = anchor / "developer/session-1"
+    folder = anchor / "fixture-worker/session-1"
     folder.mkdir(parents=True)
     (folder / "notes.md").write_text("keep this evidence\n")
     for relative in ("links", "proof/gobby-home/cache/sandbox/zig-packages"):
@@ -44,7 +44,7 @@ async def test_repeated_backups_emit_only_bounded_summary_logs(
     with caplog.at_level(logging.INFO, logger=agent_workspaces.__name__):
         for cycle in range(2):
             caplog.clear()
-            (anchor / "developer/session-1/notes.md").write_text(f"evidence cycle {cycle}\n")
+            (anchor / "fixture-worker/session-1/notes.md").write_text(f"evidence cycle {cycle}\n")
             assert await agent_workspaces.commit_workspace(project_id, "timer")
             cycle_messages.append(
                 [
@@ -67,7 +67,7 @@ async def test_skipped_paths_are_not_rediscovered_but_new_notes_are_backed_up(
 ) -> None:
     project_id, anchor = workspace_with_skips
     assert await agent_workspaces.commit_workspace(project_id, "timer")
-    new_note = "developer/session-1/new-notes.md"
+    new_note = "fixture-worker/session-1/new-notes.md"
     (anchor / new_note).write_text("new evidence after the first backup\n")
     status = await agent_workspaces._git(
         project_id, "status", "--porcelain", "-z", "--untracked-files=all", "--no-renames"
@@ -76,11 +76,11 @@ async def test_skipped_paths_are_not_rediscovered_but_new_notes_are_backed_up(
     tracked = await agent_workspaces._git(project_id, "ls-files", "-z")
     assert set(tracked.stdout.split("\0")) - {""} == {
         "README.md",
-        "developer/session-1/notes.md",
+        "fixture-worker/session-1/notes.md",
         new_note,
     }
-    assert (anchor / "developer/session-1/links/link-0").is_symlink()
-    assert (anchor / "developer/session-1/huge.bin").is_file()
+    assert (anchor / "fixture-worker/session-1/links/link-0").is_symlink()
+    assert (anchor / "fixture-worker/session-1/huge.bin").is_file()
     assert status.stdout == f"?? {new_note}\0"
 
 
@@ -94,10 +94,10 @@ async def test_newline_skipped_path_stays_out_and_unrelated_notes_back_up(
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
     project_id = "33333333-3333-4333-8333-333333333333"
     anchor = agent_workspaces.ensure_workspace(project_id)
-    folder = anchor / "developer/session-1"
+    folder = anchor / "fixture-worker/session-1"
     folder.mkdir(parents=True)
     (folder / "notes.md").write_text("keep this evidence\n")
-    skipped = f"developer/session-1/{name}"
+    skipped = f"fixture-worker/session-1/{name}"
     (anchor / skipped).symlink_to(folder / "notes.md")
     assert await agent_workspaces.commit_workspace(project_id, "timer")
     statuses: list[str] = []
@@ -115,10 +115,10 @@ async def test_newline_skipped_path_stays_out_and_unrelated_notes_back_up(
         note.parent.mkdir()
         note.write_text(f"unrelated notes {cycle}\n")
         assert await agent_workspaces.commit_workspace(project_id, "timer")
-        assert statuses[-1] == f"?? developer/session-1/plan-{cycle}/notes.md\0"
+        assert statuses[-1] == f"?? fixture-worker/session-1/plan-{cycle}/notes.md\0"
         tracked = await agent_workspaces._git(project_id, "ls-files", "-z")
         names = set(tracked.stdout.split("\0")) - {""}
-        assert f"developer/session-1/plan-{cycle}/notes.md" in names
+        assert f"fixture-worker/session-1/plan-{cycle}/notes.md" in names
         assert skipped not in names
     assert (anchor / skipped).is_symlink()
     (anchor / skipped).unlink()
@@ -134,7 +134,7 @@ async def test_skipped_path_parent_replaced_by_file_does_not_block_backups(
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
     project_id = "44444444-4444-4444-8444-444444444444"
     anchor = agent_workspaces.ensure_workspace(project_id)
-    parent_path = "developer/session-1/evidence"
+    parent_path = "fixture-worker/session-1/evidence"
     folder = anchor / parent_path
     folder.mkdir(parents=True)
     skipped = f"{parent_path}/link.md"

@@ -517,6 +517,7 @@ def build_condition_helpers(
         touches_ui_design_path,
         wrapped_validation_command,
     )
+    from .condition_helpers_definition_pins import projected_definition_pins
     from .condition_helpers_paths import PATH_CONDITION_HELPERS
     from .condition_helpers_sessions import session_condition_helpers
     from .engine.command_environment import command_sets_environment
@@ -690,6 +691,19 @@ def build_condition_helpers(
             data if isinstance(data, Mapping) else None,
         )
 
+    def _projected_definition_pins(
+        tool_input: Any = None,
+        event_data: Mapping[str, Any] | None = None,
+    ) -> list[str]:
+        project = ctx.get("project")
+        project_path = project.get("path") if isinstance(project, Mapping) else None
+        data = event_data or _event_field(ctx.get("event"), "data", {})
+        return projected_definition_pins(
+            tool_input if tool_input is not None else ctx.get("tool_input"),
+            project_path,
+            data if isinstance(data, Mapping) else None,
+        )
+
     def _outstanding_monolith_paths() -> list[str]:
         """Return over-budget files attributed to this session's task edits."""
         project = ctx.get("project")
@@ -751,6 +765,7 @@ def build_condition_helpers(
     funcs["tool_call_succeeded"] = _tool_call_succeeded
     funcs["tool_call_failed"] = _tool_call_failed
     funcs["projected_monolith_paths"] = _projected_monolith_paths
+    funcs["projected_definition_pins"] = _projected_definition_pins
     funcs["outstanding_monolith_paths"] = _outstanding_monolith_paths
     funcs["has_open_tool_error"] = _has_open_tool_error
     funcs["missing_claimed_task_extra_skills"] = _missing_claimed_task_extra_skills

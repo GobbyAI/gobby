@@ -310,7 +310,7 @@ async def test_cross_project_review_cannot_impersonate_ancestor(world: CrossProj
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", ["assistant", "orchestrator", "custom-coordinator"])
+@pytest.mark.parametrize("role", ["fixture-helper", "fixture-coordinator", "custom-coordinator"])
 async def test_declared_coordinator_cannot_author_other_projects_evidence(
     world: CrossProjectWorld, role: str
 ) -> None:
@@ -355,7 +355,7 @@ async def test_role_name_alone_does_not_grant_cross_project_access(
     caller = world.sessions.get(world.stranger_id)
     assert caller is not None
     if installed:
-        AgentDefinitionManager(world.db).create("assistant", {}, project_id=caller.project_id)
+        AgentDefinitionManager(world.db).create("fixture-helper", {}, project_id=caller.project_id)
         # Installed operator definitions do not authorize a spawned seat.
         world.sessions.register(
             external_id=caller.external_id,
@@ -364,7 +364,7 @@ async def test_role_name_alone_does_not_grant_cross_project_access(
             project_id=caller.project_id,
             parent_session_id=world.caller_id,
         )
-    SessionVariableManager(world.db).set_variable(caller.id, "_agent_type", "assistant")
+    SessionVariableManager(world.db).set_variable(caller.id, "_agent_type", "fixture-helper")
     result = await approve(world, caller.id, world.ref("qualified"))
     assert "error" in result
     assert list_attestations(world.db, world.task.id) == []

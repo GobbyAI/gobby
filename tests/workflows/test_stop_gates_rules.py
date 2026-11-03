@@ -6,7 +6,7 @@ Tier 1 behaviors (hardcoded in RuleEngine.evaluate):
 - tool_block_pending stop gate, force_allow_stop bypass, consecutive tool block counter
 
 Tier 2 rules (YAML templates — configurable):
-- require-task-close
+- synthetic task-close admission
 """
 
 from __future__ import annotations
@@ -1306,7 +1306,7 @@ class TestClaimedTaskReconciliation:
 
 
 class TestForceAllowStopWithTaskClaimed:
-    """Test that force_allow_stop does NOT bypass require-task-close when task_claimed=True."""
+    """Test that force_allow_stop does not bypass a claimed task's close requirement."""
 
     @pytest.mark.asyncio
     async def test_force_allow_suppressed_when_task_claimed(self, db: HubDatabase) -> None:
@@ -1324,7 +1324,7 @@ class TestForceAllowStopWithTaskClaimed:
 
         # force_allow_stop should be cleared but NOT set override_decision
         assert variables.get("force_allow_stop") is False
-        # Without a require-task-close rule installed, response is allow
+        # Without a task-close rule installed, response is allow
         # (the override was suppressed, rule eval proceeds normally)
         # The key assertion: force_allow_stop was consumed without setting override
         assert response.decision == "allow"  # No rules loaded = allow

@@ -228,10 +228,12 @@ async def test_developer_shaped_seat_admits_no_spawns(
     row = manager.get_by_name("scope-caller", project_id=spawn_caller.child.project_id)
     assert row is not None
     manager.update(row.id, definition_json={**definition, "name": "scope-caller"})
-    _scope_definition(spawn_caller.sessions.db, spawn_caller.child.project_id, "code-reviewer", [])
+    _scope_definition(
+        spawn_caller.sessions.db, spawn_caller.child.project_id, "fixture-definition-e08ba693", []
+    )
     with session_context_for_test(spawn_caller.child.id):
         # A DevTeam's runbook places its reviewer; the developer spawns nothing.
-        for target in ("code-reviewer", "scope-target"):
+        for target in ("fixture-definition-e08ba693", "scope-target"):
             with pytest.raises(ValueError, match="spawnable_agents"):
                 await _spawn_guards.enforce_spawn_caller(
                     spawn_caller.sessions, target, spawn_caller.child.project_id
