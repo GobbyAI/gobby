@@ -1401,6 +1401,14 @@ def test_reported_grep_from_a_workspace_cwd_follows_its_leading_cd(
         # zsh `cd old new` swaps `old` for `new` in the current directory.
         ("cd 12 99; cat notes.md", True),
         ("cd 12 99 && cat notes.md", True),
+        # zsh reads only a single digit touching `<` or `>` as a file descriptor, so a
+        # spaced, quoted or multi-digit number before a redirection is the second operand.
+        ("cd 12 9 >/dev/null; cat notes.md", True),
+        ("cd 12 99<x; cat notes.md", True),
+        ("cd 12 99 <x; cat notes.md", True),
+        ("cd 12 99>/dev/null; cat notes.md", True),
+        ("pushd 12 99 >/dev/null; cat notes.md", True),
+        ("cd 12 '9' >/dev/null; true 9>/dev/null; cat notes.md", True),
         # A redirection after the target is not a second operand.
         ("cd inner 2>/dev/null && cat notes.md", False),
         ("cd inner >/dev/null && cat notes.md", False),

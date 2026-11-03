@@ -274,11 +274,21 @@ def _logical_cd_target(arg: str, directory: Path | None) -> Path | None:
     return Path(os.path.normpath(candidate))
 
 
-def _redirect_at(tokens: list[str], index: int) -> bool:
-    """Whether `tokens[index]` starts a redirection such as `>x` or `2>x`."""
+def _attached_fds(text: str) -> frozenset[str]:
+    """Single digits the text only writes touching `<` or `>`, as in `2>x`.
+
+    The tokens split `9>x` and `9 >x` alike, but zsh reads only the touching single digit as a
+    file descriptor. A digit also written spaced or quoted before a redirection is left out.
+    """
+    attached = set(re.findall(r"(?<![^\s;&|()])(\d)[<>]", text))
+    return frozenset(attached - set(re.findall(r"(\d)['\"]*\s+[<>]", text)))
+
+
+def _redirect_at(tokens: list[str], index: int, fds: frozenset[str]) -> bool:
+    """Whether `tokens[index]` starts a redirection such as `>x`, or `2>x` when 2 is in `fds`."""
     token = tokens[index]
     following = tokens[index + 1] if index + 1 < len(tokens) else ""
-    return token.startswith(("<", ">")) or (token.isdigit() and following.startswith(("<", ">")))
+    return token.startswith(("<", ">")) or (token in fds and following.startswith(("<", ">")))
 
 
 def _place_words(token: str, places: frozenset[_Place]) -> list[str]:
@@ -320,11 +330,12 @@ def _cd_places(arg: str, places: frozenset[_Place], certain: bool) -> frozenset[
 
 
 def _cd_anchored_words(
-    tokens: list[str], base: Path | None, places: frozenset[_Place]
+    tokens: list[str], base: Path | None, places: frozenset[_Place], fds: frozenset[str]
 ) -> tuple[list[str], frozenset[_Place]]:
     """Read words anchored to every place the shell may be in when each operand runs.
 
-    `places` is where the shell may be before the command; its hook cwd is `base`. A `cd`,
+    `places` is where the shell may be before the command; its hook cwd is `base`. `fds` are
+    the digits the command writes only as file descriptors (see `_attached_fds`). A `cd`,
     `pushd` or `popd` adds its target to those places. Only a leading `cd` whose segment ends
     at `&&`, `;` or a newline replaces them. A subshell restores the places at `)`, and a brace
     group keeps the places before it at `}`. A `CDPATH` in the command makes every target
@@ -356,7 +367,7 @@ def _cd_anchored_words(
             swapped = (
                 after < len(tokens)
                 and tokens[after] not in _SHELL_SEPARATORS
-                and not _redirect_at(tokens, after)
+                and not _redirect_at(tokens, after, fds)
             )
             if name == "popd" or cdpath or not consumed or swapped:
                 target = "-"
@@ -401,14 +412,15 @@ def _shell_path_words(command: Any, base: Path | None = None, moved: bool = Fals
         tokens = _SHELL_OPERATORS.sub(" ", text).split()
     shell_reads = any(os.path.basename(os.path.expandvars(t)) in _BODY_CONSUMERS for t in tokens)
     start = frozenset({(base, moved)})
-    words, places = _cd_anchored_words(tokens, base, start)
+    fds = _attached_fds(text)
+    words, places = _cd_anchored_words(tokens, base, start, fds)
     # The operator-aware lexer splits extglob parentheses and alternatives. Keep
     # an additional whole-word view so their literal path prefix is not lost.
     try:
         whole_words = shlex.split(text)
     except ValueError:
         whole_words = []
-    whole_anchored, _ = _cd_anchored_words(whole_words, base, start)
+    whole_anchored, _ = _cd_anchored_words(whole_words, base, start, fds)
     words.extend(word for word in whole_anchored if _EXTGLOB.search(word))
     command_name = os.path.basename(os.path.expandvars(tokens[0])) if tokens else ""
     data_consumer = command_name in {"cat", "tee"} or (
