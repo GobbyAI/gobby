@@ -23,6 +23,21 @@ class CrossProjectTaskForbidden(ValueError):
         super().__init__("task_not_found")
 
 
+def can_add_team_task_labels(db: HubDatabase, caller_id: str, task: Task) -> bool:
+    """Authorize additive labels through a stored grant and admitted team scope."""
+    from gobby.agents.team_lifecycle import managed_task_team
+
+    caller = SessionManager(db).get(caller_id)
+    if caller is None or caller.project_id != task.project_id:
+        return False
+    definition = session_agent_definition(db, caller)
+    return (
+        definition is not None
+        and "add_team_task_labels" in definition[0].capabilities
+        and managed_task_team(db, caller.id, task.id) is not None
+    )
+
+
 def task_scope_refusal(
     task: Task, session_id: str, scope: AgentTaskScope, *, db: HubDatabase | None = None
 ) -> str | None:

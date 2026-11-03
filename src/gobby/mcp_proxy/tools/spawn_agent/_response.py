@@ -54,6 +54,8 @@ def build_spawn_response(
         response.update({"reuse_outcome": "reused", "reused_worktree": True})
     else:
         response["reuse_outcome"] = "fresh"
+    if "deferred_base_sync" in isolation_extra:
+        response["deferred_base_sync"] = isolation_extra["deferred_base_sync"]
     if reasoning is not None:
         if not isinstance(reasoning, ReasoningPayload):
             raise TypeError(
