@@ -1417,6 +1417,12 @@ def test_reported_grep_from_a_workspace_cwd_follows_its_leading_cd(
         ("cd {hop} && # c\n(true) & cat ../session-99/notes.md", True),
         ("cd inner && true || # c; d\ntrue & cat ../session-99/notes.md", True),
         ("cd inner && true | # c\ncat & cat ../session-99/notes.md", True),
+        # A quoted or escaped `#` is a word, so the join after it still continues the list.
+        ('cd inner && echo "#" &&\ntrue & cat ../session-99/notes.md', True),
+        ("cd inner && echo \\# &&\ntrue & cat ../session-99/notes.md", True),
+        ('cd inner && echo "#x" |\ncat & cat ../session-99/notes.md', True),
+        ('cd {hop} && echo "#" && (\ntrue\n) & cat ../session-99/notes.md', True),
+        ("cd inner && # c )\ntrue & cat ../session-99/notes.md", True),
         ("cd inner &&\ntrue\ncat ../notes.md", False),
         ("cd inner && true # c\ncat ../notes.md", False),
         ("cd inner && true; cat ../notes.md", False),
