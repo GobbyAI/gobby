@@ -15,6 +15,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -421,6 +422,57 @@ def test_script_write_in_task_worktree_is_owned_before_next_mutation(
     for mutation in (f"git restore -- {rel_path}", f"git checkout -- {rel_path}", f"rm {rel_path}"):
         assert checkout.rule_3_reason(rel_path, command=mutation) == ""
     assert "stale.txt" not in checkout.ledger(), "Unchanged dirt must not be adopted"
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_leading_cd_script_owns_only_its_task_worktree_changes(
+    mock_dependencies: dict[str, Any],
+    checkout: Checkout,
+    task_worktree: Checkout,
+    failed: bool,
+) -> None:
+    """A main-checkout hook cwd must not hide the script's proven task checkout."""
+    script = checkout.repo.parent / "rewrite from outside.py"
+    script.write_text(
+        "from pathlib import Path\nimport sys\n"
+        "Path('base.txt').write_text('script write\\n')\n"
+        "Path('generated.txt').write_text('new output\\n')\n"
+        f"sys.exit({int(failed)})\n",
+        encoding="utf-8",
+    )
+    command = (
+        f"cd -- {shlex.quote(str(task_worktree.repo))} && "
+        f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}"
+    )
+    event = replace(
+        checkout.tool_event(HookEventType.BEFORE_TOOL, command),
+        data={
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+            "project_path": str(checkout.repo),
+        },
+    )
+    normalize_tool_fields(event.data)
+    handlers = _handlers(mock_dependencies, checkout.db)
+    assert not _shell_write_refused(handlers, event)
+    result = subprocess.run(command, shell=True, cwd=checkout.repo, check=False)
+    assert result.returncode == int(failed)
+    handlers.handle_after_tool(
+        replace(
+            event,
+            event_type=HookEventType.AFTER_TOOL,
+            timestamp=datetime.now(UTC),
+            metadata={**event.metadata, "is_failure": failed},
+        )
+    )
+
+    for path in ("base.txt", "generated.txt"):
+        assert path in task_worktree.ledger()
+        assert path in task_worktree.task_ledger()
+        assert task_worktree.rule_3_reason(path) == ""
+        assert path not in checkout.ledger()
+    assert "stale.txt" not in task_worktree.ledger()
+    assert UNOWNED in task_worktree.rule_3_reason("stale.txt")
 
 
 @pytest.mark.parametrize("operation", ["format", "check --fix"])
