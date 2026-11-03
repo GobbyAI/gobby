@@ -1,5 +1,6 @@
 """Persist tool-start identity separately from provider result delivery."""
 
+from collections.abc import Mapping
 from typing import Any
 
 from gobby.adapters.codex_impl.execution_chain import (
@@ -38,6 +39,28 @@ def _bindings(variables: dict[str, Any]) -> dict[str, dict[str, Any]]:
     if not isinstance(raw, dict):
         return {}
     return {key: dict(value) for key, value in raw.items() if isinstance(value, dict)}
+
+
+def pending_fencing_calls(variables: Mapping[str, Any], task_id: str | None) -> list[str]:
+    """Return running calls bound to a task other than ``task_id`` that fence a switch.
+
+    ``task_id`` None means the target is unknown, so every bound fencing call counts.
+    Rules decide whether these calls refuse a selection; this only reports them.
+    """
+    if task_id is not None and variables.get("active_task_id") == task_id:
+        return []
+    calls = variables.get("task_tool_bindings")
+    if not isinstance(calls, Mapping):
+        return []
+    return sorted(
+        str(key)
+        for key, call in calls.items()
+        if isinstance(call, Mapping)
+        and call.get("pending") is True
+        and call.get("task_id") is not None
+        and call.get("task_id") != task_id
+        and call.get("fences_switch") is True
+    )
 
 
 def _fences_switch(event: HookEvent) -> bool:
@@ -203,29 +226,6 @@ class TaskToolBindings:
             return None, True
 
         self.manager._mutate_variables(self.session_id, mutate, keys=("task_tool_turn",))
-
-    def assert_can_select(self, task_id: str | None) -> None:
-        """Fence an explicit own switch under the caller's claim transaction."""
-
-        def check(variables: dict[str, Any]) -> tuple[None, bool]:
-            if task_id is not None and variables.get("active_task_id") == task_id:
-                return None, False
-            pending = [
-                key
-                for key, call in _bindings(variables).items()
-                if call.get("pending") is True
-                and call.get("task_id") is not None
-                and call.get("task_id") != task_id
-                and call.get("fences_switch") is True
-            ]
-            if pending:
-                raise ValueError(
-                    f"Task selection is fenced by running calls {', '.join(sorted(pending))}; "
-                    "wait for completion or stop them before calling claim_task again."
-                )
-            return None, False
-
-        self.manager._mutate_variables(self.session_id, check, keys=("task_tool_bindings",))
 
     def start(self, event: HookEvent) -> None:
         key = _call_key(event)
