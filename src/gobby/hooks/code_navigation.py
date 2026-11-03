@@ -152,27 +152,44 @@ def _literal_sed_window_line_count(token: str, quiet: bool) -> int | None:
     return None
 
 
-def count_option_line_count(parts: list[str]) -> int | None:
+_LONG_COUNT_OPTIONS = {"--lines": "n", "--bytes": "c"}
+
+
+def _last_count_option(parts: list[str]) -> tuple[str, str | None] | None:
+    """The last head/tail count option as ``("n" | "c", value)``; head obeys the last one."""
     if not parts or shell_command_name(parts[0]) not in {"head", "tail"}:
         return None
-    byte_value = False
-    for index, part in enumerate(parts[1:], start=1):
-        # A separate -c value such as `-1` is a byte count, not a line count.
-        if byte_value:
-            byte_value = False
-            continue
-        byte_value = part in {"-c", "--bytes"}
-        if part in {"-n", "--lines"}:
-            if index + 1 < len(parts):
-                return _positive_int(parts[index + 1])
-            return None
-        if part.startswith("--lines="):
-            return _positive_int(part.split("=", maxsplit=1)[1])
-        if part.startswith("-n") and len(part) > 2:
-            return _positive_int(part[2:])
-        if re.fullmatch(r"-\d+", part):
-            return _positive_int(part[1:])
-    return None
+    last: tuple[str, str | None] | None = None
+    index = 1
+    while index < len(parts):
+        part = parts[index]
+        following = parts[index + 1] if index + 1 < len(parts) else None
+        index += 1
+        if part == "--":
+            break
+        name, equals, value = part.partition("=")
+        if name in _LONG_COUNT_OPTIONS:
+            if equals:
+                last = (_LONG_COUNT_OPTIONS[name], value)
+            else:
+                last, index = (_LONG_COUNT_OPTIONS[name], following), index + 1
+        elif re.fullmatch(r"-\d+", part):
+            last = ("n", part[1:])
+        elif part.startswith("-") and not part.startswith("--"):
+            # Short options bundle (`-qc`, `-qn5`); a count takes the rest or the next word.
+            for offset, flag in enumerate(part[1:], start=2):
+                if flag in "nc":
+                    if part[offset:]:
+                        last = (flag, part[offset:])
+                    else:
+                        last, index = (flag, following), index + 1
+                    break
+    return last
+
+
+def count_option_line_count(parts: list[str]) -> int | None:
+    option = _last_count_option(parts)
+    return _positive_int(option[1]) if option and option[0] == "n" else None
 
 
 def count_option_byte_count(parts: list[str]) -> int | None:
@@ -181,18 +198,8 @@ def count_option_byte_count(parts: list[str]) -> int | None:
     ``+N`` offset forms read to end of file and stay unbounded; ``K``/``M``
     suffix forms are not parsed.
     """
-    if not parts or shell_command_name(parts[0]) not in {"head", "tail"}:
-        return None
-    for index, part in enumerate(parts[1:], start=1):
-        if part in {"-c", "--bytes"}:
-            if index + 1 < len(parts):
-                return _positive_int(parts[index + 1])
-            return None
-        if part.startswith("--bytes="):
-            return _positive_int(part.split("=", maxsplit=1)[1])
-        if part.startswith("-c") and len(part) > 2:
-            return _positive_int(part[2:])
-    return None
+    option = _last_count_option(parts)
+    return _positive_int(option[1]) if option and option[0] == "c" else None
 
 
 def source_read_navigation_metadata(

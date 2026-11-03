@@ -1169,6 +1169,13 @@ def test_a_path_git_refuses_does_not_hide_later_answers(repo: Path) -> None:
         ("xargs -iX head -n 10 < list", True),
         ("xargs head -c -1 < list", True),
         ("head -c -1 src/long.py", True),
+        # head obeys its last count option, including bundled short options.
+        ("head -qc -1 src/long.py", True),
+        ("head -n 5 -c -1 src/long.py", True),
+        ("head -c 10 -n 5000 src/long.py", True),
+        ("head -n 5 -n 5000 src/long.py", True),
+        ("head -n 5000 -n 5 src/long.py", False),
+        ("head -qn5 src/long.py", False),
         ("xargs nl < list", True),
         ("xargs cat -n < list", True),
         ("cat src/long.py | head -n 10 - - - - - >&2", True),
