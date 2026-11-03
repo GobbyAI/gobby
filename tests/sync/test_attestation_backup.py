@@ -77,7 +77,9 @@ def test_task_backup_round_trips_generic_evidence_and_its_correction(
 def test_backup_restore_keeps_divergent_stored_evidence(
     temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path
 ) -> None:
-    author = _Seats(temp_db, sample_project["id"]).add("divergent-author", ["check"])
+    author = _Seats(temp_db, sample_project["id"]).add(
+        "divergent-author", ["check"], results=("pass",)
+    )
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         sample_project["id"], "Divergence", validation_criteria="Keep evidence."
@@ -105,7 +107,9 @@ def test_backup_restore_keeps_divergent_stored_evidence(
 def test_closed_backup_cannot_discard_a_later_local_correction(
     temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path
 ) -> None:
-    author = _Seats(temp_db, sample_project["id"]).add("later-correction-author", ["check"])
+    author = _Seats(temp_db, sample_project["id"]).add(
+        "later-correction-author", ["check"], results=("pass", "needs-work")
+    )
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         sample_project["id"], "Later correction", validation_criteria="Keep newer evidence."

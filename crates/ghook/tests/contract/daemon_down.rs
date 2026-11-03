@@ -163,6 +163,15 @@ fn run_spawned_claude_gap(
     marker: Option<(&str, f64)>,
     supervisor_up: bool,
 ) -> Result<(Output, usize), Box<dyn std::error::Error>> {
+    run_spawned_claude_gap_with(hook, marker, supervisor_up, VALID_STDIN)
+}
+
+fn run_spawned_claude_gap_with(
+    hook: &str,
+    marker: Option<(&str, f64)>,
+    supervisor_up: bool,
+    stdin: &str,
+) -> Result<(Output, usize), Box<dyn std::error::Error>> {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
     if let Some((intent, age)) = marker {
@@ -188,7 +197,7 @@ fn run_spawned_claude_gap(
         Some("claude"),
         Some(hook),
         &url,
-        VALID_STDIN,
+        stdin,
         &[
             ("GOBBY_IS_SPAWNED_AGENT", "1"),
             ("GOBBY_PROJECT_ID", "test-project"),
@@ -244,6 +253,49 @@ fn spawned_outage_without_fresh_restart_keeps_post_tool_batch_paused() -> TestRe
             assert_eq!(queued, 1, "{context}");
             assert_daemon_down(batch, &context)?;
         }
+    }
+    Ok(())
+}
+
+const SCHEDULE_WAKEUP: &str = r#"{"session_id":"test-session","tool_name":"ScheduleWakeup","tool_input":{"delaySeconds":300}}"#;
+const SET_HANDOFF: &str = r#"{"session_id":"test-session","tool_name":"mcp__gobby__call_tool","tool_input":{"server_name":"gobby-sessions","tool_name":"set_handoff"}}"#;
+const RENEW_WAIT_BATCH: &str = r#"{"session_id":"test-session","tool_calls":[{"tool_name":"mcp__gobby__call_tool","tool_input":{"server_name":"gobby-agents","tool_name":"wait_for_coordination"}}]}"#;
+const TASK_WORK: &str = r#"{"session_id":"test-session","tool_name":"mcp__gobby__call_tool","tool_input":{"server_name":"gobby-tasks","tool_name":"claim_task"}}"#;
+
+fn assert_continues(output: Output, context: &str) -> TestResult {
+    assert_eq!(output.status.code(), Some(0), "{context}");
+    assert!(
+        !String::from_utf8(output.stderr)?.contains(MESSAGE),
+        "{context}"
+    );
+    Ok(())
+}
+
+#[test]
+fn spawned_outage_admits_the_seats_own_recheck_and_hold_calls() -> TestResult {
+    let cases = [
+        ("pre-tool-use", SCHEDULE_WAKEUP),
+        ("post-tool-use", SCHEDULE_WAKEUP),
+        ("pre-tool-use", SET_HANDOFF),
+        ("post-tool-batch", RENEW_WAIT_BATCH),
+        // A scheduled wakeup fires as a prompt; it must reach the seat to re-check.
+        ("user-prompt-submit", VALID_STDIN),
+    ];
+    for marker in [None, Some(("restart", 1.0))] {
+        for (hook, stdin) in cases {
+            let context = format!("{hook} {stdin} marker={marker:?}");
+            let (output, _) = run_spawned_claude_gap_with(hook, marker, false, stdin)?;
+            assert_continues(output, &context)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn spawned_outage_still_pauses_other_tool_calls() -> TestResult {
+    for stdin in [VALID_STDIN, TASK_WORK] {
+        let (output, _) = run_spawned_claude_gap_with("pre-tool-use", None, false, stdin)?;
+        assert_daemon_down(output, stdin)?;
     }
     Ok(())
 }

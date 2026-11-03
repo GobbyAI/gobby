@@ -5,6 +5,7 @@ pub mod canonical;
 pub mod contract;
 pub mod daemon;
 pub mod daemon_start;
+mod restart_hold;
 pub mod server;
 pub mod shaping;
 pub mod terminal_context;
