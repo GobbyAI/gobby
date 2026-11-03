@@ -424,6 +424,21 @@ def decoded_exec_results(
         return results
     if not isinstance(value, dict):
         return []
+    if _is_exec_result(value):
+        return [value]
+    for wrapper_key in _RESULT_WRAPPER_KEYS:
+        wrapped = value.get(wrapper_key)
+        if isinstance(wrapped, (dict, list, str)):
+            nested = decoded_exec_results(wrapped)
+            if nested:
+                return nested
+    return []
+
+
+_RESULT_WRAPPER_KEYS = ("content", "contentItems", "output")
+
+
+def _is_exec_result(value: Mapping[str, Any]) -> bool:
     has_exit = any(
         isinstance(value.get(key), int) and not isinstance(value.get(key), bool)
         for key in ("exit_code", "exitCode", "returncode")
@@ -431,15 +446,25 @@ def decoded_exec_results(
     has_boolean = any(
         isinstance(value.get(key), bool) for key in ("success", "isError", "is_error")
     )
-    has_session = exec_session_id(value) is not None
-    if has_exit or has_boolean or has_session:
+    return has_exit or has_boolean or exec_session_id(value) is not None
+
+
+def structured_exec_results(value: Any) -> list[dict[str, Any]]:
+    """Read exec results from structured output only, never from command text.
+
+    A shell command's stdout is whatever the command printed, including JSON that
+    names a session (#25614), so it is never decoded as an execution receipt.
+    """
+    if isinstance(value, list):
+        return [result for item in value for result in structured_exec_results(item)]
+    if not isinstance(value, dict):
+        return []
+    if _is_exec_result(value):
         return [value]
-    for wrapper_key in ("content", "contentItems", "output"):
-        wrapped = value.get(wrapper_key)
-        if isinstance(wrapped, (dict, list, str)):
-            nested = decoded_exec_results(wrapped)
-            if nested:
-                return nested
+    for wrapper_key in _RESULT_WRAPPER_KEYS:
+        nested = structured_exec_results(value.get(wrapper_key))
+        if nested:
+            return nested
     return []
 
 

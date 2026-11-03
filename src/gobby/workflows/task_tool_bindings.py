@@ -17,6 +17,7 @@ from gobby.adapters.codex_impl.execution_chain import (
     extract_functions_write_stdin_session_id,
     extract_wait_cell_id,
     extract_yielded_cell_id,
+    structured_exec_results,
 )
 from gobby.hooks.events import HookEvent, HookEventType, tool_execution_id
 from gobby.tasks.transcript_background import background_job_receipt
@@ -65,6 +66,14 @@ def _continuation_alias(event: HookEvent) -> str | None:
     return f"{event.source.value}:{kind}:{token}" if token is not None else None
 
 
+def _exec_results(event: HookEvent, output: Any) -> list[dict[str, Any]]:
+    """Decode printed results only for code-mode cells; other output is command text."""
+    name = event.data.get("_original_tool_name") or event.metadata.get("original_tool_name")
+    if (name or event.data.get("tool_name")) in FUNCTIONS_EXEC_NAMES:
+        return decoded_exec_results(output)
+    return structured_exec_results(output)
+
+
 def _returned_aliases(event: HookEvent, *, shell_call: bool) -> list[str]:
     output = event.data.get("tool_output", event.data.get("tool_response"))
     aliases: set[str] = set()
@@ -77,7 +86,7 @@ def _returned_aliases(event: HookEvent, *, shell_call: bool) -> list[str]:
         session = extract_direct_exec_running_session_id(output)
         if session is not None:
             aliases.add(f"{event.source.value}:session:{session}")
-        for result in decoded_exec_results(output):
+        for result in _exec_results(event, output):
             session = exec_session_id(result)
             if session is not None and result.get("exit_code") is None:
                 aliases.add(f"{event.source.value}:session:{session}")
@@ -94,7 +103,7 @@ def _terminal_background_receipt(event: HookEvent) -> bool:
         return output is not None
     if extract_direct_exec_terminal_result(output) is not None:
         return True
-    results = decoded_exec_results(output)
+    results = _exec_results(event, output)
     canonical = event.data.get("tool_result")
     if isinstance(canonical, dict):
         results.append(canonical)
