@@ -50,7 +50,7 @@ async def test_protocol_schema_lease(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("authenticated", [True, False])
-async def test_schema_lease_cannot_target_another_session(
+async def test_schema_lease_follows_explicit_session(
     session_manager: SessionManager, authenticated: bool
 ) -> None:
     from contextlib import nullcontext

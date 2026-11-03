@@ -68,7 +68,7 @@ def test_worktree_success_returns_path() -> None:
 
 
 def test_deny_reason_not_compacted() -> None:
-    agent_reason = "Synthetic refusal: " + "retain this diagnostic detail; " * 20
+    agent_reason = "Synthetic refusal: " + ("retain this diagnostic detail; " * 20).rstrip()
     assert len(agent_reason) > 300
 
     result = ClaudeCodeAdapter().translate_from_hook_response(
@@ -78,7 +78,7 @@ def test_deny_reason_not_compacted() -> None:
 
     visible_reason = result["hookSpecificOutput"]["permissionDecisionReason"]
     assert visible_reason == agent_reason
-    assert visible_reason.endswith("retain this diagnostic detail; ")
+    assert visible_reason.endswith("retain this diagnostic detail;")
 
 
 class TestClaudeCodeAdapterInit:
