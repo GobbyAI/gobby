@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.sessions import _terminal_send_keys
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.terminals import TerminalRuntimeRegistry
@@ -24,6 +25,16 @@ from tests.terminals.fakes import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _target_gate_admits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests cover backend-neutral delivery; the target gate has its own tests."""
+
+    async def admit(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(_terminal_send_keys, "send_keys_target_refusal", admit)
 
 
 def _registered_send_keys(
