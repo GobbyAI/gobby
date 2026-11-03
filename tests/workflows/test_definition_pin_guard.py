@@ -1,5 +1,6 @@
 """Definition selections use a synthetic catalog, independent of installed policy."""
 
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -230,6 +231,39 @@ def test_new_pin_is_blocked_and_existing_pin_can_be_edited(tmp_path: Path) -> No
     assert len(blocked) == 1
     assert "fixture-pipeline" in blocked[0]
     assert "tests/test_example.py" in blocked[0]
+
+
+def test_fifo_target_is_rejected_without_reading(tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "test_stream.py"
+    target.parent.mkdir()
+    os.mkfifo(target)
+    # Keep a regression from opening a FIFO and hanging the test process.
+    with patch.object(Path, "read_text", side_effect=AssertionError("unbounded FIFO read")):
+        failures = projected_definition_pins(
+            {"file_path": str(target), "content": "# synthetic replacement\n"},
+            tmp_path,
+            names=NAMES,
+        )
+    assert len(failures) == 1
+    assert "regular file" in failures[0]
+
+
+@pytest.mark.parametrize("extra_bytes", [0, 1])
+def test_source_read_size_boundary(tmp_path: Path, extra_bytes: int) -> None:
+    target = tmp_path / "tests" / "test_large.py"
+    target.parent.mkdir()
+    with target.open("wb") as stream:
+        stream.truncate(2 * 1024 * 1024 + extra_bytes)
+    failures = projected_definition_pins(
+        {"file_path": str(target), "content": "# synthetic replacement\n"},
+        tmp_path,
+        names=NAMES,
+    )
+    if extra_bytes:
+        assert len(failures) == 1
+        assert "too large" in failures[0]
+    else:
+        assert failures == []
 
 
 def test_role_data_and_writes_outside_source_scope_are_unaffected(tmp_path: Path) -> None:

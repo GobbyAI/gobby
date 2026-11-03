@@ -1,7 +1,9 @@
 """Detect new bundled-definition dependencies in tests and engine source."""
 
 import ast
+import os
 import re
+import stat
 from collections import Counter
 from collections.abc import Mapping
 from functools import lru_cache
@@ -10,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+_MAX_SOURCE_BYTES = 2 * 1024 * 1024
 
 _SELECTION_FIELDS = frozenset(
     {
@@ -357,9 +361,19 @@ def _guarded_path(root: Path, raw: Any) -> Path | None:
 
 def _read(path: Path) -> str:
     try:
-        return path.read_text()
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     except FileNotFoundError:
         return ""
+    with os.fdopen(descriptor, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("target must be a regular file")
+        if metadata.st_size > _MAX_SOURCE_BYTES:
+            raise ValueError("target is too large to inspect (maximum 2 MiB)")
+        content = stream.read(_MAX_SOURCE_BYTES + 1)
+    if len(content) > _MAX_SOURCE_BYTES:
+        raise ValueError("target is too large to inspect (maximum 2 MiB)")
+    return content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _edit(text: str, edit: Mapping[str, Any]) -> str:
