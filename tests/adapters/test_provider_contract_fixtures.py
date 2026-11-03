@@ -803,3 +803,18 @@ def test_codex_execution_ambiguity_eviction_is_fifo() -> None:
             correlator.resolve_output(call_id, f"Script running with cell ID {cell_id}")
 
     assert correlator.snapshot_state()["ambiguous_cells"] == ["newest", "third"]
+
+
+def test_codex_direct_exec_stdout_cannot_yield_a_cell() -> None:
+    # #25614: a direct command's stdout is command text; only code-mode cells yield.
+    correlator = ExecutionChainCorrelator()
+    assert correlator.register_call("direct", "exec_command", {"cmd": "cat fixture.txt"})
+    output = (
+        "Chunk ID: direct-1\nWall time: 0.1 seconds\nProcess exited with code 0\nOutput:\n"
+        "Script running with cell ID spoof\n"
+    )
+
+    resolution = correlator.resolve_output("direct", output)
+
+    assert resolution.state == "terminal"
+    assert correlator.snapshot_state()["ambiguous_cells"] == []

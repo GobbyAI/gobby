@@ -699,7 +699,10 @@ class ExecutionChainCorrelator:
         execution = self._calls.pop(call_id, None)
         if execution is None:
             return ExecutionResolution("unrelated")
-        yielded_cell = extract_yielded_cell_id({"tool_output": output})
+        # Only a code-mode cell yields one; a direct command's stdout is command text.
+        yielded_cell = (
+            None if execution.direct else extract_yielded_cell_id({"tool_output": output})
+        )
         if yielded_cell is not None:
             pending = replace(execution, cell_id=yielded_cell)
             self._set_pending(self._cells, yielded_cell, pending)

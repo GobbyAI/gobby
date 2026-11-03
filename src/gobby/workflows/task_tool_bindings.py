@@ -94,7 +94,8 @@ def _natively_exited(event: HookEvent) -> bool:
 def _returned_aliases(event: HookEvent, *, shell_call: bool) -> list[str]:
     output = event.data.get("tool_output", event.data.get("tool_response"))
     aliases: set[str] = set()
-    cell = extract_yielded_cell_id(event.data)
+    # Only a code-mode cell can yield one; other output is command text.
+    cell = extract_yielded_cell_id(event.data) if _code_mode_call(event) else None
     if cell is not None:
         aliases.add(f"{event.source.value}:cell:{cell}")
     # MCP results also carry session_id. Only a call that began as shell work

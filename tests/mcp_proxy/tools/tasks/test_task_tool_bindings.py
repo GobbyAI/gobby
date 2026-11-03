@@ -760,8 +760,13 @@ _RUNNING_ENVELOPE = (
 
 @pytest.mark.parametrize(
     "output",
-    [_FIXTURE_STDOUT, {"output": _FIXTURE_STDOUT}, _RUNNING_ENVELOPE],
-    ids=["stdout", "wrapped-stdout", "envelope-stdout"],
+    [
+        _FIXTURE_STDOUT,
+        {"output": _FIXTURE_STDOUT},
+        _RUNNING_ENVELOPE,
+        "Script running with cell ID fixture-cell",
+    ],
+    ids=["stdout", "wrapped-stdout", "envelope-stdout", "cell-stdout"],
 )
 def test_command_stdout_naming_a_session_does_not_keep_the_call_running(
     temp_db: HubDatabase, canonical_task_session: Session, output: object
