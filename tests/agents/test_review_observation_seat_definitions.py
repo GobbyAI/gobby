@@ -116,7 +116,7 @@ VERDICT_STEPS: list[dict[str, Any]] = [
 # A minimal reviewer for the malformed-SHA case: only the verdict-completion transition.
 # Candidate intake and verdict resets are read only from a definition that writes review.
 MALFORMED_SHA_REVIEWER = _seat(
-    "code-reviewer",
+    "fixture-definition-e08ba693",
     VERDICT_STEPS,
     REVIEWER_VARIABLES,
     task_attestation_writes=["independent-review"],
@@ -124,7 +124,7 @@ MALFORMED_SHA_REVIEWER = _seat(
 
 # A log monitor whose report step leaves for tick only on a durable report.
 MONITOR = _seat(
-    "log-monitor",
+    "fixture-definition-cf1e3dd7",
     [
         {
             "name": "report",
@@ -136,7 +136,7 @@ MONITOR = _seat(
     ],
     {"tick_done": False, "tick_window": None},
     # Monitors report to Triage; only a report to a declared recipient ends the window.
-    monitor_report_recipients=["triage"],
+    monitor_report_recipients=["fixture-definition-0f916789"],
 )
 
 
@@ -198,7 +198,11 @@ async def test_monitor_tick_admits_shell_and_report_does_not(temp_db: PostgresHu
             ],
         },
     ]
-    run = SeatRun(temp_db, "log-monitor", definition=_seat("log-monitor", steps))
+    run = SeatRun(
+        temp_db,
+        "fixture-definition-cf1e3dd7",
+        definition=_seat("fixture-definition-cf1e3dd7", steps),
+    )
     assert await run.admits_native("Bash", {"command": "ls"})
     assert await run.admits("gobby-agents", "wait_for_coordination")
     _set_state(run, "report")
@@ -287,7 +291,7 @@ def _single_transition_seat(start: str, target: str, when: str) -> dict[str, Any
         {"name": start, "allowed_tools": [CALL], "transitions": [{"to": target, "when": when}]},
         {"name": target, "allowed_tools": [CALL]},
     ]
-    return _seat("code-reviewer", steps, REVIEWER_VARIABLES)
+    return _seat("fixture-definition-e08ba693", steps, REVIEWER_VARIABLES)
 
 
 @pytest.mark.parametrize(
@@ -337,7 +341,7 @@ async def test_reviewer_step_moves_only_on_its_own_transition(
 ) -> None:
     run = SeatRun(
         temp_db,
-        "code-reviewer",
+        "fixture-definition-e08ba693",
         definition=_single_transition_seat(start, target, when),
     )
     _set_state(run, start, **state)
@@ -367,7 +371,7 @@ async def test_candidate_withdrawal_text_does_not_reset_declared_state(
     succeeded: bool,
 ) -> None:
     patch_local_machine_id(monkeypatch, "21000000-0000-4000-8000-000000000001")
-    run = SeatRun(temp_db, "code-reviewer", definition=MALFORMED_SHA_REVIEWER)
+    run = SeatRun(temp_db, "fixture-definition-e08ba693", definition=MALFORMED_SHA_REVIEWER)
     task = run.task()
     _set_state(
         run,
@@ -409,7 +413,7 @@ async def test_candidate_withdrawal_text_does_not_reset_declared_state(
 async def test_candidate_verdict_text_does_not_reset_declared_state(
     temp_db: PostgresHubDatabase, content: str
 ) -> None:
-    run = SeatRun(temp_db, "code-reviewer", definition=MALFORMED_SHA_REVIEWER)
+    run = SeatRun(temp_db, "fixture-definition-e08ba693", definition=MALFORMED_SHA_REVIEWER)
     task = run.task()
     _set_state(
         run,
@@ -431,7 +435,7 @@ async def test_candidate_verdict_text_does_not_reset_declared_state(
 async def test_candidate_message_does_not_mutate_arbitrary_reference_values(
     temp_db: PostgresHubDatabase, candidate_sha: str | None
 ) -> None:
-    run = SeatRun(temp_db, "code-reviewer", definition=MALFORMED_SHA_REVIEWER)
+    run = SeatRun(temp_db, "fixture-definition-e08ba693", definition=MALFORMED_SHA_REVIEWER)
     task = run.task()
     instance = run.instances.get_for_session(SESSION_ID)
     assert instance is not None
@@ -462,9 +466,9 @@ async def test_candidate_message_does_not_mutate_arbitrary_reference_values(
 async def test_monitor_leaves_report_only_on_a_nominal_or_alarm_report(
     temp_db: PostgresHubDatabase, content: str, resets: bool
 ) -> None:
-    run = SeatRun(temp_db, "log-monitor", definition=MONITOR)
+    run = SeatRun(temp_db, "fixture-definition-cf1e3dd7", definition=MONITOR)
     # Monitors report to Triage; only a durable report to Triage counts.
-    grant_step_writes(temp_db, COORDINATOR_ID, PROJECT_ID, "triage", ())
+    grant_step_writes(temp_db, COORDINATOR_ID, PROJECT_ID, "fixture-definition-0f916789", ())
     # The window's first report is already recorded; a durable report must match it.
     _set_state(
         run,

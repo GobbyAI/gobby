@@ -42,13 +42,13 @@ def test_project_agents_and_variables_require_restart(kind: str, suffix: str) ->
         (["crates/gobby-core/src/lib.rs", "web/src/App.tsx"], "cutover"),
         (["src/gobby/storage/schema_expected_identity.json", "docs/x.md"], "cutover"),
         (["src/gobby/cli/main.py", "web/src/App.tsx"], "restart"),
-        (["src/gobby/install/shared/workflows/agents/researcher.yaml"], "reload"),
-        (["src/gobby/install/shared/workflows/agents/developer.yaml", "docs/x.md"], "reload"),
+        (["src/gobby/install/shared/workflows/agents/fixture-a.yaml"], "reload"),
+        (["src/gobby/install/shared/workflows/agents/fixture-b.yaml", "docs/x.md"], "reload"),
         (["src/gobby/install/shared/workflows/agents/README.md"], "restart"),
         (["src/gobby/install/shared/workflows/agents/nested/seat.yaml"], "restart"),
         (
             [
-                "src/gobby/install/shared/workflows/agents/researcher.yaml",
+                "src/gobby/install/shared/workflows/agents/fixture-a.yaml",
                 "src/gobby/agents/sync.py",
             ],
             "restart",
@@ -71,12 +71,12 @@ def test_project_agents_and_variables_require_restart(kind: str, suffix: str) ->
         (
             [
                 ".gobby/workflows/pipelines/example-lane.yaml",
-                "src/gobby/install/shared/workflows/agents/researcher.yaml",
+                "src/gobby/install/shared/workflows/agents/fixture-a.yaml",
             ],
             "restart",
         ),
         (
-            ["src/gobby/install/shared/workflows/agents/researcher.yaml", "web/src/App.tsx"],
+            ["src/gobby/install/shared/workflows/agents/fixture-a.yaml", "web/src/App.tsx"],
             "restart",
         ),
         (["docs/guides/x.md", "tests/test_x.py"], "none"),

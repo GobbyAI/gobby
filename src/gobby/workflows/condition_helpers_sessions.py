@@ -67,7 +67,7 @@ def send_keys_target_in_scope(
     the caller's own session, its project, and its agent tree in either direction.
     A missing or unresolvable caller, and an unresolvable target, pass here.
     ``send_keys`` refuses each with its own error. A spawned agent's calls are
-    scoped like any other caller's: the ``no-send-keys`` rule decides
+    scoped like any other caller's. The active definition's capabilities decide
     whether it may use these tools at all. For ``capture_output``, a request with
     no caller is the operator's, and the target lookup takes a session UUID, which
     resolves here by primary key. Any other failure raises, and a raising block

@@ -759,7 +759,7 @@ def register_terminal_tools(
         lines: int = 50,
     ) -> dict[str, Any]:
         # Whether the target is in the caller's scope is the bundled
-        # ``block-cross-project-send-keys`` rule's decision, made before dispatch.
+        # ``cross-project terminal admission`` rule's decision, made before dispatch.
         if terminal_manager is not None and terminal_runtime_registry is not None:
             terminal = terminal_manager.get_live_for_session(session_id)
             if terminal is not None:

@@ -65,13 +65,13 @@ async def test_read_scope_selector_can_exempt_a_synthetic_seat(
         folder=Path(variables["_agent_workspace_dir"]),
         persistent=False,
     )
-    report_folder = anchor / "researcher" / "session-51"
+    report_folder = anchor / "fixture-definition-3588bb72" / "session-51"
     _register(
         temp_db,
         project_id,
         seq=51,
         status="active",
-        agent_type="researcher",
+        agent_type="fixture-definition-3588bb72",
         folder=report_folder,
         persistent=False,
     )
@@ -145,7 +145,7 @@ async def test_patch_prose_checks_destinations_without_executing_shell_text(
     relative: str,
     decision: str,
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     target = Path(variables["_agent_workspace_dir"]) / "task-25298" / relative
     # Reduced from the refused plan patch, preserving its shell punctuation.
     patch = (
@@ -313,7 +313,7 @@ async def test_owned_task_worktree_repository_content_keeps_metadata_boundary(
     (project / ".gobby").mkdir(parents=True)
     (project / ".gobby/test-types-baseline.json").write_text("{}\n", encoding="utf-8")
     init_git_checkout(project)
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     own.mkdir(parents=True)
     worktree = own / "task-25133"
@@ -357,7 +357,13 @@ async def test_owned_task_worktree_repository_content_keeps_metadata_boundary(
         assert "fixture-write-scope" in (response.reason or "")
 
 
-SEATS = ("researcher", "assistant", "archivist", "developer", None)
+SEATS = (
+    "fixture-definition-3588bb72",
+    "fixture-helper",
+    "fixture-definition-599e0437",
+    "fixture-worker",
+    None,
+)
 
 
 @pytest.mark.parametrize(
@@ -934,7 +940,7 @@ async def test_plan_documents_in_owned_worktrees_are_writable(
 ) -> None:
     project = tmp_path / "checkout"
     project.mkdir()
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     worktree = own / "task-25298"
     plans = worktree / ".gobby" / "plans"
@@ -949,7 +955,7 @@ async def test_plan_documents_in_owned_worktrees_are_writable(
         (plans / "settings.json", "block"),
         (plans / ".git" / "config.md", "block"),
         (plans / ".gobby" / "config.md", "block"),
-        (root / PROJECT / "developer" / "session-99" / ".gobby" / "plans" / "a.md", "block"),
+        (root / PROJECT / "fixture-worker" / "session-99" / ".gobby" / "plans" / "a.md", "block"),
     ):
         event = {
             "tool_name": "apply_patch",
@@ -970,7 +976,7 @@ async def test_workspace_metadata_names_ignore_case(
 ) -> None:
     project = tmp_path / "checkout"
     project.mkdir()
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     key = "_agent_workspace_dir" if folder == "own" else "_agent_workspace_epic_dir"
     directory = Path(variables[key])
     plans = directory / ".gobby" / "plans"
@@ -1008,7 +1014,7 @@ async def test_case_alias_of_workspace_root_does_not_bypass_write_scope(
 ) -> None:
     project = tmp_path / "checkout"
     project.mkdir()
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     own.mkdir(parents=True)
     directory = {"gobby": root.parent, "root": root, "definition": own.parent}[ancestor]
@@ -1046,7 +1052,7 @@ async def test_glob_literal_prefix_checks_resolved_seat(
     location: str,
     tool: str,
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     safe = own / "target"
     foreign = own.parent / "session-99"
@@ -1087,7 +1093,7 @@ async def test_glob_literal_prefix_checks_resolved_seat(
 async def test_bare_shell_patterns_check_resolved_seat(
     workspace_read_engine: RuleEngine, root: Path, pattern: str
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     foreign = own.parent / "session-99"
     own.mkdir(parents=True)
@@ -1110,7 +1116,7 @@ async def test_bare_shell_patterns_check_resolved_seat(
 async def test_literal_pattern_filename_cannot_hide_foreign_symlink(
     workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, name: str, tool: str
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     foreign = own.parent / "session-99"
     own.mkdir(parents=True)
@@ -1134,7 +1140,7 @@ async def test_literal_pattern_filename_cannot_hide_foreign_symlink(
 async def test_file_tool_paths_are_literal_not_patterns(
     workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, name: str, tool: str
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     directory = own / name
     foreign = own.parent / "session-99"
@@ -1160,7 +1166,7 @@ async def test_file_tool_paths_are_literal_not_patterns(
 async def test_shell_dot_patterns_cannot_traverse_to_foreign_sibling(
     workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, pattern: str, tool: str
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     foreign = own.parent / "session-99"
     own.mkdir(parents=True)
@@ -1180,7 +1186,7 @@ async def test_shell_dot_patterns_cannot_traverse_to_foreign_sibling(
 def test_large_regular_trees_keep_glob_reads_fast_and_allowed(
     root: Path, tmp_path: Path, location: str
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     directory = (
         Path(variables["_agent_workspace_dir"]) if location == "own" else tmp_path / "repository"
     )
@@ -1224,7 +1230,7 @@ def test_real_checkout_glob_regressions_remain_allowed(
     root: Path, tool: str, expression: str, directory: str
 ) -> None:
     checkout = Path(__file__).resolve().parents[2]
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     data = (
         _shell(expression, checkout)
         if tool == "Bash"
@@ -1245,7 +1251,7 @@ def test_ancestor_glob_does_not_imply_workspace_read(
     root: Path, tmp_path: Path, command: str
 ) -> None:
     root.mkdir(parents=True)
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     data = _shell(command, tmp_path)
     assert not agent_workspace_read_violation(None, data, data["tool_input"], variables, None)
 
@@ -1254,7 +1260,7 @@ def test_ancestor_glob_does_not_imply_workspace_read(
 def test_glob_scope_checks_do_not_enumerate_directories(
     root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     own.mkdir(parents=True)
     data = (
@@ -1283,8 +1289,8 @@ def test_glob_scope_checks_do_not_enumerate_directories(
         "grep -E '(a|b)*(c)' README.md",
         "grep -E 'v?(1|2)' README.md",
         'rg -n "(_agent_type|agent_name|agent_type|agent_definition|\\.name|\\.role|audience)'
-        ".*(==|!=| in | not in ).*(triage|orchestrator|dev-manager|assistant|developer|"
-        'researcher|reviewer|test-writer)|(_agent_type|agent_name|agent_type).*get\\(" '
+        ".*(==|!=| in | not in ).*(fixture-definition-0f916789|fixture-coordinator|dev-manager|fixture-helper|fixture-worker|"
+        'fixture-definition-3588bb72|reviewer|fixture-definition-c02389e4)|(_agent_type|agent_name|agent_type).*get\\(" '
         "src/gobby/agents src/gobby/workflows src/gobby/mcp_proxy src/gobby/tasks "
         "src/gobby/install/shared/workflows --glob '*.py' --glob '*.yaml' -m 50",
     ],
@@ -1292,7 +1298,7 @@ def test_glob_scope_checks_do_not_enumerate_directories(
 def test_regex_data_operands_are_not_extglob_paths(
     root: Path, tmp_path: Path, location: str, command: str
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     own.mkdir(parents=True)
     directory = own if location == "own" else tmp_path
@@ -1322,7 +1328,7 @@ def test_regex_data_operands_are_not_extglob_paths(
 def test_explicit_regex_option_keeps_first_file_operand(
     root: Path, tmp_path: Path, command: str
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     foreign = Path(variables["_agent_workspace_dir"]).parent / "session-99/notes.md"
     data = _shell(f"{command} '{foreign}'", tmp_path)
     assert agent_workspace_read_violation(None, data, data["tool_input"], variables, None)
@@ -1339,7 +1345,7 @@ async def test_unreadable_directory_and_brace_limit_are_distinct(
 ) -> None:
     from gobby.workflows import condition_helpers_sessions as helpers
 
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     own.mkdir(parents=True)
     for number in range(3):
@@ -1384,7 +1390,7 @@ async def test_safe_braces_and_parent_patterns_remain_readable(
     tool: str,
     expression: str,
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     directory = (
         Path(variables["_agent_workspace_dir"]) if location == "own" else tmp_path / "repository"
     )
@@ -1411,8 +1417,8 @@ async def test_read_expansion_cannot_enter_workspace_from_outside(
     workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, prefix: str
 ) -> None:
     (root.parent / "logs").mkdir(parents=True)
-    variables = _seat(root / PROJECT, "developer", 12)
-    target = root.parent / prefix / root.name / PROJECT / "developer/session-99/notes.md"
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
+    target = root.parent / prefix / root.name / PROJECT / "fixture-worker/session-99/notes.md"
     response = await _decide(workspace_read_engine, _shell(f"cat {target}", tmp_path), variables)
     assert response.decision == "block"
     assert "fixture-read-scope" in (response.reason or "")
@@ -1427,7 +1433,7 @@ async def test_case_alias_cannot_borrow_unproven_seat_ownership(
     monkeypatch: pytest.MonkeyPatch,
     identity: str,
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     alias = own.with_name(own.name.upper())
 
@@ -1452,7 +1458,7 @@ async def test_case_alias_reads_preserve_workspace_isolation(
 ) -> None:
     project = tmp_path / "checkout"
     project.mkdir()
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     own.mkdir(parents=True)
     directory = {"gobby": root.parent, "root": root, "definition": own.parent}[ancestor]
@@ -1489,8 +1495,8 @@ async def test_workspace_root_patterns_cannot_expose_foreign_reads(
 ) -> None:
     project = tmp_path / "checkout"
     project.mkdir()
-    variables = _seat(root / PROJECT, "developer", 12)
-    target = root.parent / pattern / PROJECT / "developer" / "session-99" / "notes.md"
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
+    target = root.parent / pattern / PROJECT / "fixture-worker" / "session-99" / "notes.md"
     data = (
         _shell(f"cat {target}", project)
         if tool == "shell"
@@ -1508,7 +1514,7 @@ async def test_read_patterns_keep_an_unambiguous_owned_boundary(
 ) -> None:
     project = tmp_path / "checkout"
     project.mkdir()
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     for target, decision in (
         (own / "*.md", "allow"),
@@ -1533,7 +1539,7 @@ async def test_nested_task_worktree_plan_allowance_stays_bounded(
 ) -> None:
     project = tmp_path / "checkout"
     project.mkdir()
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     variable = "_agent_workspace_dir" if folder == "own" else "_agent_workspace_epic_dir"
     worktree = Path(variables[variable]) / "task-25298"
     for relative, decision in (
@@ -1560,7 +1566,7 @@ async def test_nested_task_worktree_plan_allowance_stays_bounded(
 async def test_brace_expansion_cannot_escape_owned_read_folder(
     workspace_read_engine: RuleEngine, root: Path, tmp_path: Path, relative: str
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     target = Path(variables["_agent_workspace_dir"]) / relative
     response = await _decide(workspace_read_engine, _shell(f"cat {target}", tmp_path), variables)
     assert response.decision == "block"
@@ -1576,7 +1582,7 @@ async def test_read_alias_requires_proven_seat_identity(
     monkeypatch: pytest.MonkeyPatch,
     identity: str,
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
 
     def samefile(path: Path, other: Path) -> bool:
@@ -1604,7 +1610,7 @@ async def test_apply_patch_workspace_targets_use_the_actual_headers(
     shape: str,
     command_field: bool,
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     worktree = Path(variables["_agent_workspace_dir"]) / "task-25298"
     targets = (
         [worktree / ".gobby/plans/runbook-devteam-addendum.md"]
@@ -1650,19 +1656,19 @@ async def test_predecessor_case_alias_keeps_live_holder_and_sequence_guards(
 ) -> None:
     project_id: str = sample_project["id"]
     anchor = root / project_id
-    own = anchor / "assistant" / "session-40"
+    own = anchor / "fixture-helper" / "session-40"
     own.mkdir(parents=True)
     alias_root = root.with_name(root.name.upper())
     if not alias_root.exists():
         pytest.skip("Filesystem distinguishes workspace root casing")
     assert alias_root.samefile(root)
-    variables = _seat(anchor, "assistant", 40, persistent=True)
+    variables = _seat(anchor, "fixture-helper", 40, persistent=True)
     caller = _register(
         temp_db,
         project_id,
         seq=40,
         status="active",
-        agent_type="assistant",
+        agent_type="fixture-helper",
         folder=own,
         persistent=True,
     )
@@ -1686,7 +1692,7 @@ async def test_predecessor_case_alias_keeps_live_holder_and_sequence_guards(
             project_id,
             seq=seq,
             status=status,
-            agent_type="assistant",
+            agent_type="fixture-helper",
             folder=folder,
             persistent=True,
         )
@@ -1714,28 +1720,28 @@ async def test_read_scope_by_persistence(
         return "~/" + str(path.relative_to(root.parents[1]))
 
     # A non-persistent developer: its own folder, its epic folder and the README.
-    developer = _seat(anchor, "developer", 50)
+    developer = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
         project_id,
         seq=50,
         status="active",
-        agent_type="developer",
-        folder=anchor / "developer" / "session-50",
+        agent_type="fixture-worker",
+        folder=anchor / "fixture-worker" / "session-50",
         persistent=False,
     )
-    ended_earlier = anchor / "developer" / "session-10"
+    ended_earlier = anchor / "fixture-worker" / "session-10"
     _register(
         temp_db,
         project_id,
         seq=10,
         status="expired",
-        agent_type="developer",
+        agent_type="fixture-worker",
         folder=ended_earlier,
         persistent=False,
     )
     for allowed in (
-        anchor / "developer" / "session-50" / "notes.md",
+        anchor / "fixture-worker" / "session-50" / "notes.md",
         anchor / "epics" / "epic-5" / "plan.md",
         anchor / "README.md",
     ):
@@ -1749,9 +1755,9 @@ async def test_read_scope_by_persistence(
             assert response.decision == "allow", (data, response.reason)
     for refused in (
         ended_earlier / "notes.md",
-        anchor / "developer" / "session-51" / "notes.md",
-        anchor / "orchestrator" / "session-3" / "notes.md",
-        anchor / "developer",
+        anchor / "fixture-worker" / "session-51" / "notes.md",
+        anchor / "fixture-coordinator" / "session-3" / "notes.md",
+        anchor / "fixture-worker",
     ):
         for data in (
             _read(refused, project),
@@ -1763,24 +1769,24 @@ async def test_read_scope_by_persistence(
             assert response.decision == "block", data
 
     # A persistent seat also reads its definition's eligible predecessor folders.
-    assistant_folder = anchor / "assistant" / "session-40"
-    assistant = _seat(anchor, "assistant", 40, persistent=True)
+    assistant_folder = anchor / "fixture-helper" / "session-40"
+    assistant = _seat(anchor, "fixture-helper", 40, persistent=True)
     successor = _register(
         temp_db,
         project_id,
         seq=40,
         status="active",
-        agent_type="assistant",
+        agent_type="fixture-helper",
         folder=assistant_folder,
         persistent=True,
     )
-    predecessor = anchor / "assistant" / "session-30"
+    predecessor = anchor / "fixture-helper" / "session-30"
     _register(
         temp_db,
         project_id,
         seq=30,
         status="expired",
-        agent_type="assistant",
+        agent_type="fixture-helper",
         folder=predecessor,
         persistent=True,
     )
@@ -1793,7 +1799,10 @@ async def test_read_scope_by_persistence(
         response = await _decide(engine, data, dict(assistant), successor)
         assert response.decision == "allow", (data, response.reason)
     # Never the whole definition directory, and never another definition's folders.
-    for refused in (anchor / "assistant", anchor / "orchestrator" / "session-30" / "notes.md"):
+    for refused in (
+        anchor / "fixture-helper",
+        anchor / "fixture-coordinator" / "session-30" / "notes.md",
+    ):
         for data in (_grep(refused, project), _shell(f"cat {refused}", project)):
             response = await _decide(engine, data, dict(assistant), successor)
             assert response.decision == "block", data
@@ -1809,7 +1818,7 @@ async def test_exemptions_and_variable_protection(
 ) -> None:
     project = tmp_path / "checkout"
     project.mkdir()
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
 
     # Workspace writes sit outside every checkout: no repo mutation, so no edit-ledger entry.
@@ -1828,12 +1837,12 @@ async def test_exemptions_and_variable_protection(
         sample_project["id"],
         seq=7,
         status="active",
-        agent_type="assistant",
-        folder=root / sample_project["id"] / "assistant" / "session-7",
+        agent_type="fixture-helper",
+        folder=root / sample_project["id"] / "fixture-helper" / "session-7",
         persistent=True,
     )
     sessions = SessionManager(temp_db)
-    for role in ("assistant", "orchestrator", "default"):
+    for role in ("fixture-helper", "fixture-coordinator", "default"):
         AgentDefinitionManager(temp_db).create(
             role,
             {
@@ -1887,38 +1896,38 @@ def test_predecessor_eligibility(
             status=status,
             agent_type=definition,
             folder=bound or folder(definition, seq),
-            persistent=definition != "developer",
+            persistent=definition != "fixture-worker",
         )
 
-    caller = register("assistant", 40, "active")
-    register("assistant", 30, "expired")
-    register("assistant", 35, "active")
-    register("assistant", 45, "expired")
-    resumed = register("assistant", 32, "active")
-    register("assistant", 28, "expired")
+    caller = register("fixture-helper", 40, "active")
+    register("fixture-helper", 30, "expired")
+    register("fixture-helper", 35, "active")
+    register("fixture-helper", 45, "expired")
+    resumed = register("fixture-helper", 32, "active")
+    register("fixture-helper", 28, "expired")
     # A live clear successor inherited the session-28 lineage folder.
-    register("assistant", 39, "active", bound=folder("assistant", 28))
-    register("orchestrator", 20, "expired")
+    register("fixture-helper", 39, "active", bound=folder("fixture-helper", 28))
+    register("fixture-coordinator", 20, "expired")
 
     def readable(path: Path, who: str = caller) -> bool:
         return predecessor_folder_readable(sessions, who, str(path))
 
-    assert readable(folder("assistant", 30)) is True
-    assert readable(folder("assistant", 35)) is False, "a live sibling is not a predecessor"
-    assert readable(folder("assistant", 45)) is False, "a later lineage is not a predecessor"
-    assert readable(folder("assistant", 32)) is False, "a resumed predecessor is live"
-    assert readable(folder("assistant", 28)) is False, "a live successor holds the lineage"
-    assert readable(folder("orchestrator", 20)) is False, "another definition's folder"
-    assert readable(anchor / "assistant") is False, "never the whole definition directory"
-    assert readable(folder("assistant", 30) / ".." / "session-35") is False
+    assert readable(folder("fixture-helper", 30)) is True
+    assert readable(folder("fixture-helper", 35)) is False, "a live sibling is not a predecessor"
+    assert readable(folder("fixture-helper", 45)) is False, "a later lineage is not a predecessor"
+    assert readable(folder("fixture-helper", 32)) is False, "a resumed predecessor is live"
+    assert readable(folder("fixture-helper", 28)) is False, "a live successor holds the lineage"
+    assert readable(folder("fixture-coordinator", 20)) is False, "another definition's folder"
+    assert readable(anchor / "fixture-helper") is False, "never the whole definition directory"
+    assert readable(folder("fixture-helper", 30) / ".." / "session-35") is False
 
     sessions.update_status(resumed, "expired")
-    assert readable(folder("assistant", 32)) is True
+    assert readable(folder("fixture-helper", 32)) is True
 
     # A non-persistent seat reads no predecessor folder at all.
-    developer = register("developer", 50, "active")
-    register("developer", 10, "expired")
-    assert readable(folder("developer", 10), developer) is False
+    developer = register("fixture-worker", 50, "active")
+    register("fixture-worker", 10, "expired")
+    assert readable(folder("fixture-worker", 10), developer) is False
 
 
 @pytest.mark.asyncio
@@ -1955,14 +1964,14 @@ async def test_placeholder_template_in_commit_message_is_not_a_read(
     project.mkdir()
     project_id: str = sample_project["id"]
     anchor = root / project_id
-    developer = _seat(anchor, "developer", 50)
+    developer = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
         project_id,
         seq=50,
         status="active",
-        agent_type="developer",
-        folder=anchor / "developer" / "session-50",
+        agent_type="fixture-worker",
+        folder=anchor / "fixture-worker" / "session-50",
         persistent=False,
     )
     # The template is documentation text inside a message, not a path the seat reads.
@@ -1982,20 +1991,20 @@ async def test_concrete_reads_of_other_session_folders_stay_refused(
     project.mkdir()
     project_id: str = sample_project["id"]
     anchor = root / project_id
-    developer = _seat(anchor, "developer", 50)
+    developer = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
         project_id,
         seq=50,
         status="active",
-        agent_type="developer",
-        folder=anchor / "developer" / "session-50",
+        agent_type="fixture-worker",
+        folder=anchor / "fixture-worker" / "session-50",
         persistent=False,
     )
     # Concrete paths carrying real ids: a sibling session, and a folder of another project.
-    sibling = anchor / "developer" / "session-51" / "notes.md"
+    sibling = anchor / "fixture-worker" / "session-51" / "notes.md"
     other_project = root / "22222222-2222-4222-8222-222222222222"
-    foreign = other_project / "developer" / "session-9" / "notes.md"
+    foreign = other_project / "fixture-worker" / "session-9" / "notes.md"
     for refused in (sibling, foreign):
         for data in (
             _read(refused, project),
@@ -2024,27 +2033,30 @@ async def test_own_and_predecessor_folders_stay_readable(
     project.mkdir()
     project_id: str = sample_project["id"]
     anchor = root / project_id
-    assistant = _seat(anchor, "assistant", 40, persistent=True)
+    assistant = _seat(anchor, "fixture-helper", 40, persistent=True)
     successor = _register(
         temp_db,
         project_id,
         seq=40,
         status="active",
-        agent_type="assistant",
-        folder=anchor / "assistant" / "session-40",
+        agent_type="fixture-helper",
+        folder=anchor / "fixture-helper" / "session-40",
         persistent=True,
     )
-    predecessor = anchor / "assistant" / "session-30"
+    predecessor = anchor / "fixture-helper" / "session-30"
     _register(
         temp_db,
         project_id,
         seq=30,
         status="expired",
-        agent_type="assistant",
+        agent_type="fixture-helper",
         folder=predecessor,
         persistent=True,
     )
-    for allowed in (anchor / "assistant" / "session-40" / "notes.md", predecessor / "lessons.md"):
+    for allowed in (
+        anchor / "fixture-helper" / "session-40" / "notes.md",
+        predecessor / "lessons.md",
+    ):
         for data in (
             _read(allowed, project),
             _shell(f"ls {allowed.parent}", project),
@@ -2066,18 +2078,18 @@ async def test_shell_wrapped_reads_of_other_session_folders_stay_refused(
     project.mkdir()
     project_id: str = sample_project["id"]
     anchor = root / project_id
-    developer = _seat(anchor, "developer", 50)
+    developer = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
         project_id,
         seq=50,
         status="active",
-        agent_type="developer",
-        folder=anchor / "developer" / "session-50",
+        agent_type="fixture-worker",
+        folder=anchor / "fixture-worker" / "session-50",
         persistent=False,
     )
     # A shell wrapper runs its command string, so the paths inside that string are reads too.
-    sibling = anchor / "developer" / "session-51" / "notes.md"
+    sibling = anchor / "fixture-worker" / "session-51" / "notes.md"
     for command in (
         f'bash -c "cat {sibling}"',
         f"sh -c 'ls {sibling.parent}'",
@@ -2090,7 +2102,7 @@ async def test_shell_wrapped_reads_of_other_session_folders_stay_refused(
         assert response.decision == "block", (command, response.reason)
         assert "fixture-read-scope" in (response.reason or ""), command
     # The caller's own folder stays readable through a wrapper.
-    own = anchor / "developer" / "session-50" / "notes.md"
+    own = anchor / "fixture-worker" / "session-50" / "notes.md"
     data = _shell(f'bash -c "cat {own}"', project)
     response = await _decide(engine, data, dict(developer), caller)
     assert response.decision == "allow", (data, response.reason)
@@ -2112,12 +2124,12 @@ async def test_quoted_data_heredoc_still_checks_real_write_targets(
 ) -> None:
     project = tmp_path / "checkout"
     project.mkdir()
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     target = (
         own / ".gobby" / "project.json"
         if target_kind == "config"
-        else root / PROJECT / "developer" / "session-99" / "notes.md"
+        else root / PROJECT / "fixture-worker" / "session-99" / "notes.md"
     )
     command = header.format(target=target) + "\nLiteral commit or document content\nEOF"
     data = _shell(command, project)
@@ -2151,7 +2163,7 @@ async def test_git_commit_pathspec_workspace_scope(
 ) -> None:
     project = tmp_path / "checkout"
     project.mkdir()
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     message_option = "" if arguments.startswith("-m") else "-F - "
     command = f"git -C {own} commit {message_option}{arguments} <<'EOF'\nLiteral .git/config\nEOF"
@@ -2175,19 +2187,19 @@ async def test_quoted_heredoc_bodies_and_quoted_text_judge_concrete_foreign_path
     project.mkdir()
     project_id: str = sample_project["id"]
     anchor = root / project_id
-    developer = _seat(anchor, "developer", 50)
+    developer = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
         project_id,
         seq=50,
         status="active",
-        agent_type="developer",
-        folder=anchor / "developer" / "session-50",
+        agent_type="fixture-worker",
+        folder=anchor / "fixture-worker" / "session-50",
         persistent=False,
     )
     # A shell that reads a quoted heredoc body runs it, so the body is judged as shell code.
     # Literal heredoc data does not read the paths it describes.
-    sibling = anchor / "developer" / "session-51" / "notes.md"
+    sibling = anchor / "fixture-worker" / "session-51" / "notes.md"
     for command in (
         f"bash <<'EOF'\ncat {sibling}\nEOF",
         f"sh -s <<'EOF'\ncat {sibling}\nEOF",
@@ -2203,7 +2215,7 @@ async def test_quoted_heredoc_bodies_and_quoted_text_judge_concrete_foreign_path
         assert response.decision == "block", (command, response.reason)
         assert "fixture-read-scope" in (response.reason or ""), command
     # The caller's own folder stays readable in the same positions.
-    own = anchor / "developer" / "session-50" / "notes.md"
+    own = anchor / "fixture-worker" / "session-50" / "notes.md"
     for command in (
         f"git commit -F - <<'EOF'\nAnchor: {sibling}\nEOF",
         f"cat > {own} <<'EOF'\n# Handoff\nPrior evidence: {sibling}\nEOF",

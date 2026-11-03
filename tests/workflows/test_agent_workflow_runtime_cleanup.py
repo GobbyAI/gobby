@@ -273,7 +273,7 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
     instance_manager.save(
         make_step_instance(
             CHILD_SESSION_ID,
-            agent_name="tech-writer",
+            agent_name="fixture-definition-76c4b50c",
             current_step="terminate",
         )
     )
@@ -324,7 +324,7 @@ async def test_workflow_terminate_on_parked_daemon_stop_run_retains_state_and_sk
     instance_manager.save(
         make_step_instance(
             CHILD_SESSION_ID,
-            agent_name="tech-writer",
+            agent_name="fixture-definition-76c4b50c",
             current_step="terminate",
         )
     )
@@ -380,7 +380,7 @@ def test_daemon_stop_retains_typed_instance_other_reasons_delete(
     instance_manager.save(
         make_step_instance(
             CHILD_SESSION_ID,
-            agent_name="tech-writer",
+            agent_name="fixture-definition-76c4b50c",
             current_step="implement",
             variables={"ticket": "keep"},
         )

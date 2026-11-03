@@ -2693,7 +2693,7 @@ class TestEditWritePending:
     ) -> None:
         """Edit blocked by a declarative rule should clear edit_write_pending.
 
-        Regression test: when require-task-before-edit blocks an Edit,
+        Regression test: when fixture-definition-55b74807 blocks an Edit,
         edit_write_pending stayed True, causing edit-write-recovery to
         loop on every stop attempt.
         """
@@ -4000,7 +4000,7 @@ class TestAgentScope:
         )
 
         engine = RuleEngine(db)
-        variables: dict[str, Any] = {"_agent_type": "researcher"}
+        variables: dict[str, Any] = {"_agent_type": "fixture-definition-3588bb72"}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert variables.get("matched") is True
@@ -4015,7 +4015,7 @@ class TestAgentScope:
             "scoped-rule",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
-                agent_scope=["researcher"],
+                agent_scope=["fixture-definition-3588bb72"],
                 effects=[RuleEffect(type="set_variable", variable="matched", value=True)],
             ),
         )

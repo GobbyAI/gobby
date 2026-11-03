@@ -47,7 +47,7 @@ def _authorize_send_keys_target(
     """Resolve the send_keys caller and target.
 
     Whether the target is in the caller's scope is the bundled
-    ``block-cross-project-send-keys`` rule's decision, made before dispatch.
+    ``cross-project terminal admission`` rule's decision, made before dispatch.
     """
     from gobby.utils.session_context import get_current_session_id
 
@@ -60,7 +60,7 @@ def _authorize_send_keys_target(
         }
 
     try:
-        # Whether the caller may use send_keys at all is the default ``no-send-keys``
+        # Whether the caller may use send_keys at all is the default ``terminal-input admission policy``
         # rule's decision, made before dispatch.
         scope = resolve_actor_scope(
             session_manager, f"{SESSION_ACTOR_PREFIX}{caller_ref}", allow_autonomous=True

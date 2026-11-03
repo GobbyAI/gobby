@@ -30,10 +30,10 @@ TS = datetime(2026, 10, 10, tzinfo=UTC)
 @pytest.mark.parametrize(
     "agent_type,definition_title,seat",
     [
-        ("archivist", None, "Archivist"),
+        ("fixture-definition-599e0437", None, "Fixture Definition 599E0437"),
         ("lane-manager", None, "Lane Manager"),
-        ("code-reviewer", None, "Code Reviewer"),
-        ("developer", "Lane 1 Developer", "Lane 1 Developer"),
+        ("fixture-definition-e08ba693", None, "Fixture Definition E08Ba693"),
+        ("fixture-worker", "Lane 1 Developer", "Lane 1 Developer"),
     ],
 )
 async def test_telegram_provisional_title_uses_persisted_seat(

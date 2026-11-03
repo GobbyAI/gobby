@@ -644,7 +644,7 @@ class TestNestedPipelineDepthLimit:
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
         pipeline = PipelineDefinition(
-            name="orchestrator",
+            name="fixture-coordinator",
             steps=[PipelineStep(id="s1", exec="echo hi")],
         )
         executor = PipelineExecutor(
@@ -657,7 +657,7 @@ class TestNestedPipelineDepthLimit:
                 pipeline=pipeline,
                 inputs={},
                 project_id="proj-123",
-                _pipeline_stack=frozenset({"orchestrator"}),
+                _pipeline_stack=frozenset({"fixture-coordinator"}),
             )
         except RuntimeError as exc:
             # Self-recursion must never be classified as a cycle — the depth

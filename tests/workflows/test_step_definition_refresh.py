@@ -148,7 +148,7 @@ def _reviewer_definition() -> AgentDefinitionBody:
     ]
     return AgentDefinitionBody.model_validate(
         {
-            "name": "code-reviewer",
+            "name": "fixture-definition-e08ba693",
             "prompts": {"agent": "Synthetic reviewer seat."},
             "workflows": {"rule_selectors": {"include": []}},
             "step_workflow": {
@@ -205,7 +205,9 @@ async def test_reloaded_reviewer_ends_only_on_terminal_event(
 ) -> None:
     session_id, project_id = seat_ids
     # Authority resolves from the seat's activated definition, so the session names it.
-    SessionVariableManager(hub_db).set_variable(session_id, "_agent_type", "code-reviewer")
+    SessionVariableManager(hub_db).set_variable(
+        session_id, "_agent_type", "fixture-definition-e08ba693"
+    )
     recipient, sha = str(uuid4()), "a" * 40
     hub_db.execute(
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id, "
@@ -228,7 +230,7 @@ async def test_reloaded_reviewer_ends_only_on_terminal_event(
         handler["when"] = "False"
     agents_dir = tmp_path / "agents"
     agents_dir.mkdir()
-    template = agents_dir / "code-reviewer.yaml"
+    template = agents_dir / "fixture-definition-e08ba693.yaml"
     template.write_text(yaml.safe_dump(original.model_dump(mode="json")), encoding="utf-8")
     instance_mgr = AgentStepInstanceManager(hub_db)
     variables = {

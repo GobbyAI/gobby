@@ -33,7 +33,6 @@ from tests.hooks.test_session_materialize import (
 
 pytestmark = pytest.mark.unit
 
-SHARED = Path(__file__).parents[2] / "src/gobby/install/shared/workflows"
 KEEPER = "workspace-keeper"
 WORKER = "workspace-worker"
 PREDECESSOR_NOTE = (

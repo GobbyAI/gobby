@@ -56,7 +56,7 @@ async def _spawn_developer(
         "_load_agent_body",
         Mock(
             return_value=AgentDefinitionBody(
-                name="developer",
+                name="fixture-worker",
                 prompts=AgentPromptBlocks(agent="Developer seat"),
                 workflows=AgentWorkflows(rule_selectors=AgentSelector()),
             )
@@ -70,8 +70,8 @@ async def _spawn_developer(
         Mock(), session_manager=session_manager, db=session_manager.db
     )
     arguments: dict[str, Any] = {
-        "prompt": "Write the developer seat's change.",
-        "agent": "developer",
+        "prompt": "Write the fixture-worker seat's change.",
+        "agent": "fixture-worker",
         "execution_mode": "interactive",
         "checkout_mode": "none",
         "project_path": str(project_path),

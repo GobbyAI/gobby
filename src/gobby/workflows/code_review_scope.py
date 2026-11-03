@@ -1,6 +1,6 @@
 """Path scope of a Git commit, for the code-review gates.
 
-``require-code-review-skill`` and ``require-code-review-self-review`` block a
+``review skill-loading policy`` and ``review freshness policy`` block a
 review-gated Git operation until the ``code-review`` skill is loaded and an
 ``ocr delegate rule`` review has run since the last one. A commit that records
 only documentation has nothing for that review to read: OCR excludes every such

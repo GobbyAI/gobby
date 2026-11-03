@@ -134,7 +134,7 @@ def test_session_end_only_deletes_instances_for_target_session(db: HubDatabase) 
     _save(
         instance_manager,
         session_id=S2,
-        workflow_name="developer",
+        workflow_name="fixture-worker",
     )
 
     handler = _SessionEndHandler(db)
@@ -146,4 +146,4 @@ def test_session_end_only_deletes_instances_for_target_session(db: HubDatabase) 
 
     remaining = instance_manager.get_for_session(S2)
     assert remaining is not None
-    assert remaining.agent_name == "developer"
+    assert remaining.agent_name == "fixture-worker"

@@ -148,7 +148,7 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             )
 
         # A descendant of an active epic team is claimed by that team's seats only. A planning
-        # child is exempt, so the plan writer seat the team-planning runbook launches can claim it.
+        # child is exempt, so a planning workflow's child can claim it.
         # The current holder keeps re-claiming its leaf even after its spawn chain left the team.
         current_owner = get_claimed_session_id(task)
         epic_team = epic_team_above(ctx.task_manager.db, resolved_id)

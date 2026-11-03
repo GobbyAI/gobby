@@ -15,7 +15,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def stored_agent_type() -> Iterator[MagicMock]:
     with patch.object(resume, "SessionVariableManager") as manager:
-        manager.return_value.get_variable_subset.return_value = {"_agent_type": "developer"}
+        manager.return_value.get_variable_subset.return_value = {"_agent_type": "fixture-worker"}
         yield manager.return_value.get_variable_subset
 
 
@@ -66,7 +66,7 @@ def test_paused_seat_without_live_pane_or_active_run_resumes(
         "project",
         None,
         _run_storage(run_status),
-        "developer",
+        "fixture-worker",
     )
 
     assert resolved.id == target.id
@@ -95,7 +95,7 @@ def test_paused_seat_with_live_pane_or_active_run_stays_refused(
             "project",
             None,
             _run_storage(run_status),
-            "developer",
+            "fixture-worker",
         )
 
 
@@ -109,5 +109,5 @@ def test_non_paused_live_seat_stays_refused_without_a_pane(stored_agent_type: Ma
             "project",
             None,
             _run_storage(None),
-            "developer",
+            "fixture-worker",
         )

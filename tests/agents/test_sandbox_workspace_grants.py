@@ -58,7 +58,7 @@ from tests.fixtures.team_teardown_case import admitted_team, seated_team
 
 pytestmark = pytest.mark.unit
 
-DEVELOPER = "developer"
+DEVELOPER = "fixture-worker"
 
 
 def _associated_checkout(
@@ -66,7 +66,7 @@ def _associated_checkout(
 ) -> tuple[SpawnRequest, PreparedSpawn, Worktree]:
     db = world.case.db
     project = world.case.project_id
-    developer = world.case.session("developer")
+    developer = world.case.session("fixture-worker")
     folder = session_workspace_dir(project, "default", _seq(db, developer))
     folder.mkdir(parents=True)
     task = world.case.task("Shared candidate")
@@ -124,7 +124,9 @@ async def _workspace_decision(
     return "block" if violation else "allow"
 
 
-@pytest.mark.parametrize("definition", ["code-reviewer", "test-writer"])
+@pytest.mark.parametrize(
+    "definition", ["fixture-definition-e08ba693", "fixture-definition-c02389e4"]
+)
 async def test_associated_seat_can_launch_in_developer_task_worktree(
     world: TeamWorld, definition: str
 ) -> None:
@@ -150,7 +152,9 @@ async def test_associated_seat_can_launch_in_developer_task_worktree(
     _assert_only_own_folders(filesystem, paths, {own, worktree})
 
 
-@pytest.mark.parametrize("definition", ["code-reviewer", "test-writer"])
+@pytest.mark.parametrize(
+    "definition", ["fixture-definition-e08ba693", "fixture-definition-c02389e4"]
+)
 @pytest.mark.parametrize(
     ("tool", "field", "relative", "expected"),
     [
@@ -191,7 +195,7 @@ async def test_associated_checkout_hook_boundaries(
     ["unassigned", "no-current-run", "other-child", "task", "project", "machine", "inactive"],
 )
 async def test_unrelated_assignment_does_not_grant_checkout(world: TeamWorld, invalid: str) -> None:
-    request, context, registered = _associated_checkout(world, "code-reviewer")
+    request, context, registered = _associated_checkout(world, "fixture-definition-e08ba693")
     db = world.case.db
     if invalid == "unassigned":
         db.execute(
@@ -233,7 +237,7 @@ async def test_unrelated_assignment_does_not_grant_checkout(world: TeamWorld, in
 
 @pytest.mark.parametrize("path_kind", ["alias", "bare-seat", "nested"])
 def test_assignment_requires_exact_canonical_checkout(world: TeamWorld, path_kind: str) -> None:
-    request, context, registered = _associated_checkout(world, "code-reviewer")
+    request, context, registered = _associated_checkout(world, "fixture-definition-e08ba693")
     worktree = Path(request.cwd)
     if path_kind == "alias":
         invalid_path = worktree.parent / "alias"
@@ -250,7 +254,7 @@ def test_assignment_requires_exact_canonical_checkout(world: TeamWorld, path_kin
 
 
 async def test_explicit_worktree_assignment_does_not_require_run_task(world: TeamWorld) -> None:
-    request, context, _ = _associated_checkout(world, "code-reviewer")
+    request, context, _ = _associated_checkout(world, "fixture-definition-e08ba693")
     world.case.db.execute(
         "UPDATE agent_runs SET task_id = NULL WHERE id = %s", (context.agent_run_id,)
     )

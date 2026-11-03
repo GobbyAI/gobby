@@ -37,7 +37,7 @@ pytestmark = pytest.mark.unit
 
 SOCKET_ROOT_VARIABLE = "_agent_srt_socket_root"
 RUN_ROOT = "/private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-aaaa1111"
-SEAT = "developer"
+SEAT = "fixture-worker"
 
 
 @pytest.fixture

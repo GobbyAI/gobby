@@ -145,7 +145,7 @@ class _FreshZeroSymbolIndex:
         return []
 
 
-@pytest.mark.parametrize("name", ["plan-adversary", "fixture-reader"])
+@pytest.mark.parametrize("name", ["fixture-definition-86a2d70b", "fixture-reader"])
 def test_non_planning_agent_passes_through(name: str) -> None:
     manager = _make_task_manager_with_artifact("/tmp/whatever.md")
     result = validate_plan_for_agent_spawn(
@@ -250,7 +250,7 @@ def test_plan_adversary_blocks_when_symbol_validation_cannot_run(tmp_path: Path)
     assert result["symbol_validation"]["status"] == "failed"
 
 
-@pytest.mark.parametrize("agent_name", ("plan-adversary",))
+@pytest.mark.parametrize("agent_name", ("fixture-definition-86a2d70b",))
 def test_planning_agent_spawn_rejects_missing_plan_id(tmp_path: Path, agent_name: str) -> None:
     plan = _write_missing_plan_id(tmp_path / "missing-id.md")
     manager = _make_task_manager_with_artifact(str(plan))

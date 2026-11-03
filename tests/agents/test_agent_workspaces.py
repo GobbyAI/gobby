@@ -116,7 +116,7 @@ async def test_commit_only_when_dirty_with_guards(gobby_home: Path) -> None:
     await commit_workspace(PROJECT, "timer")
     assert await commit_workspace(PROJECT, "timer") is None, "a clean tree makes no commit"
 
-    folder = anchor / "developer" / "session-12"
+    folder = anchor / "fixture-worker" / "session-12"
     folder.mkdir(parents=True)
     (folder / "notes.md").write_text("one finding\n")
     (folder / "huge.bin").write_bytes(b"x" * (ONE_MIB + 1))
@@ -128,10 +128,10 @@ async def test_commit_only_when_dirty_with_guards(gobby_home: Path) -> None:
     assert sha is not None
     assert _ws_git(PROJECT, "rev-parse", "HEAD") == sha
     tracked = _tracked(PROJECT)
-    assert {"developer/session-12/notes.md", "developer/session-12/limit.bin"} <= tracked
-    assert "developer/session-12/huge.bin" not in tracked
-    assert "developer/session-12/link.md" not in tracked
-    assert _subjects(PROJECT)[0] == "agents-ws: set_handoff developer"
+    assert {"fixture-worker/session-12/notes.md", "fixture-worker/session-12/limit.bin"} <= tracked
+    assert "fixture-worker/session-12/huge.bin" not in tracked
+    assert "fixture-worker/session-12/link.md" not in tracked
+    assert _subjects(PROJECT)[0] == "agents-ws: set_handoff fixture-worker"
     author = _ws_git(PROJECT, "log", "-1", "--format=%an <%ae>")
     assert author == "Gobby Coordinator <gobby-coordinator@localhost>"
 
@@ -196,11 +196,11 @@ async def test_trigger_failures_are_non_blocking(
         "handler",
     )
     anchor = ensure_workspace(PROJECT)
-    (anchor / "orchestrator").mkdir()
-    (anchor / "orchestrator" / "log.md").write_text("timer entry\n")
+    (anchor / "fixture-coordinator").mkdir()
+    (anchor / "fixture-coordinator" / "log.md").write_text("timer entry\n")
     await handler(job)
-    assert "orchestrator/log.md" in _tracked(PROJECT)
-    assert _subjects(PROJECT)[0] == "agents-ws: timer orchestrator"
+    assert "fixture-coordinator/log.md" in _tracked(PROJECT)
+    assert _subjects(PROJECT)[0] == "agents-ws: timer fixture-coordinator"
 
 
 @pytest.mark.asyncio

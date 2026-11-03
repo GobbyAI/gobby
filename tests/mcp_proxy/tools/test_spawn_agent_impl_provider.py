@@ -45,7 +45,7 @@ async def test_release_manager_step_renders_definition_defaults_for_null_inputs(
     # runbook. The seat names no model, so the definition defaults come from the test.
     agent_body = AgentDefinitionBody.model_validate(
         {
-            "name": "release-manager",
+            "name": "fixture-definition-0b38809e",
             "surfaces": ["spawn"],
             "prompts": {"agent": "Manage releases"},
             "workflows": {"rule_selectors": {"include": [], "exclude": []}},
@@ -62,13 +62,13 @@ async def test_release_manager_step_renders_definition_defaults_for_null_inputs(
             },
             "steps": [
                 {
-                    "id": "release-manager",
-                    "condition": "${{ 'release-manager' in steps.guard.output.launch }}",
+                    "id": "fixture-definition-0b38809e",
+                    "condition": "${{ 'fixture-definition-0b38809e' in steps.guard.output.launch }}",
                     "mcp": {
                         "server": "gobby-agents",
                         "tool": "spawn_agent",
                         "arguments": {
-                            "agent": "release-manager",
+                            "agent": "fixture-definition-0b38809e",
                             "provider": "${{ inputs.release_manager_provider }}",
                             "model": "${{ inputs.release_manager_model }}",
                             "reasoning_effort": "${{ inputs.release_manager_reasoning_effort }}",
@@ -92,18 +92,22 @@ async def test_release_manager_step_renders_definition_defaults_for_null_inputs(
         release_manager_model=model,
         release_manager_reasoning_effort=effort,
     )
-    step = next(step for step in definition.steps if step.id == "release-manager")
+    step = next(step for step in definition.steps if step.id == "fixture-definition-0b38809e")
     assert step.mcp is not None and step.mcp.arguments is not None
     args = StepRenderer(TemplateEngine()).render_mcp_arguments(
         step.mcp.arguments,
         {
             "inputs": inputs,
-            "steps": {"guard": {"output": {"launch": ["release-manager"], "tab_exists": False}}},
+            "steps": {
+                "guard": {
+                    "output": {"launch": ["fixture-definition-0b38809e"], "tab_exists": False}
+                }
+            },
             "invocation_id": "pilot-run",
         },
         drop_none=True,
     )
-    assert args["agent"] == "release-manager"
+    assert args["agent"] == "fixture-definition-0b38809e"
     if model is None:
         assert "provider" not in args
         assert "model" not in args and "reasoning_effort" not in args
@@ -217,7 +221,7 @@ class TestProviderResolution:
             prompt="Run work",
             runner=_make_runner(),
             agent_body=make_agent_definition(
-                name="comms-agent",
+                name="fixture-definition-d838ecc9",
                 surfaces=["persona"],
                 prompts={"persona": "Coordinate interactively."},
             ),
@@ -429,7 +433,7 @@ class TestProviderResolution:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="expansion-qa",
+            name="fixture-definition-9b40e272",
             provider="inherit",
             model="gpt-6-luna",
         )

@@ -91,7 +91,7 @@ async def test_per_class_recording_is_memory_only() -> None:
     service = _service(memory_manager, task_manager)
     class_cases = [
         ("plan-review", "plan_review", "plan-adversary-reviewer", "reviewer-miss"),
-        ("plan-review", "plan_review", "plan-writer", "cross-section"),
+        ("plan-review", "plan_review", "fixture-definition-cf5ba898", "cross-section"),
         ("epic-qa", "qa_rejection", "epic-qa-reviewer", "qa-miss"),
         ("epic-qa", "qa_rejection", "epic-validation-reviewer", "validation-miss"),
     ]
@@ -185,7 +185,7 @@ async def test_cross_domain_coexistence() -> None:
     )
     code_result = await service.record(
         source_kind="agent_review",
-        source="code-reviewer",
+        source="fixture-definition-e08ba693",
         source_review="code-review:1",
         decision="confirmed",
         finding={
@@ -207,7 +207,7 @@ async def test_cross_domain_coexistence() -> None:
 
     plan_result = await service.record(
         source_kind="plan_review",
-        source="plan-adversary",
+        source="fixture-definition-86a2d70b",
         source_review="plan-review:1",
         decision="confirmed",
         finding={
@@ -248,7 +248,7 @@ async def test_check_key_convergence() -> None:
     for index, check_key in enumerate(all_keys):
         result = await service.record(
             source_kind="plan_review",
-            source="plan-adversary",
+            source="fixture-definition-86a2d70b",
             source_review=f"catalog:{check_key}",
             decision="confirmed",
             finding=_class_finding(
@@ -291,7 +291,7 @@ async def test_check_key_convergence() -> None:
     equivalent_b["title"] = "The state has two apparent owners"
     second = await service.record(
         source_kind="plan_review",
-        source="plan-adversary",
+        source="fixture-definition-86a2d70b",
         source_review="equivalent:round-2",
         decision="confirmed",
         finding=equivalent_a,
@@ -299,7 +299,7 @@ async def test_check_key_convergence() -> None:
     )
     third = await service.record(
         source_kind="plan_review",
-        source="plan-adversary",
+        source="fixture-definition-86a2d70b",
         source_review="equivalent:round-3",
         decision="confirmed",
         finding=equivalent_b,

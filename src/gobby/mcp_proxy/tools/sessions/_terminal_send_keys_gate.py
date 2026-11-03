@@ -1,6 +1,6 @@
 """Target checks an allowed ``send_keys`` caller must pass before keys are written.
 
-The bundled ``no-send-keys`` rule decides who may call ``send_keys``. This module
+The bundled ``terminal-input admission policy`` rule decides who may call ``send_keys``. This module
 decides whether the target can take keys: a live agent CLI in the foreground, an
 empty composer that the composer ledger vouches for, and no credential prompt on
 screen. Every signal that cannot be read refuses.

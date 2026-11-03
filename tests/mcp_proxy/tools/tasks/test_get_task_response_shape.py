@@ -69,7 +69,7 @@ def test_task_summary_uses_to_dict_payload_fields() -> None:
             "category": "code",
             "priority": 1,
             "validation_criteria": "Summary payload uses to_dict fields.",
-            "assigned_agent": "developer",
+            "assigned_agent": "fixture-worker",
         },
     )
 
@@ -79,7 +79,7 @@ def test_task_summary_uses_to_dict_payload_fields() -> None:
     assert payload["id"] == "03940009-0faa-4d80-9b96-289df7f44431"
     assert payload["title"] == "Apply summary fixes"
     assert payload["validation_criteria"] == "Summary payload uses to_dict fields."
-    assert payload["assigned_agent"] == "developer"
+    assert payload["assigned_agent"] == "fixture-worker"
     assert payload["state"]["is_closed"] is False
 
 
@@ -151,7 +151,7 @@ def test_task_summary_preserves_attribute_fields_missing_from_to_dict() -> None:
         priority=1,
         closed_at="2026-07-02T00:00:00Z",
         validation_criteria="Attribute-backed fields survive formatting.",
-        assigned_agent="developer",
+        assigned_agent="fixture-worker",
         to_dict=lambda: {
             "id": "03940009-0faa-4d80-9b96-289df7f44431",
             "seq_num": 17426,
@@ -164,6 +164,6 @@ def test_task_summary_preserves_attribute_fields_missing_from_to_dict() -> None:
     assert payload["task_type"] == "bug"
     assert payload["category"] == "code"
     assert payload["validation_criteria"] == "Attribute-backed fields survive formatting."
-    assert payload["assigned_agent"] == "developer"
+    assert payload["assigned_agent"] == "fixture-worker"
     assert payload["state"]["is_closed"] is True
     assert payload["state"]["closed_at"] == "2026-07-02T00:00:00Z"

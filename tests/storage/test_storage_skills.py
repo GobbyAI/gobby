@@ -473,7 +473,7 @@ class TestLocalSkillManager:
             content="Content",
         )
         skill_manager.create_skill(
-            name="code-reviewer",
+            name="fixture-definition-e08ba693",
             description="Review code for quality",
             content="Content",
         )
@@ -486,7 +486,7 @@ class TestLocalSkillManager:
         # Search by description
         results = skill_manager.search_skills("quality")
         assert len(results) == 1
-        assert results[0].name == "code-reviewer"
+        assert results[0].name == "fixture-definition-e08ba693"
 
     def test_list_core_skills(self, skill_manager) -> None:
         """Test listing core skills (always_apply=True)."""

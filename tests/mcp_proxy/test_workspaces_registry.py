@@ -384,7 +384,10 @@ async def test_rebalance_tab_reports_the_seats_it_tiled_and_skipped(stack: _Stac
         tab_ref = f"{home}:{layout['tabs'][0]['ref']}"
         pane = f"{tab_ref}:{layout['panes'][0]['ref']}"
         await _ok(registry, "split_pane", pane=pane, axis="horizontal")
-        seats = [{"name": "code-reviewer", "pane": pane}, {"name": "developer", "pane": None}]
+        seats = [
+            {"name": "fixture-definition-e08ba693", "pane": pane},
+            {"name": "fixture-worker", "pane": None},
+        ]
         arranged = await _ok(
             registry,
             "rebalance_tab",
@@ -394,8 +397,8 @@ async def test_rebalance_tab_reports_the_seats_it_tiled_and_skipped(stack: _Stac
             layout="tiled",
             seats=seats,
         )
-    assert arranged["tiled"] == ["code-reviewer"]
-    assert arranged["skipped"] == [{"seat": "developer", "reason": "pane_missing"}]
+    assert arranged["tiled"] == ["fixture-definition-e08ba693"]
+    assert arranged["skipped"] == [{"seat": "fixture-worker", "reason": "pane_missing"}]
 
 
 async def test_rebalance_tab_refuses_a_seat_with_no_name_before_the_layout_write(
@@ -555,11 +558,18 @@ def _layout_pipeline() -> PipelineDefinition:
 @pytest.mark.parametrize(
     ("seats", "expected_rows"),
     [
-        (("plan-writer",), [1, 1]),
-        (("plan-adversary",), [1, 1]),
-        (("plan-enhancer",), [1, 1]),
-        (("plan-writer", "plan-adversary"), [2, 1]),
-        (("plan-writer", "plan-adversary", "plan-enhancer"), [2, 2]),
+        (("fixture-definition-cf5ba898",), [1, 1]),
+        (("fixture-definition-86a2d70b",), [1, 1]),
+        (("fixture-definition-caf83459",), [1, 1]),
+        (("fixture-definition-cf5ba898", "fixture-definition-86a2d70b"), [2, 1]),
+        (
+            (
+                "fixture-definition-cf5ba898",
+                "fixture-definition-86a2d70b",
+                "fixture-definition-caf83459",
+            ),
+            [2, 2],
+        ),
     ],
 )
 async def test_team_planning_arrange_tiles_the_tab_a_seat_pane_joins(
@@ -636,7 +646,13 @@ async def test_team_planning_arrange_tiles_the_tab_a_seat_pane_joins(
     assert _row_sizes(tiled["tab"]["layout"]) == expected_rows
 
 
-@pytest.mark.parametrize("seats", [("plan-writer",), ("plan-writer", "plan-adversary")])
+@pytest.mark.parametrize(
+    "seats",
+    [
+        ("fixture-definition-cf5ba898",),
+        ("fixture-definition-cf5ba898", "fixture-definition-86a2d70b"),
+    ],
+)
 def test_team_planning_arrange_finds_its_tab_by_title_when_a_seat_pane_vanished(
     seats: tuple[str, ...],
 ) -> None:

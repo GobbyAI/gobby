@@ -114,8 +114,6 @@ def test_block_without_a_reason_uses_the_loud_sentinel() -> None:
 @pytest.mark.parametrize("decision", ["ask", "defer", "continue", ""])
 def test_any_other_decision_refuses_with_the_guard_fallback(decision: str) -> None:
     # The daemon's decision arrives untyped, so the adapter must refuse values outside the literals.
-    response = GitAdapter().translate_from_hook_response(
-        HookResponse(decision=cast(Any, decision))
-    )
+    response = GitAdapter().translate_from_hook_response(HookResponse(decision=cast(Any, decision)))
 
     assert response == {"decision": "block", "reason": GIT_BLOCK_FALLBACK_REASON}
