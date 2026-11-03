@@ -14,6 +14,7 @@ import contextlib
 import copy
 import json
 import logging
+import os
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -50,6 +51,12 @@ WIRE_CASES_FIXTURE = CONTRACTS_DIR / "wire_cases.v1.json"
 SHAPING_FIXTURE = CONTRACTS_DIR / "shaping_cases.v1.json"
 
 _DAEMON_PORT = 61040
+_DAEMON_ENDPOINT_ENV = (
+    "GOBBY_DAEMON_URL",
+    "GOBBY_PORT",
+    "GOBBY_DAEMON_PORT",
+    "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+)
 _CWD = "/fixture/cwd"
 # stdio_tools reads the working directory only through its own ``os`` name, so
 # this stand-in pins that one lookup without patching the process-wide os.getcwd.
@@ -298,8 +305,11 @@ def _normalized(requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 async def _capture() -> dict[str, Any]:
     # The host's own identity, auth, daemon URL, and working directory must not
-    # leak into the capture.
+    # leak into the capture. Agent sessions export a daemon endpoint, which
+    # load_client_bootstrap prefers over the scripted bootstrap.
+    host_env = {k: v for k, v in os.environ.items() if k not in _DAEMON_ENDPOINT_ENV}
     with (
+        patch.dict(os.environ, host_env, clear=True),
         patch("gobby.mcp_proxy.stdio_proxy.daemon_auth_headers", return_value={}),
         patch(
             "gobby.mcp_proxy.stdio_server.resolve_daemon_url",
