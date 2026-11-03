@@ -13,6 +13,7 @@ from gobby.mcp_proxy.tools.workflows._rules import (
 )
 from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
+from tests.fixtures.rule_definitions import store_unvalidated_rule
 
 pytestmark = pytest.mark.unit
 
@@ -244,7 +245,7 @@ def test_invalid_or_legacy_rule_remains_disableable_and_deletable(
     temp_db: HubDatabase, body: dict[str, Any], operation: str
 ) -> None:
     manager = RuleDefinitionManager(temp_db)
-    row = manager.create(name="synthetic-repairable", definition_json=body, source="custom")
+    row = store_unvalidated_rule(temp_db, "synthetic-repairable", body, enabled=True)
     result = (
         toggle_rule(manager, row.name, False)
         if operation == "disable"
@@ -256,3 +257,24 @@ def test_invalid_or_legacy_rule_remains_disableable_and_deletable(
         assert current.enabled is False
     else:
         assert current.deleted_at is not None
+
+
+def test_invalid_rule_cannot_be_reenabled(temp_db: HubDatabase) -> None:
+    manager = RuleDefinitionManager(temp_db)
+    row = store_unvalidated_rule(temp_db, "synthetic-repairable", {"not": "a-rule"}, enabled=False)
+
+    result = toggle_rule(manager, row.name, True)
+
+    assert result["success"] is False
+    assert "synthetic-repairable" in result["error"]
+    assert manager.get(row.id).enabled is False
+
+
+def test_toggle_enabled_disables_but_never_enables_an_invalid_rule(temp_db: HubDatabase) -> None:
+    manager = RuleDefinitionManager(temp_db)
+    row = store_unvalidated_rule(temp_db, "synthetic-repairable", {"not": "a-rule"}, enabled=True)
+
+    assert manager.toggle_enabled(row.id).enabled is False
+    with pytest.raises(ValueError, match="synthetic-repairable"):
+        manager.toggle_enabled(row.id)
+    assert manager.get(row.id).enabled is False

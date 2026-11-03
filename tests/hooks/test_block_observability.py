@@ -35,11 +35,6 @@ def db(hub_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def manager(db: HubDatabase) -> RuleDefinitionManager:
-    return RuleDefinitionManager(db)
-
-
-@pytest.fixture
 def engine(db: HubDatabase) -> RuleEngine:
     return RuleEngine(db)
 
@@ -104,34 +99,18 @@ def _insert_block_rule(
         name=name,
         definition_json=json.dumps(definition),
         priority=10,
+        # A session bound to no definition runs only the default-tagged baseline.
+        tags=["default"],
     )
 
 
 def _setup_step_workflow(
     db: HubDatabase,
-    manager: RuleDefinitionManager,
     instance_mgr: AgentStepInstanceManager,
     *,
     session_id: str = SESSION_ID,
 ) -> None:
     _create_session_row(db, session_id)
-    definition: dict[str, Any] = {
-        "name": "step-observability",
-        "version": "2.0",
-        "enabled": False,
-        "steps": [
-            {
-                "name": "implement",
-                "allowed_tools": ["Read"],
-            }
-        ],
-    }
-    manager.create(
-        name=definition["name"],
-        definition_json=json.dumps(definition),
-        priority=100,
-        enabled=True,
-    )
 
     from gobby.workflows.agent_models import AgentStepWorkflowBody
     from gobby.workflows.step_instances import build_step_instance
@@ -242,12 +221,11 @@ async def test_rule_block_reason_and_log_are_structured(
 @pytest.mark.asyncio
 async def test_step_enforcement_block_logs_structured_reason(
     db: HubDatabase,
-    manager: RuleDefinitionManager,
     engine: RuleEngine,
     instance_mgr: AgentStepInstanceManager,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    _setup_step_workflow(db, manager, instance_mgr)
+    _setup_step_workflow(db, instance_mgr)
     event = _make_event(
         event_type=HookEventType.BEFORE_TOOL,
         data={"tool_name": "Write"},
