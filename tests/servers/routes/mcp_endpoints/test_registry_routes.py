@@ -11,8 +11,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
-from gobby.mcp_proxy.client_manager import server_registry as server_registry_mod
 from gobby.config.persistence import DEFAULT_EMBEDDING_DIM
+from gobby.mcp_proxy.client_manager import server_registry as server_registry_mod
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.mcp_proxy.schema_hash import SchemaHashManager, compute_schema_hash

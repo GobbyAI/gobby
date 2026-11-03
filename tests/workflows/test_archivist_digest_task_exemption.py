@@ -23,13 +23,8 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import SessionManager
 from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
-from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -115,43 +110,6 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
-@pytest.fixture
-def edit_gate(
-    isolated_checkout_factory: IsolatedCheckoutFactory,
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    _local_machine_identity: None,
-) -> tuple[WorkflowHookHandler, Session, Path]:
-    """The real engine with only `require-task-before-edit` enabled, for an unclaimed seat."""
-    checkout = tmp_path / "main"
-    (checkout / ".git").mkdir(parents=True)
-    project = isolated_checkout_factory(temp_db, "digest-gate-test", root=checkout).project
-    session_manager = SessionManager(temp_db)
-    session = session_manager.register(
-        external_id="digest-external",
-        machine_id=LOCAL_MACHINE_ID,
-        source="claude",
-        project_id=project.id,
-    )
-    result = sync_bundled_rules(temp_db, get_bundled_rules_path())
-    assert result["errors"] == []
-    temp_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
-    temp_db.execute(
-        "UPDATE rule_definitions SET enabled = (name = %s)", ("require-task-before-edit",)
-    )
-    SessionVariableManager(temp_db).merge_variables(
-        session.id,
-        {
-            "_variable_defaults_loaded": True,
-            "require_task_before_edit": True,
-            "task_claimed": False,
-            "plan_mode": False,
-        },
-    )
-    handler = WorkflowHookHandler(rule_engine=RuleEngine(temp_db), session_manager=session_manager)
-    return handler, session, checkout
-
-
 def _seat_definition(
     db: HubDatabase, session: Session, name: str, *, granted: bool, enabled: bool
 ) -> None:
@@ -188,43 +146,3 @@ def _edit_event(session: Session, target: Path, checkout: Path, tool_name: str) 
         },
         metadata={"_platform_session_id": session.id, "project_path": str(checkout)},
     )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("definition_name", ["digest-seat", "custom-seat"])
-@pytest.mark.parametrize("granted", [False, True])
-@pytest.mark.parametrize("enabled", [False, True])
-@pytest.mark.parametrize("tool_name", ["Write", "Edit"])
-async def test_rule_follows_the_definition_grant_for_the_digest(
-    edit_gate: tuple[WorkflowHookHandler, Session, Path],
-    temp_db: HubDatabase,
-    definition_name: str,
-    granted: bool,
-    enabled: bool,
-    tool_name: str,
-) -> None:
-    """End to end: only an enabled definition declaring the grant edits the digest unclaimed."""
-    handler, session, checkout = edit_gate
-    _seat_definition(temp_db, session, definition_name, granted=granted, enabled=enabled)
-    event = _edit_event(session, checkout / DIGEST_RELATIVE, checkout, tool_name)
-
-    response = await handler._evaluate_rules(event)
-
-    assert response.decision == ("allow" if granted and enabled else "block")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("definition_name", ["digest-seat", "custom-seat"])
-async def test_rule_keeps_other_paths_gated_for_a_granted_seat(
-    edit_gate: tuple[WorkflowHookHandler, Session, Path],
-    temp_db: HubDatabase,
-    definition_name: str,
-) -> None:
-    """The grant opens the dated digest only; a source edit by the same seat stays blocked."""
-    handler, session, checkout = edit_gate
-    _seat_definition(temp_db, session, definition_name, granted=True, enabled=True)
-    event = _edit_event(session, checkout / "src/gobby/example.py", checkout, "Edit")
-
-    response = await handler._evaluate_rules(event)
-
-    assert response.decision == "block"

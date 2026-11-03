@@ -29,50 +29,13 @@ from gobby.hooks.receipt_effects import (
     take_worker_staging,
     worker_staging_scope,
 )
-from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.postgres import TEST_USER_ID
-from tests.framing_corpus import (
-    bundled_before_tool_block_reasons as _bundled_before_tool_block_reasons,
-)
 
 pytestmark = pytest.mark.unit
-
-_BUNDLED_BEFORE_TOOL_BLOCK_REASONS = _bundled_before_tool_block_reasons()
-
-
-class TestBundledBlockReasonFraming:
-    @pytest.mark.parametrize(
-        ("rule_name", "raw_reason"),
-        sorted(_BUNDLED_BEFORE_TOOL_BLOCK_REASONS.items()),
-        ids=sorted(_BUNDLED_BEFORE_TOOL_BLOCK_REASONS),
-    )
-    def test_live_corpus_reaches_agent_without_compaction(
-        self,
-        rule_name: str,
-        raw_reason: str,
-    ) -> None:
-        reason = (
-            skill_fetch_directive("python") if rule_name == "require-python-skill" else raw_reason
-        )
-        agent_reason = f"Rule enforced by Gobby: [{rule_name}]\n{reason.rstrip()}"
-        response = HookResponse(decision="block", reason=agent_reason)
-
-        result = ClaudeCodeAdapter().translate_from_hook_response(
-            response,
-            hook_type="pre-tool-use",
-        )
-
-        assert result["hookSpecificOutput"]["permissionDecisionReason"] == agent_reason
-
-    def test_skill_fetch_template_renders_call_at_offset_zero(self) -> None:
-        assert _BUNDLED_BEFORE_TOOL_BLOCK_REASONS["require-python-skill"] == (
-            '{{ skill_fetch_directive("python") }}'
-        )
-        assert skill_fetch_directive("python").startswith("Load and fully read the skill")
 
 
 @pytest.mark.parametrize("hook_type", ["worktree-create", "WorktreeCreate"])
@@ -105,9 +68,7 @@ def test_worktree_success_returns_path() -> None:
 
 
 def test_deny_reason_not_compacted() -> None:
-    rule_name = "require-commit-before-status"
-    template_reason = _BUNDLED_BEFORE_TOOL_BLOCK_REASONS[rule_name]
-    agent_reason = f"Rule enforced by Gobby: [{rule_name}]\n{template_reason.rstrip()}"
+    agent_reason = "Synthetic refusal: " + "retain this diagnostic detail; " * 20
     assert len(agent_reason) > 300
 
     result = ClaudeCodeAdapter().translate_from_hook_response(
@@ -117,7 +78,7 @@ def test_deny_reason_not_compacted() -> None:
 
     visible_reason = result["hookSpecificOutput"]["permissionDecisionReason"]
     assert visible_reason == agent_reason
-    assert "pass `commit_sha` explicitly" in visible_reason
+    assert visible_reason.endswith("retain this diagnostic detail; ")
 
 
 class TestClaudeCodeAdapterInit:

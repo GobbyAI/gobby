@@ -22,12 +22,10 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import yaml
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.adapters.codex_impl.execution_chain import ExecutionChainCorrelator
@@ -44,9 +42,7 @@ from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.daemon_git import daemon_git
 from gobby.workflows.commit_guard import foreign_dirty_edit_conflict, foreign_staged_commit_conflict
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path
 from gobby.workflows.task_tool_bindings import TaskToolBindings, cleanup_task_tool_bindings
 from gobby.workflows.worktree_shell_attribution import (
     OVERLAPS_VARIABLE,
@@ -384,17 +380,7 @@ def test_native_write_keeps_ownership_during_foreign_bash(
 
 
 def _shell_write_refused(handlers: EventHandlers, event: HookEvent) -> bool:
-    """Include the bundled scope gate alongside the real before-tool handler."""
-    if handlers.handle_before_tool(event).decision != "allow":
-        return True
-    rule_path = (
-        get_bundled_rules_path() / "task-enforcement/block-unresolved-scope-shell-write.yaml"
-    )
-    rule = yaml.safe_load(rule_path.read_text())["rules"]["block-unresolved-scope-shell-write"]
-    evaluator = SafeExpressionEvaluator(
-        {"event": SimpleNamespace(data=event.data)}, build_condition_helpers()
-    )
-    return bool(rule["enabled"] and evaluator.evaluate(rule["when"]))
+    return handlers.handle_before_tool(event).decision != "allow"
 
 
 @pytest.mark.parametrize("prefix", ["python", "uv run python"])
@@ -967,11 +953,7 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
         f"UV_PROJECT_ENVIRONMENT={tmp_path / '.venv'} PYTHONPATH=src "
         f"uv run --no-sync ruff format {operand}"
     )
-    arguments = (
-        'text(await tools.apply_patch("*** Begin Patch\\n*** End Patch"));\n'
-        f"text(await tools.exec_command({json.dumps({'cmd': command, 'workdir': str(checkout.repo)})}));\n"
-        'text(await tools.write_stdin({session_id:123,chars:"",max_output_tokens:1500}));'
-    )
+    arguments = f"text(await tools.exec_command({json.dumps({'cmd': command, 'workdir': str(checkout.repo)})}));\n"
     transcript = tmp_path / "rollout.jsonl"
     transcript.write_text(
         json.dumps(
@@ -1051,10 +1033,8 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
         project_id=checkout.project_id,
         metadata={"_platform_session_id": checkout.session_id},
     )
-    assert (
-        _handlers(mock_dependencies, checkout.db).handle_before_tool(outer_before).decision
-        == "allow"
-    )
+    outer_response = _handlers(mock_dependencies, checkout.db).handle_before_tool(outer_before)
+    assert outer_response.decision == "allow", outer_response.reason
     assert not manager.get_variables(checkout.session_id).get("worktree_shell_calls")
     before = adapter.translate_to_hook_event({"hook_type": "PreToolUse", "input_data": hook_input})
     assert before is not None

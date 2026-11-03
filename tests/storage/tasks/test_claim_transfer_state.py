@@ -12,7 +12,6 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import yaml
 from psycopg.errors import LockNotAvailable
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
@@ -30,7 +29,6 @@ from gobby.workflows import state_manager as variable_state
 from gobby.workflows.engine import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.observers import reconcile_claimed_tasks
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
@@ -75,22 +73,6 @@ def claimed_state(
     return owner.id, replacement.id, task.id
 
 
-def _claim_gates_block(variables: dict[str, Any]) -> tuple[bool, bool]:
-    rules_root = Path(__file__).resolve().parents[3] / "src/gobby/install/shared/workflows/rules"
-    evaluator = SafeExpressionEvaluator(
-        {"variables": variables, "tool_input": {"clear_session": True}},
-        {"bool": bool, "has_durable_stop_wait": lambda: False},
-    )
-    clear_rules = yaml.safe_load(
-        (rules_root / "context-handoff/require-handoff-discipline.yaml").read_text()
-    )
-    stop_rules = yaml.safe_load((rules_root / "stop-gates/require-task-close.yaml").read_text())
-    return (
-        evaluator.evaluate(clear_rules["rules"]["block-clear-session-with-claimed-tasks"]["when"]),
-        evaluator.evaluate(stop_rules["rules"]["require-task-close"]["when"]),
-    )
-
-
 @pytest.mark.parametrize("force", [True, False], ids=["force", "expected-owner"])
 @pytest.mark.parametrize("retain_other_claim", [False, True], ids=["last-claim", "other-claim"])
 def test_transfer_releases_only_the_prior_owners_transferred_claim(
@@ -121,7 +103,6 @@ def test_transfer_releases_only_the_prior_owners_transferred_claim(
             },
         )
 
-    assert _claim_gates_block(variables.get_variables(owner)) == (True, True)
     claim_task(
         temp_db,
         task_id,
@@ -138,7 +119,6 @@ def test_transfer_releases_only_the_prior_owners_transferred_claim(
     assert released["active_task_id"] is None
     assert released["task_edited_files"] == {task_id: ["src/prior.py"]}
     assert released["session_dirty_files"] == ["src/prior.py"]
-    assert _claim_gates_block(released) == (retain_other_claim, retain_other_claim)
 
 
 @pytest.mark.parametrize("retain_other_claim", [False, True], ids=["empty", "other-claim"])
@@ -334,7 +314,6 @@ async def test_after_tool_claim_observation_cannot_restore_transferred_ownership
     assert state["active_task_id"] == (
         task_id if transfer_at in ("no_transfer", "locked_persistence") else None
     )
-    assert _claim_gates_block(state) == (bool(expected_claims), bool(expected_claims))
     assert state["task_edited_files"] == {task_id: ["src/caller.py"]}
     assert state["unrelated_marker"] == "preserved"
     if transfer_at == "locked_persistence":

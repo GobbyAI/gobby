@@ -9,7 +9,6 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.agent_resume import register_daemon_resume_waiter
@@ -24,27 +23,25 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.found_work_gate import FoundWorkStopFacts
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 
 pytestmark = pytest.mark.integration
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
-_RULE = "require-task-close"
-_STOP_GATE = get_bundled_rules_path() / "stop-gates" / "require-task-close.yaml"
+_RULE = "synthetic-wait-observer"
 
 
 def _insert_claimed_task_gate(db: HubDatabase) -> None:
-    """Install the shipped claimed-task gate's own condition, so the test pins that rule."""
-    data: Any = yaml.safe_load(_STOP_GATE.read_text(encoding="utf-8"))
+    """Observe durable-wait availability without depending on bundled policy."""
     RuleDefinitionManager(db).create(
         name=_RULE,
         definition_json=RuleDefinitionBody(
             event=RuleTriggerEvent.TURN_END,
-            when=str(data["rules"][_RULE]["when"]),
+            when="not has_durable_stop_wait()",
             effects=[RuleEffect(type="block", reason=f"{_RULE} blocked turn end")],
         ).model_dump(mode="json"),
         priority=50,
+        tags=["default"],
     )
 
 

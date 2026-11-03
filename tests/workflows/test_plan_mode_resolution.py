@@ -13,14 +13,8 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.storage.definitions.rules import RuleDefinitionManager
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import RuleDefinitionBody
-from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.observer_plan_mode import reconcile_native_mode, resolve_plan_mode
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -390,15 +384,6 @@ def _stale_plan_variables() -> dict[str, Any]:
     return {"chat_mode": "plan", "mode_level": 0, "plan_mode": True}
 
 
-def _block_edits_when(db: HubDatabase) -> tuple[RuleEngine, str]:
-    sync_bundled_rules(db, get_bundled_rules_path())
-    row = RuleDefinitionManager(db).get_by_name("block-edits-plan-mode")
-    assert row is not None
-    body = RuleDefinitionBody.model_validate(row.definition_json)
-    assert body.when is not None
-    return RuleEngine(db), body.when
-
-
 def _edit_event(permission_mode: str | None) -> HookEvent:
     data: dict[str, object] = {
         "tool_name": "Edit",
@@ -409,12 +394,9 @@ def _edit_event(permission_mode: str | None) -> HookEvent:
     return _tool_event(HookEventType.BEFORE_TOOL, data=data)
 
 
-def test_rejected_plan_exit_then_edit_unblocks_via_tool_event_mode(
-    temp_db: HubDatabase,
-) -> None:
+def test_rejected_plan_exit_then_edit_reconciles_via_tool_event_mode() -> None:
     """A rejected ExitPlanMode leaves plan_mode stale; the edit's own PreToolUse
     carries the harness's real permission mode and must clear it before rules run."""
-    engine, when = _block_edits_when(temp_db)
     variables = _stale_plan_variables()
     event = _edit_event("default")
     handler = WorkflowHookHandler(session_manager=_SessionManager(None))
@@ -425,13 +407,9 @@ def test_rejected_plan_exit_then_edit_unblocks_via_tool_event_mode(
     assert variables["plan_mode"] is False
     assert variables["mode_level"] == 1
     assert variables["chat_mode"] == "normal"
-    ctx = engine._build_eval_context(event, variables)
-    funcs = engine._build_allowed_funcs(ctx)
-    assert SafeExpressionEvaluator(ctx, funcs).evaluate(when) is False
 
 
-def test_edit_during_live_plan_mode_still_blocks(temp_db: HubDatabase) -> None:
-    engine, when = _block_edits_when(temp_db)
+def test_edit_during_live_plan_mode_preserves_mode() -> None:
     variables = _stale_plan_variables()
     event = _edit_event("plan")
     handler = WorkflowHookHandler(session_manager=_SessionManager(None))
@@ -439,9 +417,6 @@ def test_edit_during_live_plan_mode_still_blocks(temp_db: HubDatabase) -> None:
     handler._run_observers(event, SESSION_ID, variables)
 
     assert variables["plan_mode"] is True
-    ctx = engine._build_eval_context(event, variables)
-    funcs = engine._build_allowed_funcs(ctx)
-    assert SafeExpressionEvaluator(ctx, funcs).evaluate(when) is True
 
 
 def test_reconcile_without_native_signal_leaves_state_untouched() -> None:

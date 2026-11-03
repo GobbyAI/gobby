@@ -24,6 +24,8 @@ from tests.agents import test_team_epic_dispatch as epic_dispatch
 from tests.agents.test_team_epic_dispatch import LEAF_TITLE, epic_team, new_task
 from tests.agents.test_team_epic_dispatch import world as world_fixture
 from tests.fixtures.team_case import TITLE, TeamWorld
+from tests.fixtures.team_spawn_scope import _define_agent, _Teams
+from tests.fixtures.team_spawn_scope import teams as teams_fixture
 from tests.mcp_proxy.tools.spawn_agent import test_placement as spawn_placement
 from tests.mcp_proxy.tools.spawn_agent.test_placement import placed as placed_fixture
 from tests.terminals.test_workspace_agent_panes import (
@@ -32,8 +34,6 @@ from tests.terminals.test_workspace_agent_panes import (
     _workspace,
 )
 from tests.terminals.test_workspace_agent_panes import harness as workspace_fixture
-from tests.fixtures.team_spawn_scope import _define_agent, _Teams
-from tests.fixtures.team_spawn_scope import teams as teams_fixture
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 harness = workspace_fixture

@@ -159,6 +159,15 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
         except Exception as e:
             raise ValueError(f"Invalid expression: {e}") from e
 
+    @classmethod
+    def validate_syntax(cls, expr: str, function_names: set[str]) -> ast.Expression:
+        """Check every branch against this evaluator's grammar without executing it."""
+        from .expression_validation import validate_expression_tree
+
+        tree = cls._parse_normalized_expr(cls._normalize_expr(expr))
+        validate_expression_tree(tree, cls, function_names)
+        return tree
+
     def evaluate_value(self, expr: str) -> Any:
         """Evaluate expression and return the raw value (not coerced to bool)."""
         try:

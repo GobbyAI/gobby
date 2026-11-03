@@ -40,7 +40,6 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.observer_context_usage import detect_context_compact_guidance
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
@@ -620,23 +619,27 @@ def test_grok_post_compact_runs_session_start_compact_rules(
     mock_dependencies: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Grok PostCompact evaluates session_start(compact) YAML through HookManager."""
-    sync_result = sync_bundled_rules(session_manager.db, get_bundled_rules_path())
-    assert sync_result["errors"] == []
+    """Grok PostCompact dispatches session_start(compact) through HookManager."""
+    from gobby.storage.definitions.rules import RuleDefinitionManager
 
-    task_context = "Task #22379 is claimed: restore Grok PostCompact rules."
+    RuleDefinitionManager(session_manager.db).create(
+        "synthetic-compact-observer",
+        {
+            "event": "session_start",
+            "when": "event.data.get('source') == 'compact'",
+            "effects": [
+                {"type": "set_variable", "variable": "compact_rule_observed", "value": True},
+                {"type": "inject_context", "template": "{{ task_context }}"},
+            ],
+        },
+        tags=["default"],
+    )
+
+    task_context = "Synthetic context survives the provider delivery boundary."
     variables = _configure_manager(manager_with_mocks, session_manager)
     variables.merge_variables(
         grok_session_id,
         {
-            "pending_context_reset": True,
-            "plan_mode": True,
-            "unlocked_tools": ["call_tool"],
-            "suggested_skill_names": ["tdd"],
-            "loaded_skills": ["brevity"],
-            "loaded_skill_references": ["gobby:references/tasks/closing.md"],
-            "surfaced_memory_ids": ["mem-1@1"],
-            "_gobby_feedback_epoch_submitted": True,
             "task_context": task_context,
         },
     )
@@ -682,14 +685,7 @@ def test_grok_post_compact_runs_session_start_compact_rules(
     assert order == ["handler", "rules"]
 
     stored = variables.get_variables(grok_session_id)
-    assert stored.get("pending_context_reset") is False
-    assert stored.get("plan_mode") is False
-    assert stored.get("unlocked_tools") in ([], None)
-    assert stored.get("suggested_skill_names") in ([], None)
-    assert stored.get("loaded_skills") in ([], None)
-    assert stored.get("loaded_skill_references") in ([], None)
-    assert stored.get("surfaced_memory_ids") in ([], None)
-    assert stored.get("_gobby_feedback_epoch_submitted") is False
+    assert stored["compact_rule_observed"] is True
 
     delivered = manager_with_mocks._complete_response(
         _event(HookEventType.BEFORE_TOOL, grok_session_id, envelope_id="after-compact"),

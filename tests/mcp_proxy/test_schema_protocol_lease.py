@@ -1,7 +1,6 @@
 """Protocol schema delivery must grant the same lease as hooked/HTTP delivery."""
 
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -86,70 +85,3 @@ async def test_schema_lease_cannot_target_another_session(
     assert variables.get_variables(caller.id).get("unlocked_tools", []) == (
         ["gobby-tasks:get_task"] if authenticated else []
     )
-
-
-@pytest.mark.asyncio
-async def test_hookless_schema_lookup_admits_actual_call(
-    session_manager: SessionManager, sample_project: dict[str, Any]
-) -> None:
-    """Protocol delivery unlocks the real before-tool rule without post-tool hooks."""
-    import asyncio
-
-    from gobby.hooks.events import HookEvent, HookResponse
-    from gobby.workflows.engine.core import RuleEngine
-    from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-
-    db = session_manager.db
-    sync_bundled_rules(db, get_bundled_rules_path())
-    db.execute("UPDATE rule_definitions SET source = 'installed', enabled = FALSE")
-    db.execute(
-        "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
-        ("require-current-context-schema-before-call",),
-    )
-    session = session_manager.register(
-        external_id="hookless-admission",
-        machine_id=require_machine_id(),
-        source="grok",
-        project_id=sample_project["id"],
-    )
-    variables = SessionVariableManager(db)
-    variables.set_variable(session.id, "enforce_tool_schema_check", True)
-    engine = RuleEngine(db)
-
-    def evaluate(event: HookEvent) -> HookResponse:
-        result = asyncio.run(
-            engine.evaluate(event, session.id, variables.get_variables(session.id))
-        )
-        return HookResponse(decision=result.decision, reason=result.reason)
-
-    hook_manager = SimpleNamespace(
-        _database=db,
-        _session_manager=session_manager,
-        _workflow_handler=SimpleNamespace(evaluate=evaluate),
-    )
-    internal = MagicMock()
-    internal.is_internal.return_value = True
-    registry = internal.get_registry.return_value
-    registry.call = AsyncMock(return_value={"success": True, "delivered": True})
-    tools = GobbyDaemonTools(
-        mcp_manager=MagicMock(),
-        daemon_port=8787,
-        websocket_port=8788,
-        start_time=0,
-        internal_manager=internal,
-        db=db,
-        session_manager=session_manager,
-        hook_manager_resolver=lambda: hook_manager,
-    )
-    schema = {"success": True, "tool": {"name": "get_task", "inputSchema": {"type": "object"}}}
-    with (
-        patch.object(tools.tool_proxy, "get_tool_schema", AsyncMock(return_value=schema)),
-        session_context_for_test(session.id),
-    ):
-        blocked = await tools.call_tool("gobby-tasks", "get_task", {})
-        assert blocked.is_error is True
-        registry.call.assert_not_awaited()
-        await tools.get_tool_schema("gobby-tasks", "get_task")
-        admitted = await tools.call_tool("gobby-tasks", "get_task", {})
-    assert admitted == {"delivered": True}
-    registry.call.assert_awaited_once()

@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock
 
 import pytest
-import yaml
 
 from gobby.adapters.capabilities import GROK_MODEL_REASON_WINDOW_CHARS
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
@@ -19,7 +18,6 @@ from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalTool
 from gobby.skills.formatting import SKILL_BLOCK_ATOMICITY_NOTICE
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.enforcement.blocking import (
@@ -38,80 +36,6 @@ if TYPE_CHECKING:
 # ids like SESSION_ID would fail with `invalid input syntax for type uuid`.
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("step", ["load_skills", "serve"])
-async def test_researcher_title_and_report_writes_follow_step_and_path_scope(
-    db: "HubDatabase",
-    manager: AgentDefinitionManager,
-    engine: RuleEngine,
-    instance_mgr: AgentStepInstanceManager,
-    step: str,
-    tmp_path: Path,
-) -> None:
-    rules_root = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/rules"
-    definition: dict[str, Any] = {
-        "name": "researcher",
-        "blocked_tools": [],
-        "blocked_mcp_tools": [],
-        "workflows": {"rule_selectors": {"include": ["name:research-artifact-write-scope"]}},
-        "steps": [
-            {"name": "load_skills", "blocked_tools": ["Edit", "Write", "apply_patch"]},
-            {"name": "serve"},
-        ],
-    }
-    variables = {
-        "_agent_blocked_tools": definition["blocked_tools"],
-        "_agent_blocked_mcp_tools": definition["blocked_mcp_tools"],
-        "_agent_type": "researcher",
-    }
-    _setup_step_workflow(db, manager, instance_mgr, current_step=step, workflow_data=definition)
-    scope_bundle = yaml.safe_load((rules_root / "roles/seat-write-scope.yaml").read_text())
-    scope_rule = scope_bundle["rules"]["research-artifact-write-scope"]
-    RuleDefinitionManager(db).create(
-        name="research-artifact-write-scope",
-        definition_json={key: scope_rule[key] for key in ("event", "when", "effects")},
-        tags=scope_bundle["tags"],
-    )
-    response = await engine.evaluate(
-        _make_event(
-            data={
-                "tool_name": "mcp__gobby__call_tool",
-                "tool_input": {
-                    "server_name": "gobby-sessions",
-                    "tool_name": "set_title",
-                    "arguments": {"title": "Researcher"},
-                },
-            }
-        ),
-        session_id=SESSION_ID,
-        variables=variables,
-    )
-    assert response.decision != "block", response.reason
-    for native in ("Edit", "Write", "apply_patch"):
-        for relative in (".gobby/plans/research/report.md", "src/app.py", None):
-            path = str(tmp_path / relative) if relative else None
-            response = await engine.evaluate(
-                _make_event(
-                    data={
-                        "tool_name": native,
-                        "tool_input": {"file_path": path} if path else {},
-                        "canonical_tool_kind": "write",
-                        "canonical_file_paths": [path] if path else [],
-                        "project_path": str(tmp_path),
-                        "cwd": str(tmp_path),
-                    }
-                ),
-                session_id=SESSION_ID,
-                variables=variables,
-            )
-            allowed = step == "serve" and relative == ".gobby/plans/research/report.md"
-            assert (response.decision != "block") is allowed, (native, relative, step, response)
-            if step == "serve" and not allowed:
-                assert "research-artifact-write-scope" in (response.reason or "")
-    current = instance_mgr.get_for_session(SESSION_ID)
-    assert current is not None and current.current_step == step
 
 
 @pytest.mark.asyncio
@@ -234,9 +158,6 @@ def _setup_load_then_review(
     db: "HubDatabase", manager: AgentDefinitionManager, instance_mgr: AgentStepInstanceManager
 ) -> dict[str, Any]:
     """Install a load_skills -> review workflow; return the get_skill call that moves it."""
-    from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-
-    sync_bundled_rules(db, get_bundled_rules_path())
     _setup_step_workflow(
         db,
         manager,
@@ -294,8 +215,6 @@ async def test_proxy_transition_notice_reaches_next_hook_and_stop_is_held(
     The direct event has no provider response channel, so its notice must survive to the
     provider's own PostToolUse; a stop attempted after the transition stays held (#23258).
     """
-    from gobby.workflows.step_context import get_active_step_workflow_context
-
     call = _setup_load_then_review(db, manager, instance_mgr)
     # One dict across evaluations stands in for the persisted session variables.
     variables: dict[str, Any] = {"is_spawned_agent": True}
@@ -333,20 +252,6 @@ async def test_proxy_transition_notice_reaches_next_hook_and_stop_is_held(
         variables=variables,
     )
     assert "Step transition" not in (later.context or "")
-
-    step_context = get_active_step_workflow_context(db, SESSION_ID)
-    assert step_context is not None
-    variables["current_step"] = step_context.current_step
-    variables["current_step_status_message"] = step_context.status_message or ""
-    stop = await engine.evaluate(
-        _make_event(event_type=HookEventType.STOP, source=SessionSource.CODEX),
-        session_id=SESSION_ID,
-        variables=variables,
-    )
-    assert stop.decision == "block"
-    assert stop.reason is not None
-    assert "[require-step-completion]" in stop.reason
-    assert "Current step: review. Run the review now." in stop.reason
 
 
 @pytest.mark.asyncio

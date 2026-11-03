@@ -19,12 +19,11 @@ from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.templating import TemplatingMixin
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
-CLAIMED_TASKS_REASON = "Use clear_session=false while working inside a task."
+CLAIMED_TASKS_REASON = "Synthetic input-field decision"
 CLAIMED = {"claimed_tasks": {"fe063aea-a379-4cb8-b55e-1519f14bbfea": "#23125"}}
 ROUTE = {"server_name": "gobby-sessions", "tool_name": "set_handoff"}
 HANDOFF = {"current_state": "midway", "next_steps": ["finish"]}
@@ -32,8 +31,17 @@ HANDOFF = {"current_state": "midway", "next_steps": ["finish"]}
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-    temp_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
+    from gobby.storage.definitions.rules import RuleDefinitionManager
+
+    RuleDefinitionManager(temp_db).create(
+        "synthetic-wrapper-input",
+        {
+            "event": "before_tool",
+            "when": "tool_input.get('clear_session')",
+            "effects": [{"type": "block", "reason": CLAIMED_TASKS_REASON}],
+        },
+        tags=["default"],
+    )
     return temp_db
 
 

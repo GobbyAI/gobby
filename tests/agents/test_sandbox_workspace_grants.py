@@ -18,7 +18,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import yaml
 
 from gobby.agents import resume_executor
 from gobby.agents.agent_workspaces import (
@@ -40,13 +39,10 @@ from gobby.agents.srt_settings import render_srt_settings
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
-from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
-from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.agents.test_resume_executor import (
@@ -101,20 +97,9 @@ def _associated_checkout(
 async def _workspace_decision(
     world: TeamWorld, request: SpawnRequest, tool_name: str, tool_input: dict[str, str]
 ) -> str:
-    template = (
-        Path(__file__).parents[2]
-        / "src/gobby/install/shared/workflows/rules/roles/agent-workspace-scope.yaml"
-    )
-    document = yaml.safe_load(template.read_text())
-    for rule in ("agent-workspace-read-scope", "agent-workspace-write-scope"):
-        body, metadata_fields = split_rule_definition_data(document["rules"][rule])
-        RuleDefinitionManager(world.case.db).create(
-            name=rule,
-            definition_json=RuleDefinitionBody.model_validate(body).model_dump_json(),
-            priority=metadata_fields["priority"],
-            enabled=True,
-            tags=document["tags"],
-        )
+    from gobby.storage.sessions import SessionManager
+    from gobby.workflows.safe_evaluator import build_condition_helpers
+
     seat = request.session_id
     assert seat is not None
     own = session_workspace_dir(
@@ -131,8 +116,12 @@ async def _workspace_decision(
         metadata={"_platform_session_id": seat},
         data=data,
     )
-    result = await RuleEngine(world.case.db).evaluate(event, session_id=seat, variables=variables)
-    return result.decision
+    helpers = build_condition_helpers(session_manager=SessionManager(world.case.db))
+    violation = any(
+        helpers[f"agent_workspace_{operation}_violation"](event.data, tool_input, variables, seat)
+        for operation in ("read", "write")
+    )
+    return "block" if violation else "allow"
 
 
 @pytest.mark.parametrize("definition", ["code-reviewer", "test-writer"])

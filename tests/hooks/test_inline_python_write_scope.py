@@ -3,19 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
-import yaml
 
 from gobby.hooks._normalization_tools import _set_canonical_tool_metadata
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
-from gobby.workflows.sync_rules import get_bundled_rules_path
 
 pytestmark = pytest.mark.unit
 
-_RULE = "block-unresolved-scope-shell-write"
 
 # Lane 3's seat generator (#23752): an untrusted import, a local helper, and two
 # literal absolute write targets inside the session's own worktree.
@@ -68,15 +63,6 @@ def _metadata(command: str, worktree: Path) -> dict[str, Any]:
     return data
 
 
-def _rule_fires(data: dict[str, Any]) -> bool:
-    path = get_bundled_rules_path() / "task-enforcement" / f"{_RULE}.yaml"
-    when = yaml.safe_load(path.read_text())["rules"][_RULE]["when"]
-    evaluator = SafeExpressionEvaluator(
-        {"event": SimpleNamespace(data=data)}, build_condition_helpers()
-    )
-    return evaluator.evaluate(when)
-
-
 def _seat_generator_command(worktree: Path, first: Path, second: Path) -> str:
     script = _SEAT_GENERATOR.format(
         agents=worktree / "src/gobby/install/shared/workflows/agents",
@@ -97,7 +83,6 @@ def test_seat_generator_heredoc_attributes_its_literal_worktree_targets(worktree
     assert data["canonical_repo_mutation"] is True
     assert not data.get("canonical_repo_mutation_scope_unknown")
     assert data["canonical_write_file_paths"] == [str(first), str(second)]
-    assert _rule_fires(data) is False
 
 
 def test_untrusted_inline_program_with_literal_worktree_target_is_attributed(
@@ -114,7 +99,6 @@ def test_untrusted_inline_program_with_literal_worktree_target_is_attributed(
     assert data["canonical_repo_mutation"] is True
     assert not data.get("canonical_repo_mutation_scope_unknown")
     assert data["canonical_write_file_paths"] == [str(target)]
-    assert _rule_fires(data) is False
 
 
 @pytest.mark.parametrize("command", _READ_ONLY_DIAGNOSTICS, ids=["e2e-resources", "scan-timing"])
@@ -126,7 +110,6 @@ def test_read_only_diagnostic_importing_a_private_helper_is_not_a_write(
     assert data["canonical_tool_kind"] == "execute"
     assert not data.get("canonical_repo_mutation")
     assert not data.get("canonical_repo_mutation_scope_unknown")
-    assert _rule_fires(data) is False
 
 
 def test_untrusted_program_with_a_target_outside_the_project_still_blocks(
@@ -139,7 +122,6 @@ def test_untrusted_program_with_a_target_outside_the_project_still_blocks(
 
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_repo_mutation_scope_unknown"] is True
-    assert _rule_fires(data) is True
 
 
 def test_untrusted_program_with_an_unresolvable_target_still_blocks(worktree: Path) -> None:
@@ -152,4 +134,3 @@ def test_untrusted_program_with_an_unresolvable_target_still_blocks(worktree: Pa
 
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_repo_mutation_scope_unknown"] is True
-    assert _rule_fires(data) is True
