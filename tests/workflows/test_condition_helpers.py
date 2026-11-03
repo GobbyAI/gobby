@@ -94,6 +94,10 @@ class TestShellCommandRunsOcrReview:
             "OCR_LOG=debug ocr delegate rule --format json src/a.py",
             "sudo ocr delegate rule src/a.py",
             "ocr --format json delegate rule src/a.py",
+            "uv run ocr delegate rule --format json src/a.py",
+            "cd /repo/wt && uv run ocr delegate rule --format json /repo/wt/src/a.py",
+            "uv run --project /repo/wt --with x ocr delegate rule src/a.py",
+            "uv run -- ocr delegate rule src/a.py",
         ],
     )
     def test_shell_command_runs_ocr_review(self, command: str) -> None:
@@ -111,6 +115,9 @@ class TestShellCommandRunsOcrReview:
             'echo "ocr delegate rule src/a.py"',
             "python3 -c \"print('ocr delegate rule')\"",
             "ocrx delegate rule src/a.py",
+            "uv run ocr delegate preview --format json",
+            "uv run echo ocr delegate rule src/a.py",
+            "uv run --with ocr python -c 'ocr delegate rule'",
         ],
     )
     def test_skips_non_review_invocations(self, command: object) -> None:

@@ -77,7 +77,16 @@ def _utility_command(parts: list[str]) -> list[str]:
             break
         if word in {"--help", "--version"}:
             return []
-        if name == "time" and word == "-p":
+        if name == "time" and (
+            re.fullmatch(r"-[hlpqv]+", word) or word in {"--portability", "--quiet", "--verbose"}
+        ):
+            # Report-only flags (BSD -h/-l, GNU -q/-v); -o/-a name an output file.
+            index += 1
+        elif name == "time" and word in {"-f", "--format"}:
+            if index + 1 >= len(parts):
+                return [UNRESOLVED_WRAPPER]
+            index += 2
+        elif name == "time" and word.startswith("--format="):
             index += 1
         elif name == "timeout" and word in {"--foreground", "--preserve-status", "--verbose", "-v"}:
             index += 1

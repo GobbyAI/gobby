@@ -232,6 +232,18 @@ def test_xargs_runtime_shell_argv_fails_closed(tmp_path: Path, command: str) -> 
     assert "a.py" not in data.get("canonical_write_file_paths", [])
 
 
+@pytest.mark.parametrize(
+    "command",
+    ["xargs -I cat cat f < list", "xargs -Iat cat < list", "xargs -I '' head -n 5 < list"],
+)
+def test_xargs_replacement_in_reader_name_is_unresolved(tmp_path: Path, command: str) -> None:
+    # GNU xargs may substitute into the utility name, so the reader is unknown.
+    data = metadata(command, tmp_path)
+    assert data["canonical_read_only"] is False
+    assert data["canonical_unresolved_execution"] is True
+    assert "canonical_code_navigation_action" not in data
+
+
 def test_xargs_shell_unknown_program_retains_output_scope(tmp_path: Path) -> None:
     data = metadata("echo touch a.py | xargs bash > result.txt", tmp_path)
     assert data["canonical_write_file_paths"] == ["result.txt"]
@@ -247,4 +259,14 @@ def test_zsh_correct_all_keeps_script_operand(
     (tmp_path / script).write_text("touch b.py\n")
     data = metadata(f"zsh {option} {script}{stdin}", tmp_path)
     assert data["canonical_write_file_paths"] == ["b.py"]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize("options", ["-O", "-eO", "-O -o pipefail"])
+@pytest.mark.parametrize(
+    "stdin", [" <<'EOF'\ntouch a.py\nEOF", " <<< 'touch a.py'", " -s <<< 'touch a.py'"]
+)
+def test_zsh_correct_all_flag_proves_stdin(tmp_path: Path, options: str, stdin: str) -> None:
+    data = metadata(f"zsh {options}{stdin}", tmp_path)
+    assert data["canonical_write_file_paths"] == ["a.py"]
     assert not data.get("canonical_repo_mutation_scope_unknown")
