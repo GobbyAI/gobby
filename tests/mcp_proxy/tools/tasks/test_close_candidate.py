@@ -12,9 +12,8 @@ import pytest
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 from gobby.mcp_proxy.tools.tasks._close_context import CloseAttributionSnapshot
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
-from gobby.tasks.closure_policy import ClosureDecision
 from gobby.utils.machine_id import require_machine_id
-from tests.mcp_proxy.tools.tasks.test_close_task_flow import _ctx, _task
+from tests.mcp_proxy.tools.tasks.test_close_task_flow import _approved_closure, _ctx, _task
 
 pytestmark = pytest.mark.unit
 
@@ -64,13 +63,7 @@ async def _evaluate(repo: Path, linked: list[str], requested: str | None) -> Clo
         ),
         patch.object(lifecycle, "task_landing_target", AsyncMock(return_value=(repo, "0.5.0"))),
         patch.object(lifecycle, "session_agent_definition", return_value=None),
-        patch.object(
-            lifecycle,
-            "prepare_closure",
-            return_value=SimpleNamespace(
-                decision=ClosureDecision(True, (), "policy-revision", "snapshot-revision")
-            ),
-        ),
+        patch.object(lifecycle, "prepare_closure", side_effect=_approved_closure),
     ):
         return await lifecycle._evaluate_close(
             ctx,

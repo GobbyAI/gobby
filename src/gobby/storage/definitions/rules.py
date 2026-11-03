@@ -254,10 +254,17 @@ class RuleDefinitionManager:
             incoming: Mapping[str, Any] = fields
             if from_sync:
                 incoming = prepare_sync_values(current.__dict__, fields, allowed=allowed)
-            self._validate(
-                str(incoming.get("name", current.name)),
-                incoming.get("definition_json", current.definition_json),
+            # Disabling is the one write an invalid stored row still accepts (#25487).
+            disable_only = (
+                not restore
+                and incoming.get("enabled") is False
+                and incoming.keys() <= {"enabled", "enabled_pinned"}
             )
+            if not disable_only:
+                self._validate(
+                    str(incoming.get("name", current.name)),
+                    incoming.get("definition_json", current.definition_json),
+                )
             values: dict[str, Any] = {}
             for key, value in incoming.items():
                 if key in {"sources", "tags"}:
@@ -286,7 +293,8 @@ class RuleDefinitionManager:
         now = utc_now()
         with self.db.transaction() as txn:
             current = _lock_live_row(txn, definition_id)
-            self._validate(current.name, current.definition_json)
+            if not current.enabled:
+                self._validate(current.name, current.definition_json)
             row = txn.execute(
                 """
                 UPDATE rule_definitions

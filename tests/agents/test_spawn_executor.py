@@ -75,6 +75,7 @@ from gobby.terminals.runtime import (
 from gobby.terminals.runtime import PreparedSpawn as TerminalPreparedSpawn
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from gobby.utils.native_bin import native_bin_name
+from gobby.workflows.reserved_variables import SRT_RUN_SOCKET_ROOT_VARIABLE
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.terminals.fakes import (
     FakeRuntime,
@@ -1442,7 +1443,10 @@ class TestExecuteSpawn:
         assert result.run_id == "run-agy123"
         assert request.parent_session_id == "parent"
         assert request.prepared_spawn.parent_session_id == "parent"
-        mock_sv_mgr.assert_called_once()
+        # An unsandboxed launch withdraws any stale SRT socket root before seeding variables.
+        mock_sv_mgr.return_value.withdraw_variable.assert_called_once_with(
+            "gobby-sess-agy", SRT_RUN_SOCKET_ROOT_VARIABLE
+        )
         mock_sv_mgr.return_value.merge_variables.assert_called_once_with(
             "gobby-sess-agy",
             {"_agent_type": "explorer"},
