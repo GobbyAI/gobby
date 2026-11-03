@@ -406,3 +406,97 @@ fn non_idempotent_call_that_reached_the_daemon_is_not_replayed() -> anyhow::Resu
         )
     })
 }
+
+fn write_restart_marker(root: &std::path::Path) -> anyhow::Result<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs_f64();
+    fs::write(
+        root.join("shutdown_intent_active.json"),
+        format!(r#"{{"source":"cli_restart","intent":"restart","timestamp":{now}}}"#),
+    )?;
+    Ok(())
+}
+
+fn held_call_options() -> RequestOptions<'static> {
+    RequestOptions {
+        preflight: true,
+        timeout: Duration::from_secs(10),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn held_seat_call_waits_out_a_planned_restart() -> anyhow::Result<()> {
+    isolated(|root| {
+        write_restart_marker(root)?;
+        let address = free_address()?;
+        temp_env::with_var(
+            "GOBBY_DAEMON_URL",
+            Some(format!("http://{address}")),
+            || -> anyhow::Result<()> {
+                let dialer = Dialer::with_context(root, Default::default())?;
+                // The new daemon binds while the call is already waiting.
+                let comes_back = thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(1200));
+                    KeepAliveDaemon::bind(
+                        address,
+                        Exit::Close,
+                        vec![
+                            Reply::Json(200, json!({"status":"healthy"})),
+                            Reply::Json(200, json!({"renewed":true})),
+                        ],
+                    )
+                });
+                let result =
+                    dialer.request("POST", TOOL_PATH, Some(&json!({})), held_call_options());
+                let daemon = comes_back
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("daemon thread panicked"))??;
+                assert_eq!(result, json!({"renewed":true}));
+                assert_eq!(daemon.paths(), ["/api/health", TOOL_PATH]);
+                Ok(())
+            },
+        )
+    })
+}
+
+#[test]
+fn restart_hold_still_fails_other_calls_fast_and_never_replays() -> anyhow::Result<()> {
+    isolated(|root| {
+        write_restart_marker(root)?;
+        let address = free_address()?;
+        temp_env::with_var(
+            "GOBBY_DAEMON_URL",
+            Some(format!("http://{address}")),
+            || -> anyhow::Result<()> {
+                let dialer = Dialer::with_context(root, Default::default())?;
+                let started = Instant::now();
+                let task_work = dialer.request(
+                    "POST",
+                    "/api/mcp/gobby-tasks/tools/claim_task/",
+                    Some(&json!({})),
+                    held_call_options(),
+                );
+                assert_eq!(task_work["error_code"], "DAEMON_UNAVAILABLE", "{task_work}");
+                assert!(started.elapsed() < Duration::from_secs(1));
+
+                // A hold call the daemon received but never answered is not replayed.
+                let daemon = KeepAliveDaemon::bind(
+                    address,
+                    Exit::Close,
+                    vec![Reply::Vanish, Reply::Json(200, json!({"replayed":true}))],
+                )?;
+                let lost = dialer.request("POST", TOOL_PATH, Some(&json!({})), direct());
+                assert_eq!(lost["error_code"], "DAEMON_UNAVAILABLE", "{lost}");
+                let posts = daemon
+                    .served()
+                    .iter()
+                    .filter(|s| s.method == "POST")
+                    .count();
+                assert_eq!(posts, 1, "a delivered hold call must not be replayed");
+                Ok(())
+            },
+        )
+    })
+}

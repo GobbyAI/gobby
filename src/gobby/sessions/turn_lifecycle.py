@@ -155,6 +155,8 @@ class TurnLifecycleState:
     cursor: str | int | None = None
     provider_error: ProviderErrorState | None = None
     started_at: datetime | None = None
+    # Tool calls started this turn without a matching after-tool hook, with their start time.
+    open_tools: tuple[tuple[str, datetime], ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -169,6 +171,7 @@ class TurnLifecycleState:
             "cursor": self.cursor,
             "provider_error": self.provider_error.to_dict() if self.provider_error else None,
             "started_at": datetime_to_iso(self.started_at),
+            "open_tools": {tool_id: datetime_to_iso(at) for tool_id, at in self.open_tools},
         }
 
     @classmethod
@@ -209,6 +212,7 @@ class TurnLifecycleState:
             cursor=_cursor(raw.get("cursor")),
             provider_error=ProviderErrorState.from_value(raw.get("provider_error")),
             started_at=started_at,
+            open_tools=_open_tools(raw.get("open_tools")),
         )
 
 
@@ -233,6 +237,20 @@ LifecycleMutation = Callable[
 
 def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _open_tools(value: object) -> tuple[tuple[str, datetime], ...]:
+    if not isinstance(value, Mapping):
+        return ()
+    tools: list[tuple[str, datetime]] = []
+    for tool_id, raw_at in value.items():
+        try:
+            started = parse_stored_datetime(raw_at)
+        except ValueError:
+            continue
+        if isinstance(tool_id, str) and started is not None:
+            tools.append((tool_id, started))
+    return tuple(tools)
 
 
 def _cursor(value: object) -> str | int | None:
@@ -377,10 +395,25 @@ class TurnLifecycleReducer:
         *,
         tool: Literal["start", "finish"] | None = None,
     ) -> TurnLifecycleTransitionResult:
-        """Confirm that provider work resumed and clear protected waits."""
+        """Confirm that provider work resumed and clear protected waits.
+
+        ``tool`` marks a tool call (keyed by ``evidence.request_id``) as started or
+        finished, so liveness can tell a long blocking call from a stalled seat.
+        """
 
         def mutate(current: TurnLifecycleState, _status: str) -> tuple[TurnLifecycleState, str]:
-            return self._with_evidence(current, evidence, waits=(), turn_state="open"), "active"
+            tool_id = evidence.request_id or ""
+            open_tools = tuple(entry for entry in current.open_tools if entry[0] != tool_id)
+            if tool == "start":
+                open_tools = (*open_tools, (tool_id, to_aware_utc(evidence.event_time)))
+            updated = self._with_evidence(
+                current,
+                evidence,
+                waits=(),
+                turn_state="open",
+                open_tools=open_tools if tool else None,
+            )
+            return updated, "active"
 
         return self._apply(
             session_id,
@@ -427,7 +460,9 @@ class TurnLifecycleReducer:
             else:
                 next_status = "idle"
             updated = replace(
-                self._with_evidence(current, evidence, waits=(), turn_state="terminal"),
+                self._with_evidence(
+                    current, evidence, waits=(), turn_state="terminal", open_tools=()
+                ),
                 disposition=disposition,
             )
             if disposition == "completed":
@@ -733,6 +768,7 @@ class TurnLifecycleReducer:
         waits: tuple[OutstandingWait, ...] | None = None,
         turn_state: Literal["open", "terminal"] | None = None,
         prior_status: str | None = None,
+        open_tools: tuple[tuple[str, datetime], ...] | None = None,
     ) -> TurnLifecycleState:
         request_ids = current.request_ids
         if evidence.request_id and evidence.request_id not in request_ids:
@@ -749,4 +785,5 @@ class TurnLifecycleReducer:
             cursor=evidence.cursor if evidence.cursor is not None else current.cursor,
             provider_error=current.provider_error,
             started_at=current.started_at,
+            open_tools=current.open_tools if open_tools is None else open_tools,
         )

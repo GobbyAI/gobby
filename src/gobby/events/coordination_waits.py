@@ -36,6 +36,7 @@ class CoordinationWaitService:
     async def start(self) -> None:
         if self._listener is not None:
             return
+        await asyncio.to_thread(self.manager.rearm_lapsed, self.machine_id)
         self._worker = asyncio.create_task(self._consume(), name="coordination-delivery")
         self._listener = asyncio.create_task(self._listen(), name="coordination-listener")
         try:

@@ -17,8 +17,8 @@ from gobby.mcp_proxy.tools.sessions._terminal_send_keys import register_send_key
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.terminals.composer_ledger import ComposerLedger, bind_composer_ledger, read_composer
-from gobby.terminals.pane_io import composer_gate_for_write
-from gobby.terminals.runtime import Delivered
+from gobby.terminals.pane_io import SendResult, composer_gate_for_write
+from gobby.terminals.runtime import Delivered, NamedKey, SnapshotMode
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -55,7 +55,7 @@ async def test_node_composer_requires_verified_claude_entrypoint(
     if package == "claude" and not busy:
         assert refusal is None
     else:
-        assert refusal is not None
+        assert isinstance(refusal, gate.SendKeysRefusal)
         assert refusal.code == (
             "send_keys_composer_not_idle" if package == "claude" else "send_keys_target_unconfirmed"
         )
@@ -95,12 +95,15 @@ class _Pane:
         self._text = text
         self.keys: list[str] = []
 
-    async def snapshot(self, lines: int = 80, *, mode: str = "text") -> str | None:
+    async def snapshot(self, lines: int = 80, *, mode: SnapshotMode = "text") -> str | None:
         return self._text
 
-    async def send_key(self, key: str) -> tuple[bool, str | None]:
+    async def send_key(self, key: NamedKey) -> SendResult:
         self.keys.append(key)
         return True, None
+
+    async def type_text(self, text: str) -> SendResult:
+        raise AssertionError(f"the gate never types text: {text!r}")
 
 
 def _terminal(pgid: int | None = 4321) -> SimpleNamespace:
@@ -224,7 +227,7 @@ async def test_refuses_a_target_that_cannot_take_keys(
 
     refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
 
-    assert refusal is not None
+    assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == code
     assert "gobby-agents:send_message" in refusal.message
 
@@ -254,8 +257,10 @@ async def test_missing_manager_or_registry_refuses(monkeypatch: pytest.MonkeyPat
     no_manager = await gate.send_keys_target_refusal(SESSION_ID, None, object())
     no_registry = await gate.send_keys_target_refusal(SESSION_ID, _Manager(_terminal(), None), None)
 
-    assert no_manager is not None and no_manager.code == "send_keys_target_unconfirmed"
-    assert no_registry is not None and no_registry.code == "send_keys_target_unconfirmed"
+    assert isinstance(no_manager, gate.SendKeysRefusal)
+    assert no_manager.code == "send_keys_target_unconfirmed"
+    assert isinstance(no_registry, gate.SendKeysRefusal)
+    assert no_registry.code == "send_keys_target_unconfirmed"
 
 
 @pytest.mark.asyncio
@@ -292,7 +297,7 @@ async def test_refuses_an_unknown_versioned_binary(
 
     refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
 
-    assert refusal is not None
+    assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == "send_keys_target_unconfirmed"
 
 
@@ -305,7 +310,7 @@ async def test_refuses_a_versioned_path_that_does_not_exist(
 
     refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
 
-    assert refusal is not None
+    assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == "send_keys_target_unconfirmed"
 
 
@@ -330,7 +335,7 @@ async def test_a_busy_rule_timeout_over_a_hook_denial_refuses(
 
     refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
 
-    assert refusal is not None
+    assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == "send_keys_composer_not_idle"
 
 
