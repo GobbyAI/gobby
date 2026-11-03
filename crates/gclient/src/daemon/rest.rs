@@ -130,8 +130,9 @@ impl RestClient {
         self.empty(Method::DELETE, url, None).await
     }
 
-    /// Live sessions only: the sidebar shows what is running, and the route
-    /// caps a page at 1000, which covers a project's live set many times over.
+    /// Live sessions only, parked ones included: the sidebar shows every seat
+    /// that can still be addressed, and the route caps a page at 1000, which
+    /// covers a project's live set many times over.
     pub(super) async fn sessions(&self, project: &str) -> Result<Vec<SessionRow>, DaemonError> {
         let mut url = self.url(&["api", "sessions"])?;
         {
