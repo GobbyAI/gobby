@@ -374,6 +374,8 @@ class TurnLifecycleReducer:
         self,
         session_id: str,
         evidence: TurnEvidence,
+        *,
+        tool: Literal["start", "finish"] | None = None,
     ) -> TurnLifecycleTransitionResult:
         """Confirm that provider work resumed and clear protected waits."""
 

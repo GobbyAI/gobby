@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,6 +16,8 @@ from gobby.mcp_proxy.tools.sessions import _terminal_send_keys_gate as gate
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import register_send_keys_tool
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.terminals.composer_ledger import ComposerLedger, bind_composer_ledger, read_composer
+from gobby.terminals.pane_io import composer_gate_for_write
 from gobby.terminals.runtime import Delivered
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
@@ -86,11 +88,19 @@ class _Manager:
 
 
 class _Pane:
+    backend = "fake"
+    target = TERMINAL_ID
+
     def __init__(self, text: str | None) -> None:
         self._text = text
+        self.keys: list[str] = []
 
     async def snapshot(self, lines: int = 80, *, mode: str = "text") -> str | None:
         return self._text
+
+    async def send_key(self, key: str) -> tuple[bool, str | None]:
+        self.keys.append(key)
+        return True, None
 
 
 def _terminal(pgid: int | None = 4321) -> SimpleNamespace:
@@ -111,8 +121,11 @@ def _scene(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> _Manager:
     monkeypatch.setattr(
         gate, "foreground_executables", lambda pids: scene["foreground"] if pids else {}
     )
-    monkeypatch.setattr(gate, "read_composer", lambda _id: SimpleNamespace(state=scene["composer"]))
-    monkeypatch.setattr(gate, "live_runtime_pane", lambda *_args: pane)
+    if scene["composer"] is not None:  # None reads the bound composer ledger
+        monkeypatch.setattr(
+            gate, "read_composer", lambda _id: SimpleNamespace(state=scene["composer"])
+        )
+    monkeypatch.setattr(gate, "live_runtime_pane", lambda *_args: scene.get("live_pane", pane))
     monkeypatch.setattr(gate, "_detection_registry", lambda _manager: BundledDetectionRegistry())
     return _Manager(scene["terminal"], scene["lookup_error"])
 
@@ -434,4 +447,111 @@ async def test_public_send_keys_applies_the_composer_gate_to_the_operator(
     assert result["success"] is False
     assert result["error_code"] == "send_keys_target_bare_shell"
     assert "gobby-agents:send_message" in result["error"]
+    writer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("composer", "route"),
+    [
+        ("held", "send_keys(keys='ctrl_u', literal=false)"),
+        ("draft", "gobby-sessions:release_composer"),
+        ("unknown", "gobby-sessions:release_composer"),
+    ],
+)
+async def test_occupied_composer_refusal_names_a_recovery_route(
+    monkeypatch: pytest.MonkeyPatch,
+    public_send_keys: tuple[Callable[..., Any], AsyncMock, str],
+    composer: str,
+    route: str,
+) -> None:
+    register, writer, target_id = public_send_keys
+    handler = register(_scene(monkeypatch, composer=composer))
+
+    result = await handler(session_id=target_id, keys="resume\n")
+
+    assert result["error_code"] == "send_keys_composer_not_idle"
+    assert route in result["recovery"]
+    writer.assert_not_awaited()
+
+
+@pytest.fixture
+def held_compact() -> Iterator[ComposerLedger]:
+    """Bind a ledger whose composer holds a daemon-typed, unsubmitted ``/compact``."""
+    ledger = ComposerLedger()
+    ledger.release(TERMINAL_ID)
+    ledger.observe_write(TERMINAL_ID, origin="daemon", kind="text", payload="/compact")
+    bind_composer_ledger(ledger)
+    assert read_composer(TERMINAL_ID).state == "held"
+    yield ledger
+    bind_composer_ledger(None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keys", ["ctrl_u", "C-u"])
+async def test_clear_key_drains_a_held_compact_so_a_later_handoff_does_not_replay_it(
+    monkeypatch: pytest.MonkeyPatch,
+    public_send_keys: tuple[Callable[..., Any], AsyncMock, str],
+    held_compact: ComposerLedger,
+    keys: str,
+) -> None:
+    register, writer, target_id = public_send_keys
+    pane = _Pane(IDLE_COMPOSER)
+    handler = register(_scene(monkeypatch, composer=None, live_pane=pane))
+
+    result = await handler(session_id=target_id, keys=keys, literal=False)
+
+    assert result["success"] is True
+    assert result["cleared"] is True
+    # The drain runs through the pane, never as a raw daemon write that keeps the hold.
+    writer.assert_not_awaited()
+    assert "ctrl_u" in pane.keys
+    assert read_composer(TERMINAL_ID).state == "empty"
+    # A later compact handoff types /compact fresh instead of replaying a held command.
+    assert await composer_gate_for_write(pane, action="compact", pending_payload="/compact") == (
+        True,
+        None,
+        "empty",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("keys", "literal"),
+    [("ctrl_u\n", True), ("/compact", True), ("enter", False), ("escape", False)],
+    ids=["clear-with-enter", "text", "enter", "escape"],
+)
+async def test_only_a_pure_clear_key_may_touch_a_held_composer(
+    monkeypatch: pytest.MonkeyPatch,
+    public_send_keys: tuple[Callable[..., Any], AsyncMock, str],
+    held_compact: ComposerLedger,
+    keys: str,
+    literal: bool,
+) -> None:
+    register, writer, target_id = public_send_keys
+    pane = _Pane(IDLE_COMPOSER)
+    handler = register(_scene(monkeypatch, composer=None, live_pane=pane))
+
+    result = await handler(session_id=target_id, keys=keys, literal=literal)
+
+    assert result["error_code"] == "send_keys_composer_not_idle"
+    assert pane.keys == []
+    writer.assert_not_awaited()
+    assert read_composer(TERMINAL_ID).state == "held"
+
+
+@pytest.mark.asyncio
+async def test_clear_key_on_an_operator_draft_still_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    public_send_keys: tuple[Callable[..., Any], AsyncMock, str],
+) -> None:
+    register, writer, target_id = public_send_keys
+    pane = _Pane(IDLE_COMPOSER)
+    handler = register(_scene(monkeypatch, composer="draft", live_pane=pane))
+
+    result = await handler(session_id=target_id, keys="ctrl_u", literal=False)
+
+    assert result["error_code"] == "send_keys_composer_not_idle"
+    assert "gobby-sessions:release_composer" in result["recovery"]
+    assert pane.keys == []
     writer.assert_not_awaited()

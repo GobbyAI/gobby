@@ -30,6 +30,15 @@ pub(crate) fn action(
     })
 }
 
+pub(crate) fn action_for(
+    hook_type: &str,
+    cfg: &CliConfig,
+    failure_kind: DeliveryFailureKind,
+    _input: &serde_json::Value,
+) -> Option<HookAction> {
+    action(hook_type, cfg, failure_kind)
+}
+
 fn is_stop_like_hook(hook_type: &str) -> bool {
     is_stop_hook(hook_type)
         || matches!(
