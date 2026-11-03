@@ -1,7 +1,6 @@
 """Bundled orphan cleanup must not hydrate unrelated definition bodies."""
 
 import gc
-import json
 import tracemalloc
 from pathlib import Path
 from typing import Any, Literal
@@ -11,7 +10,7 @@ import pytest
 import yaml
 
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
-from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.delivery_disposition import (
@@ -21,24 +20,9 @@ from gobby.workflows.delivery_disposition import (
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 from gobby.workflows.sync_rules import sync_bundled_rules
 from gobby.workflows.sync_variables import sync_bundled_variables
+from tests.fixtures.rule_definitions import store_unvalidated_rule
 
 pytestmark = pytest.mark.integration
-
-
-def _store_legacy_rule(
-    db: HubDatabase, manager: RuleDefinitionManager, name: str, definition: dict[str, Any]
-) -> RuleDefinitionRow:
-    """Store a body written before create-time validation; the startup migration reads it."""
-    placeholder = {"event": "before_tool", "effects": [{"type": "observe"}]}
-    row = manager.create(name, placeholder, source="custom", enabled=False)
-    with db.transaction() as conn:
-        conn.execute(
-            "UPDATE rule_definitions SET definition_json = %s WHERE id = %s",
-            (json.dumps(definition), row.id),
-        )
-    stored = manager.get(row.id)
-    assert stored.definition_json == definition
-    return stored
 
 
 @pytest.mark.parametrize("kind", ["pipelines", "rules", "variables"])
@@ -158,7 +142,7 @@ def test_delivery_projection_preserves_classification_and_full_rewrite(
 ) -> None:
     manager = RuleDefinitionManager(temp_db)
     definition = {**definition, "unrelated_blob": "x" * 4096}
-    row = _store_legacy_rule(temp_db, manager, "projection", definition)
+    row = store_unvalidated_rule(temp_db, "projection", definition, enabled=False)
     candidates = manager.list_delivery_disposition_candidates()
     assert len(candidates) == 1
     compact = candidates[0]
