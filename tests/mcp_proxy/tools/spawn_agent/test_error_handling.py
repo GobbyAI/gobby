@@ -185,6 +185,7 @@ class TestSpawnAgentImplErrorBranches:
         runner._child_session_manager = MagicMock()
 
         worktree_storage = MagicMock()
+        worktree_storage.is_claimed_by_live_session.return_value = False
         worktree_storage.get.return_value = None
 
         with patch(
@@ -218,6 +219,7 @@ class TestSpawnAgentImplErrorBranches:
         mock_wt.branch_name = "test-branch"
 
         worktree_storage = MagicMock()
+        worktree_storage.is_claimed_by_live_session.return_value = False
         worktree_storage.resolve_reference.side_effect = lambda ref: ref
         worktree_storage.get.return_value = mock_wt
 
@@ -464,6 +466,7 @@ class TestSpawnAgentImplErrorBranches:
             branch_name="branch",
         )
         worktree_storage = MagicMock(db=temp_db)
+        worktree_storage.is_claimed_by_live_session.return_value = False
         git_manager = MagicMock()
         git_manager.get_current_branch = AsyncMock(return_value="main")
         git_manager.get_local_commit = AsyncMock(return_value="base-sha")
@@ -543,6 +546,7 @@ class TestSpawnAgentImplErrorBranches:
             branch_name="branch",
         )
         worktree_storage = MagicMock()
+        worktree_storage.is_claimed_by_live_session.return_value = False
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
         git_manager.get_current_branch = AsyncMock(return_value="main")
@@ -739,6 +743,7 @@ test"""
             branch_name="branch",
         )
         worktree_storage = MagicMock()
+        worktree_storage.is_claimed_by_live_session.return_value = False
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
         git_manager.get_current_branch = AsyncMock(return_value="main")
@@ -835,6 +840,7 @@ test"""
             branch_name="branch",
         )
         worktree_storage = MagicMock()
+        worktree_storage.is_claimed_by_live_session.return_value = False
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
         git_manager.get_current_branch = AsyncMock(return_value="main")
@@ -942,6 +948,7 @@ test"""
             branch_name="branch",
         )
         worktree_storage = MagicMock()
+        worktree_storage.is_claimed_by_live_session.return_value = False
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
         git_manager.get_current_branch = AsyncMock(return_value="main")
@@ -1041,6 +1048,7 @@ test"""
             branch_name="branch",
         )
         worktree_storage = MagicMock()
+        worktree_storage.is_claimed_by_live_session.return_value = False
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
         git_manager.get_current_branch = AsyncMock(return_value="main")
@@ -1230,6 +1238,7 @@ async def test_reused_worktree_failed_merge_abort_surfaces_verbatim(
     runner.can_spawn.return_value = (True, "ok", 0)
     worktree_path = tmp_path_factory.mktemp("dirty-worktree")
     worktree_storage = MagicMock()
+    worktree_storage.is_claimed_by_live_session.return_value = False
     worktree_storage.resolve_reference.side_effect = lambda ref: ref
     worktree_storage.get.return_value = SimpleNamespace(
         id="wt-dirty",

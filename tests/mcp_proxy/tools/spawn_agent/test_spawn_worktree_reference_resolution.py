@@ -236,6 +236,37 @@ class TestSpawnAgentResolvesWorktreeReferences:
         assert "Continue the assigned task" in prompt
 
     @pytest.mark.asyncio
+    async def test_refuses_worktree_claimed_by_live_session(
+        self,
+        storage: LocalWorktreeManager,
+        mock_runner: MagicMock,
+        agent_body: AgentDefinitionBody,
+        checkout: IsolatedCheckoutProject,
+    ) -> None:
+        """WIP no longer refuses reuse, so a live owner's in-flight tree must refuse explicitly."""
+        registry = _spawn_registry(mock_runner, storage, _git_manager())
+        with (
+            patch.object(storage, "is_claimed_by_live_session", return_value=True) as live,
+            _spawn_flow(agent_body, checkout) as execute_spawn,
+        ):
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Continue the assigned task",
+                    "provider": "claude",
+                    "parent_session_id": "parent-1",
+                    "worktree_id": _FULL_ID,
+                },
+            )
+            await _drain_spawn_background_tasks()
+        assert result["success"] is False
+        assert result["error"] == (
+            f"Failed to prepare reused worktree: Cannot reuse claimed live worktree: {_FULL_ID}"
+        )
+        live.assert_called_once_with(_FULL_ID)
+        execute_spawn.assert_not_awaited()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(("worktree_ref", "error_needle"), _UNRESOLVABLE_REFS)
     async def test_returns_resolver_error_before_any_allocation(
         self,

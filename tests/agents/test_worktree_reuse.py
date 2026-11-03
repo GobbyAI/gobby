@@ -406,6 +406,33 @@ async def test_sync_reused_worktree_raises_when_conflict_abort_fails(tmp_path: P
         )
 
 
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_failed_abort_raises_even_when_git_output_says_aborted(tmp_path: Path) -> None:
+    """A conflicted path containing '; aborted' must not pass for a confirmed abort."""
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    git = FakeGitManager(
+        [
+            _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
+            _result(["git", "status"], 0),
+            _result(["git", "merge-base"], 1),
+            _result(
+                ["git", "merge"], 1, stderr="CONFLICT (content): Merge conflict in x; aborted\n"
+            ),
+            _result(["git", "diff"], 0, stdout="x; aborted\n"),
+            _result(["git", "merge", "--abort"], 1, stderr="cannot abort\n"),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="abort failed"):
+        await sync_reused_worktree_to_base(
+            git_manager=git,
+            worktree_path=str(worktree),
+            base_branch="0.4.7",
+        )
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("reason", "cause"),

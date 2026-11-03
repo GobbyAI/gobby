@@ -17,6 +17,9 @@ from gobby.worktrees.deletion import probe_missing_worktree_git_state
 
 logger = logging.getLogger(__name__)
 
+# WorktreeGitManager.sync_from_main's message for a conflicted sync it rolled back.
+_CONFLICT_ABORTED = "Sync failed due to conflicts; aborted"
+
 
 @dataclass(frozen=True)
 class DeferredBaseSync:
@@ -161,8 +164,9 @@ async def _sync_reused_worktree_to_base(
     if not result.success:
         detail = f"{result.message}: {result.error or result.output or ''}"
         message = f"Failed to merge base {base_ref} into reused worktree: {detail}"
-        # Defer only after a confirmed abort; a failed abort leaves a half-merged tree.
-        if "conflict" in detail.lower() and "; aborted" in detail:
+        # Defer only after a confirmed abort; a failed abort leaves a half-merged tree. Match
+        # the whole message: git's output can name a conflicted path containing "; aborted".
+        if result.message == _CONFLICT_ABORTED:
             return await _deferred_sync(
                 git_manager, path, base_ref, base_sha, "merge_conflict", detail
             )
