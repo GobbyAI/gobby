@@ -149,8 +149,6 @@ async def test_detached_handler_refuses_before_storage_effects(
 
 
 async def test_reuse_conflict_preserves_candidate(repo: Path, tmp_path: Path) -> None:
-    from gobby.agents.worktree_reuse import ReusedWorktreeSyncConflict
-
     child = tmp_path / "conflicted"
     git(repo, "worktree", "add", "-b", "candidate", str(child), "main")
     (child / "modified.txt").write_text("candidate bytes\n")
@@ -159,15 +157,18 @@ async def test_reuse_conflict_preserves_candidate(repo: Path, tmp_path: Path) ->
     (repo / "modified.txt").write_text("new base bytes\n")
     git(repo, "commit", "-am", "base changes")
     selected = git(repo, "rev-parse", "HEAD")
-    with pytest.raises(ReusedWorktreeSyncConflict) as error:
-        await sync_reused_worktree_to_base(
-            git_manager=WorktreeGitManager(repo),
-            worktree_path=str(child),
-            base_branch="main",
-            base_commit_sha=selected,
-        )
-    assert error.value.base_commit_sha == selected
-    assert error.value.worktree_path == str(child)
+    fork = git(repo, "merge-base", candidate, selected)
+    result = await sync_reused_worktree_to_base(
+        git_manager=WorktreeGitManager(repo),
+        worktree_path=str(child),
+        base_branch="main",
+        base_commit_sha=selected,
+    )
+    assert result.status == "deferred"
+    assert result.base_commit_sha == fork
+    assert result.deferred is not None
+    assert result.deferred.reason == "merge_conflict"
+    assert result.deferred.pending_base_sha == selected
     assert git(child, "rev-parse", "HEAD") == candidate
     assert (child / "modified.txt").read_text() == "candidate bytes\n"
     assert git(child, "status", "--porcelain") == ""

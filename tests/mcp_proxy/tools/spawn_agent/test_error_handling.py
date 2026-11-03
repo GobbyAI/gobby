@@ -722,105 +722,6 @@ test"""
         )
 
     @pytest.mark.asyncio
-    async def test_reused_worktree_merge_conflict_preserves_original_and_stops_spawn(
-        self, tmp_path: Path
-    ) -> None:
-        from gobby.agents.worktree_reuse import ReusedWorktreeSyncConflict
-        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
-
-        runner = MagicMock()
-        runner.can_spawn.return_value = (True, "ok", 0)
-        runner.child_session_manager = MagicMock()
-        runner.run_storage = MagicMock()
-        runner.run_storage.has_active_run_for_task.return_value = False
-        old_path = tmp_path / "old-worktree"
-        old_path.mkdir()
-        checkpoint = old_path / "checkpoint.txt"
-        checkpoint.write_text("preserved checkpoint", encoding="utf-8")
-        worktree = MagicMock(
-            id="wt-old",
-            worktree_path=str(old_path),
-            branch_name="branch",
-            base_branch="feature-base",
-        )
-        worktree_storage = MagicMock()
-        worktree_storage.get.return_value = worktree
-        git_manager = MagicMock()
-        git_manager.get_current_branch = AsyncMock(return_value="main")
-        git_manager.get_local_commit = AsyncMock(return_value="base-sha")
-        git_manager.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
-        git_manager.get_current_branch = AsyncMock(return_value="main")
-        conflict = ReusedWorktreeSyncConflict(
-            "Failed to merge base main into reused worktree: CONFLICT; merge aborted",
-            worktree_path=str(old_path),
-            base_ref="main",
-            base_commit_sha="base-sha",
-        )
-
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={
-                    "id": "11111111-1111-4111-8111-111111110001",
-                    "project_path": str(tmp_path / "repo"),
-                },
-            ),
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
-                new=AsyncMock(side_effect=conflict),
-            ) as sync,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.get_isolation_handler",
-            ) as isolation_handler,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",
-                new=AsyncMock(),
-            ) as repair,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn"
-            ) as prepare_spawn,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
-                new_callable=AsyncMock,
-            ) as mock_execute,
-        ):
-            result = await spawn_agent_impl(
-                prompt="test",
-                runner=runner,
-                parent_session_id="sess-1",
-                provider="codex",
-                model="gpt-5.4",
-                worktree_id="wt-old",
-                worktree_storage=worktree_storage,
-                git_manager=git_manager,
-                cleanup_isolation_on_failure=True,
-            )
-
-        assert result["success"] is False
-        assert result["error_code"] == "reused_worktree_merge_conflict"
-        assert result["worktree_id"] == "wt-old"
-        assert result["worktree_path"] == str(old_path)
-        assert result["branch_name"] == "branch"
-        assert result["base_branch"] == "feature-base"
-        assert result["merge_target"] == "main"
-        assert result["base_commit_sha"] == "base-sha"
-        assert result["preserved"] is True
-        assert "original worktree was preserved" in result["error"]
-        assert "retry spawn_agent with worktree_id='wt-old'" in result["recovery"]
-        sync.assert_awaited_once_with(
-            git_manager=git_manager,
-            worktree_path=str(old_path),
-            base_branch="main",
-            base_commit_sha="base-sha",
-        )
-        repair.assert_not_awaited()
-        isolation_handler.assert_not_called()
-        prepare_spawn.assert_not_called()
-        mock_execute.assert_not_awaited()
-        worktree_storage.delete.assert_not_called()
-        assert checkpoint.read_text(encoding="utf-8") == "preserved checkpoint"
-
-    @pytest.mark.asyncio
     async def test_isolated_spawn_defers_indexing_to_executor(self, tmp_path: Path) -> None:
         from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
@@ -970,7 +871,7 @@ test"""
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
                 new=AsyncMock(
                     return_value=ReusedWorktreeSyncResult(
-                        status="clean",
+                        status="already_current",
                         base_ref="main",
                         base_commit_sha="",
                     )
@@ -1075,7 +976,9 @@ test"""
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
-                new=AsyncMock(),
+                new=AsyncMock(
+                    return_value=ReusedWorktreeSyncResult("merged", "refs/heads/main", "base-sha")
+                ),
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",
@@ -1155,7 +1058,9 @@ test"""
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
-                new=AsyncMock(),
+                new=AsyncMock(
+                    return_value=ReusedWorktreeSyncResult("merged", "refs/heads/main", "base-sha")
+                ),
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",

@@ -15,11 +15,11 @@ import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.storage.hub.protocol import HubDatabase
@@ -134,7 +134,9 @@ def _spawn_flow(
         ),
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
-            new=AsyncMock(return_value=SimpleNamespace(base_commit_sha="base-sha")),
+            new=AsyncMock(
+                return_value=ReusedWorktreeSyncResult("merged", "refs/heads/main", "base-sha")
+            ),
         ),
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",

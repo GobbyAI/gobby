@@ -48,6 +48,7 @@ async def prepare_reused_worktree(
         "main_repo_path": main_repo_path,
         "reused_worktree": True,
         "base_branch": base_branch,
+        **sync_result.isolation_extra(),
     }
     if sync_result.base_commit_sha:
         extra["base_commit_sha"] = sync_result.base_commit_sha
