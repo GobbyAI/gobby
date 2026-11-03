@@ -1403,6 +1403,8 @@ def test_set_handoff_retry_reuses_the_in_flight_compact_attempt(
     assert "Call `get_handoff()`" in continuation
     assert "allowed and required during a restart or cutover hold" in continuation
     assert "do not wait for DAEMON BACK" in continuation
+    # A held seat may still re-arm its hold and talk to its coordinator.
+    assert "`wait_for_coordination` and `send_message` stay allowed" in continuation
     assert "do not call `set_handoff` again" in continuation
     consumed = consume_pending_handoff(temp_db, session_id)
     assert consumed is not None

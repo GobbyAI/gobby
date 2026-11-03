@@ -13,7 +13,6 @@ import pytest
 
 from gobby.agents.idle_detector import IdleDetector
 from gobby.mcp_proxy.tools.sessions import _terminal
-from gobby.mcp_proxy.tools.sessions import _terminal_compaction as compaction
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMMAND_NOT_SUBMITTED_ERROR_CODE,
     _INTERRUPT_ATTEMPTS,
@@ -28,7 +27,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
 from gobby.sessions.compact_continuation import CompactBoundaryWaiter
 from gobby.sessions.transcript_cursor import CodexRolloutCursor
 from gobby.terminals.composer import composer_clear_sequence
-from gobby.terminals.composer_ledger import ComposerLedger, WriteOrigin
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.pane_io import ComposerReader, RuntimePaneIO
 from gobby.terminals.runtime import SnapshotMode
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -209,7 +208,7 @@ async def test_failed_followup_enter_keeps_codex_compact_attempt_pending() -> No
     assert result == (True, None, True, {"enter_delivery_unconfirmed": True})
     assert pane.typed == ["/compact\n"]
     # The ledger reads the settled seat's composer empty, so nothing is drained.
-    assert pane.keys == ["enter"]
+    assert pane.keys == [*composer_clear_sequence("codex"), "enter"]
     mark.assert_called_once()
     clear.assert_not_called()
     schedule.assert_called_once()
@@ -249,7 +248,9 @@ async def test_unverified_compact_submit_keeps_the_attempt_without_retyping(
 
     assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
     assert pane.typed == ["/compact\n"]
-    assert pane.keys == ["enter"]
+    # Without a reader the wipe is one blind drain pass; a readable empty frame needs none.
+    blind_wipe = composer_clear_sequence(cli_source) if composer_read is None else ()
+    assert pane.keys == [*blind_wipe, "enter"]
     mark.assert_called_once()
     clear.assert_not_called()
     schedule.assert_called_once()
@@ -314,7 +315,7 @@ async def test_a_composer_the_enter_empties_is_submitted_once() -> None:
 
     assert result == (True, None, True, None)
     # Escape may restore a prompt the ledger cannot see, so a drain precedes the command.
-    assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter"]
+    assert pane.keys == ["escape", "enter"]
     assert pane.typed == ["/compact\n"]
 
 
@@ -328,7 +329,7 @@ async def test_a_command_the_paste_kept_is_submitted_by_the_enter() -> None:
 
     assert result == (True, None, True, None)
     assert pane.typed == ["/compact\n"]
-    assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter"]
+    assert pane.keys == ["escape", "enter"]
     clear.assert_not_called()
 
 
@@ -351,7 +352,7 @@ async def test_command_the_recovery_enter_cannot_submit_fails_without_retyping(
     }
     assert reason is not None and "/compact" in reason
     assert pane.typed == ["/compact\n"]
-    assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter", "enter"]
+    assert pane.keys == ["escape", "enter", "enter"]
     clear.assert_called_once()
 
 
@@ -384,7 +385,7 @@ async def test_command_that_never_leaves_the_composer_fails_typed(
     assert len(records) == 1
     assert records[0].levelno == logging.ERROR
     assert pane.typed == ["/compact\n"]
-    assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter", "enter"]
+    assert pane.keys == ["escape", "enter", "enter"]
     clear.assert_called_once()
 
 
@@ -524,7 +525,7 @@ async def test_seat_leaving_after_the_command_write_gets_no_enter(command: str) 
 
     assert ok is False
     assert detail == {"error_code": NO_TERMINAL_TARGET_ERROR_CODE, "continuation_pending": False}
-    assert pane.keys == []
+    assert pane.keys == list(composer_clear_sequence("codex"))
     assert pane.typed == [f"{command}\n"]
     clear.assert_called_once()
 
@@ -595,7 +596,7 @@ async def test_settled_codex_with_no_interrupt_observation_never_interrupts() ->
     assert ok is True
     assert reason is None
     assert pane.typed == ["/compact\n"]
-    assert pane.keys == ["enter"]
+    assert pane.keys == [*composer_clear_sequence("codex"), "enter"]
     observe.assert_not_called()
 
 
@@ -734,25 +735,14 @@ def test_resolve_pane_io_requires_a_managed_terminal() -> None:
     ) == (None, error)
 
 
-@pytest.mark.parametrize(
-    ("draft_kind", "writes"),
-    [
-        ("own", [("daemon", "/compact")]),
-        ("foreign", [("operator", "private operator note")]),
-        ("prefix", [("daemon", "/compact"), ("operator", " with operator addition")]),
-    ],
-)
-async def test_compact_retry_submits_only_its_exact_pending_command(
+async def test_compact_retry_submits_its_exact_pending_command_with_bare_enter(
     composer_ledger: ComposerLedger,
-    draft_kind: str,
-    writes: list[tuple[WriteOrigin, str]],
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    for origin, payload in writes:
-        composer_ledger.observe_write(
-            _ComposerPane.target, origin=origin, kind="text", payload=payload
-        )
-    draft = "".join(payload for _origin, payload in writes)
+    """A held command is the one composer state the wipe keeps: it needs only Enter."""
+    composer_ledger.observe_write(
+        _ComposerPane.target, origin="daemon", kind="text", payload="/compact"
+    )
+    draft = "/compact"
 
     class HeldPane(_ComposerPane):
         async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str:
@@ -771,26 +761,11 @@ async def test_compact_retry_submits_only_its_exact_pending_command(
     result, mark, clear = await _send(
         pane, lambda: True, command="/compact", composer_read=_CLAUDE_READ
     )
-    if draft_kind == "own":
-        assert result[0] is True
-        assert pane.keys == ["enter", "enter"]
-        assert pane.typed == []
-        mark.assert_called_once()
-        clear.assert_not_called()
-    else:
-        assert result[0] is False
-        assert result[3] == {"error_code": "composer_occupied", "continuation_pending": False}
-        assert pane.keys == [] and pane.typed == []
-        mark.assert_not_called()
-        records = [
-            record
-            for record in caplog.records
-            if getattr(record, "event", None) == "composer_write_refused"
-        ]
-        assert len(records) == 1
-        assert records[0].__dict__["composer_state"] == "draft"
-        assert records[0].__dict__["snapshot_source"] == "ledger"
-        assert draft not in records[0].getMessage()
+    assert result[0] is True
+    assert pane.keys == ["enter", "enter"]
+    assert pane.typed == []
+    mark.assert_called_once()
+    clear.assert_not_called()
 
 
 class _DraftAfterInterruptPane(_ComposerPane):
@@ -807,96 +782,17 @@ class _DraftAfterInterruptPane(_ComposerPane):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("command", ["/compact", "/clear"])
-async def test_draft_typed_after_the_first_probe_refuses_before_any_drain(command: str) -> None:
-    """The empty read before the settle wait cannot authorize the later write (#22915).
-
-    The ledger is read again right before the command, so an operator draft
-    typed during the wait is neither drained nor submitted, and the continuation
-    marker is released for durable recovery.
-    """
+async def test_draft_typed_during_the_interrupt_is_wiped_before_the_command(command: str) -> None:
+    """The empty read before the interrupt does not skip the wipe after it (#25595)."""
     pane = _DraftAfterInterruptPane()
 
     result, _mark, clear = await _send(pane, lambda: True, command=command)
 
-    assert result[0] is False
-    assert result[3] == {"error_code": "composer_occupied", "continuation_pending": False}
-    assert pane.keys == ["escape"]
-    assert pane.typed == []
-    clear.assert_called_once_with()
-
-
-class _ChangingInterruptPane(_ComposerPane):
-    def __init__(self, state: str) -> None:
-        super().__init__()
-        self.state = state
-
-    def occupy(self) -> None:
-        """The operator starts a draft, or the host loses its record of the composer."""
-        if self.state == "draft":
-            self.ledger.observe_write(
-                self.target, origin="operator", kind="text", payload="operator draft"
-            )
-        else:
-            self.ledger.block(self.target, "gap")
-
-
-@pytest.mark.parametrize("state", ["draft", "blocked"])
-@pytest.mark.parametrize(
-    ("source", "phase"),
-    [
-        ("claude", "settle"),
-        ("codex", "settle"),
-        ("claude", "retry"),
-        ("claude", "blind"),
-        ("codex", "blind"),
-    ],
-)
-async def test_composer_is_rechecked_before_each_interrupt_after_waits(
-    monkeypatch: pytest.MonkeyPatch, source: str, state: str, phase: str
-) -> None:
-    """A changed composer before an interrupt gets no further keys, text, or destructive drain."""
-    pane = _ChangingInterruptPane(state)
-
-    async def settle(*_args: object, **_kwargs: object) -> bool:
-        if phase != "retry":
-            pane.occupy()
-        return False
-
-    async def wait_interrupt(
-        _observer: Callable[[], bool | None], *, attempt_seconds: float
-    ) -> bool:
-        pane.occupy()
-        return False
-
-    monkeypatch.setattr(compaction, "_wait_for_turn_to_settle", settle)
-    monkeypatch.setattr(compaction, "_wait_for_interrupt", wait_interrupt)
-    mark = MagicMock(return_value=True)
-    clear = MagicMock(return_value=True)
-    result = await _send_terminal_compaction_command(
-        pane,
-        "/compact",
-        "session-1",
-        cli_source=source,
-        mark_continuation_pending=mark,
-        clear_continuation_pending=clear,
-        observe_interrupt=None if phase == "blind" else (lambda: False),
-        turn_settled=lambda: False,
-        settle_seconds=0.0,
-    )
-
-    expected_code = "composer_occupied" if state == "draft" else "composer_unknown"
-    assert result[0] is False
-    assert result[2] is False
-    assert result[3] == {"error_code": expected_code, "continuation_pending": False}
-    assert result[1] is not None
-    assert pane.keys == (["escape"] if phase == "retry" else [])
-    assert pane.typed == []
-    if phase == "blind":
-        mark.assert_not_called()
-        clear.assert_not_called()
-    else:
-        mark.assert_called_once_with()
-        clear.assert_called_once_with()
+    assert result[0] is True, result
+    assert pane.keys[0] == "escape"
+    assert pane.keys[1:-1] == list(composer_clear_sequence("claude"))
+    assert pane.typed == [f"{command}\n"]
+    clear.assert_not_called()
 
 
 class _MidTurnFramePane(_ComposerPane):
@@ -977,10 +873,10 @@ async def test_claude_compact_requested_mid_turn_is_sent_once_after_the_turn_set
 
 
 @pytest.mark.asyncio
-async def test_claude_draft_typed_while_the_turn_runs_refuses_without_input(
+async def test_claude_draft_typed_while_the_turn_runs_is_wiped_before_the_command(
     composer_ledger: ComposerLedger,
 ) -> None:
-    """The ledger is read again once the turn settles, so a draft typed meanwhile refuses."""
+    """The composer is read again once the turn settles, so a draft typed meanwhile is wiped."""
     pane = _MidTurnFramePane(_UNREADABLE_MID_TURN_FRAME)
     settle = _turn_settling_on_second_poll(pane)
 
@@ -993,17 +889,12 @@ async def test_claude_draft_typed_while_the_turn_runs_refuses_without_input(
 
     result, mark, clear = await _send_mid_turn(pane, turn_settled)
 
-    assert result == (
-        False,
-        "composer holds an operator draft",
-        False,
-        {"error_code": "composer_occupied", "continuation_pending": False},
-    )
+    assert result == (True, None, True, {"interrupted": False})
     assert pane.settled is True
-    assert pane.keys == []
-    assert pane.typed == []
+    assert pane.typed == ["/compact\n"]
+    assert pane.typed_while_settled == [True]
     mark.assert_called_once_with()
-    clear.assert_called_once_with()
+    clear.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1086,12 +977,12 @@ async def test_codex_placeholder_after_enter_proves_the_submit(newline: str, wra
 
     assert result == (True, None, True, None)
     assert pane.typed == ["/compact\n"]
-    assert pane.keys == ["escape", *composer_clear_sequence("codex"), "enter"]
+    assert pane.keys == ["escape", "enter"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("draft", ["operator draft", "Ask Codex to do anything"])
-async def test_codex_operator_draft_refuses_even_when_it_reads_like_the_placeholder(
+async def test_codex_draft_that_survives_the_wipe_is_never_typed_into(
     composer_ledger: ComposerLedger, draft: str
 ) -> None:
     composer_ledger.observe_write(
@@ -1103,10 +994,12 @@ async def test_codex_operator_draft_refuses_even_when_it_reads_like_the_placehol
         pane, lambda: True, cli_source="codex", command="/compact", composer_read=_CODEX_READ
     )
 
+    # The pane ignores every key, so even a draft that reads like the placeholder
+    # never shows an empty composer and the command is never typed after it.
     assert result[0] is False
-    assert result[3] == {"error_code": "composer_occupied", "continuation_pending": False}
+    assert result[3] == {"error_code": "composer_not_clean", "continuation_pending": False}
     assert pane.typed == []
-    assert pane.keys == []
+    assert "enter" not in pane.keys
 
 
 @pytest.mark.asyncio
@@ -1120,7 +1013,12 @@ async def test_failed_enter_read_back_records_the_partial_frame_shape(
                 return False, "pty_busy"
             return await super().send_key(key)
 
-    pane = FailedEnterPane(partial=True)
+        async def type_text(self, text: str) -> tuple[bool, str | None]:
+            # The wipe reads a whole frame; the read-back after the write sees a partial one.
+            self.partial = True
+            return await super().type_text(text)
+
+    pane = FailedEnterPane()
     with caplog.at_level(logging.WARNING, logger="gobby.terminals.pane_io"):
         result, _, _ = await _send(
             pane, lambda: True, cli_source="codex", command="/compact", composer_read=_CODEX_READ

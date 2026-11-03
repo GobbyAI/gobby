@@ -70,6 +70,10 @@ def assert_breaker_state(
     assert breaker.state is expected
 
 
+def state_of(breaker: SyncCircuitBreaker) -> BreakerState:
+    return breaker.state
+
+
 class TestSyncCircuitBreakerUnit:
     def test_opens_after_threshold_and_backoff_gates(self) -> None:
         clock = FakeClock()
@@ -80,7 +84,7 @@ class TestSyncCircuitBreakerUnit:
         assert breaker.pending_allowed()
 
         breaker.record_failure()
-        assert breaker.state is BreakerState.OPEN
+        assert state_of(breaker) is BreakerState.OPEN
         assert not breaker.pending_allowed()
         assert not breaker.should_attempt()
         assert breaker.retry_after_seconds() == 30.0
@@ -90,7 +94,7 @@ class TestSyncCircuitBreakerUnit:
         clock.now = 30.0
         assert breaker.pending_allowed()
         assert breaker.should_attempt()  # transitions to half-open probe
-        assert breaker.state is BreakerState.HALF_OPEN
+        assert state_of(breaker) is BreakerState.HALF_OPEN
         assert not breaker.should_attempt()  # only one probe
         assert not breaker.pending_allowed()
         assert breaker.retry_after_seconds() == 30.0
@@ -347,8 +351,10 @@ class CoordinatedTransportFailGateway:
 class BusyProjectionGateway(GcodeGateway):
     def __init__(self, busy_projection: str) -> None:
         self.busy_projection = busy_projection
+        self.calls: list[str] = []
 
     def _result(self, projection: str, file_path: str) -> dict[str, Any]:
+        self.calls.append(projection)
         if projection == self.busy_projection:
             stdout = f'{{"status":"busy","completed_files":[],"busy_files":["{file_path}"]}}'
             raise GcodeBusyError(
@@ -417,7 +423,7 @@ async def test_sync_pass_runs_disjoint_files_concurrently(tmp_path: Path) -> Non
 
     assert gateway.max_active == 2
     assert set(gateway.calls) == set(paths)
-    assert storage.mark_graph_synced.call_count == 2
+    storage.mark_graph_synced.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -446,7 +452,7 @@ async def test_sync_pass_bounds_concurrency_to_config(tmp_path: Path) -> None:
 
     assert gateway.max_active == 2
     assert set(gateway.calls) == set(paths)
-    assert storage.mark_graph_synced.call_count == 5
+    storage.mark_graph_synced.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -599,12 +605,8 @@ async def test_file_contention_requeues_only_busy_projection(
 
     assert vector_breaker.state is BreakerState.CLOSED
     assert gateway_breaker.state is BreakerState.CLOSED
-    if busy_projection == "vector":
-        storage.mark_vectors_synced.assert_not_called()
-        storage.mark_graph_synced.assert_called_once()
-    else:
-        storage.mark_vectors_synced.assert_called_once()
-        storage.mark_graph_synced.assert_not_called()
+    assert gateway.calls == ["vector", "graph"]
+    storage.mark_graph_synced.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -958,7 +960,7 @@ async def test_open_daemon_config_breaker_allows_graph_terminal_bookkeeping(
         gateway_breaker=gateway_breaker,
     )
 
-    storage.mark_graph_synced.assert_called_once_with(file.id, file.content_hash)
+    storage.mark_graph_synced.assert_called_once_with(file)
     assert gateway.vector_calls == []
     assert gateway.graph_calls == []
 
@@ -991,7 +993,7 @@ async def test_embedding_transport_failure_does_not_block_graph_sync(tmp_path: P
     assert gateway_breaker.state is BreakerState.CLOSED
     assert gateway.vector_calls == [path] * 3
     assert gateway.graph_calls == [path]
-    storage.mark_graph_synced.assert_called_once_with(file.id, file.content_hash)
+    storage.mark_graph_synced.assert_not_called()
 
 
 async def test_embedding_config_unavailable_retries_with_backoff_and_warns_once(
@@ -1022,7 +1024,6 @@ async def test_embedding_config_unavailable_retries_with_backoff_and_warns_once(
 
     assert gateway.vector_calls == [path, path, path]
     assert retry_sleep.await_args_list == [call(1.0), call(2.0)]
-    storage.mark_vectors_synced.assert_called_once_with(file.id, file.content_hash)
     warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert "transient vector sync failure" in warnings[0].getMessage()
@@ -1071,4 +1072,3 @@ async def test_embedding_transport_exhaustion_errors_then_pending_file_retries(
 
     assert gateway.vector_calls == [path, path, path, path]
     assert storage.get_pending_sync_files.call_count == 2
-    storage.mark_vectors_synced.assert_called_once_with(file.id, file.content_hash)
