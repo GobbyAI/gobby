@@ -1219,6 +1219,36 @@
         "coordination-wait-contract"
       ],
       "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-agents",
+      "tool": "send_attachment",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/messaging.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agent_messaging.py",
+        "symbol": "send_attachment"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-agents",
+      "tool": "get_attachment",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/messaging.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/agent_messaging.py",
+        "symbol": "get_attachment"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent; the message's sender or recipient"
     }
   ],
   "delegated_operations": {

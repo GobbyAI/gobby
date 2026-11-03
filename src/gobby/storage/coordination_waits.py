@@ -43,10 +43,22 @@ class CoordinationWaitManager:
         coordination_key: str | None = None,
         statuses: list[str] | None = None,
         reply: bool = False,
+        background_task_id: str | None = None,
         timeout: float = 900,
     ) -> dict[str, Any]:
-        if (coordination_key is not None) + (statuses is not None) + bool(reply) != 1:
-            raise ValueError("Provide exactly one of coordination_key, statuses, or reply")
+        conditions = (coordination_key, statuses, reply or None, background_task_id)
+        if sum(condition is not None for condition in conditions) != 1:
+            raise ValueError(
+                "Provide exactly one of coordination_key, statuses, reply, or background_task_id"
+            )
+        if background_task_id is not None:
+            # The session holds on its own provider background task. Nothing releases a
+            # self-owned keyed wait, so only expiry or the next prompt ends it.
+            if not background_task_id.strip() or len(background_task_id) > 256:
+                raise ValueError("background_task_id must contain 1–256 characters")
+            if waiter_session_id != owner_session_id:
+                raise ValueError("A background task wait's owner must be the waiting session")
+            coordination_key = background_task_id
         if coordination_key is not None and (
             not coordination_key.strip() or len(coordination_key) > 256
         ):
@@ -57,7 +69,7 @@ class CoordinationWaitManager:
             statuses = sorted(set(statuses))
         if isinstance(timeout, bool) or not math.isfinite(timeout) or not 0 < timeout <= 3600:
             raise ValueError("timeout must be greater than zero and at most 3600 seconds")
-        if waiter_session_id == owner_session_id:
+        if background_task_id is None and waiter_session_id == owner_session_id:
             raise ValueError("The coordination owner must be another session")
         # A reply wait names neither a key nor statuses, so [null,null] is its identity.
         condition_key = json.dumps([coordination_key, statuses], separators=(",", ":"))
@@ -127,6 +139,23 @@ class CoordinationWaitManager:
             ).fetchone()
             assert row is not None
             return dict(row)
+
+    def clear_background_waits(self, session_id: str) -> int:
+        """End the session's background task waits when its next prompt arrives.
+
+        That prompt is the provider's completion notification or the operator, so the
+        turn is already live: mark the outcome delivered in the same write to keep the
+        delivery service from waking the session into it.
+        """
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE coordination_waits SET outcome = 'cancelled', "
+                "completed_at = clock_timestamp(), delivered_at = clock_timestamp() "
+                "WHERE waiter_session_id = %s AND owner_session_id = waiter_session_id "
+                "AND outcome = 'waiting'",
+                (session_id,),
+            )
+            return cursor.rowcount
 
     def refresh(self, wait_id: str, machine_id: str) -> dict[str, Any] | None:
         with self.db.transaction() as conn:
