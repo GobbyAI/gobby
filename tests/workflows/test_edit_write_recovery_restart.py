@@ -11,6 +11,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 
 pytestmark = pytest.mark.unit
 
@@ -66,6 +67,19 @@ async def test_restart_between_pre_and_post_tool_does_not_blame_the_edit(
     assert "tool-failure-recovery" in reasons[0]
     assert not any("edit-write-recovery" in reason for reason in reasons)
     assert variables["edit_write_pending"] is False
+
+
+@pytest.mark.asyncio
+async def test_edit_pending_state_is_reserved_from_session_writes(temp_db: HubDatabase) -> None:
+    # A seat that writes session variables must not clear the stop gate early.
+    variables: dict[str, Any] = {}
+    await RuleEngine(temp_db).evaluate(
+        _event(HookEventType.BEFORE_TOOL, EDIT), SESSION_ID, variables
+    )
+
+    edit_state = sorted(name for name in variables if "edit_write" in name)
+    assert len(edit_state) == 2
+    assert [name for name in edit_state if not is_reserved_workflow_variable(name)] == []
 
 
 @pytest.mark.asyncio

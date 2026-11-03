@@ -157,7 +157,8 @@ def _resolve_rule_events(
 # Identifies this daemon process. Hooks are not spooled while the daemon is down, so a
 # pending mutation recorded by another process may have finished unobserved.
 ENGINE_PROCESS_TOKEN = uuid.uuid4().hex
-_EDIT_WRITE_PENDING_PROCESS = "_edit_write_pending_process"
+# The reserved edit_write_ prefix keeps session variable writes from clearing it.
+_EDIT_WRITE_PENDING_PROCESS = "edit_write_pending_process"
 
 
 def mark_edit_write_pending(variables: dict[str, Any]) -> None:
