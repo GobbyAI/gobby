@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import IdleDetector
-from gobby.terminals.composer_ledger import record_composer_submit
+from gobby.terminals.composer_ledger import read_composer, record_composer_submit
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.terminals.pane_io import (
     DEFAULT_SNAPSHOT_LINES,
@@ -26,11 +26,10 @@ from gobby.terminals.pane_io import (
     DrainResult,
     PaneIO,
     SendResult,
-    clear_composer,
-    composer_gate_for_write,
     log_pane_failure,
     send_pane_key,
     submit_text,
+    wipe_composer,
 )
 from gobby.terminals.runtime import NamedKey, SnapshotMode
 
@@ -90,8 +89,6 @@ _SUBMIT_VERIFY_SETTLE_SECONDS = SUBMIT_VERIFY_SECONDS
 _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
 _COMMAND_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
 _COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
-_COMPOSER_OCCUPIED_ERROR_CODE = "composer_occupied"
-_COMPOSER_UNKNOWN_ERROR_CODE = "composer_unknown"
 _INTERRUPT_UNCONFIRMED_ERROR_CODE = "interrupt_unconfirmed"
 # The session's recorded CLI process no longer owns its pane, so no key may be sent.
 NO_TERMINAL_TARGET_ERROR_CODE = "no_terminal_target"
@@ -229,23 +226,7 @@ async def _send_compaction_interrupt(
     key: NamedKey,
     session_id: str,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
-    """Recheck the composer immediately before each interrupt, including retries."""
-    writable, refuse_reason, state = await composer_gate_for_write(
-        pane, action="a compaction interrupt"
-    )
-    if not writable:
-        return (
-            False,
-            refuse_reason,
-            {
-                "error_code": (
-                    _COMPOSER_OCCUPIED_ERROR_CODE
-                    if state == "draft"
-                    else _COMPOSER_UNKNOWN_ERROR_CODE
-                ),
-                "continuation_pending": False,
-            },
-        )
+    """Press the interrupt key; set_handoff owns the composer, so its text never blocks this."""
     ok, reason = await send_pane_key(pane, key, session_id, action="sending compaction interrupt")
     return ok, reason, None
 
@@ -478,6 +459,12 @@ async def _wait_for_compaction_rejection(
             return rejection
 
 
+def _holds_command(pane: PaneIO, command: str) -> bool:
+    """Whether the composer holds exactly ``command``, which needs only a bare Enter."""
+    read = read_composer(pane.target)
+    return read.state == "held" and read.holds_payload(command)
+
+
 async def _send_terminal_compaction_command(
     pane: PaneIO,
     command: str,
@@ -544,7 +531,7 @@ async def _send_terminal_compaction_command_locked(
     on_command_submitting: Callable[[], None] | None = None,
     seat_left: Callable[[], bool] | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
-    """Interrupt a live turn, drain the composer, submit the command, watch for a rejection.
+    """Interrupt a live turn, wipe the composer, submit the command, watch for a rejection.
 
     ``settle_seconds`` overrides every wait (tests); ``observe_interrupt`` is the
     transcript observer for CLIs that record interrupts, and its absence keeps the
@@ -556,11 +543,11 @@ async def _send_terminal_compaction_command_locked(
     ``interrupted: False``. Interrupt only on timeout. A CLI that rejects the
     command because its turn is still running (Grok) fails a compact command at
     once, since it may have started; ``/clear`` is interrupted again and resubmitted
-    once before the delivery fails. The composer ledger gates
-    the composer first: an exact pending command gets bare Enter without another
-    text write. A human draft refuses the whole delivery with ``composer_occupied``
-    before any key is sent, so the operator's draft and the live turn are both left
-    alone; the agent retries once the draft is submitted. ``composer_read`` then
+    once before the delivery fails. set_handoff owns the composer: an exact pending
+    command gets bare Enter without another text write, and anything else it
+    holds, an operator draft or stuck continuation text included, is wiped after
+    the interrupt. Only text that survives the wipe fails the delivery, with
+    ``composer_not_clean`` and nothing typed. ``composer_read`` then
     reads the composer back after Enter, so a command the CLI typed but
     never submitted fails with ``command_not_submitted`` instead of reporting
     success on the strength of the write outcome. ``seat_left`` is checked
@@ -572,29 +559,8 @@ async def _send_terminal_compaction_command_locked(
     if seat_left is not None:
         pane = _SeatGuardedPane(pane, seat_left)
     try:
-        writable, refuse_reason, composer_state = await composer_gate_for_write(
-            pane, action=command, pending_payload=command
-        )
         settle_wait_seconds, settle_poll_seconds = _turn_settle_wait_budget(settle_seconds)
-        if not writable:
-            logger.info(
-                "Refusing %s for session %s: %s",
-                command,
-                session_id,
-                refuse_reason,
-            )
-            error_code = (
-                _COMPOSER_OCCUPIED_ERROR_CODE
-                if composer_state == "draft"
-                else _COMPOSER_UNKNOWN_ERROR_CODE
-            )
-            return (
-                False,
-                refuse_reason,
-                False,
-                {"error_code": error_code, "continuation_pending": False},
-            )
-        held_command = composer_state == "held"
+        held_command = _holds_command(pane, command)
         interrupt_key = _compact_interrupt_key(cli_source)
         interrupt_seconds = interrupt_settle_seconds if settle_seconds is None else settle_seconds
         rejection_seconds = rejection_settle_seconds if settle_seconds is None else settle_seconds
@@ -684,35 +650,14 @@ async def _send_terminal_compaction_command_locked(
                     None,
                 )
 
-            # The settle wait and interrupt ran since the first read, so that empty read
-            # cannot authorize this write: read again, refuse a draft or unknown entry,
-            # and drain only stale daemon text.
-            writable, refuse_reason, composer_state = await composer_gate_for_write(
-                pane, action=command, pending_payload=command
-            )
-            if not writable:
-                if continuation_pending:
-                    clear_continuation_pending()
-                error_code = (
-                    _COMPOSER_OCCUPIED_ERROR_CODE
-                    if composer_state == "draft"
-                    else _COMPOSER_UNKNOWN_ERROR_CODE
-                )
-                return (
-                    False,
-                    refuse_reason,
-                    False,
-                    {"error_code": error_code, "continuation_pending": False},
-                )
-            # Stale text of unknown length (after the interrupt) refuses only on a
-            # positive draft frame after the drain; empty or unknown proceeds.
-            drain = (
-                DrainResult(True)
-                if composer_state in {"empty", "held"}
-                else await clear_composer(
+            # Text may have arrived during the settle wait and interrupt, so read
+            # again: only an exact held command skips the wipe.
+            if _holds_command(pane, command):
+                drain = DrainResult(True)
+            else:
+                drain = await wipe_composer(
                     pane, cli_source, composer_read, verify_seconds=verify_seconds
                 )
-            )
             if not drain.ok:
                 if continuation_pending:
                     clear_continuation_pending()
