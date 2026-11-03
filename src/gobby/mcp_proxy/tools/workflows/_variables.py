@@ -24,7 +24,6 @@ from gobby.storage.definitions.variables import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import VariableDefinitionBody
-from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
 
@@ -133,12 +132,6 @@ def set_variable(
     # Coerce value types
     value = _coerce_value(value)
 
-    if is_reserved_workflow_variable(name):
-        return {
-            "success": False,
-            "error": f"{name} is managed by the workflow runtime and cannot be set directly.",
-        }
-
     # Resolve session_task references (#N or N) to UUIDs upfront
     if name == "session_task" and isinstance(value, str):
         try:
@@ -220,7 +213,7 @@ def get_variable(
     if scope == "step":
         if instance_manager is None:
             instance_manager = AgentStepInstanceManager(db)
-        instance = instance_manager.get_for_session(resolved_session_id)
+        instance = instance_manager.get_active_for_session(resolved_session_id)
         if instance is None:
             return {
                 "success": False,

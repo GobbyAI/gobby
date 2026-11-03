@@ -43,7 +43,7 @@ from tests.fixtures.team_case import (
 pytestmark = pytest.mark.unit
 _REAL_AGENT_BODY = _factory._load_agent_body
 LEAF_TITLE = "Wire the scroll handler"
-DEFINITIONS: dict[str, tuple[str, ...]] = {"developer": ("implementation",)}
+DEFINITIONS: dict[str, tuple[str, ...]] = {"fixture-worker": ("implementation",)}
 
 
 @dataclass
@@ -167,7 +167,7 @@ async def epic_team(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("manager_name", ["researcher", "fixture-manager"])
+@pytest.mark.parametrize("manager_name", ["fixture-definition-3588bb72", "fixture-manager"])
 @pytest.mark.parametrize("granted", [True, False])
 async def test_managed_task_team_uses_declared_manager_policy(
     world: TeamWorld, manager_name: str, granted: bool
@@ -361,7 +361,7 @@ async def test_pod_refuses_a_leaf_tree_a_prior_seat_still_works_in(world: TeamWo
     team = await epic_team(world, epic)
     prior = world.child(leaf, parent=team.manager)
     await world.admit(prior, leaf, parent_team_id=team.binding.team_id)
-    running_seat(world, prior, "developer")
+    running_seat(world, prior, "fixture-worker")
     world.finish(prior)
     trees = sorted(world.tree_ids())
 
@@ -389,7 +389,7 @@ async def test_pod_refuses_a_leaf_tree_an_unattached_seat_still_holds(
         parent_session_id=prior.id,
         provider="claude",
         prompt="Implement the leaf.",
-        agent_name="developer",
+        agent_name="fixture-worker",
     )
     if started:
         assert runs.start(seat.id) is not None
@@ -417,7 +417,7 @@ async def test_pod_adopts_its_leaf_tree_once_an_unattached_seat_has_ended(world:
         parent_session_id=prior.id,
         provider="claude",
         prompt="Implement the leaf.",
-        agent_name="developer",
+        agent_name="fixture-worker",
     )
     runs.complete(seat.id)
     world.finish(prior)

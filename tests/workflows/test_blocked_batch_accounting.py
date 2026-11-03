@@ -18,18 +18,22 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.block_batching import BLOCK_SCOPES_VARIABLE
 from gobby.workflows.engine.core import RuleEngine
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
 # Session id columns are native uuid in PostgreSQL.
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 
+ENFORCED_SEAT = "fixture-enforced-seat"
 BLOCKED_RULE = "block-todowrite"
 BLOCKED_REASON = "Rule enforced by Gobby: [block-todowrite]\nUse gobby-tasks instead"
 
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
+    # The enforcing seat must resolve its definition, or it fails closed first.
+    seed_seat(temp_db, ENFORCED_SEAT, include=["*"])
     return temp_db
 
 
@@ -337,7 +341,7 @@ class TestEnforcementBlockScoping:
     @staticmethod
     def _enforcing_variables(**extra: Any) -> dict[str, Any]:
         return {
-            "_agent_type": "backend-developer",
+            "_agent_type": ENFORCED_SEAT,
             "_agent_blocked_tools": ["TodoWrite"],
             **extra,
         }
@@ -395,7 +399,7 @@ class TestEnforcementBlockScoping:
         engine = RuleEngine(db)
         variables = self._enforcing_variables(
             _last_blocked_tool="Edit",
-            _last_blocked_rule_name="require-python-skill",
+            _last_blocked_rule_name="fixture-definition-06531cd3",
             _last_blocked_reason="Load the python skill.",
             consecutive_tool_blocks=2,
             max_consecutive_blocked_tool_attempts=5,

@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import ast
 import re
 from pathlib import Path
-from typing import Any
 
 import pytest
-import yaml
 
 from gobby.skills.loader import SkillLoader
 from tests.skills.scenario_runner import run_recorded_skill_scenario
@@ -18,9 +15,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.skill_tdd]
 ROOT = Path(__file__).resolve().parents[2]
 SCENARIO = Path(__file__).resolve().parent / "scenarios/brevity/concise-readable-output.yaml"
 SKILL_PATH = ROOT / "src/gobby/install/shared/skills/brevity/SKILL.md"
-DRIFT_RULE_PATH = (
-    ROOT / "src/gobby/install/shared/workflows/rules/brevity/detect-brevity-drift.yaml"
-)
 CURRENT_SKILL_FOOTPRINT = 3_564
 CJK_PATTERN = re.compile(r"[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
 ENGLISH_BANNED_LITERALS = (
@@ -65,22 +59,6 @@ class _DeterministicCompressionCollaborator:
             result = result.replace("Set ", "cfg → ")
 
         return result
-
-
-def _extract_match_literals(expression: str) -> tuple[str, ...]:
-    prefix = "assistant_response_matches_any(["
-    payload = expression.split(prefix, maxsplit=1)[1].split("])", maxsplit=1)[0]
-    parsed = ast.literal_eval(f"[{payload}]")
-    assert isinstance(parsed, list)
-    return tuple(str(item) for item in parsed)
-
-
-def _load_drift_rules() -> dict[str, Any]:
-    data = yaml.safe_load(DRIFT_RULE_PATH.read_text(encoding="utf-8"))
-    assert isinstance(data, dict)
-    rules = data["rules"]
-    assert isinstance(rules, dict)
-    return rules
 
 
 def test_brevity_pressure_scenario_preserves_meaning_and_readability() -> None:
@@ -171,24 +149,3 @@ def test_brevity_skill_keeps_interface_and_adds_clarity_contract() -> None:
     )
     for guidance in expected_guidance:
         assert guidance in content
-
-
-def test_brevity_drift_source_is_english_only_with_unchanged_detection_contract() -> None:
-    content = DRIFT_RULE_PATH.read_text(encoding="utf-8")
-    rules = _load_drift_rules()
-
-    assert CJK_PATTERN.search(content) is None
-    assert tuple(rules) == (
-        "detect-brevity-literal-drift",
-        "detect-brevity-contrastive-drift",
-    )
-
-    literal_rule = rules["detect-brevity-literal-drift"]
-    assert literal_rule["event"] == "turn_end"
-    assert literal_rule["priority"] == 30
-    assert _extract_match_literals(literal_rule["when"]) == ENGLISH_BANNED_LITERALS
-    assert _extract_match_literals(literal_rule["effects"][0]["value"]) == ENGLISH_BANNED_LITERALS
-
-    contrastive_rule = rules["detect-brevity-contrastive-drift"]
-    assert contrastive_rule["event"] == "turn_end"
-    assert contrastive_rule["priority"] == 31

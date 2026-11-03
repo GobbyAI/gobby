@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -198,21 +197,4 @@ def is_project_plan_artifact_path(
             relative.suffix == ".md"
             or (include_coverage and len(relative.parts) >= 4 and relative.parts[2] == "coverage")
         )
-    )
-
-
-_DIGEST_NAME = re.compile(r"gobby-digest-[0-9]{4}-[0-9]{2}-[0-9]{2}\.md")
-
-
-def is_project_digest_artifact_path(path: str, project_root: str | Path | None) -> bool:
-    """Recognize the Archivist's dated digest directly under `<project>/.gobby/reports/`.
-
-    The optional `.tmp.<pid>.<hex>` staging sibling is not matched; it stays task-gated.
-    """
-    relative = _project_relative_path(path, project_root)
-    return (
-        relative is not None
-        and len(relative.parts) == 3
-        and relative.parts[:2] == (".gobby", "reports")
-        and _DIGEST_NAME.fullmatch(relative.parts[2]) is not None
     )

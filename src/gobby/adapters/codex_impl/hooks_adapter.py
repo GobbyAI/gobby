@@ -5,8 +5,9 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from gobby.adapters.base import (
     BaseAdapter,
@@ -26,6 +27,7 @@ from gobby.adapters.codex_impl.execution_chain import (
 )
 from gobby.adapters.codex_impl.lifecycle_events import annotate_codex_hook_event
 from gobby.adapters.codex_impl.literal_shell_calls import literal_shell_calls
+from gobby.adapters.codex_impl.native_exec_failures import is_simple_native_exec_cell
 from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
 )
@@ -36,16 +38,10 @@ from gobby.adapters.degradation import (
     record_unsupported_response_fields,
     truncate_context_for_adapter,
 )
-from gobby.hooks._normalization_base_commands import unwrap_execution_command
-from gobby.hooks._normalization_bindings import _raw_shell_word_is_literal
-from gobby.hooks._normalization_env import env_directory_operands
-from gobby.hooks._normalization_segments import _split_shell_segments
-from gobby.hooks._normalization_shell import _literal_cd_target, scan_shell_command
 from gobby.hooks._path_scope import current_tool_cwd
-from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.hooks.shell_execution import shell_execution, starts_elsewhere
+from gobby.hooks.shell_execution import literal_shell_workdir
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -60,92 +56,51 @@ _TRANSCRIPT_READ_CHUNK_BYTES = 64 * 1024
 
 
 def _node_shell_workdir(input_data: dict[str, Any]) -> str | None:
-    """Prove a node command's directory without accessing its provider transcript.
-
-    Only `cd /literal && one-command` is admitted. Extra control flow could run
-    after a failed cd; nested shells and directory wrappers need a different proof.
-    """
+    """Prove a node command's directory without accessing its provider transcript."""
     tool_input = input_data.get("tool_input")
     command = (
         tool_input.get("command", tool_input.get("cmd")) if isinstance(tool_input, dict) else None
     )
-    if not isinstance(command, str):
-        return None
-    try:
-        scan = scan_shell_command(command)
-    except ValueError:
-        return None
-    segments = _split_shell_segments(scan.tokens)
-    if scan.heredocs or len(segments) != 2 or segments[1].separator_before != "&&":
-        return None
-    first, second = segments
-    first_words = [token.value for token in first.tokens]
-    if first_words[:1] != ["cd"] or not (
-        len(first_words) == 2 or (len(first_words) == 3 and first_words[1] == "--")
-    ):
-        return None
-    target = _literal_cd_target(first_words)
-    if target is None or not Path(target).is_absolute():
-        return None
-    # Exactly one separator, including trailing control operators. Expansion and
-    # grouping must not hide commands before cd or inside the remaining command.
-    if len(scan.tokens) != len(first.tokens) + len(second.tokens) + 1:
-        return None
-    for token, (start, end) in zip(scan.tokens, scan.spans, strict=True):
-        if not _raw_shell_word_is_literal(command[start:end]):
-            return None
-        if not token.quoted and any(char in token.value for char in "(){}"):
-            return None
-    words = [token.value for token in second.tokens]
-    assignments: set[str] = set()
-    while words:
-        if env_directory_operands(words) or starts_elsewhere(words):
-            return None
-        unwrapped = _unwrap(words, assignments=assignments)
-        if not assignments.isdisjoint({"UV_WORKING_DIR", "UV_ENV_FILE"}):
-            return None
-        execution = unwrap_execution_command(unwrapped, None)
-        if execution.parts is None or execution.cwd is not None or not execution.directory_proven:
-            return None
-        if execution.parts == words:
-            break
-        words = execution.parts
-    if not words or words[0].rsplit("/", 1)[-1] in {"cd", "pushd", "popd", "eval"}:
-        return None
-    if shell_execution(words) is not None:
-        return None
-    return target
+    return literal_shell_workdir(command) if isinstance(command, str) else None
 
 
-def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
-    """Borrow cwd only from one proven, still-pending provider shell call.
+# A pending call's record can still be mid-write, or not yet flushed, when the hook reads the
+# rollout. Re-reading a few times covers that window; a longer gap stays refused.
+_PENDING_RECORD_RETRIES = 2
+_PENDING_RECORD_RETRY_DELAY_SECONDS = 0.2
 
-    Native Bash hooks omit nested exec_command.workdir. Reuse the transcript
-    execution correlator, including yielded cells, instead of guessing from the
-    session's task or the most recent matching historical command.
-    """
-    if node_origin():
-        return _node_shell_workdir(input_data)
-    transcript_path = input_data.get("transcript_path")
-    tool_input = input_data.get("tool_input")
-    if not isinstance(transcript_path, str) or not isinstance(tool_input, dict):
-        return None
-    command = tool_input.get("command", tool_input.get("cmd"))
-    if not isinstance(command, str):
-        return None
+
+class _PendingLookup(NamedTuple):
+    """One snapshot of the rollout: a proven workdir, or the guard that refused it."""
+
+    workdir: str | None
+    refusal: str = ""
+    # Only an unterminated tail or a missing match can be completed by a later write.
+    retryable: bool = False
+    outer_call_id: str | None = None
+
+
+def _pending_shell_lookup(transcript_path: str, command: str) -> _PendingLookup:
+    """Read the rollout once and prove the pending call that launched ``command``."""
     parser = CodexTranscriptParser()
     validated: dict[str, str | None] = {}
     batches: dict[str, list[dict[str, Any]]] = {}
+    simple_cells: set[str] = set()
     try:
         with Path(transcript_path).open(encoding="utf-8") as transcript:
             for index, line in enumerate(transcript):
                 if not line.endswith("\n"):
-                    return None  # An incomplete provider record cannot prove the active call.
+                    # An incomplete provider record cannot prove the active call.
+                    return _PendingLookup(
+                        None, f"incomplete provider record at line {index}", retryable=True
+                    )
                 json.loads(line)  # A malformed record could hide a competing pending call.
                 parsed = parser.parse_line(line, index)
                 if isinstance(parsed, ParsedMessage) and parsed.content_type == "tool_use":
                     arguments = parsed.tool_input or {}
                     if parsed.tool_use_id and parsed.tool_name in FUNCTIONS_EXEC_NAMES:
+                        if is_simple_native_exec_cell(arguments.get("raw")):
+                            simple_cells.add(parsed.tool_use_id)
                         calls = literal_shell_calls(arguments.get("raw"))
                         if calls is not None and len(calls) > 1:
                             batches[parsed.tool_use_id] = calls
@@ -160,14 +115,14 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
                     ):
                         cwd = arguments.get("cwd")
                         validated[parsed.tool_use_id] = cwd if isinstance(cwd, str) else None
-    except (OSError, UnicodeError, ValueError):
-        return None
+    except (OSError, UnicodeError, ValueError, RecursionError) as exc:
+        return _PendingLookup(None, f"rollout unreadable or malformed: {exc}")
     chain = parser.snapshot_state()["execution_chain"]
     # Process IDs describe commands that already started. Losing old process
     # receipts must not poison a new command's cwd proof; unresolved calls and
     # yielded cells can still launch it, so their overflow remains fail closed.
     if not chain["pending_complete"] or chain["ambiguous_cells"]:
-        return None
+        return _PendingLookup(None, "pending calls overflowed or are ambiguous")
     pending = {
         entry["outer_call_id"]: entry
         for key in ("calls", "cells")
@@ -182,15 +137,62 @@ def _pending_shell_workdir(input_data: dict[str, Any]) -> str | None:
         )
     ]
     if any(entry["literal_command"] is None for entry in invocations):
-        return None
+        return _PendingLookup(None, "unattributed pending call blocks every proof")
     matches = [entry for entry in invocations if entry["literal_command"] == command]
-    if len(matches) != 1 or matches[0]["outer_call_id"] not in validated:
-        return None
+    if len(matches) != 1:
+        return _PendingLookup(
+            None, f"{len(matches)} pending calls match the command", retryable=not matches
+        )
     match = matches[0]
+    if match["outer_call_id"] not in validated:
+        return _PendingLookup(None, "matched call is not a validated shell call")
     cwd = current_tool_cwd(
         {"cwd": validated[match["outer_call_id"]], "tool_input": {"workdir": match["workdir"]}}
     )
-    return str(cwd) if cwd is not None else None
+    if cwd is None:
+        return _PendingLookup(None, "matched call has no proven cwd")
+    outer = match["outer_call_id"]
+    # A yielded or multi-command cell can no longer vouch for one inner invocation.
+    unique_outer = outer if outer in chain["calls"] and outer in simple_cells else None
+    return _PendingLookup(str(cwd), outer_call_id=unique_outer)
+
+
+def _pending_shell_workdir(
+    input_data: dict[str, Any], *, correlation: dict[str, str] | None = None
+) -> str | None:
+    """Borrow cwd only from one proven, still-pending provider shell call.
+
+    Native Bash hooks omit nested exec_command.workdir. Reuse the transcript
+    execution correlator, including yielded cells, instead of guessing from the
+    session's task or the most recent matching historical command.
+    """
+    if node_origin():
+        workdir = _node_shell_workdir(input_data)
+        if workdir is None:
+            logger.warning("cwd proof refused: node command is not a proven literal cd")
+        return workdir
+    transcript_path = input_data.get("transcript_path")
+    tool_input = input_data.get("tool_input")
+    if not isinstance(transcript_path, str) or not isinstance(tool_input, dict):
+        logger.warning("cwd proof refused: transcript path or tool input is missing")
+        return None
+    command = tool_input.get("command", tool_input.get("cmd"))
+    if not isinstance(command, str):
+        logger.warning("cwd proof refused: command is not text")
+        return None
+    lookup = _pending_shell_lookup(transcript_path, command)
+    for _ in range(_PENDING_RECORD_RETRIES):
+        if lookup.workdir is not None or not lookup.retryable:
+            break
+        time.sleep(_PENDING_RECORD_RETRY_DELAY_SECONDS)
+        lookup = _pending_shell_lookup(transcript_path, command)
+    if lookup.workdir is None:
+        logger.warning("cwd proof refused: %s", lookup.refusal)
+    elif correlation is not None and lookup.outer_call_id is not None:
+        explicit = any(tool_input.get(key) for key in ("workdir", "cwd"))
+        if not explicit or current_tool_cwd(input_data) == Path(lookup.workdir):
+            correlation["outer_call_id"] = lookup.outer_call_id
+    return lookup.workdir
 
 
 def _command_execution_result(input_data: dict[str, Any]) -> dict[str, Any] | None:
@@ -290,6 +292,7 @@ class CodexHooksAdapter(BaseAdapter):
         session_id = input_data.get("session_id", "")
         raw_tool_input = input_data.get("tool_input")
         shell_cwd_unproven = False
+        shell_correlation: dict[str, str] = {}
 
         from gobby.hooks.normalization import (
             is_shell_tool,
@@ -302,7 +305,7 @@ class CodexHooksAdapter(BaseAdapter):
             if not isinstance(shell_input, dict):
                 shell_cwd_unproven = True
             elif not any(shell_input.get(key) for key in ("workdir", "cwd")):
-                workdir = _pending_shell_workdir(input_data)
+                workdir = _pending_shell_workdir(input_data, correlation=shell_correlation)
                 if workdir is not None:
                     input_data = {
                         **input_data,
@@ -312,6 +315,17 @@ class CodexHooksAdapter(BaseAdapter):
                     shell_cwd_unproven = True
             elif current_tool_cwd(input_data) is None:
                 shell_cwd_unproven = True
+            elif not node_origin():
+                path = input_data.get("transcript_path")
+                command = shell_input.get("command", shell_input.get("cmd"))
+                if isinstance(path, str) and isinstance(command, str):
+                    lookup = _pending_shell_lookup(path, command)
+                    if (
+                        lookup.workdir is not None
+                        and lookup.outer_call_id is not None
+                        and current_tool_cwd(input_data) == Path(lookup.workdir)
+                    ):
+                        shell_correlation["outer_call_id"] = lookup.outer_call_id
 
         if hook_type == "PostToolUse" and is_shell_tool(input_data.get("tool_name")):
             command_result = _command_execution_result(input_data)
@@ -349,6 +363,8 @@ class CodexHooksAdapter(BaseAdapter):
         # Check for failure on PostToolUse
         is_failure = normalized_data.get("is_error", False)
         metadata: dict[str, Any] = {"_native_hook_type": hook_type}
+        if shell_correlation:
+            metadata["_native_shell_outer_call_id"] = shell_correlation["outer_call_id"]
         if shell_cwd_unproven:
             # The launcher's cwd cannot vouch for a script in a computed workdir.
             # Keep it for session lookup, but classify without it for the read-only proof.

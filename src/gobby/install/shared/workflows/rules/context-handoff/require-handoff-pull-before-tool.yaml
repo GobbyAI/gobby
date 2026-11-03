@@ -1,3 +1,4 @@
+version: "1.0.1"
 tags: [context-handoff, handoff, enforcement, gobby, default]
 
 rules:
@@ -28,5 +29,5 @@ rules:
         reason: >-
           Call gobby-sessions:get_handoff() to consume the pending handoff before loading
           skills or starting work. This pull is required even during a restart or cutover
-          hold; keep other held work paused. Schema discovery, pending memory recall and
-          coordination remain available.
+          hold. Schema discovery, pending memory recall, `wait_for_coordination` and
+          `send_message` remain available; keep other held task work paused.

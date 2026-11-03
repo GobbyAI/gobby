@@ -22,6 +22,15 @@ from tests.workflows.step_instance_fixtures import make_step_instance
 pytestmark = pytest.mark.unit
 
 
+def _reserved_refusal(name: str) -> str:
+    """The write-authority refusal for a runtime-reserved variable (#25487)."""
+    return (
+        "Rule enforced by Gobby: [native-variable-authority]\n"
+        f"Native set_variable may not change the reserved variable {name!r}. "
+        "set_variable remains available for other permitted variables."
+    )
+
+
 def _make_mocks(
     instance: AgentStepInstance | None = None,
     session_variables: dict[str, Any] | None = None,
@@ -31,7 +40,7 @@ def _make_mocks(
     session_manager.resolve_session_reference.return_value = "uuid-session-1"
 
     instance_manager = MagicMock()
-    instance_manager.get_for_session.return_value = instance
+    instance_manager.get_active_for_session.return_value = instance
     instance_manager.merge_variables.return_value = instance
 
     session_var_manager = MagicMock()
@@ -233,9 +242,7 @@ class TestSetVariableScoped:
             session_var_manager=mocks["session_var_manager"],
         )
 
-        assert result["success"] is False
-        assert "reserved variable" in result["error"]
-        assert "set_variable remains available" in result["error"]
+        assert result == {"success": False, "error": _reserved_refusal(name)}
         mocks["session_var_manager"].set_variable.assert_not_called()
 
     def test_set_variable_blocks_open_tool_errors_in_workflow_scope(self) -> None:
@@ -253,9 +260,7 @@ class TestSetVariableScoped:
             instance_manager=mocks["instance_manager"],
         )
 
-        assert result["success"] is False
-        assert "reserved variable" in result["error"]
-        assert "set_variable remains available" in result["error"]
+        assert result == {"success": False, "error": _reserved_refusal("open_tool_errors")}
         mocks["instance_manager"].merge_variables.assert_not_called()
 
     @pytest.mark.parametrize("scope", ["session", "step"])
@@ -278,10 +283,7 @@ class TestSetVariableScoped:
             session_var_manager=mocks["session_var_manager"],
         )
 
-        assert result["success"] is False
-        assert "turn_interrupt_initiated" in result["error"]
-        assert "reserved variable" in result["error"]
-        assert "set_variable remains available" in result["error"]
+        assert result == {"success": False, "error": _reserved_refusal("turn_interrupt_initiated")}
         mocks["session_var_manager"].set_variable.assert_not_called()
         mocks["instance_manager"].merge_variables.assert_not_called()
 
@@ -327,10 +329,7 @@ class TestSetVariableScoped:
             session_var_manager=mocks["session_var_manager"],
         )
 
-        assert result["success"] is False
-        assert "_authored_merge_commits" in result["error"]
-        assert "reserved variable" in result["error"]
-        assert "set_variable remains available" in result["error"]
+        assert result == {"success": False, "error": _reserved_refusal("_authored_merge_commits")}
         mocks["session_var_manager"].set_variable.assert_not_called()
         mocks["instance_manager"].merge_variables.assert_not_called()
 
@@ -361,7 +360,7 @@ class TestGetVariableScoped:
         assert result["success"] is True
         assert result["value"] is True
         assert result["exists"] is True
-        mocks["instance_manager"].get_for_session.assert_called_once_with("uuid-session-1")
+        mocks["instance_manager"].get_active_for_session.assert_called_once_with("uuid-session-1")
 
     def test_get_variable_without_workflow_reads_from_session_variables(self) -> None:
         """get_variable() without workflow reads from session_variables."""

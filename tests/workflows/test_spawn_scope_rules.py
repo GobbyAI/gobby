@@ -77,7 +77,7 @@ def _only_rules_enabled(db: HubDatabase, *names: str) -> RuleDefinitionManager:
                     ],
                 },
                 enabled=name in names,
-                tags=["default", "seat-policy"],
+                tags=["default", "runbook"],
             )
         else:
             manager.update(row.id, enabled=name in names)
@@ -351,7 +351,7 @@ class TestLimitSpawnableAgents:
 
 class TestLimitSpawnNetworkOverride:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("name", ["default", "orchestrator", "custom-network-manager"])
+    @pytest.mark.parametrize("name", ["default", "fixture-coordinator", "custom-network-manager"])
     @pytest.mark.parametrize("granted", [True, False])
     async def test_spawned_network_authority_is_declared(
         self,
@@ -417,10 +417,10 @@ class TestLimitSpawnNetworkOverride:
     ) -> None:
         if case == "disabled":
             definitions = AgentDefinitionManager(temp_db)
-            definition = definitions.get_by_name("orchestrator")
+            definition = definitions.get_by_name("fixture-coordinator")
             assert definition is not None
             definitions.update(definition.id, enabled=False)
-            caller = callers["orchestrator"]
+            caller = callers["fixture-coordinator"]
         elif case == "lineage-root":
             root = callers["root"]
             caller = session_manager.register(
@@ -430,10 +430,14 @@ class TestLimitSpawnNetworkOverride:
                 project_id=root.project_id,
                 parent_session_id=root.id,
             )
-            SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", "orchestrator")
+            SessionVariableManager(temp_db).set_variable(
+                caller.id, "_agent_type", "fixture-coordinator"
+            )
         else:
             caller = callers["worker"]
-            SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", "orchestrator")
+            SessionVariableManager(temp_db).set_variable(
+                caller.id, "_agent_type", "fixture-coordinator"
+            )
         _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE)
 
         response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
@@ -452,7 +456,7 @@ class TestLimitSpawnNetworkOverride:
         sample_project: dict[str, Any],
     ) -> dict[str, Session]:
         """A root session, spawned runs with and without authority, and broken identities."""
-        for name in ("default", "orchestrator"):
+        for name in ("default", "fixture-coordinator"):
             seed_seat(
                 temp_db, name, spawnable_agents=["*"], capabilities=["override_spawn_network"]
             )
@@ -461,8 +465,8 @@ class TestLimitSpawnNetworkOverride:
         return {
             "root": root,
             "default": _spawned(temp_db, session_manager, root, "default", "default"),
-            "orchestrator": _spawned(
-                temp_db, session_manager, root, "orchestrator", "orchestrator"
+            "fixture-coordinator": _spawned(
+                temp_db, session_manager, root, "fixture-coordinator", "fixture-coordinator"
             ),
             "worker": _spawned(temp_db, session_manager, root, "worker", "spawn-scope-worker"),
             "nameless": _spawned(temp_db, session_manager, root, "nameless", None),
@@ -470,9 +474,9 @@ class TestLimitSpawnNetworkOverride:
         }
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("caller", ["root", "default", "orchestrator"])
+    @pytest.mark.parametrize("caller", ["root", "default", "fixture-coordinator"])
     @pytest.mark.parametrize("network", ["none", "trusted"])
-    async def test_root_default_and_orchestrator_choose_either_profile(
+    async def test_root_default_and_override_holder_choose_either_profile(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
@@ -571,7 +575,7 @@ class TestLimitSpawnNetworkOverride:
         assert LIMIT_SPAWN_NETWORK_OVERRIDE in response.reason
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("owner", ["default", "orchestrator"])
+    @pytest.mark.parametrize("owner", ["default", "fixture-coordinator"])
     async def test_borrowed_run_never_gains_authority(
         self,
         temp_db: HubDatabase,
@@ -593,7 +597,7 @@ class TestLimitSpawnNetworkOverride:
         assert LIMIT_SPAWN_NETWORK_OVERRIDE in response.reason
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("owner", ["default", "orchestrator"])
+    @pytest.mark.parametrize("owner", ["default", "fixture-coordinator"])
     async def test_clear_successor_keeps_the_runs_authority(
         self,
         temp_db: HubDatabase,
@@ -730,7 +734,6 @@ async def test_spawn_rules_let_a_team_manager_resume_a_session(
         SEAT_NO_SPAWN,
         LIMIT_SPAWNABLE_AGENTS,
         LIMIT_SPAWN_NETWORK_OVERRIDE,
-        "no-agent-spawn",
     )
     seed_seat(temp_db, "custom-team-manager", include=[f"name:{SEAT_NO_SPAWN}"])
     seat = _register(session_manager, str(sample_project["id"]), "custom-team-manager")
@@ -738,12 +741,12 @@ async def test_spawn_rules_let_a_team_manager_resume_a_session(
     variables = {"_agent_type": "custom-team-manager", "team_manager": True}
 
     resumed = await engine.evaluate(
-        _spawn_event(seat.id, "spawn_agent", "developer", resume_session_id="gobby#15771"),
+        _spawn_event(seat.id, "spawn_agent", "fixture-worker", resume_session_id="gobby#15771"),
         session_id=seat.id,
         variables=dict(variables),
     )
     new_spawn = await engine.evaluate(
-        _spawn_event(seat.id, "spawn_agent", "developer"),
+        _spawn_event(seat.id, "spawn_agent", "fixture-worker"),
         session_id=seat.id,
         variables=dict(variables),
     )
@@ -764,12 +767,17 @@ def test_spawn_any_wildcard_stands_alone() -> None:
         )
 
 
-TEAM_SEAT_TYPES = ("test-writer", "developer", "code-reviewer", "custom-maker")
+TEAM_SEAT_TYPES = (
+    "fixture-definition-c02389e4",
+    "fixture-worker",
+    "fixture-definition-e08ba693",
+    "custom-maker",
+)
 
 
 @dataclass
 class _Teams:
-    """A Dev Manager with a seat of each type in its admitted team, and another team's developer."""
+    """A Dev Manager with a seat of each type in its admitted team, and another team's fixture-worker."""
 
     db: HubDatabase
     manager: Session
@@ -799,9 +807,12 @@ async def teams(
     own, other = runbooks
     built = _Teams(
         db=temp_db,
-        manager=running_seat(world, own, "dev-team-lead"),
-        seats={name: running_seat(world, own, name) for name in (*TEAM_SEAT_TYPES, "orchestrator")},
-        outsider=running_seat(world, other, "developer"),
+        manager=running_seat(world, own, "fixture-definition-f0ad0fd9"),
+        seats={
+            name: running_seat(world, own, name)
+            for name in (*TEAM_SEAT_TYPES, "fixture-coordinator")
+        },
+        outsider=running_seat(world, other, "fixture-worker"),
     )
     # A runbook completes once its seats launch; the team outlives the execution.
     for runbook in runbooks:
@@ -836,7 +847,7 @@ async def test_dev_pod_launch_requires_its_running_epic_manager_and_own_leaf(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from gobby.workflows.condition_helpers_pods import dev_pod_launch_allowed
+    from gobby.workflows.condition_helpers_pods import dev_pod_launch_refusal
 
     world = make_team_world(
         make_landing_case(temp_db, sample_project, tmp_path), tmp_path, monkeypatch
@@ -865,36 +876,96 @@ async def test_dev_pod_launch_requires_its_running_epic_manager_and_own_leaf(
             "name": "fixture-pod",
             "inputs": {"task": task.id, "parent_team_id": team.team_id},
         }
-        assert (
-            dev_pod_launch_allowed(sessions, manager.id, "run_pipeline", arguments, ["fixture-pod"])
-            is allowed
+        refusal = dev_pod_launch_refusal(
+            sessions, manager.id, "run_pipeline", arguments, ["fixture-pod"]
         )
-    assert not dev_pod_launch_allowed(
-        sessions,
-        world.case.creator,
-        "run_pipeline",
-        {"name": "fixture-pod", "inputs": {"task": leaf.id, "parent_team_id": team.team_id}},
-        ["fixture-pod"],
+        assert (refusal is None) is allowed, refusal
+    assert (
+        dev_pod_launch_refusal(
+            sessions,
+            world.case.creator,
+            "run_pipeline",
+            {"name": "fixture-pod", "inputs": {"task": leaf.id, "parent_team_id": team.team_id}},
+            ["fixture-pod"],
+        )
+        is not None
     )
+
+
+@pytest.mark.asyncio
+async def test_dev_pod_refusal_names_the_reason_it_refuses(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.agents.team_admission_records import TeamAdmissionRefused
+    from gobby.agents.team_lifecycle import pod_parent
+    from gobby.workflows.condition_helpers_pods import dev_pod_launch_refusal
+
+    world = make_team_world(
+        make_landing_case(temp_db, sample_project, tmp_path), tmp_path, monkeypatch
+    )
+    tasks = LocalTaskManager(temp_db)
+    epic = tasks.create_task(sample_project["id"], "Synthetic epic", task_type="epic")
+    leaf = tasks.create_task(sample_project["id"], "Own leaf", parent_task_id=epic.id)
+    foreign = tasks.create_task(sample_project["id"], "Unrelated leaf")
+    runbook = world.child(epic)
+    team = await world.admit(runbook, epic)
+    seed_seat(
+        temp_db,
+        "fixture-coordinator",
+        workflows={"rule_selectors": {"include": []}, "variables": {"team_manager": True}},
+    )
+    manager = running_seat(world, runbook, "fixture-coordinator")
+    temp_db.execute(
+        "UPDATE agent_runs SET task_id = %s WHERE id = %s", (epic.id, manager.agent_run_id)
+    )
+    sessions = SessionManager(temp_db)
+    foreign_launch = {
+        "name": "fixture-pod",
+        "inputs": {"task": foreign.id, "parent_team_id": team.team_id},
+    }
+    leaf_launch = {
+        "name": "fixture-pod",
+        "inputs": {"task": leaf.id, "parent_team_id": team.team_id},
+    }
+
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        pod_parent(temp_db, manager.id, foreign.id, team.team_id)
+    refusal = dev_pod_launch_refusal(
+        sessions, manager.id, "run_pipeline", foreign_launch, ["fixture-pod"]
+    )
+    assert refusal is not None
+    assert refused.value.code in refusal and str(refused.value) in refusal
+
+    assert (
+        dev_pod_launch_refusal(sessions, manager.id, "run_pipeline", leaf_launch, ["fixture-pod"])
+        is None
+    )
+    other = dev_pod_launch_refusal(
+        sessions, world.case.creator, "run_pipeline", leaf_launch, ["fixture-pod"]
+    )
+    assert other is not None and "team manager" in other
 
 
 # Refused resumes: (target seat, resume, requested agent, the manager's team_manager value).
 _REFUSED_RESUMES = pytest.mark.parametrize(
     ("target", "resume", "agent", "team_manager"),
     [
-        ("outsider", True, "developer", True),
-        ("orchestrator", True, "orchestrator", True),
-        ("developer", False, "developer", True),
-        ("developer", True, "release-manager", True),
-        ("developer", True, "dev-team-lead", True),
-        ("developer", True, "developer", False),
+        ("outsider", True, "fixture-worker", True),
+        ("fixture-coordinator", True, "fixture-coordinator", True),
+        ("fixture-worker", False, "fixture-worker", True),
+        ("fixture-worker", True, "fixture-definition-0b38809e", True),
+        ("fixture-worker", True, "fixture-definition-f0ad0fd9", True),
+        ("fixture-worker", True, "fixture-worker", False),
     ],
     ids=[
         "other-team-seat",
-        "orchestrator-seat",
+        "coordinator-seat",
         "fresh-spawn",
-        "retyped-to-release-manager",
-        "retyped-to-dev-team-lead",
+        "retyped-to-another-definition",
+        "retyped-to-a-third-definition",
         "not-a-team-manager",
     ],
 )
@@ -907,7 +978,11 @@ async def test_team_manager_resumes_a_seat_of_its_own_team(
 ) -> None:
     _only_rules_enabled(teams.db, LIMIT_SPAWNABLE_AGENTS)
     _define_agent(
-        teams.db, "dev-team-lead", None, variables={"team_manager": True}, resumable=TEAM_SEAT_TYPES
+        teams.db,
+        "fixture-definition-f0ad0fd9",
+        None,
+        variables={"team_manager": True},
+        resumable=TEAM_SEAT_TYPES,
     )
     engine = RuleEngine(teams.db, session_manager=session_manager)
 
@@ -926,12 +1001,12 @@ async def test_team_manager_resumes_a_seat_of_its_own_team(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("seat_type", ["developer", "custom-maker"])
+@pytest.mark.parametrize("seat_type", ["fixture-worker", "custom-maker"])
 async def test_team_resume_requires_a_declared_target(
     teams: _Teams, session_manager: SessionManager, seat_type: str
 ) -> None:
     _only_rules_enabled(teams.db, LIMIT_SPAWNABLE_AGENTS)
-    _define_agent(teams.db, "dev-team-lead", None, variables={"team_manager": True})
+    _define_agent(teams.db, "fixture-definition-f0ad0fd9", None, variables={"team_manager": True})
     response = await RuleEngine(teams.db, session_manager=session_manager).evaluate(
         _spawn_event(
             teams.manager.id, "spawn_agent", seat_type, resume_session_id=teams.seats[seat_type].id
@@ -955,7 +1030,7 @@ async def test_team_manager_refuses_another_teams_seat_a_retype_or_a_fresh_spawn
     _only_rules_enabled(teams.db, LIMIT_SPAWNABLE_AGENTS)
     _define_agent(
         teams.db,
-        "dev-team-lead",
+        "fixture-definition-f0ad0fd9",
         None,
         variables={"team_manager": team_manager},
         resumable=TEAM_SEAT_TYPES,
@@ -993,7 +1068,11 @@ async def test_team_manager_admission_resumes_its_own_teams_seat(
     seat_type: str,
 ) -> None:
     _define_agent(
-        teams.db, "dev-team-lead", None, variables={"team_manager": True}, resumable=TEAM_SEAT_TYPES
+        teams.db,
+        "fixture-definition-f0ad0fd9",
+        None,
+        variables={"team_manager": True},
+        resumable=TEAM_SEAT_TYPES,
     )
     _admit_as(monkeypatch, teams.manager)
 
@@ -1020,7 +1099,7 @@ async def test_team_manager_admission_refuses_other_teams_retypes_and_fresh_spaw
 ) -> None:
     _define_agent(
         teams.db,
-        "dev-team-lead",
+        "fixture-definition-f0ad0fd9",
         None,
         variables={"team_manager": team_manager},
         resumable=TEAM_SEAT_TYPES,

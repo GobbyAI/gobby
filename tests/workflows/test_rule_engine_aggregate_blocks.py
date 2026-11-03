@@ -130,19 +130,19 @@ class TestAggregateBlocks:
         )
         _insert_rule(
             manager,
-            "require-claimed-task-required-skills",
+            "fixture-shared-skill-gate",
             [RuleEffect(type="block", reason=python_directive)],
             priority=10,
         )
         _insert_rule(
             manager,
-            "require-python-skill",
+            "fixture-definition-06531cd3",
             [RuleEffect(type="block", reason=python_directive)],
             priority=20,
         )
         _insert_rule(
             manager,
-            "require-restraint-skill",
+            "fixture-definition-a19da299",
             [RuleEffect(type="block", reason=restraint_directive)],
             priority=30,
         )
@@ -153,8 +153,8 @@ class TestAggregateBlocks:
             "Rule enforced by Gobby: [aggregated:2-gates]\n"
             f"{SKILL_BLOCK_ATOMICITY_NOTICE}\n"
             "Multiple gates blocked while retrying Edit.\n"
-            f"1. [require-claimed-task-required-skills] {python_directive}\n"
-            f"2. [require-restraint-skill] {restraint_directive}"
+            f"1. [fixture-shared-skill-gate] {python_directive}\n"
+            f"2. [fixture-definition-a19da299] {restraint_directive}"
         )
 
     def test_aggregate_formatter_omits_placeholder_retry_target(self) -> None:
@@ -174,7 +174,7 @@ class TestAggregateBlocks:
     ) -> None:
         _insert_rule(
             manager,
-            "require-code-review-skill",
+            "fixture-definition-585d1086",
             [
                 RuleEffect(
                     type="block",

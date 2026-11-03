@@ -32,7 +32,11 @@ class DefinitionManager(Protocol):
 
 def _rule_factory(db: PostgresHubDatabase) -> tuple[DefinitionManager, str]:
     manager = RuleDefinitionManager(db)
-    row = manager.create(name="rule", definition_json={"event": "Stop"}, enabled=True)
+    row = manager.create(
+        name="rule",
+        definition_json={"event": "turn_end", "effects": [{"type": "observe"}]},
+        enabled=True,
+    )
     return manager, row.id
 
 

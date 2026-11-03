@@ -616,7 +616,7 @@ UPDATE_TASK = ToolSpec(
 
 
 class TestUpdateTaskLeavesAuthorityToRules:
-    """update_task has no claim check; the block-update-task rule decides who may edit."""
+    """update_task has no claim check; configured rules decide who may edit."""
 
     @pytest.mark.parametrize(
         "context_session", [CALLER_SESSION, OWNER_SESSION, None], ids=["foreign", "owner", "none"]

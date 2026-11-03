@@ -1,5 +1,5 @@
 name: developer
-version: "2.1.0"
+version: "2.1.1"
 description: Implements and tests a task; the daemon hands its claim to independent review.
 tags:
 - gobby
@@ -114,7 +114,7 @@ workflows:
   rule_selectors:
     include:
     - tag:default
-    - tag:seat-policy
+    - tag:runbook
     - tag:worker-safety
     - tag:task-closure-general
     - tag:task-closure-coding

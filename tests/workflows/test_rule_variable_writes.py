@@ -11,6 +11,7 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleEffect
 from gobby.workflows.engine.core import RuleEngine
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -86,6 +87,8 @@ async def _run_selected_variable_write(
         return {"success": True}
 
     engine = RuleEngine(temp_db, mcp_dispatcher=dispatch)
+    # The sentinel doubles as the seat name when the case writes _agent_type; it must resolve.
+    seed_seat(temp_db, "unchanged", include=["*"])
     variables: dict[str, Any] = {variable: "unchanged"}
     response = await engine.evaluate(
         HookEvent(

@@ -32,6 +32,7 @@ from gobby.workflows.delivery_disposition import (
     prepare_rule_definition_for_persist,
 )
 from gobby.workflows.pipeline_loader import _is_bundled_template
+from gobby.workflows.rule_validation import validate_rule
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -385,6 +386,8 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except DefinitionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.exception(
                 "Failed to update rule %s (%s): %s",
@@ -419,6 +422,10 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
                 "description": updated.description,
                 "source": updated.source,
                 "tags": updated.tags,
+                "warnings": [
+                    {"field": issue.field, "code": issue.code, "message": issue.message}
+                    for issue in validate_rule(body, name=updated.name).warnings
+                ],
             },
         }
 

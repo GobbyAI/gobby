@@ -29,10 +29,10 @@ def world(
         make_landing_case(temp_db, sample_project, tmp_path), tmp_path, monkeypatch
     )
     for name, grants in (
-        ("code-reviewer", ["independent-review"]),
-        ("docs-reviewer", ["independent-review"]),
-        ("research-reviewer", ["independent-review"]),
-        ("developer", ["implementation"]),
+        ("fixture-definition-e08ba693", ["independent-review"]),
+        ("fixture-definition-3d77e16a", ["independent-review"]),
+        ("fixture-definition-82cde3b3", ["independent-review"]),
+        ("fixture-worker", ["implementation"]),
     ):
         AgentDefinitionManager(temp_db).create(
             name,
@@ -59,7 +59,9 @@ async def admit(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("definition", ["developer", "docs-reviewer", "research-reviewer"])
+@pytest.mark.parametrize(
+    "definition", ["fixture-worker", "fixture-definition-3d77e16a", "fixture-definition-82cde3b3"]
+)
 async def test_enabled_definition_needs_no_hardcoded_review_grant(
     world: TeamWorld, definition: str
 ) -> None:
@@ -84,32 +86,40 @@ async def test_reviewer_agent_admission(world: TeamWorld) -> None:
 
     # A review-grant definition becomes the team's first reviewer binding, with no seat yet.
     owner = world.child(task)
-    reply = await admit(world, owner, task, "docs-reviewer")
+    reply = await admit(world, owner, task, "fixture-definition-3d77e16a")
     assert reply["success"] is True, reply
     team = world.admit_step_output(owner)["team"]
-    assert team["reviewers"] == {"docs-reviewer": None}
+    assert team["reviewers"] == {"fixture-definition-3d77e16a": None}
 
     # A single-task team keeps exactly one reviewer definition.
-    second = await admit(world, owner, task, "code-reviewer")
+    second = await admit(world, owner, task, "fixture-definition-e08ba693")
     assert second["success"] is False, second
-    assert "code-reviewer" in second["error"]
-    assert world.admit_step_output(owner)["team"]["reviewers"] == {"docs-reviewer": None}
+    assert "fixture-definition-e08ba693" in second["error"]
+    assert world.admit_step_output(owner)["team"]["reviewers"] == {
+        "fixture-definition-3d77e16a": None
+    }
 
     # A replacement execution joins with its binding's definition, and no other.
     world.finish(owner)
     mismatch = world.child(task)
-    reply = await admit(world, mismatch, task, "code-reviewer", team_id=team["team_id"])
+    reply = await admit(
+        world, mismatch, task, "fixture-definition-e08ba693", team_id=team["team_id"]
+    )
     assert reply["success"] is False, reply
-    assert "docs-reviewer" in reply["error"]
+    assert "fixture-definition-3d77e16a" in reply["error"]
     replacement = world.child(task)
-    reply = await admit(world, replacement, task, "docs-reviewer", team_id=team["team_id"])
+    reply = await admit(
+        world, replacement, task, "fixture-definition-3d77e16a", team_id=team["team_id"]
+    )
     assert reply["success"] is True, reply
-    assert world.admit_step_output(replacement)["team"]["reviewers"] == {"docs-reviewer": None}
+    assert world.admit_step_output(replacement)["team"]["reviewers"] == {
+        "fixture-definition-3d77e16a": None
+    }
 
 
 @pytest.mark.asyncio
 async def test_research_spike_admits_a_research_reviewer_devteam(world: TeamWorld) -> None:
-    # The researcher claims its spike; the DevTeam bound to it takes research-reviewer.
+    # The owner claims its spike; the bound team takes the declared reviewer definition.
     spike = LocalTaskManager(world.case.db).create_task(
         world.case.project_id,
         "Research the debt",
@@ -119,6 +129,8 @@ async def test_research_spike_admits_a_research_reviewer_devteam(world: TeamWorl
         claimed_by_session_id=world.case.claimant,
     )
     owner = world.child(spike)
-    reply = await admit(world, owner, spike, "research-reviewer")
+    reply = await admit(world, owner, spike, "fixture-definition-82cde3b3")
     assert reply["success"] is True, reply
-    assert world.admit_step_output(owner)["team"]["reviewers"] == {"research-reviewer": None}
+    assert world.admit_step_output(owner)["team"]["reviewers"] == {
+        "fixture-definition-82cde3b3": None
+    }

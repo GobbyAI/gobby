@@ -49,6 +49,7 @@ async def _decide(
         definition_json=RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
             when=when,
+            mandatory=True,
             effects=[RuleEffect(type="block", reason="condition held")],
         ).model_dump_json(),
         priority=10,

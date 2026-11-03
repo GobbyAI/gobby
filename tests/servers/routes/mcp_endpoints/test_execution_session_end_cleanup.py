@@ -23,7 +23,6 @@ from gobby.hooks.session_types import HookSessionManager
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.servers.routes.mcp.endpoints.request_context import _set_context_for_request
 from gobby.servers.routes.mcp.hooks import create_hooks_router
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.session_context import reset_seeded_contexts
@@ -50,9 +49,7 @@ def no_workspace_commit(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-_PLAN_ADVERSARY_TERMINATE_WORKFLOW = {
-    "name": "plan-adversary-steps",
-    "description": "Step-enforcement workflow used by plan-adversary agents.",
+_TERMINATE_WORKFLOW = {
     "steps": [
         {
             "name": "terminate",
@@ -190,12 +187,6 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
         machine_id=checkout.machine_id,
     )
 
-    RuleDefinitionManager(db).create(
-        name="plan-adversary-steps",
-        definition_json=json.dumps(_PLAN_ADVERSARY_TERMINATE_WORKFLOW),
-        priority=100,
-        enabled=True,
-    )
     instance_manager = AgentStepInstanceManager(db)
     from gobby.workflows.agent_models import AgentStepWorkflowBody
     from gobby.workflows.step_instances import build_step_instance
@@ -204,12 +195,12 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
         build_step_instance(
             make_agent_definition(
                 prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-                name="plan-adversary",
+                name="fixture-definition-86a2d70b",
                 surfaces=["spawn"],
                 step_workflow=AgentStepWorkflowBody.model_validate(
                     {
-                        "exit_condition": _PLAN_ADVERSARY_TERMINATE_WORKFLOW["exit_condition"],
-                        "steps": _PLAN_ADVERSARY_TERMINATE_WORKFLOW["steps"],
+                        "exit_condition": _TERMINATE_WORKFLOW["exit_condition"],
+                        "steps": _TERMINATE_WORKFLOW["steps"],
                     }
                 ),
             ),
@@ -306,12 +297,6 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
         machine_id=checkout.machine_id,
     )
 
-    RuleDefinitionManager(db).create(
-        name="plan-adversary-steps",
-        definition_json=json.dumps(_PLAN_ADVERSARY_TERMINATE_WORKFLOW),
-        priority=100,
-        enabled=True,
-    )
     workflow_handler = WorkflowHookHandler(
         rule_engine=RuleEngine(db=db),
         enabled=True,
@@ -321,7 +306,7 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
     instance_manager.save(
         make_step_instance(
             session_id,
-            agent_name="plan-adversary",
+            agent_name="fixture-definition-86a2d70b",
             current_step="terminate",
         )
     )

@@ -80,7 +80,7 @@ def frozen_workspace_refusal(
             f"SRT write scope frozen at launch to {_bound_workspace(db, run)}. A workspace "
             "it creates or claims mid-run stays outside both (gcode code_overlay_mismatch, "
             "writes denied). Branch inside the bound workspace instead "
-            "(git switch -c <branch> <base>), or ask the Orchestrator to resume this "
+            "(git switch -c <branch> <base>), or ask the launch owner to resume this "
             "session bound to the other workspace."
         ),
     }

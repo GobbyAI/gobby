@@ -148,7 +148,7 @@ def _reviewer_definition() -> AgentDefinitionBody:
     ]
     return AgentDefinitionBody.model_validate(
         {
-            "name": "code-reviewer",
+            "name": "fixture-definition-e08ba693",
             "prompts": {"agent": "Synthetic reviewer seat."},
             "workflows": {"rule_selectors": {"include": []}},
             "step_workflow": {
@@ -205,7 +205,9 @@ async def test_reloaded_reviewer_ends_only_on_terminal_event(
 ) -> None:
     session_id, project_id = seat_ids
     # Authority resolves from the seat's activated definition, so the session names it.
-    SessionVariableManager(hub_db).set_variable(session_id, "_agent_type", "code-reviewer")
+    SessionVariableManager(hub_db).set_variable(
+        session_id, "_agent_type", "fixture-definition-e08ba693"
+    )
     recipient, sha = str(uuid4()), "a" * 40
     hub_db.execute(
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id, "
@@ -228,7 +230,7 @@ async def test_reloaded_reviewer_ends_only_on_terminal_event(
         handler["when"] = "False"
     agents_dir = tmp_path / "agents"
     agents_dir.mkdir()
-    template = agents_dir / "code-reviewer.yaml"
+    template = agents_dir / "fixture-definition-e08ba693.yaml"
     template.write_text(yaml.safe_dump(original.model_dump(mode="json")), encoding="utf-8")
     instance_mgr = AgentStepInstanceManager(hub_db)
     variables = {
@@ -561,3 +563,47 @@ async def test_unavailable_current_workflow_retains_snapshot_permissions(
     assert recovery.decision == "allow"
     retained = instance_mgr.get_for_session(session_id)
     assert retained is not None and retained.snapshot == instance.snapshot
+
+
+def test_step_scope_get_variable_reads_current_definition_defaults(
+    hub_db: HubDatabase, seat_ids: tuple[str, str]
+) -> None:
+    from gobby.mcp_proxy.tools.workflows._variables import get_variable
+
+    session_id, _ = seat_ids
+    original = _definition("R1", "get_task")
+    assert original.step_workflow is not None
+    manager = AgentDefinitionManager(hub_db)
+    row = manager.upsert_with_steps(
+        original.name, original.model_dump(), original.step_workflow.model_dump()
+    )
+    AgentStepInstanceManager(hub_db).save(
+        build_step_instance(
+            original,
+            session_id=session_id,
+            step_workflow_id=row.step_workflow_id,
+            variables={"assigned_task_id": "retained-task"},
+        )
+    )
+    updated = _definition("R2", "get_task")
+    assert updated.step_workflow is not None
+    updated.step_workflow.variables["bounced"] = True
+    manager.upsert_with_steps(
+        updated.name, updated.model_dump(), updated.step_workflow.model_dump()
+    )
+    sessions = MagicMock()
+    sessions.resolve_session_reference.return_value = session_id
+
+    def read(name: str | None) -> dict[str, object]:
+        return get_variable(
+            sessions, hub_db, name=name, session_id=session_id, scope="step", brief=False
+        )
+
+    # Step transitions evaluate against definition defaults, so the read reports them too.
+    assert (read("bounced")["value"], read("bounced")["exists"]) == (True, True)
+    assert read("handed_off")["value"] is False
+    assert read(None)["variables"] == {
+        "assigned_task_id": "retained-task",
+        "bounced": True,
+        "handed_off": False,
+    }

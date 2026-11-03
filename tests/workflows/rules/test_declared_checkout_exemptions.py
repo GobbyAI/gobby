@@ -9,15 +9,15 @@ from gobby.hooks.session_activation import (
     clear_active_rule_names_cache,
 )
 from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize(
     "rule_name",
-    ["block-dirty-path-approval-cli", "block-cross-session-foreign-staged-commit"],
+    ["synthetic-checkout-selector", "synthetic-secondary-selector"],
 )
 @pytest.mark.parametrize(
     ("definition_name", "exempt"),
@@ -45,7 +45,14 @@ def test_installed_definition_controls_checkout_guard_exemption(
                 }
             ),
         )
-        sync_bundled_rules(temp_db, get_bundled_rules_path())
+        RuleDefinitionManager(temp_db).create(
+            rule_name,
+            {
+                "event": "before_tool",
+                "effects": [{"type": "block", "reason": "Synthetic selector"}],
+            },
+            tags=["default"],
+        )
 
         active_rules = _resolve_active_rule_names(temp_db, definition_name, None)
 

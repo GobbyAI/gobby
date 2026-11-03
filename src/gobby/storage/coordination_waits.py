@@ -143,6 +143,22 @@ class CoordinationWaitManager:
             ).fetchone()
             return dict(row) if row else None
 
+    def rearm_lapsed(self, machine_id: str, grace_seconds: int = 900) -> int:
+        """Give waits whose deadline passed while no resolver ran a fresh grace window.
+
+        Run once at daemon start: a deadline that ran out during downtime is not a
+        timeout the waiter could have observed, so the hold survives the restart.
+        """
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE coordination_waits w "
+                "SET expires_at = clock_timestamp() + make_interval(secs => %s) "
+                "FROM sessions s WHERE s.id = w.waiter_session_id AND s.machine_id = %s "
+                "AND w.outcome = 'waiting' AND w.expires_at <= clock_timestamp()",
+                (grace_seconds, machine_id),
+            )
+            return cursor.rowcount
+
     def pending_ids(self, machine_id: str) -> list[str]:
         return [
             row["id"]

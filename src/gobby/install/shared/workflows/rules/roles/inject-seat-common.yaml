@@ -1,5 +1,5 @@
-version: "2.0.1"
-tags: [roles, seat, enforcement, gobby, seat-policy]
+version: "3.1.0"
+tags: [roles, runbook, enforcement, gobby]
 
 rules:
   inject-seat-common:
@@ -19,7 +19,7 @@ rules:
           - No spawns except Assistant and Orchestrator. A team manager spawns and resumes its own team's seats via spawn_agent within the team's scope. Runbooks start seats.
           - Only Orchestrator launches pipelines/runbooks (Assistant if down), except that an epic's Dev Team Lead runs dev-team itself for its own leaves (parent_team_id) and relaunches (team_id). Only Orchestrator and Assistant create/register projects on operator GO; others request via Orchestrator.
           - Announce daemon restarts globally before proceeding; report DAEMON BACK when healthy. A plain restart needs a heads-up, not acknowledgements. Honor quiet hours and coordinate operations that can kill agent panes.
-          - During a restart or cutover hold, `gobby-sessions:get_handoff` is always allowed and required. Do not wait for DAEMON BACK to consume it; other work stays paused.
+          - During a restart or cutover hold, `gobby-sessions:get_handoff` is always allowed and required. Do not wait for DAEMON BACK to consume it. `gobby-agents:wait_for_coordination` and `gobby-agents:send_message` stay allowed, and `set_handoff` stays allowed until shutdown admission closes; other task work stays paused.
           - Push: operator approves exact SHA; Orchestrator alone runs/directs it.
           - Work: claimed task, stop gate, handoff; no native goals.
           - Operator text: #NNNNN needs title/phrase; healthy="Systems nominal".

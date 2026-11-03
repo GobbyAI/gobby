@@ -31,7 +31,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 teams = teams_fixture
 
 TASK_ID = "task-uuid-25125"
-SEAT_TYPE = "developer"
+SEAT_TYPE = "fixture-worker"
 
 
 def _manager_run(h: _Teams) -> MagicMock:
@@ -55,7 +55,7 @@ def _worker_run() -> MagicMock:
     worker.id = "run-worker"
     worker.child_session_id = "child-worker"
     worker.parent_session_id = "parent-worker"
-    worker.agent_name = "test-writer"
+    worker.agent_name = "fixture-definition-c02389e4"
     worker.status = "running"
     worker.task_id = TASK_ID
     return worker
@@ -73,7 +73,7 @@ def _run_storage(*active: Any) -> MagicMock:
 
 
 def _expire_seat(h: _Teams) -> None:
-    """Hold the team's developer seat as an expired, natively resumable session."""
+    """Hold the team's fixture-worker seat as an expired, natively resumable session."""
     seat = h.seats[SEAT_TYPE]
     # A spawned seat records its definition as _agent_type; a resume checks the retype against it.
     SessionVariableManager(h.db).merge_variables(seat.id, {"_agent_type": SEAT_TYPE})
@@ -111,7 +111,11 @@ async def _spawn(
 ) -> tuple[dict[str, Any], AsyncMock]:
     """Run spawn_agent through the registry as ``caller``; return the reply and the launch."""
     _define_agent(
-        h.db, "dev-team-lead", None, variables={"team_manager": True}, resumable=(SEAT_TYPE,)
+        h.db,
+        "fixture-definition-f0ad0fd9",
+        None,
+        variables={"team_manager": True},
+        resumable=(SEAT_TYPE,),
     )
     if resume_session_id is not None:
         _expire_seat(h)

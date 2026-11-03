@@ -12,8 +12,11 @@ only applicable topics, normally at most three for one workflow. Loading this
 overview does not satisfy an operation-specific reference requirement.
 
 Establish intended behavior, event, condition, effect, and target audience before
-changing policy. Preserve obligations and test positive, negative, and recovery
-cases in isolated state. Rules react to events; pipelines own durable sequencing
+changing policy. Validate YAML syntax and schema, then use the shared side-effect-free
+engine preflight for bundled and user-created rules, including disabled definitions.
+Keep Python tests focused on engine and helper mechanics with independent synthetic
+definitions; never pin an individual rule's policy or copy it into a test fixture.
+Rules react to events; pipelines own durable sequencing
 and agents own worker lifecycle. Documentation grants no execution authority.
 
 Use the six rule-management MCP tools for agent work. `gobby rules` and HTTP
@@ -23,4 +26,5 @@ policy or repeatedly retrying the same call.
 
 Guide: [Rules](../../../../../../../../docs/guides/rules.md#public-tooling).
 
-_Last verified: 2026-09-12_
+_Version: 1.0.0_
+_Last verified: 2026-11-02_

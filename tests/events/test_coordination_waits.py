@@ -516,7 +516,7 @@ async def test_interactive_grok_seat_waits_then_wakes_on_owner_message(
         parent_session_id=harness.owner,
         child_session_id=harness.waiter,
         provider="grok",
-        agent_name="security-auditor",
+        agent_name="fixture-definition-fc0c281e",
         prompt="Wait for work",
         resume_metadata_json={"execution_mode": "interactive", "provider_cli_mode": "terminal"},
     )
@@ -574,7 +574,7 @@ async def test_timed_out_reply_wait_wakes_a_codex_seat(harness: CoordinationHarn
         parent_session_id=harness.owner,
         child_session_id=harness.waiter,
         provider="codex",
-        agent_name="recovery-steward",
+        agent_name="fixture-definition-248cadd1",
         prompt="Patrol live seats",
         resume_metadata_json={"execution_mode": "interactive", "provider_cli_mode": "terminal"},
     )
@@ -733,6 +733,73 @@ async def test_restart_rehydrates_active_wait_and_deadline(harness: Coordination
         assert wake.call_args.args[2]["outcome"] == "timeout"
     finally:
         await restarted.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("form", "outcome"),
+    [({"statuses": ["paused"]}, "status_matched"), ({"reply": True}, "replied")],
+    ids=["owner-status", "reply"],
+)
+async def test_daemon_start_rearms_waits_whose_deadline_lapsed_while_down(
+    harness: CoordinationHarness, form: dict[str, Any], outcome: str
+) -> None:
+    row = harness.wait(**form, timeout=60)
+    # The daemon was down past the deadline, so no resolver ran: the row still says waiting.
+    harness.db.execute(
+        "UPDATE coordination_waits SET expires_at = clock_timestamp() - interval '5 minutes' "
+        "WHERE id = %s",
+        (row["id"],),
+    )
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    service = CoordinationWaitService(
+        harness.manager,
+        CompletionEventRegistry(wake_callback=wake),
+        require_machine_id(),
+        lambda: connection_for(harness),
+    )
+    await service.start()
+    try:
+        await asyncio.wait_for(service._queue.join(), 5)
+        rearmed = harness.row(row["id"])
+        assert rearmed["outcome"] == "waiting"
+        assert rearmed["expires_at"] > utc_now()
+        assert row["id"] in service._timers
+        wake.assert_not_awaited()
+
+        # The re-armed wait still resolves on its own condition.
+        if form.get("reply"):
+            harness.reply()
+        else:
+            harness.status("paused")
+        assert harness.row(row["id"])["outcome"] == outcome
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_failed_rearm_still_starts_delivery(
+    harness: CoordinationHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(machine_id: str, grace_seconds: int = 900) -> int:
+        raise RuntimeError(f"hub unavailable for {machine_id}")
+
+    monkeypatch.setattr(harness.manager, "rearm_lapsed", refuse)
+    row = harness.wait(reply=True, timeout=60)
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    service = CoordinationWaitService(
+        harness.manager,
+        CompletionEventRegistry(wake_callback=wake),
+        require_machine_id(),
+        lambda: connection_for(harness),
+    )
+    await service.start()
+    try:
+        harness.reply()
+        assert harness.row(row["id"])["outcome"] == "replied"
+        assert service._listener is not None and not service._listener.done()
+    finally:
+        await service.stop()
 
 
 @pytest.mark.asyncio

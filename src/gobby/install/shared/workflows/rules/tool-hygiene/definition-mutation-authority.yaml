@@ -1,0 +1,51 @@
+version: "1.0.0"
+tags: [gobby, default, tool-hygiene]
+
+rules:
+  definition-mutation-authority:
+    description: Require a declared capability for workflow definition mutations
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 5
+    when: >
+      event.data.get('mcp_server') == 'gobby-workflows'
+      and event.data.get('mcp_tool') in [
+        'create_rule', 'update_rule', 'toggle_rule', 'delete_rule',
+        'create_agent_definition', 'toggle_agent_definition', 'delete_agent_definition',
+        'update_agent_rules', 'update_agent_variables', 'update_agent_step_workflow',
+        'create_variable', 'update_variable', 'delete_variable',
+        'create_pipeline', 'update_pipeline', 'delete_pipeline', 'reload_cache']
+      and not (
+        operator_session(event.metadata.get('_platform_session_id'))
+        or session_has_capability(
+          event.metadata.get('_platform_session_id'), 'manage_workflow_definitions')
+        or (
+          event.data.get('mcp_tool') in ['toggle_rule', 'update_rule', 'delete_rule']
+          and session_has_capability(
+            event.metadata.get('_platform_session_id'), 'manage_rule_enforcement')))
+    effects:
+      - type: block
+        mcp_tools:
+          - gobby-workflows:create_rule
+          - gobby-workflows:update_rule
+          - gobby-workflows:toggle_rule
+          - gobby-workflows:delete_rule
+          - gobby-workflows:create_agent_definition
+          - gobby-workflows:toggle_agent_definition
+          - gobby-workflows:delete_agent_definition
+          - gobby-workflows:update_agent_rules
+          - gobby-workflows:update_agent_variables
+          - gobby-workflows:update_agent_step_workflow
+          - gobby-workflows:create_variable
+          - gobby-workflows:update_variable
+          - gobby-workflows:delete_variable
+          - gobby-workflows:create_pipeline
+          - gobby-workflows:update_pipeline
+          - gobby-workflows:delete_pipeline
+          - gobby-workflows:reload_cache
+        reason: >-
+          Workflow definition mutation requires manage_workflow_definitions or the
+          operator's terminal. toggle_rule, update_rule and delete_rule also accept
+          manage_rule_enforcement. Ask an authorized session to make the change;
+          list, get and evaluate tools remain available for inspection.

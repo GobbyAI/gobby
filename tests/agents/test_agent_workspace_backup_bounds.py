@@ -55,11 +55,11 @@ async def test_generated_trees_are_absent_from_git_status(
 ) -> None:
     anchor = agent_workspaces.ensure_workspace(project_id)
     folders = (
-        "developer/session-1/target-gclient/debug/incremental",
-        "developer/session-1/node_modules/package",
-        "orchestrator/session-2/diag/.codex/plugins/cache",
-        "developer/session-3/.venv/lib",
-        "test-writer/session-4/gobby-pytest-home-abc/logs",
+        "fixture-worker/session-1/target-gclient/debug/incremental",
+        "fixture-worker/session-1/node_modules/package",
+        "fixture-coordinator/session-2/diag/.codex/plugins/cache",
+        "fixture-worker/session-3/.venv/lib",
+        "fixture-tester/session-4/gobby-pytest-home-abc/logs",
     )
     for folder in folders:
         root = anchor / folder

@@ -643,7 +643,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Acceptance criteria for validating task completion. Cannot be cleared on any task_type except 'epic'. Reference named tests as `test: path::test_symbol` and evidence files as `file: path`. A backticked command span is a mandatory exact close command; pipelines, placeholders, redirections, and trailing punctuation are rejected.",
+                    "description": "Optional acceptance criteria. Selected rules decide whether criteria or validation evidence are required for completion.",
                     "default": None,
                 },
                 "parent_task_id": {
@@ -687,7 +687,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "additional_skills": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Skill names to load alongside the assigned agent's defaults (e.g. ['tech-writer']).",
+                    "description": "Skill names to load alongside the assigned agent's defaults (e.g. ['example-documentation']).",
                     "default": None,
                 },
                 "affected_files": {

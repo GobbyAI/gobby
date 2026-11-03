@@ -873,9 +873,9 @@ class TestChildCancelRetryIsEffectSafe:
         db.execute(
             """
             INSERT INTO rule_definitions (
-                id, name, definition_json, enabled, source
+                id, name, definition_json, enabled, source, tags
             )
-            VALUES (%s, %s, %s, %s, 'custom')
+            VALUES (%s, %s, %s, %s, 'custom', '["default"]')
             """,
             (str(uuid4()), name, json.dumps(definition), True),
         )
@@ -1452,9 +1452,9 @@ class TestVariablePersistence:
         db.execute(
             """
             INSERT INTO rule_definitions (
-                id, name, definition_json, enabled, source
+                id, name, definition_json, enabled, source, tags
             )
-            VALUES (%s, %s, %s, %s, 'custom')
+            VALUES (%s, %s, %s, %s, 'custom', '["default"]')
             """,
             (str(uuid4()), name, json.dumps(definition), True),
         )
@@ -1533,9 +1533,9 @@ class TestVariablePersistence:
         db.execute(
             """
             INSERT INTO rule_definitions (
-                id, name, definition_json, enabled, source
+                id, name, definition_json, enabled, source, tags
             )
-            VALUES (%s, %s, %s, %s, 'custom')
+            VALUES (%s, %s, %s, %s, 'custom', '["default"]')
             """,
             (str(uuid4()), "on-receipt-reminder", json.dumps(definition), True),
         )
@@ -1599,9 +1599,9 @@ class TestVariablePersistence:
             db.execute(
                 """
                 INSERT INTO rule_definitions (
-                    id, name, definition_json, enabled, source
+                id, name, definition_json, enabled, source, tags
                 )
-                VALUES (%s, %s, %s, %s, 'custom')
+            VALUES (%s, %s, %s, %s, 'custom', '["default"]')
                 """,
                 (str(uuid4()), name, json.dumps(definition), True),
             )
@@ -1637,9 +1637,9 @@ class TestVariablePersistence:
         db.execute(
             """
             INSERT INTO rule_definitions (
-                id, name, definition_json, enabled, source
+                id, name, definition_json, enabled, source, tags
             )
-            VALUES (%s, %s, %s, %s, 'custom')
+            VALUES (%s, %s, %s, %s, 'custom', '["default"]')
             """,
             (str(uuid4()), "on-receipt-block", json.dumps(definition), True),
         )
@@ -1705,9 +1705,9 @@ class TestVariablePersistence:
         db.execute(
             """
             INSERT INTO rule_definitions (
-                id, name, definition_json, enabled, source
+                id, name, definition_json, enabled, source, tags
             )
-            VALUES (%s, %s, %s, %s, 'custom')
+            VALUES (%s, %s, %s, %s, 'custom', '["default"]')
             """,
             (str(uuid4()), "test-flag-gate", json.dumps(definition), True),
         )
@@ -1954,12 +1954,6 @@ class TestVariablePersistence:
         self, db: HubDatabase
     ) -> None:
         """Codex AFTER_TOOL rehydrates get_tool_schema context; the lookup itself is never denied."""
-        from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
-
-        sync_bundled_rules(db, get_bundled_rules_path())
-        db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
-
-        # require-tasks-skill-for-mutations gates on the interactive agent.
         SessionVariableManager(db=db).merge_variables(SESSION_ID, {"_agent_type": "default"})
 
         rule_engine = RuleEngine(db=db)
@@ -2003,8 +1997,6 @@ class TestVariablePersistence:
         before_response = await handler._evaluate_rules(before_event)
         response = await handler._evaluate_rules(after_event)
 
-        # The unmet task-skill gate targets gobby-tasks:close_task, but schema lookups
-        # stay callable so its recovery can run.
         assert before_response.decision == "allow"
         assert response.decision == "allow"
         assert after_event.data["tool_input"] == {
@@ -2169,8 +2161,8 @@ class TestLedgerDirtyState:
         }
         db.execute(
             "INSERT INTO rule_definitions "
-            "(id, name, definition_json, enabled, source) "
-            "VALUES (%s, %s, %s, %s, 'custom')",
+            "(id, name, definition_json, enabled, source, tags) "
+            "VALUES (%s, %s, %s, %s, 'custom', '[\"default\"]')",
             (str(uuid4()), "test-dirty-block", json.dumps(definition), True),
         )
 
@@ -2181,8 +2173,8 @@ class TestLedgerDirtyState:
         }
         db.execute(
             "INSERT INTO rule_definitions "
-            "(id, name, definition_json, enabled, source) "
-            "VALUES (%s, %s, %s, %s, 'custom')",
+            "(id, name, definition_json, enabled, source, tags) "
+            "VALUES (%s, %s, %s, %s, 'custom', '[\"default\"]')",
             (str(uuid4()), f"test-{event}-marker", json.dumps(definition), True),
         )
 

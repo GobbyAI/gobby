@@ -39,7 +39,12 @@ which reasons need disposition evidence, references or other requirements.
 
 ## Evidence and policy
 
-Kinds declare allowed_results and guidance in task_attestation_kinds. The server refuses other results with that guidance. The engine does not interpret
+Kinds declare allowed_results and guidance in task_attestation_kinds. The server refuses other results with that guidance.
+A selected closure rule may declare an `attestation_shape` (kinds, result, reference scheme and
+value pattern, task applicability). Recording refuses evidence that shape can never accept and
+names the accepted shape. A result the author's definition declares for the kind in
+task_attestation_kinds stays recordable, such as `rejected`; a definition that declares no kinds
+can record only the shape's result for shaped kinds. The engine does not interpret
 an `implementation`, `test`, `independent-review` or `closing` record as special authority.
 The selected `task_close` and `task_land` rules inspect the task, authenticated
 caller, repository facts and append-only attestation history. Rules can require
@@ -102,6 +107,6 @@ Security paths force approval at land even without a label. Filers label obvious
 trust-boundary work; leads inspect the diff and add security-review when needed.
 Only the operator or authorized policy owner removes that label.
 
-_Version: 2.0.1_
+_Version: 2.1.1_
 
-_Last verified: 2026-11-02_
+_Last verified: 2026-11-03_

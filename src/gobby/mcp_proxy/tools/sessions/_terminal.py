@@ -200,7 +200,7 @@ async def _send_terminal_compaction_command(
     on_command_submitting: Callable[[], None] | None = None,
     seat_left: Callable[[], bool] | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
-    """Persist continuation state, confirm interruption, drain the composer, then compact."""
+    """Persist continuation state, confirm interruption, wipe the composer, then compact."""
     return await _send_terminal_compaction_command_impl(
         pane,
         command,
@@ -758,8 +758,7 @@ def register_terminal_tools(
         session_id: str,
         lines: int = 50,
     ) -> dict[str, Any]:
-        # Whether the target is in the caller's scope is the bundled
-        # ``block-cross-project-send-keys`` rule's decision, made before dispatch.
+        # Configured rules decide target scope before dispatch.
         if terminal_manager is not None and terminal_runtime_registry is not None:
             terminal = terminal_manager.get_live_for_session(session_id)
             if terminal is not None:

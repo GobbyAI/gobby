@@ -67,7 +67,7 @@ def _claim_first_body() -> AgentDefinitionBody:
     """A task-bound seat whose first step is claim, the shape the spawn guard refuses taskless."""
     return AgentDefinitionBody.model_validate(
         {
-            "name": "tech-writer",
+            "name": "fixture-definition-76c4b50c",
             "provider": "claude",
             "model": "claude-sonnet-5",
             "prompts": {"agent": "Synthetic task-bound seat."},
@@ -458,7 +458,7 @@ class TestSpawnAgentStepVariables:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="plan-adversary",
+            name="fixture-definition-86a2d70b",
             provider="codex",
             model="gpt-5.4",
             step_workflow=AgentStepWorkflowBody(
@@ -544,7 +544,7 @@ class TestSpawnAgentStepVariables:
                 "spawn_agent",
                 {
                     "prompt": "Review the plan",
-                    "agent": "plan-adversary",
+                    "agent": "fixture-definition-86a2d70b",
                     "task_id": f"#{task.seq_num}",
                     "parent_session_id": parent.id,
                 },
@@ -615,7 +615,7 @@ class TestSpawnAgentStepVariables:
             task_manager.claim_task(task.id, owner_id)
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="plan-adversary",
+            name="fixture-definition-86a2d70b",
             provider="codex",
             model="gpt-5.4",
         )
@@ -661,7 +661,7 @@ class TestSpawnAgentStepVariables:
                 "spawn_agent",
                 {
                     "prompt": "Implement the widget",
-                    "agent": "plan-adversary",
+                    "agent": "fixture-definition-86a2d70b",
                     "task_id": f"#{task.seq_num}",
                     "parent_session_id": parent.id,
                 },
@@ -880,7 +880,7 @@ class TestSpawnAgentStepVariables:
         db: Any,
         mock_runner: MagicMock,
     ) -> None:
-        agent_name = "tech-writer"
+        agent_name = "fixture-definition-76c4b50c"
         (
             result,
             task_manager,
@@ -922,7 +922,7 @@ class TestSpawnAgentStepVariables:
             isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
-            agent_name="tech-writer",
+            agent_name="fixture-definition-76c4b50c",
             seat_body=_claim_first_body(),
         )
 
@@ -950,7 +950,7 @@ class TestSpawnAgentStepVariables:
             isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
-            agent_name="developer",
+            agent_name="fixture-worker",
             task_assignment=task_assignment,
         )
 
@@ -966,7 +966,7 @@ class TestSpawnAgentStepVariables:
         db: Any,
         mock_runner: MagicMock,
     ) -> None:
-        agent_name = "developer"
+        agent_name = "fixture-worker"
         (
             result,
             task_manager,
@@ -1013,7 +1013,7 @@ class TestSpawnAgentStepVariables:
             isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
-            agent_name="developer",
+            agent_name="fixture-worker",
         )
 
         assert result["success"] is True
@@ -1050,7 +1050,7 @@ class TestSpawnAgentStepVariables:
             isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
-            agent_name="developer",
+            agent_name="fixture-worker",
             additional_skills=["code-index"],
         )
 

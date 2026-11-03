@@ -81,14 +81,16 @@ class TestAgentDefinitionsList:
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_lists_agent_definitions(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:
         manager = MagicMock()
-        manager.list_resolved.return_value = [_agent_row("developer", description="Build features")]
+        manager.list_resolved.return_value = [
+            _agent_row("fixture-worker", description="Build features")
+        ]
         mock_get_manager.return_value = manager
 
         result = runner.invoke(cli, ["agents", "list"])
 
         assert result.exit_code == 0
         assert "Found 1 agent definition" in result.output
-        assert "developer" in result.output
+        assert "fixture-worker" in result.output
         assert "Build features" in result.output
         manager.list_resolved.assert_called_once_with(project_id=None)
 
@@ -101,7 +103,7 @@ class TestAgentDefinitionsList:
     ) -> None:
         manager = MagicMock()
         manager.list_resolved.return_value = [
-            _agent_row("developer", model="project-model", project_id="proj-1"),
+            _agent_row("fixture-worker", model="project-model", project_id="proj-1"),
         ]
         mock_get_manager.return_value = manager
         no_project_context.return_value = {"id": "proj-1"}
@@ -111,7 +113,7 @@ class TestAgentDefinitionsList:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert [(a["name"], a["model"], a["project_id"]) for a in data["agents"]] == [
-            ("developer", "project-model", "proj-1"),
+            ("fixture-worker", "project-model", "proj-1"),
         ]
         manager.list_resolved.assert_called_once_with(project_id="proj-1")
 
@@ -149,7 +151,7 @@ class TestAgentDefinitionsList:
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_json_output(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:
         manager = MagicMock()
-        manager.list_resolved.return_value = [_agent_row("developer", model="opus")]
+        manager.list_resolved.return_value = [_agent_row("fixture-worker", model="opus")]
         mock_get_manager.return_value = manager
 
         result = runner.invoke(cli, ["agents", "list", "--json"])
@@ -157,7 +159,7 @@ class TestAgentDefinitionsList:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["count"] == 1
-        assert data["agents"][0]["name"] == "developer"
+        assert data["agents"][0]["name"] == "fixture-worker"
         assert data["agents"][0]["model"] == "opus"
 
     @patch("gobby.cli.agents.get_agent_definition_manager")
@@ -167,7 +169,7 @@ class TestAgentDefinitionsList:
         broken = _agent_row("broken")
         cast(Any, broken).definition_json = "{not-json"
         manager = MagicMock()
-        manager.list_resolved.return_value = [_agent_row("developer"), broken]
+        manager.list_resolved.return_value = [_agent_row("fixture-worker"), broken]
         mock_get_manager.return_value = manager
 
         result = runner.invoke(cli, ["agents", "list", "--json"])
@@ -175,7 +177,7 @@ class TestAgentDefinitionsList:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["count"] == 1
-        assert data["agents"][0]["name"] == "developer"
+        assert data["agents"][0]["name"] == "fixture-worker"
         assert "broken" not in result.output
 
     @patch("gobby.cli.agents.get_agent_definition_manager")
@@ -191,13 +193,15 @@ class TestAgentDefinitionsShow:
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_show_agent_definition(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:
         manager = MagicMock()
-        manager.get_by_name.return_value = _agent_row("developer", description="Build features")
+        manager.get_by_name.return_value = _agent_row(
+            "fixture-worker", description="Build features"
+        )
         mock_get_manager.return_value = manager
 
-        result = runner.invoke(cli, ["agents", "show", "developer"])
+        result = runner.invoke(cli, ["agents", "show", "fixture-worker"])
 
         assert result.exit_code == 0
-        assert "Agent: developer" in result.output
+        assert "Agent: fixture-worker" in result.output
         assert "Description: Build features" in result.output
         assert "Provider: claude" in result.output
         assert "Persona prompt:" in result.output
@@ -206,14 +210,16 @@ class TestAgentDefinitionsShow:
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_show_json_output(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:
         manager = MagicMock()
-        manager.get_by_name.return_value = _agent_row("developer", surfaces=["spawn", "persona"])
+        manager.get_by_name.return_value = _agent_row(
+            "fixture-worker", surfaces=["spawn", "persona"]
+        )
         mock_get_manager.return_value = manager
 
-        result = runner.invoke(cli, ["agents", "show", "developer", "--json"])
+        result = runner.invoke(cli, ["agents", "show", "fixture-worker", "--json"])
 
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["name"] == "developer"
+        assert data["name"] == "fixture-worker"
         assert data["surfaces"] == ["spawn", "persona"]
         assert "step_workflow" in data
         assert data["step_workflow"] is None
@@ -228,14 +234,14 @@ class TestAgentDefinitionsShow:
         runner: CliRunner,
     ) -> None:
         manager = MagicMock()
-        manager.get_by_name.return_value = _agent_row("developer")
+        manager.get_by_name.return_value = _agent_row("fixture-worker")
         mock_get_manager.return_value = manager
         no_project_context.return_value = {"id": "proj-1"}
 
-        result = runner.invoke(cli, ["agents", "show", "developer", "--json"])
+        result = runner.invoke(cli, ["agents", "show", "fixture-worker", "--json"])
 
         assert result.exit_code == 0
-        manager.get_by_name.assert_called_once_with("developer", project_id="proj-1")
+        manager.get_by_name.assert_called_once_with("fixture-worker", project_id="proj-1")
 
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_show_resolves_project_from_working_directory(
@@ -247,8 +253,8 @@ class TestAgentDefinitionsShow:
     ) -> None:
         monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
         no_project_context.side_effect = real_get_project_context
-        override = _agent_row("developer", model="override-model", project_id="proj-cwd")
-        global_row = _agent_row("developer", model="global-model")
+        override = _agent_row("fixture-worker", model="override-model", project_id="proj-cwd")
+        global_row = _agent_row("fixture-worker", model="global-model")
         manager = MagicMock()
         manager.get_by_name.side_effect = lambda name, project_id=None: (
             override if project_id == "proj-cwd" else global_row
@@ -258,7 +264,7 @@ class TestAgentDefinitionsShow:
         with runner.isolated_filesystem():
             Path(".gobby").mkdir()
             Path(".gobby/project.json").write_text(json.dumps({"id": "proj-cwd"}))
-            result = runner.invoke(cli, ["agents", "show", "developer", "--json"])
+            result = runner.invoke(cli, ["agents", "show", "fixture-worker", "--json"])
 
         assert result.exit_code == 0
         assert "override-model" in result.output
@@ -270,7 +276,7 @@ class TestAgentDefinitionsShow:
     ) -> None:
         manager = MagicMock()
         manager.get_by_name.return_value = _agent_row(
-            "developer",
+            "fixture-worker",
             step_workflow={
                 "variables": {"required_skills": ["tdd"]},
                 "steps": [{"name": "implement"}],
@@ -278,7 +284,7 @@ class TestAgentDefinitionsShow:
         )
         mock_get_manager.return_value = manager
 
-        result = runner.invoke(cli, ["agents", "show", "developer", "--json"])
+        result = runner.invoke(cli, ["agents", "show", "fixture-worker", "--json"])
 
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -308,14 +314,14 @@ class TestAgentDefinitionsShow:
     def test_show_reports_malformed_json(
         self, mock_get_manager: MagicMock, runner: CliRunner
     ) -> None:
-        broken = _agent_row("developer")
+        broken = _agent_row("fixture-worker")
         cast(Any, broken).definition_json = "{not-json"
         manager = MagicMock()
         manager.get_by_name.return_value = broken
         mock_get_manager.return_value = manager
 
-        result = runner.invoke(cli, ["agents", "show", "developer"])
+        result = runner.invoke(cli, ["agents", "show", "fixture-worker"])
 
         assert result.exit_code == 1
-        assert "Failed to parse agent definition 'developer'" in result.output
+        assert "Failed to parse agent definition 'fixture-worker'" in result.output
         assert "is not valid JSON" in result.output

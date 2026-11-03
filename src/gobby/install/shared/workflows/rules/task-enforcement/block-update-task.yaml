@@ -1,4 +1,5 @@
-tags: [task-enforcement, enforcement, tasks, gobby, default]
+version: "2.0.0"
+tags: [task-enforcement, enforcement, tasks, gobby, runbook]
 
 # Task edits are granted by agent definition: a definition that may edit tasks
 # excludes this rule through its rule_selectors.

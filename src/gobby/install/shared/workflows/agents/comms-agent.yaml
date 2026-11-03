@@ -2,7 +2,7 @@ name: comms-agent
 description: |
   Communications coordinator for Telegram and other external channels.
   Answers operational questions and delegates implementation to spawned agents.
-version: "1.2"
+version: "1.2.1"
 enabled: true
 surfaces: [persona]
 provider: inherit
@@ -69,4 +69,13 @@ workflows:
       - "name:seat-no-task-close"
       - "name:seat-no-project-create"
       - "tag:default"
+      - "name:agent-workspace-read-scope"
+      - "name:agent-workspace-write-scope"
+      - "name:inject-agent-workspace"
+      - "name:reset-agent-workspace-on-context-loss"
+      - "name:block-temp-scratchpad-writes"
+      - "name:block-update-task"
+      - "name:query-readonly-seat-scope"
+      - "name:seat-no-ask-user-question"
+      - "name:no-comms-attach"
       - "name:no-send-keys"

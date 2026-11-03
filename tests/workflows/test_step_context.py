@@ -70,7 +70,7 @@ def test_first_incomplete_step_workflow_returns_none_when_exit_condition_is_met(
     _patch_step_instance(
         monkeypatch,
         _instance(
-            "expansion-qa",
+            "fixture-definition-9b40e272",
             "terminate",
             snapshot=_snapshot(["qa_check", "terminate"], "current_step == 'terminate'"),
         ),
@@ -84,14 +84,14 @@ def test_first_incomplete_step_workflow_reports_unmet_exit_condition(
     _patch_step_instance(
         monkeypatch,
         _instance(
-            "expansion-qa",
+            "fixture-definition-9b40e272",
             "qa_check",
             snapshot=_snapshot(["qa_check", "terminate"], "current_step == 'terminate'"),
         ),
     )
     incomplete = first_incomplete_step_workflow(MagicMock(), "session-1")
     assert incomplete is not None
-    assert incomplete.workflow_name == "expansion-qa"
+    assert incomplete.workflow_name == "fixture-definition-9b40e272"
     assert incomplete.current_step == "qa_check"
     assert incomplete.eval_error is None
 
@@ -130,7 +130,7 @@ def test_first_incomplete_step_workflow_honors_step_workflow_complete_variable(
     _patch_step_instance(
         monkeypatch,
         _instance(
-            "expansion-qa",
+            "fixture-definition-9b40e272",
             "qa_check",
             snapshot=_snapshot(["qa_check", "terminate"], "current_step == 'terminate'"),
         ),
@@ -294,7 +294,7 @@ def test_step_context_carries_the_idle_step_flag(
     _patch_step_instance(
         monkeypatch,
         _instance(
-            "developer",
+            "fixture-worker",
             "claim",
             snapshot=_step_snapshot(WorkflowStep(name="claim", idle=idle), "vars.done"),
         ),

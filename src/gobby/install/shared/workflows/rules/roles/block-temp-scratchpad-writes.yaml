@@ -1,4 +1,5 @@
-tags: [roles, seat, enforcement, gobby, default]
+version: "2.0.0"
+tags: [roles, runbook, enforcement, gobby]
 
 # Temp and provider-scratchpad writes (#25218). Every agent writes under its assigned
 # workspace folder or its task worktree, never under /tmp, $TMPDIR, /private/var/folders

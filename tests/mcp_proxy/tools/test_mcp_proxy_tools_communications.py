@@ -35,9 +35,9 @@ def channel_admin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Session:
     AgentDefinitionManager(temp_db).create(
-        name="comms-agent",
+        name="fixture-definition-d838ecc9",
         definition_json={
-            "name": "comms-agent",
+            "name": "fixture-definition-d838ecc9",
             "prompts": {"agent": "Manage communications."},
             "workflows": {"rule_selectors": {"include": []}},
             "communications_admin": True,
@@ -51,7 +51,9 @@ def channel_admin(
         project_id=str(sample_project["id"]),
         agent_depth=1,
     )
-    SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", "comms-agent")
+    SessionVariableManager(temp_db).set_variable(
+        caller.id, "_agent_type", "fixture-definition-d838ecc9"
+    )
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.communications.get_current_session_id", lambda: caller.id
     )
@@ -211,7 +213,11 @@ async def test_send_operator_message_requires_installed_operator_grant(
     tmp_path: Path,
 ) -> None:
     """An enrolled DM is targeted explicitly; unlisted agents cannot send to it."""
-    agent_type = "archivist" if tool_name == "send_operator_attachment" else "reporter"
+    agent_type = (
+        "fixture-definition-599e0437"
+        if tool_name == "send_operator_attachment"
+        else "fixture-definition-41d6d532"
+    )
     if not permitted:
         agent_type = "unlisted-worker"
     AgentDefinitionManager(temp_db).create(

@@ -39,7 +39,6 @@ from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.agents.test_lifecycle_monitor import _make_progress_stagnation_monitor, _pane_text
 from tests.events.test_coordination_waits import CoordinationHarness, connection_for
 from tests.events.test_coordination_waits import harness as coordination_fixture
@@ -175,7 +174,15 @@ async def test_turn_end_gates_yield_only_for_live_coordination_hold(
     spawned: bool,
     ending: str,
 ) -> None:
-    sync_bundled_rules(harness.db, get_bundled_rules_path())
+    RuleDefinitionManager(harness.db).create(
+        "synthetic-hold-observer",
+        {
+            "event": "turn_end",
+            "when": "not has_durable_stop_wait()",
+            "effects": [{"type": "block", "reason": "Synthetic hold completed"}],
+        },
+        tags=["default"],
+    )
     tasks = LocalTaskManager(harness.db)
     task = tasks.create_task(
         project_id=PERSONAL_PROJECT_ID,
@@ -208,8 +215,7 @@ async def test_turn_end_gates_yield_only_for_live_coordination_hold(
     end_hold(harness, row["id"], ending)
     unheld = await engine.evaluate(event, session_id=harness.waiter, variables=variables)
     assert unheld.decision == "block"
-    expected_gate = "require-step-completion" if spawned else "require-task-close"
-    assert expected_gate in (unheld.reason or "")
+    assert "synthetic-hold-observer" in (unheld.reason or "")
 
 
 @pytest.mark.parametrize("ending", ["reply", "reply_expiry"])
@@ -228,11 +234,15 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.INFO, logger="gobby.workflows.engine.evaluation")
-    sync_bundled_rules(harness.db, get_bundled_rules_path())
     rules = RuleDefinitionManager(harness.db)
-    original = rules.get_by_name("require-step-completion")
-    assert original is not None
-    rules.create("fixture-finish-workflow", original.definition_json)
+    rules.create(
+        "fixture-finish-workflow",
+        {
+            "event": "turn_end",
+            "when": "not has_durable_stop_wait()",
+            "effects": [{"type": "block", "reason": "Synthetic hold completed"}],
+        },
+    )
     external_id = str(uuid.uuid4())
     harness.db.execute(
         "UPDATE sessions SET external_id = %s WHERE id = %s", (external_id, harness.waiter)

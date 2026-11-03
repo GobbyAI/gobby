@@ -1626,18 +1626,18 @@ async fn ledger_stop_block_replay_window() {
             replay
         );
     }
-    let legacy = json!({"decision":"deny","reason":"[block-terminal-validation-failure] retry"});
+    let untyped = json!({"decision":"deny","reason":"[fixture-stop-gate] retry"});
     write_marker(
         &ledger,
-        "legacy",
-        json!({"processed_at":iso(now - Duration::seconds(121)),"response":legacy}),
+        "untyped",
+        json!({"processed_at":iso(now - Duration::seconds(121)),"response":untyped}),
     );
-    assert!(
+    assert_eq!(
         ledger
-            .terminal_response("legacy", Some(now))
+            .terminal_response("untyped", Some(now))
             .await
-            .unwrap()
-            .is_none()
+            .unwrap(),
+        Some(untyped)
     );
     let tool = json!({"decision":"deny","reason":"policy"});
     write_marker(

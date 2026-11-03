@@ -51,6 +51,10 @@ _DATA_BASENAME_HEADS = (_DATA_COMMANDS - {"git"}) | {"cd", "curl", "test", "["}
 _PYTHON_FLAG = re.compile(r"(PYTHONDONTWRITEBYTECODE|PYTHONUNBUFFERED|PYTHONUTF8)=[01]")
 # Literal path syntax for uv's environment selector; this does not verify the interpreter.
 _UV_ENVIRONMENT = re.compile(r"UV_PROJECT_ENVIRONMENT=[\w./-]+")
+# Interpreter options that take no value, so none can supply program text.
+_PYTHON_STDIN_OPTIONS = frozenset({"-B", "-E", "-I", "-O", "-OO", "-P", "-q", "-s", "-S", "-u"})
+# Script arguments: no operator, redirection, quote, expansion, brace, glob or tilde.
+_PLAIN_ARGUMENT = re.compile(r"[\w./@%+=:,-]+")
 # Git subcommands whose operands are revisions or pathspecs. Git runs a program
 # from a positional only for subcommands such as `bisect run`, so these stay data.
 _GIT_READ_ONLY_SUBCOMMANDS = frozenset(
@@ -785,7 +789,19 @@ def _literal_language_heredoc(command: str, scan: ShellScan) -> bool:
         words = words[2:]
         if words[:1] == ["--no-sync"]:
             words = words[1:]
-    return words in (["python"], ["python", "-"], ["python3"], ["python3", "-"])
+    return _python_stdin_program(words)
+
+
+def _python_stdin_program(words: list[str]) -> bool:
+    """Python reading its program from stdin: no-argument flags, then `-` and literal args."""
+    if words[:1] not in (["python"], ["python3"]):
+        return False
+    rest = words[1:]
+    while rest and rest[0] in _PYTHON_STDIN_OPTIONS:
+        rest = rest[1:]
+    if not rest:
+        return True
+    return rest[0] == "-" and all(_PLAIN_ARGUMENT.fullmatch(arg) for arg in rest[1:])
 
 
 def _shell_setup(text: str, scan: ShellScan, stages: list[list[str]]) -> bool:

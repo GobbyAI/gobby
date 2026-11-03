@@ -159,6 +159,15 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
         except Exception as e:
             raise ValueError(f"Invalid expression: {e}") from e
 
+    @classmethod
+    def validate_syntax(cls, expr: str, function_names: set[str]) -> ast.Expression:
+        """Check every branch against this evaluator's grammar without executing it."""
+        from .expression_validation import validate_expression_tree
+
+        tree = cls._parse_normalized_expr(cls._normalize_expr(expr))
+        validate_expression_tree(tree, cls, function_names)
+        return tree
+
     def evaluate_value(self, expr: str) -> Any:
         """Evaluate expression and return the raw value (not coerced to bool)."""
         try:
@@ -508,7 +517,9 @@ def build_condition_helpers(
         touches_ui_design_path,
         wrapped_validation_command,
     )
+    from .condition_helpers_definition_pins import projected_definition_pins
     from .condition_helpers_paths import PATH_CONDITION_HELPERS
+    from .condition_helpers_selection import pending_selection_fence_calls
     from .condition_helpers_sessions import session_condition_helpers
     from .engine.command_environment import command_sets_environment
     from .monolith_guard import (
@@ -574,6 +585,16 @@ def build_condition_helpers(
         funcs["task_needs_human_review"] = lambda task_id: False
         funcs["task_state_in"] = lambda task_id, *states: False
         funcs["task_type_in"] = lambda task_id_or_ids, *types: False
+
+    def _event_project_id() -> str | None:
+        project_id = getattr(ctx.get("event"), "project_id", None)
+        if not project_id:
+            project_id = (ctx.get("project") or {}).get("id")
+        return str(project_id) if project_id else None
+
+    funcs["pending_selection_fence_calls"] = lambda task_ref: pending_selection_fence_calls(
+        task_manager, _get_variables(ctx), _event_project_id(), task_ref
+    )
 
     # --- Stop signal helper ---
 
@@ -681,6 +702,19 @@ def build_condition_helpers(
             data if isinstance(data, Mapping) else None,
         )
 
+    def _projected_definition_pins(
+        tool_input: Any = None,
+        event_data: Mapping[str, Any] | None = None,
+    ) -> list[str]:
+        project = ctx.get("project")
+        project_path = project.get("path") if isinstance(project, Mapping) else None
+        data = event_data or _event_field(ctx.get("event"), "data", {})
+        return projected_definition_pins(
+            tool_input if tool_input is not None else ctx.get("tool_input"),
+            project_path,
+            data if isinstance(data, Mapping) else None,
+        )
+
     def _outstanding_monolith_paths() -> list[str]:
         """Return over-budget files attributed to this session's task edits."""
         project = ctx.get("project")
@@ -742,6 +776,7 @@ def build_condition_helpers(
     funcs["tool_call_succeeded"] = _tool_call_succeeded
     funcs["tool_call_failed"] = _tool_call_failed
     funcs["projected_monolith_paths"] = _projected_monolith_paths
+    funcs["projected_definition_pins"] = _projected_definition_pins
     funcs["outstanding_monolith_paths"] = _outstanding_monolith_paths
     funcs["has_open_tool_error"] = _has_open_tool_error
     funcs["missing_claimed_task_extra_skills"] = _missing_claimed_task_extra_skills

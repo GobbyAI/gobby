@@ -19,7 +19,7 @@ pytestmark = pytest.mark.unit
 
 def _claimed_past_bound(temp_db: HubDatabase, sample_project: dict[str, Any]) -> tuple[str, Task]:
     sessions = AgentSessions(temp_db, sample_project["id"])
-    holder = sessions.add("developer")
+    holder = sessions.add("fixture-worker")
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(sample_project["id"], "Run mypy in the foreground")
     manager.claim_task(task.id, holder)

@@ -8,9 +8,7 @@ when their content is unchanged; a deliberate deletion carries no marker and
 stays sticky across syncs.
 """
 
-import json
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,23 +24,6 @@ from gobby.workflows.definitions import AgentDefinitionBody
 __all__ = ["get_bundled_agents_path", "sync_bundled_agents"]
 
 logger = logging.getLogger(__name__)
-
-
-_DISCOVERY_PLACEHOLDER_AGENTS = frozenset({"researcher"})
-
-# One-time repair: the sweep removed these rows in one batch on 2026-09-06
-# before it recorded its origin, so they carry no marker and no sync can tell
-# them apart from a deliberate deletion. The cutoff bounds the repair to that
-# batch; every sweep deletion since marks itself.
-_PRE_MARKER_SWEPT_AGENTS = frozenset({"researcher"})
-_PRE_MARKER_SWEEP_CUTOFF = datetime(2026, 9, 7, tzinfo=UTC)
-
-
-def _is_legacy_discovery_placeholder(name: str, definition_json: str, enabled: bool) -> bool:
-    """Return True for bundled disabled discovery placeholders that must become live."""
-    if name not in _DISCOVERY_PLACEHOLDER_AGENTS or enabled:
-        return False
-    return "PLACEHOLDER" in definition_json or "placeholder_agent:" in definition_json
 
 
 def _is_sync_managed_bundled_agent(existing: AgentDefinitionRow) -> bool:
@@ -61,22 +42,13 @@ def _definition_json_equal(existing_json: dict[str, Any], desired_json: dict[str
     return json_equal(existing, desired)
 
 
-def _was_swept_before_marker(existing: AgentDefinitionRow) -> bool:
-    """Return whether this row predates the sweep marker and was swept away."""
-    return (
-        existing.name in _PRE_MARKER_SWEPT_AGENTS
-        and existing.deleted_at is not None
-        and existing.deleted_at < _PRE_MARKER_SWEEP_CUTOFF
-    )
-
-
 def _should_restore_swept_row(existing: AgentDefinitionRow, parent_body: dict[str, Any]) -> bool:
     """Return whether a soft-deleted managed row is a removal sync may undo."""
     if SYNC_ORPHAN_TAG in (existing.tags or []):
         return True
     if not _definition_json_equal(agent_parent_body(existing.definition_json), parent_body):
         return True
-    return _was_swept_before_marker(existing)
+    return False
 
 
 def _build_agent_update_fields(
@@ -84,8 +56,6 @@ def _build_agent_update_fields(
     *,
     body: AgentDefinitionBody,
     parent_body: dict[str, Any],
-    force_enable: bool = False,
-    restore: bool = False,
 ) -> dict[str, Any]:
     """Build changed fields for a managed bundled agent row."""
     fields: dict[str, Any] = {}
@@ -95,8 +65,6 @@ def _build_agent_update_fields(
         fields["description"] = body.description
     if existing.source != "installed":
         fields["tags"] = ["gobby"]
-        fields["enabled"] = body.enabled
-    elif force_enable or restore:
         fields["enabled"] = body.enabled
     elif not existing.enabled_pinned and existing.enabled != body.enabled:
         fields["enabled"] = body.enabled
@@ -118,9 +86,8 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
     """Sync bundled agent definitions from install/shared/workflows/agents/ to the database.
 
     Creates installed rows directly from template files. Installed rows are
-    overwritten when the template changes (preserving the user's enabled toggle,
-    except for legacy disabled discovery placeholders that are upgraded to real
-    enabled agents). Rows the orphan sweep removed are restored once their
+    overwritten when the template changes (preserving the user's enabled toggle).
+    Rows the orphan sweep removed are restored once their
     template returns; deliberately deleted rows stay deleted.
 
     Args:
@@ -168,14 +135,6 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
             parent_body = agent_parent_body(dumped)
             step_workflow = dumped.get("step_workflow")
             existing = manager.get_by_name(name, include_deleted=True)
-            existing_json = ""
-            if existing is not None:
-                existing_json = (
-                    existing.definition_json
-                    if isinstance(existing.definition_json, str)
-                    else json.dumps(existing.definition_json)
-                )
-
             if existing is not None:
                 if not _is_sync_managed_bundled_agent(existing):
                     state = "soft-deleted " if existing.deleted_at is not None else ""
@@ -209,16 +168,10 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                     result["skipped"] += 1
                     continue
 
-                force_enable = _is_legacy_discovery_placeholder(
-                    name,
-                    existing_json,
-                    existing.enabled,
-                )
                 update_fields = _build_agent_update_fields(
                     existing,
                     body=body,
                     parent_body=parent_body,
-                    force_enable=force_enable,
                 )
                 if update_fields:
                     manager.upsert_from_sync(

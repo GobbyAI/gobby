@@ -115,7 +115,6 @@ def test_table_row_decomposition_rule_documented() -> None:
     assert "table-row decomposition" in body
     assert "one acceptance item per" in body
     assert "data row" in body
-    assert "plan-adversary" in body
 
 
 def test_no_retired_plan_storage_terms() -> None:

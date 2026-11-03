@@ -339,6 +339,14 @@ def _checkout_probe(git_cwd: str) -> Path:
     return Path(git_cwd) if checkout_reads.node_origin() else Path(git_cwd).resolve()
 
 
+def git_mutation_cwd(parts: list[str], cwd: str | None, base_cwd: Path | None) -> str | None:
+    """The absolute directory a Git command runs in, honoring a proven ``-C``; else None."""
+    _, git_cwd, unknown = git_command_parts(parts, cwd, base_cwd)
+    if unknown or not git_cwd or not Path(git_cwd).is_absolute():
+        return None
+    return git_cwd
+
+
 def _git_apply_flags(arguments: list[str]) -> set[str] | None:
     """Prove apply options without treating their values or operands as flags."""
     value_options = {

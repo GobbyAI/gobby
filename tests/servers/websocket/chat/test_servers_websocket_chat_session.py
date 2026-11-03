@@ -402,12 +402,12 @@ class TestConfigureChatSession:
         await mixin.configure_chat_session(
             "conv-comms",
             chat_mode="normal",
-            agent_name="comms-agent",
+            agent_name="fixture-definition-d838ecc9",
             project_id="project-1",
         )
 
         assert mixin._pending_modes["conv-comms"] == "normal"
-        assert mixin._pending_agents["conv-comms"] == "comms-agent"
+        assert mixin._pending_agents["conv-comms"] == "fixture-definition-d838ecc9"
         assert mixin._pending_projects["conv-comms"] == "project-1"
 
     @pytest.mark.asyncio
@@ -415,7 +415,7 @@ class TestConfigureChatSession:
         session = MagicMock(
             chat_mode="normal",
             project_id="project-1",
-            _pending_agent_name="comms-agent",
+            _pending_agent_name="fixture-definition-d838ecc9",
         )
         session.stop = AsyncMock()
         mixin._chat_sessions["conv-comms"] = session
@@ -423,7 +423,7 @@ class TestConfigureChatSession:
         await mixin.configure_chat_session(
             "conv-comms",
             chat_mode="normal",
-            agent_name="comms-agent",
+            agent_name="fixture-definition-d838ecc9",
             project_id="project-1",
         )
 
@@ -443,14 +443,14 @@ class TestConfigureChatSession:
         await mixin.configure_chat_session(
             "conv-comms",
             chat_mode="normal",
-            agent_name="comms-agent",
+            agent_name="fixture-definition-d838ecc9",
             project_id="project-new",
         )
 
         session.stop.assert_awaited_once()
         assert "conv-comms" not in mixin._chat_sessions
         assert mixin._pending_modes["conv-comms"] == "normal"
-        assert mixin._pending_agents["conv-comms"] == "comms-agent"
+        assert mixin._pending_agents["conv-comms"] == "fixture-definition-d838ecc9"
         assert mixin._pending_projects["conv-comms"] == "project-new"
 
     @pytest.mark.asyncio
@@ -459,7 +459,7 @@ class TestConfigureChatSession:
             await mixin.configure_chat_session(
                 "conv-comms",
                 chat_mode="auto",
-                agent_name="comms-agent",
+                agent_name="fixture-definition-d838ecc9",
                 project_id="project-1",
             )
 

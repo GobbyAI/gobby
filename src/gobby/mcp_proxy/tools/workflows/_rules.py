@@ -194,6 +194,9 @@ def _rule_summary(row: RuleDefinitionRow) -> dict[str, Any]:
 def _rule_detail(row: RuleDefinitionRow) -> dict[str, Any]:
     """Build a detailed dict for a rule row, including full definition."""
     body = _rule_body(row)
+    from gobby.workflows.rule_validation import validate_rule
+
+    validation = validate_rule(body, name=row.name)
     return {
         "id": row.id,
         "name": row.name,
@@ -210,6 +213,10 @@ def _rule_detail(row: RuleDefinitionRow) -> dict[str, Any]:
         "source": row.source,
         "tags": row.tags,
         "project_id": row.project_id,
+        "warnings": [
+            {"field": item.field, "code": item.code, "message": item.message}
+            for item in validation.warnings
+        ],
     }
 
 
@@ -327,7 +334,10 @@ def toggle_rule(
             return {"success": False, "error": reserved_error}
         if protected_error := _protected_rule_error(row):
             return {"success": False, "error": protected_error}
-        updated = def_manager.update(row.id, enabled=enabled)
+        try:
+            updated = def_manager.update(row.id, enabled=enabled)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
     logger.info("Toggled rule '%s' enabled=%s", name, enabled)
 
     return _rule_or_parse_error(updated, allow_metadata=True)
@@ -405,7 +415,7 @@ def update_rule(
 
     try:
         updated = update_rule_fields(def_manager, row.id, fields)
-    except (DefinitionNotFoundError, ReservedRuleMutationError, ProtectedRuleError) as exc:
+    except (DefinitionNotFoundError, ValueError) as exc:
         return {"success": False, "error": str(exc)}
     logger.info("Updated rule '%s' (fields=%s)", name, list(fields))
 
@@ -483,7 +493,7 @@ def create_rule(
             source="custom",
             tags=tags,
         )
-    except DefinitionNameConflictError as exc:
+    except (DefinitionNameConflictError, ValueError) as exc:
         return {"success": False, "error": str(exc)}
     logger.info("Created rule '%s' (id=%s)", name, row.id)
 

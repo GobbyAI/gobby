@@ -5,7 +5,7 @@ setuid ``/bin/ps``, so without it a sandboxed seat cannot run ``ps`` at all.
 
 TODO(#22407): Droid's supervisor, the upstream defect that first needed this shim,
 SIGKILLs its process group when its ``ps`` probe fails. Drop Droid's dependency once
-Factory ships a fix. Reviewer seats keep the shim for stall diagnosis (#25069).
+Factory ships a fix. Sandboxed seats keep the shim for stall diagnosis (#25069).
 Upstream issue: https://github.com/Factory-AI/factory/issues/33
 
 Droid runs every ``Execute`` command under an inline bash supervisor that probes
@@ -64,7 +64,7 @@ PS_WRAPPER = """#!/bin/sh
 # bin/ps (#25368), off PATH. Only -o with non-argument columns and the selector flags
 # -A -a -x -r -w -W -p -q -U -G -g -t reach ps, so `ps aux`, `ps -e` and `ps -o args`
 # never list other processes' arguments. The column list must match the
-# no-process-environment-listing rule and the Python copy in droid_ps_shim.py.
+# process-environment admission policy and the Python copy in droid_ps_shim.py.
 
 refuse() {
     echo "ps: refused: only -o with non-argument columns may list processes" >&2

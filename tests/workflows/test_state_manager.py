@@ -43,6 +43,29 @@ def test_scoped_defaults_copy_only_requested_values_on_cache_hit_and_miss(
     _clear_variable_defaults_caches()
 
 
+def test_slow_defaults_load_retains_a_full_cache_lifetime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [0.0]
+    loads: list[float] = []
+
+    def load(db: object, project_id: str | None) -> dict[str, Any]:
+        loads.append(clock[0])
+        clock[0] += SessionVariableManager._DEFAULTS_CACHE_TTL * 2
+        return {"selected": [1]}
+
+    monkeypatch.setattr(state_manager, "load_variable_defaults", load)
+    monkeypatch.setattr("time.monotonic", lambda: clock[0])
+    monkeypatch.setattr(state_manager, "get_definitions_revision", lambda domain: 1)
+    _clear_variable_defaults_caches()
+    manager = SessionVariableManager(MagicMock())
+    first = manager._get_variable_defaults(None, keys=("selected",))
+    first["selected"].append(2)
+    assert manager._get_variable_defaults(None, keys=("selected",)) == {"selected": [1]}
+    assert loads == [0.0]
+    _clear_variable_defaults_caches()
+
+
 def test_scoped_defaults_preserve_ttl_and_revision_refresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

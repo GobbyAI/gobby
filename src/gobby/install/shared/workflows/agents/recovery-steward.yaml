@@ -6,7 +6,7 @@ description: |
   Triage for resume, and alerts Triage when a DevTeam has gone quiet. Its backstop
   sweep ends the leftover seats of closed tasks and deletes the worktrees that
   have landed. Never restarts the daemon or edits code.
-version: "2.0.0"
+version: "2.2.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
@@ -60,7 +60,7 @@ workflows:
     # Selects default, so no-send-keys withholds send_keys from the steward:
     # resumes go through Triage to the Orchestrator.
     include:
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "name:require-seat-procedure"
       - "tag:default"
       - "tag:worker-safety"

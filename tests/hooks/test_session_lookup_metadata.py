@@ -524,7 +524,7 @@ def test_grok_tool_hook_from_another_process_in_the_pane_auto_registers() -> Non
 def test_hand_started_grok_parent_survives_first_of_three_process_bound_children() -> None:
     """A process-bound Grok child's session_end leaves the hand-started tmux parent live.
 
-    The parent's own session_end then pauses it: gobby never spawns tmux, so the
+    The parent's own session_end then idles it: gobby never spawns tmux, so the
     pane outlives the CLI and its external terminal row stays attached.
     """
     session_manager, session_task_manager, service = _uncached_service()
@@ -610,7 +610,7 @@ def test_hand_started_grok_parent_survives_first_of_three_process_bound_children
     assert "_native_subagent_binding" not in parent_end.metadata
     assert handlers.handle_session_end(parent_end).decision == "allow"
 
-    session_manager.update_status_if_non_terminal.assert_called_once_with(parent.id, "paused")
+    session_manager.update_status_if_non_terminal.assert_called_once_with(parent.id, "idle")
     coordinator.complete_agent_run.assert_not_called()
     terminal_manager.mark_exited.assert_not_called()
     terminal_manager.release_session.assert_not_called()

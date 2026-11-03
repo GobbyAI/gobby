@@ -5,7 +5,7 @@ description: |
   passes it, reaches consensus with the writer over send_message, and stamps
   the M1 task manifest on consensus. Never edits the plan narrative.
 
-version: "2.2.0"
+version: "3.0.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -103,7 +103,7 @@ prompts:
 workflows:
   rule_selectors:
     include:
-      - "tag:seat-policy"
+      - "tag:runbook"
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
@@ -205,6 +205,13 @@ step_workflow:
         - server: gobby-agents
           tool: send_message
           action: advance_seat
+          protocol:
+            consensus_pattern: >-
+              EVENT=(CONSENSUS|CONSENSUS_WITHDRAWN) SHA=([0-9a-f]{40})(?:\s|$)
+            consensus_step: review
+            withdrawal_step: stamp
+            consensus_event: CONSENSUS
+            withdrawal_event: CONSENSUS_WITHDRAWN
       transitions:
         - to: stamp
           when: "vars.consensus and not vars.bounced"
@@ -246,6 +253,13 @@ step_workflow:
         - server: gobby-agents
           tool: send_message
           action: advance_seat
+          protocol:
+            consensus_pattern: >-
+              EVENT=(CONSENSUS|CONSENSUS_WITHDRAWN) SHA=([0-9a-f]{40})(?:\s|$)
+            consensus_step: review
+            withdrawal_step: stamp
+            consensus_event: CONSENSUS
+            withdrawal_event: CONSENSUS_WITHDRAWN
         - server: gobby-agents
           tool: end_agent_run
           action: set_variable

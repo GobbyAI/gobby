@@ -23,6 +23,7 @@ from gobby.config.validation_detection import (
     classify_validation_segments,
 )
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
@@ -46,7 +47,6 @@ from gobby.workflows.found_work_gate import (
     unresolved_validation_failures,
 )
 from gobby.workflows.hooks import WorkflowHookHandler
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -350,6 +350,31 @@ async def test_cargo_package_spec_stop_failure(
 
     assert facts.terminal_validation_failures == ((command,) if should_block else ())
     derive.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_workflow_handler_feeds_analyzer_facts_to_rules(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    RuleDefinitionManager(temp_db).create(
+        "synthetic-analyzer-observer",
+        {
+            "event": "turn_end",
+            "when": "found_work_shirk",
+            "effects": [{"type": "block", "reason": "Synthetic analyzer fact"}],
+        },
+        tags=["default"],
+    )
+    handler = WorkflowHookHandler(rule_engine=RuleEngine(temp_db))
+    handler._session_var_manager = None
+    analyze = AsyncMock(return_value=FoundWorkStopFacts(shirk=True))
+    monkeypatch.setattr(handler._found_work_analyzer, "analyze", analyze)
+    event = _event(HookEventType.STOP, metadata={"_platform_session_id": SESSION_ID})
+    event.cwd = str(Path(__file__).resolve().parents[2])
+    response = await handler.evaluate_async(event)
+    assert response.decision == "block"
+    assert "Synthetic analyzer fact" in (response.reason or "")
+    analyze.assert_awaited_once()
 
 
 class TestPermissionDeferralFastPath:
@@ -1762,145 +1787,3 @@ async def test_two_sessions_owner_filed_disposition_survives_later_turn(
     )
 
     assert facts.terminal_validation_failures == ()
-
-
-class TestFoundWorkDeclarativeRules:
-    @pytest.fixture(autouse=True)
-    def sync_rules(self, temp_db: HubDatabase) -> None:
-        sync_bundled_rules(temp_db, get_bundled_rules_path())
-
-    @pytest.mark.asyncio
-    async def test_permission_deferral_fact_blocks_once_then_allows(
-        self, temp_db: HubDatabase
-    ) -> None:
-        engine = RuleEngine(temp_db)
-        variables: dict[str, Any] = {"_memory_initial_stop_checked": True}
-
-        response = await engine.evaluate(
-            _event(HookEventType.STOP),
-            session_id=SESSION_ID,
-            variables=variables,
-            eval_context={"found_work_shirk": True, "found_work_shirk_confirmed": False},
-        )
-
-        assert response.decision == "block"
-        assert "Found-work ladder" in (response.reason or "")
-        assert "send_message" in (response.reason or "")
-        assert "needs-decision/needs-planning/clean-window" in (response.reason or "")
-        assert "once per session" in (response.reason or "")
-        assert variables["found_work_shirk_alerted"] is True
-        assert variables["found_work_shirk_confirmed"] is False
-
-        second = await engine.evaluate(
-            _event(HookEventType.STOP),
-            session_id=SESSION_ID,
-            variables=variables,
-            eval_context={"found_work_shirk": True, "found_work_shirk_confirmed": False},
-        )
-
-        assert second.decision == "allow"
-
-    @pytest.mark.asyncio
-    async def test_confirmed_shirk_records_confirmation(self, temp_db: HubDatabase) -> None:
-        variables: dict[str, Any] = {"_memory_initial_stop_checked": True}
-
-        response = await RuleEngine(temp_db).evaluate(
-            _event(HookEventType.STOP),
-            session_id=SESSION_ID,
-            variables=variables,
-            eval_context={"found_work_shirk": True, "found_work_shirk_confirmed": True},
-        )
-
-        assert response.decision == "block"
-        assert variables["found_work_shirk_alerted"] is True
-        assert variables["found_work_shirk_confirmed"] is True
-
-    @pytest.mark.asyncio
-    async def test_prior_shirk_alert_allows_stop(self, temp_db: HubDatabase) -> None:
-        variables: dict[str, Any] = {
-            "_memory_initial_stop_checked": True,
-            "found_work_shirk_alerted": True,
-        }
-
-        response = await RuleEngine(temp_db).evaluate(
-            _event(HookEventType.STOP),
-            session_id=SESSION_ID,
-            variables=variables,
-            eval_context={"found_work_shirk": True, "found_work_shirk_confirmed": True},
-        )
-
-        assert response.decision == "allow"
-        assert "found_work_shirk_confirmed" not in variables
-
-    @pytest.mark.asyncio
-    async def test_stop_attempt_cap_releases_both_gates(self, temp_db: HubDatabase) -> None:
-        response = await RuleEngine(temp_db).evaluate(
-            _event(HookEventType.STOP),
-            session_id=SESSION_ID,
-            variables={"_memory_initial_stop_checked": True, "stop_attempts": 20},
-            eval_context={
-                "found_work_shirk": True,
-                "terminal_validation_failure": True,
-                "terminal_validation_failure_commands": ["pytest tests/unit"],
-            },
-        )
-
-        assert response.decision == "allow"
-
-    @pytest.mark.asyncio
-    async def test_workflow_handler_feeds_analyzer_facts_to_rules(
-        self,
-        temp_db: HubDatabase,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        handler = WorkflowHookHandler(rule_engine=RuleEngine(temp_db))
-        handler._session_var_manager = None
-        analyze = AsyncMock(return_value=FoundWorkStopFacts(shirk=True))
-        monkeypatch.setattr(handler._found_work_analyzer, "analyze", analyze)
-        event = _event(
-            HookEventType.STOP,
-            metadata={"_platform_session_id": SESSION_ID},
-        )
-        event.cwd = str(Path(__file__).resolve().parents[2])
-
-        response = await handler.evaluate_async(event)
-
-        assert response.decision == "block"
-        assert "Found-work ladder" in (response.reason or "")
-        analyze.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_terminal_failure_fact_blocks_with_command(self, temp_db: HubDatabase) -> None:
-        response = await RuleEngine(temp_db).evaluate(
-            _event(HookEventType.STOP),
-            session_id=SESSION_ID,
-            variables={"_memory_initial_stop_checked": True},
-            eval_context={
-                "terminal_validation_failure": True,
-                "terminal_validation_failure_commands": ["pytest tests/unit"],
-            },
-        )
-
-        assert response.decision == "block"
-        assert "pytest tests/unit" in (response.reason or "")
-
-    @pytest.mark.asyncio
-    async def test_no_detector_facts_allows_stop(self, temp_db: HubDatabase) -> None:
-        response = await RuleEngine(temp_db).evaluate(
-            _event(HookEventType.STOP),
-            session_id=SESSION_ID,
-            variables={"_memory_initial_stop_checked": True},
-            eval_context={
-                "found_work_shirk": False,
-                "terminal_validation_failure": False,
-            },
-        )
-
-        assert response.decision == "allow"
-
-    def test_bundled_template_has_no_repo_specific_commands(self) -> None:
-        template = (
-            get_bundled_rules_path() / "stop-gates" / "enforce-found-work-ladder.yaml"
-        ).read_text(encoding="utf-8")
-        for command in ("pytest", "ruff", "mypy", "cargo", "npm", "uv run"):
-            assert command not in template

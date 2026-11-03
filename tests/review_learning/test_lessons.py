@@ -102,7 +102,7 @@ async def test_domain_and_check_key_tags(
     service = _service(fake_memory_manager, fake_task_manager)
     result = await service.record(
         source_kind="plan_review",
-        source="plan-adversary",
+        source="fixture-definition-86a2d70b",
         source_review="plan-round-1",
         decision="confirmed",
         finding={

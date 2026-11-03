@@ -259,7 +259,7 @@ async def test_domain_lists_are_project_scoped(
         project_id=PROJECT_ID,
         definition_json={
             "event": "before_tool",
-            "effects": [{"type": "inject_context", "content": "x"}],
+            "effects": [{"type": "inject_context", "template": "x"}],
         },
     )
     RuleDefinitionManager(temp_db).create(
@@ -267,7 +267,7 @@ async def test_domain_lists_are_project_scoped(
         project_id=OTHER_PROJECT_ID,
         definition_json={
             "event": "before_tool",
-            "effects": [{"type": "inject_context", "content": "y"}],
+            "effects": [{"type": "inject_context", "template": "y"}],
         },
     )
     AgentDefinitionManager(temp_db).create(

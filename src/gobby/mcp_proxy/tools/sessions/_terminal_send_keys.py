@@ -7,8 +7,12 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from gobby.events.wake_terminal_resolution import resolve_session_terminal_route
-from gobby.mcp_proxy.tools.sessions._terminal_send_keys_gate import send_keys_target_refusal
+from gobby.mcp_proxy.tools.sessions._terminal_send_keys_gate import (
+    ComposerCleared,
+    send_keys_target_refusal,
+)
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
+from gobby.terminals.composer import COMPOSER_CLEAR_KEYS
 from gobby.terminals.key_bytes import normalize_named_key
 from gobby.terminals.runtime import Delivered, IndeterminateWrite, TerminalWriteError
 from gobby.terminals.write_coordinator import IdempotencyConflictError, WriteRequest
@@ -46,8 +50,7 @@ def _authorize_send_keys_target(
 ) -> tuple[str | None, dict[str, Any] | None]:
     """Resolve the send_keys caller and target.
 
-    Whether the target is in the caller's scope is the bundled
-    ``block-cross-project-send-keys`` rule's decision, made before dispatch.
+    Configured rules decide target scope before dispatch.
     """
     from gobby.utils.session_context import get_current_session_id
 
@@ -60,8 +63,7 @@ def _authorize_send_keys_target(
         }
 
     try:
-        # Whether the caller may use send_keys at all is the default ``no-send-keys``
-        # rule's decision, made before dispatch.
+        # Configured rules decide caller admission before dispatch.
         scope = resolve_actor_scope(
             session_manager, f"{SESSION_ACTOR_PREFIX}{caller_ref}", allow_autonomous=True
         )
@@ -158,14 +160,22 @@ def register_send_keys_tool(
             }
 
         assert resolved_session_id is not None
+        # Only a single clear key may drain a held daemon draft; text or Enter never does.
+        clear_held = not literal and normalize_named_key(keys) in COMPOSER_CLEAR_KEYS
         refusal = await send_keys_target_refusal(
-            resolved_session_id, terminal_manager, terminal_runtime_registry
+            resolved_session_id,
+            terminal_manager,
+            terminal_runtime_registry,
+            clear_held=clear_held,
         )
+        if isinstance(refusal, ComposerCleared):
+            return {"success": True, "cleared": True, "idempotency_key": resolved_key}
         if refusal is not None:
             return {
                 "success": False,
                 "error": refusal.message,
                 "error_code": refusal.code,
+                "recovery": refusal.recovery,
                 "idempotency_key": resolved_key,
             }
         target_session = session_manager.get(resolved_session_id)

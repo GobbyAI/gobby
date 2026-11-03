@@ -1498,7 +1498,7 @@ class TestContinueInChatTerminalKill:
         host._send_error = AsyncMock()
 
         mock_run = MagicMock()
-        mock_run.agent_name = "code-reviewer"
+        mock_run.agent_name = "fixture-definition-e08ba693"
 
         with patch("gobby.storage.agents.LocalAgentRunManager.get", return_value=mock_run):
             await SessionControlMixin._handle_attach_to_session(
@@ -1514,7 +1514,7 @@ class TestContinueInChatTerminalKill:
         assert response["can_proxy_attach"] is True
         assert response["workflow_name"] == "release-checks"
         assert response["agent_run_id"] == "run-auto-1"
-        assert response["agent_name"] == "code-reviewer"
+        assert response["agent_name"] == "fixture-definition-e08ba693"
         assert response["context_used_tokens"] == 53535
         assert response["context_usage_ratio"] == 0.2072
         assert response["context_usage_source"] == "codex_token_event"

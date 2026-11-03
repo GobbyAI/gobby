@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from gobby.storage.definitions.rules import RuleDefinitionManager
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.monolith_guard import (
     MONOLITH_SOURCE_EXTENSIONS,
     is_monolith_guard_path,
@@ -19,14 +15,7 @@ from gobby.workflows.monolith_guard import (
     projected_monolith_paths,
 )
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
-RULE_NAMES = (
-    "require-decompose-monolith-before-threshold-write",
-    "require-monolith-resolution-before-commit",
-    "require-monolith-resolution-before-task-transition",
-    "require-monolith-resolution-before-turn-end",
-)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -70,11 +59,7 @@ def _condition_result(
         context=context,
         allowed_funcs=build_condition_helpers(context=context),
     )
-    return evaluator.evaluate(
-        "event.data.get('canonical_tool_kind') == 'write' and "
-        "bool(projected_monolith_paths(tool_input, event.data)) and "
-        "not skill_loaded('decompose-monolith')"
-    )
+    return evaluator.evaluate("bool(projected_monolith_paths(tool_input, event.data))")
 
 
 @pytest.mark.parametrize("extension", sorted(MONOLITH_SOURCE_EXTENSIONS))
@@ -312,107 +297,3 @@ def test_completion_guard_clears_after_decomposition_or_deletion(tmp_path: Path)
 
     owned.write_text(_lines(1_000), encoding="utf-8")
     assert outstanding_monolith_paths(variables, tmp_path) == ["src/owned.py"]
-
-
-def test_loading_skill_unlocks_write_but_never_completion_ceiling(tmp_path: Path) -> None:
-    _write_lines(tmp_path, "src/app.py", 999)
-    tool_input = {
-        "file_path": "src/app.py",
-        "old_string": "line 0",
-        "new_string": "changed\ninserted",
-    }
-
-    assert _condition_result(tmp_path, tool_input) is True
-    assert (
-        _condition_result(
-            tmp_path,
-            tool_input,
-            loaded_skills=["decompose-monolith"],
-        )
-        is False
-    )
-
-    _write_lines(tmp_path, "src/app.py", 1_000)
-    context = {
-        "variables": {
-            "loaded_skills": ["decompose-monolith"],
-            "task_edited_files": {"task-1": ["src/app.py"]},
-        },
-        "project": {"path": str(tmp_path)},
-    }
-    helpers = build_condition_helpers(context=context)
-    assert helpers["outstanding_monolith_paths"]() == ["src/app.py"]
-
-
-def test_bundled_sync_installs_enabled_rules_and_preserves_the_user_toggle(
-    temp_db: HubDatabase,
-) -> None:
-    """66dbca284 (#19408) flipped these templates to enabled, matching the DB.
-
-    A resync must still preserve whatever the user set, so the toggle is
-    flipped the other way here than it was when the templates shipped disabled.
-    """
-    manager = RuleDefinitionManager(temp_db)
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-
-    rows = [manager.get_by_name(name) for name in RULE_NAMES]
-    assert all(row is not None and row.enabled is True for row in rows)
-
-    write_row = rows[0]
-    assert write_row is not None
-    manager.update(write_row.id, enabled=False)
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-
-    refreshed = manager.get_by_name(RULE_NAMES[0])
-    assert refreshed is not None
-    assert refreshed.enabled is False
-
-
-def test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance(
-    temp_db: HubDatabase,
-) -> None:
-    manager = RuleDefinitionManager(temp_db)
-    sync_bundled_rules(temp_db, get_bundled_rules_path())
-    bodies: dict[str, RuleDefinitionBody] = {}
-    for name in RULE_NAMES:
-        row = manager.get_by_name(name)
-        assert row is not None
-        bodies[name] = RuleDefinitionBody.model_validate(row.definition_json)
-
-    commit = bodies[RULE_NAMES[1]]
-    commit_effect = commit.resolved_effects[0]
-    assert commit_effect.tools == ["Bash"]
-    # The pattern is the shared command-position idiom (#20825): a git commit
-    # invocation matches at the start of any shell segment, including behind
-    # git's global options, while a prose mention inside a string does not.
-    assert commit_effect.command_pattern is not None
-    commit_pattern = re.compile(commit_effect.command_pattern)
-    for command in (
-        "git commit -m x",
-        "make lint && git commit -m x",
-        "git -C /repo commit -m x",
-    ):
-        assert commit_pattern.search(command), command
-    assert commit_pattern.search('echo "git commit"') is None
-
-    transition_effect = bodies[RULE_NAMES[2]].resolved_effects[0]
-    assert set(transition_effect.mcp_tools or []) == {
-        "gobby-tasks:close_task",
-        "gobby-tasks:de_escalate_task",
-    }
-    assert bodies[RULE_NAMES[3]].event == "turn_end"
-
-    reasons = "\n".join(body.resolved_effects[0].reason or "" for body in bodies.values()).lower()
-    assert "decompose-monolith" in reasons
-    assert "code-index" in reasons
-    assert "current claimed task and session" in reasons
-    assert "deferred refactor tasks are prohibited" in reasons
-
-
-def test_task_skill_removes_follow_up_refactor_task_direction() -> None:
-    body = (
-        PROJECT_ROOT / "src/gobby/install/shared/skills/gobby/references/tasks/implementation.md"
-    ).read_text(encoding="utf-8")
-
-    assert "complete that decomposition within this task; do not defer it" in body
-    assert "newly created one left unclaimed" not in body
