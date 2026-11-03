@@ -44,7 +44,11 @@ from gobby.utils.daemon_git import daemon_git
 from gobby.workflows.commit_guard import foreign_dirty_edit_conflict, foreign_staged_commit_conflict
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.task_tool_bindings import TaskToolBindings, cleanup_task_tool_bindings
+from gobby.workflows.task_tool_bindings import (
+    TaskToolBindings,
+    cleanup_task_tool_bindings,
+    pending_fencing_calls,
+)
 from gobby.workflows.worktree_shell_attribution import (
     OVERLAPS_VARIABLE,
     begin_structured_edit_calls,
@@ -995,7 +999,7 @@ def test_native_computed_cwd_reads_never_borrow_launcher_ownership(
                     metadata={**outer_after.metadata, "_platform_session_id": checkout.session_id},
                 )
             )
-    TaskToolBindings(manager, checkout.session_id).assert_can_select(None)
+    assert pending_fencing_calls(manager.get_variables(checkout.session_id), None) == []
 
 
 @pytest.mark.parametrize("relative_operands", [False, True])
@@ -1082,7 +1086,7 @@ def test_native_codex_formatter_receipt_keeps_worktree_ownership(
         assert (checkout.repo / "format_me.py").read_text() == "x=1\n"
         for key in ("worktree_shell_calls", "claimed_shell_snapshots", "git_operation_ownership"):
             assert not manager.get_variables(checkout.session_id).get(key), key
-        TaskToolBindings(manager, checkout.session_id).assert_can_select(None)
+        assert pending_fencing_calls(manager.get_variables(checkout.session_id), None) == []
         assert checkout.rule_3_reason("format_me.py") == ""
         # Retry through the normal literal wrapper, with no ownership recovery.
         transcript.write_text(literal_transcript)
@@ -1469,7 +1473,7 @@ def test_git_operation_conflict_keeps_its_actionable_reason(
     )
     assert response.decision == "block"
     assert "Another live session owns the Git operation" in (response.reason or "")
-    TaskToolBindings(manager, checkout.session_id).assert_can_select(None)
+    assert pending_fencing_calls(manager.get_variables(checkout.session_id), None) == []
     foreign_operations = manager.get_variables(checkout.foreign_session_id)[
         "git_operation_ownership"
     ]
