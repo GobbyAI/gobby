@@ -6,6 +6,11 @@ installed row, not one session. `update_rule` changes metadata or a full body.
 `delete_rule` soft-deletes; a bundled `gobby` tag requires `force=true`, and sync
 can restore it. Deletion is not a durable policy toggle.
 
+MCP mutation requires `manage_workflow_definitions` or the operator's terminal;
+`toggle_rule`, `update_rule` and `delete_rule` also accept
+`manage_rule_enforcement`. Other seats must route changes to an authorized
+session. Read and evaluate tools remain available.
+
 Runtime loads enabled global rows plus the event project's rows, then filters
 agent scope and audience. The session's current enabled agent definition selects
 rules; cached `_active_rule_names` is a display projection, not authority. A
@@ -38,5 +43,5 @@ a single-rule repair.
 
 Guide: [Activation](../../../../../../../../docs/guides/rules.md#activation-model).
 
-_Version: 1.1.0_
+_Version: 1.2.0_
 _Last verified: 2026-11-03_
