@@ -183,12 +183,13 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
                         diagnostics::FailureKind::DirectPostAfterEnqueueFailure,
                         Some(&diagnostic_error),
                     );
-                    if let Some(action) = crate::daemon_down::action(
+                    if let Some(action) = crate::daemon_down::action_for(
                         hook_type,
                         &cfg,
                         report
                             .failure_kind
                             .unwrap_or(transport::DeliveryFailureKind::Other),
+                        &env.input_data,
                     ) {
                         return Ok(action);
                     }
@@ -290,12 +291,13 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
             if report.is_adapter_timeout() && !is_critical {
                 return emit_exit(continue_action(cfg.source, hook_type));
             }
-            if let Some(action) = crate::daemon_down::action(
+            if let Some(action) = crate::daemon_down::action_for(
                 hook_type,
                 &cfg,
                 report
                     .failure_kind
                     .unwrap_or(transport::DeliveryFailureKind::Other),
+                &env.input_data,
             ) {
                 return emit_exit(action);
             }

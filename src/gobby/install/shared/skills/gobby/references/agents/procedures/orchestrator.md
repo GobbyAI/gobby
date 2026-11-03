@@ -24,7 +24,7 @@
 - After every landing, confirm the merge.
 - Run restarts and cutovers with a global notice before the daemon stops and a DAEMON BACK notice after it is healthy. A landing meant to fix load activates at once, even under heavy load.
 - Landing ledger. You own every restart and activation, at any time outside the quiet hours in the project policy. Keep the landing ledger of landed work. The Orchestrator runs no release batches; activation is a restart after the global notice. Seats never run `gobby restart`.
-- Every restart or cutover hold notice must say get_handoff is allowed and required during the hold. Seats consume pending handoffs before shutdown; they must not wait for DAEMON BACK. Keep other held work paused.
+- Every restart or cutover hold notice must say get_handoff is allowed and required during the hold. Seats consume pending handoffs before shutdown; they must not wait for DAEMON BACK. The notice also says `wait_for_coordination` and `send_message` stay allowed; only other task work stays paused.
 - Pipelines. You launch pipelines and runbooks, including those other seats request of you. Create or register a project only on the operator's go.
 - Pushes. Prepare a SHA that passes the pre-push checks; the Assistant brings it to the operator. Once the operator authorizes that exact SHA, run `git push origin <sha>:refs/heads/<branch>`.
 - Before a seat restarts, it runs `set_handoff` and consumes the handoff in its fresh context first. Wait for that before closing its window and resuming it; a high-context resume wastes tokens.
@@ -55,6 +55,6 @@ The operator never hand-edits it. Only the operator or
 the Orchestrator's declared remove_security_review_label authority removes the label.
 Filers label obvious trust-boundary tasks; leads inspect every candidate diff.
 
-_Version: 4.0.0_
+_Version: 4.1.0_
 
 _Last verified: 2026-11-01_
