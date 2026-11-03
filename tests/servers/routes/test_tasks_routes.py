@@ -1338,10 +1338,7 @@ class TestComments:
     @pytest.mark.parametrize(
         "author_type,detail",
         [
-            (
-                "task_step",
-                "Task step records are recorded only through the dedicated record_*_step tools",
-            ),
+            ("task_step", "Retired task evidence cannot be created through comments"),
             ("task_attestation", "Task attestations are recorded only through record_attestation"),
         ],
     )

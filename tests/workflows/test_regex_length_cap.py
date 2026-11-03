@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -105,6 +106,11 @@ def test_registry_rejects_before_persist(temp_db: HubDatabase) -> None:
     assert manager.get_by_name("registry-cap") is None
 
 
+def _capped_rule(length: int) -> dict[str, Any]:
+    effect = {"type": "block", "reason": "Capped.", "command_pattern": "x" * length}
+    return {"event": "before_tool", "effects": [effect]}
+
+
 @pytest.mark.integration
 def test_registry_uses_current_config_for_create_and_sync_update(temp_db: HubDatabase) -> None:
     mutations = ConfigMutations(temp_db)
@@ -114,15 +120,15 @@ def test_registry_uses_current_config_for_create_and_sync_update(temp_db: HubDat
         patch=ConfigPatch(values={"workflow.definition_regex_max_length": 16}),
     )
     manager = RuleDefinitionManager(temp_db)
-    row = manager.create("configured-registry", {"command_pattern": "x" * 16})
+    row = manager.create("configured-registry", _capped_rule(16))
     mutations.patch(
         expected_revision=result.revision,
         patch=ConfigPatch(values={"workflow.definition_regex_max_length": 15}),
     )
     with pytest.raises(ValueError, match="configured-registry.*16.*15"):
-        manager.update_from_sync(row.id, definition_json={"command_pattern": "x" * 16})
+        manager.update_from_sync(row.id, definition_json=_capped_rule(16))
     with pytest.raises(ValueError, match="lower-cap.*16.*15"):
-        manager.create("lower-cap", {"command_pattern": "x" * 16})
+        manager.create("lower-cap", _capped_rule(16))
     assert manager.get(row.id).definition_json == row.definition_json
 
 
