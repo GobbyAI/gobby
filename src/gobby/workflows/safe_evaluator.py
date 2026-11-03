@@ -510,6 +510,7 @@ def build_condition_helpers(
         shell_command_runs_ocr_review,
         task_commit_project_path_allowlist_violation,
         task_has_no_commits,
+        task_label_update_allowed,
         task_needs_human_review,
         task_state_in,
         task_type_in,
@@ -557,6 +558,9 @@ def build_condition_helpers(
             ),
             "touches_claude_memory_path": touches_claude_memory_path,
             "claims_without_edit_target": claims_without_edit_target,
+            "task_label_update_allowed": lambda session_id, tool_input: task_label_update_allowed(
+                task_manager, session_id, tool_input
+            ),
             "touches_ui_design_path": touches_ui_design_path,
             **PATH_CONDITION_HELPERS,
             **session_condition_helpers(session_manager),
