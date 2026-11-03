@@ -424,6 +424,21 @@ def decoded_exec_results(
         return results
     if not isinstance(value, dict):
         return []
+    if _is_exec_result(value):
+        return [value]
+    for wrapper_key in _RESULT_WRAPPER_KEYS:
+        wrapped = value.get(wrapper_key)
+        if isinstance(wrapped, (dict, list, str)):
+            nested = decoded_exec_results(wrapped)
+            if nested:
+                return nested
+    return []
+
+
+_RESULT_WRAPPER_KEYS = ("content", "contentItems", "output")
+
+
+def _is_exec_result(value: Mapping[str, Any]) -> bool:
     has_exit = any(
         isinstance(value.get(key), int) and not isinstance(value.get(key), bool)
         for key in ("exit_code", "exitCode", "returncode")
@@ -431,15 +446,25 @@ def decoded_exec_results(
     has_boolean = any(
         isinstance(value.get(key), bool) for key in ("success", "isError", "is_error")
     )
-    has_session = exec_session_id(value) is not None
-    if has_exit or has_boolean or has_session:
+    return has_exit or has_boolean or exec_session_id(value) is not None
+
+
+def structured_exec_results(value: Any) -> list[dict[str, Any]]:
+    """Read exec results from structured output only, never from command text.
+
+    A shell command's stdout is whatever the command printed, including JSON that
+    names a session (#25614), so it is never decoded as an execution receipt.
+    """
+    if isinstance(value, list):
+        return [result for item in value for result in structured_exec_results(item)]
+    if not isinstance(value, dict):
+        return []
+    if _is_exec_result(value):
         return [value]
-    for wrapper_key in ("content", "contentItems", "output"):
-        wrapped = value.get(wrapper_key)
-        if isinstance(wrapped, (dict, list, str)):
-            nested = decoded_exec_results(wrapped)
-            if nested:
-                return nested
+    for wrapper_key in _RESULT_WRAPPER_KEYS:
+        nested = structured_exec_results(value.get(wrapper_key))
+        if nested:
+            return nested
     return []
 
 
@@ -512,18 +537,14 @@ def extract_direct_exec_running_session_id(value: Any) -> str | None:
 
 
 def extract_yielded_cell_id(data: Mapping[str, Any]) -> str | None:
-    """Read the functions wrapper correlation token without inferring outcome."""
+    """Read the functions wrapper correlation token without inferring outcome.
+
+    The wrapper writes it as the first text item's first line; anything later is stdout.
+    """
     output = data.get("tool_output", data.get("tool_response"))
-    yielded_cells: set[str] = set()
-    for text in _iter_output_text(output):
-        for line in text.splitlines():
-            first_nonblank = line.strip()
-            if not first_nonblank:
-                continue
-            match = _YIELDED_CELL_RE.fullmatch(first_nonblank)
-            if match:
-                yielded_cells.add(match.group(1))
-    return next(iter(yielded_cells)) if len(yielded_cells) == 1 else None
+    header = next(iter(_iter_output_text(output)), "").strip()
+    match = _YIELDED_CELL_RE.fullmatch(header.splitlines()[0]) if header else None
+    return match.group(1) if match else None
 
 
 def extract_wait_cell_id(data: Mapping[str, Any]) -> str | None:
@@ -544,6 +565,8 @@ class PendingExecution:
     direct: bool = False
     expects_serialized_result: bool = False
     workdir: str | None = None
+    # Set per registered call: a poll's mode can differ from the launch it continues.
+    code_mode_call: bool = False
 
     def to_state(self) -> dict[str, Any]:
         return {
@@ -554,6 +577,7 @@ class PendingExecution:
             "direct": self.direct,
             "expects_serialized_result": self.expects_serialized_result,
             "workdir": self.workdir,
+            "code_mode_call": self.code_mode_call,
         }
 
     @classmethod
@@ -570,12 +594,16 @@ class PendingExecution:
             return None
         direct = value.get("direct", False)
         expects_serialized_result = value.get("expects_serialized_result", False)
-        if not isinstance(direct, bool) or not isinstance(expects_serialized_result, bool):
+        code_mode_call = value.get("code_mode_call", False)
+        if not all(
+            isinstance(flag, bool) for flag in (direct, expects_serialized_result, code_mode_call)
+        ):
             return None
         return cls(
             outer_call_id=outer_call_id,
             direct=direct,
             expects_serialized_result=expects_serialized_result,
+            code_mode_call=code_mode_call,
             **optional,
         )
 
@@ -667,14 +695,18 @@ class ExecutionChainCorrelator:
                     execution = self._cells.get(cell_id)
         if execution is None:
             return False
-        self._set_pending(self._calls, call_id, execution)
+        code_mode = name in FUNCTIONS_EXEC_NAMES or name in WAIT_NAMES
+        self._set_pending(self._calls, call_id, replace(execution, code_mode_call=code_mode))
         return True
 
     def resolve_output(self, call_id: str, output: Any) -> ExecutionResolution:
         execution = self._calls.pop(call_id, None)
         if execution is None:
             return ExecutionResolution("unrelated")
-        yielded_cell = extract_yielded_cell_id({"tool_output": output})
+        # Only a code-mode call yields one; a direct call's stdout is command text.
+        yielded_cell = (
+            extract_yielded_cell_id({"tool_output": output}) if execution.code_mode_call else None
+        )
         if yielded_cell is not None:
             pending = replace(execution, cell_id=yielded_cell)
             self._set_pending(self._cells, yielded_cell, pending)
@@ -688,7 +720,8 @@ class ExecutionChainCorrelator:
         native_terminal = extract_direct_exec_terminal_result(output)
         if native_terminal is not None:
             results = [native_terminal]
-        elif execution.direct:
+        elif execution.direct and not execution.code_mode_call:
+            # A code-mode poll of a direct launch still prints its own result.
             results = []
         else:
             results = decoded_exec_results(
