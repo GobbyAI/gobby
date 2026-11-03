@@ -1423,6 +1423,11 @@ def test_reported_grep_from_a_workspace_cwd_follows_its_leading_cd(
         ('cd inner && echo "#x" |\ncat & cat ../session-99/notes.md', True),
         ('cd {hop} && echo "#" && (\ntrue\n) & cat ../session-99/notes.md', True),
         ("cd inner && # c )\ntrue & cat ../session-99/notes.md", True),
+        # A `;` or newline inside a keyword compound or backticks does not end the list.
+        ("cd inner && if true; then true; fi & cat ../session-99/notes.md", True),
+        ("cd inner && if true\nthen true\nfi & cat ../session-99/notes.md", True),
+        ("cd inner && while false\ndo :\ndone & cat ../session-99/notes.md", True),
+        ("cd inner && echo `\ntrue` & cat ../session-99/notes.md", True),
         ("cd inner &&\ntrue\ncat ../notes.md", False),
         ("cd inner && true # c\ncat ../notes.md", False),
         ("cd inner && true; cat ../notes.md", False),

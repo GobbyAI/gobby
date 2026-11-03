@@ -286,48 +286,6 @@ def _redirect_at(tokens: list[str], index: int) -> bool:
     return token.startswith(("<", ">")) or (token.isdigit() and following.startswith(("<", ">")))
 
 
-_LIST_JOINS = frozenset({"&&", "||", "|", "|&"})
-
-
-def _backgrounded(tokens: list[str], start: int) -> bool:
-    """Whether the and-or list running through `tokens[start:]` ends at `&`.
-
-    The list ends at a top-level `;` or newline, except a newline after `&&`, `||`, `|` or
-    `|&`, which continues it. A `#` comment up to the newline ends nothing, and only its
-    joins and openers count. An `&` anywhere before the end counts, even inside a group
-    or what looks like a comment, so a misread nesting or quote only keeps more places.
-    """
-    depth = 0
-    previous = ""
-    comment = False
-    for token in tokens[start:]:
-        if token == "&":
-            return True
-        if token == "\n" and comment:
-            comment = False
-        elif comment:
-            # The tokens lose their quoting, so a quoted `#` also lands here. Joins and
-            # openers still count, and closers do not, so a misread comment only keeps
-            # more places.
-            if token in _LIST_JOINS:
-                previous = token
-            elif token in {"(", "{"}:
-                depth += 1
-            continue
-        elif token.startswith("#"):
-            comment = True
-            continue
-        if token in {"(", "{"}:
-            depth += 1
-        elif token in {")", "}"}:
-            depth -= 1
-        elif depth <= 0 and (token == ";" or (token == "\n" and previous not in _LIST_JOINS)):
-            return False
-        if token != "\n":
-            previous = token
-    return False
-
-
 def _place_words(token: str, places: frozenset[_Place]) -> list[str]:
     """Words one token reads from each place. Once a place has moved, every bare word counts."""
     words: list[str] = []
@@ -418,14 +376,15 @@ def _cd_anchored_words(
             else:
                 target = raw
             # Only a leading `cd` whose segment ends at `&&`, `;` or a newline may narrow, and
-            # only when its and-or list is not backgrounded by `&`.
+            # only when no `&` follows. Finding where a backgrounded list ends needs a full
+            # shell grammar, so any later `&` keeps the place the shell started in.
             ends_segment = after == len(tokens) or tokens[after] in {"&&", ";", "\n"}
             certain = (
                 name == "cd"
                 and index == 0
                 and consumed
                 and ends_segment
-                and not _backgrounded(tokens, after)
+                and "&" not in tokens[after:]
             )
             places = _cd_places(target, places, certain)
         elif token not in _SHELL_SEPARATORS:
