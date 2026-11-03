@@ -1,0 +1,20 @@
+version: "1.0.0"
+tags: [task-enforcement, enforcement, gobby, default]
+
+rules:
+  no-bundled-definition-test-pins:
+    description: "Keep tests independent of bundled runbook policy"
+    event: before_tool
+    enabled: true
+    priority: 26
+    when: >-
+      event.data.get('canonical_tool_kind') == 'write' and
+      bool(projected_definition_pins(tool_input, event.data))
+    effects:
+      - type: block
+        reason: |-
+          This write adds a bundled-definition dependency in tests:
+          {{ projected_definition_pins(tool_input, event.data) | join('; ') }}.
+          Declare synthetic fixture definitions inline and test the behavior the
+          engine derives from their YAML. Bundled definitions may only receive
+          generic YAML syntax, schema and engine dry-run validation.
