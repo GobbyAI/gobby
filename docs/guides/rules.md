@@ -100,6 +100,7 @@ APIs validate the stored `effects` shape directly.
 | `tools` | Optional pre-filter on native tool name |
 | `audience` | Limit the rule to `all`, `interactive`, `autonomous`, or a concrete audience |
 | `agent_scope` | Limit the rule to specific agent types |
+| `retry_limit` | `before_tool` only. Evaluated before agent and step enforcement and every other rule; its block preempts them and keeps the original block's recovery state |
 | `effects` | One or more effect definitions |
 
 Current rules are validated as `RuleDefinitionBody`. `effects` is required in

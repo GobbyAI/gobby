@@ -120,11 +120,16 @@ Some safety behaviors live in the rule engine itself rather than YAML.
 If the same tool is blocked repeatedly without recovery:
 
 - the engine tracks the blocked tool identity
-- retries of the same tool increment a counter
-- repeated retries eventually trigger a stronger hard-coded block
+- retries of the same tool increment `consecutive_tool_blocks`
+- the bundled `error-recovery/consecutive-tool-block` rule (`retry_limit: true`,
+  mandatory) blocks once `consecutive_tool_blocks + 1` reaches
+  `max_consecutive_blocked_tool_attempts` (default 5), quoting the original
+  block reason
 
-This is meant to break bad retry loops and push the agent toward a different
-recovery action.
+The engine only counts; the threshold and the escalation wording live in that
+YAML rule. Rules see the counter through `block_state`, the issuing agent's
+blocked-retry scope. This is meant to break bad retry loops and push the agent
+toward a different recovery action.
 
 For MCP calls routed through `call_tool`, the tracked identity is
 `server:tool`. A repeated block on `gobby-tasks:close_task` does not make every
