@@ -8,9 +8,11 @@ import logging
 import os
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from gobby.agents.constants import CLAUDE_MANAGED_AGENT_SETTINGS
 from gobby.agents.provider_capabilities import provider_supports_sandbox
 from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig, compute_sandbox_paths
 from gobby.paths import get_gobby_home
@@ -213,25 +215,59 @@ class AgySandboxResolver(SandboxResolver):
         return (["--sandbox"], {})
 
 
+def _deep_merge_settings(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str, Any]:
+    """Return ``left`` overlaid by ``right``, merging nested objects key by key."""
+    merged = dict(left)
+    for key, value in right.items():
+        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
+            merged[key] = _deep_merge_settings(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def merge_claude_settings(
     base_settings: dict[str, Any],
     config: SandboxConfig,
     paths: ResolvedSandboxPaths,
 ) -> dict[str, Any]:
     """Merge Claude sandbox settings into an existing settings payload."""
-
-    def _merge(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
-        merged = dict(left)
-        for key, value in right.items():
-            if isinstance(value, dict) and isinstance(merged.get(key), dict):
-                merged[key] = _merge(merged[key], value)
-            else:
-                merged[key] = value
-        return merged
-
     resolver = ClaudeSandboxResolver()
     overlay = resolver.build_settings(config, paths)
-    return _merge(base_settings, overlay)
+    return _deep_merge_settings(base_settings, overlay)
+
+
+def managed_claude_settings_args(*arg_lists: Sequence[str], srt_enforced: bool) -> list[str]:
+    """Fold every ``--settings`` pair of a managed Claude launch into one.
+
+    ``arg_lists`` are provider argument lists in rising precedence; each
+    ``--settings`` value must be an inline JSON object. On top of them go the
+    SRT override that disables Claude's own sandbox inside the wrapper, then
+    ``CLAUDE_MANAGED_AGENT_SETTINGS``. Other arguments keep their order, and the
+    single merged ``--settings`` pair leads them.
+    """
+    settings: dict[str, Any] = {}
+    passthrough: list[str] = []
+    for args in arg_lists:
+        values = iter(args)
+        for arg in values:
+            if arg != "--settings":
+                passthrough.append(arg)
+                continue
+            raw = next(values, None)
+            if raw is None:
+                raise ValueError("Claude --settings has no value")
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError("Claude --settings must be an inline JSON object") from exc
+            if not isinstance(payload, dict):
+                raise ValueError("Claude --settings must be an inline JSON object")
+            settings = _deep_merge_settings(settings, payload)
+    if srt_enforced:
+        settings = _deep_merge_settings(settings, {"sandbox": {"enabled": False}})
+    settings = _deep_merge_settings(settings, CLAUDE_MANAGED_AGENT_SETTINGS)
+    return ["--settings", json.dumps(settings, separators=(",", ":")), *passthrough]
 
 
 def preflight_provider_native_settings(

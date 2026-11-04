@@ -27,7 +27,7 @@ from gobby.agents.constants import (
 )
 from gobby.agents.isolation_code_index import ensure_isolation_code_index
 from gobby.agents.sandbox_policy import canonical_path
-from gobby.agents.sandbox_resolvers import get_sandbox_resolver
+from gobby.agents.sandbox_resolvers import get_sandbox_resolver, managed_claude_settings_args
 from gobby.agents.spawn import PreparedSpawn, build_cli_command
 from gobby.agents.spawn_cache_policy import (
     sandbox_config_for_spawn as _sandbox_config_for_spawn,
@@ -423,10 +423,14 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
         return sandbox_result
     launch = sandbox_result
     post_sandbox_started = start_spawn_phase()
-    if launch.enforced and launch.backend == "srt":
-        cmd.extend(["--settings", '{"sandbox": {"enabled": false}}'])
-    cmd.extend(launch.provider_args)
-    cmd.extend(request.provider_args)
+    cmd.extend(
+        managed_claude_settings_args(
+            # The preflighted resolver policy outranks caller settings.
+            request.provider_args,
+            launch.provider_args,
+            srt_enforced=launch.enforced and launch.backend == "srt",
+        )
+    )
     if request.prompt:
         cmd.append(request.prompt)
     await asyncio.to_thread(

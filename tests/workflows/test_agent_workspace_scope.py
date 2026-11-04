@@ -2641,3 +2641,44 @@ async def test_quoted_heredoc_bodies_and_quoted_text_judge_concrete_foreign_path
         data = _shell(command, project)
         response = await _decide(engine, data, dict(developer), caller)
         assert response.decision == "allow", (command, response.reason)
+
+
+@pytest.mark.asyncio
+async def test_own_folder_heredoc_after_mkdir_is_allowed_and_python_c_judges_literals(
+    engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    project_id: str = sample_project["id"]
+    anchor = root / project_id
+    developer = _seat(anchor, "fixture-worker", 50)
+    caller = _register(
+        temp_db,
+        project_id,
+        seq=50,
+        status="active",
+        agent_type="fixture-worker",
+        folder=anchor / "fixture-worker" / "session-50",
+        persistent=False,
+    )
+    own = anchor / "fixture-worker" / "session-50"
+    sibling = anchor / "fixture-worker" / "session-51" / "notes.md"
+    # The reported shape: a compound prefix before a quoted heredoc of markdown prose.
+    command = (
+        f"mkdir -p {own} && cat > {own}/standing-directives.md <<'EOF'\n"
+        "# Standing directives\nFollow the operator's rules.\n* keep notes current\nEOF"
+    )
+    for cwd in (project, own):
+        response = await _decide(engine, _shell(command, cwd), dict(developer), caller)
+        assert response.decision == "allow", (cwd, response.reason)
+    readable = f"python3 -c \"print(open('{own}/standing-directives.md').read())\""
+    response = await _decide(engine, _shell(readable, project), dict(developer), caller)
+    assert response.decision == "allow", response.reason
+    refused = f"python3 -c \"print(open('{sibling}').read())\""
+    response = await _decide(engine, _shell(refused, project), dict(developer), caller)
+    assert response.decision == "block", response.reason
+    assert "fixture-read-scope" in (response.reason or "")
