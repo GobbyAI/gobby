@@ -198,6 +198,13 @@ def create_communications_registry(
         )
     )
     async def send_operator_message(channel: str, content: str) -> dict[str, Any]:
+        if is_daemon_execution():
+            # A daemon-run step's grant covers report attachments only, never free text.
+            return {
+                "success": False,
+                "code": "forbidden",
+                "error": "Daemon-run steps may send only operator attachments",
+            }
         try:
             caller_id = get_current_session_id()
             destination = await asyncio.to_thread(operator_destination, channel, caller_id)

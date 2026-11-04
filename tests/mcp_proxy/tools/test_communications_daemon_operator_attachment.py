@@ -449,3 +449,47 @@ async def test_step_without_bound_execution_gets_no_session_grant(
 
     assert result["success"] is False
     manager.send_attachment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_granted_run_cannot_send_free_text_to_operator(
+    temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path
+) -> None:
+    """The grant admits report attachments only; a free-text operator message stays refused."""
+    project_id = str(sample_project["id"])
+    session = _session(temp_db, project_id)
+    run = _execution(temp_db, project_id, session.id, {"operator_messaging": True})
+    manager = _manager([_channel("operator-status", project_id)])
+    manager.send_message = AsyncMock(
+        return_value=MagicMock(status="sent", id="delivered", error=None)
+    )
+    project_root, _ = _checkout(tmp_path)
+    tools = create_communications_registry(manager, db=temp_db, workspace_root=project_root)
+    handler = tools.get_tool("send_operator_message")
+    assert handler is not None
+    proxy = _CommsProxy(handler)
+    step = PipelineStep(
+        id="free_text",
+        mcp=MCPStepConfig(
+            server="gobby-communications",
+            tool="send_operator_message",
+            arguments={"channel": "operator-status", "content": "free text"},
+        ),
+    )
+    context: dict[str, Any] = {
+        "session_id": session.id,
+        "project_id": project_id,
+        "_pipeline_execution_id": run,
+    }
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.communications.get_current_session_id",
+            return_value=session.id,
+        ),
+        suppress(PipelineStepError),
+    ):
+        await execute_mcp_step(step, context, lambda: proxy, SessionManager(temp_db))
+
+    assert proxy.last is not None
+    assert proxy.last["success"] is False
+    manager.send_message.assert_not_awaited()
