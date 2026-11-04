@@ -813,6 +813,99 @@ async fn ungranted_native_pane_types_on_host_grant_while_the_take_is_held() {
     mock.shutdown().await;
 }
 
+/// How the daemon answers the take that a keypress queues behind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TakeReply {
+    /// The daemon answers at once.
+    Healthy,
+    /// The daemon's reply is held for `SLOW_REPLY`, then released.
+    Slowed,
+    /// The daemon never answers.
+    Absent,
+}
+
+/// How long a `TakeReply::Slowed` daemon holds its reply.
+const SLOW_REPLY: Duration = Duration::from_secs(1);
+/// The most a keystroke may take to reach the host stream in any daemon state.
+/// A key that waited on the daemon would take `SLOW_REPLY` when slowed and
+/// would never arrive when absent.
+const KEY_BOUND: Duration = Duration::from_millis(500);
+
+/// Keystroke latency on a native pane, first while the host has not granted
+/// it and then once it has, with the daemon healthy, slowed and absent. Every
+/// key reaches the host stream within `KEY_BOUND` in every state, so no
+/// keystroke awaits the daemon (memory b59e4ce9).
+#[tokio::test]
+async fn keystroke_latency_is_the_same_whether_the_daemon_is_healthy_slowed_or_absent() {
+    for reply in [TakeReply::Healthy, TakeReply::Slowed, TakeReply::Absent] {
+        let mock = MockDaemon::start("local-token").await;
+        let mut host = StallingHost::start().await;
+        host.serve_grants(json!({"ok": true, "granted": true}));
+        let (mut workspace, _home) = two_pane_workspace(&mock, Some(&host)).await;
+        let (backend, draws, frames) = DrawRecorder::new(96, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut chrome = Chrome::dark();
+        let (input_tx, input_rx) = mpsc::channel(1);
+        let release = (reply != TakeReply::Healthy)
+            .then(|| mock.hold_ws("terminal_take_control", for_terminal("terminal-b")));
+
+        let driver = async {
+            let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+            wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+            if let (TakeReply::Slowed, Some(release)) = (reply, &release) {
+                let release = Arc::clone(release);
+                tokio::spawn(async move {
+                    tokio::time::sleep(SLOW_REPLY).await;
+                    release.notify_one();
+                });
+            }
+            let started = std::time::Instant::now();
+            probe.key(KeyCode::Char('x'), KeyModifiers::NONE).await;
+            host.wait_for_input(b"x").await;
+            let ungranted = started.elapsed();
+            // The host's grant applies with the first key's flush, so the next
+            // key types on the granted pane's host stream.
+            probe.draws_continue().await;
+            let started = std::time::Instant::now();
+            probe.key(KeyCode::Char('y'), KeyModifiers::NONE).await;
+            host.wait_for_input(b"y").await;
+            let granted = started.elapsed();
+            drop(input_tx);
+            (ungranted, granted)
+        };
+
+        let mut switch = TerminalGuard::recording().0;
+        let (result, (ungranted, granted)) = tokio::join!(
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
+            driver
+        );
+        result.expect("live loop exits cleanly");
+        eprintln!("keystroke latency, daemon take {reply:?}: ungranted {ungranted:?}, granted {granted:?}");
+        assert!(
+            ungranted < KEY_BOUND,
+            "an ungranted key took {ungranted:?} to reach the host with the daemon {reply:?}"
+        );
+        assert!(
+            granted < KEY_BOUND,
+            "a granted key took {granted:?} to reach the host with the daemon {reply:?}"
+        );
+        assert!(
+            written(&mock, "terminal-b").is_empty(),
+            "no key rode the daemon with the daemon {reply:?}"
+        );
+        if let Some(release) = &release {
+            release.notify_one();
+        }
+        mock.shutdown().await;
+    }
+}
+
 /// A peer that holds the pane refuses the keypress grant on the stream. The
 /// key is dropped with a visible refusal, never queued for the daemon, and the
 /// grant asked for it does not displace the peer.
