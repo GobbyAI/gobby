@@ -222,8 +222,8 @@ See [docs/guides/README.md](docs/guides/README.md) for the full guide index.
 | Grok | Hooks + MCP | Shared lifecycle, transcript parsing, spawned-agent flows |
 | AGY | Hooks + MCP config | Cross-session context, memory, tasks, pipelines; live chat/spawn unavailable |
 
-A task started in any one of them can be continued in any other with the same
-local state, validation gates, and review state. Hook policy is portable across
+A task released or handed off by one of them can be continued in any other with the
+same local state, validation gates, and review state. Hook policy is portable across
 providers, while native response fidelity remains provider-specific and is
 tracked in [adapter-fidelity.md](docs/guides/adapter-fidelity.md).
 
