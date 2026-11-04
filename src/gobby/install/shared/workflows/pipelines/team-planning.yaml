@@ -1,6 +1,6 @@
 name: team-planning
 type: pipeline
-version: "2.2.0"
+version: "2.2.1"
 description: |
   Planning runbook: launches the plan writer, plan enhancer and plan adversary seats into one
   'Team Planning - #<task>' tab in the shared checkout. Each seat runs its own agent definition, and
@@ -16,9 +16,9 @@ description: |
   Planning child: the run reuses the task's open planning child or creates one, and the plan
   writer claims it before writing the plan file. Before end_agent_run the Writer records an
   approved implementation attestation on that child with the full final plan commit SHA and
-  validation/consensus evidence, then sends Triage the child ref, stamped plan, SHA and attestation
-  ID. The Orchestrator is the named closer: it records independent-review and validation for that
-  exact reference, previews closure and closes the planning child when selected policy passes.
+  validation/consensus evidence, then sends the report_to session the child ref, stamped plan, SHA
+  and attestation ID. The configured completion owner records independent-review and validation for
+  that exact reference, previews closure and closes the planning child when selected policy passes.
   Closure does not approve expansion; operator approval is still required.
 tags: [runbook]
 resume_on_restart: true
@@ -47,7 +47,7 @@ inputs:
   report_to:
     type: string
     required: true
-    description: "Triage's live session ref for readiness, blockers and unassigned waits"
+    description: "Live session ref of the seat this team reports to, for readiness, blockers and unassigned waits"
   plan_writer_provider:
     type: string
     default: null
@@ -175,7 +175,7 @@ steps:
         checkout_mode: none
         project_path: "${{ inputs.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the plan writer seat for task ${{ inputs.task }} (${{ steps['target'].output.get('title') or inputs.task }}). Your plan file is ${{ (steps['registered-plan'].output.get('plan') or {}).get('plan_path') or ('.gobby/plans/task-' + (inputs.task | replace('#', '')) + '.md') }}, and your planning task is ${{ steps['planning-child'].output.get('ref') if 'planning-child' in steps and steps['planning-child'].output else ((steps['planning-children'].output.get('tasks', []) if 'planning-children' in steps and steps['planning-children'].output else []) | selectattr('category', 'equalto', 'planning') | first | default({})).get('ref') }}. Claim that planning task with claim_task before you write the plan file. Before end_agent_run, record its approved implementation attestation with the full final plan commit SHA and validation/consensus evidence. Send Triage the planning-child ref, stamped plan, SHA and attestation ID. The Orchestrator is the named closer: it records independent-review and validation, previews and closes the child when policy passes; closure does not approve expansion. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the plan writer seat for task ${{ inputs.task }} (${{ steps['target'].output.get('title') or inputs.task }}). Your plan file is ${{ (steps['registered-plan'].output.get('plan') or {}).get('plan_path') or ('.gobby/plans/task-' + (inputs.task | replace('#', '')) + '.md') }}, and your planning task is ${{ steps['planning-child'].output.get('ref') if 'planning-child' in steps and steps['planning-child'].output else ((steps['planning-children'].output.get('tasks', []) if 'planning-children' in steps and steps['planning-children'].output else []) | selectattr('category', 'equalto', 'planning') | first | default({})).get('ref') }}. Claim that planning task with claim_task before you write the plan file. Before end_agent_run, record its approved implementation attestation with the full final plan commit SHA and validation/consensus evidence. Send the report_to session ${{ inputs.report_to }} the planning-child ref, stamped plan, SHA and attestation ID. The configured completion owner records independent-review and validation, previews and closes the child when policy passes; closure does not approve expansion. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': inputs.seat_pane,
           'axis': 'right', 'title': 'Plan Writer'}}

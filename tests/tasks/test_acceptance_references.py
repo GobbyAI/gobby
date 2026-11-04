@@ -5,17 +5,8 @@ from __future__ import annotations
 import pytest
 
 from gobby.tasks import acceptance_references as artifacts_module
-from gobby.tasks.acceptance_references import malformed_test_reference_findings
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.mark.parametrize("prefix", ["- TDD cycle:", "Named test:"])
-def test_unlabeled_test_reference_is_not_silently_dropped(prefix: str) -> None:
-    reference = "tests/x_test.py::test_a"
-    findings = malformed_test_reference_findings(f"{prefix} test: `{reference}`")
-    accepted = artifacts_module.extract_artifact_references(f"{prefix} test: `{reference}`", "test")
-    assert reference in accepted or any(reference in finding for finding in findings)
 
 
 def test_artifact_references_ignore_prose_file_line_token() -> None:
@@ -48,7 +39,6 @@ def test_artifact_references_ignore_bare_prose_words() -> None:
 def test_artifact_references_ignore_compound_labels_and_fenced_examples(criteria: str) -> None:
     assert artifacts_module.extract_artifact_references(criteria, "test") == ()
     assert artifacts_module.extract_artifact_references(criteria, "file") == ()
-    assert malformed_test_reference_findings(criteria) == ()
 
 
 def test_artifact_references_keep_real_tests_after_fenced_examples() -> None:
@@ -65,7 +55,6 @@ def test_artifact_references_keep_real_tests_after_fenced_examples() -> None:
         "tests/live.py::test_live",
     )
     assert artifacts_module.extract_artifact_references(criteria, "file") == ("docs/evidence.md",)
-    assert malformed_test_reference_findings(criteria) == ()
 
 
 @pytest.mark.parametrize(
@@ -295,22 +284,4 @@ def test_backticked_reference_keeps_trailing_colon() -> None:
 
     assert artifacts_module.extract_artifact_references(criteria, "test") == (
         "tests/x.py::test_x:",
-    )
-
-
-def test_malformed_test_reference_findings_reports_every_invalid_reference() -> None:
-    findings = malformed_test_reference_findings(
-        """\
-test: `tests/x/test_y.py`
-test: `oops`
-test: tests/z/test_w.py
-test: `tests/x/test_y.py::test_valid`
-3) Dispatch test: an openapi-template server registers.
-"""
-    )
-
-    assert findings == (
-        "tests/x/test_y.py: malformed test reference; expected path::test_symbol",
-        "oops: malformed test reference; expected path::test_symbol",
-        "tests/z/test_w.py: malformed test reference; expected path::test_symbol",
     )

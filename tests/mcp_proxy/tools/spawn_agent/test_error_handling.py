@@ -464,6 +464,7 @@ class TestSpawnAgentImplErrorBranches:
             id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
             worktree_path=str(worktree_path),
             branch_name="branch",
+            task_id=task.id,
         )
         worktree_storage = MagicMock(db=temp_db)
         worktree_storage.is_claimed_by_live_session.return_value = False
@@ -838,6 +839,7 @@ test"""
             id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
             worktree_path=str(worktree_path),
             branch_name="branch",
+            task_id=None,
         )
         worktree_storage = MagicMock()
         worktree_storage.is_claimed_by_live_session.return_value = False
@@ -1244,6 +1246,7 @@ async def test_reused_worktree_failed_merge_abort_surfaces_verbatim(
         id="wt-dirty",
         worktree_path=str(worktree_path),
         branch_name="dirty-branch",
+        task_id=None,
     )
     git_manager = MagicMock()
     git_manager.get_current_branch = AsyncMock(return_value="main")

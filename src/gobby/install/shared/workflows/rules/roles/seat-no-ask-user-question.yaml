@@ -1,4 +1,4 @@
-version: "3.0.0"
+version: "3.0.1"
 tags: [roles, runbook, enforcement, gobby]
 
 # The native question dialog freezes a seat's pane until someone answers it, and no
@@ -15,5 +15,5 @@ rules:
         tools: [AskUserQuestion]
         reason: >-
           Use `gobby-agents:send_message` to send your question to the seat you report to
-          (your report_to session, Triage or your Dev Team Lead), then continue other work or
+          (your report_to session), then continue other work or
           wait for the reply. The question dialog freezes your pane until someone answers it.

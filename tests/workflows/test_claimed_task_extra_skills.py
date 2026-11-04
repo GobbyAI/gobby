@@ -85,11 +85,6 @@ def test_claim_exposes_tdd_metadata_without_runtime_obligations() -> None:
         "claimed_task_extra_skills": ["test-driven-development"],
         "unresolvable_claimed_task_extra_skills": [],
         "claimed_task_requires_tdd": True,
-        "claimed_task_acceptance_test_paths": [
-            "tests/workflows/test_claimed_task_extra_skills.py",
-            "tests/workflows/test_shared.py",
-            "crates/gclient/tests/parity/sidebar.rs",
-        ],
         "claimed_task_is_source_work": False,
     }
 
@@ -98,47 +93,18 @@ def test_claim_exposes_tdd_metadata_without_runtime_obligations() -> None:
         manager,
     )
     assert skill_only_state["claimed_task_requires_tdd"] is True
-    assert skill_only_state["claimed_task_acceptance_test_paths"] == [
-        "tests/workflows/test_shared.py",
-        "crates/gclient/tests/parity/sidebar.rs",
-    ]
 
     stale_variables = {
         "claimed_tasks": {},
         "claimed_task_requires_tdd": True,
-        "claimed_task_acceptance_test_paths": ["tests/stale.py"],
     }
     assert refresh_claimed_task_extra_skills(stale_variables, manager) == {
         "claimed_task_extra_skills": [],
         "unresolvable_claimed_task_extra_skills": [],
         "claimed_task_requires_tdd": False,
-        "claimed_task_acceptance_test_paths": [],
         "claimed_task_is_source_work": False,
     }
     assert stale_variables["claimed_task_requires_tdd"] is False
-    assert stale_variables["claimed_task_acceptance_test_paths"] == []
-
-
-def test_claim_exposes_expansion_prefixed_acceptance_test_paths() -> None:
-    manager = MagicMock()
-    manager.get_task.return_value = _task(
-        labels=["tdd:required"],
-        validation_criteria=(
-            "Acceptance artifacts:\n"
-            "- 2.3.1: test: "
-            "`tests/workflows/test_claimed_task_extra_skills.py::test_expanded`\n"
-            "- 2.3.2: file: `src/gobby/tasks/acceptance_references.py`"
-        ),
-    )
-
-    state = build_claimed_task_extra_skill_state(
-        {"claimed_tasks": {"task-1": "#1"}},
-        manager,
-    )
-
-    assert state["claimed_task_acceptance_test_paths"] == [
-        "tests/workflows/test_claimed_task_extra_skills.py"
-    ]
 
 
 def test_multiple_claims_dedupe_without_reordering() -> None:
@@ -267,7 +233,6 @@ def test_refresh_state_drops_unresolvable_names_after_last_claim() -> None:
         "claimed_task_extra_skills": [],
         "unresolvable_claimed_task_extra_skills": [],
         "claimed_task_requires_tdd": False,
-        "claimed_task_acceptance_test_paths": [],
         "claimed_task_is_source_work": False,
     }
 

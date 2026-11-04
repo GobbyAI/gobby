@@ -29,7 +29,9 @@ async def test_explicit_reuse_records_selected_base(repo: Path, tmp_path: Path) 
     selected = git(repo, "rev-parse", "HEAD")
     storage = MagicMock()
     storage.is_claimed_by_live_session.return_value = False
-    existing = SimpleNamespace(worktree_path=str(child), branch_name="candidate", id="wt-id")
+    existing = SimpleNamespace(
+        worktree_path=str(child), branch_name="candidate", id="wt-id", task_id=None
+    )
     context, _ = await prepare_reused_worktree(
         existing_worktree=existing,
         git_manager=WorktreeGitManager(repo),

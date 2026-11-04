@@ -112,6 +112,10 @@ def recovery_pane(
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="#24763 is tests-first: reboot inventory does not yet keep the recoverable pane",
+)
 async def test_reboot_inventory_and_workspace_sweep_keep_recoverable_pane(
     temp_db: HubDatabase, recovery_pane: RecoveryPane
 ) -> None:
