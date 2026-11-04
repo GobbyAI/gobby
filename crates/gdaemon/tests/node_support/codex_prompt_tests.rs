@@ -459,6 +459,43 @@ async fn codex_prompt_held_snapshot_fails_at_deadline() -> Result<()> {
     fixture.assert_no_signal().await
 }
 
+#[tokio::test(start_paused = true)]
+async fn codex_prompt_exit_reports_output_printed_after_the_last_poll() -> Result<()> {
+    let mut fixture = PromptFixture::new().await?;
+    let exit_output = "codex: usage limit reached";
+    fixture.hub.script(
+        FAILURE,
+        vec![(StatusCode::OK, json!({"transitioned":true}))],
+    );
+    let delivery = fixture.start(PROMPT);
+    pump().await;
+    // The poll at 1 s reads an empty pane, and that reply is held. The process prints its error
+    // and leaves the inventory before the reply lands, so only a read after the exit can carry it.
+    fixture.host.pause_next_snapshot_reply();
+    advance(1000).await;
+    fixture.host.set_pane(exit_output);
+    fixture.host.clear_inventory();
+    fixture.host.release_snapshot_reply();
+    pump().await;
+    assert!(delivery.is_finished(), "the exit must end delivery");
+    delivery.await?;
+    let requests = fixture.hub.requests();
+    assert_eq!(
+        requests.len(),
+        1,
+        "the exit posts one failure: {requests:?}"
+    );
+    assert_eq!(
+        requests[0].body["code"],
+        "codex_terminal_exited_before_composer"
+    );
+    assert_eq!(
+        requests[0].body["pane"], exit_output,
+        "the failure must carry the process's own output"
+    );
+    fixture.assert_no_signal().await
+}
+
 /// Wires a launch's agents to node services as `NodeServices::prepare` does. The agents hold only
 /// a weak reference, so the caller keeps the returned node alive for the test.
 fn wire_services(launch: &LaunchFixture) -> Result<Arc<NodeServices>> {
