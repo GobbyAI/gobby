@@ -153,6 +153,60 @@ fn explicit_files_respect_ignored_ancestors() {
 }
 
 #[test]
+fn batch_explicit_classification_matches_per_path_classification() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let status = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .arg(root)
+        .status()
+        .expect("initialize test repository");
+    assert!(status.success());
+    write_file(root, ".gitignore", b"/wiki/\n");
+    write_file(root, "src/lib.rs", b"pub fn surviving_code() {}\n");
+    write_file(root, "src/nested/deep/mod.rs", b"pub fn deep() {}\n");
+    write_file(root, "docs/guide.md", b"# Guide\n");
+    write_file(root, "data/blob.bin", b"\0\x01binary payload");
+    write_file(root, ".github/CODEOWNERS", b"* @owner\n");
+    write_file(root, ".gobby/plans/plan.md", b"# Plan\n");
+    write_file(root, "wiki/page.md", b"# Retired vault\n");
+    write_file(root, "wiki/nested/more.rs", b"fn hidden_by_ignore() {}\n");
+    let rels = [
+        "src/lib.rs",
+        "src/nested/deep/mod.rs",
+        "docs/guide.md",
+        "data/blob.bin",
+        ".github/CODEOWNERS",
+        ".gobby/plans/plan.md",
+        "wiki/page.md",
+        "wiki/nested/more.rs",
+        "missing/file.rs",
+    ];
+    let paths: Vec<std::path::PathBuf> = rels.iter().map(|rel| root.join(rel)).collect();
+    let excludes: Vec<&str> = Vec::new();
+
+    let batch =
+        classify_explicit_files_with_options(root, &paths, &excludes, DiscoveryOptions::default());
+    assert_eq!(batch[0], Some(FileClassification::Ast), "src/lib.rs");
+    assert_eq!(batch[6], None, "gitignored wiki/page.md");
+    assert_eq!(batch[4], None, "hidden non-allowlisted CODEOWNERS");
+    assert_eq!(batch[8], None, "missing file");
+
+    for respect_gitignore in [true, false] {
+        let options = DiscoveryOptions { respect_gitignore };
+        let per_path: Vec<_> = paths
+            .iter()
+            .map(|path| classify_explicit_file_with_options(root, path, &excludes, options))
+            .collect();
+        assert_eq!(
+            classify_explicit_files_with_options(root, &paths, &excludes, options),
+            per_path,
+            "respect_gitignore={respect_gitignore}",
+        );
+    }
+}
+
+#[test]
 fn ordinary_wiki_named_directory_uses_normal_classification() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();

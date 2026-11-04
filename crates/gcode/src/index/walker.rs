@@ -5,10 +5,13 @@ mod classification;
 mod discovery;
 mod generated;
 mod hidden;
+#[cfg(test)]
+pub(crate) mod op_counts;
 mod types;
 
 pub use classification::{
-    classify_explicit_file_with_options, classify_file, content_language, is_content_indexable,
+    classify_explicit_file_with_options, classify_explicit_files_with_options, classify_file,
+    content_language, is_content_indexable,
 };
 pub(crate) use classification::{indexable_len, passes_path_filters};
 pub use discovery::discover_files_with_options;
