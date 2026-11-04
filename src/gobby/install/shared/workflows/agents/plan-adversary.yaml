@@ -5,7 +5,7 @@ description: |
   passes it, reaches consensus with the writer over send_message, and stamps
   the M1 task manifest on consensus. Never edits the plan narrative.
 
-version: "3.1.0"
+version: "4.0.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -26,6 +26,7 @@ blocked_mcp_tools:
   - "gobby-plans:apply_plan_review_manifest"
   - "gobby-plans:checkpoint_plan_review_lesson_mint"
   - "gobby-worktrees:create_worktree"
+  - "gobby-worktrees:sync_worktree"
   - "gobby-agents:spawn_agent"
   - "gobby-agents:kill_agent"
   - "gobby-plans:apply_plan_review_repairs"

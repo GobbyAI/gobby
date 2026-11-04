@@ -8,6 +8,7 @@ validate through AgentDefinitionBody.
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from gobby.agents.sync import get_bundled_agents_path
 from gobby.cli.agents_steps import check_agent
 from gobby.skills.sync import get_bundled_skills_path
 from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
@@ -28,6 +30,7 @@ from gobby.workflows.definitions import (
 )
 from gobby.workflows.pipeline_models import PipelineDefinition
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+from gobby.workflows.selectors import resolve_rules_for_agent
 from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
 from gobby.workflows.sync_rules import get_bundled_rules_path
 
@@ -229,3 +232,74 @@ def test_review_stage_seat_loads_the_holistic_epic_review_for_epic_targets() -> 
     for duty in EPIC_REVIEW_DUTIES:
         assert duty in reference, duty
     assert re.search(r"^_Version: \d+\.\d+\.\d+_$", raw, re.MULTILINE)
+
+
+SHELL_GIT_MUTATION_FIELD = "canonical_git_mutation"
+WORKTREE_SYNC_TOOL = "gobby-worktrees:sync_worktree"
+REVIEW_ATTESTATIONS = {"independent-review", "security-review"}
+_SYNCED_AT = datetime(2026, 11, 3, tzinfo=UTC)
+
+
+def _bundled_rule_rows() -> list[RuleDefinitionRow]:
+    """Bundled rules as sync stores them: per-rule tags, else file tags, plus gobby."""
+    rows: list[RuleDefinitionRow] = []
+    for path in sorted(get_bundled_rules_path().rglob("*.yaml")):
+        if {"deprecated", "_deprecated"}.intersection(path.parts):
+            continue
+        document = _load(path)
+        for name, definition in (document.get("rules") or {}).items():
+            tags = list(definition.get("tags", document.get("tags", [])))
+            rows.append(
+                RuleDefinitionRow(
+                    id=name,
+                    name=name,
+                    enabled=True,
+                    enabled_pinned=False,
+                    priority=int(definition.get("priority", 100)),
+                    definition_json=dict(definition),
+                    source="installed",
+                    tags=tags if "gobby" in tags else [*tags, "gobby"],
+                    created_at=_SYNCED_AT,
+                    updated_at=_SYNCED_AT,
+                )
+            )
+    return rows
+
+
+BUNDLED_RULE_ROWS = _bundled_rule_rows()
+SHELL_GIT_BLOCKING_RULES = {
+    row.name
+    for row in BUNDLED_RULE_ROWS
+    if SHELL_GIT_MUTATION_FIELD in str(row.definition_json.get("when", ""))
+    and any(effect.get("type") == "block" for effect in row.definition_json.get("effects", []))
+}
+AGENT_BODIES = {body.name: body for body in map(_validate_agent_definition, BUNDLED_AGENT_YAMLS)}
+
+
+def _blocks_shell_git_mutation(body: AgentDefinitionBody) -> bool:
+    return bool(resolve_rules_for_agent(body, BUNDLED_RULE_ROWS) & SHELL_GIT_BLOCKING_RULES)
+
+
+SHELL_GIT_BLOCKED_SEATS = sorted(
+    name for name, body in AGENT_BODIES.items() if _blocks_shell_git_mutation(body)
+)
+TREE_REVIEW_SEATS = sorted(
+    name
+    for name, body in AGENT_BODIES.items()
+    if body.checkout_mode == "inherit" and REVIEW_ATTESTATIONS & set(body.task_attestation_writes)
+)
+
+
+def test_branch_guard_invariants_cover_bundled_seats() -> None:
+    assert SHELL_GIT_BLOCKING_RULES, "no bundled rule blocks shell git mutation"
+    assert TREE_REVIEW_SEATS, "no bundled review seat runs in an inherited checkout"
+
+
+@pytest.mark.parametrize("name", TREE_REVIEW_SEATS)
+def test_review_seat_in_the_author_tree_cannot_mutate_git_from_the_shell(name: str) -> None:
+    assert _blocks_shell_git_mutation(AGENT_BODIES[name]), name
+
+
+@pytest.mark.parametrize("name", SHELL_GIT_BLOCKED_SEATS)
+def test_seat_barred_from_shell_git_mutation_cannot_sync_a_worktree(name: str) -> None:
+    assert WORKTREE_SYNC_TOOL in AGENT_BODIES[name].blocked_mcp_tools, name

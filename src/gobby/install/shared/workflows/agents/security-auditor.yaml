@@ -1,5 +1,5 @@
 name: security-auditor
-version: "2.3.0"
+version: "3.0.0"
 description: Audits security boundaries and independently reviews exact security candidates.
 tags:
 - gobby
@@ -25,6 +25,7 @@ blocked_mcp_tools:
 - gobby-agents:kill_agent
 - gobby-tasks:close_task
 - gobby-tasks-ops:land_commit
+- gobby-worktrees:sync_worktree
 task_attestation_writes:
 - security-review
 respect_task_protections: true
