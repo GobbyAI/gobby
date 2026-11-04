@@ -355,6 +355,51 @@ def test_settle_terminal_context_replaces_only_a_pending_marker(
     assert row.terminal_context == settled.terminal_context
 
 
+@pytest.mark.parametrize(
+    ("stored", "incoming", "recorded"),
+    [
+        ({"gobby_codex_clear_origin": "codex_vscode"}, "pending", "codex_vscode"),
+        (
+            {"gobby_codex_clear_origin": "codex-tui", "parent_pid": 4242},
+            "pending",
+            "codex-tui",
+        ),
+        ({"gobby_codex_clear_origin": "pending"}, "codex-tui", "codex-tui"),
+        ({}, "pending", "pending"),
+    ],
+    ids=["settled", "adopted", "pending-settles", "first-write"],
+)
+def test_register_never_unsettles_a_clear_origin(
+    session_mgr: SessionManager,
+    project_id: str,
+    stored: dict[str, object],
+    incoming: str,
+    recorded: str,
+) -> None:
+    """A clear-start that registers late writes its origin only over a pending one."""
+    created = session_mgr.register(
+        external_id="late-clear-start",
+        machine_id="20000000-0000-4000-8000-000000000002",
+        source="codex",
+        project_id=project_id,
+        terminal_context={"cwd": "/work/repos/gobby", **stored},
+    )
+
+    updated = session_mgr.register(
+        external_id="late-clear-start",
+        machine_id="20000000-0000-4000-8000-000000000002",
+        source="codex",
+        project_id=project_id,
+        terminal_context={"cwd": "/work/repos/gobby/sub", "gobby_codex_clear_origin": incoming},
+    )
+
+    assert updated.id == created.id
+    assert updated.terminal_context is not None
+    assert updated.terminal_context["gobby_codex_clear_origin"] == recorded
+    # The rest of the context still merges.
+    assert updated.terminal_context["cwd"] == "/work/repos/gobby/sub"
+
+
 def test_recover_session_prefers_tmux_context_over_cwd_only_candidate(
     session_mgr: SessionManager,
     project_id: str,

@@ -35,11 +35,13 @@ def _local_machine() -> Iterator[None]:
         yield
 
 
-def _expired_past_horizon(manager: SessionManager, project_id: str, machine_id: str) -> Session:
+def _expired_past_horizon(
+    manager: SessionManager, project_id: str, machine_id: str, source: str = "codex"
+) -> Session:
     session = manager.register(
         external_id=EXTERNAL_ID,
         machine_id=machine_id,
-        source="codex",
+        source=source,
         project_id=project_id,
         routed_machine_id=machine_id,
     )
@@ -78,16 +80,19 @@ def _assert_freshly_active(manager: SessionManager, session_id: str) -> None:
     assert row.last_activity > datetime.now(UTC) - timedelta(minutes=1)
 
 
+@pytest.mark.parametrize("source", ["codex", "grok"])
 async def test_mcp_registration_reactivates_an_expired_session(
-    session_manager: SessionManager, sample_project: dict[str, Any]
+    session_manager: SessionManager, sample_project: dict[str, Any], source: str
 ) -> None:
-    session = _expired_past_horizon(session_manager, sample_project["id"], LOCAL_MACHINE_ID)
+    session = _expired_past_horizon(
+        session_manager, sample_project["id"], LOCAL_MACHINE_ID, source
+    )
     registry = create_session_messages_registry(session_manager=session_manager)
 
     with session_context_for_test(session.id):
         result = await registry.call(
             "register_session",
-            {"external_id": EXTERNAL_ID, "source": "codex", "project_id": sample_project["id"]},
+            {"external_id": EXTERNAL_ID, "source": source, "project_id": sample_project["id"]},
         )
 
     assert result["session_id"] == session.id, result
@@ -95,14 +100,17 @@ async def test_mcp_registration_reactivates_an_expired_session(
     _assert_freshly_active(session_manager, session.id)
 
 
+@pytest.mark.parametrize("source", ["codex", "grok"])
 def test_rest_registration_reactivates_an_expired_session(
-    session_manager: SessionManager, sample_project: dict[str, Any], tmp_path: Path
+    session_manager: SessionManager, sample_project: dict[str, Any], tmp_path: Path, source: str
 ) -> None:
-    session = _expired_past_horizon(session_manager, sample_project["id"], LOCAL_MACHINE_ID)
+    session = _expired_past_horizon(
+        session_manager, sample_project["id"], LOCAL_MACHINE_ID, source
+    )
 
     response = _client(session_manager, tmp_path).post(
         "/api/sessions/register",
-        json={"external_id": EXTERNAL_ID, "source": "codex", "project_id": sample_project["id"]},
+        json={"external_id": EXTERNAL_ID, "source": source, "project_id": sample_project["id"]},
         headers={"X-Gobby-Session-Id": session.id},
     )
 

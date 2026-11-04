@@ -3569,6 +3569,17 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
                 # It carries other news, so the merge cannot skip as a no-op.
                 stale.data["cwd"] = str(temp_dir / "subdir")
                 manager._session_lookup._backfill_terminal_context(waiting.id, stale, waiting)
+                # Nor may a clear-start that computed its origin before the rollout existed
+                # and registers only now.
+                held_start = HookEvent(
+                    event_type=HookEventType.SESSION_START,
+                    session_id=successor_thread,
+                    source=SessionSource.CODEX,
+                    timestamp=datetime.now(UTC),
+                    data={**start.data, "transcript_path": stale.data["transcript_path"]},
+                    machine_id=LOCAL_MACHINE_ID,
+                )
+                assert manager.handle(held_start).decision == "allow"
             # A late hook for the cleared thread must not revive it beside the successor.
             assert manager.handle(prompt_for(predecessor_thread)).decision == "allow"
     finally:
