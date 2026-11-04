@@ -2110,21 +2110,18 @@ class TestBeforeToolBlockTracking:
         assert variables["tool_block_pending"] is True
 
     @pytest.mark.asyncio
-    async def test_success_keeps_edit_state_while_another_context_failed(
+    async def test_success_keeps_edit_state_while_this_context_failed(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
-        """A parallel success elsewhere never clears edit state a subagent's failure left."""
+        """A non-edit success keeps edit state while its own context has a failure pending."""
 
         engine = RuleEngine(db)
-        variables: dict[str, Any] = {
-            "edit_write_pending": True,
-            "_last_blocked_scopes": {"a1": {"tool_block_pending": True}},
-        }
+        variables: dict[str, Any] = {"edit_write_pending": True, "tool_block_pending": True}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["edit_write_pending"] is True
-        assert variables["_last_blocked_scopes"]["a1"]["tool_block_pending"] is True
+        assert variables["tool_block_pending"] is False
 
     @pytest.mark.parametrize(
         "payload,expected_pending",

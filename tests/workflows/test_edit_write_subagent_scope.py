@@ -338,3 +338,28 @@ async def test_subagent_terminal_stop_leaves_the_parent_write_held(temp_db: HubD
     assert not _held_by_edit_recovery(released)
     assert SUBAGENT not in variables["_last_blocked_scopes"]
     assert _held_by_edit_recovery(await engine.evaluate(_stop(), SESSION_ID, variables))
+
+
+@pytest.mark.asyncio
+async def test_orphaned_subagent_failure_does_not_hold_parent_edit_recovery(
+    temp_db: HubDatabase,
+) -> None:
+    """A killed subagent's unrecovered failure must not hold the parent's stale edit state.
+
+    The subagent's Read fails and it ends without a SubagentStop, so its scope keeps
+    tool_block_pending. The parent's Edit post is lost, leaving its own
+    edit_write_pending set. The parent's successful Read clears that flag, because
+    the parent's own context has no pending failure.
+    """
+    engine = RuleEngine(temp_db)
+    variables: dict[str, Any] = {}
+    await engine.evaluate(_tool(HookEventType.BEFORE_TOOL, READ, SUBAGENT), SESSION_ID, variables)
+    await engine.evaluate(
+        _tool(HookEventType.AFTER_TOOL, READ, SUBAGENT, failed=True), SESSION_ID, variables
+    )
+    await engine.evaluate(_turn_start(), SESSION_ID, variables)
+    await engine.evaluate(_tool(HookEventType.BEFORE_TOOL, EDIT), SESSION_ID, variables)
+    await engine.evaluate(_tool(HookEventType.AFTER_TOOL, READ), SESSION_ID, variables)
+
+    assert variables["edit_write_pending"] is False
+    assert not _held_by_edit_recovery(await engine.evaluate(_stop(), SESSION_ID, variables))
