@@ -5,7 +5,6 @@ from __future__ import annotations
 from ._constants import (
     ACTIVE_AGENT_RUN_STATUS_SQL,
     ACTIVE_AGENT_RUN_STATUSES,
-    DELIBERATE_STOP_TERMINAL_REASONS,
     STATUS_CANCELLED,
     STATUS_ERROR,
     STATUS_PENDING,
@@ -17,6 +16,7 @@ from ._constants import (
     AgentRunTerminalReason,
     TerminalAction,
     logger,
+    task_closed_terminal_reason,
 )
 from ._manager import LocalAgentRunManager
 from ._models import AgentRun
@@ -25,7 +25,6 @@ from ._sandbox_records import sandbox_record
 __all__ = [
     "ACTIVE_AGENT_RUN_STATUSES",
     "ACTIVE_AGENT_RUN_STATUS_SQL",
-    "DELIBERATE_STOP_TERMINAL_REASONS",
     "STATUS_CANCELLED",
     "STATUS_ERROR",
     "STATUS_PENDING",
@@ -38,6 +37,7 @@ __all__ = [
     "AgentRunTerminalReason",
     "LocalAgentRunManager",
     "TerminalAction",
+    "task_closed_terminal_reason",
     "logger",
     "sandbox_record",
 ]

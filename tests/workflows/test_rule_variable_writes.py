@@ -37,7 +37,6 @@ TARGETS = [
         ("custom", [], "ordinary_flag", True),
         ("installed", ["gobby"], "_agent_type", True),
         ("installed", ["user", "gobby"], "_agent_type", False),
-        ("installed", [], "project_policy", True),
     ],
 )
 @pytest.mark.asyncio
@@ -51,6 +50,28 @@ async def test_rule_selected_variable_write_authority(
     variable: str,
     allowed: bool,
 ) -> None:
+    variables, response = await _run_selected_variable_write(
+        temp_db, target_field, effect, delivery, source, tags, variable
+    )
+
+    assert variables[variable] == (True if allowed else "unchanged")
+    staged = response.metadata.get(STAGED_EFFECTS_FIELD, {}).get("session_variables", {})
+    if allowed and delivery == "on_receipt":
+        assert staged[variable] is True
+    else:
+        assert variable not in staged
+    assert response.decision == ("block" if target_field == "acknowledge_variable" else "allow")
+
+
+async def _run_selected_variable_write(
+    temp_db: HubDatabase,
+    target_field: str,
+    effect: dict[str, Any],
+    delivery: str,
+    source: Literal["installed", "custom", "project"],
+    tags: list[str],
+    variable: str,
+) -> tuple[dict[str, Any], Any]:
     manager = RuleDefinitionManager(temp_db)
     manager.create(
         name="synthetic-writer",
@@ -81,12 +102,36 @@ async def test_rule_selected_variable_write_authority(
         variables=variables,
     )
 
-    assert variables[variable] == (True if allowed else "unchanged")
+    return variables, response
+
+
+@pytest.mark.parametrize(("target_field", "effect"), TARGETS)
+@pytest.mark.parametrize("delivery", ["eager", "on_receipt"])
+@pytest.mark.asyncio
+async def test_installed_project_policy_writes_only_through_set_variable(
+    temp_db: HubDatabase,
+    target_field: str,
+    effect: dict[str, Any],
+    delivery: str,
+) -> None:
+    """An installed row reaches project_policy only through its own set_variable effect."""
+    variables, response = await _run_selected_variable_write(
+        temp_db,
+        target_field,
+        effect,
+        delivery,
+        "installed",
+        [],
+        "project_policy",
+    )
+    allowed = target_field == "variable"
     staged = response.metadata.get(STAGED_EFFECTS_FIELD, {}).get("session_variables", {})
+
+    assert variables["project_policy"] == (True if allowed else "unchanged")
     if allowed and delivery == "on_receipt":
-        assert staged[variable] is True
+        assert staged["project_policy"] is True
     else:
-        assert variable not in staged
+        assert "project_policy" not in staged
     assert response.decision == ("block" if target_field == "acknowledge_variable" else "allow")
 
 
@@ -110,7 +155,7 @@ def test_writer_model_enumerates_active_target(target_field: str, effect: dict[s
         ("custom", [], "ordinary_flag", True),
         ("installed", ["gobby"], "_agent_type", True),
         ("installed", ["gobby", "user"], "_agent_type", False),
-        ("installed", [], "project_policy", True),
+        ("installed", [], "project_policy", False),
     ],
 )
 def test_cached_and_late_injection_success_uses_rule_authority(

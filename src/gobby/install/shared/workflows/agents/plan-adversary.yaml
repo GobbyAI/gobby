@@ -5,7 +5,7 @@ description: |
   passes it, reaches consensus with the writer over send_message, and stamps
   the M1 task manifest on consensus. Never edits the plan narrative.
 
-version: "3.1.0"
+version: "4.0.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]

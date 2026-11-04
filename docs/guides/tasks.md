@@ -170,14 +170,17 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
 })
 ```
 
-Omit Git arguments for non-Git tasks. Preview returns `blocking_reasons`,
+Omit Git arguments for non-Git tasks. Preview (`preview=true`) returns `blocking_reasons`,
 `can_close`, `policy_revision`, `snapshot_revision`, resolved commit identities
 and `closed=false`. Diagnostic responses also expose facts. Preview changes
 neither task state nor links. Resolve refusals, then repeat with `preview=false`.
 Pass `expected_closure_revision` to bind final close to that snapshot. Final
 close evaluates current policy and evidence under locks and links an explicit
 candidate atomically with closure. Concurrent changes can require a new preview.
-Success returns `closed=true`.
+Success returns `closed=true`. Closure rules read repository facts such as
+`integration_ancestry`, true when every linked commit is an ancestor of the integration
+branch. After `closed=true`, review the task's memories with
+`gobby-memory:review_task_memories`.
 
 Reasons are nonblank text of at most 120 characters. YAML can restrict them and
 require disposition evidence or replacement references. Scopes and project task

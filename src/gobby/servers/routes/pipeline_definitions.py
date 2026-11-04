@@ -25,6 +25,7 @@ from gobby.storage.definitions.pipelines import (
     PipelineDefinitionRow,
 )
 from gobby.storage.hub.protocol import WorkflowDefinitionMutation
+from gobby.utils.strict_yaml import load_strict_yaml
 from gobby.workflows.pipeline_models import PipelineDefinition
 
 if TYPE_CHECKING:
@@ -238,7 +239,7 @@ def create_pipeline_definitions_router(server: HTTPServer) -> APIRouter:
     @router.post("/import")
     async def import_definition(request: ImportYAMLRequest) -> dict[str, Any]:
         try:
-            parsed = yaml.safe_load(request.yaml_content)
+            parsed = load_strict_yaml(request.yaml_content)
             if not isinstance(parsed, dict) or "name" not in parsed:
                 raise ValueError("Invalid YAML: must be a mapping with a 'name' field")
             if parsed.get("type") != "pipeline":

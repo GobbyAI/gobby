@@ -36,6 +36,7 @@ from gobby.plans.evidence import (
 from gobby.plans.parser import PlanParseError
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 from gobby.tasks.commits import collect_task_diff_text
+from gobby.worktrees.base_branch import isolation_base_branch
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,9 @@ class _CliEvidenceContext:
         raw = asdict(artifacts)
         if raw["updated_at"] is None:
             return None
+        raw["base_branch"] = isolation_base_branch(
+            self.task_manager.db, artifacts.worktree_id, artifacts.clone_id
+        )
         return raw
 
     def get_commit_range_diff(self, range_: str) -> str:

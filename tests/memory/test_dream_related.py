@@ -110,6 +110,18 @@ def test_distinctive_terms_priorities() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("ref", "digits"),
+    [("#123", "123"), ("#123456", "123456"), ("#1000123", "1000123")],
+)
+def test_distinctive_terms_reads_task_refs_at_any_digit_width(ref: str, digits: str) -> None:
+    """A capped width truncates #1000123 to 100012, which names a different task."""
+    terms = _distinctive_terms(f"Follow up on {ref} before the dream run", max_terms=3).split()
+
+    assert terms[0] == digits
+
+
+@pytest.mark.unit
 def test_distinctive_terms_keeps_a_balanced_phrase_safe_for_related_search() -> None:
     """Related-term normalization preserves a balanced phrase as valid query syntax."""
     assert _distinctive_terms('"agent-prompt cap"') == '"agent-prompt cap"'
