@@ -127,26 +127,6 @@ fn fully_authorized_missing_column_still_reports_migration_debt() {
     );
 }
 
-/// Runs a restoring statement on drop, so a panicking test leaves the shared schema
-/// as it found it.
-struct RestoreOnDrop {
-    database_url: String,
-    sql: String,
-}
-
-impl Drop for RestoreOnDrop {
-    fn drop(&mut self) {
-        match gobby_core::postgres::connect_readwrite(&self.database_url) {
-            Ok(mut owner) => {
-                if let Err(err) = owner.batch_execute(&self.sql) {
-                    eprintln!("RestoreOnDrop: `{}` failed: {err}", self.sql);
-                }
-            }
-            Err(err) => eprintln!("RestoreOnDrop: connect failed for `{}`: {err}", self.sql),
-        }
-    }
-}
-
 #[test]
 #[cfg_attr(
     not(gcode_postgres_tests),
@@ -158,8 +138,8 @@ fn nologin_open_connection_with_missing_column_reports_refresh_not_migration_deb
     let mut owner = gobby_core::postgres::connect_readwrite(&database_url).expect("connect owner");
 
     // A login role with CONNECT, schema USAGE, and SELECT on every inspected table.
-    // Its connection stays open after the owner revokes login, so the open session
-    // is the only place the revoked authority can be observed.
+    // The validator reads the current role's login authority when it checks, so the
+    // revoked login is observed by assuming the role in a rollback-only transaction.
     let role = format!("gcode_authority_{}", uuid::Uuid::new_v4().simple());
     let password = uuid::Uuid::new_v4().simple().to_string();
     let schema = current_schema_name(&mut owner).expect("resolve current schema");
@@ -202,32 +182,31 @@ fn nologin_open_connection_with_missing_column_reports_refresh_not_migration_deb
     validate_runtime_schema(&mut restricted)
         .expect("a fully granted login role passes validation before its login is revoked");
 
-    // Rename rather than drop: the restore puts back the exact column definition.
+    // Rollback-only, on the owner's session: the rename, the NOLOGIN revoke and the
+    // role switch stay uncommitted, so no other process observes the hidden column.
+    // The rollback also runs on a panic, and a killed process rolls back when its
+    // connection closes.
     let table = format!(
         "{}.{}",
         quote_ident(&schema),
         quote_ident("code_indexed_projects")
     );
-    let _restore = RestoreOnDrop {
-        database_url: database_url.clone(),
-        sql: format!(
-            "ALTER TABLE {table} RENAME COLUMN {probe} TO {column}",
-            probe = quote_ident("created_at_authority_probe"),
-            column = quote_ident("created_at"),
-        ),
-    };
     owner
         .batch_execute(&format!(
-            "ALTER TABLE {table} RENAME COLUMN {column} TO {probe};
-             ALTER ROLE {role} NOLOGIN;",
+            "BEGIN;
+             ALTER TABLE {table} RENAME COLUMN {column} TO {probe};
+             ALTER ROLE {role} NOLOGIN;
+             SET ROLE {role};",
             column = quote_ident("created_at"),
             probe = quote_ident("created_at_authority_probe"),
             role = quote_ident(&role),
         ))
-        .expect("hide created_at and revoke login on the open role");
-
-    let err = validate_runtime_schema(&mut restricted)
-        .expect_err("a NOLOGIN role on an open connection must not pass schema validation");
+        .expect("hide created_at, revoke login, and assume the role in a transaction");
+    let result = validate_runtime_schema(&mut owner);
+    owner
+        .batch_execute("ROLLBACK")
+        .expect("roll back the column rename, the login revoke and the role switch");
+    let err = result.expect_err("a NOLOGIN role must not pass schema validation");
     let message = format!("{err:#}");
     assert!(
         !message.contains("missing required code-index columns"),
