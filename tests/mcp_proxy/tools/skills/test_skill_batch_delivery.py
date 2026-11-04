@@ -123,7 +123,9 @@ async def test_body_that_does_not_fit_moves_whole_to_the_next_page(
 
     page_two = await tool(cursor=page_one["page"]["next_cursor"], session_id=session.id)
 
-    assert page_two["instructions"] == [{"identity": "second", "content": _marked("second", second)}]
+    assert page_two["instructions"] == [
+        {"identity": "second", "content": _marked("second", second)}
+    ]
     assert page_two["page"] == {"completed": ["second"], "complete": True, "next_cursor": None}
     assert _ledgers(temp_db, session.id) == (["first", "second"], [])
 

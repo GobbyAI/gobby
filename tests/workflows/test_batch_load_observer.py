@@ -63,7 +63,11 @@ def _page(
 def test_completed_identities_are_credited_while_the_batch_continues() -> None:
     variables: dict[str, Any] = {"loaded_skills": ["earlier"]}
     output = _page(
-        [_item("brevity", "b"), _item("gobby:references/a.md", "a"), _item("restraint", "r", final=False)],
+        [
+            _item("brevity", "b"),
+            _item("gobby:references/a.md", "a"),
+            _item("restraint", "r", final=False),
+        ],
         ["brevity", "gobby:references/a.md"],
         "b.next",
     )
@@ -96,7 +100,11 @@ def test_unavailable_identities_are_noted_so_they_are_not_requested_again() -> N
     variables: dict[str, Any] = {}
     output = _page([_item("brevity", "b")], ["brevity"], None)
     output["result"]["unavailable"] = [
-        {"identity": "gobby:references/a.md", "error_code": "not_found", "message": "File not found"}
+        {
+            "identity": "gobby:references/a.md",
+            "error_code": "not_found",
+            "message": "File not found",
+        }
     ]
 
     detect_mcp_call(_after_get_skill(output), variables, SESSION_ID)
