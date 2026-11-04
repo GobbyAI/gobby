@@ -378,7 +378,7 @@ def test_policy_map_entry_with_unknown_key_is_rejected() -> None:
 
 def test_legacy_launch_default_keys_are_not_read() -> None:
     defaults = model_defaults_from_policy(
-        {"launch_defaults": {"dev-team": {"developer_model": _MAP_MODEL}}}
+        {"launch_defaults": {"seat-pipeline": {"seat_model": _MAP_MODEL}}}
     )
 
     assert defaults.entries == {}
