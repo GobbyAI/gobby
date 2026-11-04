@@ -7,6 +7,7 @@ storage failure fails the preflight before any index, read, or spawn success.
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,6 +24,9 @@ GCODE = "/usr/local/bin/gcode"
 def managed_checkout_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", tmp_path)
     monkeypatch.setattr("gobby.clones.git.CLONES_ROOT", tmp_path)
+    projects = MagicMock()
+    projects.return_value.get.return_value = SimpleNamespace(name="project")
+    monkeypatch.setattr("gobby.mcp_proxy.tools._clones_creation.LocalProjectManager", projects)
 
 
 GcodeRunner = Callable[..., Awaitable[None]]
@@ -177,7 +181,7 @@ async def test_direct_paths_pin_before_return(tmp_path: Path) -> None:
         git_manager=clone_git,
         project_id="11111111-1111-4111-8111-111111110001",
     )
-    clone_path = tmp_path / "clone"
+    clone_path = tmp_path / "project" / "clone"
     with (
         patch(
             "gobby.mcp_proxy.tools._clones_creation.select_worktree_base",
@@ -215,7 +219,7 @@ async def test_clone_pin_failure_rolls_back_clone(tmp_path: Path) -> None:
         git_manager=clone_git,
         project_id="11111111-1111-4111-8111-111111110001",
     )
-    clone_path = tmp_path / "clone"
+    clone_path = tmp_path / "project" / "clone"
     failing_pin = AsyncMock(side_effect=GcodeGatewayError("gcode_pin_failed:1:pin failed"))
     with (
         patch(

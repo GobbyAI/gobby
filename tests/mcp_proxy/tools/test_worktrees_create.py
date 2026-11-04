@@ -469,6 +469,7 @@ async def test_create_worktree_installs_codex_hooks(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("tmp_worktree_root")
 async def test_create_worktree_failure(
     registry: Any, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
 ) -> None:

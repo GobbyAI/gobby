@@ -13,7 +13,7 @@ from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils import project_context
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.project_context import read_isolation_marker
-from gobby.worktrees.creation import create_worktree
+from gobby.worktrees.creation import create_worktree, resolve_managed_worktree_path
 from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
@@ -248,6 +248,37 @@ async def test_creation_refuses_path_outside_managed_root(
     assert not scratch.exists()
     assert storage.get_by_branch(project_id, "scratch-seat") is None
     assert _git(root, "branch", "--list", "scratch-seat") == ""
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("requested", "accepted"),
+    [
+        ("managed/seat", True),
+        ("~/managed/seat", True),
+        ("managed/../managed/seat", True),
+        ("managed", False),
+        ("managed/../scratchpad/clean", False),
+        ("managed/escape/seat", False),
+        ("~/scratchpad/clean", False),
+    ],
+)
+def test_managed_worktree_path_containment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requested: str, accepted: bool
+) -> None:
+    """Containment is judged on the resolved path: ~, .., symlinks and the root itself."""
+    managed_root = tmp_path / "managed"
+    managed_root.mkdir()
+    (tmp_path / "outside").mkdir()
+    (managed_root / "escape").symlink_to(tmp_path / "outside")
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", managed_root)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = requested if requested.startswith("~") else str(tmp_path / requested)
+
+    resolved = resolve_managed_worktree_path(path)
+
+    expected = (managed_root / "seat").resolve() if accepted else None
+    assert resolved == expected
 
 
 @pytest.mark.integration

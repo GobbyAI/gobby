@@ -13,6 +13,7 @@ from gobby.clones.git import CloneGitManager
 from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.projects import LocalProjectManager
 from gobby.utils.git import run_to_completion
 from gobby.utils.project_context import ensure_project_json_for_isolation
 from gobby.worktrees.base_branch import WorktreeBaseError, select_worktree_base
@@ -43,8 +44,8 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
 
         Args:
             branch_name: Branch to create (external clones check it out)
-            requested_clone_path: Path inside the managed clone root; omitted uses
-                ~/.gobby/clones/{project}/{branch_name}
+            requested_clone_path: Path directly under ~/.gobby/clones/{project}; omitted
+                uses ~/.gobby/clones/{project}/{branch_name}
             remote_url: External repository to shallow-clone; omitted clones
                 the local repository at the selected commit
             task_id: Optional task ID to link
@@ -70,20 +71,22 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 "error": "No project context available for clone creation",
             }
 
+        project = await asyncio.to_thread(LocalProjectManager(ctx.clone_storage.db).get, project_id)
+        if project is None:
+            return {"success": False, "error": f"Project not found: {project_id}"}
+        # Reconciliation and path adoption only recognize clones directly under the
+        # project directory, so creation holds to the same layout.
+        project_directory = clone_git.project_clone_directory(project.name)
         if requested_clone_path is None:
-            requested_clone_path = str(
-                clone_git.CLONES_ROOT
-                / Path(git_manager.repo_path).name
-                / checkout_dir_name(branch_name)
-            )
-        # Expand ~ before any filesystem operations (subprocess.run doesn't expand tildes)
-        clone_path = str(Path(requested_clone_path).expanduser())
-        if CloneGitManager.resolve_managed_clone_path(clone_path) is None:
+            requested_clone_path = str(project_directory / checkout_dir_name(branch_name))
+        resolved_clone_path = CloneGitManager.resolve_managed_clone_path(requested_clone_path)
+        if resolved_clone_path is None or resolved_clone_path.parent != project_directory:
             return {
                 "success": False,
-                "error": f"Clone path must be under {clone_git.CLONES_ROOT.expanduser().resolve()}",
+                "error": f"Clone path must be directly under {project_directory}",
                 "error_code": "clone_path_outside_root",
             }
+        clone_path = str(resolved_clone_path)
 
         clone_created = False
         record_created = False
@@ -232,7 +235,8 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 "clone_path": {
                     "type": "string",
                     "description": (
-                        "Path inside ~/.gobby/clones; any other path is refused. "
+                        "Path directly under ~/.gobby/clones/{project}; any other path is "
+                        "refused. "
                         "Omitted: ~/.gobby/clones/{project}/{branch_name}"
                     ),
                 },

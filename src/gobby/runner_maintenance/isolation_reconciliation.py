@@ -171,10 +171,7 @@ async def _reconcile_project_clones(
 ) -> int:
     try:
         manager = CloneGitManager(checkout_root)
-        project_directory = await asyncio.to_thread(
-            _canonical_path,
-            clone_git.CLONES_ROOT / project.name,
-        )
+        project_directory = await asyncio.to_thread(clone_git.project_clone_directory, project.name)
         candidates = await asyncio.to_thread(_list_immediate_directories, project_directory)
     except (OSError, ValueError) as exc:
         logger.debug("Skipping clone reconciliation for %s: %s", project.name, exc)

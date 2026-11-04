@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 CLONES_ROOT = Path.home() / ".gobby" / "clones"
 
 
+def project_clone_directory(project_name: str) -> Path:
+    """The canonical directory whose immediate children are a project's managed clones."""
+    return (CLONES_ROOT.expanduser().resolve() / project_name).resolve()
+
+
 @dataclass
 class CloneStatus:
     """Status of a git clone including changes and sync state."""

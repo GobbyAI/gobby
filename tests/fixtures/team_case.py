@@ -239,6 +239,9 @@ def make_team_world(
     """Wire spawn_agent and the runbook tools over ``case``; launches are recorded, not run."""
     # Team trees live under ~/.gobby/worktrees; keep them inside the test's directory.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(
+        "gobby.worktrees.creation.WORKTREES_ROOT", tmp_path / "home" / ".gobby" / "worktrees"
+    )
     monkeypatch.setattr(GcodeGateway, "pin_project", AsyncMock())
     LocalMachineManager(case.db).upsert_seen(require_machine_id(), TEST_USER_ID, hostname="local")
     world = TeamWorld(

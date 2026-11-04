@@ -294,7 +294,7 @@ async def test_clone_bound_run_create_for_own_task_and_claim_clone_refused(
             "create_clone",
             {
                 "branch_name": "mid-run",
-                "clone_path": str(tmp_path / "mid-run"),
+                "clone_path": str(tmp_path / sample_project["name"] / "mid-run"),
                 "remote_url": "https://example.invalid/repo.git",
                 "task_id": own_task,
             },
@@ -328,7 +328,7 @@ async def test_clone_bound_run_creates_clone_for_another_seat(
             "create_clone",
             {
                 "branch_name": "sub-lane",
-                "clone_path": str(tmp_path / "sub-lane"),
+                "clone_path": str(tmp_path / sample_project["name"] / "sub-lane"),
                 "remote_url": "https://example.invalid/repo.git",
             },
         )
