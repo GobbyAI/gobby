@@ -400,3 +400,54 @@ def test_parent_manual_compaction_still_resets_after_a_subagent_batch(
 
     assert session.variables["unlocked_tools"] == []
     assert session.variables["pre_compact_seen"] is True
+
+
+def test_manual_compaction_context_is_not_repeated_by_a_later_settle(
+    session: _Session, send: Callable[[HookEvent], HookResponse]
+) -> None:
+    # Held subagent hooks settle before the manual PreCompact. The manual boundary is verified at
+    # its tails, so a later main event does not replay the reset context a second time.
+    send(session.event(PRE, trigger="auto"))
+    send(session.event(START, source="compact"))
+    send(session.event(PRE, trigger="manual"))
+    session.parent_boundary("manual-boundary")
+
+    manual_start = send(session.event(START, source="compact"))
+    send(session.event(POST, trigger="manual"))
+    later = send(session.event(BEFORE, prompt="continue"))
+
+    assert session.kinds == [PRE, START, POST, BEFORE]
+    assert CONTEXT_MARKER in _context(manual_start)
+    assert CONTEXT_MARKER not in _context(later)
+
+
+def test_subagent_pre_compact_inside_a_manual_compaction_skips_the_pre_rules(
+    session: _Session, send: Callable[[HookEvent], HookResponse]
+) -> None:
+    send(session.event(PRE, trigger="manual"))
+    send(session.event(PRE, trigger="auto"))
+    send(session.event(START, source="compact"))
+    send(session.event(POST, trigger="auto"))
+    session.parent_boundary("manual-boundary")
+
+    response = send(session.event(BEFORE, prompt="continue"))
+
+    assert session.kinds == [PRE, START, POST, BEFORE]
+    assert CONTEXT_MARKER in _context(response)
+
+
+def test_a_held_parent_lifecycle_settles_before_a_manual_compaction(
+    session: _Session, send: Callable[[HookEvent], HookResponse]
+) -> None:
+    send(session.event(PRE, trigger="auto"))
+    session.parent_boundary("auto-boundary")
+    send(session.event(START, source="compact"))
+
+    pre_response = send(session.event(PRE, trigger="manual"))
+    session.parent_boundary("manual-boundary")
+    send(session.event(START, source="compact"))
+    later = send(session.event(BEFORE, prompt="continue"))
+
+    assert session.kinds == [PRE, START, PRE, START, BEFORE]
+    assert CONTEXT_MARKER in _context(pre_response)
+    assert CONTEXT_MARKER not in _context(later)

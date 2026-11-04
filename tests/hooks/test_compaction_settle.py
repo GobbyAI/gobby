@@ -212,3 +212,44 @@ def test_merge_without_replayed_context_leaves_the_response_unchanged() -> None:
     assert merge_replayed_context(settling, [HookResponse(decision="allow")]).context == (
         "own context"
     )
+
+
+def test_manual_tails_verify_their_boundary_so_no_later_settle_counts_it(parent: Path) -> None:
+    ownership = CompactionOwnership()
+    ownership.route(_event(PRE, parent, trigger="auto"))
+    ownership.route(_event(START, parent, source="compact"))
+    assert ownership.route(_event(PRE, parent, trigger="manual")) == ([], False)
+    _append(parent, _boundary("manual-boundary"))
+
+    assert ownership.route(_event(START, parent, source="compact")) == ([], False)
+    ownership.route(_event(PRE, parent, trigger="auto"))
+
+    assert ownership.route(_event(BEFORE, parent, prompt="continue")) == ([], False)
+
+
+def test_held_parent_lifecycle_settles_before_a_manual_pre_compact(parent: Path) -> None:
+    ownership = CompactionOwnership()
+    ownership.route(_event(PRE, parent, trigger="auto"))
+    _append(parent, _boundary("auto-boundary"))
+    ownership.route(_event(START, parent, source="compact"))
+
+    replays, held = ownership.route(_event(PRE, parent, trigger="manual"))
+
+    assert held is False
+    assert [replay.event_type for replay in replays] == [PRE, START]
+
+
+def test_held_pre_compact_is_not_replayed_when_a_manual_boundary_settles(parent: Path) -> None:
+    # A manual PreCompact ran, a subagent's auto PreCompact and the manual tails were held, then
+    # the manual boundary was written. The held PreCompact must not run the rules again.
+    ownership = CompactionOwnership()
+    assert ownership.route(_event(PRE, parent, trigger="manual")) == ([], False)
+    ownership.route(_event(PRE, parent, trigger="auto"))
+    ownership.route(_event(START, parent, source="compact"))
+    ownership.route(_event(POST, parent, trigger="auto"))
+    _append(parent, _boundary("manual-boundary"))
+
+    replays, held = ownership.route(_event(BEFORE, parent, prompt="continue"))
+
+    assert held is False
+    assert [replay.event_type for replay in replays] == [START, POST]

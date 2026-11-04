@@ -6,7 +6,9 @@ and no agent_id or subagents/ path, so the subagent skip cannot classify them. T
 per session, and their payloads cannot tell the parent from a subagent:
 
 - An auto PreCompact, a SessionStart(source=compact) and a PostCompact are held. A manual
-  compaction runs immediately: its PreCompact and the tails that follow it are not held.
+  compaction runs immediately, after any held hooks settle, and its boundary is verified at
+  its tails. A held PreCompact is not replayed when a manual boundary settles, because the
+  manual PreCompact already ran its rules.
 - The next non-compaction main-thread event settles the held hooks. It counts the
   compact_boundary records in the parent's main transcript since the last verified boundary.
   None drops every held hook. One or more runs one parent lifecycle, built from the latest held
@@ -49,6 +51,8 @@ class _SessionState:
     last_trigger: str | None = None
     held: dict[str, HookEvent] = field(default_factory=dict)
     verified: str | None = None
+    # A manual PreCompact ran its rules for the boundary that has not been verified yet.
+    manual_pre_ran: bool = False
 
 
 class CompactionOwnership:
@@ -90,10 +94,20 @@ class CompactionOwnership:
             trigger = str(event.data.get("trigger", _AUTO))
             state.last_trigger = trigger
             if trigger != _AUTO:
-                return [], False
+                # The manual boundary is written after this PreCompact, so settling now counts
+                # only earlier boundaries.
+                replays = self._settle(state, event) if state.held else []
+                state.manual_pre_ran = True
+                return replays, False
             kind = _PRE
         else:
             if state.last_trigger == _MANUAL:
+                # The manual boundary is written before its tails. Verify it so that no later
+                # settle counts it again.
+                boundary = _newest_boundary(_transcript_of(event))
+                if boundary is not None:
+                    state.verified = boundary
+                state.manual_pre_ran = False
                 return [], False
             kind = _START if event.event_type == HookEventType.SESSION_START else _POST
         if not state.held and state.verified is None:
@@ -103,8 +117,14 @@ class CompactionOwnership:
         return [], True
 
     def _settle(self, state: _SessionState, event: HookEvent) -> list[HookEvent]:
-        lifecycle = [state.held[kind] for kind in _LIFECYCLE if kind in state.held]
+        # A manual PreCompact already ran its rules for the boundary being settled.
+        lifecycle = [
+            state.held[kind]
+            for kind in _LIFECYCLE
+            if kind in state.held and not (kind == _PRE and state.manual_pre_ran)
+        ]
         state.held.clear()
+        state.manual_pre_ran = False
         transcript = _transcript_of(event)
         if transcript is None:
             return []
