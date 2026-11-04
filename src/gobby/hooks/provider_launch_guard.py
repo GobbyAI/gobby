@@ -36,6 +36,7 @@ from gobby.hooks._sed_arguments import _sed_file_operands
 from gobby.hooks._sed_expansion import sed_literal_bindings
 from gobby.hooks._sed_program import sed_execution
 from gobby.hooks._shell_execution_words import _unwrap
+from gobby.hooks.provider_launch_subcommands import POSITIONAL_GROUPS, SUBCOMMANDS
 
 _PROVIDERS = frozenset({"codex", "claude", "droid", "grok", "agy"})
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
@@ -48,72 +49,6 @@ _function_consumer_memo: ContextVar[dict[tuple[str, bool, ShellDialect], bool | 
     ContextVar("_function_consumer_memo", default=None)
 )
 
-# Subcommands that answer a literal help request, by provider. A word maps to
-# its child subcommands; an empty mapping is a leaf, which may take a prompt.
-type _Subcommands = dict[str, _Subcommands]
-_MCP: _Subcommands = {"add": {}, "get": {}, "list": {}, "remove": {}}
-_SUBCOMMANDS: dict[str, _Subcommands] = {
-    "codex": {
-        "exec": {},
-        "review": {},
-        "login": {"status": {}},
-        "logout": {},
-        "mcp": {**_MCP, "login": {}, "logout": {}},
-        "resume": {},
-        "fork": {},
-    },
-    "claude": {
-        "auth": {"login": {}, "logout": {}, "status": {}},
-        "mcp": {
-            **_MCP,
-            "add-from-claude-desktop": {},
-            "add-json": {},
-            "reset-project-choices": {},
-            "serve": {},
-        },
-        "plugin": {
-            "disable": {},
-            "enable": {},
-            "install": {},
-            "list": {},
-            "marketplace": {"add": {}, "list": {}, "remove": {}, "update": {}},
-            "uninstall": {},
-            "update": {},
-            "validate": {},
-        },
-        "doctor": {},
-        "install": {},
-        "update": {},
-    },
-    "droid": {
-        "exec": {},
-        "daemon": {},
-        "search": {},
-        "update": {},
-        "mcp": _MCP,
-        "plugin": {},
-        "computer": {},
-    },
-    "grok": {
-        "agent": {},
-        "login": {},
-        "logout": {},
-        "mcp": _MCP,
-        "models": {},
-        "sessions": {},
-        "doctor": {},
-        "version": {},
-    },
-    "agy": {
-        "agent": {},
-        "agents": {},
-        "mcp": _MCP,
-        "models": {},
-        "plugin": {},
-        "plugins": {},
-        "update": {},
-    },
-}
 # Providers whose `help <subcommand>` form prints that subcommand's help.
 _HELP_COMMAND_PROVIDERS = frozenset({"codex", "droid", "grok", "agy"})
 
@@ -219,13 +154,13 @@ def _help_request(args: list[str], provider: str) -> bool:
         path, wants_group = args[:-1], True
     else:
         return False
-    node = _SUBCOMMANDS[provider]
+    node = SUBCOMMANDS[provider]
     for word in path:
         if word not in node:
             return False
         node = node[word]
-    # A leaf subcommand can take `help` as its prompt; only a group answers it.
-    return bool(node) or not wants_group
+    # A leaf takes a trailing `help` as a prompt word, and so does a positional group.
+    return not wants_group or (bool(node) and (provider, *path) not in POSITIONAL_GROUPS)
 
 
 def _shell_stdin(words: list[str]) -> bool:

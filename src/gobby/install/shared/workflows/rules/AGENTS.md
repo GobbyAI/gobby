@@ -27,7 +27,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `review-learning` | `review-learning/` | 3 | Inject confirmed planning and review lessons into matching work, and require complete verified findings from the configured review source |
 | `impeccable` | `impeccable/` | 2 | Run the Impeccable design detector after UI file edits, and its full-rule deep pass at turn end |
 | `integrations` | `integrations/` | 1 | Rewrite shell commands through stock RTK before native permission handling |
-| `roles` | `roles/` | 31 | Definition-selected seat guidance and restrictions on spawning, pipeline launch, project creation, user questions, task closure, database queries and write scopes. Exclusions declare exemptions. Team managers use their declared spawn/resume scopes within the admitted team. Closing definitions declare reasons, task scopes and review requirements. Optional documentation, research, digest and Prometheus scopes are selected by name. Operator exemptions use stored identity; definition names grant no authority. |
+| `roles` | `roles/` | 30 | Definition-selected seat guidance and restrictions on spawning, pipeline launch, project creation, user questions, task closure, database queries and write scopes. Exclusions declare exemptions. Team managers use their declared spawn/resume scopes within the admitted team. Closing definitions declare reasons, task scopes and review requirements. Optional documentation, research and digest scopes are selected by name. Operator exemptions use stored identity; definition names grant no authority. |
 
 Definitions may explicitly select `name:no-git-push` or `name:no-agent-spawn`.
 These strict policies cover persona and spawned sessions, including team managers.
@@ -111,7 +111,7 @@ An enabled definition may intentionally select an empty set.
 Runbook seat definitions explicitly select `tag:runbook`. Their exclusions grant
 spawn, pipeline, question, project-creation and closure permissions. Write scopes
 (`research-artifact-write-scope`, `documentation-write-scope`, `digest-write-scope`)
-and `prometheus-query-only` are selected by name. Database-query permission is an
+are selected by name. Database-query permission is an
 explicit exclusion of `query-readonly-seat-scope`. Baseline session rules
 keep unresolved children bounded while leaving the operator's unspawned terminal
 open; missing or disabled named definitions are blocked by the engine instead. Project creation uses the stored

@@ -236,6 +236,22 @@ def test_reply_matches_the_owner_to_waiter_direction_only(harness: CoordinationH
     assert completed["message_id"] == message_id
 
 
+@pytest.mark.parametrize("receipt_type", ["agent_started", "agent_recovery"])
+def test_reply_skips_daemon_receipts_written_in_the_child_name(
+    harness: CoordinationHarness, receipt_type: str
+) -> None:
+    # The daemon writes these receipts from the child to its parent. A receipt
+    # that lands after the wait exists must not answer it; the child's own
+    # message must.
+    row = harness.wait(reply=True)
+    harness.reply(message_type=receipt_type)
+    assert harness.row(row["id"])["outcome"] == "waiting"
+    message_id = harness.reply()
+    completed = harness.row(row["id"])
+    assert completed["outcome"] == "replied"
+    assert completed["message_id"] == message_id
+
+
 def test_reply_keeps_its_deadline_and_the_owner_ending(harness: CoordinationHarness) -> None:
     expired = harness.wait(reply=True)
     harness.db.execute(

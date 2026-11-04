@@ -783,6 +783,10 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "agy --help",
         "codex help",
         "codex -V",
+        "codex --version",
+        "codex app-server --help",
+        "codex app-server -h",
+        "codex app-server help",
         "codex login status",
         "codex help login",
         "codex help login status",
@@ -802,6 +806,7 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "grok models --help",
         "claude auth login --help",
         "claude help",
+        "claude plugin help",
         "env A=b /opt/bin/codex login status",
         "command -- codex --help",
         "codex --help && claude auth status",
@@ -859,11 +864,154 @@ def test_administration_and_documentation(command: str) -> None:
         # a leaf subcommand takes a prompt, not `help`.
         "claude please help",
         "codex exec help",
+        "codex sandbox help",
         "claude mcp add --scope user --help",
+        # A trailing `help` after a positional group is a prompt, and launch options
+        # stay blocked.
+        "codex app-server",
+        "codex app-server --listen stdio:// --help",
+        "codex app-server --help && codex exec hi",
+        "codex --version && codex exec hi",
     ],
 )
 def test_help_does_not_exempt_launch_operands(command: str) -> None:
     assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
+# Every real subcommand codex's --help lists (aliases included) and each nested one
+# its zsh completion lists. Internal, hidden, and [internal] entries are excluded.
+CODEX_HELP_SUBCOMMANDS = [
+    "agents",
+    "exec",
+    "e",
+    "exec fork",
+    "exec resume",
+    "exec review",
+    "review",
+    "login",
+    "login status",
+    "logout",
+    "mcp",
+    "mcp add",
+    "mcp get",
+    "mcp list",
+    "mcp login",
+    "mcp logout",
+    "mcp remove",
+    "plugin",
+    "plugin add",
+    "plugin list",
+    "plugin marketplace",
+    "plugin marketplace add",
+    "plugin marketplace list",
+    "plugin marketplace remove",
+    "plugin marketplace upgrade",
+    "plugin remove",
+    "app-server",
+    "app-server daemon",
+    "app-server daemon bootstrap",
+    "app-server daemon disable-remote-control",
+    "app-server daemon enable-remote-control",
+    "app-server daemon restart",
+    "app-server daemon start",
+    "app-server daemon stop",
+    "app-server daemon update",
+    "app-server daemon version",
+    "app-server generate-json-schema",
+    "app-server generate-ts",
+    "app-server proxy",
+    "remote-control",
+    "remote-control pair",
+    "remote-control start",
+    "remote-control stop",
+    "app",
+    "completion",
+    "update",
+    "doctor",
+    "sandbox",
+    "sandbox uninstall",
+    "debug",
+    "debug app-server",
+    "debug app-server send-message-v2",
+    "debug models",
+    "debug prompt-input",
+    "debug trace-reduce",
+    "apply",
+    "a",
+    "resume",
+    "queue",
+    "archive",
+    "delete",
+    "migrate-rollouts",
+    "migrate-nfs-db",
+    "unarchive",
+    "fork",
+    "cloud",
+    "cloud apply",
+    "cloud diff",
+    "cloud exec",
+    "cloud list",
+    "cloud status",
+    "exec-server",
+    "exec-server forward",
+    "features",
+    "features disable",
+    "features enable",
+    "features list",
+]
+
+
+@pytest.mark.parametrize("subcommand", CODEX_HELP_SUBCOMMANDS)
+def test_codex_subcommand_help_is_exempt(subcommand: str) -> None:
+    for flag in ("--help", "-h"):
+        command = f"codex {subcommand} {flag}"
+        assert not blocks_direct_provider_launch("Bash", {"command": command}), command
+
+
+# Groups that take no positional prompt or command. codex's completion lists their
+# children, so a trailing `help` answers the group's help.
+CODEX_HELP_GROUPS = [
+    "login",
+    "mcp",
+    "plugin",
+    "plugin marketplace",
+    "app-server",
+    "app-server daemon",
+    "remote-control",
+    "debug",
+    "debug app-server",
+    "cloud",
+    "features",
+    "exec-server",
+]
+
+
+@pytest.mark.parametrize("group", CODEX_HELP_GROUPS)
+def test_codex_group_trailing_help_is_exempt(group: str) -> None:
+    command = f"codex {group} help"
+    assert not blocks_direct_provider_launch("Bash", {"command": command}), command
+
+
+@pytest.mark.parametrize(
+    "subcommand", [path for path in CODEX_HELP_SUBCOMMANDS if path not in CODEX_HELP_GROUPS]
+)
+def test_codex_trailing_help_is_a_prompt(subcommand: str) -> None:
+    # A leaf, or a group with a positional prompt or command (exec, e, sandbox), takes
+    # `help` as a prompt word, so the launch stays blocked.
+    command = f"codex {subcommand} help"
+    assert blocks_direct_provider_launch("Bash", {"command": command}), command
+
+
+@pytest.mark.parametrize("subcommand", CODEX_HELP_SUBCOMMANDS)
+def test_codex_subcommand_launch_stays_blocked(subcommand: str) -> None:
+    # A positional prompt, a launch option, and a chained launch each keep the path
+    # a launch.
+    for form in (
+        f"codex {subcommand} hi",
+        f"codex {subcommand} --json",
+        f"codex {subcommand} --help && codex exec hi",
+    ):
+        assert blocks_direct_provider_launch("Bash", {"command": form}), form
 
 
 @pytest.mark.parametrize(
