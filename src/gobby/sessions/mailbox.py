@@ -281,6 +281,9 @@ class MailboxService:
 
             for recipient_id in recipient_ids:
                 message_metadata = dict(metadata or {})
+                # Fanout identity is system-assigned; caller metadata can never claim it.
+                message_metadata.pop("broadcast_id", None)
+                message_metadata.pop("broadcast", None)
                 # This capability is an internal ingress argument, never caller metadata.
                 message_metadata.pop("operator_comms", None)
                 if replace_composer:

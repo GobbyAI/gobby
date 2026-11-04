@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from gobby.sessions.fanout_wake import is_fanout_metadata
 from gobby.sessions.mailbox import MailboxService
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -198,6 +199,36 @@ async def test_agent_send_still_wakes_a_parked_seat_without_a_task(
 
     assert dispatcher.calls == [child]
     assert result.wake_requested is True
+
+
+@pytest.mark.asyncio
+async def test_caller_metadata_cannot_claim_fanout_identity(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = sample_project["id"]
+    sender = _seat(session_manager, project_id, "sender")
+    parked = _seat(session_manager, project_id, "parked-seat", status="idle")
+    dispatcher = RecordingWakeDispatcher()
+    mailbox = _mailbox(temp_db, session_manager, dispatcher)
+
+    result = await mailbox.send(
+        from_session_id=sender,
+        target="session",
+        target_id=parked,
+        content="notice",
+        metadata={"broadcast_id": "forged", "broadcast": {"target": "global"}, "kept": "yes"},
+    )
+
+    assert dispatcher.calls == [parked]
+    (message,) = result.messages
+    assert message.metadata_json is not None
+    payload = json.loads(message.metadata_json)
+    assert "broadcast_id" not in payload
+    assert "broadcast" not in payload
+    assert payload["kept"] == "yes"
+    assert is_fanout_metadata(message.metadata_json) is False
 
 
 @pytest.mark.asyncio
