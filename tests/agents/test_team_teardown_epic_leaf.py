@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from gobby.agents.team_admission_records import TeamBinding
-from gobby.agents.team_teardown import TEARDOWN_GRACE
+from gobby.agents.team_teardown import TEARDOWN_GRACE, _last_refusals
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -47,7 +47,7 @@ TITLE = "Scroll and type during daemon outage window"
 LEAF_TITLE = "Wire the scroll handler"
 NESTED_TITLE = "Scroll state for the nested epic"
 # seated_team launches a manager, tester, implementer and reviewer in the epic tree.
-PRIMARY_DEVELOPER = 2
+PRIMARY_SEAT = 2
 
 
 @pytest.fixture
@@ -150,7 +150,7 @@ async def test_closing_a_merged_epic_leaf_ends_its_dispatched_seat_and_removes_i
     epic = new_task(world, TITLE, epic=True)
     leaf = new_task(world, LEAF_TITLE, parent=epic)
     team = await seated_team(world, epic, world.child(epic))
-    manager, primary = team.seats[0], team.seats[PRIMARY_DEVELOPER]
+    manager, primary = team.seats[0], team.seats[PRIMARY_SEAT]
     tree = team_tree(team)
     sub = sub_tree(world, team, leaf)
     dispatched = dispatched_seat(world, team, str(sub.path))
@@ -294,6 +294,35 @@ async def test_refused_leaf_tree_logs_once_per_reason_and_retries_every_pass(
     assert sub.path.is_dir()
 
 
+@pytest.mark.asyncio
+async def test_a_refused_tree_that_later_deletes_releases_its_refusal_memory(
+    world: TeamWorld,
+) -> None:
+    """#25656: once a retained tree is deleted, no refusal memory for it stays in process."""
+    db = world.case.db
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await seated_team(world, epic, world.child(epic))
+    tree = team_tree(team)
+    sub = sub_tree(world, team, leaf)
+    git_in(tree, "merge", "--no-ff", sub.branch, "-m", "Merge leaf into epic main")
+    closed = close_leaf(world, leaf, sub.sha)
+    outcomes = [
+        WorktreeDeletionResult(success=False, error_code="worktree_in_use", error="tree in use"),
+        WorktreeDeletionResult(success=True),
+    ]
+
+    async def delete(binding: TeamBinding) -> WorktreeDeletionResult:
+        return outcomes.pop(0)
+
+    first_pass = closed_at(closed) + TEARDOWN_GRACE
+    await teardown_pass(db, daemon(db), first_pass, delete=delete)
+    assert any(worktree == sub.worktree_id for _, worktree in _last_refusals)
+
+    await teardown_pass(db, daemon(db), first_pass + timedelta(minutes=1), delete=delete)
+    assert not any(worktree == sub.worktree_id for _, worktree in _last_refusals)
+
+
 def manager_stops(db: HubDatabase, manager: str) -> None:
     """The manager's run cancelled and its session expired, as a daemon stop leaves them."""
     run = db.fetchone(
@@ -376,7 +405,7 @@ async def test_leaf_under_a_nested_epic_ends_its_seat_and_removes_its_sub_tree(
     nested = new_task(world, NESTED_TITLE, parent=epic, epic=True)
     leaf = new_task(world, LEAF_TITLE, parent=nested)
     team = await seated_team(world, epic, world.child(epic))
-    manager, primary = team.seats[0], team.seats[PRIMARY_DEVELOPER]
+    manager, primary = team.seats[0], team.seats[PRIMARY_SEAT]
     tree = team_tree(team)
     sub = sub_tree(world, team, leaf)
     dispatched = dispatched_seat(world, team, str(sub.path))

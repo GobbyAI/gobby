@@ -649,8 +649,8 @@ async def test_treeless_team_closes_its_seats_without_deleting_a_tree(
     runbook = world.child(task)
     binding = await world.admit(runbook, task, checkout_mode="none")
     world.finish(runbook)
-    researcher = seat(world, runbook, binding, "fixture-definition-3588bb72", manages=task)
-    team = Team(task, runbook, binding, [researcher])
+    treeless_seat = seat(world, runbook, binding, "fixture-definition-3588bb72", manages=task)
+    team = Team(task, runbook, binding, [treeless_seat])
     closed = close(world, team, commit(team, "report.md"))
     deleted: list[TeamBinding] = []
 
@@ -661,7 +661,7 @@ async def test_treeless_team_closes_its_seats_without_deleting_a_tree(
     await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE, delete=no_tree_delete)
 
     assert deleted == []
-    assert terminations.ended() == [researcher]
+    assert terminations.ended() == [treeless_seat]
     assert teardown(world, team) == {"outcome": "cleaned"}
 
 

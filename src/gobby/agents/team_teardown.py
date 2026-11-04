@@ -116,8 +116,8 @@ def _due_runbook_seats(db: HubDatabase, cutoff: datetime) -> list[_DueRunbook]:
     """Task-bound runbooks without team admission still own the seats they launched.
 
     The saved definition and inputs are authoritative, including after a runbook finishes.
-    Support has no task input. Restrict discovery to local executions with unfinished seats;
-    admitted teams retain their existing tree cleanup and refusal handling.
+    Executions without a task input are not discovered. Restrict discovery to local executions
+    with unfinished seats; admitted teams retain their existing tree cleanup and refusal handling.
     """
     rows = db.fetchall(
         """
@@ -470,6 +470,9 @@ async def _delete_tree(
     result: WorktreeDeletionResult | None = await delete(binding)
     if result is not None and result.error_code == "worktree_not_eligible":
         return await asyncio.to_thread(_ineligible, db, binding)
+    if result is not None and result.success:
+        # The tree is gone, so nothing can retry its refusal; release the memory of it.
+        _last_refusals.pop((binding.team_id, binding.worktree_id), None)
     return result
 
 
