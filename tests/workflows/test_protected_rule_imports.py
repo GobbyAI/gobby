@@ -133,3 +133,18 @@ def test_project_row_displaces_only_an_unprotected_global_row(
     (effective,) = [row for row in manager.list_effective(project_id) if row.name == GATE]
 
     assert effective.project_id == (None if protected else project_id)
+
+
+@pytest.mark.parametrize("with_global", [False, True], ids=["foreign-only", "foreign-and-global"])
+def test_global_view_excludes_other_projects_rows(
+    temp_db: HubDatabase, sample_project: dict[str, Any], with_global: bool
+) -> None:
+    manager = RuleDefinitionManager(temp_db)
+    body: dict[str, Any] = {"event": "task_close", "effects": [{"type": "block", "reason": "g"}]}
+    manager.create(GATE, body, project_id=str(sample_project["id"]), source="installed")
+    if with_global:
+        manager.create(GATE, body, source="installed")
+
+    effective = [row.project_id for row in manager.list_effective(None) if row.name == GATE]
+
+    assert effective == ([None] if with_global else [])

@@ -421,6 +421,8 @@ class RuleDefinitionManager:
         """
         by_name: dict[str, RuleDefinitionRow] = {}
         for row in self.list_all(project_id=project_id):
+            if row.project_id not in (None, project_id):
+                continue
             current = by_name.get(row.name)
             if current is None:
                 by_name[row.name] = row
