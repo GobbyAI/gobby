@@ -8,12 +8,15 @@ from pathlib import Path
 from typing import Any
 
 from gobby.agents.frozen_workspace import frozen_workspace_refusal
+from gobby.clones import git as clone_git
+from gobby.clones.git import CloneGitManager
 from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.git import run_to_completion
 from gobby.utils.project_context import ensure_project_json_for_isolation
 from gobby.worktrees.base_branch import WorktreeBaseError, select_worktree_base
+from gobby.worktrees.creation import checkout_dir_name
 from gobby.worktrees.git import WorktreeGitManager
 
 logger = logging.getLogger(__name__)
@@ -28,7 +31,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
 
     async def _create_clone_impl(
         branch_name: str,
-        clone_path: str,
+        requested_clone_path: str | None,
         remote_url: str | None = None,
         task_id: str | None = None,
         base_branch: str | None = None,
@@ -40,7 +43,8 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
 
         Args:
             branch_name: Branch to create (external clones check it out)
-            clone_path: Path where clone will be created
+            requested_clone_path: Path inside the managed clone root; omitted uses
+                ~/.gobby/clones/{project}/{branch_name}
             remote_url: External repository to shallow-clone; omitted clones
                 the local repository at the selected commit
             task_id: Optional task ID to link
@@ -50,9 +54,6 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
         Returns:
             Dict with clone info, base_commit_sha and index_source, or error
         """
-        # Expand ~ before any filesystem operations (subprocess.run doesn't expand tildes)
-        clone_path = str(Path(clone_path).expanduser())
-
         git_manager = ctx.git_manager
         if git_manager is None:
             return {
@@ -67,6 +68,21 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
             return {
                 "success": False,
                 "error": "No project context available for clone creation",
+            }
+
+        if requested_clone_path is None:
+            requested_clone_path = str(
+                clone_git.CLONES_ROOT
+                / Path(git_manager.repo_path).name
+                / checkout_dir_name(branch_name)
+            )
+        # Expand ~ before any filesystem operations (subprocess.run doesn't expand tildes)
+        clone_path = str(Path(requested_clone_path).expanduser())
+        if CloneGitManager.resolve_managed_clone_path(clone_path) is None:
+            return {
+                "success": False,
+                "error": f"Clone path must be under {clone_git.CLONES_ROOT.expanduser().resolve()}",
+                "error_code": "clone_path_outside_root",
             }
 
         clone_created = False
@@ -183,7 +199,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
 
     async def create_clone(
         branch_name: str,
-        clone_path: str,
+        clone_path: str | None = None,
         remote_url: str | None = None,
         task_id: str | None = None,
         base_branch: str | None = None,
@@ -215,7 +231,10 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 },
                 "clone_path": {
                     "type": "string",
-                    "description": "Path where clone will be created",
+                    "description": (
+                        "Path inside ~/.gobby/clones; any other path is refused. "
+                        "Omitted: ~/.gobby/clones/{project}/{branch_name}"
+                    ),
                 },
                 "remote_url": {
                     "type": "string",
@@ -239,7 +258,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                     "default": 1,
                 },
             },
-            "required": ["branch_name", "clone_path"],
+            "required": ["branch_name"],
         },
         func=create_clone,
     )

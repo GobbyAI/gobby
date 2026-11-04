@@ -166,7 +166,8 @@ class CloneGitManager:
         """
         return await self._run_git(args, cwd=cwd, timeout=timeout, check=check, env=env)
 
-    def resolve_managed_clone_path(self, clone_path: str | Path) -> Path | None:
+    @staticmethod
+    def resolve_managed_clone_path(clone_path: str | Path) -> Path | None:
         """Canonicalize a clone path and enforce containment under the managed root."""
         resolved_path = Path(clone_path).expanduser().resolve()
         clones_root = CLONES_ROOT.expanduser().resolve()

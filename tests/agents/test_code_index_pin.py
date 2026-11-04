@@ -17,6 +17,14 @@ from gobby.mcp_proxy.tools.clones import create_clones_registry
 from gobby.worktrees.creation import WorktreeCreationResult, create_worktree
 
 GCODE = "/usr/local/bin/gcode"
+
+
+@pytest.fixture(autouse=True)
+def managed_checkout_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", tmp_path)
+    monkeypatch.setattr("gobby.clones.git.CLONES_ROOT", tmp_path)
+
+
 GcodeRunner = Callable[..., Awaitable[None]]
 
 

@@ -126,6 +126,7 @@ def registry(
         "gobby.mcp_proxy.tools._clones_creation.ensure_project_json_for_isolation", AsyncMock()
     )
     monkeypatch.setattr(GcodeGateway, "pin_project", AsyncMock())
+    monkeypatch.setattr("gobby.clones.git.CLONES_ROOT", Path("/tmp/clones"))
     return create_clones_registry(
         clone_storage=mock_clone_storage,
         git_manager=mock_git_manager,
@@ -478,6 +479,55 @@ class TestCreateClone:
         }
         mock_git_manager.create_clone.assert_not_called()
         mock_clone_storage.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("remote_url", [None, "https://example.invalid/repo.git"])
+    async def test_create_clone_refuses_path_outside_managed_root(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+        remote_url: str | None,
+    ) -> None:
+        """A clone_path outside the managed root is refused before any git or task work."""
+        arguments = {"branch_name": "feature", "clone_path": "/tmp/scratchpad/clean"}
+        if remote_url is not None:
+            arguments["remote_url"] = remote_url
+
+        result = await registry.call("create_clone", arguments)
+
+        assert result == {
+            "success": False,
+            "error": f"Clone path must be under {Path('/tmp/clones').resolve()}",
+            "error_code": "clone_path_outside_root",
+        }
+        mock_git_manager.create_clone.assert_not_called()
+        mock_git_manager.shallow_clone.assert_not_called()
+        mock_clone_storage.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_clone_default_path_lands_under_managed_root(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Omitting clone_path places the clone at <root>/<repo name>/<branch>."""
+        mock_git_manager.create_clone.return_value = MagicMock(success=True)
+        mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
+        mock_clone_storage.create.return_value = _merge_test_clone()
+
+        result = await registry.call("create_clone", {"branch_name": "feature/default-seat"})
+
+        assert result["success"] is True
+        expected = "/tmp/clones/repo/feature-default-seat"
+        mock_git_manager.create_clone.assert_awaited_once_with(
+            expected, "feature/default-seat", "main", base_commit_sha="abc123"
+        )
+        assert mock_clone_storage.create.call_args.kwargs["clone_path"] == expected
+
+    def test_create_clone_path_is_optional(self, registry: Any) -> None:
+        tool = registry.get_schema("create_clone")
+
+        assert tool is not None
+        assert tool["inputSchema"]["required"] == ["branch_name"]
 
 
 class TestGetClone:

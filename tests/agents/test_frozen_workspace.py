@@ -32,6 +32,12 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _managed_checkout_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", tmp_path)
+    monkeypatch.setattr("gobby.clones.git.CLONES_ROOT", tmp_path)
+
+
 def _session(session_manager: SessionManager, project_id: str, name: str) -> str:
     return session_manager.register(
         external_id=f"frozen-workspace-{name}",
