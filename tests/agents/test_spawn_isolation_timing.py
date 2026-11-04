@@ -108,6 +108,15 @@ def test_idle_baseline_breakdown_is_complete(clock: Clock) -> None:
     assert set(result) == set(spawn_timing.SPAWN_PHASES)
 
 
+def test_code_index_pin_is_attributed_to_top_level_phase(clock: Clock) -> None:
+    clock.now = 10.0
+    timings = {"code_index_pin": 4000.0, "code_index_index": 5000.0}
+    result = spawn_timing.complete_spawn_phase_timings(timings, started_at=0)
+    assert "code_index_pin" in spawn_timing.TOP_LEVEL_SPAWN_PHASES
+    assert result["code_index_pin"] == 4000
+    assert result["unattributed"] == 1000
+
+
 @pytest.mark.parametrize(
     ("kind", "fresh"),
     [

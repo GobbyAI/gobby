@@ -443,6 +443,7 @@ pub(super) fn index_overlay_files(
         machine_id,
         &outcome.indexed_file_paths,
     )?;
+    timings.phase("overlay.local_inheritance");
     let mut trigger_paths = outcome.indexed_file_paths.clone();
     trigger_paths.extend(adopted_paths);
     let promoted_owners =
@@ -558,24 +559,24 @@ fn route_candidates(
     excludes: &[&str],
     respect_gitignore: bool,
 ) -> (HashMap<String, PathBuf>, HashMap<String, PathBuf>) {
+    let abs_paths: Vec<PathBuf> = rels.iter().map(|rel| root_path.join(rel)).collect();
+    let classes = walker::classify_explicit_files_with_options(
+        root_path,
+        &abs_paths,
+        excludes,
+        walker::DiscoveryOptions { respect_gitignore },
+    );
     let mut ast_by_rel = HashMap::new();
     let mut content_by_rel = HashMap::new();
-    for rel in rels {
-        let abs = root_path.join(rel);
-        let route = explicit_route_with_discovery_options(
-            root_path,
-            &abs,
-            excludes,
-            walker::DiscoveryOptions { respect_gitignore },
-        );
-        match route {
-            ExplicitFileRoute::Ast => {
+    for ((rel, abs), class) in rels.iter().zip(abs_paths).zip(classes) {
+        match class {
+            Some(walker::FileClassification::Ast) => {
                 ast_by_rel.insert(rel.clone(), abs);
             }
-            ExplicitFileRoute::ContentOnly => {
+            Some(walker::FileClassification::ContentOnly) => {
                 content_by_rel.insert(rel.clone(), abs);
             }
-            ExplicitFileRoute::Skip => {}
+            None => {}
         }
     }
     (ast_by_rel, content_by_rel)
@@ -913,38 +914,5 @@ pub(super) fn write_tombstone(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{DEFAULT_GIT_STATUS_TIMEOUT_SECS, git_status_timeout, valid_porcelain_status_byte};
-    use std::time::Duration;
-
-    #[test]
-    fn porcelain_status_byte_validation_matches_git_v1_codes() {
-        for byte in *b" MADRCU?!" {
-            assert!(valid_porcelain_status_byte(byte));
-        }
-        for byte in [0, b'X', b'\n'] {
-            assert!(!valid_porcelain_status_byte(byte));
-        }
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn git_status_timeout_reads_positive_env_seconds() {
-        temp_env::with_var("GCODE_GIT_STATUS_TIMEOUT_SECS", Some("2"), || {
-            assert_eq!(git_status_timeout(), Duration::from_secs(2));
-        });
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn git_status_timeout_rejects_invalid_env_values() {
-        for value in ["0", "-1", "abc"] {
-            temp_env::with_var("GCODE_GIT_STATUS_TIMEOUT_SECS", Some(value), || {
-                assert_eq!(
-                    git_status_timeout(),
-                    Duration::from_secs(DEFAULT_GIT_STATUS_TIMEOUT_SECS)
-                );
-            });
-        }
-    }
-}
+#[path = "overlay/tests.rs"]
+mod tests;
