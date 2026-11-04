@@ -41,6 +41,15 @@ SYNTHETIC_RULES: list[tuple[str, dict[str, Any]]] = [
         },
     ),
     (
+        "reset-on-clear",
+        {
+            "event": "session_start",
+            "when": "event.data.get('source') in ['clear']",
+            "priority": 10,
+            "effects": [{"type": "set_variable", "variable": "unlocked_tools", "value": []}],
+        },
+    ),
+    (
         "mark-pre-compact",
         {
             "event": "pre_compact",
@@ -266,3 +275,28 @@ def test_parent_manual_compaction_still_resets_after_a_subagent_batch(
 
     assert session.variables["unlocked_tools"] == []
     assert session.variables["pre_compact_seen"] is True
+
+
+def test_overlapping_auto_compactions_skip_the_pre_compact_and_still_reset(
+    session: _Session, send: Callable[[HookEvent], HookResponse]
+) -> None:
+    # A parent auto PreCompact that overlaps a subagent's PreCompact cannot be attributed by
+    # payload, so it is skipped (fail closed). The parent's session_start(compact) still resets.
+    send(session.event(HookEventType.PRE_COMPACT, trigger="auto"))
+    send(session.event(HookEventType.PRE_COMPACT, trigger="auto"))
+    session.parent_boundary("boundary-1")
+    send(session.event(HookEventType.SESSION_START, source="compact"))
+    send(session.event(HookEventType.BEFORE_AGENT, prompt="continue"))
+
+    assert session.evaluated == [HookEventType.SESSION_START, HookEventType.BEFORE_AGENT]
+    assert session.variables["unlocked_tools"] == []
+    assert "pre_compact_seen" not in session.variables
+
+
+def test_parent_clear_still_resets_through_the_rules(
+    session: _Session, send: Callable[[HookEvent], HookResponse]
+) -> None:
+    send(session.event(HookEventType.SESSION_START, source="clear"))
+
+    assert session.evaluated == [HookEventType.SESSION_START]
+    assert session.variables["unlocked_tools"] == []
