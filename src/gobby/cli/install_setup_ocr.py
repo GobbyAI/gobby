@@ -1,11 +1,13 @@
 """Install the pinned open-code-review CLI that the commit gate and code review run.
 
-A matching `ocr` on PATH is left in place. Any other install, or none, is replaced by
-the pinned npm package, and an install that cannot be verified is an error.
+A verified `ocr` on PATH is left in place. Any other install, or none, is replaced by the
+pinned npm package. npm's result is verified before it is accepted, and an install that
+fails verification is removed and reported as an error.
 """
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess  # nosec B404 # fixed npm invocation resolved with shutil.which
 from dataclasses import dataclass
@@ -27,8 +29,21 @@ class OcrInstallResult:
     path: Path
 
 
+def _run_npm(npm: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(  # nosec B603 # executable resolved with shutil.which
+            [npm, *arguments],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_INSTALL_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise OcrInstallError(f"npm could not run: {exc}") from exc
+
+
 def install_ocr_cli() -> OcrInstallResult:
-    """Install OCR at the pinned version, or leave a matching install in place."""
+    """Install OCR at the pinned version, or leave a verified install in place."""
     status = ocr_dependency_status()
     if status.state == "healthy" and status.path is not None:
         return OcrInstallResult(installed=False, version=OCR_VERSION, path=Path(status.path))
@@ -36,20 +51,16 @@ def install_ocr_cli() -> OcrInstallResult:
     npm = shutil.which("npm")
     if npm is None:
         raise OcrInstallError("npm is required to install the pinned OCR CLI")
-    try:
-        completed = subprocess.run(  # nosec B603 # executable resolved with shutil.which
-            [npm, "install", "-g", f"{OCR_PACKAGE}@{OCR_VERSION}"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=_INSTALL_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise OcrInstallError(f"npm could not install OCR: {exc}") from exc
+    # --ignore-scripts stops npm from running OCR's postinstall, which fetches a binary from
+    # GitHub outside these pins. The pinned platform package is the only native source.
+    completed = _run_npm(npm, "install", "-g", "--ignore-scripts", f"{OCR_PACKAGE}@{OCR_VERSION}")
     if completed.returncode != 0:
         raise OcrInstallError(f"npm failed to install OCR: {completed.stderr.strip()}")
 
     verified = ocr_dependency_status()
     if verified.state != "healthy" or verified.path is None:
-        raise OcrInstallError(verified.error or "npm installed an unexpected OCR version")
+        # Remove the unverified install; if removal itself fails, the verification error still stands.
+        with contextlib.suppress(OcrInstallError):
+            _run_npm(npm, "uninstall", "-g", OCR_PACKAGE)
+        raise OcrInstallError(verified.error or "npm installed an unverified OCR CLI")
     return OcrInstallResult(installed=True, version=OCR_VERSION, path=Path(verified.path))
