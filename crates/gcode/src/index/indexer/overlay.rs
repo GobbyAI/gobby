@@ -558,24 +558,24 @@ fn route_candidates(
     excludes: &[&str],
     respect_gitignore: bool,
 ) -> (HashMap<String, PathBuf>, HashMap<String, PathBuf>) {
+    let abs_paths: Vec<PathBuf> = rels.iter().map(|rel| root_path.join(rel)).collect();
+    let classes = walker::classify_explicit_files_with_options(
+        root_path,
+        &abs_paths,
+        excludes,
+        walker::DiscoveryOptions { respect_gitignore },
+    );
     let mut ast_by_rel = HashMap::new();
     let mut content_by_rel = HashMap::new();
-    for rel in rels {
-        let abs = root_path.join(rel);
-        let route = explicit_route_with_discovery_options(
-            root_path,
-            &abs,
-            excludes,
-            walker::DiscoveryOptions { respect_gitignore },
-        );
-        match route {
-            ExplicitFileRoute::Ast => {
+    for ((rel, abs), class) in rels.iter().zip(abs_paths).zip(classes) {
+        match class {
+            Some(walker::FileClassification::Ast) => {
                 ast_by_rel.insert(rel.clone(), abs);
             }
-            ExplicitFileRoute::ContentOnly => {
+            Some(walker::FileClassification::ContentOnly) => {
                 content_by_rel.insert(rel.clone(), abs);
             }
-            ExplicitFileRoute::Skip => {}
+            None => {}
         }
     }
     (ast_by_rel, content_by_rel)
