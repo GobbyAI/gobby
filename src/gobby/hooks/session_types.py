@@ -170,6 +170,15 @@ class HookSessionManager(Protocol):
         current: Session | None = None,
     ) -> tuple[Session | None, bool]: ...
 
+    def settle_terminal_context(
+        self,
+        session_id: str,
+        terminal_context: dict[str, Any],
+        *,
+        marker_key: str,
+        pending: str,
+    ) -> tuple[Session | None, bool]: ...
+
     def reset_transcript_processed(self, session_id: str) -> Session | None: ...
 
     def update_usage(

@@ -3560,6 +3560,7 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
             if rollout_late:
                 # Hooks that read the pending row before this prompt settled the origin
                 # finish after it. One that read the rollout too loses the settle.
+                assert waiting is not None
                 rival = prompt_for(successor_thread)
                 manager._session_lookup._backfill_terminal_context(waiting.id, rival, waiting)
                 # One that read it before the rollout existed must not undo the settle.

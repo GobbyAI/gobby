@@ -144,7 +144,9 @@ machine_id and project_id are auto-resolved from the local environment if omitte
             )
             if session.status == "expired":
                 session = await asyncio.to_thread(
-                    session_manager.revive_registered_terminal_session, session
+                    session_manager.revive_registered_terminal_session,
+                    session,
+                    caller_session_id=ambient_session.id if ambient_session else None,
                 )
 
             result: dict[str, Any] = {

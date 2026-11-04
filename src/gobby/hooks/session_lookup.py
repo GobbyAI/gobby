@@ -8,9 +8,13 @@ Extracted from HookManager.handle() as part of the Strangler Fig decomposition.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from gobby.hooks.codex_seat import codex_clear_activity_search, codex_seat_available
+from gobby.hooks.codex_seat import (
+    ClearSeatSearch,
+    codex_clear_activity_search,
+    codex_seat_available,
+)
 from gobby.hooks.event_handlers._session_start.terminal_runtime import bind_discovered_terminal
 from gobby.hooks.events import HookEvent, HookEventType, require_hook_machine_id
 from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_project_context
@@ -18,6 +22,7 @@ from gobby.hooks.session_binding import bound_session
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.terminal_context import (
     CODEX_CLEAR_ORIGIN_KEY,
+    CODEX_CLEAR_ORIGIN_PENDING,
     enrich_terminal_context_with_cwd,
     hook_cwd,
     is_gobby_acp_child,
@@ -348,6 +353,7 @@ class SessionLookupService:
         raw_context = event.data.get("terminal_context")
         terminal_context = raw_context if isinstance(raw_context, dict) else None
         clear_search = None
+        settling: ClearSeatSearch | None = None
         if (
             event.source.value == "codex"
             and event.machine_id
@@ -369,6 +375,13 @@ class SessionLookupService:
                     else recorded.transcript_path,
                     event.session_id,
                 )
+                recorded_origin = (recorded.terminal_context or {}).get(CODEX_CLEAR_ORIGIN_KEY)
+                if (
+                    clear_search is not None
+                    and recorded_origin == CODEX_CLEAR_ORIGIN_PENDING
+                    and clear_search.origin != CODEX_CLEAR_ORIGIN_PENDING
+                ):
+                    settling = clear_search
         terminal_context = enrich_terminal_context_with_cwd(
             terminal_context,
             hook_cwd(event.data, event.cwd),
@@ -376,11 +389,8 @@ class SessionLookupService:
             cleared_seat_owner=clear_search.owner if clear_search else None,
             machine_id=event.machine_id,
         )
-        if clear_search is not None:
-            terminal_context = {
-                **(terminal_context or {}),
-                CODEX_CLEAR_ORIGIN_KEY: clear_search.origin,
-            }
+        if settling is not None:
+            return self._settle_clear_origin(platform_session_id, terminal_context, settling)
         if not terminal_context:
             return current
 
@@ -399,20 +409,47 @@ class SessionLookupService:
             return None
 
         if tmux_pane_added and updated_session is not None:
-            title = getattr(updated_session, "title", None) or ""
-            schedule_tmux_window_rename(
-                updated_session,
-                title,
-                loop=getattr(self._session_coordinator, "_event_loop", None),
-            )
-        if (
-            clear_search is not None
-            and clear_search.owner is not None
-            and updated_session is not None
-            and (updated_session.terminal_context or {}).get("parent_pid")
-        ):
-            updated_session = self._take_over_cleared_seat(updated_session)
+            self._rename_tmux_window(updated_session)
         return updated_session
+
+    def _settle_clear_origin(
+        self,
+        platform_session_id: str,
+        terminal_context: dict[str, Any] | None,
+        search: ClearSeatSearch,
+    ) -> Session | None:
+        """Record a /clear successor's origin, once its rollout names it.
+
+        Hooks of one session can overlap, so only the hook whose conditional write wins
+        settles the origin and may adopt the seat. A hook that loses returns the stored
+        row, which holds the winner's result.
+        """
+        try:
+            settled, tmux_pane_added = self._session_manager.settle_terminal_context(
+                platform_session_id,
+                {**(terminal_context or {}), CODEX_CLEAR_ORIGIN_KEY: search.origin},
+                marker_key=CODEX_CLEAR_ORIGIN_KEY,
+                pending=CODEX_CLEAR_ORIGIN_PENDING,
+            )
+        except Exception as exc:
+            self._logger.debug(
+                "Failed to settle /clear origin for session %s: %s", platform_session_id, exc
+            )
+            return None
+        if settled is None:
+            return self._session_manager.get(platform_session_id)
+        if tmux_pane_added:
+            self._rename_tmux_window(settled)
+        if search.owner is not None and (settled.terminal_context or {}).get("parent_pid"):
+            settled = self._take_over_cleared_seat(settled)
+        return settled
+
+    def _rename_tmux_window(self, session: Session) -> None:
+        schedule_tmux_window_rename(
+            session,
+            getattr(session, "title", None) or "",
+            loop=getattr(self._session_coordinator, "_event_loop", None),
+        )
 
     def _take_over_cleared_seat(self, successor: Session) -> Session:
         """Hand a late-adopted /clear successor its predecessor's seat and pane.

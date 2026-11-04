@@ -266,8 +266,10 @@ Response:
 ```
 
 `session_status` is the session's lifecycle status after registration.
-Re-registering an expired terminal session reactivates it unless its CLI has
-exited, a clear successor replaced it, or another live session holds its pane.
+An expired terminal session that re-registers itself, naming its own id in the
+`X-Gobby-Session-Id` header, is reactivated unless its CLI has exited, a clear
+successor replaced it, or another live session holds its pane. A registration
+from any other caller leaves it expired.
 A session that belongs to another machine returns 409.
 
 ### `POST /api/sessions/find_current`

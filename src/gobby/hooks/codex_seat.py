@@ -38,8 +38,10 @@ def codex_thread_originator(transcript_path: str | None, thread_id: str) -> str 
         return None
     try:
         # Non-blocking, so a pipe at this path fails the regular-file check instead of
-        # hanging the hook until something writes to it.
-        fd = os.open(Path(transcript_path).expanduser(), os.O_RDONLY | os.O_NONBLOCK)
+        # hanging the hook until something writes to it. A symlink is refused: Codex
+        # writes rollouts in place. A terminal device never becomes the controlling tty.
+        flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_NOCTTY
+        fd = os.open(Path(transcript_path).expanduser(), flags)
         with os.fdopen(fd, "rb") as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 return None

@@ -889,7 +889,9 @@ class TestSessionManagerLifecycle:
         assert expired is not None
 
         by_activity = session_manager.revive_expired_terminal_session(session.id)
-        by_registration = session_manager.revive_registered_terminal_session(expired)
+        by_registration = session_manager.revive_registered_terminal_session(
+            expired, caller_session_id=session.id
+        )
 
         assert by_activity is not None
         assert by_activity.status == "expired"

@@ -59,12 +59,18 @@ class RevivalTrigger(Enum):
 
 
 class _TerminalRevivalMixin:
-    def revive_registered_terminal_session(self: _RevivalHost, session: Session) -> Session:
-        """Reactivate an expired terminal row that an explicit registration names.
+    def revive_registered_terminal_session(
+        self: _RevivalHost, session: Session, *, caller_session_id: str | None
+    ) -> Session:
+        """Reactivate an expired terminal row that its own session registers again.
 
-        Returns the row as it stands afterwards, still expired when ownership refuses it.
+        Only the session itself may revive the row this way: a registration from another
+        session, or from no session, leaves it expired. Returns the row as it stands
+        afterwards, still expired when ownership refuses it.
         """
         if session.session_type != "terminal" or session.status != "expired":
+            return session
+        if caller_session_id != session.id:
             return session
         revived = self.revive_expired_terminal_session(
             session.id, session, trigger=RevivalTrigger.REGISTRATION

@@ -9,7 +9,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from gobby.agents.sandbox import (
     web_chat_policy_mismatch_message,
@@ -305,7 +305,9 @@ def register_core_routes(
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/register")
-    async def register_session(request_data: SessionRegisterRequest) -> dict[str, Any]:
+    async def register_session(
+        request_data: SessionRegisterRequest, request: Request
+    ) -> dict[str, Any]:
         """
         Register session metadata in local storage.
 
@@ -363,8 +365,22 @@ def register_core_routes(
                 sandbox_enabled=request_data.sandbox_enabled,
             )
             if session.status == "expired":
+                # Only the session itself may revive its row: name it in the caller header.
+                caller_ref = request.headers.get("X-Gobby-Session-Id", "").strip()
+                caller_session_id: str | None = None
+                if caller_ref:
+                    try:
+                        caller_session_id = await server.run_db(
+                            server.session_manager.resolve_session_reference,
+                            caller_ref,
+                            project_id,
+                        )
+                    except ValueError:
+                        caller_session_id = None
                 session = await server.run_db(
-                    server.session_manager.revive_registered_terminal_session, session
+                    server.session_manager.revive_registered_terminal_session,
+                    session,
+                    caller_session_id=caller_session_id,
                 )
 
             inc_counter("session_registrations_total")
