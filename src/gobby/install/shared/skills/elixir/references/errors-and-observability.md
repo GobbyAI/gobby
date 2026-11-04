@@ -31,3 +31,5 @@
 - Keep retries idempotent or guarded by idempotency keys.
 - For transactions and workflows, define rollback or compensation behavior
   before adding side effects.
+
+_Version: 1.0.0_

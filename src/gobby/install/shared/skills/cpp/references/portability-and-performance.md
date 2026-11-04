@@ -37,3 +37,5 @@ hot paths, memory layout, or performance-sensitive APIs.
   where they reduce real compile cost without hurting clarity.
 - Watch binary size when adding templates, exceptions, RTTI, static libraries, or
   generated code.
+
+_Version: 1.0.0_

@@ -60,4 +60,6 @@ See [hub installation contract](../../../../../../../../docs/guides/hub-install-
 [backup recovery](../../../../../../../../docs/guides/cli-commands.md#hub-backup-disaster-recovery),
 and [physical acceptance](../../../../../../../../docs/guides/remote-docker-acceptance.md).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-10-24_

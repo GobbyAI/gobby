@@ -54,3 +54,5 @@ export async function fetchJson(url, { signal, timeoutMs = 10000 } = {}) {
 - Treat component unmount or route changes as cancellation points.
 - Avoid updating state after an owner has been disposed.
 - Keep one source of truth for pending, fulfilled, empty, and error states.
+
+_Version: 1.0.0_

@@ -45,3 +45,5 @@
   serialized tables, or reusable pooled state.
 - Reset or discard state between tenants according to the host's isolation
   contract; `package.loaded`, globals, metatables, and closures retain state.
+
+_Version: 1.0.0_

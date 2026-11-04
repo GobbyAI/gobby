@@ -31,3 +31,5 @@ authorized rewritten source branch after checking its remote state.
 On a timeout or connection loss, inspect the remote/target and operation state
 before retrying. A successful transport is not proof of a successful Git result.
 See [sync and merge](../../../../../../../../docs/guides/worktrees.md#sync-and-merge).
+
+_Version: 1.0.0_

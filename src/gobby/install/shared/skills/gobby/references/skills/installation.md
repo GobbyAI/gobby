@@ -34,4 +34,6 @@ isolated fixtures for installation and upgrade verification.
 
 Guide: [Skills](../../../../../../../../docs/guides/skills.md#installation-and-update-boundaries).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

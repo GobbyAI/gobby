@@ -52,3 +52,5 @@ Choose focused commands that compile and test the changed source set:
   lifecycle boundaries are involved
 
 Record the exact tasks and explain why they cover the changed platform/module.
+
+_Version: 1.0.0_

@@ -10,3 +10,5 @@ inline `teach` mode first. Then call
 
 Do not ask users to invoke `craft`; natural build and redesign requests use the
 same dispatch path.
+
+_Version: 1.0.0_

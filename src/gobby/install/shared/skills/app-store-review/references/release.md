@@ -67,3 +67,5 @@ specific question and supporting sources; do not send it without authorization.
 End with checked facts, remaining blockers/evidence gaps, and recommendations.
 “No issue found in inspected scope” is a bounded claim. Never guarantee approval
 or describe unperformed archive/device/submission checks as passed.
+
+_Version: 1.0.0_

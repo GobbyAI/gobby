@@ -46,4 +46,6 @@ previous approval for that checkout. Source:
 
 Guide: [Finding your session](../../../../../../../../docs/guides/sessions.md#finding-your-own-session).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-10-17_

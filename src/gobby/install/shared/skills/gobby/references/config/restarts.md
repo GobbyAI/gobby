@@ -32,3 +32,5 @@ documented exceptions. Runtime activation does not rewrite those files.
 After recovery, read values and health again and verify the intended key is active.
 See [runtime contract](../../../../../../../../docs/guides/configuration.md#reactive-runtime-configuration-contract)
 and [hook deadlines](../../../../../../../../docs/guides/configuration.md#tasks-and-workflows).
+
+_Version: 1.0.0_

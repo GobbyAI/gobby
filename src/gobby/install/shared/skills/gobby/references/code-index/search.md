@@ -38,4 +38,6 @@ configuration require [recovery](recovery.md), not invented matches.
 
 Guide: [Search lanes](../../../../../../../../docs/guides/gcode-user-guide.md#search).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

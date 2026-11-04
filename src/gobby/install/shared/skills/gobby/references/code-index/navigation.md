@@ -43,4 +43,6 @@ the plan coverage reference for its grammar.
 
 Guide: [Operating model](../../../../../../../../docs/guides/gcode-user-guide.md#operating-model).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-10-26_

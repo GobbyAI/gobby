@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [task-enforcement, git, default, guardrail]
 
 # The protected-branch guard sends this rule a synthetic before_tool event for every

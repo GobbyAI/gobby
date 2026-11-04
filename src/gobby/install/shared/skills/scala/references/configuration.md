@@ -49,3 +49,5 @@ scala-cli test path/to/source --test-only com.acme.OrderSpec
 Run cross-version (`+`) or cross-platform targets when the changed API or source
 is shared across those matrices. Keep the first pass scoped to the affected
 module so failures identify the relevant boundary.
+
+_Version: 1.0.0_

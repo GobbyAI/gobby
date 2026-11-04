@@ -38,4 +38,6 @@ wait timeout, inspect the child before retrying. Operator CLI run accepts string
 
 Verified guide: [pipelines.md](../../../../../../../../docs/guides/pipelines.md#step-details).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

@@ -16,3 +16,5 @@ activation defaults, not the ordinary read layer or access authorization.
 See [lifecycle](../../../../../../../../docs/guides/variables.md#variable-lifecycle), [initialization](../../../../../../../../docs/guides/variables.md#initialization),
 and [selectors](../../../../../../../../docs/guides/variables.md#variable-selectors). If changes do not appear, inspect the
 target project and stored override before retrying sync.
+
+_Version: 1.0.0_

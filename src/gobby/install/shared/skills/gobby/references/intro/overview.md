@@ -20,3 +20,5 @@ current schemas. Follow existing authorization boundaries for profile content;
 the availability of a write route does not authorize unrelated deployment work.
 
 Human starting point: [working profile](../../../../../../../../docs/guides/README.md#working-profile).
+
+_Version: 1.0.0_

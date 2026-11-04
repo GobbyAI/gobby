@@ -35,3 +35,5 @@ retrying. Rehearse mutating examples with isolated fixtures or a temporary
 daemon pointed at the test hub. Never use the user's live state as a test.
 
 See the [observability guide](../../../../../../../../docs/guides/observability.md).
+
+_Version: 1.0.0_

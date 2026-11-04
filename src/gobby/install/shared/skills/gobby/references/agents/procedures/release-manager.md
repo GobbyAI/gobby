@@ -7,3 +7,5 @@
 - Report each promotion to the Orchestrator with the binary names, versions and sha256.
 - You never run daemon commands. The Orchestrator owns the daemon.
 - Never remove dirty worktrees or branches that hold unlanded work. Never push or merge into the release branch.
+
+_Version: 1.0.0_

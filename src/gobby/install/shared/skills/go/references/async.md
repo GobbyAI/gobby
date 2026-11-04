@@ -48,3 +48,5 @@ Stop timers and tickers when done. Drain timer channels only when required by th
 - Use `sync.Mutex` for shared mutable state when ownership is clearer than channel choreography.
 - Use atomics only for narrow counters, flags, or lock-free paths with tests that exercise races.
 - Run `go test -race` for changes to goroutines, locks, timers, shared maps, or cancellation paths.
+
+_Version: 1.0.0_

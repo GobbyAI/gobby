@@ -53,3 +53,5 @@ full, cancellation, retries and cold app startup on iPhone, iPad and Mac.
 Show “staged on this device” separately from “saved/shared” or “delivered to the
 coding computer.” A share-sheet dismissal alone does not prove remote receipt.
 Keep local recovery available if a foreground handoff is unavailable or declined.
+
+_Version: 1.0.0_

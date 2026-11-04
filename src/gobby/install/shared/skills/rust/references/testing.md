@@ -155,3 +155,5 @@ fn serialize_response() {
     insta::assert_json_snapshot!(resp);
 }
 ```
+
+_Version: 1.0.0_

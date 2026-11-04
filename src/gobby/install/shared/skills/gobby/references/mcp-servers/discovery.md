@@ -41,4 +41,6 @@ initialization is `gobby init`, an operator procedure.
 
 Guide: [Progressive discovery](../../../../../../../../docs/guides/mcp-tools.md#progressive-discovery-pattern).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

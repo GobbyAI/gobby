@@ -51,3 +51,5 @@
 - Cover invalid classes, nil/empty distinctions, mutation after input, equality,
   copying, initialization failure, and localized formatting where relevant.
 - Assert error domain, code, underlying cause, and Swift-imported error behavior.
+
+_Version: 1.0.0_

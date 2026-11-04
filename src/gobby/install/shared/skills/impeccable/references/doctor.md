@@ -42,3 +42,5 @@ those findings through Gobby's ownership model:
 
 Do not treat commit counts or inherited workspace context as proof of drift.
 Compare the named source to `.impeccable.md` before making a truth claim.
+
+_Version: 1.0.0_

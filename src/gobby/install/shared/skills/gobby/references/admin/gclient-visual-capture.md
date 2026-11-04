@@ -62,3 +62,5 @@ gclient UI. Judge only the gclient area. View the file with the Read tool.
 
 For gclient controls and layout, see the
 [gclient user guide](../../../../../../../../docs/guides/gclient-user-guide.md).
+
+_Version: 1.0.0_

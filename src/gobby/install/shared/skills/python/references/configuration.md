@@ -126,3 +126,5 @@ Keep slow, integration, network, daemon, and database tests isolated through mar
 ## Environment And Secrets
 
 Validate environment variables at process boundaries and keep `.env` files out of committed secrets. Use typed config loaders or schema validators when the application has more than a handful of environment keys.
+
+_Version: 1.0.0_

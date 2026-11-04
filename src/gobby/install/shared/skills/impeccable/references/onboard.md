@@ -232,3 +232,5 @@ Test with real users:
 - **Time to value**: How long until users get first value?
 
 When users hit the aha moment fast and don't drop off, call `get_skill_file(name="impeccable", path="references/polish.md")` on `gobby-skills` and follow it for the final pass.
+
+_Version: 1.0.0_

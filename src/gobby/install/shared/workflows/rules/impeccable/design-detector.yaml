@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [impeccable, design, gobby, default, enforcement]
 
 # Gobby rules own Impeccable edit-time enforcement (see the bundled impeccable

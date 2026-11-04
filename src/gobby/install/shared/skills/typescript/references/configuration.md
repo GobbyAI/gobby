@@ -114,3 +114,5 @@ TypeScript compiler checks do not catch every unsafe pattern. When the repo uses
 - misuse of `void`, `await`, and template expressions
 
 Type-aware lint is slower. Scope it to packages that need it or use separate CI jobs if the repo already optimizes lint performance.
+
+_Version: 1.0.0_

@@ -37,4 +37,6 @@ MCP tools, never a raw CLI/HTTP call to bypass workflow gates.
 
 Guide: [Manage instances](../../../../../../../../docs/guides/mcp-tools.md#manage-instances).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

@@ -23,4 +23,6 @@ or lose work. Checkpoint commits are recovery evidence, not completed validation
 
 Guide: [Recovery checkpoints](../../../../../../../../docs/guides/agents.md#recovery-checkpoints).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

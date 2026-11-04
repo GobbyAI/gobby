@@ -36,3 +36,5 @@ across package, network, storage, platform, or UI boundaries.
   deep links, and environment/config values before constructing domain objects.
 - Represent expected validation failures as typed failures or result states where
   the UI or caller needs to recover.
+
+_Version: 1.0.0_

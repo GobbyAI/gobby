@@ -50,3 +50,5 @@ framework tests, snapshots, static-analysis checks, or Composer scripts.
   - `vendor/bin/phpunit tests/Account/AccountLookupHandlerTest.php`
   - `vendor/bin/pest tests/Account/AccountLookupHandlerTest.php`
   - `vendor/bin/phpstan analyse src/Account src/Controller`
+
+_Version: 1.0.0_

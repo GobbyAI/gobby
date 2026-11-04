@@ -58,4 +58,6 @@ Do not print credential material, even when a query returns it. Summarize the
 rows the task needs. Keep the query narrow: select named columns, filter in SQL,
 and rely on `limit` as the backstop.
 
+_Version: 1.0.0_
+
 _Last verified: 2026-10-27_

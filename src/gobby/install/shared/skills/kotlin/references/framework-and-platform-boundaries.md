@@ -47,3 +47,5 @@ serialization, dependency injection, or platform interop code.
   adapters that make nullability, threading, lifecycle, and error behavior clear.
 - Do not let platform-specific threading or lifecycle assumptions leak into
   common/domain code.
+
+_Version: 1.0.0_

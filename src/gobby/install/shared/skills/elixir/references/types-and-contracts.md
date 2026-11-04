@@ -35,3 +35,5 @@
   edge cases.
 - For binaries and protocols, validate size, encoding, and version markers
   before destructuring untrusted data.
+
+_Version: 1.0.0_

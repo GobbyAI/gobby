@@ -43,3 +43,5 @@
   explicitly permits it.
 - Confine each Lua state to the host's synchronization model. Coordinate shared
   native data outside Lua with explicit ownership or locks.
+
+_Version: 1.0.0_

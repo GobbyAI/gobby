@@ -58,3 +58,5 @@ remain far below it for concise session context.
 
 See the [HTTP contract](../../../../../../../../docs/guides/http-endpoints.md#global-working-profile).
 Changing the file does not retroactively replace already-loaded session context.
+
+_Version: 1.0.0_

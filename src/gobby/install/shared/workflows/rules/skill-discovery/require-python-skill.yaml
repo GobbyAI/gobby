@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [skill-discovery, context, gobby, default]
 
 rules:
