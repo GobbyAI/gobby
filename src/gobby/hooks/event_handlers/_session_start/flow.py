@@ -19,6 +19,7 @@ from gobby.hooks.terminal_context import (
     hook_cwd,
     hook_sandbox_enabled,
     is_gobby_acp_child,
+    remember_codex_seat,
 )
 from gobby.storage.session_activity import (
     ProviderIdentityRebind,
@@ -452,9 +453,18 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         )
         if clear_origin is not None and session_id:
             # A clear-start that lost to a settled origin wrote nothing: bind from the row.
+            proposed_pid = (terminal_context or {}).get("parent_pid")
             registered = handler._session_manager.get(session_id)
             if registered is not None:
                 terminal_context = registered.terminal_context or {}
+                # Only a seat this start found and storage kept is cached for the thread.
+                if (
+                    cleared_seat_owner is not None
+                    and seat_thread_id
+                    and proposed_pid
+                    and terminal_context.get("parent_pid") == proposed_pid
+                ):
+                    remember_codex_seat(seat_thread_id, terminal_context)
 
     if handler._session_manager and session_source == "compact":
         if not session_id:

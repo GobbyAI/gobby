@@ -451,7 +451,9 @@ class _CodexSeatIndex:
         Every seat TUI in the cwd that started before the thread is a candidate, whoever
         owns it; resumed and Gobby-spawned seats count, since /clear works in either.
         Adopt only a sole candidate whose owner is recorded. Any second candidate refuses:
-        a guess could type into another pane.
+        a guess could type into another pane. The adoption is only a proposal, so it is
+        not cached: the caller publishes it with ``remember_codex_seat`` once storage
+        accepts it.
         """
         minted_at = _thread_minted_at(thread_id)
         if minted_at is None or cwd is None:
@@ -471,8 +473,11 @@ class _CodexSeatIndex:
         process, pid, create_time = candidates[0]
         if owner_of(pid, create_time) is not SeatOwner.RECORDED:
             return None
-        self._adopted[thread_id] = (pid, create_time)
         return process
+
+    def remember(self, thread_id: str, pid: int, create_time: float) -> None:
+        self._adopted[thread_id] = (pid, create_time)
+        self._missed_at.pop(thread_id, None)
 
     def _rescan(self) -> None:
         seats: list[tuple[int, float, tuple[str, ...]]] = []
@@ -550,6 +555,22 @@ _SEAT_INDEX = _CodexSeatIndex()
 def clear_codex_seat_index() -> None:
     """Forget every cached seat process; tests call this between scenarios."""
     _SEAT_INDEX.clear()
+
+
+def remember_codex_seat(thread_id: str, stored_context: Mapping[str, Any] | None) -> None:
+    """Cache the seat a stored session row records for a /clear successor's thread.
+
+    Call it only with the row as storage holds it after the successor's write was
+    accepted, so later hooks for the thread resolve the winner's seat and a refused
+    or losing adoption is never visible to them.
+    """
+    context = stored_context or {}
+    pid, create_time = context.get("parent_pid"), context.get("parent_create_time")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return
+    if isinstance(create_time, bool) or not isinstance(create_time, (int, float)):
+        return
+    _SEAT_INDEX.remember(thread_id, pid, float(create_time))
 
 
 def _non_empty_str(value: Any) -> str | None:

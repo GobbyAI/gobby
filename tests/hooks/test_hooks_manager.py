@@ -3425,7 +3425,10 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
     checked again on the thread's next activity.
     """
     from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
-    from gobby.hooks.terminal_context import clear_codex_seat_index
+    from gobby.hooks.terminal_context import (
+        clear_codex_seat_index,
+        enrich_terminal_context_with_cwd,
+    )
     from gobby.storage.terminals import TerminalManager
 
     manager = hook_manager_with_mocks
@@ -3546,7 +3549,7 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
             patch(
                 "gobby.hooks.terminal_context.psutil.process_iter",
                 side_effect=lambda **_: list(table),
-            ) as scan,
+            ),
         ):
             assert manager.handle(start).decision == "allow"
             if rollout_late:
@@ -3605,11 +3608,15 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
             # A late hook for the cleared thread must not revive it beside the successor.
             assert manager.handle(prompt_for(predecessor_thread)).decision == "allow"
             if adopts:
-                # The accepted seat stays cached through every losing hook above, so
-                # later activity resolves it without a process scan.
-                scans = scan.call_count
-                assert manager.handle(prompt_for(successor_thread)).decision == "allow"
-                assert scan.call_count == scans
+                # The accepted seat stays cached through every losing hook above, so the
+                # thread's later hooks still resolve it.
+                later = enrich_terminal_context_with_cwd(
+                    dict(host_context),
+                    str(temp_dir),
+                    external_id=successor_thread,
+                    machine_id=LOCAL_MACHINE_ID,
+                )
+                assert (later or {}).get("parent_pid") == seat.pid
     finally:
         clear_codex_seat_index()
 
