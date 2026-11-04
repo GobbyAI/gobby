@@ -72,7 +72,8 @@ hold with a durable `coordination_release` message to you containing the
 matching `metadata.coordination_key`; ordinary message text does not release a
 keyed hold. A reply wait is the primitive for a requested parent reply: it
 resolves `replied` on the next durable message that owner sends you after
-registration, and omitting `owner_session` waits on the session that spawned
+registration. Daemon receipts written in the owner's name (`agent_started`,
+`agent_recovery`) never resolve it. Omitting `owner_session` waits on the session that spawned
 you. Messages already sent never resolve it, so send the question and register
 in the same turn. A registered wait holds off idle and stuck cleanup until it
 resolves, times out, or is cancelled.
@@ -108,5 +109,5 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Version: 1.3.0_
-_Last verified: 2026-11-02_
+_Version: 1.4.0_
+_Last verified: 2026-11-03_
