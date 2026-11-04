@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from gobby.sessions.mailbox import MailboxService
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
@@ -135,6 +136,67 @@ async def test_direct_send_still_wakes_a_parked_seat_without_a_task(
     )
 
     assert dispatcher.calls == [seat]
+    assert result.wake_requested is True
+
+
+@pytest.mark.asyncio
+async def test_parent_send_still_wakes_a_parked_seat_without_a_task(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = sample_project["id"]
+    parent = _seat(session_manager, project_id, "parent-seat", status="idle")
+    child = session_manager.register(
+        external_id="child-seat",
+        machine_id=None,
+        source="codex",
+        project_id=project_id,
+        title="child-seat",
+        agent_depth=1,
+        parent_session_id=parent,
+    ).id
+    dispatcher = RecordingWakeDispatcher()
+    mailbox = _mailbox(temp_db, session_manager, dispatcher)
+
+    result = await mailbox.send(from_session_id=child, target="parent", content="status")
+
+    assert dispatcher.calls == [parent]
+    assert result.wake_requested is True
+
+
+@pytest.mark.asyncio
+async def test_agent_send_still_wakes_a_parked_seat_without_a_task(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    project_id = sample_project["id"]
+    parent = _seat(session_manager, project_id, "parent-seat")
+    child = session_manager.register(
+        external_id="child-seat",
+        machine_id=None,
+        source="codex",
+        project_id=project_id,
+        title="child-seat",
+        agent_depth=1,
+        parent_session_id=parent,
+    ).id
+    session_manager.update_status(child, "idle")
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=parent,
+        child_session_id=child,
+        provider="codex",
+        prompt="work",
+    )
+    dispatcher = RecordingWakeDispatcher()
+    mailbox = _mailbox(temp_db, session_manager, dispatcher)
+
+    result = await mailbox.send(
+        from_session_id=parent, target="agent", target_id=run.id, content="status"
+    )
+
+    assert dispatcher.calls == [child]
     assert result.wake_requested is True
 
 
