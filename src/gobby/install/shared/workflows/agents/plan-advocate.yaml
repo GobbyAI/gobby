@@ -5,7 +5,7 @@ description: |
   reads the writer's plan, and sends ranked Better/Bigger edits to the writer
   over send_message. Never edits the plan, approves or rejects.
 
-version: "2.0.0"
+version: "2.1.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -16,6 +16,8 @@ fallbacks:
   - provider: claude
     model: claude-opus-5-5
 checkout_mode: none
+# Sandboxed plan seats reach the web through the trusted egress allowlist.
+network: trusted
 send_message_targets: [parent, session]
 # The Plan Advocate is advisory-only and must never edit the plan artifact.
 blocked_tools:
