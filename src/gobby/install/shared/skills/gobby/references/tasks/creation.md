@@ -15,7 +15,8 @@ or `fullstack`). Choose the schema's task type and category for the deliverable;
 priority defaults to 2. For `validation_criteria`: Outline the evaluation criteria
 an agent will use to ensure a high-quality deliverable. Be precise. Use
 `test: path::test_symbol` for named tests and `file: path` for evidence artifacts;
-those references extend the task's declared file scope. When an
+those references join the task's declared file scope when its description declares
+targets. When an
 agent-authored description rests on specific source behavior, cite it as
 [evidence](../code-index/evidence.md) describes. User-authored text needs no
 citations, and the task tools take no citation field.

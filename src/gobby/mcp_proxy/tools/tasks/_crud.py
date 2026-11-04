@@ -392,7 +392,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Outline the evaluation criteria an agent will use to ensure a high-quality deliverable. Be precise. Give every non-epic task criteria. Name tests as `test: path::test_symbol` and evidence files as `file: path`; those references extend the task's declared file scope. Selected rules decide whether criteria or validation evidence are required for completion.",
+                    "description": "Outline the evaluation criteria an agent will use to ensure a high-quality deliverable. Be precise. Give every non-epic task criteria. Name tests as `test: path::test_symbol` and evidence files as `file: path`; those references join the task's declared file scope when its description declares targets. Selected rules decide whether criteria or validation evidence are required for completion.",
                     "default": None,
                 },
                 "implementation_domain": {
@@ -660,7 +660,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Outline the evaluation criteria an agent will use to ensure a high-quality deliverable. Be precise. Give every non-epic task criteria. Name tests as `test: path::test_symbol` and evidence files as `file: path`; those references extend the task's declared file scope. Selected rules decide whether criteria or validation evidence are required for completion.",
+                    "description": "Outline the evaluation criteria an agent will use to ensure a high-quality deliverable. Be precise. Give every non-epic task criteria. Name tests as `test: path::test_symbol` and evidence files as `file: path`; those references join the task's declared file scope when its description declares targets. Selected rules decide whether criteria or validation evidence are required for completion.",
                     "default": None,
                 },
                 "parent_task_id": {
