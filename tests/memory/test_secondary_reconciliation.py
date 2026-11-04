@@ -290,3 +290,42 @@ async def test_purge_hidden_splits_supersession_budget(
     # The SQL slice is capped at half the budget; artifact deletes then spend
     # whatever remains of the whole budget (#20364), not a fixed half.
     assert 0 < io_timeouts[0] <= 4.0
+
+
+@pytest.mark.asyncio
+async def test_stale_projection_keeps_rationale_edit_reindex_flag(
+    hub_db: HubDatabase,
+    vector_store: AsyncMock,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocked_embed(_content: str) -> list[float]:
+        started.set()
+        await release.wait()
+        return list(_VECTOR)
+
+    manager = _manager(hub_db, AsyncMock(return_value=list(_VECTOR)), vector_store)
+    created = await manager.create_memory(
+        "rationale fence probe",
+        project_id=PERSONAL_PROJECT_ID,
+        rationale="when: the original rationale applies",
+    )
+    manager._lifecycle_service._embed_fn = blocked_embed
+    stale = asyncio.create_task(manager.reconcile_memory_indices(created.id))
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    # The storage write sets the flag without starting its own projection, so the
+    # only projection that can clear it is the stale one embedding the old rationale.
+    await asyncio.to_thread(
+        manager.storage.update_memory,
+        created.id,
+        rationale="when: the edited rationale applies",
+    )
+    release.set()
+
+    assert await asyncio.wait_for(stale, timeout=3) is False
+    stored = manager.get_memory(created.id)
+    assert stored is not None
+    assert stored.rationale == "when: the edited rationale applies"
+    assert stored.vector_needs_reindex is True
