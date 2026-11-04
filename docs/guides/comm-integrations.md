@@ -282,14 +282,15 @@ Minimal direct-message configuration:
 {
   "responder": {
     "enabled": true,
-    "agent": "comms-agent"
+    "agent": "responder-agent"
   },
   "allow_from": ["123456789"]
 }
 ```
 
-`responder.agent` must name the agent definition to use. `comms-agent` above is
-a bundled example; choose your own enabled definition as needed. Missing, blank,
+`responder.agent` must name an enabled agent definition that carries the
+responder grant. `responder-agent` above is a placeholder; replace it with your
+own enabled definition. Missing, blank,
 or non-string values return configuration guidance without starting a chat turn.
 Optional `responder.provider` and `responder.model` select the chat backend.
 Omitting them uses daemon defaults. The standard WebSocket server must be
@@ -318,7 +319,7 @@ Example:
 {
   "responder": {
     "enabled": true,
-    "agent": "comms-agent"
+    "agent": "responder-agent"
   },
   "allow_from": ["42"],
   "group_policy": "allowlist",

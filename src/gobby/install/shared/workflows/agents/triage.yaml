@@ -1,10 +1,16 @@
 name: triage
 capabilities: [message_restricted_seats, follow_relaunch, accept_resume_retype]
 description: Triage seat. Receives the reports meant for the Orchestrator, bundles them, and wakes the Orchestrator with one digest so it is not the message bottleneck.
-version: "5.1.0"
+version: "5.2.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
-provider: inherit
+provider: claude
+model: claude-sonnet-5-5
+reasoning_effort: medium
+fallbacks:
+  - provider: codex
+    model: gpt-6.1-terra
+    reasoning_effort: xhigh
 execution_mode: interactive
 checkout_mode: inherit
 persistent_workspace: true

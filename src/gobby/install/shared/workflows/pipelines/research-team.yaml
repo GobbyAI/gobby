@@ -1,9 +1,9 @@
-name: research
+name: research-team
 type: pipeline
-version: "2.0.1"
+version: "3.0.0"
 description: |
   Research runbook: admits a treeless team for the task and launches a Researcher and a Research
-  Reviewer into one 'Research - #<task>' tab in the shared checkout. The seats work in the main
+  Reviewer into one 'Research Team - #<task>' tab in the shared checkout. The seats work in the main
   checkout with no branch or worktree, and there is no Dev Team Lead: the Researcher sends its
   candidate to the Research Reviewer, which answers LAND or BOUNCE, and the Researcher reports
   READY_TO_CLOSE to report_to. Each seat runs its own agent definition, and each seat pane takes
@@ -80,7 +80,7 @@ steps:
         require_report_to: true
         skip_live_seats: true
         task: "${{ inputs.task }}"
-        tab_title: Research
+        tab_title: "Research Team - ${{ inputs.task }}"
         catalogue:
           - name: researcher
             title: Researcher
@@ -139,7 +139,7 @@ steps:
         project_path: "${{ inputs.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
         prompt: >-
-          You are the research reviewer seat. Your task is ${{ inputs.task }}. Your current session ref is fresh; follow your installed agent definition for your review duties and authority, except where this run's routing below differs. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target="session", target_id="${{ inputs.report_to }}"). This run has no Dev Team Lead. ${{ ('Name your session to your researcher seat, session ' + steps['researcher'].output.get('child_session_id') + ', with gobby-agents:send_message(target="session", target_id="' + steps['researcher'].output.get('child_session_id') + '"), so it can send you its candidate.') if 'researcher' in steps and steps['researcher'].output.get('child_session_id') else ('Name your session to your researcher seat, session ' + steps.guard.output.get('live')['researcher'] + ', with gobby-agents:send_message(target="session", target_id="' + steps.guard.output.get('live')['researcher'] + '"), so it can send you its candidate.') if steps.guard.output.get('live') and 'researcher' in steps.guard.output.get('live') else 'Your researcher seat is not in this launch; name your session to report_to so it can reach you.' }} Wait with gobby-agents:wait_for_coordination(owner_session="${{ inputs.report_to }}", reply=true) for the researcher's EVENT=CANDIDATE TASK=${{ inputs.task }}. Review that commit against the task's criteria, then send a CANDIDATE_VERDICT with VERDICT=LAND, or VERDICT=BOUNCE with its findings, to the researcher seat and to report_to. Record your review step. Do not launch other seats or pipelines.
+          You are the research reviewer seat. Your task is ${{ inputs.task }}. Your current session ref is fresh; follow your installed agent definition for your review duties and authority, except where this run's routing below differs. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target="session", target_id="${{ inputs.report_to }}"). This run has no Dev Team Lead. ${{ ('Name your session to your researcher seat, session ' + steps['researcher'].output.get('child_session_id') + ', with gobby-agents:send_message(target="session", target_id="' + steps['researcher'].output.get('child_session_id') + '"), so it can send you its candidate.') if 'researcher' in steps.guard.output.launch and steps['researcher'].output.get('child_session_id') else ('Name your session to your researcher seat, session ' + steps.guard.output.get('live')['researcher'] + ', with gobby-agents:send_message(target="session", target_id="' + steps.guard.output.get('live')['researcher'] + '"), so it can send you its candidate.') if steps.guard.output.get('live') and 'researcher' in steps.guard.output.get('live') else 'Your researcher seat is not in this launch; name your session to report_to so it can reach you.' }} Wait with gobby-agents:wait_for_coordination(owner_session="${{ inputs.report_to }}", reply=true) for the researcher's EVENT=CANDIDATE TASK=${{ inputs.task }}. Review that commit against the task's criteria, then send a CANDIDATE_VERDICT with VERDICT=LAND, or VERDICT=BOUNCE with its findings, to the researcher seat and to report_to. Record your review step. Do not launch other seats or pipelines.
         placement: >-
           ${{ {'split': {'pane': inputs.seat_pane or steps['researcher'].output.get('pane_ref'),
           'axis': 'right', 'title': 'Research Reviewer'}}

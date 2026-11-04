@@ -16,6 +16,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.agents.model_defaults import ModelDefaults
 from gobby.agents.team_communications import recipient_admits
 from gobby.agents.team_lifecycle import seat_team
 from gobby.storage.agents import LocalAgentRunManager
@@ -87,6 +88,7 @@ def check_runbook_seats(
     tab_title: str | None = None,
     task: str | None = None,
     seat_models: Mapping[str, str | None] | None = None,
+    model_defaults_for: Callable[[str], ModelDefaults] | None = None,
 ) -> AdmittedSeats:
     """Admit ``requested`` seats or raise ``RunbookSeatRefusal``.
 
@@ -111,7 +113,8 @@ def check_runbook_seats(
     the runbook tab; with ``task`` it becomes ``<tab_title> - #<seq>``.
     ``tab_exists`` says whether the workspace has that tab; two such tabs refuse.
     ``seat_models`` maps each seat to the model its launch takes; with it, a launching seat that
-    has no model there and none on its agent definition refuses.
+    has no model there, no ``agent_model_defaults`` entry from ``model_defaults_for``, and no model
+    on its agent definition refuses.
     """
     if (require_report_to and report_to is None) or (
         report_to is not None and not report_to.strip()
@@ -144,6 +147,7 @@ def check_runbook_seats(
             task=task,
             seat_models=seat_models,
             report_to=report_to,
+            model_defaults_for=model_defaults_for,
         )
     except RunbookSeatRefusal:
         raise
@@ -201,6 +205,7 @@ def _admit(
     task: str | None,
     seat_models: Mapping[str, str | None] | None,
     report_to: str | None,
+    model_defaults_for: Callable[[str], ModelDefaults] | None,
 ) -> AdmittedSeats:
     session = stores.sessions.get(caller_session_id)
     if (
@@ -275,7 +280,14 @@ def _admit(
         launching = tuple(seat for seat in seats if seat.name in launch)
         _refuse_unreachable_report_to(stores, report_to, project_id=project_id, seats=launching)
     if seat_models is not None:
-        _refuse_unmodeled_launches(stores.definitions, project_id, seats, launch, seat_models)
+        _refuse_unmodeled_launches(
+            stores.definitions,
+            project_id,
+            seats,
+            launch,
+            seat_models,
+            model_defaults=_policy_for(model_defaults_for, project_id),
+        )
     tab = _runbook_tab_title(stores.tasks, project_id, tab_title, tab_task)
     return AdmittedSeats(
         workspace_id=workspace_id,
@@ -487,23 +499,38 @@ def _refuse_unresolved_agents(
         raise RunbookSeatRefusal("; ".join(unresolved))
 
 
+def _policy_for(
+    model_defaults_for: Callable[[str], ModelDefaults] | None, project_id: str
+) -> ModelDefaults | None:
+    """The project's model policy, or a refusal when the policy cannot be read."""
+    if model_defaults_for is None:
+        return None
+    try:
+        return model_defaults_for(project_id)
+    except ValueError as exc:
+        raise RunbookSeatRefusal(str(exc)) from exc
+
+
 def _refuse_unmodeled_launches(
     definitions: AgentDefinitionManager,
     project_id: str,
     seats: Sequence[CatalogueSeat],
     launch: Sequence[str],
     seat_models: Mapping[str, str | None],
+    model_defaults: ModelDefaults | None = None,
 ) -> None:
-    """Refuse a launching seat with neither a model input nor a model on its definition."""
+    """Refuse a launching seat with no model input, no definition model, and no policy entry."""
     unmodeled: list[str] = []
     for seat in seats:
         if seat.name not in launch or seat_models.get(seat.name):
             continue
+        if model_defaults is not None and model_defaults.entry_for(seat.agent) is not None:
+            continue
         row = definitions.get_by_name(seat.agent, project_id=project_id)
         if row is not None and not row.definition_json.get("model"):
             unmodeled.append(
-                f"seat '{seat.name}' launches with no model: set its model input or a model "
-                f"on agent definition '{seat.agent}'"
+                f"seat '{seat.name}' launches with no model: set its model input, a model "
+                f"on agent definition '{seat.agent}', or an agent_model_defaults entry for it"
             )
     if unmodeled:
         raise RunbookSeatRefusal("; ".join(unmodeled))

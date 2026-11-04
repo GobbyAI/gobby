@@ -143,9 +143,8 @@ def test_active_policy_codex_model_is_seeded(
                     "type": "set_variable",
                     "variable": "project_policy",
                     "value": {
-                        "launch_defaults": {
-                            "developer_provider": "codex",
-                            "developer_model": "gpt-7-sol",
+                        "agent_model_defaults": {
+                            "fixture-seat": {"provider": "codex", "model": "gpt-7-sol"},
                         }
                     },
                 }
@@ -167,9 +166,9 @@ def test_active_policy_codex_model_is_seeded(
     assert config["tui"]["model_availability_nux"]["gpt-7-sol"] == 4
 
     # Caching package resources must not freeze the DB-active defaults.
-    policy_row.definition_json["effects"][0]["value"]["launch_defaults"]["developer_model"] = (
-        "gpt-7-terra"
-    )
+    policy_row.definition_json["effects"][0]["value"]["agent_model_defaults"]["fixture-seat"][
+        "model"
+    ] = "gpt-7-terra"
     updated_models = active_codex_launch_models(cast(Any, object()), "project-1")
     assert updated_models == ("gpt-7-terra",)
     with patch("gobby.agents.trust.Path.home", return_value=tmp_path):

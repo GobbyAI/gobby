@@ -1,10 +1,10 @@
 name: review
 type: pipeline
 description: |
-  Interactive /gobby review workflow. Dispatches epic-reviewer for an
+  Interactive /gobby review workflow. Dispatches code-reviewer for an
   epic so the epic review loop can approve, reject, or escalate.
 
-version: "1.0"
+version: "2.0.0"
 enabled: true
 
 inputs:
@@ -18,12 +18,12 @@ inputs:
     description: "Invocation mode; the skill's in-line mode uses apply_persona instead of this pipeline"
   provider:
     type: string
-    default: "codex"
-    description: "LLM provider override"
+    default: null
+    description: "LLM provider override; null lets the policy map or the definition decide"
   model:
     type: string
-    default: ""
-    description: "Model override (empty = provider default)"
+    default: null
+    description: "Model override; null lets the policy map or the definition decide"
   worktree_id:
     type: string
     default: ""
@@ -35,7 +35,7 @@ steps:
       server: gobby-agents
       tool: spawn_agent
       arguments:
-        agent: epic-reviewer
+        agent: code-reviewer
         task_id: "${{ inputs.task_id }}"
         allow_closed_task: true
         provider: "${{ inputs.provider }}"
@@ -43,7 +43,7 @@ steps:
         worktree_id: "${{ inputs.worktree_id }}"
         parent_session_id: "${{ session_id }}"
         prompt: |
-          Review epic task ${{ inputs.task_id }} as the epic-reviewer
+          Review epic task ${{ inputs.task_id }} as the code-reviewer
           agent. Check scope, reality, testing, and YAGNI against the approved
           plan and implementation evidence, then approve, reject, or escalate.
           Deliver the Epic Findings verdict in your end_agent_run handoff.

@@ -123,14 +123,6 @@ class BatchSpawnResponse(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-_BUILT_IN_DEFAULTS: dict[str, Any] = {
-    "agent_name": "default",
-    "checkout_mode": "inherit",
-    "model": None,
-    "reasoning_effort": None,
-    "reasoning_required": False,
-}
-
 # Semaphore to cap concurrent batch spawns
 _BATCH_SEMAPHORE = asyncio.Semaphore(5)
 
@@ -364,6 +356,10 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
         from gobby.hub.node_client import NodeCommandError
         from gobby.hub.remote_spawn import RemoteSpawnRequest
+        from gobby.mcp_proxy.tools.spawn_agent._launch_settings import (
+            agent_provider_for_spawn,
+            load_model_defaults,
+        )
         from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import resolve_spawn_provider
         from gobby.mcp_proxy.tools.spawn_agent._remote_routing import (
             resolve_spawn_route,
@@ -394,9 +390,12 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
         if not routed.local:
             try:
+                model_defaults = await asyncio.to_thread(
+                    load_model_defaults, task_manager.db, effective_project_id
+                )
                 run_provider = resolve_spawn_provider(
                     explicit_provider=req.provider,
-                    agent_provider=agent_body.provider if agent_body is not None else None,
+                    agent_provider=agent_provider_for_spawn(agent_body, req.model, model_defaults),
                     default_provider=None,
                 )
             except ValueError as exc:
@@ -410,6 +409,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 daemon_config=config_snapshot.active,
                 placement=None,
                 completion_registry=server.services.completion_registry,
+                model_defaults=model_defaults,
                 request=RemoteSpawnRequest(
                     parent_session_id=parent_session_id,
                     project_id=effective_project_id,
@@ -589,25 +589,6 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             succeeded=succeeded,
             failed=failed,
         ).model_dump(exclude_none=True)
-
-    # -----------------------------------------------------------------------
-    # GET /api/agents/launch-defaults
-    # -----------------------------------------------------------------------
-    @router.get("/launch-defaults")
-    async def get_launch_defaults(
-        project_id: str = Query(..., description="Project ID"),
-    ) -> dict[str, Any]:
-        """Get per-category launch defaults for the project."""
-        try:
-            key = f"launch_defaults.{project_id}"
-            saved = require_config_snapshot(server).active_values.get(key) or {}
-            # Merge with built-in defaults for any missing categories
-            return {"status": "success", "defaults": saved, "built_in": _BUILT_IN_DEFAULTS}
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception("Error fetching launch defaults: %s", e)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------------
     # POST /api/agents/spawn/prompt-preview

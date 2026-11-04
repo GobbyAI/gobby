@@ -27,6 +27,9 @@ from gobby.workflows.rule_authority import refuse_protected_rule_import
 
 logger = logging.getLogger(__name__)
 
+# Marks an installed project row that a project rule import wrote and owns.
+PROJECT_IMPORT_TAG = "project-workflow-import"
+
 
 def get_bundled_rules_path() -> Path:
     """Get the path to bundled rules directory.
@@ -362,8 +365,9 @@ def _sync_single_rule(
         "description": rule_data.get("description"),
         "enabled": rule_data.get("enabled", True),
         "priority": rule_data.get("priority", 100),
-        "tags": file_tags if file_tags is not None else [],
         **rule_data,
+        # The merged file tags carry the sync tag; a rule's own tags must not drop it.
+        "tags": file_tags if file_tags is not None else [],
     }
     defaults = {
         key: value
@@ -484,12 +488,16 @@ def _is_sync_managed_rule(existing: Any, sync_tag: str, project_id: str | None) 
 
     A global row may be adopted (and re-scoped) by a project sync, and a row the
     syncing project already owns keeps following its YAML; a row owned by another
-    project is never touched.
+    project is never touched. A project-owned row that lost the sync tag is still
+    managed while it carries the project import marker.
     """
+    if existing.source != "installed" or existing.project_id not in (None, project_id):
+        return False
+    tags = existing.tags or []
+    if sync_tag in tags:
+        return True
     return (
-        existing.source == "installed"
-        and existing.project_id in (None, project_id)
-        and sync_tag in (existing.tags or [])
+        existing.project_id == project_id and project_id is not None and PROJECT_IMPORT_TAG in tags
     )
 
 

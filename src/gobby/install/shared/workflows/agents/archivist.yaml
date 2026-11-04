@@ -4,10 +4,16 @@ message_sender_capabilities: [message_restricted_seats]
 description: |
   Archivist seat. Keeps the daily digest from the Orchestrator's updates. The daemon's
   digest delivery cron sends each day's file to the operator.
-version: "2.0.0"
+version: "2.1.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
-provider: inherit
+provider: claude
+model: claude-haiku-5-5
+reasoning_effort: medium
+fallbacks:
+  - provider: codex
+    model: gpt-6.1-terra
+    reasoning_effort: xhigh
 execution_mode: interactive
 checkout_mode: inherit
 persistent_workspace: true
