@@ -2,7 +2,8 @@
 
 A subagent's in-flight or failed Edit/Write must not hold the parent's stop, and the
 parent's writes must not hold a subagent's stop. Each context clears only its own
-state on its own post-tool outcome.
+state on its own post-tool outcome. A failed tool call holds only its own SubagentStop, the
+same way.
 """
 
 from __future__ import annotations
@@ -77,6 +78,10 @@ def _held_by_edit_recovery(response: Any) -> bool:
     return response.decision == "block" and "edit-write-recovery" in (response.reason or "")
 
 
+def _held_by_tool_recovery(response: Any) -> bool:
+    return response.decision == "block" and "tool-failure-recovery" in (response.reason or "")
+
+
 @pytest.mark.asyncio
 async def test_subagent_write_in_flight_does_not_hold_parent_stop(temp_db: HubDatabase) -> None:
     engine = RuleEngine(temp_db)
@@ -116,6 +121,10 @@ async def test_subagent_failed_write_holds_its_own_stop_only(temp_db: HubDatabas
         _tool(HookEventType.AFTER_TOOL, EDIT, SUBAGENT, failed=True), SESSION_ID, variables
     )
 
+    # A failed call also sets tool-failure recovery, which reports first, as on the main agent.
+    assert _held_by_tool_recovery(
+        await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
+    )
     own_stop = await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
     assert _held_by_edit_recovery(own_stop)
 
@@ -182,6 +191,50 @@ async def test_parent_turn_start_keeps_subagent_failed_write_held_at_its_own_sto
 
 
 @pytest.mark.asyncio
+async def test_subagent_tool_failure_holds_its_own_stop_only(temp_db: HubDatabase) -> None:
+    engine = RuleEngine(temp_db)
+    variables: dict[str, Any] = {}
+    await engine.evaluate(_tool(HookEventType.BEFORE_TOOL, READ, SUBAGENT), SESSION_ID, variables)
+    await engine.evaluate(
+        _tool(HookEventType.AFTER_TOOL, READ, SUBAGENT, failed=True), SESSION_ID, variables
+    )
+
+    assert _held_by_tool_recovery(
+        await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
+    )
+    assert not _held_by_tool_recovery(await engine.evaluate(_stop(), SESSION_ID, variables))
+
+
+@pytest.mark.asyncio
+async def test_parent_tool_failure_does_not_hold_subagent_stop(temp_db: HubDatabase) -> None:
+    engine = RuleEngine(temp_db)
+    variables: dict[str, Any] = {}
+    await engine.evaluate(_tool(HookEventType.BEFORE_TOOL, READ), SESSION_ID, variables)
+    await engine.evaluate(_tool(HookEventType.AFTER_TOOL, READ, failed=True), SESSION_ID, variables)
+
+    assert _held_by_tool_recovery(await engine.evaluate(_stop(), SESSION_ID, variables))
+    assert not _held_by_tool_recovery(
+        await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
+    )
+
+
+@pytest.mark.asyncio
+async def test_subagent_tool_failure_block_is_self_clearing(temp_db: HubDatabase) -> None:
+    engine = RuleEngine(temp_db)
+    variables: dict[str, Any] = {}
+    await engine.evaluate(
+        _tool(HookEventType.AFTER_TOOL, READ, SUBAGENT, failed=True), SESSION_ID, variables
+    )
+
+    assert _held_by_tool_recovery(
+        await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
+    )
+    assert not _held_by_tool_recovery(
+        await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
+    )
+
+
+@pytest.mark.asyncio
 async def test_parent_turn_start_keeps_subagent_in_flight_write_held_at_its_own_stop(
     temp_db: HubDatabase,
 ) -> None:
@@ -209,6 +262,9 @@ async def test_parent_turn_start_before_subagent_failed_post_still_holds_its_sto
         _tool(HookEventType.AFTER_TOOL, EDIT, SUBAGENT, failed=True), SESSION_ID, variables
     )
 
+    assert _held_by_tool_recovery(
+        await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
+    )
     assert _held_by_edit_recovery(
         await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
     )
@@ -236,6 +292,9 @@ async def test_subagent_stop_circuit_breaker_then_drops_its_scope(temp_db: HubDa
         _tool(HookEventType.AFTER_TOOL, EDIT, SUBAGENT, failed=True), SESSION_ID, variables
     )
 
+    assert _held_by_tool_recovery(
+        await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
+    )
     for _ in range(3):
         held = await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
         assert _held_by_edit_recovery(held)

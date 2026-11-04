@@ -632,9 +632,10 @@ class RuleEngine(
                     else:
                         override_decision = "allow"
 
-                # Auto-block stop when a tool just failed (self-clearing)
-                elif is_turn_end and variables.get("tool_block_pending"):
-                    variables["tool_block_pending"] = False
+                # Auto-block stop when this agent context's tool just failed (self-clearing),
+                # at its turn end or its own SubagentStop.
+                elif (is_turn_end or subagent_stop) and block_state.get("tool_block_pending"):
+                    block_state["tool_block_pending"] = False
                     override_decision = "block"
                     override_reason = (
                         "Rule enforced by Gobby: [tool-failure-recovery]\n"
