@@ -28,6 +28,7 @@ from gobby.runner_shutdown_storage import (
     _shutdown_database_concurrency,
     _shutdown_database_concurrency_under_cancellation,
 )
+from gobby.sessions.daemon_notices import send_hold_notice_if_restarting
 from gobby.shutdown_intent import ShutdownIntent, coerce_shutdown_intent, get_shutdown_marker_path
 
 if TYPE_CHECKING:
@@ -797,14 +798,17 @@ async def shutdown_daemon_services(
 ) -> None:
     """Run graceful shutdown within the CLI's process-termination deadline."""
     global _overall_shutdown_deadline
+    loop = asyncio.get_running_loop()
+    overall_deadline = loop.time() + _OVERALL_SHUTDOWN_DEADLINE_SECONDS
+    _overall_shutdown_deadline = overall_deadline
+    # Inside the overall deadline, and before the host stops: wakes reach terminals
+    # only while the host still accepts input.
+    await send_hold_notice_if_restarting(runner)
     host = getattr(runner, "terminal_host_manager", None)
     if host is not None:
         host.begin_shutdown()
     shutdown_intent = coerce_shutdown_intent(getattr(runner, "_shutdown_intent", None))
     services = getattr(getattr(runner, "http_server", None), "services", None)
-    loop = asyncio.get_running_loop()
-    overall_deadline = loop.time() + _OVERALL_SHUTDOWN_DEADLINE_SECONDS
-    _overall_shutdown_deadline = overall_deadline
     graceful_deadline = min(
         overall_deadline,
         loop.time() + _GRACEFUL_SHUTDOWN_BUDGET_SECONDS,

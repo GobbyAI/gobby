@@ -134,7 +134,7 @@ def service_manager(
     monkeypatch.setattr("gobby.cli.daemon_start.service_start", service_start)
     monkeypatch.setattr("gobby.cli.daemon_start._wait_for_daemon_health", lambda _port: 1.0)
     monkeypatch.setattr("gobby.cli.daemon_start._poll_startup_progress", lambda _port: True)
-    monkeypatch.setattr("gobby.cli.daemon_start._reconcile_ui_exposure", lambda _port: None)
+    monkeypatch.setattr("gobby.cli.daemon_start._reconcile_exposures", lambda _port: None)
     monkeypatch.setattr(
         "gobby.cli.runtime.CliRuntime.read_only_operational_config",
         lambda _runtime: mock_daemon_config,

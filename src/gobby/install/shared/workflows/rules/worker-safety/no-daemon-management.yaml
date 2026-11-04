@@ -1,8 +1,9 @@
+version: "1.0.1"
 tags: [worker-safety, enforcement, gobby]
 
 rules:
   no-daemon-management:
-    description: "Block spawned agents from starting, stopping, restarting or cutting over the gobby daemon via CLI; the Orchestrator restarts it after a global notice"
+    description: "Block spawned agents from starting, stopping, restarting or cutting over the gobby daemon via CLI; the Orchestrator restarts it and the daemon announces the restart"
     event: before_tool
     enabled: true
     priority: 50

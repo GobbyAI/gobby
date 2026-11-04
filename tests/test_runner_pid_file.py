@@ -1037,7 +1037,7 @@ class TestStartStopBarriers:
             patch("gobby.cli.daemon_start.subprocess.Popen", return_value=process) as popen,
             patch("gobby.cli.daemon_start._wait_for_daemon_health", return_value=0.1),
             patch("gobby.cli.daemon_start._poll_startup_progress", return_value=True),
-            patch("gobby.cli.daemon_start._reconcile_ui_exposure"),
+            patch("gobby.cli.daemon_start._reconcile_exposures"),
             patch("gobby.cli.daemon_start.has_auth_env", return_value=True),
             patch("gobby.cli.daemon_lifecycle.time.sleep"),
         ):
