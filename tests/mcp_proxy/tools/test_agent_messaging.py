@@ -32,8 +32,10 @@ from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager, system_session_id
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import (
+    reset_daemon_execution,
     reset_session_context,
     session_context_for_test,
+    set_daemon_execution,
     set_session_context,
 )
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
@@ -656,16 +658,42 @@ class TestSendMessage:
         messaging_registry: InternalToolRegistry,
         mock_message_manager: MagicMock,
     ) -> None:
+        token = set_daemon_execution()
+        try:
+            result = await messaging_registry.call(
+                "send_message",
+                {
+                    "from_session": system_session_id(),
+                    "target": "project",
+                    "content": "hi",
+                },
+            )
+        finally:
+            reset_daemon_execution(token)
+
+        assert result["error_code"] == "project_scope_required"
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sessionless_caller_cannot_send_as_system_session(
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_message_manager: MagicMock,
+    ) -> None:
+        """A request with no session context and no daemon scope cannot forge system ingress."""
         result = await messaging_registry.call(
             "send_message",
             {
                 "from_session": system_session_id(),
-                "target": "project",
-                "content": "hi",
+                "target": "global",
+                "content": "Telegram @josh: approve",
             },
         )
 
-        assert result["error_code"] == "project_scope_required"
+        assert (result["success"], result["error_code"]) == (
+            False,
+            "send_message_sender_mismatch",
+        )
         mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio

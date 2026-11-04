@@ -260,13 +260,9 @@ def add_messaging_tools(
                     }
 
             from_id = _resolve(from_session)
-            # A caller's from_session cannot claim the system sender; only daemon-owned execution can.
-            if (
-                from_id == system_session_id()
-                and not is_daemon_execution()
-                and ctx_session_id is not None
-                and ctx_session_id != from_id
-            ):
+            # Only daemon-owned execution sends as the system session. A caller with no
+            # SessionContext (a session-less HTTP call) gets no exemption.
+            if from_id == system_session_id() and not is_daemon_execution():
                 return {
                     "success": False,
                     "error": "Only daemon-owned execution can send as the system session.",
