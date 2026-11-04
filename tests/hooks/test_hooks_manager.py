@@ -3361,6 +3361,161 @@ def test_codex_successor_after_a_slow_login_binds_its_existing_pane(
     assert live.id == pane_id
 
 
+def _codex_tui(
+    pid: int, cmdline: list[str], create_time: float, terminal_id: str, cwd: Path
+) -> MagicMock:
+    mock = MagicMock()
+    mock.pid = pid
+    mock.info = {"name": "codex"}
+    mock.name.return_value = "codex"
+    mock.cmdline.return_value = cmdline
+    mock.create_time.return_value = create_time
+    mock.parent.return_value = None
+    mock.parents.return_value = []
+    mock.cwd.return_value = str(cwd)
+    mock.terminal.return_value = "/dev/ttys000"
+    mock.environ.return_value = {"GOBBY_TERMINAL_ID": terminal_id}
+    return mock
+
+
+def _uuid7_at(seconds: float, tail: int) -> str:
+    return str(uuid.UUID(int=(int(seconds * 1000) << 80) | (7 << 76) | (0x2 << 62) | tail))
+
+
+@pytest.mark.parametrize("second_seat", [False, True], ids=["only-seat", "two-seats"])
+def test_codex_clear_in_running_tui_takes_over_the_pane(
+    hook_manager_with_mocks: HookManager,
+    temp_dir: Path,
+    second_seat: bool,
+) -> None:
+    """#25647: a /clear inside a running Codex TUI hands the pane to the new thread.
+
+    The shared managed app-server runs the hooks, so the new thread names no seat in
+    argv and was minted hours after its TUI started. The predecessor still records
+    that TUI and holds the pane. With one seat TUI in the cwd the clear successor
+    adopts it and takes the binding; a second seat in the cwd keeps the refusal.
+    """
+    from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+    from gobby.hooks.terminal_context import clear_codex_seat_index
+    from gobby.storage.terminals import TerminalManager
+
+    manager = hook_manager_with_mocks
+    sessions = manager._session_manager
+    terminals = TerminalManager(sessions.db)
+    manager._event_handlers.terminal_manager = terminals
+    project = LocalProjectManager(sessions.db).get_by_name("test-project")
+    assert project is not None
+    pane_id = str(uuid.uuid4())
+    terminals.create_pending(
+        terminal_id=pane_id,
+        project_id=project.id,
+        backend="native",
+        ownership="gobby",
+        spawn_key=pane_id,
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    minted_at = time.time()
+    seat = _codex_tui(45647, ["codex", "--yolo"], minted_at - 7200, pane_id, temp_dir)
+    predecessor_id = sessions.register_session(
+        external_id=_uuid7_at(minted_at - 7100, 0x1111),
+        machine_id=LOCAL_MACHINE_ID,
+        source="codex",
+        project_id=project.id,
+        terminal_context={
+            "cwd": str(temp_dir),
+            "tty": "/dev/ttys000",
+            "parent_pid": seat.pid,
+            "parent_create_time": minted_at - 7200,
+            "parent_name": "codex",
+            "gobby_terminal_id": pane_id,
+        },
+    )
+    assert terminals.bind_session(pane_id, predecessor_id, project.id) is not None
+    sessions.update_status(predecessor_id, "idle")
+    host = _codex_tui(
+        94728,
+        ["codex", "app-server", "--listen", "unix://", "--managed-daemon"],
+        50.0,
+        "",
+        temp_dir,
+    )
+    table = [host, seat]
+    if second_seat:
+        table.append(_codex_tui(52001, ["codex"], minted_at - 3600, str(uuid.uuid4()), temp_dir))
+
+    def lookup(pid: int) -> MagicMock:
+        for candidate in table:
+            if candidate.pid == pid:
+                return candidate
+        raise psutil.NoSuchProcess(pid)
+
+    successor_thread = _uuid7_at(minted_at, 0x2222)
+    host_context = {"parent_pid": host.pid, "gobby_terminal_id": str(uuid.uuid4())}
+    start = HookEvent(
+        event_type=HookEventType.SESSION_START,
+        session_id=successor_thread,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={"source": "clear", "cwd": str(temp_dir), "terminal_context": host_context},
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    prompt = CodexHooksAdapter().translate_to_hook_event(
+        {
+            "hook_type": "UserPromptSubmit",
+            "input_data": {
+                "session_id": successor_thread,
+                "prompt": "Start the next task.",
+                "cwd": str(temp_dir),
+                "terminal_context": dict(host_context),
+                "machine_id": LOCAL_MACHINE_ID,
+            },
+            "source": "codex",
+        }
+    )
+    assert prompt is not None
+    clear_codex_seat_index()
+    try:
+        with (
+            patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
+            patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename"),
+            patch("gobby.hooks.terminal_context.psutil.Process", side_effect=lookup),
+            patch(
+                "gobby.hooks.terminal_context.psutil.process_iter",
+                side_effect=lambda **_: list(table),
+            ),
+        ):
+            assert manager.handle(start).decision == "allow"
+            assert manager.handle(prompt).decision == "allow"
+    finally:
+        clear_codex_seat_index()
+
+    successor = sessions.get(prompt.metadata["_platform_session_id"])
+    assert successor is not None
+    assert successor.external_id == successor_thread
+    bound = sessions.db.fetchall("SELECT id FROM terminals WHERE session_id = %s", (successor.id,))
+    predecessor = sessions.get(predecessor_id)
+    assert predecessor is not None
+    if second_seat:
+        # Two seat TUIs share the cwd: no process signal names the clearing one.
+        assert (successor.terminal_context or {}).get("parent_pid") is None
+        assert bound == []
+        assert predecessor.status == "idle"
+        return
+    assert successor.terminal_context is not None
+    assert successor.terminal_context["parent_pid"] == seat.pid
+    assert successor.terminal_context["gobby_terminal_id"] == pane_id
+    assert [str(row["id"]) for row in bound] == [pane_id]
+    assert predecessor.status == "expired"
+    assert successor.parent_session_id == predecessor_id
+
+    sessions.update_status(successor.id, "paused")
+    paused = sessions.get(successor.id)
+    assert paused is not None
+    live = terminals.resolve_live_for_session(paused)
+    assert live is not None
+    assert live.id == pane_id
+
+
 def test_session_resolution_reads_the_session_row_once(
     hook_manager_with_mocks: HookManager,
     sample_session_start_event: HookEvent,
