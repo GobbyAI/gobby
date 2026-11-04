@@ -177,6 +177,36 @@ async def test_closing_a_merged_epic_leaf_ends_its_dispatched_seat_and_removes_i
 
 
 @pytest.mark.asyncio
+async def test_leaf_seat_that_cannot_end_files_no_task_and_keeps_its_sub_tree(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#25656: a leaf whose dispatched seat cannot end keeps its sub-tree and files no task."""
+    db = world.case.db
+
+    async def cannot_end(**_kwargs: Any) -> dict[str, Any]:
+        return {"success": False}
+
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", cannot_end)
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await seated_team(world, epic, world.child(epic))
+    sub = sub_tree(world, team, leaf)
+    dispatched_seat(world, team, str(sub.path))
+    closed = close_leaf(world, leaf, sub.sha)
+    tasks_before = project_task_ids(world)
+
+    with caplog.at_level(logging.WARNING, logger=TEARDOWN_LOGGER):
+        await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    assert project_task_ids(world) == tasks_before
+    assert sub.path.is_dir()
+    assert LocalWorktreeManager(db).get(sub.worktree_id) is not None
+    assert branch_exists(world, sub.branch)
+    (code,) = refusal_codes(caplog)
+    assert code
+
+
+@pytest.mark.asyncio
 async def test_leaf_teardown_keeps_a_dirty_or_unmerged_sub_tree_and_logs_it(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
