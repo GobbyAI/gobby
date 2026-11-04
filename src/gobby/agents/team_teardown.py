@@ -66,7 +66,7 @@ class _DueTeam:
 
 @dataclass(frozen=True)
 class _DueLeaf:
-    team: _DueTeam  # the epic team whose branch the leaf's sub-tree was cut from
+    team: _DueTeam  # the team of the leaf's parent task, whose branch the sub-tree was cut from
     binding: TeamBinding  # the sub-tree, bound as a tree so the team's deleter removes it
 
 
@@ -268,11 +268,11 @@ def _with_members(db: HubDatabase, bindings: list[TeamBinding]) -> list[_DueTeam
 
 
 def _due_leaves(db: HubDatabase, cutoff: datetime) -> list[_DueLeaf]:
-    """Sub-trees of epic leaves that closed before ``cutoff``, each paired with its epic's team.
+    """Sub-trees of leaves that closed before ``cutoff``, each paired with its parent task's team.
 
     A sub-tree is cut from its team's branch, so an admission on this machine names that branch,
     and the team's task is an ancestor of the leaf at any depth. The team may still be open: a
-    leaf can close while its epic works on.
+    leaf can close while its parent task works on.
     """
     rows = db.fetchall(
         """
@@ -391,7 +391,7 @@ async def _tear_down_leaf(
 ) -> int:
     """End the seats a merged leaf dispatched, then delete its sub-tree and branch.
 
-    The epic is still open, so no teardown outcome goes on its admission. A retained
+    The parent task is still open, so no teardown outcome goes on its admission. A retained
     sub-tree stays due and is retried on the next pass, which logs its refusal again.
     """
     seats = await asyncio.to_thread(_team_seats, db, leaf.team)
@@ -480,7 +480,7 @@ def _team_seats(db: HubDatabase, team: _DueTeam) -> list[AgentRun]:
     """Every run the team's runbooks launched, ended or not.
 
     An ended seat still anchors its resumed run and the seats it dispatched. Resumes
-    may be parented to the epic manager even when the original seat belongs to a pod.
+    may be parented to the parent task's manager even when the original seat belongs to a pod.
     """
     executions = LocalPipelineExecutionManager(db, team.binding.project_id)
     runs = LocalAgentRunManager(db)

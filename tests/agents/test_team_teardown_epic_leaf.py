@@ -46,7 +46,7 @@ pytestmark = pytest.mark.unit
 TITLE = "Scroll and type during daemon outage window"
 LEAF_TITLE = "Wire the scroll handler"
 NESTED_TITLE = "Scroll state for the nested epic"
-# seated_team launches a manager, tester, implementer and reviewer in the epic tree.
+# seated_team launches a manager, tester, implementer and checker in the parent task's tree.
 PRIMARY_SEAT = 2
 
 

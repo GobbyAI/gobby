@@ -154,7 +154,7 @@ def commit(team: Team, name: str) -> str:
 
 
 def land(world: TeamWorld, team: Team, name: str) -> str:
-    """Commit ``name`` in the team tree and merge its branch into trunk, as landing does."""
+    """Commit ``name`` in the team tree and merge its branch into trunk, as the merge step does."""
     sha = commit(team, name)
     world.case.git("merge", "--no-edit", team.binding.branch)
     return sha
@@ -223,7 +223,7 @@ async def test_close_collapses_all_team_seats(
     terminations = Terminations(db)
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
     team = await admitted_team(world, "Collapse the closed team")
-    # A replacement execution joined the team and launched its own reviewer.
+    # A replacement execution joined the team and launched its own checker.
     rejoined = world.child(team.task)
     await world.admit(rejoined, team.task, team.binding.team_id)
     world.finish(rejoined)
@@ -373,7 +373,7 @@ async def test_cleanup_preserves_unsafe_trees(
     }
     shas[unmerged.binding.team_id] = commit(unmerged, "unmerged.py")
     edited = tree_of(dirty.binding) / "README.md"
-    edited.write_text("edited after landing\n")
+    edited.write_text("edited after the merge\n")
     stranger = world.case.session("operator shell")
     db.execute(
         "UPDATE sessions SET workspace_path = %s WHERE id = %s",
@@ -405,7 +405,7 @@ async def test_cleanup_preserves_unsafe_trees(
         assert LocalWorktreeManager(db).get(tree_id_of(team.binding)) is not None
         assert branch_exists(world, team.binding.branch)
     assert sorted(refusal_codes(caplog)) == sorted(code for _, code in refusals)
-    assert edited.read_text() == "edited after landing\n"
+    assert edited.read_text() == "edited after the merge\n"
     assert git_in(tree_of(mismatched.binding), "branch", "--show-current") == (
         "operator-experiment"
     )
@@ -645,7 +645,7 @@ async def test_treeless_team_closes_its_seats_without_deleting_a_tree(
     db = world.case.db
     terminations = Terminations(db)
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
-    task = world.case.task("Treeless research team")
+    task = world.case.task("Treeless team")
     runbook = world.child(task)
     binding = await world.admit(runbook, task, checkout_mode="none")
     world.finish(runbook)
@@ -671,20 +671,20 @@ async def test_close_ends_task_bound_dispatched_seat_outside_tree_and_preserves_
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch, parked: bool, inside_tree: bool
 ) -> None:
     db = world.case.db
-    team = await admitted_team(world, "Dispatched reviewer in the main checkout")
-    reviewer = dispatched_seat(world, team, str(world.case.repo))
+    team = await admitted_team(world, "Dispatched checker in the main checkout")
+    checker = dispatched_seat(world, team, str(world.case.repo))
     db.execute(
         "UPDATE agent_runs SET task_id = %s WHERE child_session_id = %s",
-        (team.task.id, reviewer),
+        (team.task.id, checker),
     )
     runs = LocalAgentRunManager(db)
-    reviewer_run = runs.get_by_session(reviewer)
-    assert reviewer_run is not None
+    checker_run = runs.get_by_session(checker)
+    assert checker_run is not None
     if parked:
-        SessionManager(db).update_terminal_pickup_metadata(reviewer, agent_run_id=reviewer_run.id)
-        runs.start(reviewer_run.id)
-        runs.merge_resume_metadata(reviewer_run.id, {"provider_native_session_id": "native-review"})
-        runs.cancel(reviewer_run.id, terminal_reason="daemon_stop")
+        SessionManager(db).update_terminal_pickup_metadata(checker, agent_run_id=checker_run.id)
+        runs.start(checker_run.id)
+        runs.merge_resume_metadata(checker_run.id, {"provider_native_session_id": "native-check"})
+        runs.cancel(checker_run.id, terminal_reason="daemon_stop")
     other_task = world.case.task("Another open assignment")
     # Preserve the manager, but still find the children it dispatched for the closing task.
     manager = team.seats[0]
@@ -709,14 +709,14 @@ async def test_close_ends_task_bound_dispatched_seat_outside_tree_and_preserves_
 
     await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
 
-    assert terminations.ended() == sorted([*team.seats[1:], *([] if parked else [reviewer])])
+    assert terminations.ended() == sorted([*team.seats[1:], *([] if parked else [checker])])
     assert session_status(db, manager) == "active"
     assert session_status(db, other) == "active"
     assert session_status(db, reassigned.id) == "active"
-    assert session_status(db, reviewer) == "expired"
-    assert get_agent_end_handoff(db, reviewer_run.id) is not None
+    assert session_status(db, checker) == "expired"
+    assert get_agent_end_handoff(db, checker_run.id) is not None
     if parked:
-        ended_run = runs.get(reviewer_run.id)
+        ended_run = runs.get(checker_run.id)
         assert ended_run is not None and ended_run.resume_metadata_json is not None
         assert ended_run.resume_metadata_json[CONSUMED_BY_KEY] == "teardown"
     assert LocalTaskManager(db).get_task(other_task.id).claimed_by_session_id == reassigned.id
@@ -726,7 +726,7 @@ async def test_close_ends_task_bound_dispatched_seat_outside_tree_and_preserves_
 
     await teardown_pass(db, daemon(db), closed_at(other_closed) + TEARDOWN_GRACE)
 
-    expected = [*team.seats, other, reassigned.id, *([] if parked else [reviewer])]
+    expected = [*team.seats, other, reassigned.id, *([] if parked else [checker])]
     assert terminations.ended() == sorted(expected)
     assert {session_status(db, session) for session in (manager, other, reassigned.id)} == {
         "expired"
@@ -743,7 +743,7 @@ async def test_team_teardown_refusal_creates_no_task(
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
     dirty = await admitted_team(world, "Dirty teardown team")
     sha = land(world, dirty, "dirty.py")
-    (tree_of(dirty.binding) / "dirty.py").write_text("edited after landing\n")
+    (tree_of(dirty.binding) / "dirty.py").write_text("edited after the merge\n")
     closed = close(world, dirty, sha, minutes_ago=1)
     before = project_task_ids(world)
 
