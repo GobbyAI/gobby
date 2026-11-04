@@ -182,6 +182,21 @@ async def test_parent_turn_start_keeps_subagent_failed_write_held_at_its_own_sto
 
 
 @pytest.mark.asyncio
+async def test_parent_turn_start_keeps_subagent_in_flight_write_held_at_its_own_stop(
+    temp_db: HubDatabase,
+) -> None:
+    engine = RuleEngine(temp_db)
+    variables: dict[str, Any] = {}
+    await engine.evaluate(_tool(HookEventType.BEFORE_TOOL, EDIT, SUBAGENT), SESSION_ID, variables)
+
+    await engine.evaluate(_turn_start(), SESSION_ID, variables)
+
+    assert _held_by_edit_recovery(
+        await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
+    )
+
+
+@pytest.mark.asyncio
 async def test_parent_turn_start_before_subagent_failed_post_still_holds_its_stop(
     temp_db: HubDatabase,
 ) -> None:
