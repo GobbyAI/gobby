@@ -299,11 +299,15 @@ async fn two_new_tabs_before_the_first_create_lands_place_both() {
 async fn a_held_adoption_step_keeps_the_window_live_and_rolls_back_on_refusal() {
     let mock = MockDaemon::start("local-token").await;
     mock.refuse_workspace_op_at("pane.split", 1, "busy", "adoption split refused");
+    // The focused pane types through the daemon, so both are tmux-backed (see
+    // `pane_workspace`).
+    mock.set_attach_backend("terminal-a", "tmux");
+    mock.set_attach_backend("terminal-b", "tmux");
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
-        roster_items(&["terminal-a", "terminal-b"]),
+        roster_items_on("tmux", &["terminal-a", "terminal-b"]),
     );
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
@@ -393,6 +397,7 @@ async fn closing_a_tab_issues_tab_close_only_after_every_kill_settles() {
             &["terminal-a", "terminal-b", "terminal-c"],
             None,
             false,
+            &[],
         )
         .await;
         let seeded = mock.seed_workspace(

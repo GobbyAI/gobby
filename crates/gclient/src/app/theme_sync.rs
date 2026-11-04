@@ -127,35 +127,39 @@ impl Pane {
 }
 
 impl<D: Daemon> Workspace<D> {
-    /// Bring every capable pane's host up to `theme`. A proxied pane has no
-    /// stream of its own, so the daemon relays its declaration on the host
-    /// stream it holds for the pane's attachment; the host's input grant
-    /// still decides whether it applies.
-    pub(crate) async fn sync_terminal_themes(&mut self, theme: &ThemeDeclaration) {
-        let mut relayed = Vec::new();
+    /// Bring every capable pane's host up to `theme`. Direct panes sync now.
+    /// A proxied pane has no stream of its own, so its relay is returned for
+    /// the live loop to send as a job, and a slow daemon never holds up the
+    /// tick. The daemon relays the declaration on the host stream it holds for
+    /// the pane's attachment; the host's input grant still decides whether it
+    /// applies.
+    pub(crate) fn sync_terminal_themes(
+        &mut self,
+        theme: &ThemeDeclaration,
+    ) -> Vec<(super::PaneId, ThemeDeclaration)> {
+        let mut relays = Vec::new();
         for (id, pane) in self.panes.iter_mut() {
             match pane.theme_due(theme) {
                 Some(Transport::Direct) => pane.sync_terminal_theme(theme),
-                Some(Transport::Proxy) => relayed.push((
-                    *id,
-                    json!({
-                        "type": "terminal_set_theme",
-                        "terminal_id": pane.terminal_id,
-                        "attachment_id": pane.attachment_id(),
-                        "theme": theme,
-                    }),
-                )),
+                Some(Transport::Proxy) => relays.push((*id, theme.clone())),
                 None => {}
             }
         }
-        for (id, message) in relayed {
-            // A failed relay leaves the pane undeclared for the next tick.
-            if self.daemon.notify(message).await.is_ok() {
-                if let Some(pane) = self.panes.get_mut(&id) {
-                    pane.declared_theme = Some(theme.clone());
-                }
-            }
-        }
+        relays
+    }
+}
+
+impl Pane {
+    /// The `terminal_set_theme` relay for a proxied pane whose theme is due.
+    pub(crate) fn theme_relay(&self, theme: &ThemeDeclaration) -> Option<serde_json::Value> {
+        (self.theme_due(theme) == Some(Transport::Proxy)).then(|| {
+            json!({
+                "type": "terminal_set_theme",
+                "terminal_id": self.terminal_id,
+                "attachment_id": self.attachment_id(),
+                "theme": theme,
+            })
+        })
     }
 }
 

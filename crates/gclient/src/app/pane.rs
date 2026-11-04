@@ -519,6 +519,19 @@ impl Pane {
         self.direct_native() && self.host_input_granted
     }
 
+    /// A native backend whose frames come over the daemon's proxy. Its keys go
+    /// to the host stream, never through the daemon, so it reattaches there
+    /// instead (#25653).
+    pub(super) fn native_proxy(&self) -> bool {
+        self.backend.is_native() && self.transport() == Some(Transport::Proxy)
+    }
+
+    /// Ask for this proxy pane's direct try now, not at its backoff's due time
+    /// (#25653).
+    pub(super) fn promote_now(&mut self) {
+        self.promote_at = Some(Instant::now());
+    }
+
     pub(super) fn host_attachment_id(&self) -> Option<u64> {
         self.frame_source
             .as_ref()
