@@ -91,7 +91,7 @@ def test_failed_reinstall_leaves_prior_bundled_rows(hub_db: HubDatabase) -> None
     manager = RuleDefinitionManager(hub_db)
     prior = manager.create(
         name="keep-prior-rule",
-        definition_json={"event": "before_tool", "action": "allow"},
+        definition_json={"event": "before_tool", "effects": [{"type": "block", "reason": "stop"}]},
         source="installed",
         tags=["gobby"],
     )
@@ -205,7 +205,10 @@ def test_reinstall_deletes_only_rows_bundled_sync_owns(hub_db: HubDatabase) -> N
         agents.create("bundled-agent", {"name": "bundled-agent", **_AGENT_BODY}, tags=["gobby"]),
         rules.create(
             name="bundled-rule",
-            definition_json={"event": "before_tool", "action": "allow"},
+            definition_json={
+                "event": "before_tool",
+                "effects": [{"type": "block", "reason": "stop"}],
+            },
             source="installed",
             tags=["gobby"],
         ),
