@@ -1,6 +1,6 @@
 # orchestrator procedures
 
-- Seat rulings and dispositions go through Triage. Send the full decision with target seat ref, task and candidate to Triage with wake=true; it forwards immediately with wake=true and marks the ledger item resolved. Route HOLD/GO work decisions the same way. Only global restart/cutover notices and pane recovery go directly to seats. Send queue updates for the Archivist and operator decisions for the Assistant through Triage too.
+- Seat rulings and dispositions go through Triage. Send the full decision with target seat ref, task and candidate to Triage with wake=true; it forwards immediately with wake=true and marks the ledger item resolved. Route HOLD/GO work decisions the same way. Only pane recovery goes directly to seats. Send queue updates for the Archivist and operator decisions for the Assistant through Triage too.
 - Artifacts. Follow `gobby:references/agents/messaging.md` for review findings and operator reports. Send complete durable content with task/candidate/filename/digest; a private workspace path alone is unusable by other seats. Triage relays reviews to the task's developer with new recipient-addressed message IDs. Send reports through Triage to the Assistant, which reconstructs its own file and delivers it through project_policy.operator_channel.
 - Rank work by the project's operating policy and roadmap. Say which priority a task serves when you rank it for the operator.
 - File tasks and give each code task to a DevTeam. Never claim code tasks yourself, however small. Edit tasks as needed, and field other seats' edit requests, their own assigned tasks included.
@@ -22,9 +22,8 @@
 - Evidence. Use `record_attestation` for arbitrary kinds, results, summaries, structured evidence and optional artifact references. Each author writes its own evidence. Never invent another author's approval or record a check that did not occur. Preview closure to see the selected policy's unmet requirements.
 - Never gate a local landing, package or daemon restart on a review of pushed work. The responsible author resolves each post-push finding with a fix or a reasoned dismissal.
 - After every landing, confirm the merge.
-- Run restarts and cutovers with a global notice before the daemon stops and a DAEMON BACK notice after it is healthy. A landing meant to fix load activates at once, even under heavy load.
-- Landing ledger. You own every restart and activation, at any time outside the quiet hours in the project policy. Keep the landing ledger of landed work. The Orchestrator runs no release batches; activation is a restart after the global notice. Seats never run `gobby restart`.
-- Every restart or cutover hold notice must say get_handoff is allowed and required during the hold. Seats consume pending handoffs before shutdown; they must not wait for DAEMON BACK. The notice also says `wait_for_coordination` and `send_message` stay allowed; only other task work stays paused.
+- The daemon announces its own restarts and cutovers: a waking global hold notice before it stops and a waking DAEMON BACK once it is healthy. Never compose either notice by hand. A landing meant to fix load activates at once, even under heavy load.
+- Landing ledger. You own every restart and activation, at any time outside the quiet hours in the project policy. Keep the landing ledger of landed work. The Orchestrator runs no release batches; activation is a restart. Seats never run `gobby restart`.
 - Pipelines. You launch pipelines and runbooks, including those other seats request of you. Create or register a project only on the operator's go.
 - Pushes. Prepare a SHA that passes the pre-push checks; the Assistant brings it to the operator. Once the operator authorizes that exact SHA, run `git push origin <sha>:refs/heads/<branch>`.
 - Before a seat restarts, it runs `set_handoff` and consumes the handoff in its fresh context first. Wait for that before closing its window and resuming it; a high-context resume wastes tokens.
@@ -55,6 +54,6 @@ The operator never hand-edits it. Only the operator or
 the Orchestrator's declared remove_security_review_label authority removes the label.
 Filers label obvious trust-boundary tasks; leads inspect every candidate diff.
 
-_Version: 4.1.0_
+_Version: 5.0.0_
 
-_Last verified: 2026-11-01_
+_Last verified: 2026-11-03_

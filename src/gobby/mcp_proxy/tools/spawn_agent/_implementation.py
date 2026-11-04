@@ -81,7 +81,12 @@ from ._spawn_guards import (
 )
 from ._spawn_phase import SpawnPhase
 from ._step_state import persist_initial_step_instance_if_resolved
-from ._worktree_reuse import prepare_resumed_worktree, prepare_reused_worktree
+from ._worktree_reuse import (
+    prepare_resumed_worktree,
+    prepare_reused_worktree,
+    refuse_foreign_task_binding,
+    resolve_reused_worktree_id,
+)
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -106,7 +111,7 @@ async def spawn_agent_impl(
     base_branch: str | None = None,
     worktree_dir_name: str | None = None,  # Epic-team sub-worktree directory, set by team dispatch
     clone_id: str | None = None,  # Reuse existing clone instead of creating new isolation
-    worktree_id: str | None = None,  # Reuse existing worktree instead of creating new isolation
+    worktree_id: str | None = None,  # Reuse an existing worktree (id, id prefix or branch)
     cleanup_isolation_on_failure: bool = False,
     worktree_storage: Any | None = None,
     git_manager: Any | None = None,
@@ -470,7 +475,7 @@ async def spawn_agent_impl(
     isolation_started = start_spawn_phase()
     if worktree_id and worktree_storage:
         try:
-            worktree_id = worktree_storage.resolve_reference(worktree_id)
+            worktree_id = resolve_reused_worktree_id(worktree_storage, project_id, worktree_id)
         except ValueError as exc:
             return {"success": False, "error": str(exc) or type(exc).__name__}
         existing_worktree = worktree_storage.get(worktree_id)
@@ -503,6 +508,9 @@ async def spawn_agent_impl(
         try:
             # Resume preserves its recorded checkout; explicit reuse syncs its base.
             if spawn_config.preserve_existing_worktree:
+                if claim:
+                    # A claiming resume still may not move a tree onto another task.
+                    refuse_foreign_task_binding(existing_worktree, spawn_config.task_id)
                 isolation_ctx, handler = await prepare_resumed_worktree(
                     existing_worktree=existing_worktree,
                     spawn_config=spawn_config,

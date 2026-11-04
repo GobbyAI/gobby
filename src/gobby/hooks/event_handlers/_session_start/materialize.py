@@ -293,13 +293,10 @@ def _bind_clear_successor(
             exc,
         )
     try:
-        from gobby.agents.agent_workspaces import bind_session_workspace, schedule_workspace_commit
+        from gobby.agents.agent_workspaces import bind_session_workspace
 
         bind_session_workspace(
             handler._session_manager.db, successor_id, inherit_from=predecessor_id
-        )
-        schedule_workspace_commit(
-            getattr(session_obj, "project_id", None), "clear_binding", loop=handler._event_loop
         )
     except Exception as exc:
         handler.logger.warning(

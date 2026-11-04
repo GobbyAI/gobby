@@ -325,6 +325,13 @@ it. The parent, or its bound clear successor, reads it with
 `get_handoff(agent_run_id=<child run>)`, which is idempotent and does not consume it.
 The ending child seat cannot read it back through that call.
 
+A provider-native subagent that shares its parent's session, such as a Claude Code
+`Task` or workflow agent, owns no handoff. The parent's handoff and context-pressure
+gates skip events whose hook payload carries `agent_id`, so a parent's `set_handoff`
+or context limit never blocks its running subagents. Those subagents cannot call
+`get_handoff` or `set_handoff`: either call would consume or compact the parent's
+handoff. The parent's own calls stay gated as before.
+
 Load `gobby:references/sessions/handoffs.md` before authoring `set_handoff` or
 cooperative `end_agent_run` content. A before-tool block teaches this requirement;
 the existing model-aware context-pressure warnings also request the reference.

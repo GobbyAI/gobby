@@ -529,6 +529,7 @@ def build_condition_helpers(
     )
     from .remote_fetch_guard import remote_fetch_execution
     from .task_claim_state import claims_without_edit_target
+    from .time_windows import time_in_windows
 
     ctx = context or {}
 
@@ -553,6 +554,7 @@ def build_condition_helpers(
             "command_sets_environment": command_sets_environment,
             "blocks_direct_provider_launch": blocks_direct_provider_launch,
             "remote_fetch_execution": remote_fetch_execution,
+            "time_in_windows": time_in_windows,
             "task_commit_project_path_allowlist_violation": (
                 task_commit_project_path_allowlist_violation
             ),

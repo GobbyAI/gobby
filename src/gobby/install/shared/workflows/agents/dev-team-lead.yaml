@@ -8,7 +8,7 @@ capabilities:
 - team_main_checkout
 description: Leads single-task and epic DevTeams, including every leaf team of its epic; lands,
   validates, closes and cleans up.
-version: "4.2.0"
+version: "4.2.1"
 tags:
 - gobby
 - seat
@@ -81,7 +81,7 @@ prompts:
     ## Coordination
     Monitor gobby-tasks:team_progress and real claims. Register
     wait_for_coordination(owner_session=<seat>, reply=true, timeout=900) for replies;
-    re-arm event-driven waits. Send readiness/blockers to report_to/Triage; obey HOLD/GO.
+    re-arm event-driven waits. Send readiness/blockers to report_to; obey HOLD/GO.
     After closure request cooperative seat completion, verify no live use and delete
     the clean merged worktree with its stored base_branch as merged_into, without force.
     Retain a shared epic tree until every descendant and final proof is complete.
@@ -118,7 +118,7 @@ prompts:
     ## Coordination
     Monitor gobby-tasks:team_progress and real claims. Register
     wait_for_coordination(owner_session=<seat>, reply=true, timeout=900) for replies;
-    re-arm event-driven waits. Send readiness/blockers to report_to/Triage; obey HOLD/GO.
+    re-arm event-driven waits. Send readiness/blockers to report_to; obey HOLD/GO.
     After closure request cooperative seat completion, verify no live use and delete
     the clean merged worktree with its stored base_branch as merged_into, without force.
     Retain a shared epic tree until every descendant and final proof is complete.

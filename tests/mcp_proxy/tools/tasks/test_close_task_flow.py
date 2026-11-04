@@ -19,7 +19,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import commit_close as _commit_close
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as notifications
-from gobby.storage.tasks import Task, TaskHasOpenChildrenError
+from gobby.storage.tasks import Task, TaskStaleStateError
 from gobby.tasks.closure_policy import ClosureDecision
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.agent_definitions import make_agent_definition
@@ -208,14 +208,15 @@ async def test_a_child_created_during_the_close_window_asks_for_a_retry(
     evaluation = _ready_evaluation(task)
     monkeypatch.setattr(lifecycle, "_evaluate_close", AsyncMock(return_value=evaluation))
     manager = cast(MagicMock, ctx.task_manager)
-    manager.close_task.side_effect = TaskHasOpenChildrenError(task.id, ["late-child (Late child)"])
+    # A late child moves the closure revision, so the guarded close loses the race.
+    manager.close_task.side_effect = TaskStaleStateError(task.id)
     cleanup = MagicMock()
     monkeypatch.setattr(close_finalization, "_cleanup_closed_claim", cleanup)
     result = await _commit_close(
         ctx, evaluation, reason="done", changes_summary="Done", commit_sha=None
     )
     assert result["error"] == "close_state_changed"
-    assert "Late child" in result["message"]
+    assert "reload and retry" in result["message"]
     cleanup.assert_not_called()
 
 

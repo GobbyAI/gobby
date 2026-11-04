@@ -626,6 +626,47 @@ rules:
         assert result["synced"] == 0
         assert len(result["errors"]) > 0
 
+    def test_runtime_variables_are_not_sync_warnings(
+        self, db: HubDatabase, rules_dir: Path
+    ) -> None:
+        """The context-free sync dry run treats runtime-only variables as expected."""
+        (rules_dir / "runtime.yaml").write_text(
+            """
+rules:
+  runtime-rule:
+    event: before_tool
+    when: "variables.get('flag') and event.data.get('x')"
+    effect:
+      type: block
+      reason: "Runtime only: {{ runtime_only_value }}"
+"""
+        )
+        result = sync_bundled_rules(db, rules_dir)
+
+        assert result["synced"] == 1
+        assert result.get("warnings", []) == []
+        assert result["errors"] == []
+
+    def test_invalid_when_expression_still_fails_sync(
+        self, db: HubDatabase, rules_dir: Path
+    ) -> None:
+        """A genuinely invalid expression is still reported."""
+        (rules_dir / "broken.yaml").write_text(
+            """
+rules:
+  broken-rule:
+    event: before_tool
+    when: "variables.get('flag') and ("
+    effect:
+      type: block
+      reason: "Broken."
+"""
+        )
+        result = sync_bundled_rules(db, rules_dir)
+
+        assert result["synced"] == 0
+        assert any("broken-rule" in error for error in result["errors"])
+
     def test_missing_effect_field_skipped(
         self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
     ) -> None:

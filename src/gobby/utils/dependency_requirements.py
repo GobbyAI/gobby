@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess  # Fixed dependency version commands. # nosec B404
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -25,6 +26,7 @@ GIT_MIN_VERSION = "2.38.0"
 NODE_MIN_VERSION = "22.12.0"
 DOCKER_COMPOSE_MIN_VERSION = "2.7.0"
 STARTING_GRACE_SECONDS = 120.0
+PROBE_RETRY_DELAY_SECONDS = 0.5
 
 _VERSION_PATTERN = re.compile(
     r"(?<![A-Za-z0-9])v?(?P<numeric>\d+(?:\.\d+){1,3})"
@@ -410,16 +412,11 @@ def _command_status(
         )
     try:
         path = str(Path(raw_path).resolve(strict=True))
-        result = spawn.run(  # Executable resolved from PATH. # nosec B603
-            [path, *arguments],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=10,
-        )
-        output: str | None = result.stdout.strip() or result.stderr.strip()
-        if result.returncode != 0:
-            output = None
+        output, failure = _probe_output(path, arguments)
+        if failure is not None:
+            # A loaded machine can fail one spawn; retry once before failing closed.
+            time.sleep(PROBE_RETRY_DELAY_SECONDS)
+            output, failure = _probe_output(path, arguments)
     except subprocess.TimeoutExpired:
         return DependencyStatus(
             state="invalid",
@@ -432,9 +429,22 @@ def _command_status(
                 "overloaded. Retry when load drops."
             ),
         )
-    except (OSError, RuntimeError, subprocess.SubprocessError):
+    except (OSError, RuntimeError) as exc:
         path = str(Path(raw_path).resolve(strict=False))
-        output = None
+        output, failure = None, f"cannot resolve the executable: {exc!r}"
+    if failure is not None:
+        requirement = _requirement_text(minimum_version, None)
+        return DependencyStatus(
+            state="invalid",
+            installed_version=None,
+            minimum_version=minimum_version,
+            expected_version=None,
+            path=path,
+            error=(
+                f"{name} version check failed at {path} ({failure}); requires {requirement}. "
+                f"A loaded machine can cause this; retry when load drops. {install_action}"
+            ),
+        )
     return evaluate_version(
         name=name,
         output=output,
@@ -442,6 +452,29 @@ def _command_status(
         minimum_version=minimum_version,
         install_action=install_action,
     )
+
+
+def _probe_output(path: str, arguments: tuple[str, ...]) -> tuple[str | None, str | None]:
+    """Run one version command; return its output, or why it produced none."""
+    try:
+        result = spawn.run(  # Executable resolved from PATH. # nosec B603
+            [path, *arguments],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        raise
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        return None, f"could not run: {exc!r}"
+    if result.returncode != 0:
+        stderr = " ".join(result.stderr.split())[:200]
+        return (
+            None,
+            f"exit {result.returncode}: {stderr}" if stderr else f"exit {result.returncode}",
+        )
+    return result.stdout.strip() or result.stderr.strip(), None
 
 
 def srt_dependency_status() -> DependencyStatus:

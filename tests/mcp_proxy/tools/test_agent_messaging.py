@@ -458,7 +458,10 @@ class TestSendMessage:
         assert "global reaches every live non-system session" in description
         assert "wake=true requests immediate processing" in description
         assert "Omitting wake requests immediate processing" in description
-        assert "global and project fanout remains queued without live wakes" in description
+        assert "and for global fanout; project fanout remains queued without live wakes" in (
+            description
+        )
+        assert "The daemon sends restart and cutover notices itself" in description
         assert "wake=false queues without a live wake" in description
         assert "target" in schema["inputSchema"]["properties"]
         assert "target_id" in schema["inputSchema"]["properties"]

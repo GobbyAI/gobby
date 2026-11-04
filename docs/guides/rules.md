@@ -171,6 +171,8 @@ timing.
 | `session_end` | Session teardown |
 | `task_created` | A task row has been created |
 | `task_completed` | A task row has completed |
+| `task_close` | A `close_task` preview or final close is evaluated against the selected closure rules |
+| `task_land` | A `land_commit` request is evaluated against the selected landing rules |
 | `teammate_idle` | A teammate/agent idle signal was emitted |
 | `instructions_loaded` | Runtime instructions were loaded |
 | `config_change` | Configuration changed |
