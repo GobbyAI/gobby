@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.workflows.definitions import WorkflowStep
+from gobby.workflows.reserved_variables import rule_variable_is_writable
 from gobby.workflows.safe_evaluator import (
     SafeExpressionEvaluator,
     build_agent_workflow_allowed_funcs,
@@ -151,7 +152,11 @@ class EnforcementHandlerMixin:
             if action == "set_variable":
                 var_name = handler.get("variable")
                 ok, var_value = self._evaluate_step_handler_value(handler.get("value"), ctx, action)
-                if var_name is not None and ok:
+                if (
+                    var_name is not None
+                    and ok
+                    and rule_variable_is_writable(var_name, None, writer="set_variable")
+                ):
                     instance.variables[var_name] = var_value
                     variables[var_name] = var_value
                     vars_changed = True

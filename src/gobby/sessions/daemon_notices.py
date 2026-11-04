@@ -1,7 +1,9 @@
 """Daemon-owned restart notices: a hold before a restart stops the daemon, DAEMON BACK after.
 
-The daemon sends both as system-sender globals with live wakes, so no session composes
-them by hand and idle sessions waiting on DAEMON BACK wake when it arrives.
+The daemon sends both as system-sender globals, so no session composes them by hand.
+The globals wake active seats and seats holding a claimed task; a parked seat with no
+claimed task reads the notice on its next turn. A coordination wait resumes through its
+own completion path.
 """
 
 from __future__ import annotations

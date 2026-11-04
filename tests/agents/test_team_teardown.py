@@ -61,7 +61,11 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reason", ["done", "superseded", "moot", "abandoned"])
+@pytest.mark.parametrize(
+    # Close reasons are free text; an unmapped one still reaches waiters verbatim.
+    "reason",
+    ["done", "superseded", "moot", "abandoned", "wont_do", "split into smaller tasks"],
+)
 async def test_closed_task_teardown_records_success_without_user_cancellation(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch, reason: str
 ) -> None:
@@ -147,7 +151,7 @@ def land(world: TeamWorld, team: Team, name: str) -> str:
 def close(
     world: TeamWorld, team: Team, sha: str, *, minutes_ago: int = 0, reason: str = "done"
 ) -> Task:
-    """The Dev Team Lead's committed close, optionally backdated past the teardown grace."""
+    """The team's committed close, optionally backdated past the teardown grace."""
     db = world.case.db
     db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha]), team.task.id))
     LocalTaskManager(db).close_task(

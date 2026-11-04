@@ -147,10 +147,12 @@ def add_messaging_tools(
             "exemptions. Refused direct sends fail with message_recipient_not_allowed and "
             "fanout skips that recipient. "
             "Message content never causes wake behavior. Omitting wake requests immediate "
-            "processing for direct session, parent, or agent targets and for global "
-            "fanout; project fanout remains queued without live wakes. wake=true requests "
-            "immediate processing even for project fanout; wake=false queues without a live "
-            "wake. The daemon sends restart and cutover notices itself. A wake may "
+            "processing for direct session, parent, or agent targets. Fanout (global, and "
+            "project with wake=true) live-wakes only active recipients and recipients "
+            "holding a claimed task; an idle, paused, or waiting recipient with no claimed "
+            "task keeps its message queued for its next turn. Otherwise project fanout "
+            "stays queued without live wakes, and wake=false queues any target without a "
+            "live wake. The daemon sends restart and cutover notices itself. A wake may "
             "steer active work; interrupted, awaiting-input, "
             "awaiting-approval, and awaiting-handoff sessions retain queued content. "
             "An awaiting-handoff terminal with a confirmed compact boundary and an empty "
@@ -261,13 +263,9 @@ def add_messaging_tools(
                     }
 
             from_id = _resolve(from_session)
-            # A caller's from_session cannot claim the system sender; only daemon-owned execution can.
-            if (
-                from_id == system_session_id()
-                and not is_daemon_execution()
-                and ctx_session_id is not None
-                and ctx_session_id != from_id
-            ):
+            # Only daemon-owned execution sends as the system session. A caller with no
+            # SessionContext (a session-less HTTP call) gets no exemption.
+            if from_id == system_session_id() and not is_daemon_execution():
                 return {
                     "success": False,
                     "error": "Only daemon-owned execution can send as the system session.",

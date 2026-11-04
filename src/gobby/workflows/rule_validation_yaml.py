@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from gobby.utils.strict_yaml import load_strict_yaml
 from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.rule_validation import RuleValidation, RuleValidationIssue, validate_rule
 
@@ -45,7 +46,7 @@ def validate_rule_yaml(
         )
 
     try:
-        data = yaml.safe_load(text)
+        data = load_strict_yaml(text)
     except yaml.YAMLError as exc:
         return [invalid("<file>", str(exc))]
     if not isinstance(data, dict) or not isinstance(data.get("rules"), dict) or not data["rules"]:

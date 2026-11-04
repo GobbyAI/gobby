@@ -113,6 +113,76 @@ async def test_compute_changes_against_base_commit_includes_committed_work(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_changes_start_at_the_fork_after_the_base_is_merged_in(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    fork = _init_repo(repo)
+    _git(repo, "checkout", "-q", "-b", "trunk")
+    _git(repo, "checkout", "-q", "-b", "task")
+    (repo / "own.txt").write_text("own\n", encoding="utf-8")
+    _git(repo, "add", "own.txt")
+    _git(repo, "commit", "-qm", "own")
+    _git(repo, "checkout", "-q", "trunk")
+    (repo / "upstream.txt").write_text("upstream\n", encoding="utf-8")
+    _git(repo, "add", "upstream.txt")
+    _git(repo, "commit", "-qm", "upstream")
+    _git(repo, "checkout", "-q", "task")
+    _git(repo, "merge", "-q", "--no-edit", "trunk")
+    (repo / "upstream.txt").unlink()
+    _git(repo, "commit", "-qam", "drop the merged file")
+    workspace = SessionWorkspace(
+        working_dir=str(repo), base_ref=fork, checkout_mode="worktree", base_branch="trunk"
+    )
+
+    changes = await compute_session_changes(workspace)
+    diff = await compute_session_file_diff(workspace, "upstream.txt")
+
+    assert {(c.path, c.status) for c in changes} == {("own.txt", "W"), ("upstream.txt", "D")}
+    assert "-upstream" in diff
+
+
+def test_resolved_isolated_workspace_carries_its_base_branch(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    project = LocalProjectManager(temp_db).create("project")
+    row = LocalWorktreeManager(temp_db).create(
+        project.id, "task", str(worktree), base_branch="trunk"
+    )
+    _patch_checkout_root(monkeypatch, str(tmp_path))
+    session_manager = SimpleNamespace(
+        get=lambda _sid: SimpleNamespace(project_id=project.id, machine_id="machine-1"),
+        db=temp_db,
+    )
+    artifacts = SimpleNamespace(
+        worktree_path=str(worktree),
+        worktree_id=row.id,
+        clone_path=None,
+        clone_id=None,
+        base_commit_sha="abc123",
+    )
+    task_manager = SimpleNamespace(
+        db=temp_db,
+        list_tasks=lambda claimed_by_session_id: [SimpleNamespace(id="task-1")],
+        artifacts=SimpleNamespace(get_artifacts=lambda _tid: artifacts),
+    )
+
+    workspace = resolve_session_workspace(
+        session_manager=session_manager, task_manager=task_manager, session_id="sess-1"
+    )
+
+    assert workspace == SessionWorkspace(
+        working_dir=str(worktree),
+        base_ref="abc123",
+        checkout_mode="worktree",
+        base_branch="trunk",
+    )
+
+
+@pytest.mark.asyncio
 async def test_compute_session_file_diff_for_edited_and_untracked(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)

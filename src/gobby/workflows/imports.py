@@ -8,8 +8,6 @@ from stat import S_ISDIR, S_ISREG
 from types import SimpleNamespace
 from typing import Any
 
-import yaml
-
 from gobby.paths import get_global_workflows_dir
 from gobby.storage.definition_validation import validate_registry_regexes
 from gobby.storage.definitions import preserve_bundled_tag
@@ -27,6 +25,7 @@ from gobby.storage.project_checkouts import CheckoutNotFoundError, require_root
 from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS, LocalProjectManager
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.utils.dev import linked_worktree_root
+from gobby.utils.strict_yaml import load_strict_yaml
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import (
     PipelineDefinition,
@@ -35,6 +34,7 @@ from gobby.workflows.definitions import (
     validate_workflow_definition_data,
 )
 from gobby.workflows.pipeline_loader import detect_override_conflict
+from gobby.workflows.rule_authority import refuse_protected_rule_import
 from gobby.workflows.sync_rules import sync_rule_file
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,8 @@ def _upsert_rule(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
     name = str(data["name"])
     body = prepare_rule_definition_for_persist(name, body)
     existing = manager.get_by_name(name, project_id=project_id)
+    target = existing if existing is not None and existing.project_id == project_id else None
+    refuse_protected_rule_import(manager, name, target, body)
     fields = {
         "definition_json": body,
         "description": data.get("description", ""),
@@ -136,9 +138,9 @@ def _upsert_rule(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
         "sources": data.get("sources"),
         "tags": data.get("tags"),
     }
-    if existing is not None and existing.project_id == project_id:
-        preserve_bundled_tag(existing.tags, fields)
-        return manager.update(existing.id, **fields)
+    if target is not None:
+        preserve_bundled_tag(target.tags, fields)
+        return manager.update(target.id, **fields)
     return manager.create(name=name, project_id=project_id, source="installed", **fields)
 
 
@@ -242,8 +244,7 @@ def sync_imported_workflow_file(
     on_disk: set[tuple[str, str]] | None = None,
 ) -> Any:
     """Load one workflow YAML file and upsert it into the runtime database."""
-    with path.open(encoding="utf-8") as file:
-        data = yaml.safe_load(file)
+    data = load_strict_yaml(path.read_text(encoding="utf-8"))
     if isinstance(data, dict) and "name" not in data and isinstance(data.get("rules"), dict):
         # A rule file in the `gobby rules import` format: file-level group and
         # tags over a `rules` mapping. Import it through that same path.
