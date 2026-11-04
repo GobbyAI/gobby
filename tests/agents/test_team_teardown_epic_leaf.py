@@ -1,12 +1,13 @@
 """An epic leaf's sub-worktree is torn down when the leaf closes (#25224).
 
 The epic's primary seats and tree persist until the epic closes. A leaf whose sub-worktree
-is dirty or unmerged keeps that tree and reports it to Triage as a finding.
+is dirty or unmerged keeps that tree and logs the refusal without filing a task.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from gobby.agents.team_teardown import FINDING_LABEL, TEARDOWN_GRACE
+from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -24,12 +25,15 @@ from gobby.storage.worktrees import LocalWorktreeManager
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.team_case import TeamWorld, git_in, make_team_world
 from tests.fixtures.team_teardown_case import (
+    TEARDOWN_LOGGER,
     Team,
     Terminations,
     branch_exists,
     closed_at,
     daemon,
     dispatched_seat,
+    project_task_ids,
+    refusal_codes,
     seated_team,
     session_status,
     teardown_pass,
@@ -134,17 +138,6 @@ def team_tree(team: Team) -> Path:
     return Path(team.binding.worktree_path)
 
 
-def leaf_tickets(world: TeamWorld, tree: Path) -> list[Task]:
-    """Triage findings that name a sub-worktree path."""
-    return [
-        task
-        for task in LocalTaskManager(world.case.db).list_tasks(
-            project_id=world.case.project_id, label=FINDING_LABEL
-        )
-        if str(tree) in (task.description or "")
-    ]
-
-
 @pytest.mark.asyncio
 async def test_closing_a_merged_epic_leaf_ends_its_dispatched_seat_and_removes_its_tree(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch
@@ -167,6 +160,7 @@ async def test_closing_a_merged_epic_leaf_ends_its_dispatched_seat_and_removes_i
     assert sub.path.is_dir()
 
     closed = close_leaf(world, leaf, sub.sha)
+    tasks_before = project_task_ids(world)
     await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
 
     assert terminations.ended() == [dispatched]
@@ -179,12 +173,12 @@ async def test_closing_a_merged_epic_leaf_ends_its_dispatched_seat_and_removes_i
     assert tree.is_dir()
     assert branch_exists(world, team.binding.branch)
     assert LocalTaskManager(db).get_task(epic.id).closed_at is None
-    assert leaf_tickets(world, sub.path) == []
+    assert project_task_ids(world) == tasks_before
 
 
 @pytest.mark.asyncio
-async def test_leaf_teardown_keeps_a_dirty_or_unmerged_sub_tree_and_reports_it(
-    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+async def test_leaf_teardown_keeps_a_dirty_or_unmerged_sub_tree_and_logs_it(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     db = world.case.db
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
@@ -202,14 +196,19 @@ async def test_leaf_teardown_keeps_a_dirty_or_unmerged_sub_tree_and_reports_it(
         close_leaf(world, unmerged_leaf, unmerged.sha),
     ]
 
-    await teardown_pass(db, daemon(db), max(map(closed_at, closes)) + TEARDOWN_GRACE)
+    tasks_before = project_task_ids(world)
+    with caplog.at_level(logging.WARNING, logger=TEARDOWN_LOGGER):
+        await teardown_pass(db, daemon(db), max(map(closed_at, closes)) + TEARDOWN_GRACE)
 
+    assert project_task_ids(world) == tasks_before
     for sub in (dirty, unmerged):
         assert sub.path.is_dir()
         assert LocalWorktreeManager(db).get(sub.worktree_id) is not None
         assert branch_exists(world, sub.branch)
-        (ticket,) = leaf_tickets(world, sub.path)
-        assert ticket.is_escalated
+    assert sorted(refusal_codes(caplog)) == [
+        "branch_not_merged_into_target",
+        "uncommitted_changes",
+    ]
     assert (dirty.path / "README.md").read_text() == "edited after the merge\n"
     assert tree.is_dir()
 

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
+
+import pytest
 
 from gobby.agents.recovery_state import is_daemon_stop_parked
 from gobby.agents.team_admission_records import TeamBinding
@@ -23,6 +26,8 @@ from tests.fixtures.team_case import TeamWorld
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
+
+TEARDOWN_LOGGER = "gobby.agents.team_teardown"
 
 ROLES = ("fixture-definition-c02389e4", "fixture-worker", "fixture-definition-e08ba693")
 
@@ -179,3 +184,22 @@ async def teardown_pass(
         delete=delete or team_tree_deleter(db, None),
         now=at,
     )
+
+
+def project_task_ids(world: TeamWorld) -> set[str]:
+    """Every task in the project, to prove a teardown pass filed none."""
+    tasks = LocalTaskManager(world.case.db).list_tasks(
+        project_id=world.case.project_id, limit=10_000
+    )
+    return {task.id for task in tasks}
+
+
+def refusal_codes(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """The codes of the teardown refusals logged as structured WARNING records."""
+    return [
+        str(record.__dict__["code"])
+        for record in caplog.records
+        if record.name == TEARDOWN_LOGGER
+        and record.levelno == logging.WARNING
+        and "code" in record.__dict__
+    ]
