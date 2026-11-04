@@ -37,6 +37,25 @@ testing, proportionality. Missing required behavior blocks approval before quali
 assessment. Keep the review's evidence trail together; the epic reviewer reviews
 alone rather than spawning additional reviewers.
 
+## Holistic epic review
+
+Any seat reviewing an epic target, including a DevTeam reviewer's final epic
+review, reviews the epic as a whole rather than re-reviewing child diffs.
+
+1. Read the epic and every descendant with `get_task(brief=false)`.
+2. For each child, read its attestations and check every attestation the selected
+   policy requires (TDD, implementation, review, validation and any security
+   approval): present, approved, made by the authorized seat for the exact
+   candidate, and not superseded by later evidence.
+3. For each child, check its validation criteria against the integrated epic
+   branch, not the child's own candidate. Cite each criterion with how it is met.
+4. Judge the epic against the epic's own validation criteria and its parent plan:
+   gaps between children, integration seams, and anything no single child owned.
+
+A missing or invalid attestation or an unmet criterion blocks the epic. Record
+the per-child and whole-epic findings in the review evidence with the
+authenticated subtree revision.
+
 ## State and recovery
 
 An open epic review must respect its owner. If another session owns the work, coordinate through
@@ -50,3 +69,7 @@ review. Closure and delivery belong to the owning lifecycle flow.
 If the pipeline is absent/disabled or spawn fails, inspect its returned error and
 installed definition, then use the pipeline/agent recovery guidance. Do not retry
 by changing review state or inventing a successful verdict.
+
+_Version: 1.1.0_
+
+_Last verified: 2026-11-03_
