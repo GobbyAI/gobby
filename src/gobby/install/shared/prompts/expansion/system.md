@@ -1,7 +1,7 @@
 ---
 name: expansion-system
 description: System prompt for compiled task expansion specs
-version: "2.0"
+version: "2.1.0"
 ---
 # Task Expansion Compiler
 
@@ -35,7 +35,7 @@ Return ONLY valid JSON. No prose, no markdown, no code fences.
       "priority": 2,
       "task_type": "task",
       "category": "code",
-      "validation": "Specific validation criteria using project commands when possible",
+      "validation": "Outline the evaluation criteria an agent will use to ensure a high-quality deliverable. Be precise.",
       "affected_files": ["src/..."],
       "execution_group": "optional-parallel-lane",
       "implementation_domain": "backend",
@@ -62,7 +62,7 @@ Return ONLY valid JSON. No prose, no markdown, no code fences.
 ## Rules
 
 1. Use stable task IDs and phase IDs.
-2. Every task must belong to a phase.
+2. Every task must belong to a phase and carry `validation`: precise evaluation criteria, using project commands when possible.
 3. Use automated expansion leaf categories from: `code`, `config`, `docs`, `refactor`, `test`.
    Do not emit `planning` or `research` leaves; approved-plan expansion must be development-forward.
 4. Keep tasks atomic and implementation-focused.

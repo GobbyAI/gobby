@@ -276,3 +276,23 @@ async def test_create_task_refuses_a_closed_parent_with_an_actionable_error(
     assert "Task was not created." in result["message"]
     assert f'reopen_task(task_id="#{parent.seq_num}")' in result["message"]
     assert temp_db.fetchall("SELECT id FROM tasks WHERE parent_task_id = %s", (parent.id,)) == []
+
+
+CRITERIA_LEAD = (
+    "Outline the evaluation criteria an agent will use to ensure a high-quality deliverable. "
+    "Be precise."
+)
+
+
+@pytest.mark.parametrize("tool_name", ["create_task", "update_task"])
+def test_validation_criteria_description_leads_with_the_evaluation_brief(
+    task_registry: InternalToolRegistry, tool_name: str
+) -> None:
+    schema = task_registry.get_schema(tool_name)
+    assert schema is not None
+    description = schema["inputSchema"]["properties"]["validation_criteria"]["description"]
+
+    assert description.startswith(CRITERIA_LEAD + " ")
+    assert "`test: path::test_symbol`" in description
+    assert "`file: path`" in description
+    assert "Optional" not in description

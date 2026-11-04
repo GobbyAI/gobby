@@ -54,7 +54,7 @@ from gobby.workflows.engine.block_batching import (
 )
 from gobby.workflows.engine.blocked_tool_recovery import (
     clear_blocked_tool_recovery_state,
-    format_consecutive_tool_block_reason,
+    escalate_retry_limit,
     is_blocked_tool_recovery_remediation,
 )
 from gobby.workflows.engine.definition_binding import (
@@ -429,30 +429,8 @@ class RuleEngine(
                                 # Every sibling of one assistant response repeats the
                                 # same denial before the agent can read any of them,
                                 # so the whole batch buys one remediation attempt.
-                                count = register_blocked_attempt(
-                                    block_state,
-                                    source=event.source,
-                                )
-                                max_attempts = int(
-                                    variables.get("max_consecutive_blocked_tool_attempts", 5)
-                                )
-                                total_attempts = count + 1
-                                if total_attempts >= max_attempts:
-                                    resp = HookResponse(
-                                        decision="block",
-                                        reason=format_consecutive_tool_block_reason(
-                                            tool_name=tool_name,
-                                            total_attempts=total_attempts,
-                                            variables=block_state,
-                                        ),
-                                    )
-                                    return await self._finalize_block_response(
-                                        resp,
-                                        evaluation,
-                                        span,
-                                        source="retry-limit",
-                                        rule_name="consecutive-tool-block",
-                                    )
+                                # Retry-limit rules decide when this count escalates.
+                                register_blocked_attempt(block_state, source=event.source)
                         else:
                             # Different tool — reset counter, let it through to rule evaluation
                             block_state["consecutive_tool_blocks"] = 0
@@ -537,6 +515,16 @@ class RuleEngine(
                         "rules.resolved_events",
                         [rule_event.value for rule_event in resolved_rule_events],
                     )
+
+                # 4a. Retry-limit rules escalate a repeated denial before any other gate.
+                if is_before_tool:
+                    retry_rules = [rule for rule in rules if rule[1].retry_limit]
+                    rules = [rule for rule in rules if not rule[1].retry_limit]
+                    retry_block = await escalate_retry_limit(
+                        self, retry_rules, evaluation, span, aggregate_blocks=aggregate_blocks
+                    )
+                    if retry_block is not None:
+                        return retry_block
 
                 # 4b. Agent-level tool enforcement (broadest scope, preempts everything).
                 # A named seat whose definition is gone acts on nothing; it may still stop.

@@ -868,13 +868,12 @@ class TestDetectTaskClaimClaimOperations:
 
         assert "task_claimed" not in variables
 
-    def test_criteria_update_refreshes_claimed_task_acceptance_paths(
+    def test_criteria_update_refreshes_claimed_task_tdd_metadata(
         self, variables, make_after_tool_event, mock_task_manager
     ) -> None:
-        """An edit to a claimed task's criteria reaches the TDD gate without a re-claim."""
-        criteria = "1.1: New behavior. test: `tests/test_new.py::test_new_behavior`."
+        """An edit to a claimed task's criteria refreshes its TDD metadata without a re-claim."""
+        criteria = "1.1: New behavior. TDD evidence: `tests/test_new.py::test_new_behavior`."
         mock_task_manager.get_task.return_value = _claimed_task(
-            labels=["tdd:required"],
             validation_criteria=criteria,
             claimed_by_session_id=SESSION_ID,
         )
@@ -882,7 +881,7 @@ class TestDetectTaskClaimClaimOperations:
             {
                 "task_claimed": True,
                 "claimed_tasks": {"task-uuid-123": "#123"},
-                "claimed_task_acceptance_test_paths": ["tests/test_old.py"],
+                "claimed_task_requires_tdd": False,
             }
         )
         event = make_after_tool_event(
@@ -897,7 +896,7 @@ class TestDetectTaskClaimClaimOperations:
 
         detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
 
-        assert variables["claimed_task_acceptance_test_paths"] == ["tests/test_new.py"]
+        assert variables["claimed_task_requires_tdd"] is True
         assert variables["claimed_tasks"] == {"task-uuid-123": "#123"}
 
     def test_update_to_unclaimed_task_leaves_projection_alone(
@@ -906,7 +905,7 @@ class TestDetectTaskClaimClaimOperations:
         mock_task_manager.get_task.return_value = _claimed_task(
             validation_criteria="1.1: X. test: `tests/test_other.py::test_other`."
         )
-        variables["claimed_task_acceptance_test_paths"] = ["tests/test_old.py"]
+        variables["claimed_task_requires_tdd"] = True
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
             tool_input={
@@ -919,7 +918,7 @@ class TestDetectTaskClaimClaimOperations:
 
         detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
 
-        assert variables["claimed_task_acceptance_test_paths"] == ["tests/test_old.py"]
+        assert variables["claimed_task_requires_tdd"] is True
         assert "task_claimed" not in variables
 
     def test_does_not_set_task_claimed_on_claim_error(

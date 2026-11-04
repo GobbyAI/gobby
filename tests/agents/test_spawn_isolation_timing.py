@@ -139,6 +139,7 @@ async def test_isolation_paths_share_spawn_timing_map(
         id="workspace",
         branch_name="timing",
         base_branch="main",
+        task_id=None,
     )
     storage.get_by_branch.return_value = None if fresh else existing
     storage.create.return_value = existing

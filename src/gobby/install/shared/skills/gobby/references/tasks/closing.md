@@ -82,8 +82,9 @@ A landing request records its admission snapshot in its receipt; changed evidenc
 is evaluated on the next request. Code owns integrity and authenticated
 provenance. Definitions, rules and pipelines own completion standards.
 
-Follow the assigned restart and activation owner. Announce a daemon restart or
-cutover globally, honor quiet hours, proceed, and report DAEMON BACK when healthy.
+Follow the assigned restart and activation owner. Honor quiet hours and proceed;
+the daemon sends its own hold notice before a restart or cutover and DAEMON BACK
+once healthy.
 Separately coordinate operations that can kill agent panes.
 
 Guide: [Close](../../../../../../../../docs/guides/tasks.md#close).
@@ -100,6 +101,6 @@ Security paths force approval at land even without a label. Filers label obvious
 trust-boundary work; leads inspect the diff and add security-review when needed.
 Only the operator or authorized policy owner removes that label.
 
-_Version: 2.1.0_
+_Version: 3.0.0_
 
 _Last verified: 2026-11-03_

@@ -80,9 +80,9 @@ verify both its HEAD and registered branch are ancestors of the stored landing
 target. Switch that tree to its registered branch, then retry the managed delete
 with the same target. If any proof fails, preserve the tree and report the blocker.
 
-Report task, SHA, checks and cleanup to report_to/Triage. Route genuine blockers
-through Triage, preserving holds and dependencies.
+Report task, SHA, checks and cleanup to report_to. Route genuine blockers
+through report_to, preserving holds and dependencies.
 
-_Version: 3.1.0_
+_Version: 3.1.1_
 
 _Last verified: 2026-11-02_

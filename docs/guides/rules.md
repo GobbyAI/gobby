@@ -100,6 +100,7 @@ APIs validate the stored `effects` shape directly.
 | `tools` | Optional pre-filter on native tool name |
 | `audience` | Limit the rule to `all`, `interactive`, `autonomous`, or a concrete audience |
 | `agent_scope` | Limit the rule to specific agent types |
+| `retry_limit` | `before_tool` only. Evaluated before agent and step enforcement and every other rule; its block preempts them and keeps the original block's recovery state |
 | `effects` | One or more effect definitions |
 
 Current rules are validated as `RuleDefinitionBody`. `effects` is required in
@@ -170,6 +171,8 @@ timing.
 | `session_end` | Session teardown |
 | `task_created` | A task row has been created |
 | `task_completed` | A task row has completed |
+| `task_close` | A `close_task` preview or final close is evaluated against the selected closure rules |
+| `task_land` | A `land_commit` request is evaluated against the selected landing rules |
 | `teammate_idle` | A teammate/agent idle signal was emitted |
 | `instructions_loaded` | Runtime instructions were loaded |
 | `config_change` | Configuration changed |

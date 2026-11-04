@@ -1,6 +1,9 @@
-version: "1.0.1"
+version: "1.1.0"
 tags: [context-handoff, handoff, enforcement, gobby, default]
 
+# A Claude subagent shares its parent's session and carries agent_id in its hook
+# payload. The pending handoff belongs to the parent, so a subagent neither
+# waits on the pull nor touches the session's handoff.
 rules:
   require-handoff-pull-before-tool:
     description: "Consume the pending handoff before loading new context or doing work"
@@ -9,6 +12,7 @@ rules:
     priority: 1
     when: >-
       variables.get('handoff_pull_pending')
+      and not event.data.get('agent_id')
       and not (
         event.data.get('mcp_server') == 'gobby-sessions'
         and event.data.get('mcp_tool') in ('get_handoff', 'set_handoff', 'feedback')
@@ -31,3 +35,20 @@ rules:
           skills or starting work. This pull is required even during a restart or cutover
           hold. Schema discovery, pending memory recall, `wait_for_coordination` and
           `send_message` remain available; keep other held task work paused.
+
+  block-subagent-session-handoff:
+    description: "Keep subagents off the parent session's handoff"
+    event: before_tool
+    enabled: true
+    priority: 1
+    when: "event.data.get('agent_id')"
+    effects:
+      - type: block
+        mcp_tools:
+          - "gobby-sessions:get_handoff"
+          - "gobby-sessions:set_handoff"
+        reason: >-
+          This subagent shares its parent's session, so the session handoff belongs to
+          the parent. get_handoff would consume the parent's handoff and set_handoff would
+          compact the parent. Continue your own work and return your result; the parent
+          pulls its own handoff.

@@ -9,6 +9,7 @@ from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import (
     LocalTaskManager,
     TaskIDCollisionError,
+    TaskStaleStateError,
 )
 from gobby.tasks.state_semantics import (
     is_task_closed,
@@ -1017,23 +1018,6 @@ class TestLocalTaskManager:
         updated = task_manager.update_task(child.id, parent_task_id=None)
         assert updated.parent_task_id is None
 
-    def test_close_task_with_many_children(self, task_manager, project_id) -> None:
-        parent = task_manager.create_task(project_id, "P", validation_criteria=VALIDATION_CRITERIA)
-        for i in range(5):
-            task_manager.create_task(
-                project_id,
-                f"C{i}",
-                parent_task_id=parent.id,
-                validation_criteria=VALIDATION_CRITERIA,
-            )
-
-        with pytest.raises(ValueError) as exc:
-            task_manager.close_task(parent.id)
-
-        msg = str(exc.value)
-        assert "has 5 open child task(s)" in msg
-        assert "and 2 more" in msg
-
     # =========================================================================
     # Commit Linking Tests
     # =========================================================================
@@ -1631,26 +1615,6 @@ class TestLocalTaskManager:
     # Close Task Additional Tests
     # =========================================================================
 
-    def test_close_task_force_with_open_children(self, task_manager, project_id) -> None:
-        """Test force closing a task with open children."""
-        parent = task_manager.create_task(
-            project_id, "Parent", validation_criteria=VALIDATION_CRITERIA
-        )
-        task_manager.create_task(
-            project_id,
-            "Child",
-            parent_task_id=parent.id,
-            validation_criteria=VALIDATION_CRITERIA,
-        )
-
-        # Normal close should fail
-        with pytest.raises(ValueError, match="open child task"):
-            task_manager.close_task(parent.id)
-
-        # Force close should succeed
-        closed = task_manager.close_task(parent.id, force=True)
-        assert is_task_closed(closed)
-
     def test_close_task_with_session_and_commit(
         self, task_manager, project_id, session_manager
     ) -> None:
@@ -1695,18 +1659,14 @@ class TestLocalTaskManager:
         parent = task_manager.create_task(
             project_id, "Parent", validation_criteria=VALIDATION_CRITERIA
         )
-        task_manager.create_task(
-            project_id,
-            "Child",
-            parent_task_id=parent.id,
-            validation_criteria=VALIDATION_CRITERIA,
-        )
 
         with (
             patch("gobby.utils.git.normalize_commit_sha", return_value="abc123"),
-            pytest.raises(ValueError, match="open child task"),
+            pytest.raises(TaskStaleStateError),
         ):
-            task_manager.close_task_with_commit(parent.id, "abc123")
+            task_manager.close_task_with_commit(
+                parent.id, "abc123", expected_closure_revision="stale-revision"
+            )
 
         refreshed = task_manager.get_task(parent.id)
         assert not is_task_closed(refreshed)

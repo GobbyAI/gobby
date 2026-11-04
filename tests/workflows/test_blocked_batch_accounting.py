@@ -2,7 +2,7 @@
 
 A parallel batch of sibling denials from one assistant response buys one
 remediation attempt; separate responses, marked by the provider's tool-batch
-boundary event, still escalate to the consecutive-tool-block guard.
+boundary event, still reach the retry-limit escalation.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTrig
 from gobby.workflows.engine.block_batching import BLOCK_SCOPES_VARIABLE
 from gobby.workflows.engine.core import RuleEngine
 from tests.fixtures.agent_definitions import seed_seat
+from tests.workflows.rule_arming import SYNTHETIC_ESCALATION_PREFIX, install_retry_limit_rule
 
 pytestmark = pytest.mark.unit
 
@@ -34,6 +35,7 @@ BLOCKED_REASON = "Rule enforced by Gobby: [block-todowrite]\nUse gobby-tasks ins
 def db(temp_db: HubDatabase) -> HubDatabase:
     # The enforcing seat must resolve its definition, or it fails closed first.
     seed_seat(temp_db, ENFORCED_SEAT, include=["*"])
+    install_retry_limit_rule(temp_db)
     return temp_db
 
 
@@ -139,7 +141,7 @@ class TestParallelBatchCounting:
         )
         assert response.decision == "block"
         assert response.reason is not None
-        assert "5 times consecutively after repeated BEFORE_TOOL blocks" in response.reason
+        assert f"{SYNTHETIC_ESCALATION_PREFIX}: TodoWrite x5 |" in response.reason
 
     @pytest.mark.asyncio
     async def test_batch_suppression_survives_a_full_batch_then_escalates(
