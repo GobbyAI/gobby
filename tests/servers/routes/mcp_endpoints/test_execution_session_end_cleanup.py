@@ -40,15 +40,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture(autouse=True)
-def no_workspace_commit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Session end schedules an agent-workspace commit; these tests never run one."""
-    monkeypatch.setattr(
-        "gobby.hooks.event_handlers._session_end.schedule_workspace_commit",
-        lambda *_a, **_k: None,
-    )
-
-
 _TERMINATE_WORKFLOW = {
     "steps": [
         {

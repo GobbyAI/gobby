@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from gobby.agents.agent_workspaces import release_epic_workspace, schedule_workspace_commit
+from gobby.agents.agent_workspaces import release_epic_workspace
 from gobby.agents.team_admission_records import (
     TeamBinding,
     admission_step,
@@ -345,7 +345,7 @@ SELECT id::text AS id FROM up WHERE id IS NOT NULL
 async def _tear_down(
     db: HubDatabase, team: _DueTeam, terminate: TeamRunTerminator, delete: TeamTreeDeleter
 ) -> int:
-    folder = await asyncio.to_thread(release_epic_workspace, db, team.binding)
+    await asyncio.to_thread(release_epic_workspace, db, team.binding)
     seats = await asyncio.to_thread(_team_seats, db, team)
     dispatched = await asyncio.to_thread(
         _dispatched_runs, db, seats, team.binding.worktree_path, None
@@ -366,8 +366,6 @@ async def _tear_down(
     if await asyncio.to_thread(_protected_seats_remain, db, [*seats, *dispatched], eligible):
         logger.info("Team %s waits for seats on other tasks", team.binding.team_id)
         return sum(ended)
-    if folder is not None:
-        schedule_workspace_commit(team.binding.project_id, folder.name)
     if team.binding.worktree_id is None:  # a treeless team has no tree to delete
         await asyncio.to_thread(_record, db, team.binding, {"outcome": "cleaned"})
         return len(ended) + 1
