@@ -216,6 +216,61 @@ fn codex_prompt_placement() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn claude_settings_fold_into_one_managed_payload() -> Result<()> {
+    for name in ["claude-fresh", "claude-resume"] {
+        let mut case = CommandCase::new(name)?;
+        case.payload.provider_args = vec![
+            "--add-dir".into(),
+            "/opt/shared".into(),
+            "--settings".into(),
+            r#"{"idleCompaction":true,"sandbox":{"enabled":true},"theme":"dark"}"#.into(),
+        ];
+        let environment = case.environment()?;
+        let argv = build_command(
+            &case.payload,
+            &case.cwd,
+            &case.home,
+            &case.sandbox,
+            &environment.env,
+        )?;
+        let settings = argv
+            .windows(2)
+            .filter(|pair| pair[0] == "--settings")
+            .map(|pair| serde_json::from_str::<Value>(&pair[1]))
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            settings,
+            vec![json!({
+                "idleCompaction": false,
+                "sandbox": {"enabled": false},
+                "theme": "dark",
+            })],
+            "{name}: one managed --settings payload"
+        );
+        assert!(
+            argv.windows(2)
+                .any(|pair| pair == ["--add-dir", "/opt/shared"]),
+            "{name}: passthrough args survive"
+        );
+
+        case.payload.provider_args = vec!["--settings".into(), "/etc/claude.json".into()];
+        let environment = case.environment()?;
+        assert!(
+            build_command(
+                &case.payload,
+                &case.cwd,
+                &case.home,
+                &case.sandbox,
+                &environment.env,
+            )
+            .is_err(),
+            "{name}: a non-object --settings value cannot be merged"
+        );
+    }
+    Ok(())
+}
+
 fn executable(path: &Path, body: &str) -> Result<()> {
     fs::write(path, format!("#!/bin/sh\n{body}\n"))?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;

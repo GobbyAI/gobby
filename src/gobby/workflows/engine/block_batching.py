@@ -86,6 +86,13 @@ def block_scope(variables: dict[str, Any], context: str) -> dict[str, Any]:
     return scope
 
 
+def failure_pending_in_any_context(variables: dict[str, Any]) -> bool:
+    """Whether the main agent or any subagent context has an unrecovered tool failure."""
+    scopes = variables.get(BLOCK_SCOPES_VARIABLE)
+    contexts = [variables, *(scopes.values() if isinstance(scopes, dict) else ())]
+    return any(isinstance(scope, dict) and scope.get("tool_block_pending") for scope in contexts)
+
+
 def clear_block_scopes(variables: dict[str, Any]) -> None:
     """Drop every subagent block scope at a turn boundary."""
     variables[BLOCK_SCOPES_VARIABLE] = {}

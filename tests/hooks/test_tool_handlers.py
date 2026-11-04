@@ -108,7 +108,7 @@ class TestToolHandlers:
         )
         assert capability is not None
         assert capability.context is not None
-        assert '"path":"references/admin/overview.md"' in capability.context
+        assert '"names":["gobby:references/admin/overview.md"]' in capability.context
         assert "cold_start_admin" not in capability.context
         manager.resolve_skill_name.assert_not_called()
         prompt_context = event_handlers._intercept_skill_command("$gobby guide")
@@ -187,7 +187,7 @@ class TestToolHandlers:
         )
         assert response.decision == "block"
         assert response.context is not None
-        assert '"path":"references/tasks/closing.md"' in response.context
+        assert '"names":["gobby:references/tasks/closing.md"]' in response.context
         assert "overview.md" not in response.context
         event_handlers._skill_manager.resolve_skill_name.assert_not_called()
 

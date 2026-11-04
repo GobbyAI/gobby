@@ -30,16 +30,16 @@ def test_reference_contract_3_1_1(prefix: str) -> None:
     assert f"{prefix} tasks" in help_route.context
     assert "get_skill" not in help_route.context
     overview = route_gobby_request("tasks", resolve_skill=resolver)
-    assert '"path":"references/tasks/overview.md"' in overview.context
+    assert '"names":["gobby:references/tasks/overview.md"]' in overview.context
     assert "PRIVATE BODY" not in overview.context
     menu = route_gobby_request("tasks references", resolve_skill=resolver, command_prefix=prefix)
     assert f"{prefix} tasks references closing" in menu.context
     assert "Commit and close" in menu.context
     assert "get_skill_file" not in menu.context
     topic = route_gobby_request("tasks references closing", resolve_skill=resolver)
-    assert '"path":"references/tasks/closing.md"' in topic.context
+    assert '"names":["gobby:references/tasks/closing.md"]' in topic.context
     assert "overview.md" not in topic.context
-    assert "get_tool_schema" in topic.context
+    assert "get_tool_schema" not in topic.context
     assert "cursor" in topic.context
     request = route_gobby_request("tasks close #42", resolve_skill=resolver)
     assert request.arguments == "close #42"
@@ -175,11 +175,11 @@ def test_admin_requests_and_capability_loads_keep_the_admin_capability() -> None
     request = route_gobby_request("admin check daemon health", resolve_skill=_NO_SKILLS.get)
     assert request.kind == "reference"
     assert request.arguments == "check daemon health"
-    assert '"path":"references/admin/overview.md"' in request.context
+    assert '"names":["gobby:references/admin/overview.md"]' in request.context
     assert route_gobby_request("admin references", resolve_skill=_NO_SKILLS.get).kind == "menu"
     loaded = route_gobby_request("admin", resolve_skill=_NO_SKILLS.get, operator_commands=False)
     assert loaded.kind == "reference"
-    assert '"path":"references/admin/overview.md"' in loaded.context
+    assert '"names":["gobby:references/admin/overview.md"]' in loaded.context
     assert "cold_start_admin" not in loaded.context
     unknown = route_gobby_request(
         "assistant", resolve_skill=_NO_SKILLS.get, operator_commands=False

@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.skills.instruction_requirements import (
+    instruction_batch_directive,
     instruction_fetch_call,
     instruction_fetch_directive,
     is_instruction_call_line,
@@ -61,30 +62,13 @@ def skill_fetch_directive(name: str) -> str:
 
 
 def skill_fetch_batch_directive(names: Sequence[str]) -> str:
-    """Return a compact directive for loading multiple skills directly."""
+    """Return one directive that loads every missing instruction in a single call."""
     skills = _unique_names(names)
     if not skills:
         return ""
     if len(skills) == 1:
         return skill_fetch_directive(skills[0])
-
-    if any(":" in skill for skill in skills):
-        return "\n".join(
-            [
-                "Load these instructions in order, one page per separate outer tool result; "
-                "do not use Promise.all or aggregate responses.",
-                *(skill_fetch_directive(skill) for skill in skills),
-            ]
-        )
-
-    return "\n".join(
-        [
-            "Load and fully read these skills in order. Use one sequential tool call and one "
-            "separate outer tool result per skill; do not use Promise.all or aggregate responses:",
-            *(f"- {skill_fetch_proxy_path(skill)}" for skill in skills),
-            "Then continue.",
-        ]
-    )
+    return instruction_batch_directive(skills)
 
 
 def format_skill_fetch_context(name: str, args: str | None = None) -> str:

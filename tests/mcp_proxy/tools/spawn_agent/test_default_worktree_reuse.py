@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures("stub_srt_verifier")
 
 @pytest.mark.integration
 @pytest.mark.parametrize("reuse", ["explicit", "branch"])
-async def test_default_body_merges_and_binds_reused_worktree(
+async def test_default_body_binds_reused_worktree_and_defers_its_base(
     tmp_path: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -33,6 +33,7 @@ async def test_default_body_merges_and_binds_reused_worktree(
     git(source, "config", "user.email", "test@example.com")
     git(source, "config", "user.name", "Default Test")
     git(source, "commit", "--allow-empty", "-m", "initial")
+    fork = git(source, "rev-parse", "HEAD")
     child = tmp_path / "fixture-worker"
     git(source, "worktree", "add", "-b", "candidate", str(child))
     (child / "candidate.txt").write_text("candidate\n")
@@ -47,7 +48,7 @@ async def test_default_body_merges_and_binds_reused_worktree(
     task = tasks.create_task(
         project_id=sample_project["id"],
         title="Continue development",
-        validation_criteria="Reuse merges the base and binds artifacts.",
+        validation_criteria="Reuse binds artifacts and leaves the base merge to the seat.",
     )
     storage = LocalWorktreeManager(temp_db)
     existing = storage.create(
@@ -100,9 +101,10 @@ async def test_default_body_merges_and_binds_reused_worktree(
 
     assert result["error"] == "stopped after isolation"
     prepare.assert_called_once()
-    assert git(child, "rev-parse", "HEAD^1") == candidate
-    assert git(child, "rev-parse", "HEAD^2") == base
+    # The candidate branch has its own commit, so reuse leaves it unmerged.
+    assert git(child, "rev-parse", "HEAD") == candidate
+    assert git(child, "merge-base", "HEAD", base) == fork
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
     assert artifacts.worktree_id == existing.id
     assert artifacts.worktree_path == str(child)
-    assert artifacts.base_commit_sha == base
+    assert artifacts.base_commit_sha == fork

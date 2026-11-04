@@ -1,3 +1,4 @@
+version: "1.1.0"
 tags: [progressive-discovery, enforcement, mcp, gobby, default]
 
 rules:
@@ -9,6 +10,10 @@ rules:
     when: "event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool') and variables.get('enforce_tool_schema_check') and not is_discovery_tool(tool_input.get('tool_name')) and not is_operator_tool(tool_input.get('tool_name')) and not is_argumentless_proxy_tool(tool_input) and not is_tool_unlocked(tool_input) and source != 'pipeline'"
     effects:
       - type: block
+        # A proxied call's blocked-tool identity is its server:tool lease key. The
+        # proxy records the lease without a hook event, so the retry of the same
+        # call once its lease exists is the remediation, not another attempt.
+        recovery_when: "variables.get('_last_blocked_tool') in (variables.get('unlocked_tools') or [])"
         reason: >-
           Run {% if schema_lease_key(tool_input) %}get_tool_schema(server_name='{{ tool_input.get('server_name') }}', tool_name='{{ tool_input.get('tool_name') }}') first.
           The lease remains valid until context is cleared or compacted.{% else %}call_tool again with server_name and tool_name as top-level parameters beside arguments.

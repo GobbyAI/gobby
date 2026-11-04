@@ -1,8 +1,9 @@
+version: "1.1.0"
 tags: [task-enforcement, enforcement, tasks, gobby, default]
 
 rules:
   disclose-claimed-task-extra-skills:
-    description: "Disclose missing task extras after a successful task claim"
+    description: "Request the claimed task's extras and every other owed instruction in one call"
     event: after_tool
     enabled: true
     priority: 29
@@ -25,8 +26,8 @@ rules:
           )
         )
       )
-      and missing_claimed_task_extra_skills() != []
+      and context_instructions(['gobby:references/development/obligations.md'] if variables.get('claimed_task_is_source_work') else []) != []
     effects:
       - type: inject_context
         template: |
-          {{ skill_fetch_batch_directive(missing_claimed_task_extra_skills()) }}
+          {{ skill_fetch_batch_directive(context_instructions(['gobby:references/development/obligations.md'] if variables.get('claimed_task_is_source_work') else [])) }}

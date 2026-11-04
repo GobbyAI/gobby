@@ -36,6 +36,8 @@ def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str
         reference = inner_tool == "get_skill_file"
         if tracked:
             _track_loaded_skill(variables, tool_output, session_id, reference=reference)
+            if not reference:
+                _track_batch_completed(variables, tool_output, session_id)
         else:
             _track_unresolvable_claimed_task_extra_skill(
                 variables,
@@ -72,18 +74,85 @@ def _track_loaded_skill(
     logger.debug("Session %s: loaded skill tracked %s", session_id, name)
 
 
+def _track_batch_completed(variables: dict[str, Any], tool_output: Any, session_id: str) -> None:
+    """Credit every identity a batch page completed; note the ones it could not serve."""
+    from gobby.skills.instruction_requirements import parse_instruction_requirement
+
+    page = _batch_page(tool_output)
+    if page is None:
+        return
+    for identity in _completed_batch_identities(page):
+        try:
+            requirement = parse_instruction_requirement(identity)
+        except ValueError:
+            continue
+        key = "loaded_skills" if requirement.path is None else "loaded_skill_references"
+        _append_unique(variables, key, requirement.identity)
+        logger.debug("Session %s: batch-loaded instruction tracked %s", session_id, identity)
+    unavailable = page.get("unavailable")
+    for item in unavailable if isinstance(unavailable, list) else []:
+        missing = item.get("identity") if isinstance(item, dict) else None
+        if isinstance(missing, str) and missing:
+            _append_unique(variables, "unavailable_instructions", missing)
+
+
+def _append_unique(variables: dict[str, Any], key: str, value: str) -> None:
+    current = variables.get(key)
+    values = list(current) if isinstance(current, list) else []
+    if value not in values:
+        values.append(value)
+    variables[key] = values
+
+
+def _batch_page(tool_output: Any) -> dict[str, Any] | None:
+    """Unwrap a successful batch page from proxy result wrappers."""
+    candidate = tool_output
+    for _ in range(4):
+        if not isinstance(candidate, dict) or _is_failed_result(candidate):
+            return None
+        if isinstance(candidate.get("instructions"), list) and isinstance(
+            candidate.get("page"), dict
+        ):
+            return candidate
+        candidate = candidate.get("result", candidate.get("structuredContent"))
+    return None
+
+
+def _completed_batch_identities(page: dict[str, Any]) -> list[str]:
+    """Return completed identities whose page content ends with their end marker."""
+    completed = page["page"].get("completed")
+    if not isinstance(completed, list):
+        return []
+    delivered = {
+        item.get("identity"): item.get("content")
+        for item in page["instructions"]
+        if isinstance(item, dict)
+    }
+    return [
+        identity
+        for identity in completed
+        if isinstance(identity, str)
+        and isinstance(content := delivered.get(identity), str)
+        and content.endswith(f"<!-- end: {identity} -->\n")
+    ]
+
+
+def _is_failed_result(candidate: dict[str, Any]) -> bool:
+    return bool(
+        candidate.get("error")
+        or candidate.get("status") == "error"
+        or candidate.get("success") is False
+        or candidate.get("isError") is True
+    )
+
+
 def _completed_instruction(tool_output: Any, field: str) -> dict[str, Any] | None:
     """Unwrap proxy results without accepting errors or incomplete pages."""
     candidate = tool_output
     for _ in range(4):
         if not isinstance(candidate, dict):
             return None
-        if (
-            candidate.get("error")
-            or candidate.get("status") == "error"
-            or candidate.get("success") is False
-            or candidate.get("isError") is True
-        ):
+        if _is_failed_result(candidate):
             return None
         instruction = candidate.get(field)
         if isinstance(instruction, dict):

@@ -151,9 +151,9 @@ def route_gobby_request(
         context = instruction_fetch_directive(f"gobby:{capability.overview}")
         if arguments:
             context += (
-                "\n\nBefore handling the original request, load each applicable topic below "
-                'through schema-gated get_skill_file(name="gobby", path=...). '
-                "Evaluate its loading condition against the request; follow every cursor to null. "
+                "\n\nBefore handling the original request, load every applicable topic below "
+                'in one get_skill(names=["gobby:<path>", ...]) call. '
+                "Evaluate each loading condition against the request; follow every cursor to null. "
                 "Tool schemas remain authoritative for parameters.\n"
             )
             context += "\n".join(f"- {topic.path}: {topic.when}" for topic in capability.topics)

@@ -760,6 +760,31 @@ def build_condition_helpers(
         listed = [references] if isinstance(references, str) else references or ()
         return next((ref for ref in listed if not instruction_is_loaded(str(ref), variables)), None)
 
+    def _context_instructions(core: Any = None) -> list[str]:
+        """Return every instruction this context still owes, deduplicated in load order.
+
+        ``core`` comes from the calling rule; the seat's declared procedure,
+        references and required skills and the claimed task's extras follow it.
+        Identities a batch load reported unavailable are left out so a missing
+        instruction is not requested again every turn.
+        """
+        from gobby.workflows.claimed_task_extra_skills import missing_claimed_task_extra_skills
+
+        variables = _get_variables(ctx)
+        owed: list[str] = [item for item in core or () if isinstance(item, str) and item]
+        for key in ("_seat_procedure", "_seat_references", "required_skills"):
+            value = variables.get(key)
+            listed = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+            owed.extend(item for item in listed if isinstance(item, str) and item)
+        owed.extend(missing_claimed_task_extra_skills(variables))
+        unavailable = variables.get("unavailable_instructions")
+        skipped = set(unavailable) if isinstance(unavailable, list) else set()
+        return [
+            item
+            for item in dict.fromkeys(owed)
+            if item not in skipped and not instruction_is_loaded(item, variables)
+        ]
+
     def _task_mutation_requires_tasks_skill(
         tool_input: Any = None,
         event_data: dict[str, Any] | None = None,
@@ -789,6 +814,7 @@ def build_condition_helpers(
     funcs["has_open_tool_error"] = _has_open_tool_error
     funcs["missing_claimed_task_extra_skills"] = _missing_claimed_task_extra_skills
     funcs["first_unloaded_instruction"] = _first_unloaded_instruction
+    funcs["context_instructions"] = _context_instructions
     funcs["task_mutation_requires_tasks_skill"] = _task_mutation_requires_tasks_skill
     funcs["assistant_response_matches_any"] = _assistant_response_matches_any
 

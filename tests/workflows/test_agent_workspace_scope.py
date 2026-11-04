@@ -1340,7 +1340,7 @@ def test_explicit_regex_option_keeps_first_file_operand(
 def test_reported_project_grep_is_allowed_from_checkout(root: Path, tmp_path: Path) -> None:
     # The reported command, verbatim, run from the project checkout. Its leading cd narrows
     # the plan read to the project; nothing it resolves is a foreign seat folder.
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     checkout = tmp_path / "gobby"
     checkout.mkdir()
     command = (
@@ -1363,8 +1363,8 @@ def test_reported_grep_from_a_workspace_cwd_follows_its_leading_cd(
     # The reported grep with its cd target an existing checkout, run from a workspace folder
     # that is not the seat's own. The pre-fix rule took the grep's relative file operand from
     # that cwd and refused it; the leading cd moves the operand to the checkout.
-    variables = _seat(root / PROJECT, "developer", 12)
-    definition = root / PROJECT / "plan-writer"
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
+    definition = root / PROJECT / "fixture-planner"
     definition.mkdir(parents=True)
     checkout = tmp_path / "gobby"
     checkout.mkdir()
@@ -1385,7 +1385,7 @@ def test_reported_grep_from_a_workspace_cwd_follows_its_leading_cd(
 @pytest.mark.parametrize(
     ("command", "refused"),
     [
-        # Bash and zsh fold `..` on the logical path: `hop/..` is the developer folder.
+        # Bash and zsh fold `..` on the logical path: `hop/..` is the seat folder.
         ("cd {hop}/.. && cat session-99/notes.md", True),
         ("cd {hop}/..; cat session-99/notes.md", True),
         ("cd {hop}/..\ncat session-99/notes.md", True),
@@ -1393,7 +1393,7 @@ def test_reported_grep_from_a_workspace_cwd_follows_its_leading_cd(
         ("cd {foreign_link} && cat notes.md", True),
         # Bash falls back to the physical path when the logical one does not exist. The
         # link sits outside the workspaces root, so `deep_hop/../x` is a missing folder there,
-        # and bash lands in own/inner/deep/x, four levels below the developer folder.
+        # and bash lands in own/inner/deep/x, four levels below the seat folder.
         ("cd {deep_hop}/../x && cat ../../../../session-99/notes.md", True),
         ("cd {deep_hop}/../x; cat ../../../../session-99/notes.md", True),
         # `set -P` (or zsh `chase_links`) makes cd physical even where the logical path exists.
@@ -1441,7 +1441,7 @@ def test_reported_grep_from_a_workspace_cwd_follows_its_leading_cd(
 def test_symlinked_cd_reads_follow_the_shell_path(
     root: Path, tmp_path: Path, command: str, refused: bool
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     foreign = own.parent / "session-99"
     (own / "inner" / "deep" / "deeper").mkdir(parents=True)
@@ -1481,7 +1481,7 @@ def test_leading_cd_anchors_relative_reads_to_its_target(
 ) -> None:
     # The hook reports the shell cwd from before the command. A shell left inside the
     # workspace must still judge a relative operand against the checkout its `cd` enters.
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     checkout = tmp_path / "gobby"
     checkout.mkdir()
@@ -1511,7 +1511,7 @@ def test_leading_cd_anchors_relative_reads_to_its_target(
 def test_leading_cd_still_refuses_foreign_workspace_reads(
     root: Path, tmp_path: Path, command: str
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     foreign = own.parent / "session-99"
     own.mkdir(parents=True)
@@ -1543,7 +1543,7 @@ def test_cd_after_other_separators_still_refuses_foreign_reads(
 ) -> None:
     # A cd reached through `||`, a brace group or a new line runs in the current shell, so the
     # operands after it resolve from its target, not from the hook cwd.
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     foreign = own.parent / "session-99"
     own.mkdir(parents=True)
@@ -1572,7 +1572,7 @@ def test_skipped_piped_or_dynamic_cd_keeps_foreign_reads_refused(
 ) -> None:
     # Run from the own folder: a cd that may be skipped, runs in a pipeline subshell or has an
     # unknown target must not move the judged place off the own folder.
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     foreign = own.parent / "session-99"
     own.mkdir(parents=True)
@@ -1625,7 +1625,7 @@ def test_widened_cwd_forms_keep_foreign_reads_refused(
     # Run from the own folder. A cd, pushd, popd or evaluator that is not narrowed adds its target
     # or an unknown place, and the own folder stays reachable, so a relative operand is judged from
     # every place the shell may be in and a foreign seat folder is refused.
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     foreign = own.parent / "session-99"
     own.mkdir(parents=True)
@@ -1682,7 +1682,7 @@ def test_movers_after_a_narrowing_cd_keep_foreign_reads_refused(
     root: Path, tmp_path: Path, command: str, refused: bool
 ) -> None:
     # Run from the own folder, where the bare relative read already reaches session-99.
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     (own.parent / "session-99").mkdir(parents=True)
     own.mkdir()
@@ -1702,7 +1702,7 @@ def test_movers_after_a_narrowing_cd_keep_foreign_reads_refused(
 def test_subshell_cd_leaves_own_folder_reads_allowed(root: Path, tmp_path: Path) -> None:
     # A `( cd ... )` subshell changes nothing for the shell, so a bare own-folder read after it
     # still resolves from the own folder.
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     own.mkdir(parents=True)
     (own / "notes.md").write_text("Own notes")
@@ -1731,7 +1731,7 @@ def test_subshell_cd_leaves_own_folder_reads_allowed(root: Path, tmp_path: Path)
 def test_leading_cd_into_own_folder_keeps_own_reads_allowed(
     root: Path, tmp_path: Path, command: str
 ) -> None:
-    variables = _seat(root / PROJECT, "developer", 12)
+    variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
     (own / "sub").mkdir(parents=True)
     (own / "notes.md").write_text("Own notes")
@@ -2131,8 +2131,8 @@ async def test_read_scope_by_persistence(
     def tilde(path: Path) -> str:
         return "~/" + str(path.relative_to(root.parents[1]))
 
-    # A non-persistent developer: its own folder, its epic folder and the README.
-    developer = _seat(anchor, "fixture-worker", 50)
+    # A non-persistent seat: its own folder, its epic folder and the README.
+    worker = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
         project_id,
@@ -2163,7 +2163,7 @@ async def test_read_scope_by_persistence(
             _shell(f"cat {allowed}", project),
             _shell(f"cat {tilde(allowed)}", project),
         ):
-            response = await _decide(engine, data, dict(developer), caller)
+            response = await _decide(engine, data, dict(worker), caller)
             assert response.decision == "allow", (data, response.reason)
     for refused in (
         ended_earlier / "notes.md",
@@ -2177,12 +2177,12 @@ async def test_read_scope_by_persistence(
             _shell(f"cat {refused}", project),
             _shell(f"grep -r lesson {tilde(refused)}", project),
         ):
-            response = await _decide(engine, data, dict(developer), caller)
+            response = await _decide(engine, data, dict(worker), caller)
             assert response.decision == "block", data
 
     # A persistent seat also reads its definition's eligible predecessor folders.
     assistant_folder = anchor / "fixture-helper" / "session-40"
-    assistant = _seat(anchor, "fixture-helper", 40, persistent=True)
+    helper = _seat(anchor, "fixture-helper", 40, persistent=True)
     successor = _register(
         temp_db,
         project_id,
@@ -2208,7 +2208,7 @@ async def test_read_scope_by_persistence(
         _shell(f"cat {predecessor / 'lessons.md'}", project),
         _shell(f"cat {tilde(predecessor / 'lessons.md')}", project),
     ):
-        response = await _decide(engine, data, dict(assistant), successor)
+        response = await _decide(engine, data, dict(helper), successor)
         assert response.decision == "allow", (data, response.reason)
     # Never the whole definition directory, and never another definition's folders.
     for refused in (
@@ -2216,7 +2216,7 @@ async def test_read_scope_by_persistence(
         anchor / "fixture-coordinator" / "session-30" / "notes.md",
     ):
         for data in (_grep(refused, project), _shell(f"cat {refused}", project)):
-            response = await _decide(engine, data, dict(assistant), successor)
+            response = await _decide(engine, data, dict(helper), successor)
             assert response.decision == "block", data
 
 
@@ -2337,9 +2337,9 @@ def test_predecessor_eligibility(
     assert readable(folder("fixture-helper", 32)) is True
 
     # A non-persistent seat reads no predecessor folder at all.
-    developer = register("fixture-worker", 50, "active")
+    worker = register("fixture-worker", 50, "active")
     register("fixture-worker", 10, "expired")
-    assert readable(folder("fixture-worker", 10), developer) is False
+    assert readable(folder("fixture-worker", 10), worker) is False
 
 
 @pytest.mark.asyncio
@@ -2376,7 +2376,7 @@ async def test_placeholder_template_in_commit_message_is_not_a_read(
     project.mkdir()
     project_id: str = sample_project["id"]
     anchor = root / project_id
-    developer = _seat(anchor, "fixture-worker", 50)
+    worker = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
         project_id,
@@ -2387,7 +2387,7 @@ async def test_placeholder_template_in_commit_message_is_not_a_read(
         persistent=False,
     )
     # The template is documentation text inside a message, not a path the seat reads.
-    response = await _decide(engine, _shell(command, project), dict(developer), caller)
+    response = await _decide(engine, _shell(command, project), dict(worker), caller)
     assert response.decision == "allow", (command, response.reason)
 
 
@@ -2403,7 +2403,7 @@ async def test_concrete_reads_of_other_session_folders_stay_refused(
     project.mkdir()
     project_id: str = sample_project["id"]
     anchor = root / project_id
-    developer = _seat(anchor, "fixture-worker", 50)
+    worker = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
         project_id,
@@ -2423,12 +2423,12 @@ async def test_concrete_reads_of_other_session_folders_stay_refused(
             _shell(f"ls {refused.parent}", project),
             _shell(f"cat {refused}", project),
         ):
-            response = await _decide(engine, data, dict(developer), caller)
+            response = await _decide(engine, data, dict(worker), caller)
             assert response.decision == "block", (data, response.reason)
             assert "fixture-read-scope" in (response.reason or ""), data
     # A placeholder inside a commit message does not excuse a concrete read in the same command.
     data = _shell(f'git commit -m "Anchor: {TEMPLATE}" && cat {sibling}', project)
-    response = await _decide(engine, data, dict(developer), caller)
+    response = await _decide(engine, data, dict(worker), caller)
     assert response.decision == "block", (data, response.reason)
     assert "fixture-read-scope" in (response.reason or ""), data
 
@@ -2445,7 +2445,7 @@ async def test_own_and_predecessor_folders_stay_readable(
     project.mkdir()
     project_id: str = sample_project["id"]
     anchor = root / project_id
-    assistant = _seat(anchor, "fixture-helper", 40, persistent=True)
+    helper = _seat(anchor, "fixture-helper", 40, persistent=True)
     successor = _register(
         temp_db,
         project_id,
@@ -2474,7 +2474,7 @@ async def test_own_and_predecessor_folders_stay_readable(
             _shell(f"ls {allowed.parent}", project),
             _shell(f"cat {allowed}", project),
         ):
-            response = await _decide(engine, data, dict(assistant), successor)
+            response = await _decide(engine, data, dict(helper), successor)
             assert response.decision == "allow", (data, response.reason)
 
 
@@ -2490,7 +2490,7 @@ async def test_shell_wrapped_reads_of_other_session_folders_stay_refused(
     project.mkdir()
     project_id: str = sample_project["id"]
     anchor = root / project_id
-    developer = _seat(anchor, "fixture-worker", 50)
+    worker = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
         project_id,
@@ -2510,13 +2510,13 @@ async def test_shell_wrapped_reads_of_other_session_folders_stay_refused(
         f'eval "cat {sibling}"',
     ):
         data = _shell(command, project)
-        response = await _decide(engine, data, dict(developer), caller)
+        response = await _decide(engine, data, dict(worker), caller)
         assert response.decision == "block", (command, response.reason)
         assert "fixture-read-scope" in (response.reason or ""), command
     # The caller's own folder stays readable through a wrapper.
     own = anchor / "fixture-worker" / "session-50" / "notes.md"
     data = _shell(f'bash -c "cat {own}"', project)
-    response = await _decide(engine, data, dict(developer), caller)
+    response = await _decide(engine, data, dict(worker), caller)
     assert response.decision == "allow", (data, response.reason)
 
 
@@ -2599,7 +2599,7 @@ async def test_quoted_heredoc_bodies_and_quoted_text_judge_concrete_foreign_path
     project.mkdir()
     project_id: str = sample_project["id"]
     anchor = root / project_id
-    developer = _seat(anchor, "fixture-worker", 50)
+    worker = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
         project_id,
@@ -2623,7 +2623,7 @@ async def test_quoted_heredoc_bodies_and_quoted_text_judge_concrete_foreign_path
         f'git commit -m "see {sibling}"',
     ):
         data = _shell(command, project)
-        response = await _decide(engine, data, dict(developer), caller)
+        response = await _decide(engine, data, dict(worker), caller)
         assert response.decision == "block", (command, response.reason)
         assert "fixture-read-scope" in (response.reason or ""), command
     # The caller's own folder stays readable in the same positions.
@@ -2632,12 +2632,53 @@ async def test_quoted_heredoc_bodies_and_quoted_text_judge_concrete_foreign_path
         f"git commit -F - <<'EOF'\nAnchor: {sibling}\nEOF",
         f"cat > {own} <<'EOF'\n# Handoff\nPrior evidence: {sibling}\nEOF",
     ):
-        response = await _decide(engine, _shell(command, project), dict(developer), caller)
+        response = await _decide(engine, _shell(command, project), dict(worker), caller)
         assert response.decision != "block", (command, response.reason)
     for command in (
         f"bash <<'EOF'\ncat {own}\nEOF",
         f"git commit -F - <<'EOF'\nAnchor: {own}\nEOF",
     ):
         data = _shell(command, project)
-        response = await _decide(engine, data, dict(developer), caller)
+        response = await _decide(engine, data, dict(worker), caller)
         assert response.decision == "allow", (command, response.reason)
+
+
+@pytest.mark.asyncio
+async def test_own_folder_heredoc_after_mkdir_is_allowed_and_python_c_judges_literals(
+    engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    project_id: str = sample_project["id"]
+    anchor = root / project_id
+    worker = _seat(anchor, "fixture-worker", 50)
+    caller = _register(
+        temp_db,
+        project_id,
+        seq=50,
+        status="active",
+        agent_type="fixture-worker",
+        folder=anchor / "fixture-worker" / "session-50",
+        persistent=False,
+    )
+    own = anchor / "fixture-worker" / "session-50"
+    sibling = anchor / "fixture-worker" / "session-51" / "notes.md"
+    # The reported shape: a compound prefix before a quoted heredoc of markdown prose.
+    command = (
+        f"mkdir -p {own} && cat > {own}/standing-directives.md <<'EOF'\n"
+        "# Standing directives\nFollow the operator's rules.\n* keep notes current\nEOF"
+    )
+    for cwd in (project, own):
+        response = await _decide(engine, _shell(command, cwd), dict(worker), caller)
+        assert response.decision == "allow", (cwd, response.reason)
+    readable = f"python3 -c \"print(open('{own}/standing-directives.md').read())\""
+    response = await _decide(engine, _shell(readable, project), dict(worker), caller)
+    assert response.decision == "allow", response.reason
+    refused = f"python3 -c \"print(open('{sibling}').read())\""
+    response = await _decide(engine, _shell(refused, project), dict(worker), caller)
+    assert response.decision == "block", response.reason
+    assert "fixture-read-scope" in (response.reason or "")

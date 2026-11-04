@@ -31,7 +31,11 @@ from gobby.telemetry.rule_allow_audit import RuleResult, record_rule_evaluation
 from gobby.workflows.block_audit import combined_rule_condition, log_enforcement_block
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine._offload import inline_offload_scope, offload, offload_rule_loop
-from gobby.workflows.engine.block_batching import agent_context_key, block_scope
+from gobby.workflows.engine.block_batching import (
+    agent_context_key,
+    block_scope,
+    failure_pending_in_any_context,
+)
 from gobby.workflows.engine.blocked_tool_recovery import (
     block_reason_signature,
     clear_blocked_tool_recovery_state,
@@ -271,17 +275,16 @@ class EvaluationMixin:
         variables: dict[str, Any],
     ) -> None:
         """Update failed-tool and edit/write recovery state after tool completion."""
+        # Each agent context owns its pending flag; the main agent's is the flat one.
+        block_state = block_scope(variables, agent_context_key(event.data))
         if hook_event_tool_outcome(event.data, event.metadata).succeeded is False:
-            variables["tool_block_pending"] = True
+            block_state["tool_block_pending"] = True
             self._check_catastrophic_failure(event, variables)
             return
-
-        # Snapshot before clearing: a parallel non-edit success should not clear
-        # edit state created by a tool failure in the same turn.
-        had_pending_failure = variables.get("tool_block_pending", False)
-
-        variables["tool_block_pending"] = False
-        block_state = block_scope(variables, agent_context_key(event.data))
+        # Snapshot before clearing: a parallel non-edit success in any context
+        # should not clear edit state created by a tool failure in the same turn.
+        had_pending_failure = failure_pending_in_any_context(variables)
+        block_state["tool_block_pending"] = False
         clear_blocked_tool_recovery_state(block_state)
         block_state["consecutive_tool_blocks"] = 0
 
@@ -804,7 +807,7 @@ class EvaluationMixin:
                     # Track the blocked tool so repeated retries can escalate,
                     # but do not mark this as a tool execution failure.
                     if evaluation.is_before_tool:
-                        evaluation.variables["_last_blocked_tool"] = _get_tool_identity(
+                        evaluation.block_state["_last_blocked_tool"] = _get_tool_identity(
                             evaluation.event.data
                         )
                         # Blocked edit/write never executed - nothing to recover

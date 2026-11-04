@@ -928,18 +928,22 @@ def test_linked_checkout_generated_paths_remain_accessible(repo: Path) -> None:
     (gitdir / "commondir").write_text("../..\n")
     (linked / ".git").write_text(f"gitdir: {gitdir}\n")
     assert not navigation_requires_index(event(repo, f"rg VALUE {linked}/dist/assets"), {})
-    assert navigation_requires_index(event(repo, f"rg VALUE {linked}/src"), {})
-    assert not navigation_requires_index(
-        event(repo, f"rg VALUE {linked}/src"), {"is_spawned_agent": True}
-    )
+    assert not navigation_requires_index(event(repo, f"rg VALUE {linked}/src"), {})
+    assert navigation_requires_index(event(repo, "rg VALUE src"), {})
 
 
 @pytest.mark.parametrize("tool_workdir", [False, True])
 @pytest.mark.parametrize("is_spawned_agent", [False, True])
-def test_sibling_checkout_navigation_respects_spawned_scope(
+def test_sibling_worktree_navigation_skips_the_index_gates(
     repo: Path, tool_workdir: bool, is_spawned_agent: bool
 ) -> None:
-    """A reviewer may read a sibling tree without attempting an unauthorized gcode call."""
+    """A read of another linked worktree is outside the indexed checkout.
+
+    Every session reads it without a code-index gate; #23915 skipped it only for
+    spawned seats. Own-checkout reads, reads of the primary checkout and reads that
+    mix the own checkout with a sibling stay gated; a primary read is redirected
+    through ``--project``.
+    """
     linked = repo.parent / "linked"
     (linked / "src").mkdir(parents=True)
     gitdir = repo / ".git/worktrees/linked"
@@ -973,9 +977,11 @@ def test_sibling_checkout_navigation_respects_spawned_scope(
     primary = read_event(linked, str(repo / "src/long.py"))
     mixed = event(repo, f"cat src/long.py {linked}/src/long.py")
 
+    assert primary.get("canonical_gcode_project_hint") == str(repo)
+
     variables = {"is_spawned_agent": is_spawned_agent}
-    assert navigation_requires_index(sibling, variables) is (not is_spawned_agent)
-    assert navigation_requires_index(search, variables) is (not is_spawned_agent)
+    assert navigation_requires_index(sibling, variables) is False
+    assert navigation_requires_index(search, variables) is False
     assert navigation_requires_index(own, variables)
     assert navigation_requires_index(primary, variables)
     assert navigation_requires_index(mixed, variables)

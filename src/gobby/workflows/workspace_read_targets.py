@@ -16,6 +16,8 @@ from typing import Any
 
 from gobby.hooks._normalization_shell import scan_shell_command
 from gobby.hooks._path_scope import current_project_root, current_tool_cwd, resolve_tool_path
+from gobby.hooks._python_pipeline_classifier import _inline_interpreter_parts
+from gobby.hooks.code_navigation import shell_command_name
 from gobby.workflows.condition_helpers_paths import workspace_contains
 
 _SHELL_OPERATORS = re.compile(r"[<>|;&()]")
@@ -28,7 +30,8 @@ _SHELL_UNIT = re.compile(
     r"|`(?:\\.|[^`\\])*`"
     r"|\\."
     r"|(?<![^\s;&|()])#[^\n]*"  # a comment starts a word
-    r"|(?<!<)<<(?P<dash>-?)[ \t]*(?P<quote>['\"])(?P<tag>\w+)(?P=quote)"  # quoted heredoc header
+    # A quoted heredoc header: `<<'EOF'`, `<<"EOF"` or `<<\EOF`.
+    r"|(?<!<)<<(?P<dash>-?)[ \t]*(?:(?P<quote>['\"])(?P<tag>\w+)(?P=quote)|\\(?P<bare>\w+))"
     r"|.",
     re.DOTALL,
 )
@@ -37,9 +40,13 @@ _SHELL_UNIT = re.compile(
 _PLACEHOLDER_SEGMENT = re.compile(r"<[A-Za-z_][\w-]*>")
 
 
-def _skip_heredoc_bodies(command: str, pos: int, pending: list[tuple[str, bool]]) -> int:
-    """Position just past the last delimiter line, reading the bodies in header order."""
-    for tag, strip_tabs in pending:
+def _skip_heredoc_bodies(
+    command: str, pos: int, pending: list[tuple[str, bool, int]]
+) -> tuple[int, list[str]]:
+    """Position just past the last delimiter line, and each body read in header order."""
+    bodies: list[str] = []
+    for tag, strip_tabs, _segment in pending:
+        lines: list[str] = []
         while pos < len(command):
             end = command.find("\n", pos)
             line_end = len(command) if end == -1 else end
@@ -47,20 +54,33 @@ def _skip_heredoc_bodies(command: str, pos: int, pending: list[tuple[str, bool]]
             pos = len(command) if end == -1 else end + 1
             if (line.lstrip("\t") if strip_tabs else line) == tag:
                 break
-    return pos
+            lines.append(line)
+        bodies.append("\n".join(lines))
+    return pos, bodies
 
 
-def _split_heredoc_bodies(command: str) -> tuple[str, list[str]]:
+def _ends_list_segment(text: str, kept: list[str], following: str) -> bool:
+    """Whether an unquoted unit ends an and-or list element; a pipeline stays one element."""
+    previous = kept[-2] if len(kept) > 1 else ""
+    if text == "&":
+        return previous not in {"|", ">", "<"} and not following.startswith(">")
+    if text == "|":
+        return previous == "|"
+    return text in {";", "\n", "(", ")"}
+
+
+def _split_heredoc_bodies(command: str) -> tuple[str, list[tuple[str, str]]]:
     """Split each quoted-delimiter heredoc body out of the command text.
 
     The shell reads a quoted-delimiter body as literal text, so it is returned apart from the
-    command. The caller judges a body as shell code when a shell reads it, and as text otherwise.
+    command, paired with the list element whose header opened it: the pipeline that reads it.
     A body starts after the unquoted newline that ends its header line and runs to the
     delimiter line, matched exactly as the shell matches it.
     """
     kept: list[str] = []
-    bodies: list[str] = []
-    pending: list[tuple[str, bool]] = []
+    bodies: list[tuple[str, str]] = []
+    pending: list[tuple[str, bool, int]] = []
+    starts = [0]
     pos = 0
     while pos < len(command):
         unit = _SHELL_UNIT.match(command, pos)
@@ -68,14 +88,18 @@ def _split_heredoc_bodies(command: str) -> tuple[str, list[str]]:
             return command, []
         text = unit.group(0)
         pos = unit.end()
-        if unit.group("tag") is not None:
-            pending.append((unit.group("tag"), unit.group("dash") == "-"))
+        tag = unit.group("tag") or unit.group("bare")
+        if tag is not None:
+            pending.append((tag, unit.group("dash") == "-", len(starts) - 1))
         elif text == "\n" and pending:
-            start = pos
-            pos = _skip_heredoc_bodies(command, pos, pending)
-            bodies.append(command[start:pos])
+            pos, texts = _skip_heredoc_bodies(command, pos, pending)
+            ends = [*starts[1:], len(kept)]
+            for (_, _, segment), body in zip(pending, texts, strict=True):
+                bodies.append((body, "".join(kept[starts[segment] : ends[segment]])))
             pending = []
         kept.append(text)
+        if _ends_list_segment(text, kept, command[pos : pos + 1]):
+            starts.append(len(kept))
     return "".join(kept), bodies
 
 
@@ -101,6 +125,21 @@ def _shell_tokens(command: str) -> list[str]:
         else:
             tokens.append(token)
     return tokens
+
+
+def _lenient_tokens(command: str) -> list[str]:
+    """Shell words, or, for text the lexer cannot read, every word between operators."""
+    try:
+        return _shell_tokens(command)
+    except ValueError:
+        return _SHELL_OPERATORS.sub(" ", command).split()
+
+
+def _data_consumer(tokens: list[str]) -> bool:
+    """Whether one pipeline is a lone `cat`, `tee` or `git commit`, which reads stdin as data."""
+    name = os.path.basename(os.path.expandvars(tokens[0])) if tokens else ""
+    consumer = name in {"cat", "tee"} or (name == "git" and tokens[1:2] == ["commit"])
+    return consumer and "|" not in tokens and "|&" not in tokens
 
 
 _SHELL_WRAPPERS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
@@ -142,22 +181,136 @@ def _path_words(tokens: list[str]) -> list[str]:
     ]
 
 
-def _mask_regex_operands(command: str) -> str:
-    """Mask literal grep/rg regexes and non-executing sed substitutions, keeping paths."""
-    scan = scan_shell_command(command)
+def _literal_raw(raw: str) -> bool:
+    """Whether a raw shell word is quoted text the shell passes on without expanding."""
+    return len(raw) >= 2 and (
+        (raw[0] == raw[-1] == "'" and "'" not in raw[1:-1])
+        or (raw[0] == raw[-1] == '"' and not any(c in raw[1:-1] for c in '$`"'))
+    )
+
+
+# Interpreter flags whose next word is program text, not a path operand.
+_INLINE_CODE_FLAGS = {
+    "python": {"-c"},
+    "python3": {"-c"},
+    "node": {"-e", "--eval", "-p", "--print"},
+    "ruby": {"-e"},
+}
+_QUOTED_LITERAL = re.compile(r"'([^'\n]*)'|\"((?:\\.|[^\"\\\n])*)\"|`([^`\n]*)`")
+_SUBSTITUTION = re.compile(r"\$\(|`|[<>]\(")
+
+
+def _inline_code_follows(words: list[str]) -> bool:
+    """Whether the next word is the inline program of `python -c`, `node -e` or `ruby -e`."""
+    parts = _inline_interpreter_parts(words)
+    flags = _INLINE_CODE_FLAGS.get(shell_command_name(parts[0])) if len(parts) > 1 else None
+    return flags is not None and words[-1] in flags
+
+
+def _literal_path_words(text: str) -> list[str]:
+    """Paths program text or the data a program reads names literally.
+
+    A quoted literal counts when it starts at `/` or `~`, or names a relative path holding
+    `/` with no space. A quoted literal holding a space is also command text, such as
+    `"cat <path>"`, so each of its words is judged like a bare word. A bare word counts when
+    it starts at `/`, `~`, `./` or `../`. Operators such as `*` and `/` and prose such as
+    `* item` are not paths.
+    """
+    found: list[str] = []
+    for match in _QUOTED_LITERAL.finditer(text):
+        value = next((group for group in match.groups() if group is not None), "")
+        spaced = re.search(r"\s", value) is not None
+        if value.startswith(("/", "~")) or ("/" in value and not spaced):
+            found.append(value)
+        if spaced:
+            found.extend(_bare_path_words(value))
+    found.extend(_bare_path_words(_QUOTED_LITERAL.sub(" ", text)))
+    return found
+
+
+def _bare_path_words(text: str) -> list[str]:
+    """Whitespace-separated words of `text` that start at `/`, `~`, `./` or `../`."""
+    found: list[str] = []
+    for raw in text.split():
+        word = raw.strip("()[]{},;:=")
+        if word.startswith(("/", "~", "./", "../")) and word.strip("/"):
+            found.append(word)
+    return found
+
+
+def _literal_places_words(found: list[str], places: frozenset[_Place]) -> list[str]:
+    """Literal path words anchored to every place the shell may be in."""
+    words: list[str] = []
+    for place in places:
+        if place is None:
+            relative = [word for word in found if not word.startswith(("/", "~"))]
+            words.extend([_UNKNOWN_CWD] if relative else [])
+            words.extend(word for word in found if word.startswith(("/", "~")))
+        else:
+            words.extend(_anchored(found, *place))
+    return words
+
+
+def _mask_data_operands(command: str) -> str:
+    """Mask operands that are data, not paths, keeping every path a command reads.
+
+    Literal grep/rg regexes, non-executing sed substitutions, jq filters and `--arg`/`--argjson`
+    values are masked; a literal inline interpreter program is replaced by the paths it names
+    literally. A command the scanner cannot read is returned unmasked.
+    """
+    try:
+        scan = scan_shell_command(command)
+    except ValueError:
+        return command
     head = ""
     seen = False
     expression = False
     value = False
     options = True
+    jq_name = jq_value = False
+    words: list[str] = []
     masked = list(command)
+    programs: list[tuple[int, int, str]] = []
     for token, (start, end) in zip(scan.tokens, scan.spans, strict=True):
         word = token.value
         if not token.quoted and word in {"|", "||", "&&", ";", "&", "\n"}:
             head, seen, expression, value, options = "", False, False, False, True
+            jq_name = jq_value = False
+            words = []
             continue
+        raw = command[start:end]
+        if words and _literal_raw(raw) and _inline_code_follows(words):
+            paths = " ".join(shlex.quote(path) for path in _literal_path_words(word))
+            programs.append((start, end, paths))
+        words.append(word)
         if not head:
             head = os.path.basename(word)
+            continue
+        if head == "jq":
+            if jq_name:
+                # `--arg NAME VALUE` passes a string; `--rawfile NAME FILE` reads its file.
+                jq_name = False
+            elif jq_value:
+                jq_value = False
+                if _SUBSTITUTION.search(raw) is None:
+                    masked[start:end] = " " * (end - start)
+            elif value:
+                value = False
+            elif options and word == "--":
+                options = False
+            elif options and word in {"--arg", "--argjson", "--rawfile", "--slurpfile"}:
+                jq_name, jq_value = True, word in {"--arg", "--argjson"}
+                value = not jq_value
+            elif options and word in {"-L", "--indent"}:
+                value = True
+            elif options and word in {"-f", "--from-file"}:
+                seen = True
+            elif options and word.startswith("-") and word != "-":
+                pass
+            elif not seen:
+                seen = True
+                if _literal_raw(raw):
+                    masked[start:end] = " " * (end - start)
             continue
         if head not in {"grep", "egrep", "fgrep", "rg", "sed"}:
             continue
@@ -186,11 +339,6 @@ def _mask_regex_operands(command: str) -> str:
             continue
         pattern = expression or not seen
         seen, expression = True, False
-        raw = command[start:end]
-        literal = len(raw) >= 2 and (
-            (raw[0] == raw[-1] == "'" and "'" not in raw[1:-1])
-            or (raw[0] == raw[-1] == '"' and not any(c in raw[1:-1] for c in '$`"'))
-        )
         if head == "sed":
             delimiter = re.escape(word[1:2])
             pattern = (
@@ -204,8 +352,11 @@ def _mask_regex_operands(command: str) -> str:
                     )
                 )
             )
-        if pattern and literal:
+        if pattern and _literal_raw(raw):
             masked[start:end] = " " * (end - start)
+    # A program's paths may be shorter or longer than its text, so they go in last.
+    for start, end, paths in reversed(programs):
+        masked[start:end] = [paths]
     return "".join(masked)
 
 
@@ -423,19 +574,22 @@ def _command_places_words(command: str, places: frozenset[_Place]) -> list[str]:
 def _shell_path_words(command: Any, base: Path | None = None, moved: bool = False) -> list[str]:
     """Shell words that look like paths: operators split outside quotes, env vars expanded.
 
-    Only known data consumers may omit literal heredoc bodies. Interpreters and
-    unknown consumers still need path checks. Shell wrappers and `eval` recurse.
-    Relative words are anchored to the literal `cd` before them, starting from `base`.
+    A literal heredoc body is shell code when a shell or `eval` in the command may read it.
+    Otherwise a known data consumer's body is skipped, and an interpreter's or unknown
+    consumer's body is judged by the paths it names literally. Shell wrappers and `eval`
+    recurse. Relative words are anchored to the literal `cd` before them, starting from `base`.
     """
     if not isinstance(command, str):
         return []
     text, bodies = _split_heredoc_bodies(command)
-    text = _mask_regex_operands(text.strip())
-    try:
-        tokens = _shell_tokens(text)
-    except ValueError:
-        tokens = _SHELL_OPERATORS.sub(" ", text).split()
-    shell_reads = any(os.path.basename(os.path.expandvars(t)) in _BODY_CONSUMERS for t in tokens)
+    text = _mask_data_operands(text.strip())
+    tokens = _lenient_tokens(text)
+    # `.` sources a file only as a command word; as an operand it is the current directory.
+    shell_reads = any(
+        name in _BODY_CONSUMERS
+        and (name != "." or index == 0 or tokens[index - 1] in _COMMAND_STARTS)
+        for index, name in enumerate(os.path.basename(os.path.expandvars(t)) for t in tokens)
+    )
     start = frozenset({(base, moved)})
     words, places = _cd_anchored_words(tokens, base, start)
     # The operator-aware lexer splits extglob parentheses and alternatives. Keep
@@ -446,16 +600,11 @@ def _shell_path_words(command: Any, base: Path | None = None, moved: bool = Fals
         whole_words = []
     whole_anchored, _ = _cd_anchored_words(whole_words, base, start)
     words.extend(word for word in whole_anchored if _EXTGLOB.search(word))
-    command_name = os.path.basename(os.path.expandvars(tokens[0])) if tokens else ""
-    data_consumer = command_name in {"cat", "tee"} or (
-        command_name == "git" and tokens[1:2] == ["commit"]
-    )
-    compound = "\n" in text.strip() or any(
-        token in {"|", "||", "&", "&&", ";", "(", ")"} for token in tokens
-    )
-    if shell_reads or compound or not data_consumer:
-        for body in bodies:
+    for body, segment in bodies:
+        if shell_reads:
             words.extend(_command_places_words(body, places))
+        elif not _data_consumer(_lenient_tokens(segment.strip())):
+            words.extend(_literal_places_words(_literal_path_words(body), places))
     for wrapped in _wrapped_commands(tokens):
         words.extend(_command_places_words(wrapped, places))
     return words

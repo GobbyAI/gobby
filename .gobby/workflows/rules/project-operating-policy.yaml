@@ -1,4 +1,4 @@
-version: "1.2.1"
+version: "1.2.2"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -254,7 +254,6 @@ rules:
         delivery: on_receipt
         template: |
           ## Project Operating Policy
-          - Load brevity(max) at start/compact/clear; use throughout.
           - Operator: resolve_operator_conversation(channel="gobby-telegram"); no hardcoded IDs.
           - Before routing/launch/handoff: get_variable(name="project_policy") for roots/role_launch_defaults/launch_defaults/workspace_layout. Reporter/Consolidator read role_guidance before work. Pass a runbook its launch_defaults entry plus its required inputs; bundles inherit, project-agnostic.
           - Integration 0.5.0. Push: the operator and sessions running the default agent definition may push. Other seats push only for the exact SHA the operator approves, and only the Orchestrator runs git push origin <sha>:refs/heads/0.5.0.
