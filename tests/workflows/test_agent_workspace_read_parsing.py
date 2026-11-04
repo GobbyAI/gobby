@@ -88,6 +88,24 @@ def test_quoted_heredoc_prose_in_a_compound_command_is_data(
     assert "*" not in _shell_path_words(command, checkout), command
 
 
+def test_a_quoted_regex_over_checkout_paths_is_not_a_workspace_read(
+    root: Path, checkout: Path
+) -> None:
+    """A read-only grep that names no workspace path passes (#25578 family)."""
+    variables, _, _ = _folders(root)
+    command = (
+        'grep -rniE "spawned.*(sibling|linked|another checkout|other checkout)'
+        '|(sibling|linked) (worktree|checkout).*(spawned|managed)" '
+        "docs src/gobby/install/shared/skills/gobby/references/code-index"
+    )
+    # A task worktree sits beside the workspaces root under the same home.
+    worktree = root.parent / "worktrees" / "project" / "task-1"
+    worktree.mkdir(parents=True)
+
+    assert not _refused(command, variables, checkout)
+    assert not _refused(command, variables, worktree)
+
+
 def test_unparseable_command_text_does_not_escape_the_check(root: Path, checkout: Path) -> None:
     variables, own, sibling = _folders(root)
     # A stray apostrophe outside any heredoc leaves the command unparseable for the scanner,
