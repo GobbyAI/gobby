@@ -6,10 +6,10 @@ This directory contains bundled rule groups. These are **templates** — they ar
 
 | Group | Dir | Rules | Purpose |
 |-------|-----|-------|---------|
-| `worker-safety` | `worker-safety/` | 60 | Block git push for spawned sessions and through an opt-in strict policy, force push, the operator-only landing override, destructive git/shell, unmanaged worktree/clone commands, direct provider launches, bash sleep, agent spawning through an opt-in strict policy, external GitHub issues, package install/publish, remote-script exec, full test suite, validation runs wrapped in pipes or command sequences, daemon management, data exfiltration (curl/wget upload, scp/sftp, secret-path reads), and, for every session, listings of other processes' environment or arguments (`ps aux`, `ps -o args` or `command`, plain `ps` and any `ps` without an allowlisted `-o`, `ps -e`/`-E`, `pgrep -fl`, `pgrep -a`, `/proc/<pid>/environ`); `ps` is allowed only with `-o` naming non-argument columns, and PID-only `pgrep -f`/`-g` stay open |
+| `worker-safety` | `worker-safety/` | 61 | Block git push for spawned sessions and through an opt-in strict policy, force push, the operator-only landing override, destructive git/shell, unmanaged worktree/clone commands and the native `EnterWorktree` tool, direct provider launches, bash sleep, agent spawning through an opt-in strict policy, external GitHub issues, package install/publish, remote-script exec, full test suite, validation runs wrapped in pipes or command sequences, daemon management, data exfiltration (curl/wget upload, scp/sftp, secret-path reads), and, for every session, listings of other processes' environment or arguments (`ps aux`, `ps -o args` or `command`, plain `ps` and any `ps` without an allowlisted `-o`, `ps -e`/`-E`, `pgrep -fl`, `pgrep -a`, `/proc/<pid>/environ`); `ps` is allowed only with `-o` naming non-argument columns, and PID-only `pgrep -f`/`-g` stay open |
 | `tool-hygiene` | `tool-hygiene/` | 13 | Require `uv` and Gobby memory tools. Selected terminal rules restrict web-chat callers and target scope; default-tagged `no-send-keys` withholds `send_keys` unless the definition holds its capability. Bound spawned messaging by `send_message_targets` and spawning by `spawnable_agents`. Network override requires `override_spawn_network` or the operator terminal. Selected `no-comms-attach` blocks conversation attachment. |
 | `progressive-discovery` | `progressive-discovery/` | 5 | Require a current-context schema lease before ordinary MCP calls; track optional inventory discovery |
-| `task-enforcement` | `task-enforcement/` | 23 | Require claimed tasks and interactive mutation guidance, block spawned-agent task creation, block `update_task` unless the agent definition excludes `block-update-task`, nudge native trackers after claim, inject claimed-task extras, protect shared-worktree edits and commits, decide direct integration-branch commits from the caller's declared `direct_integration_commit` grant (the protected-branch guard consults it through `ghook`), keep the operator-only `gobby sessions approve-dirty-paths` away from every agent, fail closed on unresolved-scope shell writes, and enforce valid task transitions, and refuse unquoted braces or substitutions in gobby command words |
+| `task-enforcement` | `task-enforcement/` | 24 | Require claimed tasks and interactive mutation guidance, refuse a task selection while a running call is bound to another task, block spawned-agent task creation, block `update_task` unless the agent definition excludes `block-update-task` or declares `add_team_task_labels` for a labels-only patch within its admitted team, nudge native trackers after claim, inject claimed-task extras, protect shared-worktree edits and commits, decide direct integration-branch commits from the caller's declared `direct_integration_commit` grant (the protected-branch guard consults it through `ghook`), keep the operator-only `gobby sessions approve-dirty-paths` away from every agent, fail closed on unresolved-scope shell writes, and enforce valid task transitions, and refuse unquoted braces or substitutions in gobby command words |
 | `stop-gates` | `stop-gates/` | 8 | Require workflow completion, let a standing seat with no claimed task stop at its `idle: true` step after a durable readiness send declares `seat_idle` through a rule effect (cleared at the next turn start), and enforce the Found Work ladder before turn end |
 | `plan-mode` | `plan-mode/` | 6 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
 | `memory-lifecycle` | `memory-lifecycle/` | 14 | Initial-load recovery gated on MCP proxy readiness, memory surfacing at turn start, agent spawn, task claim, and handoff, post-close review, plan-memory guards, turn sequencing, and tracking reset |
@@ -90,15 +90,19 @@ Tags serve two purposes:
 | Tag | Meaning |
 |-----|---------|
 | `gobby` | **Provenance** — rule ships with Gobby. All bundled rules get this tag. |
-| `default` | **Baseline** — selected by the interactive definition and used when no enabled definition resolves. |
+| `default` | **Baseline** — selected by the interactive definition and used by a session bound to no named definition. |
 | `runbook` | **Runbook seats** — restrictions, routing and guidance that exist only for runbook seats. Runbook seat definitions select it; the `default` definition never does, and a `runbook` rule never also carries `default`. |
 | Group tags | **Identity** — rule belongs to a functional group. Workers cherry-pick these. |
 
 The `default` agent uses `rule_selectors: {include: ["tag:default"]}` to load interactive-session rules. Worker agents select the group tags needed for their role.
 
-The current enabled definition supplies rule selection. Missing or disabled
-definitions receive only enabled `default`-tagged rules; cached
-`_active_rule_names` cannot preserve an exclusion or activate an opt-in rule.
+The current enabled definition supplies rule selection. A session with no
+named definition (absent, empty or `default` agent type, and no `default` row)
+receives only enabled `default`-tagged rules. A named definition that is missing
+or disabled fails closed: the engine blocks every tool call with
+`unresolved-agent-definition`, keeps only mandatory rules, and still lets the
+turn end. Cached `_active_rule_names` cannot preserve an exclusion or activate
+an opt-in rule.
 An enabled definition may intentionally select an empty set.
 
 Runbook seat definitions explicitly select `tag:runbook`. Their exclusions grant
@@ -106,8 +110,8 @@ spawn, pipeline, question, project-creation and closure permissions. Write scope
 (`research-artifact-write-scope`, `documentation-write-scope`, `digest-write-scope`)
 and `prometheus-query-only` are selected by name. Database-query permission is an
 explicit exclusion of `query-readonly-seat-scope`. Baseline session rules
-keep unresolved children and missing or disabled named definitions bounded while
-leaving the operator's unspawned terminal open. Project creation uses the stored
+keep unresolved children bounded while leaving the operator's unspawned terminal
+open; missing or disabled named definitions are blocked by the engine instead. Project creation uses the stored
 operator identity; parent lineage alone never identifies a spawned child. Closing definitions
 also declare their permitted reasons and task scopes for MCP enforcement.
 

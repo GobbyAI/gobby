@@ -21,6 +21,9 @@ from gobby.utils.project_context import (
 
 pytestmark = pytest.mark.unit
 
+# The sources below are plain directories, so the selected base is supplied.
+BASE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
+
 
 class TestCopyProjectJsonToWorktree:
     """Tests for _copy_project_json_to_worktree function."""
@@ -45,7 +48,7 @@ class TestCopyProjectJsonToWorktree:
         worktree.mkdir()
 
         # Call the function
-        await _copy_project_json_to_worktree(main_repo, worktree)
+        await _copy_project_json_to_worktree(main_repo, worktree, base_commit=BASE_COMMIT)
 
         # Verify worktree project.json was created
         worktree_project_json = worktree / ".gobby" / "project.json"
@@ -86,7 +89,7 @@ class TestCopyProjectJsonToWorktree:
         )
 
         # Call the function
-        await _copy_project_json_to_worktree(main_repo, worktree)
+        await _copy_project_json_to_worktree(main_repo, worktree, base_commit=BASE_COMMIT)
 
         # Verify source content overwrites existing
         with open(worktree_project_json) as f:
@@ -109,7 +112,7 @@ class TestCopyProjectJsonToWorktree:
         worktree.mkdir()
 
         # Call the function - should not raise
-        await _copy_project_json_to_worktree(main_repo, worktree)
+        await _copy_project_json_to_worktree(main_repo, worktree, base_commit=BASE_COMMIT)
 
         # Verify no project.json was created in worktree
         worktree_project_json = worktree / ".gobby" / "project.json"
@@ -131,7 +134,7 @@ class TestCopyProjectJsonToWorktree:
         worktree.mkdir()
 
         # Call the function
-        await _copy_project_json_to_worktree(main_repo, worktree)
+        await _copy_project_json_to_worktree(main_repo, worktree, base_commit=BASE_COMMIT)
 
         # Verify .gobby dir was created
         assert (worktree / ".gobby").is_dir()
@@ -183,12 +186,14 @@ class TestGetWorkflowProjectPath:
         assert result is not None
         assert result.resolve() == project.resolve()
 
-    def test_returns_none_for_no_project(self, tmp_path: Path, monkeypatch) -> None:
+    def test_returns_none_for_no_project(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Verify get_workflow_project_path returns None when no project found."""
         # Isolate test from parent directories
         original_exists = Path.exists
 
-        def isolated_exists(self):
+        def isolated_exists(self: Path) -> bool:
             try:
                 self.relative_to(tmp_path)
                 return original_exists(self)
@@ -385,7 +390,7 @@ class TestEdgeCases:
             patch("gobby.utils.project_context.os.replace", side_effect=OSError("Write failed")),
             pytest.raises(IsolationProjectJsonError),
         ):
-            await _copy_project_json_to_worktree(main_repo, worktree)
+            await _copy_project_json_to_worktree(main_repo, worktree, base_commit=BASE_COMMIT)
 
         # Verify .gobby dir was created (function gets that far before error)
         assert (worktree / ".gobby").is_dir()
@@ -406,7 +411,7 @@ class TestEdgeCases:
         worktree.mkdir()
 
         with pytest.raises(IsolationProjectJsonError) as exc_info:
-            await _copy_project_json_to_worktree(main_repo, worktree)
+            await _copy_project_json_to_worktree(main_repo, worktree, base_commit=BASE_COMMIT)
 
         assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
         worktree_project_json = worktree / ".gobby" / "project.json"

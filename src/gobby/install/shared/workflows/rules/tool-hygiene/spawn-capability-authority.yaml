@@ -1,0 +1,26 @@
+version: "1.1.0"
+tags: [gobby, default, tool-hygiene]
+
+rules:
+  spawn-capability-authority:
+    description: Restrict unbounded spawning to caller capabilities or declared launch authority
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 5
+    when: >
+      event.data.get('mcp_server') == 'gobby-agents'
+      and event.data.get('mcp_tool') == 'spawn_agent'
+      and not operator_session(event.metadata.get('_platform_session_id'))
+      and not spawn_capabilities_allowed(
+        event.metadata.get('_platform_session_id'), tool_input.get('agent'),
+        tool_input.get('project_path'), tool_input.get('parent_session_id'),
+        'spawn_any_definition')
+    effects:
+      - type: block
+        mcp_tools: [gobby-agents:spawn_agent]
+        reason: >-
+          Unbounded spawning requires caller capability containment or declared
+          spawn_any_definition authority. That authority never covers default,
+          including an omitted target or a fallback to default. Finite spawn lists
+          remain authoritative and parent references never grant authority.

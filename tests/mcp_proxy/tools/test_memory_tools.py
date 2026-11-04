@@ -28,6 +28,7 @@ from gobby.memory.services import _search_results
 from gobby.storage.memories import Memory, MemoryType
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.session_context import SessionContext, session_context_for_test
+from tests.mcp_proxy.caller_principal_support import bound_principal, session_claims
 
 pytestmark = pytest.mark.unit
 
@@ -477,6 +478,7 @@ class TestCreateMemory:
                 return_value=(None, None),
             ) as mock_derive,
             patch.object(handler.tool_proxy, "call_tool", AsyncMock(side_effect=proxied_call)),
+            bound_principal(session_claims(seeded_uuid, project_id=project_id)),
         ):
             result = await handler.call_tool(
                 server_name="gobby-memory",

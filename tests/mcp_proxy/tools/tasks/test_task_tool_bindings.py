@@ -17,9 +17,15 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows import task_tool_bindings
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.task_tool_bindings import TaskToolBindings
+from gobby.workflows.task_tool_bindings import TaskToolBindings, pending_fencing_calls
 
 pytestmark = pytest.mark.unit
+
+
+def _fencing(db: HubDatabase, session_id: str, task_id: str) -> str:
+    """The running calls that fence selecting ``task_id``, as the rule reports them."""
+    variables = SessionVariableManager(db).get_variables(session_id)
+    return ", ".join(pending_fencing_calls(variables, task_id))
 
 
 @pytest.mark.parametrize(
@@ -90,8 +96,7 @@ def test_background_poll_uses_persisted_original_start_and_releases_fence(
         )
     )
     binding.clear_pending("turn_end")
-    with pytest.raises(ValueError, match="background-start"):
-        tasks.claim_task_for_agent(second.id, canonical_task_session.id)
+    assert "background-start" in _fencing(temp_db, canonical_task_session.id, second.id)
     poll = replace(
         before,
         timestamp=before.timestamp + timedelta(seconds=10),
@@ -107,8 +112,7 @@ def test_background_poll_uses_persisted_original_start_and_releases_fence(
             data={**poll.data, "tool_output": "receipt unavailable"},
         )
     )
-    with pytest.raises(ValueError, match="background-start"):
-        tasks.claim_task_for_agent(second.id, canonical_task_session.id)
+    assert "background-start" in _fencing(temp_db, canonical_task_session.id, second.id)
     after = replace(
         poll,
         event_type=HookEventType.AFTER_TOOL,
@@ -116,6 +120,7 @@ def test_background_poll_uses_persisted_original_start_and_releases_fence(
     )
     assert recreated.started_at(after) == before.timestamp.timestamp()
     recreated.complete(after)
+    assert _fencing(temp_db, canonical_task_session.id, second.id) == ""
     assert (
         tasks.claim_task_for_agent(second.id, canonical_task_session.id).claimed_by_session_id
         == canonical_task_session.id
@@ -368,7 +373,7 @@ def test_failed_yielded_call_releases_pending_binding(
     assert bindings.started_at(before) == before.timestamp.timestamp()
 
 
-def test_own_switch_waits_for_the_selected_tasks_running_call(
+def test_running_call_fences_other_tasks_only_through_rules(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
@@ -396,23 +401,25 @@ def test_own_switch_waits_for_the_selected_tasks_running_call(
     bindings = TaskToolBindings(variables, canonical_task_session.id)
     bindings.start(before)
 
-    with pytest.raises(ValueError, match="running-call.*wait.*stop"):
-        tasks.claim_task_for_agent(second.id, canonical_task_session.id)
-    count = tasks.count_tasks(project_id=sample_project["id"])
-    with pytest.raises(ValueError, match="running-call.*wait.*stop"):
-        tasks.create_task_for_agent(
-            canonical_task_session.id,
-            project_id=sample_project["id"],
-            title="Must roll back",
-            validation_criteria="A fenced create-and-claim creates no task.",
-        )
-    assert tasks.count_tasks(project_id=sample_project["id"]) == count
+    # The running call fences the switch for rules; it stays fenced for the call's task.
+    assert "running-call" in _fencing(temp_db, canonical_task_session.id, second.id)
+    assert _fencing(temp_db, canonical_task_session.id, first.id) == ""
+    state = variables.get_variables(canonical_task_session.id)
+    assert pending_fencing_calls(state, None) == sorted(state["task_tool_bindings"])
 
-    assert tasks.get_task(second.id).claimed_by_session_id is None
-    assert variables.get_variables(canonical_task_session.id)["active_task_id"] == first.id
-    bindings.complete(replace(before, event_type=HookEventType.AFTER_TOOL))
+    # Storage never refuses: the fence is rule-owned, so a disabled rule means no fence.
     tasks.claim_task_for_agent(second.id, canonical_task_session.id)
     assert variables.get_variables(canonical_task_session.id)["active_task_id"] == second.id
+    created = tasks.create_task_for_agent(
+        canonical_task_session.id,
+        project_id=sample_project["id"],
+        title="Created while a call runs",
+        validation_criteria="Create-and-claim is fenced only by rules.",
+    )
+    assert created.claimed_by_session_id == canonical_task_session.id
+
+    bindings.complete(replace(before, event_type=HookEventType.AFTER_TOOL))
+    assert pending_fencing_calls(variables.get_variables(canonical_task_session.id), None) == []
 
 
 def test_anonymous_completion_requires_unchanged_selection(
@@ -748,8 +755,7 @@ def test_new_claude_prompt_keeps_a_running_background_call_fenced(
         variables.get_variables(canonical_task_session.id),
     )
 
-    with pytest.raises(ValueError, match="toolu_background.*wait.*stop"):
-        tasks.claim_task_for_agent(second.id, canonical_task_session.id)
+    assert "toolu_background" in _fencing(temp_db, canonical_task_session.id, second.id)
 
 
 _FIXTURE_STDOUT = '{"sessionId": "22222222-2222-2222-2222-222222222222", "type": "attachment"}'
@@ -894,8 +900,7 @@ def test_functions_wait_printed_exit_retires_the_background_cell(
         )
     )
     binding.clear_pending("turn_end")
-    with pytest.raises(ValueError, match="cell-start"):
-        tasks.claim_task_for_agent(second.id, canonical_task_session.id)
+    assert "cell-start" in _fencing(temp_db, canonical_task_session.id, second.id)
     poll = replace(
         before,
         request_id="cell-wait",
@@ -910,6 +915,7 @@ def test_functions_wait_printed_exit_retires_the_background_cell(
         )
     )
 
+    assert _fencing(temp_db, canonical_task_session.id, second.id) == ""
     assert (
         tasks.claim_task_for_agent(second.id, canonical_task_session.id).claimed_by_session_id
         == canonical_task_session.id

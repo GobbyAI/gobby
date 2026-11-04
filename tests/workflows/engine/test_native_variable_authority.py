@@ -205,6 +205,7 @@ async def test_foreign_non_idle_write_preserves_definition_authority(
                 source=SessionSource.CLAUDE,
                 timestamp=datetime.now(UTC),
                 metadata={},
+                project_id=PROJECT,
                 data={
                     "tool_name": SET_VARIABLE_TOOL,
                     "tool_input": {
@@ -255,6 +256,7 @@ async def test_privileged_idle_declaration_keeps_own_session_gate(
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             metadata={},
+            project_id=PROJECT,
             data={
                 "tool_name": SET_VARIABLE_TOOL,
                 "tool_input": {
@@ -361,6 +363,7 @@ async def test_hook_checks_native_authority_before_infrastructure_exemption(
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         metadata={},
+        project_id=PROJECT,
         data={
             "tool_name": SET_VARIABLE_TOOL,
             "tool_input": {

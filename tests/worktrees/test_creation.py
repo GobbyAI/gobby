@@ -13,7 +13,7 @@ from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils import project_context
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.project_context import read_isolation_marker
-from gobby.worktrees.creation import create_worktree
+from gobby.worktrees.creation import create_worktree, resolve_managed_worktree_path
 from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
@@ -22,6 +22,12 @@ def _git(root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(root), *args], check=True, capture_output=True, text=True
     ).stdout.strip()
+
+
+@pytest.fixture(autouse=True)
+def managed_worktree_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", tmp_path)
+    return tmp_path
 
 
 @pytest.fixture
@@ -213,3 +219,89 @@ async def test_creation_marker_records_selected_base_not_source_head(
     marker = read_isolation_marker(Path(result.worktree.worktree_path))
     assert marker is not None
     assert marker["base_commit"] == expected
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_creation_refuses_path_outside_managed_root(
+    local_base_repo: tuple[Path, LocalWorktreeManager, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, storage, project_id = local_base_repo
+    managed_root = tmp_path / "managed"
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", managed_root)
+    scratch = tmp_path / "scratchpad" / "clean"
+
+    result = await create_worktree(
+        git_manager=WorktreeGitManager(root),
+        worktree_storage=storage,
+        project_id=project_id,
+        branch_name="scratch-seat",
+        worktree_path=str(scratch),
+        event_emitter=lambda *_args, **_kwargs: {},
+    )
+
+    assert not result.success
+    assert result.error_code == "worktree_path_outside_root"
+    assert result.error == f"Worktree path must be under {managed_root.resolve()}"
+    assert not scratch.exists()
+    assert storage.get_by_branch(project_id, "scratch-seat") is None
+    assert _git(root, "branch", "--list", "scratch-seat") == ""
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("requested", "accepted"),
+    [
+        ("managed/seat", True),
+        ("~/managed/seat", True),
+        ("managed/../managed/seat", True),
+        ("managed", False),
+        ("managed/../scratchpad/clean", False),
+        ("managed/escape/seat", False),
+        ("~/scratchpad/clean", False),
+    ],
+)
+def test_managed_worktree_path_containment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requested: str, accepted: bool
+) -> None:
+    """Containment is judged on the resolved path: ~, .., symlinks and the root itself."""
+    managed_root = tmp_path / "managed"
+    managed_root.mkdir()
+    (tmp_path / "outside").mkdir()
+    (managed_root / "escape").symlink_to(tmp_path / "outside")
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", managed_root)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = requested if requested.startswith("~") else str(tmp_path / requested)
+
+    resolved = resolve_managed_worktree_path(path)
+
+    expected = (managed_root / "seat").resolve() if accepted else None
+    assert resolved == expected
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_creation_default_path_lands_under_managed_root(
+    local_base_repo: tuple[Path, LocalWorktreeManager, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, storage, project_id = local_base_repo
+    managed_root = tmp_path / "managed"
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", managed_root)
+
+    result = await create_worktree(
+        git_manager=WorktreeGitManager(root),
+        worktree_storage=storage,
+        project_id=project_id,
+        branch_name="feature/default-seat",
+        event_emitter=lambda *_args, **_kwargs: {},
+    )
+
+    assert result.success, result.error
+    assert result.worktree is not None
+    expected = managed_root.resolve() / root.name / "feature-default-seat"
+    assert result.worktree.worktree_path == str(expected)
+    assert expected.is_dir()

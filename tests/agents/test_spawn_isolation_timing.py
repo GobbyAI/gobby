@@ -12,6 +12,7 @@ from gobby.agents import isolation_repair, spawn_timing
 from gobby.agents.isolation_clone import CloneIsolationHandler
 from gobby.agents.isolation_models import IsolationHandler, SpawnConfig
 from gobby.agents.isolation_worktree import WorktreeIsolationHandler
+from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
 from gobby.mcp_proxy.tools.spawn_agent import _worktree_reuse
 from gobby.mcp_proxy.tools.spawn_agent._isolation_prepare import prepare_spawn_isolation
 
@@ -149,7 +150,7 @@ async def test_isolation_paths_share_spawn_timing_map(
     git.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
     git.create_worktree = AsyncMock(return_value=SimpleNamespace(success=True))
     git.create_clone = AsyncMock(return_value=SimpleNamespace(success=True))
-    sync = AsyncMock(return_value=SimpleNamespace(base_commit_sha=None))
+    sync = AsyncMock(return_value=ReusedWorktreeSyncResult("already_current", "main", ""))
     handler: IsolationHandler
     if kind == "worktree":
         monkeypatch.setattr("gobby.agents.isolation_worktree.repair_isolation_environment", repair)

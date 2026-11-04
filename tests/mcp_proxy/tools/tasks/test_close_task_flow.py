@@ -71,16 +71,18 @@ def _ready_evaluation(task: Task) -> CloseEvaluation:
     )
 
 
+def _approved_closure(*_args: object, facts: dict[str, Any], **_kwargs: object) -> Any:
+    """An approving policy whose snapshot records the observed facts, as storage does."""
+    return SimpleNamespace(
+        decision=ClosureDecision(True, (), "policy-revision", "snapshot-revision"),
+        snapshot=SimpleNamespace(facts=dict(facts)),
+    )
+
+
 @pytest.fixture(autouse=True)
 def _policy_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     """Policy decisions are exercised separately against isolated PostgreSQL."""
-    monkeypatch.setattr(
-        lifecycle,
-        "prepare_closure",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            decision=ClosureDecision(True, (), "policy-revision", "snapshot-revision")
-        ),
-    )
+    monkeypatch.setattr(lifecycle, "prepare_closure", _approved_closure)
     monkeypatch.setattr(lifecycle, "session_agent_definition", lambda *_args: None)
     monkeypatch.setattr(
         lifecycle,
@@ -131,7 +133,12 @@ async def test_close_evaluation_storage_stays_off_the_event_loop(
     monkeypatch.setattr(
         lifecycle,
         "prepare_closure",
-        record("policy", SimpleNamespace(decision=_ready_evaluation(task).decision)),
+        record(
+            "policy",
+            SimpleNamespace(
+                decision=_ready_evaluation(task).decision, snapshot=SimpleNamespace(facts={})
+            ),
+        ),
     )
     monkeypatch.setattr(lifecycle, "resolve_task_id_for_mcp", record("resolve_task", task.id))
     monkeypatch.setattr(lifecycle, "resolve_task_repo_path", record("repo", "/repo"))

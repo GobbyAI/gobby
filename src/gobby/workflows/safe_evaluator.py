@@ -510,6 +510,7 @@ def build_condition_helpers(
         shell_command_runs_ocr_review,
         task_commit_project_path_allowlist_violation,
         task_has_no_commits,
+        task_label_update_allowed,
         task_needs_human_review,
         task_state_in,
         task_type_in,
@@ -519,6 +520,7 @@ def build_condition_helpers(
     )
     from .condition_helpers_definition_pins import projected_definition_pins
     from .condition_helpers_paths import PATH_CONDITION_HELPERS
+    from .condition_helpers_selection import pending_selection_fence_calls
     from .condition_helpers_sessions import session_condition_helpers
     from .engine.command_environment import command_sets_environment
     from .monolith_guard import (
@@ -556,6 +558,9 @@ def build_condition_helpers(
             ),
             "touches_claude_memory_path": touches_claude_memory_path,
             "claims_without_edit_target": claims_without_edit_target,
+            "task_label_update_allowed": lambda session_id, tool_input: task_label_update_allowed(
+                task_manager, session_id, tool_input
+            ),
             "touches_ui_design_path": touches_ui_design_path,
             **PATH_CONDITION_HELPERS,
             **session_condition_helpers(session_manager),
@@ -584,6 +589,16 @@ def build_condition_helpers(
         funcs["task_needs_human_review"] = lambda task_id: False
         funcs["task_state_in"] = lambda task_id, *states: False
         funcs["task_type_in"] = lambda task_id_or_ids, *types: False
+
+    def _event_project_id() -> str | None:
+        project_id = getattr(ctx.get("event"), "project_id", None)
+        if not project_id:
+            project_id = (ctx.get("project") or {}).get("id")
+        return str(project_id) if project_id else None
+
+    funcs["pending_selection_fence_calls"] = lambda task_ref: pending_selection_fence_calls(
+        task_manager, _get_variables(ctx), _event_project_id(), task_ref
+    )
 
     # --- Stop signal helper ---
 

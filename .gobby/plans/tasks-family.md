@@ -1339,9 +1339,10 @@ and `SessionVariableManager.release_task_claim` do today: update
 `claimed_tasks`, `task_claimed`, `task_has_commits`, `active_task_id` and
 `task_selection_history` (as `src/gobby/workflows/task_claim_state.py::record_task_selection`
 writes it), queue or withdraw the memory reviews Python queues on claim and
-release, and enforce the selection fence in
-`src/gobby/workflows/task_tool_bindings.py::TaskToolBindings.assert_can_select`.
-A displaced owner's variables are cleared in the same transaction, as
+release. The selection fence is not part of the claim transaction: a
+`before_tool` rule refuses the claim through the
+`src/gobby/workflows/condition_helpers_selection.py::pending_selection_fence_calls`
+helper, so native claims inherit no fence check (#25621). A displaced owner's variables are cleared in the same transaction, as
 `release_claimed_task` does.
 Planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-tasks --test claim`.
 

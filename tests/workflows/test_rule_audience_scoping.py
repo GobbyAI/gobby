@@ -41,6 +41,8 @@ async def test_autonomous_audience_rules_skip_interactive_sessions(
         ).model_dump_json(),
         enabled=True,
         priority=10,
+        # Both sessions bind no definition, so only the default-tagged baseline applies.
+        tags=["default"],
     )
 
     engine = RuleEngine(temp_db)

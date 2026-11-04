@@ -88,6 +88,7 @@ class SessionMessageProcessor(
         self._restored_render_sessions: set[str] = set()
         self._mirror_start_offsets: dict[str, int] = {}
         self._mirror_eligible_ids: dict[str, set[str]] = {}
+        self._mirror_eligible_lines: dict[str, set[int]] = {}
         self._pending_turn_completions: dict[str, TurnCompletion] = {}
         self._index_appenders: dict[str, TranscriptIndexAppender] = {}
         self._observation_store = UnmodeledObservationStore(db)

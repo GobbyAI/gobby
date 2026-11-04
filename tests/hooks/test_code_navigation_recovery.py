@@ -13,6 +13,7 @@ from gobby.hooks._normalization_segments import _split_shell_segments
 from gobby.hooks._normalization_shell import scan_shell_command
 from gobby.hooks.code_navigation_recovery import navigation_requires_index
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.workflows.evaluation_context import freeze_evaluation_value
 
 pytestmark = pytest.mark.unit
 
@@ -980,12 +981,14 @@ def test_sibling_checkout_navigation_respects_spawned_scope(
     assert navigation_requires_index(mixed, variables)
 
 
-def test_one_event_asks_git_once_for_all_its_paths(
+def test_rule_condition_asks_git_once_per_call_without_writing_the_event(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # #22815: the adapter, the workflow hook and the rule engine each normalize
+    # #22815: the adapter, the workflow hook and the rule engine each normalized
     # the same event, and each pass asked Git once per path. #22829: normalizing
-    # runs on event loops, so only the rule condition asks, once per event.
+    # runs on event loops, so only the rule condition asks. #25630: rule
+    # conditions see read-only event data, so the condition batches its paths
+    # into one ask and never stores the answer on the event.
     spawns: list[list[str]] = []
     run = subprocess.run
 
@@ -997,12 +1000,15 @@ def test_one_event_asks_git_once_for_all_its_paths(
     monkeypatch.setattr(subprocess, "run", counting_run)
     data = event(repo, "rg VALUE custom-output src/constants.py src/short.py")
     normalize_tool_fields(data)
+    frozen = freeze_evaluation_value(data)
 
     assert spawns == []
-    assert navigation_requires_index(data, {})
-    assert navigation_requires_index(data, {})
+    assert navigation_requires_index(frozen, {})
     assert len(spawns) == 1
-    assert not navigation_requires_index(event(repo, "rg VALUE custom-output"), {})
+    assert frozen == freeze_evaluation_value(data)
+    assert not navigation_requires_index(
+        freeze_evaluation_value(event(repo, "rg VALUE custom-output")), {}
+    )
     assert len(spawns) == 2
 
 
@@ -1140,3 +1146,50 @@ def test_a_path_git_refuses_does_not_hide_later_answers(repo: Path) -> None:
     assert not navigation_requires_index(
         data, {"turn_written_paths": [str(repo / "a-sub/file.py")]}
     )
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("xargs -n1 head -n 100 < list", True),
+        ("xargs head -n 100 < list", True),
+        ("xargs -n 1 tail -n 100 < list", True),
+        ("xargs -n1 head -n 10 < list", False),
+        ("xargs -0 head -n40 < list", False),
+        ("xargs head -n 10 -n 5000 < list", True),
+        ("xargs head -n 10 -- < list", True),
+        ("xargs -I{} head -n 5000 {} < list", True),
+        ("xargs -I {} head -n 10 {} < list", True),
+        ("xargs -i head -n 10 {} < list", True),
+        ("xargs --replace=F tail -n 10 F < list", True),
+        # A substituted count word can become a file name; replace mode stays broad.
+        ("xargs -I -n head -n 10 < list", True),
+        ("xargs -I -c head -c 100 < list", True),
+        ("xargs -I --lines=10 head --lines=10 < list", True),
+        ("xargs -iX head -n 10 < list", True),
+        ("xargs head -c -1 < list", True),
+        ("head -c -1 src/long.py", True),
+        # head obeys its last count option, including bundled short options.
+        ("head -qc -1 src/long.py", True),
+        ("head -n 5 -c -1 src/long.py", True),
+        ("head -c 10 -n 5000 src/long.py", True),
+        ("head -n 5 -n 5000 src/long.py", True),
+        ("head -n 5000 -n 5 src/long.py", False),
+        # getopt_long accepts unambiguous long-option abbreviations.
+        ("head -n 5 --line=5000 src/long.py", True),
+        ("head -n 5 --l 5000 src/long.py", True),
+        ("head -c 100 --byt=99999 src/long.py", True),
+        ("head -qn5 src/long.py", False),
+        ("xargs nl < list", True),
+        ("xargs cat -n < list", True),
+        ("cat src/long.py | head -n 10 - - - - - >&2", True),
+        ("cat src/long.py | head -n 10 /dev/stdin /dev/fd/0 - /dev/stdin /dev/stdin >&2", True),
+        ("cat src/long.py | head -n 10 /dev/stdin /dev/stdin /dev/stdin /dev/stdin >&2", False),
+        ("head -n 100 /dev/stdin < src/long.py", True),
+        ("cat src/long.py | head -n 10 - >&2", False),
+        ("cat src/long.py | head -n 10 /dev/stdin >&2", False),
+        ("cat src/long.py | head -n 10 >&2", False),
+    ],
+)
+def test_per_file_and_repeated_stdin_bounds(repo: Path, command: str, blocked: bool) -> None:
+    assert broad_read_blocked(repo, command) is blocked

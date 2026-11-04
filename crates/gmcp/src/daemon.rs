@@ -13,6 +13,14 @@ use std::time::{Duration, Instant};
 
 type Headers = BTreeMap<String, String>;
 
+const RESTART_RETRY_PAUSE: Duration = Duration::from_millis(500);
+
+/// A daemon answer, or an unavailable answer for a request the daemon never received.
+enum Answer {
+    Final(Value),
+    Undelivered(Value),
+}
+
 /// An HTTP answer proves the endpoint is running even when it is not ready.
 #[derive(Debug, PartialEq, Eq)]
 pub enum HealthProbe {
@@ -157,9 +165,21 @@ impl Dialer {
         body: Option<&Value>,
         options: RequestOptions<'_>,
     ) -> Value {
-        match self.request_inner(method, path, body, &options) {
-            Ok(value) => value,
-            Err(error) => json!({"success": false, "error": error.to_string()}),
+        // A hold call that never reached the daemon waits out a planned restart.
+        let deadline = Instant::now() + crate::restart_hold::retry_budget(path, options.timeout);
+        loop {
+            match self.request_inner(method, path, body, &options) {
+                Ok(Answer::Final(value)) => return value,
+                Ok(Answer::Undelivered(value)) => {
+                    if Instant::now() + RESTART_RETRY_PAUSE >= deadline
+                        || !crate::restart_hold::retries(path)
+                    {
+                        return value;
+                    }
+                    std::thread::sleep(RESTART_RETRY_PAUSE);
+                }
+                Err(error) => return json!({"success": false, "error": error.to_string()}),
+            }
         }
     }
 
@@ -175,7 +195,7 @@ impl Dialer {
         path: &str,
         body: Option<&Value>,
         options: &RequestOptions<'_>,
-    ) -> anyhow::Result<Value> {
+    ) -> anyhow::Result<Answer> {
         // A restart may change the port; resolve the endpoint on every request.
         let base = daemon_url()?.trim_end_matches('/').to_owned();
         if options.preflight {
@@ -197,20 +217,20 @@ impl Dialer {
                     Err(ureq::Error::Status(503, response)) => {
                         let text = response.into_string()?;
                         if let Some(detail) = backend_unavailable(&text) {
-                            return Ok(unavailable(&base, &detail));
+                            return Ok(Answer::Undelivered(unavailable(&base, &detail)));
                         }
-                        return Ok(unavailable(
+                        return Ok(Answer::Undelivered(unavailable(
                             &base,
                             "health check could not connect within 2s or got an unhealthy answer",
-                        ));
+                        )));
                     }
                     // Busy read timeouts are tolerated but never cached as success.
                     Err(ureq::Error::Transport(error)) if is_timeout(&error) => {}
                     _ => {
-                        return Ok(unavailable(
+                        return Ok(Answer::Undelivered(unavailable(
                             &base,
                             "health check could not connect within 2s or got an unhealthy answer",
-                        ));
+                        )));
                     }
                 }
             }
@@ -283,34 +303,43 @@ impl Dialer {
             Err(error) => {
                 self.cached()?.last_preflight = None;
                 return Ok(if is_timeout(error.as_ref()) {
-                    request_timeout(path, options.timeout)
+                    Answer::Final(request_timeout(path, options.timeout))
+                } else if error.kind() == ureq::ErrorKind::ConnectionFailed {
+                    // Nothing accepted the connection, so nothing ran.
+                    Answer::Undelivered(unavailable(&base, "connection failed"))
                 } else {
-                    unavailable(&base, "connection failed")
+                    Answer::Final(unavailable(&base, "connection failed"))
                 });
             }
         };
         let status = response.status();
         let text = match response.into_string() {
             Ok(text) => text,
-            Err(error) if is_timeout(&error) => return Ok(request_timeout(path, options.timeout)),
+            Err(error) if is_timeout(&error) => {
+                return Ok(Answer::Final(request_timeout(path, options.timeout)));
+            }
             Err(error) => return Err(error.into()),
         };
         if status == 200 {
-            return serde_json::from_str(&text).context("invalid daemon JSON response");
+            return serde_json::from_str(&text)
+                .map(Answer::Final)
+                .context("invalid daemon JSON response");
         }
         if status == 503
             && let Some(detail) = backend_unavailable(&text)
         {
-            return Ok(unavailable(&base, &detail));
+            return Ok(Answer::Undelivered(unavailable(&base, &detail)));
         }
         if status == 409
             && let Ok(value) = serde_json::from_str::<Value>(&text)
             && value["detail"].is_object()
             && value["detail"]["error_code"] == "SESSION_REQUIRED"
         {
-            return Ok(value["detail"].clone());
+            return Ok(Answer::Final(value["detail"].clone()));
         }
-        Ok(json!({"success": false, "error": format!("HTTP {status}: {text}")}))
+        Ok(Answer::Final(
+            json!({"success": false, "error": format!("HTTP {status}: {text}")}),
+        ))
     }
 
     fn send(

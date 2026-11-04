@@ -17,6 +17,7 @@ import pytest
 
 from gobby.agents import spawn_executor
 from gobby.agents.isolation import SpawnConfig, WorktreeIsolationHandler
+from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
 from gobby.mcp_proxy.tools.spawn_agent import _failure_cleanup
 from gobby.mcp_proxy.tools.spawn_agent._spawn_phase import SpawnPhase
 from gobby.storage.terminals import Terminal, TerminalManager, native_locator_key
@@ -131,7 +132,9 @@ async def test_reused_worktree_survives_failure() -> None:
         patch("gobby.agents.isolation_worktree.Path.is_dir", return_value=True),
         patch(
             "gobby.agents.isolation_worktree.worktree_reuse.sync_reused_worktree_to_base",
-            new=AsyncMock(return_value=SimpleNamespace(base_commit_sha="base-sha")),
+            new=AsyncMock(
+                return_value=ReusedWorktreeSyncResult("merged", "refs/heads/main", "base-sha")
+            ),
         ) as sync_reused_worktree,
         patch(
             "gobby.agents.isolation_worktree.repair_isolation_environment",

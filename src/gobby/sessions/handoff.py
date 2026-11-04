@@ -76,7 +76,8 @@ def build_handoff_continue_prompt() -> str:
     return (
         "Call `get_handoff()` on `gobby-sessions`, follow the returned handoff, then continue. "
         "Consuming it is allowed and required during a restart or cutover hold; "
-        "do not wait for DAEMON BACK. Keep other held work paused. "
+        "do not wait for DAEMON BACK. `wait_for_coordination` and `send_message` stay allowed "
+        "during the hold; keep other held task work paused. "
         "The previous `set_handoff` succeeded and compacted this session even if the transcript "
         "shows that call as cancelled; do not call `set_handoff` again unless there is new "
         "context pressure."

@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess  # nosec B404 # git subprocess results are mediated by WorktreeGitManager.
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.agents.isolation_git_hygiene import apply_isolation_git_hygiene, blocking_status_lines
@@ -17,31 +17,55 @@ from gobby.worktrees.deletion import probe_missing_worktree_git_state
 
 logger = logging.getLogger(__name__)
 
+# WorktreeGitManager.sync_from_main's message for a conflicted sync it rolled back.
+_CONFLICT_ABORTED = "Sync failed due to conflicts; aborted"
 
-class ReusedWorktreeSyncConflict(RuntimeError):
-    """Raised when a clean reused worktree cannot merge its base without conflicts."""
 
-    def __init__(
-        self,
-        message: str,
-        *,
-        worktree_path: str,
-        base_ref: str,
-        base_commit_sha: str,
-    ) -> None:
-        super().__init__(message)
-        self.worktree_path = worktree_path
-        self.base_ref = base_ref
-        self.base_commit_sha = base_commit_sha
+@dataclass(frozen=True)
+class DeferredBaseSync:
+    """A base merge left to the seat because the tree holds WIP or conflicts."""
+
+    reason: Literal["uncommitted_changes", "merge_conflict"]
+    pending_base_sha: str
+    detail: str | None = None
 
 
 @dataclass(frozen=True)
 class ReusedWorktreeSyncResult:
-    """Summary of a reused worktree base sync."""
+    """Summary of a reused worktree base sync.
 
-    status: str
+    ``base_commit_sha`` is the base the tree actually contains. A deferred sync
+    reports the tree's merge-base and carries the unmerged target in ``deferred``.
+    """
+
+    status: Literal["already_current", "merged", "deferred"]
     base_ref: str
     base_commit_sha: str
+    deferred: DeferredBaseSync | None = None
+
+    def isolation_extra(self) -> dict[str, Any]:
+        """Isolation-context fields for the spawn banner and response."""
+        return {"deferred_base_sync": asdict(self.deferred)} if self.deferred else {}
+
+
+def deferred_base_sync_notice(extra: dict[str, Any]) -> str:
+    """Banner lines telling a reused-worktree seat to finish the deferred base merge."""
+    deferred = extra.get("deferred_base_sync")
+    if not isinstance(deferred, dict):
+        return ""
+    pending = deferred.get("pending_base_sha")
+    base = extra.get("base_branch") or "the base branch"
+    cause = (
+        "it holds uncommitted work"
+        if deferred.get("reason") == "uncommitted_changes"
+        else "merging it conflicts (the merge was aborted; nothing changed)"
+    )
+    return (
+        "\n"
+        f"Base sync deferred: this worktree was handed over as-is because {cause}.\n"
+        "Inspect `git status` and the branch log, commit any work in progress, then run "
+        f"`git merge {pending}` ({base}) and resolve conflicts before you land.\n"
+    )
 
 
 async def sync_reused_worktree_to_base(
@@ -51,7 +75,11 @@ async def sync_reused_worktree_to_base(
     base_branch: str | None,
     base_commit_sha: str | None = None,
 ) -> ReusedWorktreeSyncResult:
-    """Merge the current local base into a clean worktree, preserving checkpoint SHAs."""
+    """Merge the current local base into a reused worktree, preserving checkpoint SHAs.
+
+    Reuse never refuses for work in progress: a dirty tree skips the merge, and a
+    conflicting merge is aborted. Both return ``deferred`` with the tree untouched.
+    """
 
     return await _sync_reused_worktree_to_base(
         git_manager,
@@ -112,7 +140,7 @@ async def _sync_reused_worktree_to_base(
         base_ref, base_sha = await _resolve_base_ref(git_manager, base_branch)
     else:
         base_ref, base_sha = base_branch or "HEAD", base_commit_sha
-    await _ensure_clean_worktree(git_manager, path)
+    clean = await _is_clean_worktree(git_manager, path)
 
     ancestor = await _run_git(
         git_manager, ["merge-base", "--is-ancestor", base_sha, "HEAD"], cwd=path
@@ -122,6 +150,9 @@ async def _sync_reused_worktree_to_base(
     if ancestor.returncode not in {0, 1}:
         detail = _detail(ancestor)
         raise RuntimeError(f"Failed to compare reused worktree with {base_ref}: {detail}")
+    if not clean:
+        # Never merge onto uncommitted work; the seat commits it, then merges.
+        return await _deferred_sync(git_manager, path, base_ref, base_sha, "uncommitted_changes")
 
     result = await git_manager.sync_from_main(
         worktree_path=path,
@@ -133,12 +164,11 @@ async def _sync_reused_worktree_to_base(
     if not result.success:
         detail = f"{result.message}: {result.error or result.output or ''}"
         message = f"Failed to merge base {base_ref} into reused worktree: {detail}"
-        if "conflict" in detail.lower():
-            raise ReusedWorktreeSyncConflict(
-                message,
-                worktree_path=worktree_path,
-                base_ref=base_ref,
-                base_commit_sha=base_sha,
+        # Defer only after a confirmed abort; a failed abort leaves a half-merged tree. Match
+        # the whole message: git's output can name a conflicted path containing "; aborted".
+        if result.message == _CONFLICT_ABORTED:
+            return await _deferred_sync(
+                git_manager, path, base_ref, base_sha, "merge_conflict", detail
             )
         raise RuntimeError(message)
 
@@ -153,7 +183,30 @@ async def _resolve_base_ref(git_manager: Any, base_branch: str | None) -> tuple[
     return ref, commit
 
 
-async def _ensure_clean_worktree(git_manager: Any, path: Path) -> None:
+async def _deferred_sync(
+    git_manager: Any,
+    path: Path,
+    base_ref: str,
+    base_sha: str,
+    reason: Literal["uncommitted_changes", "merge_conflict"],
+    detail: str | None = None,
+) -> ReusedWorktreeSyncResult:
+    fork = await _run_git(git_manager, ["merge-base", "HEAD", base_sha], cwd=path)
+    fork_sha = fork.stdout.strip()
+    if fork.returncode != 0 or not fork_sha:
+        raise RuntimeError(
+            f"Failed to find reused worktree merge-base with {base_ref}: {_detail(fork)}"
+        )
+    logger.info("Deferred %s merge into reused worktree %s (%s)", base_ref, path, reason)
+    return ReusedWorktreeSyncResult(
+        "deferred",
+        base_ref,
+        fork_sha,
+        DeferredBaseSync(reason=reason, pending_base_sha=base_sha, detail=detail),
+    )
+
+
+async def _is_clean_worktree(git_manager: Any, path: Path) -> bool:
     main_repo_path = _main_repo_path(git_manager)
     if main_repo_path is not None:
         try:
@@ -167,11 +220,7 @@ async def _ensure_clean_worktree(git_manager: Any, path: Path) -> None:
     if status.returncode != 0:
         detail = _detail(status)
         raise RuntimeError(f"Failed to inspect reused worktree cleanliness: {detail}")
-    blocking_lines = blocking_status_lines(status.stdout, path, main_repo_path)
-    if blocking_lines:
-        raise RuntimeError(
-            "Cannot reuse worktree with uncommitted changes; commit, stash, or inspect it first"
-        )
+    return not blocking_status_lines(status.stdout, path, main_repo_path)
 
 
 async def _run_git(

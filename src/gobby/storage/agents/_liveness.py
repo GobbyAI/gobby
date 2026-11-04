@@ -12,6 +12,9 @@ from gobby.utils.datetime import parse_stored_datetime, utc_now
 from ._constants import ACTIVE_AGENT_RUN_STATUSES
 
 STALL_SECONDS = 600
+# A tool call still open (a build or a lock wait) counts as progress for this long;
+# after that a lost after-tool hook no longer hides a stall.
+OPEN_TOOL_TRUST_SECONDS = 7200
 
 
 class AgentLiveness(TypedDict):
@@ -48,7 +51,12 @@ def liveness_from_row(row: Mapping[str, Any]) -> AgentLiveness:
     if activity is not None and completed is not None:
         activity = min(activity, completed)
     progress = max((value for value in (started, activity) if value is not None), default=None)
-    age = max(0.0, (utc_now() - progress).total_seconds()) if progress is not None else None
+    now = utc_now()
+    age = max(0.0, (now - progress).total_seconds()) if progress is not None else None
+    in_open_tool = child_status is not None and any(
+        (now - started_tool).total_seconds() < OPEN_TOOL_TRUST_SECONDS
+        for _, started_tool in lifecycle.open_tools
+    )
     return AgentLiveness(
         child_status=child_status,
         wait_kind=wait_kind,
@@ -58,6 +66,7 @@ def liveness_from_row(row: Mapping[str, Any]) -> AgentLiveness:
         stall_suspected=(
             row.get("status") in ACTIVE_AGENT_RUN_STATUSES
             and wait_kind is None
+            and not in_open_tool
             and age is not None
             and age >= STALL_SECONDS
         ),

@@ -32,8 +32,12 @@ nonliteral input selects named keys such as `Enter` or `C-c`. A `/fast` first
 token is refused: ask the user to run the provider speed toggle. Managed writes
 can be indeterminate; inspect the resulting state before risking duplicate input.
 
-Automatic writes (wakes, compaction, continuations, watchdog reprompts) type only
-into a composer the input ledger reads empty. `release_composer` takes another
+Automatic writes (wakes, continuations, watchdog reprompts) type only into a
+composer the input ledger reads empty. `set_handoff` compaction and `/clear` are
+the exception: the handoff owns the composer, so it wipes whatever is there,
+including an operator draft, before it types the command. If no frame then shows
+the composer empty, the delivery fails with `composer_not_clean` and types
+nothing. `release_composer` takes another
 session's reference and starts its live terminal clean in that ledger. Call it
 only after `capture_output` shows no draft and no provider menu: a seat spawned
 before the ledger existed reads unknown until released, and a usage-limit stop
@@ -64,4 +68,6 @@ until it lapses.
 
 Guide: [Terminal tools](../../../../../../../../docs/guides/sessions.md#terminal-tools).
 
-_Last verified: 2026-10-06_
+_Version: 1.0.1_
+
+_Last verified: 2026-11-03_

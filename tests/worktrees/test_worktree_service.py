@@ -25,6 +25,11 @@ from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 _OBSERVED_SHA = "246f7ed62e"
 
 
+@pytest.fixture(autouse=True)
+def managed_worktree_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", tmp_path)
+
+
 def _git(repo: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", "-C", str(repo), *args],

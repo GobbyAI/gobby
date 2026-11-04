@@ -3,7 +3,7 @@
 # bin/ps (#25368), off PATH. Only -o with non-argument columns and the selector flags
 # -A -a -x -r -w -W -p -q -U -G -g -t reach ps, so `ps aux`, `ps -e` and `ps -o args`
 # never list other processes' arguments. The column list must match the
-# no-process-environment-listing rule and the Python copy in droid_ps_shim.py.
+# process-environment admission policy and the Python copy in droid_ps_shim.py.
 
 refuse() {
     echo "ps: refused: only -o with non-argument columns may list processes" >&2

@@ -27,7 +27,12 @@ async def prepare_reused_worktree(
     spawn_config: SpawnConfig,
     main_repo_path: str,
 ) -> tuple[IsolationContext, Any]:
-    """Prepare an explicit reused worktree for a new run, synced onto its base."""
+    """Prepare an explicit reused worktree for a new run, synced onto its base.
+
+    Work in progress never refuses reuse, so a tree a live session still owns refuses here.
+    """
+    if await asyncio.to_thread(worktree_storage.is_claimed_by_live_session, existing_worktree.id):
+        raise RuntimeError(f"Cannot reuse claimed live worktree: {existing_worktree.id}")
     base_branch, base_commit_sha = await select_worktree_base(git_manager, spawn_config.base_branch)
     sync_result: ReusedWorktreeSyncResult = await sync_reused_worktree_to_base(
         git_manager=git_manager,
@@ -48,6 +53,7 @@ async def prepare_reused_worktree(
         "main_repo_path": main_repo_path,
         "reused_worktree": True,
         "base_branch": base_branch,
+        **sync_result.isolation_extra(),
     }
     if sync_result.base_commit_sha:
         extra["base_commit_sha"] = sync_result.base_commit_sha

@@ -98,7 +98,8 @@ def test_noninstalled_override_cannot_erase_policy_provenance(
     effects = (
         [{"type": "set_variable", "variable": "project_policy", "value": {"security_paths": []}}]
         if replaces_effect
-        else []
+        # Rules need an effect; this override sets no policy at all.
+        else [{"type": "set_variable", "variable": "unrelated_marker", "value": {"marked": []}}]
     )
     definitions.create(
         "arbitrary-policy",

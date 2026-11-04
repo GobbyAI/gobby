@@ -21,6 +21,8 @@ from gobby.worktrees.base_branch import WorktreeBaseError, select_worktree_base
 from gobby.worktrees.git import WorktreeGitManager
 
 logger = logging.getLogger(__name__)
+# Every agent worktree lives below this root; callers cannot place one elsewhere.
+WORKTREES_ROOT = Path.home() / ".gobby" / "worktrees"
 
 type Provider = Literal["claude", "codex", "droid"]
 type PathFactory = Callable[[str, str | None], str]
@@ -64,12 +66,26 @@ class WorktreeCreationResult:
     event: dict[str, Any] | None = None
 
 
+def checkout_dir_name(branch_name: str) -> str:
+    """Return a filesystem-safe directory name for a branch checkout."""
+    safe_branch = re.sub(r'[\\:*?"<>|\s/]', "-", branch_name)
+    return re.sub(r"-{2,}", "-", safe_branch).strip("-") or "unnamed-branch"
+
+
+def resolve_managed_worktree_path(worktree_path: str | Path) -> Path | None:
+    """Canonicalize a worktree path, or return None when it is not inside the managed root."""
+    resolved_path = Path(worktree_path).expanduser().resolve()
+    root = WORKTREES_ROOT.expanduser().resolve()
+    if resolved_path == root or not resolved_path.is_relative_to(root):
+        return None
+    return resolved_path
+
+
 def generate_worktree_path(branch_name: str, project_name: str | None = None) -> str:
     """Generate the durable default path for a worktree."""
-    base = Path.home() / ".gobby" / "worktrees"
+    base = WORKTREES_ROOT
     base.mkdir(parents=True, exist_ok=True)
-    safe_branch = re.sub(r'[\\:*?"<>|\s/]', "-", branch_name)
-    safe_branch = re.sub(r"-{2,}", "-", safe_branch).strip("-") or "unnamed-branch"
+    safe_branch = checkout_dir_name(branch_name)
     return str(base / project_name / safe_branch) if project_name else str(base / safe_branch)
 
 
@@ -93,6 +109,12 @@ async def create_worktree(
     event_emitter: EventEmitter | None = None,
 ) -> WorktreeCreationResult:
     """Create, persist, initialize, and announce a worktree."""
+    if worktree_path is not None and resolve_managed_worktree_path(worktree_path) is None:
+        return WorktreeCreationResult(
+            success=False,
+            error=f"Worktree path must be under {WORKTREES_ROOT.expanduser().resolve()}",
+            error_code="worktree_path_outside_root",
+        )
     try:
         base_branch, base_commit_sha = await select_worktree_base(git_manager, base_branch)
     except WorktreeBaseError as exc:

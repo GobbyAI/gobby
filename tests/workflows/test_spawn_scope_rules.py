@@ -476,7 +476,7 @@ class TestLimitSpawnNetworkOverride:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("caller", ["root", "default", "fixture-coordinator"])
     @pytest.mark.parametrize("network", ["none", "trusted"])
-    async def test_root_default_and_orchestrator_choose_either_profile(
+    async def test_root_default_and_override_holder_choose_either_profile(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,

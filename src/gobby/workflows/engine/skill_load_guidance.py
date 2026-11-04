@@ -11,6 +11,7 @@ from gobby.workflows.definitions import WorkflowStep
 _SKILL_LOAD_TARGET_PATTERN = re.compile(r"tool_input\.name\s*==\s*['\"]([^'\"]+)['\"]")
 _REFERENCE_PATH_PATTERN = re.compile(r"tool_input\.path\s*==\s*['\"]([^'\"]+)['\"]")
 _OR_CLAUSE_PATTERN = re.compile(r"\s+or\s+")
+_SKILL_LOADED_LITERAL_PATTERN = re.compile(r"skill_loaded\(\s*['\"]([^'\"]+)['\"]\s*\)")
 _SKILL_LIST_VARIABLE_PATTERN = re.compile(
     r"vars(?:\.([A-Za-z_][A-Za-z0-9_]*)|\.get\(\s*['\"]([^'\"]+)['\"]\s*[,\)])"
 )
@@ -76,6 +77,7 @@ def _skill_load_targets(
     variables: dict[str, object],
 ) -> tuple[list[str], bool]:
     targets: list[str] = []
+    expressions: list[object] = []
     declares_targets = False
     for handler in step.on_mcp_success:
         if handler.get("server") != "gobby-skills" or handler.get("tool") not in {
@@ -97,18 +99,24 @@ def _skill_load_targets(
                 ]
             targets.extend(matches)
             declares_targets = declares_targets or bool(matches)
+        expressions.extend((condition, handler.get("value")))
 
-        for expression in (condition, handler.get("value")):
-            if not isinstance(expression, str):
+    # The step advances on its transitions, so what they require is still owed.
+    expressions.extend(transition.when for transition in step.transitions)
+    for expression in expressions:
+        if not isinstance(expression, str):
+            continue
+        literals = _SKILL_LOADED_LITERAL_PATTERN.findall(expression)
+        targets.extend(literals)
+        declares_targets = declares_targets or bool(literals)
+        for match in _SKILL_LIST_VARIABLE_PATTERN.finditer(expression):
+            variable_name = match.group(1) or match.group(2)
+            if variable_name not in _SKILL_LIST_VARIABLES:
                 continue
-            for match in _SKILL_LIST_VARIABLE_PATTERN.finditer(expression):
-                variable_name = match.group(1) or match.group(2)
-                if variable_name not in _SKILL_LIST_VARIABLES:
-                    continue
-                declares_targets = True
-                value = variables.get(variable_name)
-                if isinstance(value, list):
-                    targets.extend(item for item in value if isinstance(item, str))
+            declares_targets = True
+            value = variables.get(variable_name)
+            if isinstance(value, list):
+                targets.extend(item for item in value if isinstance(item, str))
 
     declared_order = variables.get("required_skills")
     if isinstance(declared_order, list):

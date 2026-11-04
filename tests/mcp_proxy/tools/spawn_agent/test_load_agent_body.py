@@ -49,6 +49,26 @@ class TestLoadAgentBody:
         result = _load_agent_body("nonexistent-agent", db)
         assert result is None
 
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_refuses_disabled_named_agent(
+        self, db: HubDatabase, manager: AgentDefinitionManager, enabled: bool
+    ) -> None:
+        """Spawn never binds a seat to a disabled definition; it would fail closed on use."""
+        from gobby.mcp_proxy.tools.spawn_agent._factory import _load_agent_body
+        from gobby.workflows.agent_resolver import AgentResolutionError
+
+        body = make_agent_definition(prompts={"agent": "Run the task."}, name="toggled-seat")
+        row = manager.create(name=body.name, definition_json=body.model_dump_json())
+        manager.update(row.id, enabled=enabled)
+
+        if enabled:
+            result = _load_agent_body("toggled-seat", db)
+            assert result is not None
+            assert result.name == "toggled-seat"
+        else:
+            with pytest.raises(AgentResolutionError, match="'toggled-seat' is disabled"):
+                _load_agent_body("toggled-seat", db)
+
     def test_returns_none_for_none_db(self) -> None:
         from gobby.mcp_proxy.tools.spawn_agent._factory import _load_agent_body
 

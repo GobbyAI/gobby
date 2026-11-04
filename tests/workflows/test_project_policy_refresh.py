@@ -19,6 +19,7 @@ from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.imports import sync_imported_workflow_file
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import sync_rule_file
+from tests.fixtures.agent_definitions import seed_seat
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
@@ -55,6 +56,8 @@ async def test_live_policy_refreshes_once_after_import(
     )
     assert session_id
     variables = SessionVariableManager(temp_db)
+    # A named seat must resolve its definition; this one selects the baseline rules.
+    seed_seat(temp_db, "fixture-definition-c02389e4", include=["tag:default"])
     variables.merge_variables(session_id, {"_agent_type": "fixture-definition-c02389e4"})
     handler = WorkflowHookHandler(rule_engine=RuleEngine(temp_db), session_manager=sessions)
 

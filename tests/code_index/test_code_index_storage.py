@@ -1710,8 +1710,14 @@ def test_stale_content_hash_rejects_sync_marks_and_summary(
         mode=IndexWriteMode.OVERLAY,
     )
 
-    assert code_storage.mark_vectors_synced(indexed_file.id, stale_file_hash) is False
-    assert code_storage.mark_graph_synced(indexed_file.id, stale_file_hash) is False
+    stale_snapshot = IndexedFile(
+        id=indexed_file.id,
+        project_id=PROJECT_ID,
+        file_path="src/app.py",
+        language="python",
+        content_hash=stale_file_hash,
+    )
+    assert code_storage.mark_graph_synced(stale_snapshot) is False
 
     pending = code_storage.get_pending_sync_files(PROJECT_ID)
     assert len(pending) == 1
