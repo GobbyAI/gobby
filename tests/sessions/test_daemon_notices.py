@@ -94,10 +94,12 @@ async def test_notice_is_a_system_global_that_wakes_active_seats(
 
 
 @pytest.mark.asyncio
-async def test_restart_notice_wakes_active_seats_and_seats_holding_a_task_only(
+@pytest.mark.parametrize("notice", [HOLD_NOTICE, BACK_NOTICE], ids=["hold", "back"])
+async def test_restart_notices_wake_active_seats_and_seats_holding_a_task_only(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
+    notice: str,
 ) -> None:
     project_id = sample_project["id"]
     active = session_manager.register(
@@ -108,7 +110,11 @@ async def test_restart_notice_wakes_active_seats_and_seats_holding_a_task_only(
         title="active-seat",
     ).id
     parked: list[str] = []
-    for name, status in (("idle-seat", "idle"), ("paused-seat", "paused"), ("waiting-seat", "waiting")):
+    for name, status in (
+        ("idle-seat", "idle"),
+        ("paused-seat", "paused"),
+        ("waiting-seat", "waiting"),
+    ):
         seat = session_manager.register(
             external_id=name,
             machine_id=None,
@@ -137,15 +143,13 @@ async def test_restart_notice_wakes_active_seats_and_seats_holding_a_task_only(
     dispatcher = RecordingWakeDispatcher()
     runner = _runner(database=temp_db, session_manager=session_manager, wake_dispatcher=dispatcher)
 
-    await send_daemon_notice(runner, HOLD_NOTICE)
+    await send_daemon_notice(runner, notice)
 
     assert sorted(dispatcher.calls) == sorted([active, claimed])
-    rows = temp_db.fetchall(
-        "SELECT to_session, content, metadata_json FROM inter_session_messages"
-    )
+    rows = temp_db.fetchall("SELECT to_session, content, metadata_json FROM inter_session_messages")
     assert sorted(row["to_session"] for row in rows) == sorted([active, claimed, *parked])
     for row in rows:
-        assert row["content"] == HOLD_NOTICE
+        assert row["content"] == notice
         metadata = row["metadata_json"]
         if isinstance(metadata, str):
             metadata = json.loads(metadata)

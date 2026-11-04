@@ -454,13 +454,12 @@ class TestSendMessage:
         assert "Both exclude the sender and forbid target_id" in description
         assert "project reaches that population in the sender's project" in description
         assert "global reaches every live non-system session" in description
-        assert "wake=true requests immediate processing" in description
         assert "Omitting wake requests immediate processing" in description
-        assert "and for global fanout; project fanout remains queued without live wakes" in (
-            description
-        )
+        assert "Fanout (global, and project with wake=true) live-wakes only active" in description
+        assert "an idle, paused, or waiting recipient with no claimed task" in description
+        assert "Otherwise project fanout stays queued without live wakes" in description
         assert "The daemon sends restart and cutover notices itself" in description
-        assert "wake=false queues without a live wake" in description
+        assert "wake=false queues any target without a live wake" in description
         assert "target" in schema["inputSchema"]["properties"]
         assert "target_id" in schema["inputSchema"]["properties"]
         assert "from_session" in schema["inputSchema"]["properties"]
@@ -744,9 +743,11 @@ class TestSendMessage:
         mock_db.fetchone.side_effect = lambda sql, params=(): (
             {"id": "11111111-1111-4111-8111-111111110001"} if "FROM projects" in sql else None
         )
-        # The recipient-role query finds no seats; the broadcast query finds the child.
+        # The recipient-role and parked-seat queries find no seats; the broadcast finds the child.
         mock_db.fetchall.side_effect = lambda sql, params=(): (
-            [] if "_agent_type" in sql else [{"id": "s-child", "status": "active"}]
+            []
+            if "_agent_type" in sql or "NOT EXISTS" in sql
+            else [{"id": "s-child", "status": "active"}]
         )
         mock_message_manager.create_message.side_effect = lambda **kwargs: MockMessage(
             id="msg-broadcast",

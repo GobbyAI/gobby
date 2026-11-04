@@ -17,6 +17,7 @@ from gobby.agents.team_communications import (
     relaunched_seat,
 )
 from gobby.sessions.clear_continuation import resolve_clear_successor
+from gobby.sessions.fanout_wake import parked_without_claim_session_ids
 from gobby.sessions.mailbox_delivery import WakeDispatcherProtocol, dispatch_mailbox_wakes
 from gobby.sessions.mailbox_targets import resolve_broadcast_selection
 from gobby.storage.sessions import (
@@ -70,6 +71,8 @@ class MailboxSendResult:
     wake_results: list[dict[str, Any]] = field(default_factory=list)
     # Whether committed rows still owe live wakes; ``dispatch_wakes`` delivers them.
     wake_requested: bool = False
+    # Recipients whose committed rows owe a live wake; the others stay queued without one.
+    wake_session_ids: list[str] = field(default_factory=list)
     failed_broadcasts: list[dict[str, Any]] = field(default_factory=list)
     error_code: str | None = None
     error: str | None = None
@@ -150,9 +153,10 @@ class MailboxService:
         """Send a mailbox message to an explicit resolved target selector.
 
         ``wake=None`` takes the target default: direct and global targets wake, and
-        project fanout stays queued. Recipient definitions declare required sender
-        capabilities; direct targets refuse unauthorized senders and fanout withholds
-        those recipients.
+        project fanout stays queued. Fanout never live-wakes a recipient parked between
+        turns with no claimed task; its row waits for that seat's next turn. Recipient
+        definitions declare required sender capabilities; direct targets refuse
+        unauthorized senders and fanout withholds those recipients.
         """
         result = self.persist(
             from_session_id=from_session_id,
@@ -236,6 +240,19 @@ class MailboxService:
                 )
             if wake is None:
                 wake = not resolution.fanout or resolution.target == "global"
+            parked: frozenset[str] = frozenset()
+            if wake and resolution.fanout:
+                parked = parked_without_claim_session_ids(self._db, recipient_ids)
+                if parked:
+                    resolution = replace(
+                        resolution,
+                        selector_metadata={
+                            **resolution.selector_metadata,
+                            "parked_recipients": len(parked),
+                        },
+                    )
+            wake_session_ids = [r for r in recipient_ids if r not in parked] if wake else []
+            owed_wake = frozenset(wake_session_ids)
             if message_id is not None and (resolution.fanout or len(recipient_ids) != 1):
                 raise ValueError("message_id requires exactly one direct recipient")
             broadcast_id = str(uuid.uuid4()) if resolution.fanout else None
@@ -278,7 +295,7 @@ class MailboxService:
                     metadata=message_metadata,
                     broadcast_id=broadcast_id,
                     resolution=resolution,
-                    wake_requested=wake,
+                    wake_requested=recipient_id in owed_wake,
                 )
                 message = self._message_manager.create_message(
                     from_session=from_session_id,
@@ -301,20 +318,31 @@ class MailboxService:
             target=resolution.target,
             target_id=resolution.target_id,
             selector_metadata=resolution.selector_metadata,
-            wake_requested=wake,
+            wake_requested=bool(wake_session_ids),
+            wake_session_ids=wake_session_ids,
         )
 
     async def dispatch_wakes(
         self, result: MailboxSendResult, *, priority: str = "normal"
     ) -> list[dict[str, Any]]:
-        """Wake the recipients of rows ``persist`` committed."""
+        """Wake the recipients whose committed rows still owe a live wake."""
         # Persistence is complete. The dispatcher owns live-wake policy and
         # channel-specific bounds; an outer timeout can interrupt tmux submission.
+        owed = set(result.wake_session_ids)
+        pairs = [
+            (message, session_id)
+            for message, session_id in zip(
+                result.messages, result.recipient_session_ids, strict=True
+            )
+            if session_id in owed
+        ]
+        if not pairs:
+            return []
         return await dispatch_mailbox_wakes(
             self._wake_dispatcher,
             self._session_manager,
-            result.messages,
-            result.recipient_session_ids,
+            [message for message, _ in pairs],
+            [session_id for _, session_id in pairs],
             priority=priority,
         )
 
