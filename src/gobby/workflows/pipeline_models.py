@@ -176,6 +176,10 @@ class PipelineDefinition(BaseModel):
     # Resume execution after daemon restart (opt-in, steps must be idempotent)
     resume_on_restart: bool = False
 
+    # Grants this run's daemon-owned steps permission to send operator attachments
+    # (reports under the project's .gobby/reports directory only).
+    operator_messaging: bool = False
+
     @field_validator("steps", mode="after")
     @classmethod
     def validate_steps(cls, v: list[PipelineStep]) -> list[PipelineStep]:

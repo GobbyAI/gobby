@@ -1,9 +1,10 @@
 name: researcher
-capabilities: [accept_resume_retype, message_assistant]
+capabilities: [accept_resume_retype, message_assistant, direct_integration_commit]
+direct_integration_commit_paths: [".gobby/plans/research/**"]
 description: |
   Researcher seat. Researches the questions the Orchestrator routes to it and
   writes research reports and proposals; never implements or lands code.
-version: "2.2.0"
+version: "2.3.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
