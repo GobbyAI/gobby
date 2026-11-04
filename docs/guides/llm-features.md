@@ -171,6 +171,8 @@ the same `api_base` shape. There is no `vllm-metal` protocol value.
 | `chat` | `chat` | `feature_high` | Text-generation service receives `config.chat` candidates | Chat session generation defaults |
 | `code_index.symbol_summary.candidates` | `code_index.symbol_summary` | `feature_low` | `TextGenerationService.generate(...)` with `config.code_index.symbol_summary.candidates` | `code_index.symbol_summary`: symbol summaries |
 | `code_index.community_label.candidates` | `code_index.community_label` | `feature_low` | `TextGenerationService.generate_json(...)` with `config.code_index.community_label.candidates` | `code_index.community_label`: community names, with optional decision checks |
+| `ai.decisions.tool_rerank` | `ai.decisions.tool_rerank` | `feature_mid` (incumbent: LLM rerank) | `RecommendationService` runs the classifier beside or in place of the LLM rerank through `DecisionService` | `mcp_proxy.recommendation.hybrid_rerank`: MCP tool search. Modes and fallbacks under [Decision Consumers](#decision-consumers). |
+| `ai.decisions.found_work` | `ai.decisions.found_work` | `gobby-tasks.validation` (`feature_mid`) | `confirm_shirk` runs the classifier beside or in place of the LLM verdict through `DecisionService` | `workflows.found_work_gate`: found-work confirmation before a finding alerts. Modes and fallbacks under [Decision Consumers](#decision-consumers). |
 
 Community names pass through three daemon decision checks in order: Noul carry
 (`ai.decisions.community_label_carry`) can preserve a stale model name; Score sufficiency
@@ -199,6 +201,74 @@ on OpenRouter is **UNVERIFIED**. OpenRouter can automatically use its long-conte
 provider mode even with this flag off; the flag controls Gobby's limits and emitted
 header. A live capture's diagnostic ceiling is not a ship-config opt-in. See the
 [wire contract and dated evidence](../evidence/decisions/wire-contracts.md).
+
+## Decision Consumers
+
+Two consumers read the `ai.decisions` endpoint described in
+[configuration.md](configuration.md#decision-classifier-aidecisions). Each has
+a `mode`, which defaults to `off`. `enforce` also requires `evaluated_model` and
+`evaluated_backend`, the recorded evaluation that justifies it.
+
+**Tool rerank** (`ai.decisions.tool_rerank`) reranks MCP tool search. Its
+incumbent is the LLM rerank on the `recommend_tools` route.
+
+- `off`: the LLM rerank alone.
+- `shadow`: the LLM rerank decides and returns its own result or fallback. The
+  classifier runs concurrently under its own budget, and one shadow record pairs
+  its probabilities with the LLM order.
+- `enforce`: candidates at or above `min_probability` (default `0.5`) return in
+  probability order with `search_mode: decide`. An empty result is a valid
+  reject-all. If the classifier is unavailable, or its batches disagree on
+  identity, the LLM rerank runs over the semantic candidates. Semantic order with
+  `search_mode: hybrid_fallback` returns only when the LLM rerank also fails.
+
+**Found-work** (`ai.decisions.found_work`) confirms a finding before it alerts.
+Its incumbent is the LLM verdict on the `gobby-tasks.validation` route
+(`feature_mid`). No LLM service, no daemon config, or `validation.enabled: false`
+returns before any classifier call.
+
+- `off`: the LLM verdict alone.
+- `shadow`: the LLM verdict decides. The classifier runs alongside it within the
+  same budget, and one shadow record pairs its probability with the verdict.
+- `enforce`: a probability at or above `accept_above` (default `0.9`) confirms the
+  finding. At or below `accept_below` (default `0.1`) it clears the finding.
+  Anything between escalates to the LLM verdict. An unavailable classifier also
+  escalates, so an outage never clears a finding. If the LLM verdict gets no
+  answer in time, the fast-path alert stays.
+
+### Shadow Records And Promotion
+
+Shadow mode appends one JSON line per decision to
+`~/.gobby/decisions/shadow/<consumer>.jsonl`. The directory is created `0700`
+and the file `0600`. Each record carries a content hash, the state and questions
+or propositions, the classifier and incumbent outcomes, the backend identity, the
+response model, the wire, and the endpoint host. Once a file passes 10,000 lines,
+it keeps its newest 5,000.
+
+`scripts/decisions_eval.py` replays a shadow dataset through each backend:
+
+```bash
+uv run python scripts/decisions_eval.py --consumer tool_rerank --dataset <shadow.jsonl> --out <report.md>
+```
+
+It sets thresholds on the development split, scores the holdout once, and writes
+a Markdown gate report. Audit records never enter a split or a metric. Pass
+`--decisions <file>` to evaluate an `ai.decisions` mapping other than the
+daemon's config.
+
+A consumer enters `enforce` only after its live capture holds, its report is
+committed under `docs/evidence/decisions/`, and all of these pass:
+
+- expected calibration error is at most `0.10`;
+- the option-order or candidate-order flip rate is at most `10%`;
+- p95 latency is at most `1 s` against the configured backend;
+- tool rerank: Recall@k is no lower than the LLM rerank's, with reject-all
+  accuracy reported;
+- found-work: the false-clear rate is no higher than the incumbent's, the
+  escalation rate is at most `50%`, and false clears and false alerts are
+  reported separately.
+
+Community labels pass a separate gate owned by #22604.
 
 ## Outside Feature Helpers
 

@@ -37,7 +37,8 @@ class TaskDecompositionMixin:
             task_type: Task type such as ``task``, ``bug``, or ``feature``.
             labels: Optional task labels.
             category: Optional validation category.
-            validation_criteria: Observable acceptance criteria for every non-epic task.
+            validation_criteria: Outline the evaluation criteria an agent will use to
+                ensure a high-quality deliverable. Be precise.
             assigned_agent: Optional agent assignment.
             implementation_domain: Optional code implementation domain.
             additional_skills: Optional skills requested for the task.

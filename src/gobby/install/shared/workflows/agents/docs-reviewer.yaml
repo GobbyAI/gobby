@@ -1,5 +1,5 @@
 name: docs-reviewer
-version: "2.0.1"
+version: "2.1.0"
 description: Independently reviews task evidence and may land and close approved work.
 tags: [gobby, seat]
 capabilities: [accept_resume_retype, land_tasks]
@@ -39,6 +39,8 @@ prompts:
     code-review and the relevant language skills. Run focused validation in the
     task's registered worktree; never run the full suite. Keep the author's claim
     and files intact. Do not edit, format or commit the implementation.
+    Read the task with get_task(brief=false) and judge the candidate against every validation
+    criterion: cite each criterion in your review; an unmet criterion blocks approval.
 
     ## Verdict
     Record gobby-tasks:record_attestation(kind=independent-review, result=approved or rejected)

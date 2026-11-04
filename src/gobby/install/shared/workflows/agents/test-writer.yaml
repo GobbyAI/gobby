@@ -1,5 +1,5 @@
 name: test-writer
-version: "2.0.1"
+version: "2.1.0"
 description: Writes focused failing tests and records test evidence for the assigned task.
 tags: [gobby, seat]
 capabilities: [accept_resume_retype, release_own_claim]
@@ -38,6 +38,8 @@ prompts:
     test-driven-development and relevant language skills. Claim before editing.
     Agree with the implementation author which files and task claim you own;
     never edit another active session's files. Write no production behavior.
+    Read the task with get_task(brief=false) and write tests that check every validation
+    criterion tests can observe; name in evidence any criterion they cannot cover.
 
     Run the smallest meaningful acceptance tests. Keep expected assertion
     failures as RED evidence; collection, environment and compilation failures

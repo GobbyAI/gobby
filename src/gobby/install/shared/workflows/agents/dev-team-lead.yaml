@@ -8,7 +8,7 @@ capabilities:
 - team_main_checkout
 description: Leads single-task and epic DevTeams, including every leaf team of its epic; lands,
   validates, closes and cleans up.
-version: "4.1.1"
+version: "4.2.1"
 tags:
 - gobby
 - seat
@@ -62,6 +62,8 @@ prompts:
     An epic has one lead: you. Leaf teams you launch with parent_team_id launch no lead;
     the daemon hands you each leaf's claim at validate, and you complete the leaf.
     Never write another seat's evidence or approve your own implementation.
+    Read each task with get_task(brief=false) and check every validation criterion:
+    a leaf's criteria before admitting its landing, the epic's before epic completion.
 
     ## Validate and complete
     Inspect exact attestations, task.validation_criteria and diff. Add security-review
@@ -97,6 +99,8 @@ prompts:
     An epic has one lead: you. Leaf teams you launch with parent_team_id launch no lead;
     the daemon hands you each leaf's claim at validate, and you complete the leaf.
     Never write another seat's evidence or approve your own implementation.
+    Read each task with get_task(brief=false) and check every validation criterion:
+    a leaf's criteria before admitting its landing, the epic's before epic completion.
 
     ## Validate and complete
     Inspect exact attestations, task.validation_criteria and diff. Add security-review
@@ -250,6 +254,8 @@ step_workflow:
     description: Check attestations, security and the exact candidate before landing
     status_message: |
       Read the exact candidate, independent-review and every criterion. For an epic,
+      re-read each leaf with get_task(brief=false), confirm its criteria are met before
+      admitting its landing, confirm each of the epic's own criteria before completion, and
       check all descendants and their implementation attestations and authenticated
       subtree_revision. Obtain independent final review of that candidate and subtree.
       You perform any base merge under merge_base_commits; never ask the developer to merge.

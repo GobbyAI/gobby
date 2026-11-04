@@ -2,7 +2,7 @@
 
 A provider that dispatches every tool call of one assistant response in parallel
 delivers the whole prepared batch before the agent can read the first denial, so
-charging each sibling denial to the consecutive-tool-block budget spends five
+charging each sibling denial to the blocked-retry budget spends five
 attempts on one remediation opportunity. The same payloads name the issuing
 agent, and Claude Code subagents share their parent's session id, so one flat
 counter also charges one subagent's blocks to another.
