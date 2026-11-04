@@ -5,7 +5,7 @@ description: |
   passes it, reaches consensus with the writer over send_message, and stamps
   the M1 task manifest on consensus. Never edits the plan narrative.
 
-version: "3.1.0"
+version: "3.2.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -139,15 +139,12 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load restraint, plan review and coverage, and proportionality"
       status_message: |
-        Load all four skills through mcp__gobby__call_tool before reviewing:
-        call_tool("gobby-skills", "get_skill", {"name": "restraint"}),
-        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/review.md"}),
-        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/coverage.md"}) for gobby:references/plan/coverage.md, and
-        call_tool("gobby-skills", "get_skill", {"name": "proportionality"}).
-        Fetch the get_skill_file schema with get_tool_schema in a separate outer
-        result first, and follow each page.next_cursor with only cursor until null.
-        Use only these proxy calls; native Skill, GitHub/app connector, and
-        Computer Use tools bypass Gobby's skill tracking.
+        Load restraint, plan review and coverage, and proportionality in one call:
+        call_tool("gobby-skills", "get_skill", {"names": ["restraint", "gobby:references/plan/review.md", "gobby:references/plan/coverage.md", "proportionality"]}).
+        Follow each page.next_cursor with only cursor until null; an instruction
+        is loaded once a page.completed lists it. Use only this proxy call; native
+        Skill, GitHub/app connector, and Computer Use tools bypass Gobby's skill
+        tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -169,13 +166,13 @@ step_workflow:
           value: true
         - server: gobby-skills
           tool: get_skill
-          when: "tool_input.name == 'proportionality'"
+          when: "skill_loaded('proportionality')"
           action: set_variable
           variable: proportionality_loaded
           value: true
         - server: gobby-skills
           tool: get_skill
-          when: "tool_input.name == 'restraint'"
+          when: "skill_loaded('restraint')"
           action: set_variable
           variable: restraint_loaded
           value: true

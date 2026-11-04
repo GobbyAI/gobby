@@ -5,7 +5,7 @@ description: |
   reads the writer's plan, and sends ranked Better/Bigger edits to the writer
   over send_message. Never edits the plan, approves or rejects.
 
-version: "1.3.1"
+version: "1.4.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -104,14 +104,12 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load restraint, proportionality, then the enhancement reference before filesystem reads"
       status_message: |
-        Load all three skills through mcp__gobby__call_tool before enhancing:
-        call_tool("gobby-skills", "get_skill", {"name": "restraint"}),
-        call_tool("gobby-skills", "get_skill", {"name": "proportionality"}), then
-        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/enhancement.md"}).
-        Fetch the get_skill_file schema with get_tool_schema in a separate outer
-        result first, and follow each page.next_cursor with only cursor until null.
-        Use only these proxy calls; native Skill, GitHub/app connector, and
-        Computer Use tools bypass Gobby's skill tracking.
+        Load restraint, proportionality and plan enhancement in one call before enhancing:
+        call_tool("gobby-skills", "get_skill", {"names": ["restraint", "proportionality", "gobby:references/plan/enhancement.md"]}).
+        Follow each page.next_cursor with only cursor until null; an instruction
+        is loaded once a page.completed lists it. Use only this proxy call; native
+        Skill, GitHub/app connector, and Computer Use tools bypass Gobby's skill
+        tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -130,13 +128,13 @@ step_workflow:
           value: true
         - server: gobby-skills
           tool: get_skill
-          when: "tool_input.name == 'proportionality'"
+          when: "skill_loaded('proportionality')"
           action: set_variable
           variable: proportionality_loaded
           value: true
         - server: gobby-skills
           tool: get_skill
-          when: "tool_input.name == 'restraint'"
+          when: "skill_loaded('restraint')"
           action: set_variable
           variable: restraint_loaded
           value: true
