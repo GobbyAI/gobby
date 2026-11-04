@@ -2,8 +2,8 @@
 
 A word maps to its child subcommands, and an empty mapping is a leaf. Only a listed
 word is a subcommand: a word missing from its node ends the path, so a prompt or an
-option never reads as help. No node lists `help`; a trailing `help` is a prompt
-word, and only a root help command answers it.
+option never reads as help. A trailing `help` answers a group's help, but it is a
+prompt on a leaf and on a path listed in POSITIONAL_GROUPS.
 """
 
 type _Subcommands = dict[str, _Subcommands]
@@ -119,3 +119,9 @@ SUBCOMMANDS: dict[str, _Subcommands] = {
         "update": {},
     },
 }
+
+# Paths that also take a positional prompt or command (codex exec, its alias e, and
+# sandbox). A trailing `help` after one of these is that prompt, not a help request.
+POSITIONAL_GROUPS: frozenset[tuple[str, ...]] = frozenset(
+    {("codex", "exec"), ("codex", "e"), ("codex", "sandbox")}
+)

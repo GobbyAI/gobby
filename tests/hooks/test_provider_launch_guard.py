@@ -786,6 +786,7 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "codex --version",
         "codex app-server --help",
         "codex app-server -h",
+        "codex app-server help",
         "codex login status",
         "codex help login",
         "codex help login status",
@@ -805,6 +806,7 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "grok models --help",
         "claude auth login --help",
         "claude help",
+        "claude plugin help",
         "env A=b /opt/bin/codex login status",
         "command -- codex --help",
         "codex --help && claude auth status",
@@ -862,11 +864,11 @@ def test_administration_and_documentation(command: str) -> None:
         # a leaf subcommand takes a prompt, not `help`.
         "claude please help",
         "codex exec help",
+        "codex sandbox help",
         "claude mcp add --scope user --help",
-        # Trailing `help` never exempts a group; only --help and -h do, and launch
-        # options stay blocked.
+        # A trailing `help` after a positional group is a prompt, and launch options
+        # stay blocked.
         "codex app-server",
-        "codex app-server help",
         "codex app-server --listen stdio:// --help",
         "codex app-server --help && codex exec hi",
         "codex --version && codex exec hi",
@@ -966,15 +968,48 @@ def test_codex_subcommand_help_is_exempt(subcommand: str) -> None:
         assert not blocks_direct_provider_launch("Bash", {"command": command}), command
 
 
+# Groups that take no positional prompt or command. codex's completion lists their
+# children, so a trailing `help` answers the group's help.
+CODEX_HELP_GROUPS = [
+    "login",
+    "mcp",
+    "plugin",
+    "plugin marketplace",
+    "app-server",
+    "app-server daemon",
+    "remote-control",
+    "debug",
+    "debug app-server",
+    "cloud",
+    "features",
+    "exec-server",
+]
+
+
+@pytest.mark.parametrize("group", CODEX_HELP_GROUPS)
+def test_codex_group_trailing_help_is_exempt(group: str) -> None:
+    command = f"codex {group} help"
+    assert not blocks_direct_provider_launch("Bash", {"command": command}), command
+
+
+@pytest.mark.parametrize(
+    "subcommand", [path for path in CODEX_HELP_SUBCOMMANDS if path not in CODEX_HELP_GROUPS]
+)
+def test_codex_trailing_help_is_a_prompt(subcommand: str) -> None:
+    # A leaf, or a group with a positional prompt or command (exec, e, sandbox), takes
+    # `help` as a prompt word, so the launch stays blocked.
+    command = f"codex {subcommand} help"
+    assert blocks_direct_provider_launch("Bash", {"command": command}), command
+
+
 @pytest.mark.parametrize("subcommand", CODEX_HELP_SUBCOMMANDS)
 def test_codex_subcommand_launch_stays_blocked(subcommand: str) -> None:
-    # A positional prompt, a launch option, a chained launch, and a trailing `help`
-    # word each keep the path a launch.
+    # A positional prompt, a launch option, and a chained launch each keep the path
+    # a launch.
     for form in (
         f"codex {subcommand} hi",
         f"codex {subcommand} --json",
         f"codex {subcommand} --help && codex exec hi",
-        f"codex {subcommand} help",
     ):
         assert blocks_direct_provider_launch("Bash", {"command": form}), form
 

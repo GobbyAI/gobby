@@ -36,7 +36,7 @@ from gobby.hooks._sed_arguments import _sed_file_operands
 from gobby.hooks._sed_expansion import sed_literal_bindings
 from gobby.hooks._sed_program import sed_execution
 from gobby.hooks._shell_execution_words import _unwrap
-from gobby.hooks.provider_launch_subcommands import SUBCOMMANDS
+from gobby.hooks.provider_launch_subcommands import POSITIONAL_GROUPS, SUBCOMMANDS
 
 _PROVIDERS = frozenset({"codex", "claude", "droid", "grok", "agy"})
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
@@ -145,13 +145,13 @@ def _administration(args: list[str], provider: str) -> bool:
 
 def _help_request(args: list[str], provider: str) -> bool:
     """Return whether ``args`` only ask for help on a chain of known subcommands."""
+    wants_group = False
     if provider in _HELP_COMMAND_PROVIDERS and args[:1] == ["help"]:
         path = args[1:]
     elif args[-1:] in (["--help"], ["-h"]):
         path = args[:-1]
-    elif args == ["help"]:
-        # Only a root help command takes a bare `help`; no subcommand node lists it.
-        return True
+    elif args[-1:] == ["help"]:
+        path, wants_group = args[:-1], True
     else:
         return False
     node = SUBCOMMANDS[provider]
@@ -159,7 +159,8 @@ def _help_request(args: list[str], provider: str) -> bool:
         if word not in node:
             return False
         node = node[word]
-    return True
+    # A leaf takes a trailing `help` as a prompt word, and so does a positional group.
+    return not wants_group or (bool(node) and (provider, *path) not in POSITIONAL_GROUPS)
 
 
 def _shell_stdin(words: list[str]) -> bool:
