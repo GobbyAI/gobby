@@ -24,7 +24,7 @@ from gobby.hooks.terminal_context import (
     enrich_terminal_context_with_cwd,
     hook_cwd,
     is_gobby_acp_child,
-    remember_codex_seat,
+    sync_codex_seat,
 )
 from gobby.sessions.compact_identity import resolve_compact_continuation
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
@@ -442,7 +442,7 @@ class SessionLookupService:
             self._rename_tmux_window(settled)
         if search.owner is not None and (settled.terminal_context or {}).get("parent_pid"):
             if search.thread_id:
-                remember_codex_seat(search.thread_id, settled.terminal_context)
+                sync_codex_seat(search.thread_id, settled.terminal_context)
             settled = self._take_over_cleared_seat(settled)
         return settled
 

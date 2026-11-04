@@ -15,8 +15,10 @@ from gobby.hooks.terminal_context import (
     SeatAvailable,
     SeatOwner,
     SeatOwnerCheck,
+    StoredClearContext,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY, CODEX_CLEAR_ORIGIN_PENDING
 
 # Same tolerance as terminal_ownership.recorded_process_is_alive.
@@ -108,6 +110,32 @@ def codex_clear_activity_search(
             return None
         return codex_clear_seat_search(db, machine_id, transcript_path, thread_id)
     return ClearSeatSearch(None, None, str(origin))
+
+
+def codex_stored_clear_context(db: HubDatabase, machine_id: str) -> StoredClearContext:
+    """Return a read of the terminal context a thread's /clear successor row stores.
+
+    Any project's row counts, since a hook's cwd can resolve to another project than
+    the row's. Only rows with a /clear origin answer; the newest wins.
+    """
+
+    def stored(thread_id: str) -> Mapping[str, Any] | None:
+        row = db.fetchone(
+            """
+            SELECT terminal_context FROM sessions
+            WHERE external_id = %s AND source = 'codex' AND machine_id = %s
+              AND terminal_context ->> %s IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (thread_id, machine_id, CODEX_CLEAR_ORIGIN_KEY),
+        )
+        raw = row["terminal_context"] if isinstance(row, Mapping) else None
+        if isinstance(raw, Mapping):
+            return raw
+        return Session.parse_terminal_context(raw) if isinstance(raw, str) else None
+
+    return stored
 
 
 def codex_seat_available(db: HubDatabase, machine_id: str) -> SeatAvailable:
