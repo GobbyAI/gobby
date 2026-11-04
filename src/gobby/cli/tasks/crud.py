@@ -164,7 +164,10 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
 @click.option("--description", "-d", help="Task description")
 @click.option(
     "--validation-criteria",
-    help="Observable completion criteria (required unless --type epic)",
+    help=(
+        "Outline the evaluation criteria an agent will use to ensure a high-quality "
+        "deliverable. Be precise."
+    ),
 )
 @click.option("--priority", "-p", type=int, default=2, help="Priority (1=High, 2=Med, 3=Low)")
 @click.option("--type", "-t", "task_type", type=TASK_TYPE_CHOICE, default="task", help="Task type")
@@ -212,7 +215,13 @@ def show_task(task_id: str) -> None:
 @click.command("update")
 @click.argument("task_id", metavar="TASK")
 @click.option("--title", "-T", help="New title")
-@click.option("--validation-criteria", help="New observable completion criteria")
+@click.option(
+    "--validation-criteria",
+    help=(
+        "Outline the evaluation criteria an agent will use to ensure a high-quality "
+        "deliverable. Be precise."
+    ),
+)
 @click.option("--priority", type=int, help="New priority")
 @click.option("--parent", "parent_task_id", help="Parent task (#N, path, or UUID)")
 @click.option(

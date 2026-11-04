@@ -557,7 +557,7 @@ gobby tasks delete TASKS... [OPTIONS]
 
 | Command | Key options |
 | --- | --- |
-| `tasks create` | `--description`, `--validation-criteria` (required except epics), `--priority`, `--type`, `--depends-on`, `--project` |
+| `tasks create` | `--description`, `--validation-criteria` (evaluation criteria; give every non-epic task some), `--priority`, `--type`, `--depends-on`, `--project` |
 | `tasks update` | `--title`, `--validation-criteria`, `--priority`, `--parent`, `--task-type` |
 | `tasks close` | `--reason` |
 | `tasks de-escalate` | `--reason`, `--reset-validation` |
