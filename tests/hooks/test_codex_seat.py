@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
 from collections.abc import Iterator
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
-from gobby.hooks.codex_seat import codex_seat_available, codex_seat_owner
+from gobby.hooks.codex_seat import (
+    codex_seat_available,
+    codex_seat_owner,
+    codex_thread_originator,
+)
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     discover_and_bind_external_terminal,
 )
@@ -119,6 +125,45 @@ def test_a_recorded_owner_outranks_an_unbound_thread(
         external_id="01a0e8d5-0000-7000-8000-000000000002",
     )
     assert owner_of(SEAT_PID, started) is SeatOwner.RECORDED
+
+
+THREAD_ID = "01a1a561-0000-7000-8000-000000025647"
+
+
+@pytest.mark.parametrize(
+    ("first_line", "expected"),
+    [
+        (
+            {"type": "session_meta", "payload": {"id": THREAD_ID, "originator": "codex-tui"}},
+            "codex-tui",
+        ),
+        (
+            {
+                "type": "session_meta",
+                "payload": {"id": "another-thread", "originator": "codex-tui"},
+            },
+            None,
+        ),
+        ({"type": "session_meta", "payload": {"id": THREAD_ID}}, None),
+        ({"type": "turn_context", "payload": {"id": THREAD_ID, "originator": "codex-tui"}}, None),
+        ("not json", None),
+    ],
+    ids=["tui", "other-thread", "no-originator", "not-session-meta", "malformed"],
+)
+def test_thread_originator_reads_only_its_own_rollout_header(
+    tmp_path: Path, first_line: dict[str, Any] | str, expected: str | None
+) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    text = first_line if isinstance(first_line, str) else json.dumps(first_line)
+    rollout.write_text(text + "\n")
+
+    assert codex_thread_originator(str(rollout), THREAD_ID) == expected
+
+
+def test_thread_originator_is_unknown_without_a_readable_rollout(tmp_path: Path) -> None:
+    assert codex_thread_originator(None, THREAD_ID) is None
+    assert codex_thread_originator(str(tmp_path / "missing.jsonl"), THREAD_ID) is None
+    assert codex_thread_originator(str(tmp_path), THREAD_ID) is None
 
 
 def test_sessions_on_another_machine_never_own_its_seats(

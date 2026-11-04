@@ -3383,23 +3383,39 @@ def _uuid7_at(seconds: float, tail: int) -> str:
 
 
 @pytest.mark.parametrize(
-    ("second_seat", "adopts"),
-    [(None, True), ("login", True), ("recorded", False), ("unrecorded", False)],
-    ids=["only-seat", "beside-login-seat", "two-owned-seats", "beside-unrecorded-seat"],
+    ("second_seat", "originator", "adopts"),
+    [
+        (None, "codex-tui", True),
+        ("login", "codex-tui", False),
+        ("recorded", "codex-tui", False),
+        ("unrecorded", "codex-tui", False),
+        (None, "codex_vscode", False),
+        (None, None, False),
+    ],
+    ids=[
+        "only-seat",
+        "beside-login-seat",
+        "two-owned-seats",
+        "beside-unrecorded-seat",
+        "ide-clear-beside-one-seat",
+        "unreadable-rollout",
+    ],
 )
 def test_codex_clear_in_running_tui_takes_over_the_pane(
     hook_manager_with_mocks: HookManager,
     temp_dir: Path,
     second_seat: str | None,
+    originator: str | None,
     adopts: bool,
 ) -> None:
     """#25647: a /clear inside a running Codex TUI hands the pane to the new thread.
 
     The shared managed app-server runs the hooks, so the new thread names no seat in
     argv and was minted hours after its TUI started. The predecessor still records
-    that TUI and holds the pane. The clear successor adopts the one seat in the cwd
-    that a session owns, even beside a seat waiting at login. A second seat that a
-    session owns, or may own through a session with no recorded process, refuses.
+    that TUI and holds the pane. Only a thread whose rollout says a TUI minted it
+    adopts, and only the one seat TUI in the cwd, whose owner is recorded. A second
+    seat TUI of any ownership refuses. A thread another Codex client minted, or one
+    whose rollout is unreadable, never takes a TUI pane but is still tracked.
     """
     from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
     from gobby.hooks.terminal_context import clear_codex_seat_index
@@ -3470,13 +3486,22 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
         raise psutil.NoSuchProcess(pid)
 
     successor_thread = _uuid7_at(minted_at, 0x2222)
+    rollout = temp_dir / f"rollout-{successor_thread}.jsonl"
+    if originator is not None:
+        meta = {"id": successor_thread, "originator": originator, "cwd": str(temp_dir)}
+        rollout.write_text(json.dumps({"type": "session_meta", "payload": meta}) + "\n")
     host_context = {"parent_pid": host.pid, "gobby_terminal_id": str(uuid.uuid4())}
     start = HookEvent(
         event_type=HookEventType.SESSION_START,
         session_id=successor_thread,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
-        data={"source": "clear", "cwd": str(temp_dir), "terminal_context": host_context},
+        data={
+            "source": "clear",
+            "cwd": str(temp_dir),
+            "transcript_path": str(rollout),
+            "terminal_context": host_context,
+        },
         machine_id=LOCAL_MACHINE_ID,
     )
 
@@ -3524,7 +3549,8 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
     predecessor = sessions.get(predecessor_id)
     assert predecessor is not None
     if not adopts:
-        # Two hosting seats share the cwd: no process signal names the clearing one.
+        # No verified seat minted the thread: it is tracked without a pane.
+        assert successor.status == "active"
         assert (successor.terminal_context or {}).get("parent_pid") is None
         assert bound == []
         # The predecessor keeps the pane; its own late prompt is ordinary activity.
