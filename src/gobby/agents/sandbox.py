@@ -409,6 +409,9 @@ async def compute_sandbox_paths(
                 ),
             ),
             *toolchain_credential_paths(),
+            # Seats sharing this checkout run its .venv Python, so a planted .pth or
+            # sitecustomize would run as them. Only the daemon's pre-spawn seed writes it.
+            str(workspace / ".venv"),
             *config.extra_deny_write_paths,
         ],
         base=workspace,

@@ -88,6 +88,22 @@ def isolated_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
+async def test_workspace_python_environment_cannot_be_written(
+    provider: str, isolated_home: Path, tmp_path: Path
+) -> None:
+    """Seats sharing a checkout run its .venv Python, so a planted .pth would run as them."""
+    workspace = tmp_path / "workspace"
+    (workspace / ".venv").mkdir(parents=True)
+    paths = await compute_sandbox_paths(
+        SandboxConfig(enabled=True, backend="srt"),
+        str(workspace),
+        provider=provider,
+        env={"PATH": ""},
+    )
+    assert _contains(paths.deny_write_paths, workspace / ".venv")
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
 async def test_provider_control_files_cannot_be_written(
     provider: str, isolated_home: Path, tmp_path: Path
 ) -> None:
