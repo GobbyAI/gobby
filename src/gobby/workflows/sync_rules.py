@@ -395,9 +395,11 @@ def _sync_single_rule(
         raise ValueError(str(exc)) from exc
     validation = validate_rule(definition_json, name=rule_name)
     validation.raise_for_errors()
-    if validation.warnings:
+    # Sync validates without runtime context, so unresolved runtime names are expected.
+    warnings = [issue for issue in validation.warnings if issue.code != "unresolved"]
+    if warnings:
         result.setdefault("warnings", []).extend(
-            f"Rule {rule_name!r} {issue.field}: {issue.message}" for issue in validation.warnings
+            f"Rule {rule_name!r} {issue.field}: {issue.message}" for issue in warnings
         )
     priority = metadata["priority"]
     description = metadata["description"]

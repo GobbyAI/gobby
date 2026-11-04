@@ -219,3 +219,31 @@ def test_reset_restarts_owned_sequences(
 
     assert first_id == (1,)
     assert second_id == first_id
+
+
+@pytest.mark.timeout(60)
+def test_reset_fails_fast_naming_the_lock_holder(
+    postgres_database_url: str,
+    postgres_schema: str,
+    postgres_canonical_seed: dict[str, list[tuple[Any, ...]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transaction a test leaves open fails teardown fast instead of hanging it (#25645)."""
+    psycopg = pytest.importorskip("psycopg")
+
+    from tests.fixtures import postgres as postgres_fixtures
+
+    monkeypatch.setattr(postgres_fixtures, "TEARDOWN_LOCK_TIMEOUT", "1s", raising=False)
+    dsn = postgres_database_url
+    with psycopg.connect(dsn, application_name="leaked-transaction") as holder:
+        holder.execute(
+            psycopg.sql.SQL("SET search_path TO {}").format(psycopg.sql.Identifier(postgres_schema))
+        )
+        holder.execute("LOCK TABLE metric_snapshots IN ACCESS EXCLUSIVE MODE")
+        holder_pid = holder.info.backend_pid
+        with pytest.raises(RuntimeError, match="leaked-transaction") as raised:
+            postgres_fixtures._reset_schema(dsn, postgres_schema, postgres_canonical_seed)
+
+    message = str(raised.value)
+    assert f"pid {holder_pid}" in message
+    assert "metric_snapshots" in message
