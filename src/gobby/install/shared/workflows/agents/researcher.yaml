@@ -3,7 +3,7 @@ capabilities: [accept_resume_retype, message_assistant]
 description: |
   Researcher seat. Researches the questions the Orchestrator routes to it and
   writes research reports and proposals; never implements or lands code.
-version: "2.1.0"
+version: "2.2.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
@@ -134,10 +134,14 @@ step_workflow:
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
+      # The seat's first act may be creating and claiming its own spike; that
+      # claim is not ordered behind the skill loads.
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
         - "gobby-sessions:set_title"
+        - "gobby-tasks:create_task"
+        - "gobby-tasks:claim_task"
       on_mcp_success:
         - server: gobby-skills
           tool: get_skill

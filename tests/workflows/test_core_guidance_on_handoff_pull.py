@@ -175,6 +175,32 @@ async def test_unavailable_instruction_is_not_requested_again(engine: RuleEngine
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["get_skill", "get_skill_file", "list_skills", "search_skills"])
+async def test_bootstrap_tools_pass_every_gate_before_any_load(
+    engine: RuleEngine, tool: str
+) -> None:
+    """No later skill or reference gate refuses the calls that satisfy it (#25580 item 9)."""
+    variables = _post_compact_variables(pull_pending=False)
+    event = _mcp_event(HookEventType.BEFORE_TOOL, "gobby-skills", tool)
+    event.data["tool_input"]["arguments"] = {"names": OWED}
+
+    response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.asyncio
+async def test_the_pull_itself_passes_while_it_is_owed(engine: RuleEngine) -> None:
+    response = await engine.evaluate(
+        _mcp_event(HookEventType.BEFORE_TOOL, "gobby-sessions", "get_handoff"),
+        session_id=SESSION_ID,
+        variables=_post_compact_variables(pull_pending=True),
+    )
+
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.asyncio
 async def test_skill_loads_still_wait_for_the_pull(engine: RuleEngine) -> None:
     response = await engine.evaluate(
         _mcp_event(HookEventType.BEFORE_TOOL, "gobby-skills", "get_skill"),
