@@ -1,4 +1,4 @@
-version: "1.2.0"
+version: "1.3.0"
 tags: [task-enforcement, enforcement, tasks, gobby, default]
 
 rules:
@@ -16,7 +16,7 @@ rules:
         # substitution inside double quotes still executes, so a real
         # echo "$(gobby tasks close 42)" still blocks.
         mask_quoted: true
-        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(uv\\s+run\\s+)?gobby\\s+tasks\\s+(create|update|close|reopen|delete|de-escalate|claim|label|sync|compact|import|clean|restore|backup|reindex|dep\\s+(add|remove)|commit\\s+(link|unlink|auto)|expand\\s+(compile|apply|reset|resume))\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(uv\\s+run\\s+)?gobby\\s+(?:-{1,2}[A-Za-z][\\w-]*(?:=\\S+|\\s+[^\\s-]\\S*)?\\s+)*tasks\\s+(create|update|close|reopen|delete|de-escalate|claim|label|sync|compact|import|clean|restore|backup|reindex|dep\\s+(add|remove)|commit\\s+(link|unlink|auto)|expand\\s+(compile|apply|reset|resume))\\b"
         reason: |
           Use the MCP equivalents (create_task, claim_task, update_task, close_task)
           so validation gates, discovery, and hook policy remain active. For a
