@@ -538,6 +538,8 @@ class RuleDefinitionBody(BaseModel):
     agent_scope: list[str] | None = None  # Only active for these agent types
     # Active for every definition; no rule_selectors include or exclude removes it.
     mandatory: bool = False
+    # Same-tool retry escalation: evaluated first on before_tool; its block preempts the rest.
+    retry_limit: bool = False
     # Closure rules only: record_attestation refuses evidence this shape can never accept.
     attestation_shape: AttestationShape | None = None
 
@@ -550,6 +552,8 @@ class RuleDefinitionBody(BaseModel):
             RuleTriggerEvent.TASK_LAND,
         }:
             raise ValueError("attestation_shape is restricted to task_close and task_land rules")
+        if self.retry_limit and self.event != RuleTriggerEvent.BEFORE_TOOL:
+            raise ValueError("retry_limit is restricted to before_tool rules")
         block_count = sum(e.type == "block" for e in self.effects)
         if block_count > 1:
             raise ValueError("At most one 'block' effect is allowed per rule")

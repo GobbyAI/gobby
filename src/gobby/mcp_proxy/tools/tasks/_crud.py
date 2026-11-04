@@ -97,8 +97,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             depends_on: List of task IDs that this new task depends on (must complete first)
             labels: List of labels
             category: Task domain category (test, code, document, research, config, manual)
-            validation_criteria: Acceptance criteria for validating completion.
-                Required for every task_type except "epic".
+            validation_criteria: Outline the evaluation criteria an agent will use to
+                ensure a high-quality deliverable. Be precise.
             implementation_domain: Required code task implementation domain.
             claim: If True, auto-claim the task for the current session.
             additional_skills: Optional skills required to work on the task.
@@ -392,7 +392,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Optional acceptance criteria. Selected rules decide whether criteria or validation evidence are required for completion.",
+                    "description": "Outline the evaluation criteria an agent will use to ensure a high-quality deliverable. Be precise. Give every non-epic task criteria. Name tests as `test: path::test_symbol` and evidence files as `file: path`; those references join the task's declared file scope when its description declares targets. Selected rules decide whether criteria or validation evidence are required for completion.",
                     "default": None,
                 },
                 "implementation_domain": {
@@ -660,7 +660,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Optional acceptance criteria. Selected rules decide whether criteria or validation evidence are required for completion.",
+                    "description": "Outline the evaluation criteria an agent will use to ensure a high-quality deliverable. Be precise. Give every non-epic task criteria. Name tests as `test: path::test_symbol` and evidence files as `file: path`; those references join the task's declared file scope when its description declares targets. Selected rules decide whether criteria or validation evidence are required for completion.",
                     "default": None,
                 },
                 "parent_task_id": {

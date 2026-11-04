@@ -22,6 +22,11 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import Task
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from tests.workflows.rule_arming import (
+    SYNTHETIC_ESCALATION_PREFIX,
+    SYNTHETIC_RETRY_LIMIT_RULE,
+    install_retry_limit_rule,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -550,6 +555,7 @@ class TestConsecutiveBlockScoping:
     @pytest.mark.asyncio
     async def test_same_tool_retried_5x_escalates(self, db: HubDatabase) -> None:
         """Same tool retried 5 times should hit the configured escalation block."""
+        install_retry_limit_rule(db)
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "_last_blocked_tool": "TodoWrite",
@@ -615,13 +621,11 @@ class TestConsecutiveBlockScoping:
         assert variables.get("consecutive_tool_blocks") == 4
         assert response4.decision == "block"
         assert response4.reason is not None
-        assert "TodoWrite" in response4.reason
-        assert "5 times consecutively after repeated BEFORE_TOOL blocks" in response4.reason
-        assert "Most recent original block reason:" in response4.reason
-        assert "Rule enforced by Gobby: [block-todowrite]\nUse gobby-tasks instead" in (
-            response4.reason
+        assert response4.reason.startswith(
+            f"Rule enforced by Gobby: [{SYNTHETIC_RETRY_LIMIT_RULE}]\n"
+            f"{SYNTHETIC_ESCALATION_PREFIX}: TodoWrite x5 | "
+            "Rule enforced by Gobby: [block-todowrite]\nUse gobby-tasks instead"
         )
-        assert "Recovery required:" in response4.reason
 
     @pytest.mark.asyncio
     async def test_different_tool_resets_counter(self, db: HubDatabase) -> None:

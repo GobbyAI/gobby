@@ -94,6 +94,7 @@ def resolve_tool_event_context(
 ]:
     """Resolve shared session metadata for direct tool lifecycle events."""
     from gobby.hooks.events import SessionSource, parse_session_source
+    from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
     from gobby.utils.project_context import get_project_context
 
     project_ctx = get_project_context()
@@ -130,7 +131,12 @@ def resolve_tool_event_context(
                 project_id = project_id or session_project_id
                 machine_id = getattr(session, "machine_id", None)
                 workspace_path = getattr(session, "workspace_path", None)
-                if session_project_id and machine_id:
+                # A checkout-free sentinel project owns no checkout, so it has no root to resolve.
+                if (
+                    session_project_id
+                    and machine_id
+                    and session_project_id not in CHECKOUT_FREE_PROJECT_IDS
+                ):
                     from gobby.storage.project_checkouts import resolve_operation_root
 
                     primary_root = resolve_operation_root(

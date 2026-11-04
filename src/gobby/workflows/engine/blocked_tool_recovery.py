@@ -6,15 +6,20 @@ import hashlib
 import logging
 import re
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from gobby.hooks.events import HookEventType
+from gobby.hooks.events import HookEventType, HookResponse
 from gobby.workflows.engine.block_batching import close_response_batch
+from gobby.workflows.engine.event_utils import _clear_edit_write_state, _is_write_like_event_data
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+
+if TYPE_CHECKING:
+    from gobby.storage.definitions.rules import RuleDefinitionRow
+    from gobby.workflows.definitions import RuleDefinitionBody
+    from gobby.workflows.engine.evaluation import EvaluationContext, EvaluationMixin
 
 logger = logging.getLogger(__name__)
 
-CONSECUTIVE_TOOL_BLOCK_RULE = "consecutive-tool-block"
 _RULE_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]")
 _ACTION_WORD_RE = re.compile(
     r"\b(?:ask|call|claim|clear|continue|create|load|retrieve|retry|run|use)\b",
@@ -230,34 +235,6 @@ def is_blocked_tool_recovery_remediation(
     return False
 
 
-def format_consecutive_tool_block_reason(
-    *,
-    tool_name: str,
-    total_attempts: int,
-    variables: dict[str, Any],
-) -> str:
-    """Build the terminal same-tool retry guard reason."""
-    prior_reason = variables.get("_last_blocked_reason")
-    if isinstance(prior_reason, str) and prior_reason.strip():
-        prior_section = f"Most recent original block reason:\n{prior_reason.strip()}"
-    else:
-        prior_section = (
-            "The prior block reason was unavailable. Scroll up and read the immediately "
-            "preceding tool error, then follow its requested remediation before retrying."
-        )
-
-    return (
-        f"Rule enforced by Gobby: [{CONSECUTIVE_TOOL_BLOCK_RULE}]\n"
-        f"You have attempted {tool_name} {total_attempts} times consecutively after "
-        "repeated BEFORE_TOOL blocks.\n\n"
-        f"{prior_section}\n\n"
-        "Recovery required: read the most recent original block reason, follow that rule's "
-        "requested remediation before retrying, use a different tool only when it directly "
-        "performs that remediation, and do not stop/end the turn until remediation has "
-        "been attempted."
-    )
-
-
 def _warn_block_fallback(
     *,
     session_id: str,
@@ -288,3 +265,34 @@ def _event_value(event_type: HookEventType | str) -> str:
     if isinstance(event_type, HookEventType):
         return event_type.value
     return str(event_type)
+
+
+async def escalate_retry_limit(
+    engine: EvaluationMixin,
+    retry_rules: list[tuple[RuleDefinitionRow, RuleDefinitionBody]],
+    evaluation: EvaluationContext,
+    span: Any,
+    *,
+    aggregate_blocks: bool,
+) -> HookResponse | None:
+    """Return the retry-limit block for a repeated denial, or None to continue.
+
+    Runs before agent, step and rule gates, so a looping enforcement block still
+    escalates and no sibling side effect runs. The escalation is not a new original
+    block, so the recovery state it quotes survives for the next one.
+    """
+    if not retry_rules:
+        return None
+    gates = await engine._run_rule_loop(
+        retry_rules, evaluation, aggregate_blocks=aggregate_blocks, block_effects_only=True
+    )
+    if not gates:
+        return None
+    if _is_write_like_event_data(evaluation.event.data):
+        _clear_edit_write_state(evaluation.variables)
+    response = engine._assemble_response(
+        evaluation, override_decision=None, override_reason=None, block_gates=gates
+    )
+    return await engine._finalize_block_response(
+        response, evaluation, span, source="retry-limit", block_gates=gates
+    )
