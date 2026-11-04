@@ -260,9 +260,15 @@ Response:
   "status": "registered",
   "external_id": "session-abc123",
   "id": "generated-uuid",
-  "machine_id": "machine-xyz"
+  "machine_id": "machine-xyz",
+  "session_status": "active"
 }
 ```
+
+`session_status` is the session's lifecycle status after registration.
+Re-registering an expired terminal session reactivates it unless its CLI has
+exited, a clear successor replaced it, or another live session holds its pane.
+A session that belongs to another machine returns 409.
 
 ### `POST /api/sessions/find_current`
 

@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import psycopg
 
+from gobby.hooks.codex_seat import codex_seat_owner
 from gobby.hooks.envelope_dedupe import bump_stop_replay_epoch
 from gobby.hooks.events import ContextPart, HookEvent, HookResponse, require_hook_machine_id
 from gobby.hooks.grok_pending_context import clear_queued_context
@@ -137,8 +138,18 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     existing_session = None
     raw_terminal_context = input_data.get("terminal_context")
     terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
+    # /clear in a running Codex seat mints the new thread in the seat its predecessor owns.
+    cleared_seat_owner = (
+        codex_seat_owner(handler._session_manager.db, machine_id)
+        if session_source == "clear" and cli_source == "codex" and handler._session_manager
+        else None
+    )
     terminal_context = enrich_terminal_context_with_cwd(
-        terminal_context, cwd, external_id=external_id, machine_id=machine_id
+        terminal_context,
+        cwd,
+        external_id=external_id,
+        cleared_seat_owner=cleared_seat_owner,
+        machine_id=machine_id,
     )
 
     if is_gobby_acp_child(terminal_context):

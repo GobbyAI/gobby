@@ -6,6 +6,7 @@ import logging
 import os
 import time
 from collections.abc import Callable, Mapping
+from enum import Enum
 from typing import Any
 from uuid import UUID
 
@@ -30,6 +31,22 @@ _FRESH_SEAT_WINDOW_SECONDS = 60.0
 # thread's registration supplies it from the database so a seat that sat at a login
 # prompt past the fresh window can still be adopted when it is the only unowned one.
 SeatAvailable = Callable[[int, float], bool]
+
+
+class SeatOwner(Enum):
+    """What the database says about who owns a Codex seat TUI."""
+
+    NONE = "none"
+    # A session recorded the TUI's pid and create time as its process.
+    RECORDED = "recorded"
+    # A session with no recorded process started after the TUI: maybe one of its threads.
+    POSSIBLE = "possible"
+
+
+# Classify the seat TUI with this pid and create time. A thread started by /clear inside
+# a running seat supplies it: the predecessor thread owns that seat, so the successor
+# adopts the one seat in its cwd that any session owns or may own, if it is recorded.
+SeatOwnerCheck = Callable[[int, float], SeatOwner]
 
 # Every key ghook derives from its own process and environment. Under a shared Codex
 # app-server host those values describe the host, never the seat that fired the hook.
@@ -125,6 +142,7 @@ def enrich_terminal_context_with_cwd(
     *,
     external_id: str | None = None,
     seat_available: SeatAvailable | None = None,
+    cleared_seat_owner: SeatOwnerCheck | None = None,
     machine_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Copy terminal context and add cwd and parent-process identity.
@@ -132,6 +150,8 @@ def enrich_terminal_context_with_cwd(
     ``external_id`` is the CLI's own session handle (the Codex thread id). A hook fired
     by a shared Codex app-server host is re-identified from that thread's seat process;
     ``seat_available`` widens a fresh thread's search to the one seat no session owns.
+    ``cleared_seat_owner``, given only for a /clear successor, instead confines it to the
+    one seat in the cwd that a session owns.
     ``machine_id`` is the event's machine: another machine's pids name no process here,
     so its hook records no parent-process identity rather than a local stranger's.
     """
@@ -151,6 +171,7 @@ def enrich_terminal_context_with_cwd(
         external_id=_non_empty_str(external_id),
         cwd=_non_empty_str(enriched.get("cwd")),
         seat_available=seat_available,
+        cleared_seat_owner=cleared_seat_owner,
     )
     return enriched
 
@@ -161,6 +182,7 @@ def _record_parent_process_identity(
     external_id: str | None,
     cwd: str | None,
     seat_available: SeatAvailable | None,
+    cleared_seat_owner: SeatOwnerCheck | None,
 ) -> None:
     terminal_context.pop("parent_create_time", None)
     terminal_context.pop("parent_name", None)
@@ -179,7 +201,7 @@ def _record_parent_process_identity(
         hook_parent = psutil.Process(pid)
         if _is_codex_shared_host(hook_parent):
             _replace_with_codex_seat_identity(
-                terminal_context, hook_parent, external_id, cwd, seat_available
+                terminal_context, hook_parent, external_id, cwd, seat_available, cleared_seat_owner
             )
             return
         process = _stable_cli_process(hook_parent)
@@ -233,11 +255,16 @@ def _replace_with_codex_seat_identity(
     external_id: str | None,
     cwd: str | None,
     seat_available: SeatAvailable | None,
+    cleared_seat_owner: SeatOwnerCheck | None,
 ) -> None:
     """Swap the shared host's identity for the seat TUI that owns ``external_id``."""
     for key in _PROCESS_IDENTITY_KEYS:
         terminal_context.pop(key, None)
-    seat = _SEAT_INDEX.resolve(external_id, cwd, seat_available) if external_id else None
+    seat = (
+        _SEAT_INDEX.resolve(external_id, cwd, seat_available, cleared_seat_owner)
+        if external_id
+        else None
+    )
     if seat is None:
         logger.warning(
             "Codex shared app-server host pid %s: no seat process resumes thread %s or "
@@ -300,26 +327,36 @@ class _CodexSeatIndex:
         self._missed_at = {}
 
     def resolve(
-        self, thread_id: str, cwd: str | None, seat_available: SeatAvailable | None = None
+        self,
+        thread_id: str,
+        cwd: str | None,
+        seat_available: SeatAvailable | None = None,
+        cleared_seat_owner: SeatOwnerCheck | None = None,
     ) -> psutil.Process | None:
         seat = self._cached(thread_id)
         if seat is not None:
             return seat
         now = time.monotonic()
         missed_at = self._missed_at.get(thread_id)
-        # Registration runs once per thread, so its wider search is never rate-limited.
+        # Registration and a clear successor's start run once per thread, so their wider
+        # searches are never rate-limited.
         if (
             seat_available is None
+            and cleared_seat_owner is None
             and missed_at is not None
             and now - missed_at < _SEAT_RESCAN_INTERVAL_SECONDS
         ):
             return None
         self._rescan()
         seat = self._cached(thread_id)
-        if seat is None:
+        if seat is None and cleared_seat_owner is not None:
+            # A clear successor's seat already hosted a thread, so a fresh or unowned
+            # TUI is never it.
+            seat = self._adopt_cleared(thread_id, cwd, cleared_seat_owner)
+        elif seat is None:
             seat = self._adopt(thread_id, cwd)
-        if seat is None and seat_available is not None:
-            seat = self._adopt_unowned(thread_id, cwd, seat_available)
+            if seat is None and seat_available is not None:
+                seat = self._adopt_unowned(thread_id, cwd, seat_available)
         if seat is None:
             self._missed_at[thread_id] = now
         else:
@@ -397,6 +434,38 @@ class _CodexSeatIndex:
         self._adopted[thread_id] = (pid, create_time)
         return process
 
+    def _adopt_cleared(
+        self, thread_id: str, cwd: str | None, owner_of: SeatOwnerCheck
+    ) -> psutil.Process | None:
+        """Adopt the seat TUI in ``cwd`` whose predecessor thread ran /clear.
+
+        /clear mints the new thread in a seat that already hosted one, so only seats some
+        session owns or may own are candidates; resumed and Gobby-spawned seats count,
+        since /clear works in either. Adopt only a sole candidate with a recorded owner.
+        Any second candidate refuses: a guess could type into another pane.
+        """
+        minted_at = _thread_minted_at(thread_id)
+        if minted_at is None or cwd is None:
+            return None
+        candidates: list[tuple[psutil.Process, int, float, SeatOwner]] = []
+        for pid, create_time, _cmdline in self._seats:
+            if create_time > minted_at:
+                continue
+            try:
+                process = psutil.Process(pid)
+                if not _is_seat_tui(process, cwd):
+                    continue
+            except _PSUTIL_ERRORS:
+                continue
+            owner = owner_of(pid, create_time)
+            if owner is not SeatOwner.NONE:
+                candidates.append((process, pid, create_time, owner))
+        if len(candidates) != 1 or candidates[0][3] is not SeatOwner.RECORDED:
+            return None
+        process, pid, create_time, _owner = candidates[0]
+        self._adopted[thread_id] = (pid, create_time)
+        return process
+
     def _rescan(self) -> None:
         seats: list[tuple[int, float, tuple[str, ...]]] = []
         for process in psutil.process_iter(attrs=["name"]):
@@ -433,14 +502,19 @@ def _recorded_process(pid: int, create_time: float) -> psutil.Process | None:
 
 
 def _is_fresh_seat_tui(process: psutil.Process, cwd: str | None) -> bool:
-    """A seat TUI is launched from a shell, never forked by another codex process, runs
-    in the hook's cwd when that cwd is known, and is not one Gobby spawned for an agent
-    run (``GOBBY_AGENT_RUN_ID``). An unreadable environment raises to the caller, which
+    """A fresh seat TUI is a seat TUI Gobby did not spawn for an agent run
+    (``GOBBY_AGENT_RUN_ID``). An unreadable environment raises to the caller, which
     skips the seat."""
+    if _non_empty_str(process.environ().get("GOBBY_AGENT_RUN_ID")) is not None:
+        return False
+    return _is_seat_tui(process, cwd)
+
+
+def _is_seat_tui(process: psutil.Process, cwd: str | None) -> bool:
+    """A seat TUI is launched from a shell, never forked by another codex process, and
+    runs in the hook's cwd when that cwd is known."""
     parent = process.parent()
     if parent is not None and parent.name() == _CODEX_PROCESS_NAME:
-        return False
-    if _non_empty_str(process.environ().get("GOBBY_AGENT_RUN_ID")) is not None:
         return False
     if cwd is None:
         return True

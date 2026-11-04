@@ -14,6 +14,7 @@ from gobby.sessions.terminal_binding import repair_native_terminal_binding
 from gobby.storage.machines import MachineNotRegisteredError
 from gobby.storage.sessions._title_defaults import manual_title_source
 from gobby.storage.sessions._update_sentinel import UNSET
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -141,6 +142,10 @@ machine_id and project_id are auto-resolved from the local environment if omitte
                 agent_depth=agent_depth,
                 sandbox_enabled=sandbox_enabled,
             )
+            if session.status == "expired":
+                session = await asyncio.to_thread(
+                    session_manager.revive_registered_terminal_session, session
+                )
 
             result: dict[str, Any] = {
                 "session_id": session.id,
@@ -165,5 +170,8 @@ machine_id and project_id are auto-resolved from the local environment if omitte
             return result
         except MachineNotRegisteredError as e:
             return {"error": str(e), "error_code": "machine_not_registered"}
+        except MachineOwnershipMismatchError:
+            # The registry boundary returns its typed envelope.
+            raise
         except Exception as e:
             return {"error": f"Failed to register session: {e}"}

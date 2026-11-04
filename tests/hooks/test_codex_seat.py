@@ -12,10 +12,11 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.hooks.codex_seat import codex_seat_available
+from gobby.hooks.codex_seat import codex_seat_available, codex_seat_owner
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     discover_and_bind_external_terminal,
 )
+from gobby.hooks.terminal_context import SeatOwner
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
@@ -98,6 +99,26 @@ def test_an_unbound_thread_since_the_seat_started_makes_it_ambiguous(
     available = codex_seat_available(session_manager.db, LOCAL_MACHINE_ID)
 
     assert available(SEAT_PID, time.time() - seat_started_ago) is expected
+
+
+def test_a_recorded_owner_outranks_an_unbound_thread(
+    session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    """#25647: a clear successor adopts only a seat whose owner is recorded."""
+    started = time.time() - 300
+    owner_of = codex_seat_owner(session_manager.db, LOCAL_MACHINE_ID)
+    assert owner_of(SEAT_PID, started) is SeatOwner.NONE
+
+    _register(session_manager, sample_project["id"], {"cwd": "/repo"})
+    assert owner_of(SEAT_PID, started) is SeatOwner.POSSIBLE
+
+    _register(
+        session_manager,
+        sample_project["id"],
+        {"cwd": "/repo", "parent_pid": SEAT_PID, "parent_create_time": started},
+        external_id="01a0e8d5-0000-7000-8000-000000000002",
+    )
+    assert owner_of(SEAT_PID, started) is SeatOwner.RECORDED
 
 
 def test_sessions_on_another_machine_never_own_its_seats(

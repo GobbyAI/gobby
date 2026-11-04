@@ -1,10 +1,10 @@
-"""Database ownership check for adopting a Codex seat TUI for a new thread."""
+"""Database ownership checks for adopting a Codex seat TUI for a new thread."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from gobby.hooks.terminal_context import SeatAvailable
+from gobby.hooks.terminal_context import SeatAvailable, SeatOwner, SeatOwnerCheck
 from gobby.storage.hub.protocol import HubDatabase
 
 # Same tolerance as terminal_ownership.recorded_process_is_alive.
@@ -12,14 +12,24 @@ _CREATE_TIME_TOLERANCE_SECONDS = 1.0
 
 
 def codex_seat_available(db: HubDatabase, machine_id: str) -> SeatAvailable:
-    """Return a check that no Codex terminal session owns, or may own, a seat TUI.
+    """Return a check that no Codex terminal session owns, or may own, a seat TUI."""
+    owner_of = codex_seat_owner(db, machine_id)
+
+    def available(pid: int, create_time: float) -> bool:
+        return owner_of(pid, create_time) is SeatOwner.NONE
+
+    return available
+
+
+def codex_seat_owner(db: HubDatabase, machine_id: str) -> SeatOwnerCheck:
+    """Return a check that classifies who owns a seat TUI.
 
     A session of any status that recorded the TUI's pid and create time owns it. A
     terminal session with no recorded process, created after the TUI started, may be an
-    earlier thread of that same TUI, so it makes the seat ambiguous too.
+    earlier thread of that same TUI, so it makes the seat a possible owner's too.
     """
 
-    def available(pid: int, create_time: float) -> bool:
+    def owner_of(pid: int, create_time: float) -> SeatOwner:
         rows = db.fetchall(
             """
             SELECT terminal_context->>'parent_pid' AS parent_pid,
@@ -36,15 +46,18 @@ def codex_seat_available(db: HubDatabase, machine_id: str) -> SeatAvailable:
             """,
             (machine_id, str(pid), datetime.fromtimestamp(create_time, UTC)),
         )
+        owner = SeatOwner.NONE
         for row in rows:
             if not row["parent_pid"]:
-                return False
+                owner = SeatOwner.POSSIBLE
+                continue
             try:
                 recorded = float(row["parent_create_time"])
             except (TypeError, ValueError):
-                return False
+                owner = SeatOwner.POSSIBLE
+                continue
             if abs(recorded - create_time) < _CREATE_TIME_TOLERANCE_SECONDS:
-                return False
-        return True
+                return SeatOwner.RECORDED
+        return owner
 
-    return available
+    return owner_of

@@ -25,6 +25,7 @@ from gobby.storage.machines import MachineNotRegisteredError
 from gobby.storage.sessions._lineage_discovery import nearest_live_parent_ids
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.storage.token_events import TokenEventStore
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.telemetry.instruments import inc_counter
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.worktrees.containment import WorktreeRoots, containing_worktree_id, worktree_roots
@@ -361,6 +362,10 @@ def register_core_routes(
                 ),
                 sandbox_enabled=request_data.sandbox_enabled,
             )
+            if session.status == "expired":
+                session = await server.run_db(
+                    server.session_manager.revive_registered_terminal_session, session
+                )
 
             inc_counter("session_registrations_total")
 
@@ -369,6 +374,7 @@ def register_core_routes(
                 "external_id": request_data.external_id,
                 "id": session.id,
                 "machine_id": machine_id,
+                "session_status": session.status,
             }
 
         except HTTPException:
@@ -376,6 +382,9 @@ def register_core_routes(
 
         except MachineNotRegisteredError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
+
+        except MachineOwnershipMismatchError as e:
+            raise HTTPException(status_code=409, detail=e.to_dict()) from e
 
         except ValueError as e:
             # ValueError from _resolve_project_id when project not initialized

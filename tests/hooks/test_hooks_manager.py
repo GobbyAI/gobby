@@ -3382,18 +3382,24 @@ def _uuid7_at(seconds: float, tail: int) -> str:
     return str(uuid.UUID(int=(int(seconds * 1000) << 80) | (7 << 76) | (0x2 << 62) | tail))
 
 
-@pytest.mark.parametrize("second_seat", [False, True], ids=["only-seat", "two-seats"])
+@pytest.mark.parametrize(
+    ("second_seat", "adopts"),
+    [(None, True), ("login", True), ("recorded", False), ("unrecorded", False)],
+    ids=["only-seat", "beside-login-seat", "two-owned-seats", "beside-unrecorded-seat"],
+)
 def test_codex_clear_in_running_tui_takes_over_the_pane(
     hook_manager_with_mocks: HookManager,
     temp_dir: Path,
-    second_seat: bool,
+    second_seat: str | None,
+    adopts: bool,
 ) -> None:
     """#25647: a /clear inside a running Codex TUI hands the pane to the new thread.
 
     The shared managed app-server runs the hooks, so the new thread names no seat in
     argv and was minted hours after its TUI started. The predecessor still records
-    that TUI and holds the pane. With one seat TUI in the cwd the clear successor
-    adopts it and takes the binding; a second seat in the cwd keeps the refusal.
+    that TUI and holds the pane. The clear successor adopts the one seat in the cwd
+    that a session owns, even beside a seat waiting at login. A second seat that a
+    session owns, or may own through a session with no recorded process, refuses.
     """
     from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
     from gobby.hooks.terminal_context import clear_codex_seat_index
@@ -3416,8 +3422,9 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
     )
     minted_at = time.time()
     seat = _codex_tui(45647, ["codex", "--yolo"], minted_at - 7200, pane_id, temp_dir)
+    predecessor_thread = _uuid7_at(minted_at - 7100, 0x1111)
     predecessor_id = sessions.register_session(
-        external_id=_uuid7_at(minted_at - 7100, 0x1111),
+        external_id=predecessor_thread,
         machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=project.id,
@@ -3440,8 +3447,21 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
         temp_dir,
     )
     table = [host, seat]
-    if second_seat:
-        table.append(_codex_tui(52001, ["codex"], minted_at - 3600, str(uuid.uuid4()), temp_dir))
+    if second_seat is not None:
+        other = _codex_tui(52001, ["codex"], minted_at - 3600, str(uuid.uuid4()), temp_dir)
+        table.append(other)
+        if second_seat != "login":
+            other_identity = {"parent_pid": other.pid, "parent_create_time": minted_at - 3600}
+            sessions.register_session(
+                external_id=_uuid7_at(minted_at - 3500, 0x3333),
+                machine_id=LOCAL_MACHINE_ID,
+                source="codex",
+                project_id=project.id,
+                terminal_context={
+                    "cwd": str(temp_dir),
+                    **(other_identity if second_seat == "recorded" else {}),
+                },
+            )
 
     def lookup(pid: int) -> MagicMock:
         for candidate in table:
@@ -3459,26 +3479,32 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
         data={"source": "clear", "cwd": str(temp_dir), "terminal_context": host_context},
         machine_id=LOCAL_MACHINE_ID,
     )
-    prompt = CodexHooksAdapter().translate_to_hook_event(
-        {
-            "hook_type": "UserPromptSubmit",
-            "input_data": {
-                "session_id": successor_thread,
-                "prompt": "Start the next task.",
-                "cwd": str(temp_dir),
-                "terminal_context": dict(host_context),
-                "machine_id": LOCAL_MACHINE_ID,
-            },
-            "source": "codex",
-        }
-    )
-    assert prompt is not None
+
+    def prompt_for(thread: str) -> HookEvent:
+        event = CodexHooksAdapter().translate_to_hook_event(
+            {
+                "hook_type": "UserPromptSubmit",
+                "input_data": {
+                    "session_id": thread,
+                    "prompt": "Start the next task.",
+                    "cwd": str(temp_dir),
+                    "terminal_context": dict(host_context),
+                    "machine_id": LOCAL_MACHINE_ID,
+                },
+                "source": "codex",
+            }
+        )
+        assert event is not None
+        return event
+
+    prompt = prompt_for(successor_thread)
     clear_codex_seat_index()
     try:
         with (
             patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
             patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename"),
             patch("gobby.hooks.terminal_context.psutil.Process", side_effect=lookup),
+            patch("gobby.terminal_ownership.psutil.Process", side_effect=lookup),
             patch(
                 "gobby.hooks.terminal_context.psutil.process_iter",
                 side_effect=lambda **_: list(table),
@@ -3486,6 +3512,8 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
         ):
             assert manager.handle(start).decision == "allow"
             assert manager.handle(prompt).decision == "allow"
+            # A late hook for the cleared thread must not revive it beside the successor.
+            assert manager.handle(prompt_for(predecessor_thread)).decision == "allow"
     finally:
         clear_codex_seat_index()
 
@@ -3495,11 +3523,16 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
     bound = sessions.db.fetchall("SELECT id FROM terminals WHERE session_id = %s", (successor.id,))
     predecessor = sessions.get(predecessor_id)
     assert predecessor is not None
-    if second_seat:
-        # Two seat TUIs share the cwd: no process signal names the clearing one.
+    if not adopts:
+        # Two hosting seats share the cwd: no process signal names the clearing one.
         assert (successor.terminal_context or {}).get("parent_pid") is None
         assert bound == []
-        assert predecessor.status == "idle"
+        # The predecessor keeps the pane; its own late prompt is ordinary activity.
+        assert predecessor.status == "active"
+        held = sessions.db.fetchall(
+            "SELECT id FROM terminals WHERE session_id = %s", (predecessor_id,)
+        )
+        assert [str(row["id"]) for row in held] == [pane_id]
         return
     assert successor.terminal_context is not None
     assert successor.terminal_context["parent_pid"] == seat.pid
