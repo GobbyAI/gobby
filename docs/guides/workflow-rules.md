@@ -192,7 +192,9 @@ boundary counts every denial. When a hook payload names the issuing agent
 (`agent_id`), that context's counter, `_last_blocked_tool`, `tool_block_pending`
 and `_block_reasons_shown` live in its own `_last_blocked_scopes` slot, so
 concurrent subagents sharing one session id never spend each other's budget,
-and a subagent's failed call never holds the parent's turn end.
+and a subagent's failed call never holds the parent's turn end. A parent turn
+start clears only the main context's state; a subagent's scope is dropped only
+at its own terminal SubagentStop that the gates release.
 
 On the first turn where `servers_listed` is false, the engine also queues the
 hard-coded auto-discovery MCP call that seeds available Gobby MCP servers.
