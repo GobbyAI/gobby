@@ -451,3 +451,20 @@ def test_a_held_parent_lifecycle_settles_before_a_manual_compaction(
     assert session.kinds == [PRE, START, PRE, START, BEFORE]
     assert CONTEXT_MARKER in _context(pre_response)
     assert CONTEXT_MARKER not in _context(later)
+
+
+def test_a_manual_boundary_written_before_a_subagent_pre_compact_still_settles(
+    session: _Session, send: Callable[[HookEvent], HookResponse]
+) -> None:
+    # The subagent PreCompact arrives after the parent's manual boundary is written and before its
+    # tails. The session's first compaction hook set the baseline before that boundary, so the
+    # manual boundary is still new at the settle and the parent's reset is replayed.
+    send(session.event(PRE, trigger="manual"))
+    session.parent_boundary("manual-boundary")
+    send(session.event(PRE, trigger="auto"))
+    send(session.event(START, source="compact"))
+    send(session.event(POST, trigger="manual"))
+    later = send(session.event(BEFORE, prompt="continue"))
+
+    assert session.kinds == [PRE, START, POST, BEFORE]
+    assert CONTEXT_MARKER in _context(later)

@@ -14,7 +14,7 @@ per session, and their payloads cannot tell the parent from a subagent:
   None drops every held hook. One or more runs one parent lifecycle, built from the latest held
   payload of each kind, and records the newest boundary as verified. The lifecycle's response
   context is merged into the settling event's response.
-- Subagent transcripts, timestamps and the newest boundary of any transcript are never read.
+- Subagent transcripts and timestamps are never read.
 """
 
 from __future__ import annotations
@@ -89,7 +89,13 @@ class CompactionOwnership:
             return self._settle(state, event), False
 
     def _hold(self, event: HookEvent) -> tuple[list[HookEvent], bool]:
-        state = self._sessions.setdefault(event.session_id, _SessionState())
+        state = self._sessions.get(event.session_id)
+        if state is None:
+            # Boundaries written before the session's first compaction hook belong to earlier
+            # compactions. Its PreCompact runs before the boundary it must count, so this baseline
+            # is taken before that boundary is written.
+            state = _SessionState(verified=_newest_boundary(_transcript_of(event)))
+            self._sessions[event.session_id] = state
         if event.event_type == HookEventType.PRE_COMPACT:
             trigger = str(event.data.get("trigger", _AUTO))
             state.last_trigger = trigger
@@ -110,9 +116,6 @@ class CompactionOwnership:
                 state.manual_pre_ran = False
                 return [], False
             kind = _START if event.event_type == HookEventType.SESSION_START else _POST
-        if not state.held and state.verified is None:
-            # Boundaries written before this buffer began belong to earlier compactions.
-            state.verified = _newest_boundary(_transcript_of(event))
         state.held[kind] = event
         return [], True
 
