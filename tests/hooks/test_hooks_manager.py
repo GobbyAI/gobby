@@ -3580,6 +3580,12 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
                     machine_id=LOCAL_MACHINE_ID,
                 )
                 assert manager.handle(held_start).decision == "allow"
+            if second_seat is not None:
+                # The refusal is final: once the other seat exits, a repeated clear-start
+                # for the thread still adopts nothing.
+                del table[2:]
+                clear_codex_seat_index()
+                assert manager.handle(start).decision == "allow"
             # A late hook for the cleared thread must not revive it beside the successor.
             assert manager.handle(prompt_for(predecessor_thread)).decision == "allow"
     finally:
