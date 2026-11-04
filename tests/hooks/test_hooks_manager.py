@@ -3387,6 +3387,7 @@ def _uuid7_at(seconds: float, tail: int) -> str:
         (None, "codex-tui", True, True),
         ("login", "codex-tui", False, False),
         ("recorded", "codex-tui", False, False),
+        ("recorded", "codex-tui", True, False),
         ("unrecorded", "codex-tui", False, False),
         (None, "codex_vscode", False, False),
         (None, "codex_vscode", True, False),
@@ -3397,6 +3398,7 @@ def _uuid7_at(seconds: float, tail: int) -> str:
         "only-seat-rollout-after-start",
         "beside-login-seat",
         "two-owned-seats",
+        "two-owned-seats-rollout-after-start",
         "beside-unrecorded-seat",
         "ide-clear-beside-one-seat",
         "ide-clear-rollout-after-start",
@@ -3544,7 +3546,7 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
             patch(
                 "gobby.hooks.terminal_context.psutil.process_iter",
                 side_effect=lambda **_: list(table),
-            ),
+            ) as scan,
         ):
             assert manager.handle(start).decision == "allow"
             if rollout_late:
@@ -3581,13 +3583,33 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
                 )
                 assert manager.handle(held_start).decision == "allow"
             if second_seat is not None:
-                # The refusal is final: once the other seat exits, a repeated clear-start
-                # for the thread still adopts nothing.
+                # The refusal is final: once the other seat exits, nothing that finds the
+                # lone seat only now adopts it, then or on the thread's later activity.
                 del table[2:]
                 clear_codex_seat_index()
+                if rollout_late:
+                    # A hook that read the pending row loses the settle to the refusal.
+                    assert waiting is not None
+                    late_rival = prompt_for(successor_thread)
+                    manager._session_lookup._backfill_terminal_context(
+                        waiting.id, late_rival, waiting
+                    )
+                    assert manager.handle(prompt_for(successor_thread)).decision == "allow"
+                    refused = sessions.get(waiting.id)
+                    assert refused is not None
+                    assert (refused.terminal_context or {}).get("parent_pid") is None
+                    clear_codex_seat_index()
+                # A repeated clear-start loses to the refusal too.
                 assert manager.handle(start).decision == "allow"
+                assert manager.handle(prompt_for(successor_thread)).decision == "allow"
             # A late hook for the cleared thread must not revive it beside the successor.
             assert manager.handle(prompt_for(predecessor_thread)).decision == "allow"
+            if adopts:
+                # The accepted seat stays cached through every losing hook above, so
+                # later activity resolves it without a process scan.
+                scans = scan.call_count
+                assert manager.handle(prompt_for(successor_thread)).decision == "allow"
+                assert scan.call_count == scans
     finally:
         clear_codex_seat_index()
 
