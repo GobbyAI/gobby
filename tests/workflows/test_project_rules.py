@@ -84,6 +84,9 @@ def _blocks(command: str) -> bool:
         "python3 -m gobby.runner --verbose",
         "curl -X POST http://127.0.0.1:60887/api/admin/restart",
         "curl -s -X POST localhost:60887/api/admin/shutdown?restart_supervisor=true",
+        "bash -c 'gobby restart'",
+        'sh -c "uv run gobby cutover"',
+        "zsh -lc 'cd /repo && gobby stop'",
     ],
 )
 def test_quiet_hours_rule_blocks_daemon_management(command: str) -> None:
