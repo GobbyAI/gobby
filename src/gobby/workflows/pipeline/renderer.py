@@ -4,7 +4,9 @@ import ast
 import logging
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from datetime import date
+from pathlib import Path
 from typing import Any
 
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
@@ -21,6 +23,25 @@ _PIPELINE_EVAL_FUNCS: dict[str, Any] = {
     "any": any,
     "all": all,
 }
+
+
+def host_local_today() -> str:
+    """Host-local calendar date as YYYY-MM-DD, the day that dated reports are named by."""
+    return date.today().isoformat()
+
+
+def _project_file_exists(project_path: object) -> Callable[[str], bool]:
+    """Condition helper: whether a regular file exists at a path under the project checkout."""
+    root = Path(project_path).resolve() if isinstance(project_path, str) and project_path else None
+
+    def project_file_exists(relative_path: str) -> bool:
+        if root is None or not relative_path or Path(relative_path).is_absolute():
+            return False
+        candidate = (root / relative_path).resolve()
+        return candidate.is_file() and candidate.is_relative_to(root)
+
+    return project_file_exists
+
 
 # Underscore-delimited env-var segments that indicate sensitive values.
 _SENSITIVE_SEGMENTS = frozenset(
@@ -88,6 +109,7 @@ _RESERVED_CONTEXT_KEYS = frozenset(
         "project_path",
         "current_branch",
         "invocation_id",
+        "today",
         "_string_inputs",
     }
 )
@@ -124,6 +146,7 @@ class StepRenderer:
             "project_path": context.get("project_path"),
             "current_branch": context.get("current_branch"),
             "invocation_id": context.get("invocation_id"),
+            "today": host_local_today(),
             "_string_inputs": context.get("_string_inputs", ()),
         }
         # Flatten step outputs as top-level names for direct template access
@@ -382,12 +405,17 @@ class StepRenderer:
                 "project_path": context.get("project_path"),
                 "current_branch": context.get("current_branch"),
                 "invocation_id": context.get("invocation_id"),
+                "today": host_local_today(),
             }
             # Flatten step outputs as top-level names for condition evaluation
             for step_id, step_data in steps.items():
                 if step_id not in _RESERVED_CONTEXT_KEYS:
                     eval_context[step_id] = step_data
-            evaluator = SafeExpressionEvaluator(eval_context, _PIPELINE_EVAL_FUNCS)
+            eval_funcs = {
+                **_PIPELINE_EVAL_FUNCS,
+                "project_file_exists": _project_file_exists(context.get("project_path")),
+            }
+            evaluator = SafeExpressionEvaluator(eval_context, eval_funcs)
             return evaluator.evaluate(condition)
         except ValueError as e:
             if self.strict_conditions:

@@ -43,6 +43,22 @@ class PipelineExecutionNotFoundError(RuntimeError):
     """Raised when an execution-scoped update matches no rows."""
 
 
+def pipeline_session_definition_json(db: HubDatabase, session_id: str) -> str | None:
+    """Definition snapshot of the newest pipeline run that ``session_id`` drives."""
+    row = db.execute(
+        """
+        SELECT definition_json FROM pipeline_executions
+        WHERE session_id = %s
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    if row is None or row["definition_json"] is None:
+        return None
+    return str(row["definition_json"])
+
+
 class PipelineExecutionStorageMixin:
     """Pipeline execution CRUD, queries, search, and recovery methods."""
 
