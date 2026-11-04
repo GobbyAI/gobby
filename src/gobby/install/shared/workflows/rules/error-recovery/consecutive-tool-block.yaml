@@ -1,4 +1,4 @@
-version: "1.0.0"
+version: "1.0.1"
 tags: [error-recovery, enforcement, gobby, default]
 
 # The engine charges each repeated denial of the same tool to
@@ -14,8 +14,11 @@ rules:
     mandatory: true
     retry_limit: true
     priority: 0
+    # A positive count means this call was charged as a same-tool retry; a
+    # different tool resets it to 0, so even a limit of 1 never blocks that tool.
     when: >
       block_state.get('_last_blocked_tool')
+      and block_state.get('consecutive_tool_blocks', 0) > 0
       and block_state.get('consecutive_tool_blocks', 0) + 1
       >= variables.get('max_consecutive_blocked_tool_attempts', 5)
     effects:

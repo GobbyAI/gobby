@@ -18,6 +18,7 @@ SYNTHETIC_ESCALATION_PREFIX = "Escalated after repeated denials"
 
 RETRY_LIMIT_WHEN = (
     "block_state.get('_last_blocked_tool')"
+    " and block_state.get('consecutive_tool_blocks', 0) > 0"
     " and block_state.get('consecutive_tool_blocks', 0) + 1"
     " >= variables.get('max_consecutive_blocked_tool_attempts', 5)"
 )
