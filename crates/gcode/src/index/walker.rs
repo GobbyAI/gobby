@@ -5,6 +5,8 @@ mod classification;
 mod discovery;
 mod generated;
 mod hidden;
+#[cfg(test)]
+pub(crate) mod op_counts;
 mod types;
 
 pub use classification::{

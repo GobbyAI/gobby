@@ -107,6 +107,8 @@ fn explicit_paths_visible(
     if pending.is_empty() {
         return visible;
     }
+    #[cfg(test)]
+    super::op_counts::record_visibility_walk();
 
     // Every pending path and each of its ancestors may be descended into. Inserting
     // stops at the first ancestor already present, whose own ancestors are present too.
@@ -180,6 +182,8 @@ fn explicit_path_visible(
         return false;
     }
 
+    #[cfg(test)]
+    super::op_counts::record_visibility_walk();
     let mut settings = gobby_core::indexing::WalkerSettings::new(root);
     settings.respect_gitignore = options.respect_gitignore;
     settings.max_filesize = Some(MAX_FILE_SIZE);
