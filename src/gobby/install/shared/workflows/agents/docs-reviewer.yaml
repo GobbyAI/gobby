@@ -1,5 +1,5 @@
 name: docs-reviewer
-version: "3.1.0"
+version: "3.2.0"
 description: Independently reviews task evidence and may land and close approved work.
 tags: [gobby, seat]
 capabilities: [accept_resume_retype, land_tasks]
@@ -71,6 +71,9 @@ prompts:
     team-manager binding is required. Report completion to the author and launch
     session; finish your run before the author removes the shared worktree.
     Non-coding work follows its selected policy and can close without Git.
+
+    ## Lifecycle
+    A spawned run serves one assignment. Once the final verdict for the candidate is recorded and any completion is reported, or once the lead has your rejection, end the run with `gobby-agents:end_agent_run`: current_state holds the attestation IDs and the reviewed SHA, next_steps names the lead's next action. Do not wait for a later assignment.
 
     ## Continuity
     Consume pending handoffs after compaction. Compact in place under context

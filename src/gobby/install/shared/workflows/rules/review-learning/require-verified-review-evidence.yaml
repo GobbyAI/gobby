@@ -1,15 +1,14 @@
-version: "2.0.0"
+version: "2.1.0"
 tags: [review-learning, enforcement, gobby, default]
 
 rules:
   require-verified-review-evidence:
-    description: "Require complete, verified findings for the configured review source"
+    description: "Require complete, verified findings for the epic review kind (qa_rejection), whichever seat reports them"
     event: before_tool
     enabled: true
     priority: 20
     when: >
       tool_input.get('source_kind') == 'qa_rejection'
-      and tool_input.get('source') == 'code-reviewer'
       and (
         not all(
           str((tool_input.get('finding') or {}).get(field) or '').strip()
