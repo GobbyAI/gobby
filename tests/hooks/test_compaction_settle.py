@@ -124,7 +124,7 @@ def test_boundaries_before_the_buffer_began_are_baseline(parent: Path) -> None:
     assert [replay.event_type for replay in replays] == [START]
 
 
-def test_timestamps_are_never_read(parent: Path) -> None:
+def test_a_known_baseline_ignores_timestamps(parent: Path) -> None:
     ownership = CompactionOwnership()
     ownership.route(_event(START, parent, source="compact"))
     _append(parent, _boundary("boundary-1", timestamp="2000-01-01T00:00:00.000Z"))
@@ -164,20 +164,25 @@ def test_malformed_and_lookalike_lines_are_not_boundaries(parent: Path) -> None:
     assert [replay.event_type for replay in replays] == [PRE]
 
 
-def test_missing_transcript_fails_closed(tmp_path: Path) -> None:
+def test_missing_transcript_keeps_the_held_hooks_for_a_later_read(tmp_path: Path) -> None:
     missing = tmp_path / "gone.jsonl"
     ownership = CompactionOwnership()
 
     assert ownership.route(_event(PRE, missing, trigger="auto")) == ([], True)
     assert ownership.route(_event(BEFORE, missing, prompt="continue")) == ([], False)
-    assert ownership.needs_transcripts(_event(BEFORE, missing, prompt="again")) is False
+    assert ownership.needs_transcripts(_event(BEFORE, missing, prompt="again")) is True
 
 
-def test_event_without_transcript_path_drops_the_held_hooks(parent: Path) -> None:
+def test_event_without_transcript_path_keeps_the_held_hooks(parent: Path) -> None:
     ownership = CompactionOwnership()
     ownership.route(_event(PRE, parent, trigger="auto"))
 
     assert ownership.route(_event(BEFORE, None, prompt="no path")) == ([], False)
+
+    _append(parent, _boundary("boundary-1"))
+    replays, _ = ownership.route(_event(BEFORE, parent, prompt="with path"))
+
+    assert [replay.event_type for replay in replays] == [PRE]
 
 
 @pytest.mark.parametrize("chunk_bytes", [1, 3, 17, 4096])

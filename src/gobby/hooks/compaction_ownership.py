@@ -13,8 +13,11 @@ per session, and their payloads cannot tell the parent from a subagent:
   compact_boundary records in the parent's main transcript since the last verified boundary.
   None drops every held hook. One or more runs one parent lifecycle, built from the latest held
   payload of each kind, and records the newest boundary as verified. The lifecycle's response
-  context is merged into the settling event's response.
-- Subagent transcripts and timestamps are never read.
+  context is merged into the settling event's response. An unreadable transcript leaves the held
+  hooks and their state unchanged, so the next main-thread event tries again.
+- Subagent transcripts are never read. Parent timestamps are read only for an unknown baseline:
+  when the session's first compaction hook cannot read the transcript, a boundary counts as new
+  when its timestamp is at or after that hook's millisecond.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ import threading
 from collections.abc import Generator
 from contextlib import closing
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +55,9 @@ class _SessionState:
     last_trigger: str | None = None
     held: dict[str, HookEvent] = field(default_factory=dict)
     verified: str | None = None
+    # Set while the baseline is unknown: the receive time of the session's first compaction hook,
+    # floored to its millisecond. Parent boundaries written at or after it are new.
+    unknown_since: datetime | None = None
     # A manual PreCompact ran its rules for the boundary that has not been verified yet.
     manual_pre_ran: bool = False
 
@@ -86,40 +93,72 @@ class CompactionOwnership:
             state = self._sessions.get(event.session_id)
             if state is None or not state.held:
                 return [], False
-            return self._settle(state, event), False
+            replays = self._settle(state, event)
+            return ([] if replays is None else replays), False
 
     def _hold(self, event: HookEvent) -> tuple[list[HookEvent], bool]:
         state = self._sessions.get(event.session_id)
         if state is None:
-            # Boundaries written before the session's first compaction hook belong to earlier
-            # compactions. Its PreCompact runs before the boundary it must count, so this baseline
-            # is taken before that boundary is written.
-            state = _SessionState(verified=_newest_boundary(_transcript_of(event)))
+            state = _baseline(event)
             self._sessions[event.session_id] = state
         if event.event_type == HookEventType.PRE_COMPACT:
             trigger = str(event.data.get("trigger", _AUTO))
             state.last_trigger = trigger
             if trigger != _AUTO:
                 # The manual boundary is written after this PreCompact, so settling now counts
-                # only earlier boundaries.
-                replays = self._settle(state, event) if state.held else []
+                # only earlier boundaries. When the read fails, the held lifecycle waits for a
+                # later settle, and this PreCompact's rules run without it.
+                if state.held:
+                    replays = self._settle(state, event)
+                    if replays is None:
+                        state.manual_pre_ran = False
+                        return [], False
+                else:
+                    replays = []
                 state.manual_pre_ran = True
                 return replays, False
             kind = _PRE
         else:
             if state.last_trigger == _MANUAL:
+                if state.held:
+                    # The held lifecycle is unsettled, so the parent boundaries it covers are not
+                    # counted yet. Verifying the manual boundary now would skip them.
+                    return [], False
                 # The manual boundary is written before its tails. Verify it so that no later
                 # settle counts it again.
-                boundary = _newest_boundary(_transcript_of(event))
+                try:
+                    boundary = _newest_boundary(_transcript_of(event))
+                except OSError:
+                    # Unverified. The manual boundary was written before this hook, so the time
+                    # anchor counts it as old and any later parent boundary as new.
+                    state.unknown_since = _receive_time()
+                    boundary = None
                 if boundary is not None:
                     state.verified = boundary
+                    state.unknown_since = None
                 state.manual_pre_ran = False
                 return [], False
             kind = _START if event.event_type == HookEventType.SESSION_START else _POST
         state.held[kind] = event
         return [], True
 
-    def _settle(self, state: _SessionState, event: HookEvent) -> list[HookEvent]:
+    def _settle(self, state: _SessionState, event: HookEvent) -> list[HookEvent] | None:
+        """Settle the held lifecycle; None when the transcript cannot be read, which changes nothing.
+
+        With a known baseline, the boundaries newer than it count. With an unknown one, the
+        boundaries written at or after its hook count.
+        """
+        transcript = _transcript_of(event)
+        if transcript is None:
+            return None
+        try:
+            if state.unknown_since is None:
+                fresh = _boundaries_newest_first(transcript, state.verified, limit=None)
+                newest = fresh[0] if fresh else state.verified
+            else:
+                fresh, newest = _boundaries_since(transcript, state.unknown_since)
+        except OSError:
+            return None
         # A manual PreCompact already ran its rules for the boundary being settled.
         lifecycle = [
             state.held[kind]
@@ -128,17 +167,9 @@ class CompactionOwnership:
         ]
         state.held.clear()
         state.manual_pre_ran = False
-        transcript = _transcript_of(event)
-        if transcript is None:
-            return []
-        try:
-            fresh = _boundaries_newest_first(transcript, state.verified, limit=None)
-        except OSError:
-            return []
-        if not fresh:
-            return []
-        state.verified = fresh[0]
-        return [_settled(held) for held in lifecycle]
+        state.verified = newest
+        state.unknown_since = None
+        return [_settled(held) for held in lifecycle] if fresh else []
 
 
 def merge_replayed_context(response: HookResponse, replayed: list[HookResponse]) -> HookResponse:
@@ -149,14 +180,50 @@ def merge_replayed_context(response: HookResponse, replayed: list[HookResponse])
     return response
 
 
-def _newest_boundary(transcript: Path | None) -> str | None:
-    if transcript is None:
-        return None
+def _baseline(event: HookEvent) -> _SessionState:
+    """The state for a session's first compaction hook.
+
+    Boundaries written before that hook belong to earlier compactions. Its PreCompact runs before
+    the boundary it must count, so the baseline is read before that boundary is written. When the
+    transcript cannot be read, the baseline is unknown, and the boundaries written from this hook
+    on are the new ones.
+    """
     try:
-        found = _boundaries_newest_first(transcript, None, limit=1)
+        return _SessionState(verified=_newest_boundary(_transcript_of(event)))
     except OSError:
-        return None
+        return _SessionState(unknown_since=_receive_time())
+
+
+def _receive_time() -> datetime:
+    """Now, floored to the millisecond, the precision of transcript timestamps.
+
+    A boundary written in this millisecond counts as new. The floor can count an older boundary
+    from the same millisecond as new, which repeats one reset and never drops a new one.
+    """
+    now = datetime.now(UTC)
+    return now.replace(microsecond=now.microsecond // 1000 * 1000)
+
+
+def _newest_boundary(transcript: Path | None) -> str | None:
+    """The newest parent boundary; raises OSError when the transcript cannot be read."""
+    if transcript is None:
+        raise FileNotFoundError("the event carries no transcript path")
+    found = _boundaries_newest_first(transcript, None, limit=1)
     return found[0] if found else None
+
+
+def _boundary_records(transcript: Path) -> Generator[tuple[str, dict[str, Any]]]:
+    """(uuid, record) for each parent compact_boundary, newest first."""
+    with closing(_lines_newest_first(transcript, _READ_CHUNK_BYTES)) as lines:
+        for raw in lines:
+            if _BOUNDARY_MARKER not in raw:
+                continue
+            record = _parse_record(raw)
+            if record is None or record.get("subtype") != COMPACT_BOUNDARY_SUBTYPE:
+                continue
+            uuid = record.get("uuid")
+            if isinstance(uuid, str):
+                yield uuid, record
 
 
 def _boundaries_newest_first(transcript: Path, stop_at: str | None, limit: int | None) -> list[str]:
@@ -166,22 +233,43 @@ def _boundaries_newest_first(transcript: Path, stop_at: str | None, limit: int |
     written since the last verified boundary.
     """
     found: list[str] = []
-    with closing(_lines_newest_first(transcript, _READ_CHUNK_BYTES)) as lines:
-        for raw in lines:
-            if _BOUNDARY_MARKER not in raw:
-                continue
-            record = _parse_record(raw)
-            if record is None or record.get("subtype") != COMPACT_BOUNDARY_SUBTYPE:
-                continue
-            uuid = record.get("uuid")
-            if not isinstance(uuid, str):
-                continue
+    with closing(_boundary_records(transcript)) as records:
+        for uuid, _record in records:
             if uuid == stop_at:
                 break
             found.append(uuid)
             if limit is not None and len(found) >= limit:
                 break
     return found
+
+
+def _boundaries_since(transcript: Path, since: datetime) -> tuple[list[str], str | None]:
+    """Boundaries written at or after ``since``, newest first, and the newest boundary overall.
+
+    Transcript order is write order, so the scan stops at the first boundary written before
+    ``since``. A boundary without a readable timestamp counts as written at or after ``since``.
+    """
+    fresh: list[str] = []
+    newest: str | None = None
+    with closing(_boundary_records(transcript)) as records:
+        for uuid, record in records:
+            if newest is None:
+                newest = uuid
+            if _written_before(record, since):
+                break
+            fresh.append(uuid)
+    return fresh, newest
+
+
+def _written_before(record: dict[str, Any], since: datetime) -> bool:
+    stamp = record.get("timestamp")
+    if not isinstance(stamp, str):
+        return False
+    try:
+        written = datetime.fromisoformat(stamp)
+    except ValueError:
+        return False
+    return written.tzinfo is not None and written < since
 
 
 def _settled(event: HookEvent) -> HookEvent:

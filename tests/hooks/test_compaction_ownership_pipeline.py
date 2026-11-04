@@ -14,11 +14,13 @@ import json
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.hooks import compaction_ownership
 from gobby.hooks.compaction_ownership import CompactionOwnership
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
@@ -467,4 +469,151 @@ def test_a_manual_boundary_written_before_a_subagent_pre_compact_still_settles(
     later = send(session.event(BEFORE, prompt="continue"))
 
     assert session.kinds == [PRE, START, POST, BEFORE]
+    assert CONTEXT_MARKER in _context(later)
+
+
+def _fail_transcript_reads(monkeypatch: pytest.MonkeyPatch, times: int) -> None:
+    """Make the next ``times`` reads of a parent transcript raise OSError; later reads succeed."""
+    real_lines = compaction_ownership._lines_newest_first
+    remaining = times
+
+    def unreadable(path: Path, chunk_bytes: int) -> Iterator[bytes]:
+        nonlocal remaining
+        remaining -= 1
+        if remaining == 0:
+            monkeypatch.setattr(compaction_ownership, "_lines_newest_first", real_lines)
+        raise OSError("transient read failure")
+
+    monkeypatch.setattr(compaction_ownership, "_lines_newest_first", unreadable)
+
+
+def _fix_clock(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None:
+    """Make the module's receive-time clock read ``now``."""
+    clock = SimpleNamespace(now=lambda tz=None: now, fromisoformat=datetime.fromisoformat)
+    monkeypatch.setattr(compaction_ownership, "datetime", clock)
+
+
+def test_a_failed_transcript_read_at_settle_replays_on_the_next_main_event(
+    session: _Session, send: Callable[[HookEvent], HookResponse], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    send(session.event(PRE, trigger="auto"))
+    send(session.event(START, source="compact"))
+    session.parent_boundary("boundary-1")
+    _fail_transcript_reads(monkeypatch, times=1)
+
+    failed = send(session.event(BEFORE, prompt="first"))
+    recovered = send(session.event(BEFORE, prompt="second"))
+
+    assert CONTEXT_MARKER not in _context(failed)
+    assert session.kinds == [BEFORE, PRE, START, BEFORE]
+    assert CONTEXT_MARKER in _context(recovered)
+    assert session.variables["unlocked_tools"] == []
+
+
+def test_a_failed_read_at_a_manual_pre_compact_keeps_the_earlier_parent_reset(
+    session: _Session, send: Callable[[HookEvent], HookResponse], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    send(session.event(PRE, trigger="auto"))
+    send(session.event(START, source="compact"))
+    session.parent_boundary("boundary-1")
+    _fail_transcript_reads(monkeypatch, times=1)
+
+    send(session.event(PRE, trigger="manual"))
+    session.parent_boundary("manual-boundary")
+    send(session.event(START, source="compact"))
+    later = send(session.event(BEFORE, prompt="continue"))
+
+    # Each parent compaction gets one PreCompact and one SessionStart: the manual pair ran
+    # immediately, and the earlier auto pair replays at the next main-thread event.
+    assert session.kinds == [PRE, START, PRE, START, BEFORE]
+    assert CONTEXT_MARKER in _context(later)
+
+
+def test_a_parent_boundary_written_after_an_unknown_baseline_counts(
+    session: _Session, send: Callable[[HookEvent], HookResponse], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fail_transcript_reads(monkeypatch, times=1)
+    send(session.event(PRE, trigger="auto"))
+    send(session.event(START, source="compact"))
+    session.parent_boundary("boundary-1")
+
+    later = send(session.event(BEFORE, prompt="continue"))
+
+    assert session.kinds == [PRE, START, BEFORE]
+    assert CONTEXT_MARKER in _context(later)
+    assert session.variables["unlocked_tools"] == []
+
+
+def test_a_failed_settle_read_during_an_unknown_baseline_retries_at_the_next_event(
+    session: _Session, send: Callable[[HookEvent], HookResponse], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fail_transcript_reads(monkeypatch, times=2)
+    send(session.event(PRE, trigger="auto"))
+    send(session.event(START, source="compact"))
+    session.parent_boundary("boundary-1")
+
+    failed = send(session.event(BEFORE, prompt="first"))
+    recovered = send(session.event(BEFORE, prompt="second"))
+
+    assert CONTEXT_MARKER not in _context(failed)
+    assert session.kinds == [BEFORE, PRE, START, BEFORE]
+    assert CONTEXT_MARKER in _context(recovered)
+
+
+def test_a_parent_boundary_written_before_an_unknown_baseline_is_not_replayed(
+    session: _Session, send: Callable[[HookEvent], HookResponse], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session.parent_boundary("boundary-0", at=datetime(2000, 1, 1, tzinfo=UTC))
+    _fail_transcript_reads(monkeypatch, times=1)
+    send(session.event(PRE, trigger="auto"))
+    send(session.event(START, source="compact"))
+
+    subagent_only = send(session.event(BEFORE, prompt="subagent-only"))
+
+    assert session.kinds == [BEFORE]
+    assert CONTEXT_MARKER not in _context(subagent_only)
+    assert session.variables["unlocked_tools"] == ["mcp__gobby__call_tool"]
+
+
+def test_a_failed_manual_tails_read_keeps_the_subagent_lifecycle_held(
+    session: _Session, send: Callable[[HookEvent], HookResponse], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tails = datetime(2026, 11, 4, 12, 0, 0, tzinfo=UTC)
+    _fix_clock(monkeypatch, tails)
+    send(session.event(PRE, trigger="manual"))
+    session.parent_boundary("manual-boundary", at=tails - timedelta(seconds=1))
+    _fail_transcript_reads(monkeypatch, times=1)
+    send(session.event(START, source="compact"))
+
+    send(session.event(PRE, trigger="auto"))
+    send(session.event(START, source="compact"))
+    settled = send(session.event(BEFORE, prompt="continue"))
+
+    # The manual pair ran immediately. The subagent's held pair never runs: the manual boundary
+    # was written before the failed read, so the main event settles with nothing new to replay.
+    assert session.kinds == [PRE, START, BEFORE]
+    assert CONTEXT_MARKER not in _context(settled)
+
+    send(session.event(PRE, trigger="auto"))
+    session.parent_boundary("parent-boundary")
+    send(session.event(BEFORE, prompt="parent"))
+
+    assert session.kinds == [PRE, START, BEFORE, PRE, BEFORE]
+
+
+def test_a_boundary_in_the_first_hooks_millisecond_counts_as_new(
+    session: _Session, send: Callable[[HookEvent], HookResponse], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The receive time floors to its millisecond. A boundary written 300us earlier in that
+    # millisecond counts as new, so one parent reset repeats. This pins that direction.
+    received = datetime(2026, 11, 4, 12, 0, 0, 123456, tzinfo=UTC)
+    _fix_clock(monkeypatch, received)
+    session.parent_boundary("boundary-0", at=received - timedelta(microseconds=300))
+    _fail_transcript_reads(monkeypatch, times=1)
+    send(session.event(PRE, trigger="auto"))
+    send(session.event(START, source="compact"))
+
+    later = send(session.event(BEFORE, prompt="continue"))
+
+    assert session.kinds == [PRE, START, BEFORE]
     assert CONTEXT_MARKER in _context(later)
