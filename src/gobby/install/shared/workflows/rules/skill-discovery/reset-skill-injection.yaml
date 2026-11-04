@@ -1,4 +1,4 @@
-version: "1.0.1"
+version: "1.1.0"
 tags: [skill-discovery, context, gobby, default]
 
 rules:
@@ -20,6 +20,9 @@ rules:
         value: []
       - type: set_variable
         variable: loaded_skill_references
+        value: []
+      - type: set_variable
+        variable: unavailable_instructions
         value: []
       # A stale true here would let the first commit after a compact through on
       # a review from before the reset, since reloading the skill satisfies

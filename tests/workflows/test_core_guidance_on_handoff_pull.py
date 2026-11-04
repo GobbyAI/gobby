@@ -1,49 +1,55 @@
-"""Core guidance is requested on the turn that carries a pending handoff pull.
+"""After a compaction, one instruction bundle follows the handoff pull.
 
-After a compaction the first turn both owes ``get_handoff`` and starts a fresh
-context epoch with an empty skill ledger. The bundled turn-start guidance must
-fire on that turn, while the pull gate still sequences the loads after the pull.
+The first post-compact turn owes ``get_handoff`` and starts a fresh context
+epoch with an empty skill ledger. The bundled rules must ask for every owed
+instruction in one ``get_skill(names=[...])`` call delivered with the pull's
+result, so the context costs the pull plus one load, and no skill or
+reference gate refuses work once that load completes.
 """
 
 from __future__ import annotations
 
+import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
+SEAT_PROCEDURE = "gobby:references/agents/messaging.md"
+SEAT_REFERENCE = "gobby:references/tasks/overview.md"
+OWED = [
+    "gobby:references/memory/overview.md",
+    "brevity",
+    "restraint",
+    "gobby:references/development/obligations.md",
+    "gobby:references/code-index/overview.md",
+    "gobby:references/plan/overview.md",
+    SEAT_PROCEDURE,
+    SEAT_REFERENCE,
+]
+_BATCH_CALL = re.compile(r'call_tool\("gobby-skills", "get_skill", (\{"names":\[[^\]]*\]\})\)')
 
 
-def _turn_start_skill_targets() -> set[str]:
-    targets: set[str] = set()
-    for path in sorted(get_bundled_rules_path().rglob("*.yaml")):
-        document = yaml.safe_load(path.read_text())
-        if not isinstance(document, dict):
-            continue
-        for rule in (document.get("rules") or {}).values():
-            if not isinstance(rule, dict) or rule.get("event") != "turn_start":
-                continue
-            for effect in rule.get("effects") or []:
-                if isinstance(effect, dict) and effect.get("type") == "load_skill":
-                    targets.add(str(effect["skill"]))
-    return targets
-
-
-def _fresh_epoch_variables() -> dict[str, Any]:
+def _post_compact_variables(*, pull_pending: bool) -> dict[str, Any]:
     return {
-        "handoff_pull_pending": True,
+        "handoff_pull_pending": pull_pending,
         "loaded_skills": [],
         "loaded_skill_references": [],
+        "claimed_task_is_source_work": True,
+        "code_index_available": True,
+        "plan_mode": True,
+        "plan_skill_directive_delivered": True,
+        "_seat_procedure": SEAT_PROCEDURE,
+        "_seat_references": [SEAT_REFERENCE],
     }
 
 
@@ -57,6 +63,33 @@ def _event(event_type: HookEventType, data: dict[str, Any] | None = None) -> Hoo
     )
 
 
+def _mcp_event(event_type: HookEventType, server: str, tool: str, **extra: Any) -> HookEvent:
+    return _event(
+        event_type,
+        {
+            "tool_name": "mcp__gobby__call_tool",
+            "canonical_tool_kind": "mcp",
+            "mcp_server": server,
+            "mcp_tool": tool,
+            "tool_input": {"server_name": server, "tool_name": tool, "arguments": {}},
+            **extra,
+        },
+    )
+
+
+def _load_calls(text: str | None) -> list[list[str]]:
+    return [json.loads(match)["names"] for match in _BATCH_CALL.findall(text or "")]
+
+
+def _loaded(variables: dict[str, Any], names: list[str]) -> dict[str, Any]:
+    return {
+        **variables,
+        "handoff_pull_pending": False,
+        "loaded_skills": [name for name in names if ":" not in name],
+        "loaded_skill_references": [name for name in names if ":" in name],
+    }
+
+
 @pytest.fixture
 def engine(temp_db: HubDatabase) -> RuleEngine:
     sync_bundled_rules(temp_db)
@@ -64,35 +97,89 @@ def engine(temp_db: HubDatabase) -> RuleEngine:
 
 
 @pytest.mark.asyncio
-async def test_pending_pull_turn_requests_core_guidance(engine: RuleEngine) -> None:
-    targets = _turn_start_skill_targets()
-    assert targets
-
-    response = await engine.evaluate(
+async def test_post_compact_costs_the_pull_plus_one_load(engine: RuleEngine) -> None:
+    pending = _post_compact_variables(pull_pending=True)
+    first_turn = await engine.evaluate(
         _event(HookEventType.BEFORE_AGENT, {"prompt": "continue"}),
         session_id=SESSION_ID,
-        variables=_fresh_epoch_variables(),
+        variables=pending,
     )
+    assert '"get_skill"' not in (first_turn.context or "")
 
-    context = response.context or ""
-    requested = {target for target in targets if skill_fetch_directive(target) in context}
-    assert requested, "no turn-start guidance was requested while the pull was pending"
+    pulled = await engine.evaluate(
+        _mcp_event(
+            HookEventType.AFTER_TOOL,
+            "gobby-sessions",
+            "get_handoff",
+            tool_output={"success": True, "result": {"found": True, "handoff": "state"}},
+        ),
+        session_id=SESSION_ID,
+        variables={**pending, "handoff_pull_pending": False},
+    )
+    assert _load_calls(pulled.context) == [OWED]
+    assert (pulled.context or "").count("call_tool(") == 1
 
-
-@pytest.mark.asyncio
-async def test_guidance_loads_still_wait_for_the_pull(engine: RuleEngine) -> None:
-    response = await engine.evaluate(
+    loaded = _loaded(pending, OWED)
+    gated = [
         _event(
             HookEventType.BEFORE_TOOL,
             {
-                "tool_name": "mcp__gobby__call_tool",
-                "mcp_server": "gobby-skills",
-                "mcp_tool": "get_skill_file",
-                "tool_input": {"server_name": "gobby-skills", "tool_name": "get_skill_file"},
+                "tool_name": "Write",
+                "canonical_tool_kind": "write",
+                "canonical_file_path": "/repo/.gobby/plans/draft.md",
+                "tool_input": {"file_path": "/repo/.gobby/plans/draft.md", "content": "x"},
             },
         ),
+        _event(
+            HookEventType.BEFORE_TOOL,
+            {
+                "tool_name": "Grep",
+                "canonical_tool_kind": "search",
+                "tool_input": {"pattern": "needle", "path": "src"},
+            },
+        ),
+        _mcp_event(HookEventType.BEFORE_TOOL, "gobby-tasks", "get_task"),
+        _event(HookEventType.BEFORE_AGENT, {"prompt": "next"}),
+    ]
+    for event in gated:
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=loaded)
+        assert "get_skill" not in (response.reason or ""), event.data
+        assert "get_skill" not in (response.context or ""), event.data
+
+
+@pytest.mark.asyncio
+async def test_cold_start_names_every_owed_instruction_in_one_call(engine: RuleEngine) -> None:
+    response = await engine.evaluate(
+        _event(HookEventType.BEFORE_AGENT, {"prompt": "start"}),
         session_id=SESSION_ID,
-        variables=_fresh_epoch_variables(),
+        variables=_post_compact_variables(pull_pending=False),
+    )
+
+    assert _load_calls(response.context) == [OWED]
+
+
+@pytest.mark.asyncio
+async def test_unavailable_instruction_is_not_requested_again(engine: RuleEngine) -> None:
+    variables = {
+        **_post_compact_variables(pull_pending=False),
+        "unavailable_instructions": [SEAT_REFERENCE],
+    }
+
+    response = await engine.evaluate(
+        _event(HookEventType.BEFORE_AGENT, {"prompt": "start"}),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+
+    assert _load_calls(response.context) == [[name for name in OWED if name != SEAT_REFERENCE]]
+
+
+@pytest.mark.asyncio
+async def test_skill_loads_still_wait_for_the_pull(engine: RuleEngine) -> None:
+    response = await engine.evaluate(
+        _mcp_event(HookEventType.BEFORE_TOOL, "gobby-skills", "get_skill"),
+        session_id=SESSION_ID,
+        variables=_post_compact_variables(pull_pending=True),
     )
 
     assert response.decision == "block"

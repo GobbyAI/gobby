@@ -90,3 +90,16 @@ def test_failed_batch_result_credits_nothing() -> None:
     detect_mcp_call(_after_get_skill(output), variables, SESSION_ID)
 
     assert variables.get("loaded_skills", []) == []
+
+
+def test_unavailable_identities_are_noted_so_they_are_not_requested_again() -> None:
+    variables: dict[str, Any] = {}
+    output = _page([_item("brevity", "b")], ["brevity"], None)
+    output["result"]["unavailable"] = [
+        {"identity": "gobby:references/a.md", "error_code": "not_found", "message": "File not found"}
+    ]
+
+    detect_mcp_call(_after_get_skill(output), variables, SESSION_ID)
+
+    assert variables["loaded_skills"] == ["brevity"]
+    assert variables["unavailable_instructions"] == ["gobby:references/a.md"]

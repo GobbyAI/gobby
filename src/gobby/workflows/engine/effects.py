@@ -111,8 +111,9 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                 )
                 # Per-turn injections (brevity, memory, task context) stay un-tagged.
                 # Handoff markdown is pull-only via get_handoff; see
-                # docs/contracts/session-boundary.md.
-                context_parts.append((f"rule:{row.name}", template_text))
+                # docs/contracts/session-boundary.md. A blank render injects nothing.
+                if template_text and template_text.strip():
+                    context_parts.append((f"rule:{row.name}", template_text))
 
         elif effect.type == "set_display_content":
             display_content = await offload(

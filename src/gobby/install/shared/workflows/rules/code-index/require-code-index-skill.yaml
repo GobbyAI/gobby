@@ -1,3 +1,4 @@
+version: "1.1.0"
 tags: [code-index, gobby, default]
 
 # Observation-shape classification (task #21614):
@@ -139,6 +140,8 @@ rules:
         "gobby-skills/get_skill_file",
         {"name": "gobby", "path": "references/code-index/overview.md"}
       )
+      and 'gobby:references/code-index/overview.md'
+        not in (variables.get('unavailable_instructions') or [])
       and not variables.get('code_index_preflight_warning')
       and navigation_requires_index(event.data)
     effects:
