@@ -248,3 +248,42 @@ def test_retry_limit_is_restricted_to_before_tool_rules(event: RuleTriggerEvent)
             retry_limit=True,
             effects=[RuleEffect(type="block", reason="Stop retrying.")],
         )
+
+
+@pytest.mark.asyncio
+async def test_a_rule_variable_cannot_shadow_block_state(temp_db: HubDatabase) -> None:
+    """A rule writing a variable named ``block_state`` leaves later rules the real budget."""
+    rules = RuleDefinitionManager(temp_db)
+    rules.create(
+        name="fixture-block-state-writer",
+        definition_json=RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            mandatory=True,
+            effects=[
+                RuleEffect(
+                    type="set_variable",
+                    variable="block_state",
+                    value={"consecutive_tool_blocks": 99},
+                )
+            ],
+        ).model_dump_json(),
+        enabled=True,
+        priority=10,
+    )
+    rules.create(
+        name="fixture-block-state-reader",
+        definition_json=RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            mandatory=True,
+            when="block_state.get('consecutive_tool_blocks', 0) == 99",
+            effects=[RuleEffect(type="block", reason="Shadowed block_state")],
+        ).model_dump_json(),
+        enabled=True,
+        priority=20,
+    )
+
+    variables: dict[str, Any] = {}
+    result = await RuleEngine(temp_db).evaluate(_retry_event("Read"), SESSION_ID, variables)
+
+    assert variables.get("block_state") == {"consecutive_tool_blocks": 99}
+    assert (result.decision, result.reason) == ("allow", None)

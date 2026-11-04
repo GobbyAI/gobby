@@ -574,7 +574,7 @@ class EvaluationMixin:
             )
             ctx["event"] = freeze_evaluation_value(evaluation.event)
             project_snapshot = evaluation.rule_project_snapshot
-        protected_keys = {"variables", "event", "tool_input", "source", "project"}
+        protected_keys = {"variables", "event", "tool_input", "source", "project", "block_state"}
         protected_keys.update(evaluation.eval_context or {})
 
         for row, body in rules:
