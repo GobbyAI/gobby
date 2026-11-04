@@ -104,6 +104,9 @@ IMPECCABLE_RELEASE = ImpeccableRelease(
     lockfile_sha256="a0aa57fb46ee4cbeb348e60f55df54c76eacc16fc8acc163a2b58c6b686d7ed6",
 )
 IMPECCABLE_NODE_MIN_VERSION = "22.12.0"
+OCR_PACKAGE = "@alibaba-group/open-code-review"
+OCR_VERSION = "1.13.5"
+_OCR_VERSION_PATTERN = re.compile(r"^open-code-review v(?P<version>\d+\.\d+\.\d+)\b", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -248,6 +251,7 @@ def collect_dependency_report(
     *,
     managed_services: bool,
     include_srt: bool,
+    include_ocr: bool = False,
     deadline: float | None = None,
 ) -> DependencyReport:
     """Collect every shared dependency contract and service runtime version.
@@ -267,6 +271,8 @@ def collect_dependency_report(
     probes["node"] = node_dependency_status
     if include_srt:
         probes["srt"] = srt_dependency_status
+    if include_ocr:
+        probes["ocr"] = ocr_dependency_status
     probes["impeccable"] = impeccable_dependency_status
     probes["docker_compose"] = lambda: _command_status(
         name="Docker Compose",
@@ -297,7 +303,9 @@ def collect_dependency_report(
     }
     docker_running = running.collect()
     required = {
-        name: statuses[name] for name in ("git", "node", "srt", "impeccable") if name in statuses
+        name: statuses[name]
+        for name in ("git", "node", "srt", "ocr", "impeccable")
+        if name in statuses
     }
     compose = statuses["docker_compose"]
     if managed_services:
@@ -506,6 +514,59 @@ def srt_dependency_status() -> DependencyStatus:
         minimum_version=None,
         expected_version=SRT_RELEASE.version,
         path=str(installation.root),
+        error=None,
+    )
+
+
+def ocr_dependency_status() -> DependencyStatus:
+    """Return exact-version status for the OCR CLI on PATH."""
+    raw_path = shutil.which("ocr")
+    if raw_path is None:
+        return DependencyStatus(
+            state="missing",
+            installed_version=None,
+            minimum_version=None,
+            expected_version=OCR_VERSION,
+            path=None,
+            error=(f"OCR is missing; requires =={OCR_VERSION}. Run `gobby install` to install it."),
+        )
+    path = str(Path(raw_path).resolve(strict=False))
+    try:
+        output, failure = _probe_output(path, ("--version",))
+    except subprocess.TimeoutExpired:
+        failure, output = "timed out after 10s", None
+    match = _OCR_VERSION_PATTERN.search(output or "")
+    if failure is not None or match is None:
+        return DependencyStatus(
+            state="invalid",
+            installed_version=None,
+            minimum_version=None,
+            expected_version=OCR_VERSION,
+            path=path,
+            error=(
+                f"OCR version check failed at {path} ({failure or 'unreadable version'}); "
+                f"requires =={OCR_VERSION}. Run `gobby install` to repair."
+            ),
+        )
+    installed = match["version"]
+    if installed != OCR_VERSION:
+        return DependencyStatus(
+            state="outdated",
+            installed_version=installed,
+            minimum_version=None,
+            expected_version=OCR_VERSION,
+            path=path,
+            error=(
+                f"OCR is {installed} at {path}; requires =={OCR_VERSION}. "
+                "Run `gobby install` to update it."
+            ),
+        )
+    return DependencyStatus(
+        state="healthy",
+        installed_version=installed,
+        minimum_version=None,
+        expected_version=OCR_VERSION,
+        path=path,
         error=None,
     )
 

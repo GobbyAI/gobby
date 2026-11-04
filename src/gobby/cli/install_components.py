@@ -36,6 +36,7 @@ from ._install_prompts import (
 from .install_setup import configure_ide_terminals, provision_impeccable
 from .install_setup_gmcp import daemon_start_argv, write_daemon_start_command
 from .install_setup_impeccable import remove_impeccable_runtime
+from .install_setup_ocr import OcrInstallError, install_ocr_cli
 from .install_setup_rtk import (
     RtkInstallStatus,
     disable_rule_if_present,
@@ -78,6 +79,7 @@ COMPONENTS: tuple[str, ...] = (
     "gmcp",
     "gterm",
     "srt",
+    "ocr",
 )
 CLI_COMPONENTS: frozenset[str] = frozenset({"claude", "codex", "grok", "droid", "agy"})
 # Components that leave something behind to remove. voice, embedding, and
@@ -110,6 +112,7 @@ COMPONENT_LABELS: dict[str, str] = {
     "gmcp": "gmcp",
     "gterm": "gterm",
     "srt": "SRT runner",
+    "ocr": "OCR CLI",
 }
 
 _CLI_INSTALLERS: dict[str, Callable[..., dict[str, Any]]] = {
@@ -324,6 +327,17 @@ def run_install_components(
                 "path": str(srt.path),
                 "version": srt.version,
                 "installed": srt.installed,
+            }
+        elif name == "ocr":
+            try:
+                ocr = install_ocr_cli()
+            except OcrInstallError as exc:
+                raise click.ClickException(f"Failed to install OCR CLI: {exc}") from exc
+            results["ocr"] = {
+                "success": True,
+                "path": str(ocr.path),
+                "version": ocr.version,
+                "installed": ocr.installed,
             }
         else:
             raise click.UsageError(f"Unknown component: {name}")

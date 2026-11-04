@@ -46,6 +46,8 @@ services:
       # Auth disabled for local-only access (no TLS = no point in API key)
       # To enable: set QDRANT__SERVICE__API_KEY and configure TLS
       - QDRANT__LOG_LEVEL=${GOBBY_QDRANT_LOG_LEVEL:-WARN}
+      # The open-source image sends anonymous usage statistics unless this is set.
+      - QDRANT__TELEMETRY_DISABLED=true
     volumes:
       - gobby_qdrant_data:/qdrant/storage
     healthcheck:

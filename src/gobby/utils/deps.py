@@ -699,6 +699,7 @@ def collect_all_deps(db: HubDatabase, *, managed_services: bool) -> dict[str, An
         # the daemon verified SRT fail-closed before launching it; only unsandboxed status
         # can observe the installation.
         include_srt=managed_grant_path() is None,
+        include_ocr=True,
         deadline=deadline,
     )
     results = batch.collect()

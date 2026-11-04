@@ -177,6 +177,15 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
         action = "Installed" if srt_result.installed else "Verified"
         click.echo(f"{action} managed Sandbox Runtime {srt_result.version}: {srt_result.path}")
 
+    from .install_setup_ocr import OcrInstallError, install_ocr_cli
+
+    try:
+        ocr_result = install_ocr_cli()
+    except OcrInstallError as exc:
+        raise click.ClickException(f"Failed to install OCR CLI: {exc}") from exc
+    ocr_action = "Installed" if ocr_result.installed else "Verified"
+    click.echo(f"{ocr_action} OCR CLI {ocr_result.version}: {ocr_result.path}")
+
     homebrew_mode = is_homebrew_distribution()
     provision_impeccable(project_path)
 
