@@ -16,7 +16,6 @@ from gobby.agents.model_defaults import (
     is_denylisted,
     model_defaults_from_policy,
 )
-from gobby.agents.provider_rotation import model_for_provider
 from gobby.agents.reasoning import SpawnReasoningResolution, resolve_spawn_reasoning
 from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
     incompatible_spawn_model_provider_after_recollect,
@@ -85,9 +84,10 @@ async def resolve_launch_model(
     """Resolve the run's model chain and reasoning for ``provider``. Raises ``LaunchRefused``.
 
     The model is the first of: the spawn's ``model``; the policy map entry for this agent, when
-    the entry names ``provider``; the definition's model, moved to ``provider`` at its tier;
-    otherwise a refusal. A denylisted policy or definition model is refused, while an explicit
-    spawn model is not checked. ``model_chain`` is the primary choice, then the entry's fallbacks.
+    the entry names ``provider``; the definition's model as declared; otherwise a refusal. A
+    model that ``provider`` does not serve is refused, never substituted. A denylisted policy or
+    definition model is refused, while an explicit spawn model is not checked. ``model_chain``
+    is the primary choice, then the entry's fallbacks.
     """
     agent_name = agent_body.name if agent_body is not None else None
     owner = f"agent {agent_name!r}" if agent_body else "this spawn"
@@ -109,29 +109,9 @@ async def resolve_launch_model(
             policy_entry = candidate
     effective_model = explicit_model if policy_entry is None else policy_entry.model
     if effective_model is None and agent_body:
-        agent_model = _normalize_optional_model(agent_body.model)
-        if agent_model is not None:
-            # The agent names one model, but the provider it lands on need not be
-            # the one that model belongs to: the spawn may override the provider,
-            # and `provider: inherit` follows the spawning session. Resolve the
-            # target provider's model at the same tier rather than leaving the
-            # model unset for that CLI's configured default to fill in.
-            effective_model = model_for_provider(
-                target_provider=provider,
-                declared_model=agent_model,
-            )
-            if effective_model is None:
-                raise LaunchRefused(
-                    {
-                        "success": False,
-                        "error": (
-                            f"Agent {agent_body.name!r} declares model {agent_model!r}, which "
-                            f"belongs to another provider and has no {provider} "
-                            f"equivalent. Pass an explicit model for {provider} "
-                            "instead of leaving it to the provider's default."
-                        ),
-                    }
-                )
+        # The definition's model runs as declared. A provider that does not serve it is
+        # refused by the compatibility check below, never swapped for a profile peer.
+        effective_model = _normalize_optional_model(agent_body.model)
     if effective_model is None:
         raise LaunchRefused(
             {

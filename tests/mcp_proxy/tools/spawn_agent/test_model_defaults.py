@@ -8,13 +8,14 @@ from typing import Any
 
 import pytest
 
-from gobby.agents import reasoning
+from gobby.agents import provider_rotation, reasoning
 from gobby.agents.model_defaults import (
     ModelChoice,
     ModelDefaults,
     is_denylisted,
     model_defaults_from_policy,
 )
+from gobby.config.feature_base import FeatureCandidateConfig, FeatureProfile
 from gobby.mcp_proxy.tools.spawn_agent import _launch_settings
 from gobby.mcp_proxy.tools.spawn_agent._launch_settings import (
     LaunchModel,
@@ -23,6 +24,7 @@ from gobby.mcp_proxy.tools.spawn_agent._launch_settings import (
     load_model_defaults,
     resolve_launch_model,
 )
+from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import INCOMPATIBLE_MODEL_PROVIDER
 from gobby.providers.capabilities.models import (
     ModelCapability,
     ProviderSnapshot,
@@ -38,6 +40,7 @@ _MAP_MODEL = "claude-opus-5-5"
 _DEF_MODEL = "claude-haiku-5-5"
 _FALLBACK = "claude-sonnet-5-5"
 _DENIED = "claude-fable-5-1"
+_PEER_MODEL = "gpt-peer-test"
 
 
 class _Store:
@@ -147,6 +150,29 @@ async def test_definition_model_is_used_when_map_has_no_entry(
     launch = await _resolve(body, defaults=_policy({"seat-beta": _entry(_MAP_MODEL)}))
 
     assert launch.model == _DEF_MODEL
+
+
+@pytest.mark.asyncio
+async def test_profile_candidates_cannot_swap_a_definition_model_for_a_peer(
+    claude_reasoning: None,
+    build_agent_body: Callable[..., AgentDefinitionBody],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile tier that pairs the definition's model with another provider's model cannot
+    change the fallback: the launch on that provider is refused, not run on the peer."""
+    profiles = {
+        FeatureProfile.LOW: (
+            FeatureCandidateConfig(candidate=f"claude/{_DEF_MODEL}"),
+            FeatureCandidateConfig(candidate=f"codex/{_PEER_MODEL}"),
+        ),
+    }
+    monkeypatch.setattr(provider_rotation, "DEFAULT_PROFILE_CANDIDATES", profiles)
+    body = build_agent_body(name="seat-alpha", provider="claude", model=_DEF_MODEL)
+
+    with pytest.raises(LaunchRefused) as refused:
+        await _resolve(body, provider="codex")
+
+    assert refused.value.response["error_code"] == INCOMPATIBLE_MODEL_PROVIDER
 
 
 @pytest.mark.asyncio
