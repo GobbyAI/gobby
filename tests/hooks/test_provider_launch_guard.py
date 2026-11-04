@@ -783,6 +783,9 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "agy --help",
         "codex help",
         "codex -V",
+        "codex --version",
+        "codex app-server --help",
+        "codex app-server -h",
         "codex login status",
         "codex help login",
         "codex help login status",
@@ -860,6 +863,12 @@ def test_administration_and_documentation(command: str) -> None:
         "claude please help",
         "codex exec help",
         "claude mcp add --scope user --help",
+        # app-server takes launch options; only its bare help form is exempt.
+        "codex app-server",
+        "codex app-server help",
+        "codex app-server --listen stdio:// --help",
+        "codex app-server --help && codex exec hi",
+        "codex --version && codex exec hi",
     ],
 )
 def test_help_does_not_exempt_launch_operands(command: str) -> None:

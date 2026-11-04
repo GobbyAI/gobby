@@ -61,6 +61,8 @@ _SUBCOMMANDS: dict[str, _Subcommands] = {
         "mcp": {**_MCP, "login": {}, "logout": {}},
         "resume": {},
         "fork": {},
+        # A leaf: `app-server --help` is exempt, while its launch options stay blocked.
+        "app-server": {},
     },
     "claude": {
         "auth": {"login": {}, "logout": {}, "status": {}},
