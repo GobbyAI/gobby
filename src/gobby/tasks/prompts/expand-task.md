@@ -14,7 +14,7 @@ Respond with a JSON object containing a "subtasks" array. Each subtask has:
 | priority | integer | No | 1=High, 2=Medium (default), 3=Low |
 | task_type | string | No | "task" (default), "bug", "feature", "epic" |
 | category | string | No | Automated leaf domain: "code", "config", "docs", "planning", "refactor", "research", or "test" |
-| validation_criteria | string | No | How to verify this subtask is complete |
+| validation_criteria | string | Yes, except epics | Outline the evaluation criteria an agent will use to ensure a high-quality deliverable. Be precise. |
 | depends_on | array[int] | No | Indices (0-based) of subtasks this one depends on |
 | affected_files | array[string] | No | File paths this subtask will create or modify (relative to repo root) |
 | parallel_group | string | No | Group label for subtasks that can run in parallel (e.g., "api-endpoints", "test-suite") |
@@ -66,7 +66,7 @@ Use `depends_on` to specify execution order:
 1. **Atomicity**: Each subtask should be small enough to be completed in one session (10-30 mins of work).
 2. **Dependencies**: Use `depends_on` to enforce logical order (e.g., create file before importing it).
 3. **Context Awareness**: Reference specific existing files or functions from the provided codebase context.
-4. **Testing**: Every coding subtask should have a category and validation_criteria.
+4. **Testing**: Every non-epic subtask must have a category and validation_criteria.
 5. **Completeness**: The set of subtasks must fully accomplish the parent task.
 6. **JSON Only**: Output valid JSON with no markdown prose or explanation — anything else breaks the parser. Code fences (```json) are allowed.
 7. **No Scope Creep**: Every subtask is a concrete requirement from the parent task — invented features, alternatives, "consider also adding X" suggestions, and "(Optional)" sections expand work the user never asked for. Implement exactly what is specified.

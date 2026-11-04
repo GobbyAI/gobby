@@ -552,11 +552,12 @@ class EvaluationMixin:
         ctx = evaluation.rule_context
         allowed_funcs = evaluation.rule_allowed_funcs
         if ctx is None or allowed_funcs is None:
+            # block_state is the issuing agent context's blocked-retry budget.
             ctx = await offload(
                 self._build_eval_context,
                 evaluation.event,
                 evaluation.variables,
-                evaluation.eval_context,
+                {**(evaluation.eval_context or {}), "block_state": evaluation.block_state},
             )
             allowed_funcs = await offload(self._build_allowed_funcs, ctx)
             evaluation.rule_context = ctx

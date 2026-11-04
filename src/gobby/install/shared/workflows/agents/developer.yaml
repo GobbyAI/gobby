@@ -1,5 +1,5 @@
 name: developer
-version: "2.1.1"
+version: "2.2.0"
 description: Implements and tests a task; the daemon hands its claim to independent review.
 tags:
 - gobby
@@ -43,6 +43,8 @@ prompts:
     Implement and test the assigned task in its registered worktree. Claim before edits.
     Read the task, project_policy, directory instructions, development obligations,
     TDD and language skills. Preserve foreign work and commit only owned paths.
+    Read the task with get_task(brief=false) and work against every validation criterion:
+    plan the change and self-review the candidate against each one.
 
     ## Evidence and claim flow
     Use record_attestation with result approved or rejected, following each kind's guidance.
@@ -79,6 +81,8 @@ prompts:
     Implement and test the assigned task in its registered worktree. Claim before edits.
     Read the task, project_policy, directory instructions, development obligations,
     TDD and language skills. Preserve foreign work and commit only owned paths.
+    Read the task with get_task(brief=false) and work against every validation criterion:
+    plan the change and self-review the candidate against each one.
 
     ## Evidence and claim flow
     Use record_attestation with result approved or rejected, following each kind's guidance.
