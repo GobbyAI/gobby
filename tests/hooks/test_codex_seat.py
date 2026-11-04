@@ -16,6 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.hooks.codex_seat import (
+    codex_clear_activity_search,
     codex_seat_available,
     codex_seat_owner,
     codex_thread_originator,
@@ -23,7 +24,11 @@ from gobby.hooks.codex_seat import (
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     discover_and_bind_external_terminal,
 )
-from gobby.hooks.terminal_context import SeatOwner
+from gobby.hooks.terminal_context import (
+    CODEX_CLEAR_ORIGIN_KEY,
+    SeatOwner,
+    enrich_terminal_context_with_cwd,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
@@ -165,6 +170,61 @@ def test_thread_originator_is_unknown_without_a_readable_rollout(tmp_path: Path)
     assert codex_thread_originator(None, THREAD_ID) is None
     assert codex_thread_originator(str(tmp_path / "missing.jsonl"), THREAD_ID) is None
     assert codex_thread_originator(str(tmp_path), THREAD_ID) is None
+
+
+@pytest.mark.parametrize(
+    ("recorded", "rollout_originator", "expected"),
+    [
+        ({}, "codex-tui", None),
+        ({CODEX_CLEAR_ORIGIN_KEY: "codex-tui"}, "codex-tui", None),
+        ({CODEX_CLEAR_ORIGIN_KEY: "codex_vscode"}, "codex-tui", (False, False, "codex_vscode")),
+        ({CODEX_CLEAR_ORIGIN_KEY: "pending", "parent_pid": SEAT_PID}, "codex-tui", None),
+        ({CODEX_CLEAR_ORIGIN_KEY: "pending"}, None, (False, False, "pending")),
+        ({CODEX_CLEAR_ORIGIN_KEY: "pending"}, "codex_vscode", (False, False, "codex_vscode")),
+        ({CODEX_CLEAR_ORIGIN_KEY: "pending"}, "codex-tui", (True, True, "codex-tui")),
+    ],
+    ids=[
+        "no-clear",
+        "tui-settled",
+        "other-client-settled",
+        "pending-with-seat",
+        "pending-no-rollout",
+        "pending-other-client",
+        "pending-tui",
+    ],
+)
+def test_clear_activity_search_rechecks_only_a_pending_origin(
+    session_manager: SessionManager,
+    tmp_path: Path,
+    recorded: dict[str, Any],
+    rollout_originator: str | None,
+    expected: tuple[bool, bool, str] | None,
+) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    if rollout_originator is not None:
+        meta = {"id": THREAD_ID, "originator": rollout_originator}
+        rollout.write_text(json.dumps({"type": "session_meta", "payload": meta}) + "\n")
+
+    search = codex_clear_activity_search(
+        session_manager.db, LOCAL_MACHINE_ID, recorded, str(rollout), THREAD_ID
+    )
+
+    if expected is None:
+        assert search is None
+        return
+    assert search is not None
+    searches, has_owner, origin = expected
+    assert (search.thread_id == THREAD_ID) is searches
+    assert (search.thread_id is None) is not searches
+    assert (search.owner is not None) is has_owner
+    assert search.origin == origin
+
+
+def test_hook_payload_cannot_carry_a_clear_origin() -> None:
+    enriched = enrich_terminal_context_with_cwd(
+        {CODEX_CLEAR_ORIGIN_KEY: "pending", "tty": "/dev/ttys004"}, "/repo"
+    )
+    assert enriched == {"tty": "/dev/ttys004", "cwd": "/repo"}
 
 
 @pytest.mark.timeout(10)

@@ -45,8 +45,14 @@ class SeatOwner(Enum):
 
 # Classify the seat TUI with this pid and create time. A thread started by /clear inside
 # a running seat supplies it: the predecessor thread owns that seat, so the successor
-# adopts the one seat in its cwd that any session owns or may own, if it is recorded.
+# adopts the cwd's only seat TUI when its owner is recorded.
 SeatOwnerCheck = Callable[[int, float], SeatOwner]
+
+# The daemon records a Codex /clear successor's rollout originator under this key. While
+# the rollout is unwritten it holds the pending marker, and later activity checks again.
+# Only the daemon writes it: hook payloads never carry it through.
+CODEX_CLEAR_ORIGIN_KEY = "gobby_codex_clear_origin"
+CODEX_CLEAR_ORIGIN_PENDING = "pending"
 
 # Every key ghook derives from its own process and environment. Under a shared Codex
 # app-server host those values describe the host, never the seat that fired the hook.
@@ -163,6 +169,7 @@ def enrich_terminal_context_with_cwd(
         return {"cwd": cwd_text} if cwd_text else None
 
     enriched = dict(terminal_context)
+    enriched.pop(CODEX_CLEAR_ORIGIN_KEY, None)
     if cwd_text and not _non_empty_str(enriched.get("cwd")):
         enriched["cwd"] = cwd_text
     if machine_id and machine_id != get_machine_id():

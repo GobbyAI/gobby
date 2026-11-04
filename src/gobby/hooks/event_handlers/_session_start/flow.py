@@ -8,17 +8,14 @@ from typing import Any, cast
 
 import psycopg
 
-from gobby.hooks.codex_seat import (
-    CODEX_TUI_ORIGINATOR,
-    codex_seat_owner,
-    codex_thread_originator,
-)
+from gobby.hooks.codex_seat import codex_clear_seat_search
 from gobby.hooks.envelope_dedupe import bump_stop_replay_epoch
 from gobby.hooks.events import ContextPart, HookEvent, HookResponse, require_hook_machine_id
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.hooks.session_binding import bound_session
 from gobby.hooks.terminal_context import (
+    CODEX_CLEAR_ORIGIN_KEY,
     enrich_terminal_context_with_cwd,
     hook_cwd,
     hook_sandbox_enabled,
@@ -144,18 +141,19 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
     seat_thread_id: str | None = external_id
     cleared_seat_owner = None
+    clear_origin: str | None = None
     if session_source == "clear" and cli_source == "codex" and handler._session_manager:
+        # Only a thread a seat TUI minted may adopt that seat; any other is tracked
+        # without a pane, and an unwritten rollout is checked again on later activity.
         raw_transcript_path = input_data.get("transcript_path")
-        originator = codex_thread_originator(
-            raw_transcript_path if isinstance(raw_transcript_path, str) else None, external_id
+        search = codex_clear_seat_search(
+            handler._session_manager.db,
+            machine_id,
+            raw_transcript_path if isinstance(raw_transcript_path, str) else None,
+            external_id,
         )
-        if originator == CODEX_TUI_ORIGINATOR:
-            # /clear in a running seat TUI mints the new thread in that same seat.
-            cleared_seat_owner = codex_seat_owner(handler._session_manager.db, machine_id)
-        else:
-            # Another Codex client, or an unverified origin: no seat TUI may claim it,
-            # so the session is tracked without a pane.
-            seat_thread_id = None
+        seat_thread_id, cleared_seat_owner = search.thread_id, search.owner
+        clear_origin = search.origin
     terminal_context = enrich_terminal_context_with_cwd(
         terminal_context,
         cwd,
@@ -163,6 +161,8 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         cleared_seat_owner=cleared_seat_owner,
         machine_id=machine_id,
     )
+    if clear_origin is not None:
+        terminal_context = {**(terminal_context or {}), CODEX_CLEAR_ORIGIN_KEY: clear_origin}
 
     if is_gobby_acp_child(terminal_context):
         handler.logger.info(

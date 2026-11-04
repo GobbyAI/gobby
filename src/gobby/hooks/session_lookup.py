@@ -10,12 +10,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from gobby.hooks.codex_seat import codex_seat_available
+from gobby.hooks.codex_seat import codex_clear_activity_search, codex_seat_available
+from gobby.hooks.event_handlers._session_start.terminal_runtime import bind_discovered_terminal
 from gobby.hooks.events import HookEvent, HookEventType, require_hook_machine_id
 from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_project_context
 from gobby.hooks.session_binding import bound_session
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.terminal_context import (
+    CODEX_CLEAR_ORIGIN_KEY,
     enrich_terminal_context_with_cwd,
     hook_cwd,
     is_gobby_acp_child,
@@ -28,6 +30,7 @@ from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._constants import TERMINAL_SESSION_STATUSES
 from gobby.storage.sessions._contested_expiry import session_has_active_native_subagent
 from gobby.storage.sessions._registration_cache import session_matches_registration
+from gobby.storage.terminals import TerminalManager
 from gobby.tasks.state_semantics import serialize_task_state
 
 if TYPE_CHECKING:
@@ -344,12 +347,40 @@ class SessionLookupService:
         """
         raw_context = event.data.get("terminal_context")
         terminal_context = raw_context if isinstance(raw_context, dict) else None
+        clear_search = None
+        if (
+            event.source.value == "codex"
+            and event.machine_id
+            and event.event_type != HookEventType.SESSION_END
+        ):
+            recorded = (
+                current
+                if current is not None and current.id == platform_session_id
+                else self._session_manager.get(platform_session_id)
+            )
+            if recorded is not None:
+                transcript_path = event.data.get("transcript_path")
+                clear_search = codex_clear_activity_search(
+                    self._session_manager.db,
+                    event.machine_id,
+                    recorded.terminal_context,
+                    transcript_path
+                    if isinstance(transcript_path, str)
+                    else recorded.transcript_path,
+                    event.session_id,
+                )
         terminal_context = enrich_terminal_context_with_cwd(
             terminal_context,
             hook_cwd(event.data, event.cwd),
-            external_id=event.session_id,
+            external_id=clear_search.thread_id if clear_search else event.session_id,
+            cleared_seat_owner=clear_search.owner if clear_search else None,
             machine_id=event.machine_id,
         )
+        if clear_search is not None:
+            terminal_context = {
+                **(terminal_context or {}),
+                CODEX_CLEAR_ORIGIN_KEY: clear_search.origin,
+            }
         if not terminal_context:
             return current
 
@@ -374,7 +405,32 @@ class SessionLookupService:
                 title,
                 loop=getattr(self._session_coordinator, "_event_loop", None),
             )
+        if (
+            clear_search is not None
+            and clear_search.owner is not None
+            and updated_session is not None
+            and (updated_session.terminal_context or {}).get("parent_pid")
+        ):
+            updated_session = self._take_over_cleared_seat(updated_session)
         return updated_session
+
+    def _take_over_cleared_seat(self, successor: Session) -> Session:
+        """Hand a late-adopted /clear successor its predecessor's seat and pane.
+
+        SessionStart does the same when the rollout already exists at that time.
+        """
+        try:
+            self._session_manager.bind_native_clear_successor(successor.id)
+            bind_discovered_terminal(
+                TerminalManager(self._session_manager.db),
+                self._logger,
+                session_id=successor.id,
+                project_id=successor.project_id,
+                terminal_context=successor.terminal_context,
+            )
+        except Exception as exc:
+            self._logger.warning("Failed to hand cleared seat to session %s: %s", successor.id, exc)
+        return self._session_manager.get(successor.id) or successor
 
     def _resolve_session_id(
         self,

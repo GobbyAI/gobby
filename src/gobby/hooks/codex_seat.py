@@ -5,10 +5,19 @@ from __future__ import annotations
 import json
 import os
 import stat
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
-from gobby.hooks.terminal_context import SeatAvailable, SeatOwner, SeatOwnerCheck
+from gobby.hooks.terminal_context import (
+    CODEX_CLEAR_ORIGIN_KEY,
+    CODEX_CLEAR_ORIGIN_PENDING,
+    SeatAvailable,
+    SeatOwner,
+    SeatOwnerCheck,
+)
 from gobby.storage.hub.protocol import HubDatabase
 
 # Same tolerance as terminal_ownership.recorded_process_is_alive.
@@ -46,6 +55,58 @@ def codex_thread_originator(transcript_path: str | None, thread_id: str) -> str 
         return None
     originator = payload.get("originator")
     return originator if isinstance(originator, str) and originator else None
+
+
+@dataclass(frozen=True)
+class ClearSeatSearch:
+    """How a Codex /clear successor may look for its seat TUI.
+
+    ``thread_id`` is None when no seat may be searched. ``origin`` is the recorded
+    originator, or the pending marker while the rollout is not yet readable.
+    """
+
+    thread_id: str | None
+    owner: SeatOwnerCheck | None
+    origin: str
+
+
+def codex_clear_seat_search(
+    db: HubDatabase, machine_id: str, transcript_path: str | None, thread_id: str
+) -> ClearSeatSearch:
+    """Return the seat search a /clear successor is allowed, from its rollout's origin.
+
+    Only a thread a seat TUI minted may adopt that seat. Another client's thread, or
+    one whose rollout is not written yet, searches no seat.
+    """
+    originator = codex_thread_originator(transcript_path, thread_id)
+    if originator == CODEX_TUI_ORIGINATOR:
+        return ClearSeatSearch(thread_id, codex_seat_owner(db, machine_id), originator)
+    return ClearSeatSearch(None, None, originator or CODEX_CLEAR_ORIGIN_PENDING)
+
+
+def codex_clear_activity_search(
+    db: HubDatabase,
+    machine_id: str,
+    recorded_context: Mapping[str, Any] | None,
+    transcript_path: str | None,
+    thread_id: str,
+) -> ClearSeatSearch | None:
+    """Return the seat search a /clear successor's later hook is allowed.
+
+    None means ordinary resolution: the session is no /clear successor, or its seat TUI
+    origin was already settled. A pending origin is checked again, under the same rules
+    as SessionStart, until the rollout names its client. Another client's thread never
+    searches for a seat.
+    """
+    recorded = recorded_context or {}
+    origin = recorded.get(CODEX_CLEAR_ORIGIN_KEY)
+    if origin is None or origin == CODEX_TUI_ORIGINATOR:
+        return None
+    if origin == CODEX_CLEAR_ORIGIN_PENDING:
+        if recorded.get("parent_pid"):
+            return None
+        return codex_clear_seat_search(db, machine_id, transcript_path, thread_id)
+    return ClearSeatSearch(None, None, str(origin))
 
 
 def codex_seat_available(db: HubDatabase, machine_id: str) -> SeatAvailable:
