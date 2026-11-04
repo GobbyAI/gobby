@@ -18,9 +18,11 @@ from typing import Any
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, plain_text
+from gobby.agents.srt_runtime import srt_install_root
 from gobby.terminals.composer_ledger import read_composer
 from gobby.terminals.foreground import (
     command_name,
+    foreground_child_executables,
     foreground_executables,
     foreground_node_script,
     shell_pid,
@@ -106,11 +108,40 @@ def _is_versioned_claude(executable: str) -> bool:
     )
 
 
+def _is_installed_srt_runner(script: str) -> bool:
+    """Whether ``script`` is the SRT runner this install launches providers through."""
+    try:
+        installed = (srt_install_root() / "runner.mjs").resolve(strict=True)
+        return Path(script).resolve(strict=True) == installed
+    except (OSError, RuntimeError):
+        return False
+
+
+def _srt_runner_cli(pid: int) -> str | None:
+    """The agent CLI an SRT runner launched, read from its live child in the same group.
+
+    The runner's script names no provider; its child does. The child is classified like
+    any foreground executable, so only an allowlisted CLI name or a versioned Claude
+    build on disk qualifies.
+    """
+    for executable in foreground_child_executables(pid):
+        cli = _agent_cli(command_name(executable), executable)
+        if cli is not None:
+            return cli
+    return None
+
+
 def _node_agent_cli(pid: int) -> str | None:
-    """Bind node's live script to the installed Claude package's declared CLI."""
+    """Bind node's live script to the agent CLI it runs.
+
+    Either the installed Claude package's declared CLI, or Gobby's installed SRT runner
+    with its provider as a live child.
+    """
     script = foreground_node_script(pid)
     if script is None:
         return None
+    if _is_installed_srt_runner(script):
+        return _srt_runner_cli(pid)
     try:
         entrypoint = Path(script).resolve(strict=True)
         manifest_path = entrypoint.parent / "package.json"

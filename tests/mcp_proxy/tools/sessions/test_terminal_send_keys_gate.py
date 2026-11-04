@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+import psutil
 import pytest
 
 from gobby.agents.detection.safe_regex import RegexOutcome, RegexSearchResult, SafeRegex
@@ -19,6 +21,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.terminals.composer_ledger import ComposerLedger, bind_composer_ledger, read_composer
 from gobby.terminals.pane_io import SendResult, composer_gate_for_write
 from gobby.terminals.runtime import Delivered, NamedKey, SnapshotMode
+from gobby.utils.dependency_requirements import SRT_RELEASE
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -560,3 +563,135 @@ async def test_clear_key_on_an_operator_draft_still_refuses(
     assert "gobby-sessions:release_composer" in result["recovery"]
     assert pane.keys == []
     writer.assert_not_awaited()
+
+
+# An SRT-sandboxed provider runs under Gobby's Node runner. The runner leads the pane's
+# process group and the native build is its child in that same group, so the group
+# leader's command reads as ``node``. Every pid below is synthetic.
+SRT_RUNNER_PID = 4321
+SRT_CHILD_PID = 4322
+
+
+class _SrtChild:
+    def __init__(self, pid: int, exe: str, *, group: int = SRT_RUNNER_PID) -> None:
+        self.pid = pid
+        self._exe = exe
+        self.group = group
+
+    def exe(self) -> str:
+        return self._exe
+
+
+class _SrtRunner:
+    def __init__(self, children: list[_SrtChild]) -> None:
+        self._children = children
+
+    def children(self, recursive: bool = False) -> list[_SrtChild]:
+        assert recursive is False
+        return self._children
+
+
+def _native_build(tmp_path: Path) -> Path:
+    build = tmp_path / "share" / "claude" / "versions" / "2.1.318"
+    build.parent.mkdir(parents=True)
+    build.touch()
+    return build
+
+
+def _srt_pane(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, children: list[_SrtChild]) -> Path:
+    """Install a runner under GOBBY_HOME and give the runner pane these children."""
+    home = tmp_path / "home"
+    runner = home / "tools" / "srt" / SRT_RELEASE.version / "runner.mjs"
+    runner.parent.mkdir(parents=True)
+    runner.write_text("// SRT runner fixture\n")
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    groups = {SRT_RUNNER_PID: SRT_RUNNER_PID} | {child.pid: child.group for child in children}
+
+    def getpgid(pid: int) -> int:
+        if pid not in groups:
+            raise ProcessLookupError(pid)
+        return groups[pid]
+
+    monkeypatch.setattr(os, "getpgid", getpgid)
+    monkeypatch.setattr(psutil, "Process", lambda pid: _SrtRunner(children))
+    monkeypatch.setattr(
+        gate, "foreground_node_script", lambda pid: str(runner) if pid == SRT_RUNNER_PID else None
+    )
+    return runner
+
+
+@pytest.mark.asyncio
+async def test_srt_runner_admits_an_idle_composer_on_its_native_claude_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    build = _native_build(tmp_path)
+    _srt_pane(monkeypatch, tmp_path, [_SrtChild(SRT_CHILD_PID, str(build))])
+    manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"})
+
+    assert await gate.send_keys_target_refusal(SESSION_ID, manager, object()) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("child", ["none", "shell", "node", "unknown-build", "left-group"])
+async def test_srt_runner_refuses_without_a_live_agent_cli_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, child: str
+) -> None:
+    build = _native_build(tmp_path)
+    children = {
+        "none": [],
+        "shell": [_SrtChild(SRT_CHILD_PID, "/bin/sh")],
+        "node": [_SrtChild(SRT_CHILD_PID, "/opt/homebrew/bin/node")],
+        "unknown-build": [
+            _SrtChild(SRT_CHILD_PID, str(tmp_path / "share/claude/versions/2.1.999"))
+        ],
+        "left-group": [_SrtChild(SRT_CHILD_PID, str(build), group=9999)],
+    }[child]
+    _srt_pane(monkeypatch, tmp_path, children)
+    manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"})
+
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+
+    assert isinstance(refusal, gate.SendKeysRefusal)
+    assert refusal.code == "send_keys_target_unconfirmed"
+
+
+@pytest.mark.asyncio
+async def test_a_runner_copy_outside_the_installed_root_admits_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    build = _native_build(tmp_path)
+    _srt_pane(monkeypatch, tmp_path, [_SrtChild(SRT_CHILD_PID, str(build))])
+    copy = tmp_path / "elsewhere" / "runner.mjs"
+    copy.parent.mkdir()
+    copy.write_text("// copied runner\n")
+    monkeypatch.setattr(gate, "foreground_node_script", lambda pid: str(copy))
+    manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"})
+
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+
+    assert isinstance(refusal, gate.SendKeysRefusal)
+    assert refusal.code == "send_keys_target_unconfirmed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overrides", "code"),
+    [
+        pytest.param({"snapshot": "Password:"}, "send_keys_credential_prompt", id="password"),
+        pytest.param({"composer": "draft"}, "send_keys_composer_not_idle", id="human-draft"),
+        pytest.param(
+            {"snapshot": HOOK_DENIAL_OVER_LIVE_TURN}, "send_keys_composer_not_idle", id="live-turn"
+        ),
+    ],
+)
+async def test_srt_admission_leaves_the_composer_checks_in_force(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, overrides: dict[str, Any], code: str
+) -> None:
+    build = _native_build(tmp_path)
+    _srt_pane(monkeypatch, tmp_path, [_SrtChild(SRT_CHILD_PID, str(build))])
+    manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"}, **overrides)
+
+    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+
+    assert isinstance(refusal, gate.SendKeysRefusal)
+    assert refusal.code == code
