@@ -1,7 +1,7 @@
 """Tests for normalized hook terminal context."""
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -11,6 +11,7 @@ import psutil
 import pytest
 
 from gobby.hooks.terminal_context import (
+    SeatOwner,
     clear_codex_seat_index,
     enrich_terminal_context_with_cwd,
     hook_cwd,
@@ -721,6 +722,186 @@ def test_new_thread_adopts_the_human_tui_beside_a_spawned_agent_tui_past_the_win
     assert result == _seat_context(
         70100, tty="/dev/ttys004", terminal_id="pane-human", create_time=SLOW_SEAT_STARTED_AT - 30
     )
+
+
+# #25647: a /clear successor's stored row decides its seat. The seat that ran /clear
+# started long before the thread; a fresh neighbor started in the cwd just before it.
+CLEARED_SEAT_PID = 45647
+CLEARED_SEAT_STARTED_AT = FRESH_MINTED_AT - 7200.0
+NEIGHBOR_PID = 52002
+NEIGHBOR_STARTED_AT = FRESH_MINTED_AT - 30.0
+_CLEAR_ORIGIN = "gobby_codex_clear_origin"
+_STORED_SEAT = {
+    "cwd": "/repo",
+    "parent_pid": CLEARED_SEAT_PID,
+    "parent_create_time": CLEARED_SEAT_STARTED_AT,
+}
+STORED_CLEAR_ROWS: dict[str, dict[str, Any] | None] = {
+    "no-row": None,
+    "pending": {_CLEAR_ORIGIN: "pending", "cwd": "/repo"},
+    "refused": {_CLEAR_ORIGIN: "codex-tui", "cwd": "/repo"},
+    "other-client": {_CLEAR_ORIGIN: "codex_exec", "cwd": "/repo"},
+    "stored-seat": {_CLEAR_ORIGIN: "codex-tui", **_STORED_SEAT},
+    "pending-with-seat": {_CLEAR_ORIGIN: "pending", **_STORED_SEAT},
+}
+ENRICHMENT_SHAPES: dict[str, dict[str, Any]] = {
+    "ordinary": {},
+    "seat-available": {"seat_available": lambda _pid, _create_time: True},
+    "cleared-seat-owner": {"cleared_seat_owner": lambda _pid, _create_time: SeatOwner.RECORDED},
+}
+
+
+@pytest.fixture
+def stored_clear_row() -> Iterator[Callable[[str, dict[str, Any] | None], None]]:
+    """Point the seat index at one stored row per thread, as the database would."""
+    from gobby.hooks.terminal_context import configure_codex_seat_index
+
+    rows: dict[str, dict[str, Any] | None] = {}
+    configure_codex_seat_index(rows.get)
+    yield rows.__setitem__
+    configure_codex_seat_index(None)
+
+
+def _cleared_seat_and_neighbor() -> list[MagicMock]:
+    return [
+        _managed_host(),
+        _fresh_seat(
+            CLEARED_SEAT_PID,
+            tty="/dev/ttys004",
+            terminal_id="pane-cleared",
+            create_time=CLEARED_SEAT_STARTED_AT,
+        ),
+        _fresh_seat(
+            NEIGHBOR_PID,
+            tty="/dev/ttys005",
+            terminal_id="pane-neighbor",
+            create_time=NEIGHBOR_STARTED_AT,
+        ),
+    ]
+
+
+@pytest.mark.parametrize("shape", list(ENRICHMENT_SHAPES))
+@pytest.mark.parametrize(
+    ("stored", "expected_pids"),
+    [
+        # No /clear row: today's resolution. Two seat TUIs make the /clear search refuse.
+        ("no-row", {"ordinary": NEIGHBOR_PID, "seat-available": NEIGHBOR_PID}),
+        ("pending", {}),
+        ("refused", {}),
+        ("other-client", {}),
+        ("stored-seat", dict.fromkeys(ENRICHMENT_SHAPES, CLEARED_SEAT_PID)),
+        ("pending-with-seat", dict.fromkeys(ENRICHMENT_SHAPES, CLEARED_SEAT_PID)),
+    ],
+)
+def test_stored_clear_row_decides_the_seat_for_every_enrichment_shape(
+    stored_clear_row: Callable[[str, dict[str, Any] | None], None],
+    shape: str,
+    stored: str,
+    expected_pids: dict[str, int],
+) -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    stored_clear_row(thread, STORED_CLEAR_ROWS[stored])
+
+    with _process_table(_cleared_seat_and_neighbor()):
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread, **ENRICHMENT_SHAPES[shape]
+        )
+
+    assert (result or {}).get("parent_pid") == expected_pids.get(shape)
+
+
+def test_a_resumed_seat_outranks_a_stored_clear_refusal(
+    stored_clear_row: Callable[[str, dict[str, Any] | None], None],
+) -> None:
+    """Resuming the thread in another pane moves it there: argv is direct evidence."""
+    thread = _uuid7(FRESH_MINTED_AT)
+    stored_clear_row(thread, STORED_CLEAR_ROWS["refused"])
+    resumed = _seat(70300, thread, tty="/dev/ttys006", terminal_id="pane-resumed", create_time=10.0)
+
+    with _process_table([*_cleared_seat_and_neighbor(), resumed]):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert (result or {}).get("parent_pid") == 70300
+
+
+def test_a_stored_seat_that_exited_is_never_replaced_by_a_guess(
+    stored_clear_row: Callable[[str, dict[str, Any] | None], None],
+) -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    stored_clear_row(thread, STORED_CLEAR_ROWS["stored-seat"])
+    host, _exited, neighbor = _cleared_seat_and_neighbor()
+
+    with _process_table([host, neighbor]):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert result is not None
+    assert "parent_pid" not in result
+
+
+def test_an_unreadable_stored_row_records_no_seat() -> None:
+    from gobby.hooks.terminal_context import configure_codex_seat_index
+
+    def unreadable(_thread_id: str) -> dict[str, Any] | None:
+        raise RuntimeError("database unavailable")
+
+    thread = _uuid7(FRESH_MINTED_AT)
+    configure_codex_seat_index(unreadable)
+    try:
+        with _process_table(_cleared_seat_and_neighbor()):
+            result = enrich_terminal_context_with_cwd(
+                dict(HOST_CONTEXT), "/repo", external_id=thread
+            )
+    finally:
+        configure_codex_seat_index(None)
+
+    assert result is not None
+    assert "parent_pid" not in result
+
+
+def test_a_clear_search_ignores_a_seat_guessed_before_the_clear_row(
+    stored_clear_row: Callable[[str, dict[str, Any] | None], None],
+) -> None:
+    """A guess cached before the thread was known to be a /clear successor never
+    answers its /clear search, and the stored row replaces it once written."""
+    from gobby.hooks.terminal_context import sync_codex_seat
+
+    thread = _uuid7(FRESH_MINTED_AT)
+    with _process_table(_cleared_seat_and_neighbor()):
+        guessed = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+        searched = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT),
+            "/repo",
+            external_id=thread,
+            **ENRICHMENT_SHAPES["cleared-seat-owner"],
+        )
+        stored_clear_row(thread, STORED_CLEAR_ROWS["refused"])
+        sync_codex_seat(thread, STORED_CLEAR_ROWS["refused"])
+        later = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert (guessed or {}).get("parent_pid") == NEIGHBOR_PID
+    assert searched is not None
+    assert "parent_pid" not in searched
+    assert later is not None
+    assert "parent_pid" not in later
+
+
+def test_syncing_a_stored_seat_answers_later_hooks_without_a_read(
+    stored_clear_row: Callable[[str, dict[str, Any] | None], None],
+) -> None:
+    from gobby.hooks.terminal_context import configure_codex_seat_index, sync_codex_seat
+
+    def unread(_thread_id: str) -> dict[str, Any] | None:
+        raise AssertionError("a synced seat needs no stored-row read")
+
+    thread = _uuid7(FRESH_MINTED_AT)
+    stored = STORED_CLEAR_ROWS["stored-seat"]
+    stored_clear_row(thread, stored)
+    with _process_table(_cleared_seat_and_neighbor()):
+        sync_codex_seat(thread, stored)
+        configure_codex_seat_index(unread)
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert (result or {}).get("parent_pid") == CLEARED_SEAT_PID
 
 
 # #23049 option A: a pane locks only under Gobby's SRT, which the launch and

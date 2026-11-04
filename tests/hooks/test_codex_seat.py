@@ -32,6 +32,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
 from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX
 
 pytestmark = pytest.mark.integration
@@ -264,6 +265,69 @@ def test_sessions_on_another_machine_never_own_its_seats(
     available = codex_seat_available(session_manager.db, OTHER_MACHINE_ID)
 
     assert available(SEAT_PID, started) is True
+
+
+def test_stored_clear_context_reads_only_a_threads_clear_row(
+    session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    """#25647: the seat index reads a thread's /clear outcome from its stored row.
+
+    The read has no project filter: a hook whose cwd resolves elsewhere still meets
+    the outcome. Rows without a /clear origin, and other machines' rows, are no answer.
+    """
+    from gobby.hooks.codex_seat import codex_stored_clear_context
+
+    refused = {"cwd": "/repo", CODEX_CLEAR_ORIGIN_KEY: "codex-tui"}
+    _register(session_manager, sample_project["id"], refused, external_id=THREAD_ID)
+    ordinary_thread = "01a1a561-0000-7000-8000-000000025648"
+    _register(
+        session_manager,
+        sample_project["id"],
+        {"cwd": "/repo", "parent_pid": SEAT_PID, "parent_create_time": time.time() - 300},
+        external_id=ordinary_thread,
+    )
+
+    local = codex_stored_clear_context(session_manager.db, LOCAL_MACHINE_ID)
+    other_machine = codex_stored_clear_context(session_manager.db, OTHER_MACHINE_ID)
+
+    stored = local(THREAD_ID)
+    assert stored is not None
+    assert stored[CODEX_CLEAR_ORIGIN_KEY] == "codex-tui"
+    assert "parent_pid" not in stored
+    assert local(ordinary_thread) is None
+    assert local("01a1a561-0000-7000-8000-000000025649") is None
+    assert other_machine(THREAD_ID) is None
+
+
+def test_stored_clear_context_reads_the_newest_clear_row(
+    session_manager: SessionManager, sample_project: dict[str, Any], tmp_path: Path
+) -> None:
+    """A thread with clear rows in two projects answers with the one written last."""
+    from gobby.hooks.codex_seat import codex_stored_clear_context
+
+    elsewhere = install_isolated_checkout_project(
+        session_manager.db,
+        tmp_path / "elsewhere",
+        name="elsewhere",
+        machine_id=LOCAL_MACHINE_ID,
+    ).project
+    _register(
+        session_manager,
+        sample_project["id"],
+        {"cwd": "/repo", CODEX_CLEAR_ORIGIN_KEY: "pending"},
+        external_id=THREAD_ID,
+    )
+    _register(
+        session_manager,
+        elsewhere.id,
+        {"cwd": "/repo", CODEX_CLEAR_ORIGIN_KEY: "codex-tui"},
+        external_id=THREAD_ID,
+    )
+
+    stored = codex_stored_clear_context(session_manager.db, LOCAL_MACHINE_ID)(THREAD_ID)
+
+    assert stored is not None
+    assert stored[CODEX_CLEAR_ORIGIN_KEY] == "codex-tui"
 
 
 def test_a_new_human_codex_thread_binds_the_gterm_pane_it_names(
