@@ -84,6 +84,7 @@ from ._step_state import persist_initial_step_instance_if_resolved
 from ._worktree_reuse import (
     prepare_resumed_worktree,
     prepare_reused_worktree,
+    refuse_foreign_task_binding,
     resolve_reused_worktree_id,
 )
 
@@ -507,6 +508,9 @@ async def spawn_agent_impl(
         try:
             # Resume preserves its recorded checkout; explicit reuse syncs its base.
             if spawn_config.preserve_existing_worktree:
+                if claim:
+                    # A claiming resume still may not move a tree onto another task.
+                    refuse_foreign_task_binding(existing_worktree, spawn_config.task_id)
                 isolation_ctx, handler = await prepare_resumed_worktree(
                     existing_worktree=existing_worktree,
                     spawn_config=spawn_config,

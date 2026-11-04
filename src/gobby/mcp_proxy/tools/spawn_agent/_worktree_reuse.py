@@ -41,6 +41,19 @@ def resolve_reused_worktree_id(worktree_storage: Any, project_id: str | None, re
         ) from id_error
 
 
+def refuse_foreign_task_binding(existing_worktree: Any, task_id: str | None) -> None:
+    """Refuse a claiming spawn into a worktree bound to a different task.
+
+    Same-task reuse stays allowed, so a crashed or ended seat can recover its tree.
+    """
+    bound_task_id = existing_worktree.task_id
+    if bound_task_id and task_id and bound_task_id != task_id:
+        raise RuntimeError(
+            f"Cannot reuse worktree {existing_worktree.id}: it is bound to task "
+            f"{bound_task_id}, not the spawn's task {task_id}"
+        )
+
+
 async def prepare_reused_worktree(
     *,
     existing_worktree: Any,
@@ -56,12 +69,7 @@ async def prepare_reused_worktree(
     """
     if await asyncio.to_thread(worktree_storage.is_claimed_by_live_session, existing_worktree.id):
         raise RuntimeError(f"Cannot reuse claimed live worktree: {existing_worktree.id}")
-    bound_task_id = existing_worktree.task_id
-    if bound_task_id and spawn_config.task_id and bound_task_id != spawn_config.task_id:
-        raise RuntimeError(
-            f"Cannot reuse worktree {existing_worktree.id}: it is bound to task "
-            f"{bound_task_id}, not the spawn's task {spawn_config.task_id}"
-        )
+    refuse_foreign_task_binding(existing_worktree, spawn_config.task_id)
     base_branch, base_commit_sha = await select_worktree_base(git_manager, spawn_config.base_branch)
     sync_result: ReusedWorktreeSyncResult = await sync_reused_worktree_to_base(
         git_manager=git_manager,
