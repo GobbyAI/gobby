@@ -125,6 +125,8 @@ def test_unparseable_command_text_does_not_escape_the_check(root: Path, checkout
         "mkdir -p {own} && python3 - <<'EOF'\nprint(open('{sibling}/notes.md').read())\nEOF",
         "mkdir -p {own} && bash <<'EOF'\ncat {sibling}/notes.md\nEOF",
         "cd {own} && . /dev/stdin <<'EOF'\ncat {sibling}/notes.md\nEOF",
+        "python3 <<'EOF'\nimport os\nos.system(\"cat {sibling}/notes.md\")\nEOF",
+        'python3 <<\\EOF\nimport os\nos.system("cat {sibling}/notes.md")\nEOF',
     ],
 )
 def test_heredoc_bodies_a_program_reads_keep_foreign_paths_refused(
@@ -172,6 +174,10 @@ def test_inline_interpreter_code_operators_are_not_paths(root: Path, checkout: P
         "node -e \"console.log(require('fs').readFileSync('{sibling}/notes.md'))\"",
         "ruby -e \"puts File.read('{sibling}/notes.md')\"",
         "python3 -c \"print(open('$(cat {sibling}/path.txt)').read())\"",
+        # A path inside a quoted command string the program runs.
+        "python3 -c 'import os; os.system(\"cat {sibling}/notes.md\")'",
+        'node -e \'require("child_process").execSync("cat {sibling}/notes.md")\'',
+        "python3 -c 'import os; os.system(\"/bin/true; cat {sibling}/notes.md\")'",
     ],
 )
 def test_inline_interpreter_code_naming_a_foreign_folder_stays_refused(

@@ -211,15 +211,27 @@ def _literal_path_words(text: str) -> list[str]:
     """Paths program text or the data a program reads names literally.
 
     A quoted literal counts when it starts at `/` or `~`, or names a relative path holding
-    `/` with no space. A bare word counts when it starts at `/`, `~`, `./` or `../`. Operators
-    such as `*` and `/` and prose such as `* item` are not paths.
+    `/` with no space. A quoted literal holding a space is also command text, such as
+    `"cat <path>"`, so each of its words is judged like a bare word. A bare word counts when
+    it starts at `/`, `~`, `./` or `../`. Operators such as `*` and `/` and prose such as
+    `* item` are not paths.
     """
     found: list[str] = []
     for match in _QUOTED_LITERAL.finditer(text):
         value = next((group for group in match.groups() if group is not None), "")
-        if value.startswith(("/", "~")) or ("/" in value and not re.search(r"\s", value)):
+        spaced = re.search(r"\s", value) is not None
+        if value.startswith(("/", "~")) or ("/" in value and not spaced):
             found.append(value)
-    for raw in _QUOTED_LITERAL.sub(" ", text).split():
+        if spaced:
+            found.extend(_bare_path_words(value))
+    found.extend(_bare_path_words(_QUOTED_LITERAL.sub(" ", text)))
+    return found
+
+
+def _bare_path_words(text: str) -> list[str]:
+    """Whitespace-separated words of `text` that start at `/`, `~`, `./` or `../`."""
+    found: list[str] = []
+    for raw in text.split():
         word = raw.strip("()[]{},;:=")
         if word.startswith(("/", "~", "./", "../")) and word.strip("/"):
             found.append(word)
