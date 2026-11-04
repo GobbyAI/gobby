@@ -11,7 +11,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.pipeline_executions import pipeline_session_definition_json
+from gobby.storage.pipeline_executions import pipeline_execution_definition_json
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.session_resolution import resolve_session_reference
@@ -19,7 +19,11 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 from gobby.utils.datetime import utc_now
 from gobby.utils.project_context import get_project_context
-from gobby.utils.session_context import get_current_session_id, is_daemon_execution
+from gobby.utils.session_context import (
+    current_pipeline_execution,
+    get_current_session_id,
+    is_daemon_execution,
+)
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -148,11 +152,17 @@ def create_communications_registry(
 
     def operator_destination(channel: str, caller_id: str | None) -> str:
         if is_daemon_execution():
-            # A daemon-run pipeline holds no agent grant. Its installed definition must
-            # declare operator_messaging, and the project-bound channel below still applies.
+            # A daemon-run pipeline step holds no agent grant. The execution it runs under must
+            # declare operator_messaging in its definition, and the project-bound channel below
+            # still applies. Nested runs share the session, so the execution is what is judged.
             caller = registered_caller(caller_id)
-            if db is None or not _grants_operator_messaging(
-                pipeline_session_definition_json(db, caller.id)
+            execution_id = current_pipeline_execution()
+            if (
+                db is None
+                or execution_id is None
+                or not _grants_operator_messaging(
+                    pipeline_execution_definition_json(db, execution_id)
+                )
             ):
                 raise ValueError("Caller is not permitted to message the operator on this channel")
         else:
