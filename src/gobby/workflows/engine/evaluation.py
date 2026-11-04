@@ -288,9 +288,9 @@ class EvaluationMixin:
         clear_blocked_tool_recovery_state(block_state)
         block_state["consecutive_tool_blocks"] = 0
 
-        if variables.get("edit_write_pending"):
+        if block_state.get("edit_write_pending"):
             if _is_write_like_event_data(event.data) or not had_pending_failure:
-                _clear_edit_write_state(variables)
+                _clear_edit_write_state(block_state)
 
     async def _finalize_block_response(
         self,
@@ -812,7 +812,7 @@ class EvaluationMixin:
                         )
                         # Blocked edit/write never executed - nothing to recover
                         if _is_write_like_event_data(evaluation.event.data):
-                            _clear_edit_write_state(evaluation.variables)
+                            _clear_edit_write_state(evaluation.block_state)
 
             rule_latency = (time.perf_counter() - rule_start) * 1000
             rule_result: RuleResult = "block" if rule_blocked else "allow"

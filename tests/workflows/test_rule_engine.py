@@ -2856,6 +2856,39 @@ class TestEditWritePending:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
+    async def test_subagent_edit_blocked_by_rule_clears_only_its_own_pending(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """A rule-blocked subagent Edit clears that subagent's pending state, not the parent's."""
+        _insert_rule(
+            manager,
+            "block-edit-rule",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                tools=["Edit"],
+                effects=[RuleEffect(type="block", reason="No task claimed")],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        # The parent's own Edit is still in flight.
+        variables: dict[str, Any] = {"edit_write_pending": True}
+
+        edit_event = _make_event(
+            HookEventType.BEFORE_TOOL, data={"tool_name": "Edit", "agent_id": "a1"}
+        )
+        response = await engine.evaluate(edit_event, session_id=SESSION_ID, variables=variables)
+        assert response.decision == "block"
+
+        assert variables["_last_blocked_scopes"]["a1"]["edit_write_pending"] is False
+        assert variables["edit_write_pending"] is True
+
+        stop_event = _make_event(HookEventType.STOP)
+        response = await engine.evaluate(stop_event, session_id=SESSION_ID, variables=variables)
+        assert response.decision == "block"
+        assert "edit-write-recovery" in (response.reason or "")
+
+    @pytest.mark.asyncio
     async def test_edit_write_pending_cleared_by_non_edit_success(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:

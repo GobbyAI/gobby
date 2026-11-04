@@ -437,7 +437,7 @@ class RuleEngine(
                 # Track edit/write attempts — set pending on pre-tool
                 if is_before_tool:
                     if _is_write_like_event_data(event.data):
-                        mark_edit_write_pending(variables)
+                        mark_edit_write_pending(block_state)
 
                 elif raw_event_value == HookEventType.POST_TOOL_BATCH.value:
                     # This agent context's response closed its tool batch, so the
@@ -481,7 +481,7 @@ class RuleEngine(
                             "stop_attempts": variables["stop_attempts"],
                             "task_claimed": variables.get("task_claimed"),
                             "claimed_tasks": variables.get("claimed_tasks"),
-                            "edit_write_pending": variables.get("edit_write_pending"),
+                            "edit_write_pending": block_state.get("edit_write_pending"),
                             "tool_block_pending": variables.get("tool_block_pending"),
                             "active_agent_wait": active_agent_wait,
                             "active_coordination_wait": active_coordination_wait,
@@ -549,7 +549,7 @@ class RuleEngine(
                     await self._flush_pending_terminal_denial(session_id)
                     if agent_block is not None:
                         if _is_write_like_event_data(event.data):
-                            _clear_edit_write_state(variables)
+                            _clear_edit_write_state(block_state)
                         return await self._finalize_block_response(
                             agent_block,
                             evaluation,
@@ -576,7 +576,7 @@ class RuleEngine(
                     if step_block is not None:
                         # Blocked edit/write never executed — nothing to recover
                         if _is_write_like_event_data(event.data):
-                            _clear_edit_write_state(variables)
+                            _clear_edit_write_state(block_state)
                         return await self._finalize_block_response(
                             step_block,
                             evaluation,
@@ -634,13 +634,14 @@ class RuleEngine(
                         "A tool just failed. Read the error and recover — do not stop."
                     )
 
-                # Block stop when edit/write is pending (failed or in-flight)
-                elif is_turn_end and variables.get("edit_write_pending"):
-                    edit_stop_blocks = variables.get("edit_write_stop_blocks", 0)
-                    if edit_write_outcome_lost(variables):
-                        _clear_edit_write_state(variables)
+                # Block stop when this agent context's edit/write is pending (failed or
+                # in-flight). A subagent's pending write holds only its own stop.
+                elif is_turn_end and block_state.get("edit_write_pending"):
+                    edit_stop_blocks = block_state.get("edit_write_stop_blocks", 0)
+                    if edit_write_outcome_lost(block_state):
+                        _clear_edit_write_state(block_state)
                     elif edit_stop_blocks < 3:  # Circuit breaker
-                        variables["edit_write_stop_blocks"] = edit_stop_blocks + 1
+                        block_state["edit_write_stop_blocks"] = edit_stop_blocks + 1
                         override_decision = "block"
                         override_reason = (
                             "Rule enforced by Gobby: [edit-write-recovery]\n"
@@ -649,7 +650,7 @@ class RuleEngine(
                         )
                     else:
                         # Circuit breaker tripped — clear and allow stop
-                        _clear_edit_write_state(variables)
+                        _clear_edit_write_state(block_state)
 
                 if not rules:
                     # Auto-manage tool_block_pending on after_tool execution results.
@@ -736,7 +737,7 @@ class RuleEngine(
                         await self._flush_pending_terminal_denial(session_id)
                         if agent_block is not None:
                             if _is_write_like_event_data(event.data):
-                                _clear_edit_write_state(variables)
+                                _clear_edit_write_state(block_state)
                             return await self._finalize_block_response(
                                 agent_block,
                                 evaluation,
@@ -754,7 +755,7 @@ class RuleEngine(
                         await self._flush_pending_terminal_denial(session_id)
                         if step_block is not None:
                             if _is_write_like_event_data(event.data):
-                                _clear_edit_write_state(variables)
+                                _clear_edit_write_state(block_state)
                             return await self._finalize_block_response(
                                 step_block,
                                 evaluation,
