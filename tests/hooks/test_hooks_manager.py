@@ -2368,20 +2368,19 @@ class TestHookManagerWebhookDispatch:
 
         manager._webhook_dispatcher.config.enabled = False
         manager._webhook_dispatcher.config.endpoints = [endpoint]
+        sent: list[object] = []
+
+        async def record_send(*args: object, **kwargs: object) -> None:
+            sent.append(args)
 
         with (
             patch.object(manager._webhook_dispatcher, "_build_payload") as build_payload,
-            patch.object(
-                manager._webhook_dispatcher,
-                "_dispatch_single",
-                new_callable=AsyncMock,
-            ) as dispatch_single,
+            patch.object(manager._webhook_dispatcher, "_dispatch_single", new=record_send),
         ):
-            result = manager._dispatch_webhooks_async(event)
+            manager._dispatch_webhooks_async(event)
 
-        assert result is None
+        assert sent == []
         build_payload.assert_not_called()
-        dispatch_single.assert_not_called()
 
     def test_dispatch_webhooks_async_no_matching_endpoints(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
@@ -2401,20 +2400,19 @@ class TestHookManagerWebhookDispatch:
         # Enable webhooks but have no non-blocking endpoints
         manager._webhook_dispatcher.config.enabled = True
         manager._webhook_dispatcher.config.endpoints = []
+        sent: list[object] = []
+
+        async def record_send(*args: object, **kwargs: object) -> None:
+            sent.append(args)
 
         with (
             patch.object(manager._webhook_dispatcher, "_build_payload") as build_payload,
-            patch.object(
-                manager._webhook_dispatcher,
-                "_dispatch_single",
-                new_callable=AsyncMock,
-            ) as dispatch_single,
+            patch.object(manager._webhook_dispatcher, "_dispatch_single", new=record_send),
         ):
-            result = manager._dispatch_webhooks_async(event)
+            manager._dispatch_webhooks_async(event)
 
-        assert result is None
+        assert sent == []
         build_payload.assert_not_called()
-        dispatch_single.assert_not_called()
 
     def test_dispatch_webhooks_async_with_matching_endpoints(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path

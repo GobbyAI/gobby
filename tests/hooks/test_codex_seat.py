@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
 from collections.abc import Iterator
@@ -164,6 +165,13 @@ def test_thread_originator_is_unknown_without_a_readable_rollout(tmp_path: Path)
     assert codex_thread_originator(None, THREAD_ID) is None
     assert codex_thread_originator(str(tmp_path / "missing.jsonl"), THREAD_ID) is None
     assert codex_thread_originator(str(tmp_path), THREAD_ID) is None
+
+
+@pytest.mark.timeout(10)
+def test_thread_originator_never_waits_on_a_pipe(tmp_path: Path) -> None:
+    pipe = tmp_path / "rollout.jsonl"
+    os.mkfifo(pipe)
+    assert codex_thread_originator(str(pipe), THREAD_ID) is None
 
 
 def test_sessions_on_another_machine_never_own_its_seats(

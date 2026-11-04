@@ -1,14 +1,51 @@
-"""Database ownership checks for adopting a Codex seat TUI for a new thread."""
+"""Ownership and origin checks for adopting a Codex seat TUI for a new thread."""
 
 from __future__ import annotations
 
+import json
+import os
+import stat
 from datetime import UTC, datetime
+from pathlib import Path
 
 from gobby.hooks.terminal_context import SeatAvailable, SeatOwner, SeatOwnerCheck
 from gobby.storage.hub.protocol import HubDatabase
 
 # Same tolerance as terminal_ownership.recorded_process_is_alive.
 _CREATE_TIME_TOLERANCE_SECONDS = 1.0
+# The rollout originator Codex writes for a thread its terminal TUI minted.
+CODEX_TUI_ORIGINATOR = "codex-tui"
+# The session_meta header carries the base instructions, so it can run long.
+_MAX_ROLLOUT_HEADER_BYTES = 1 << 20
+
+
+def codex_thread_originator(transcript_path: str | None, thread_id: str) -> str | None:
+    """Return the client that minted ``thread_id``, from its rollout's session_meta header.
+
+    Returns None unless the file is a readable regular rollout whose header names this
+    thread, so callers treat an unknown origin the same as an unverified one.
+    """
+    if not transcript_path:
+        return None
+    try:
+        # Non-blocking, so a pipe at this path fails the regular-file check instead of
+        # hanging the hook until something writes to it.
+        fd = os.open(Path(transcript_path).expanduser(), os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return None
+            header = json.loads(stream.readline(_MAX_ROLLOUT_HEADER_BYTES))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(header, dict) or header.get("type") != "session_meta":
+        return None
+    payload = header.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("id") != thread_id:
+        return None
+    originator = payload.get("originator")
+    return originator if isinstance(originator, str) and originator else None
 
 
 def codex_seat_available(db: HubDatabase, machine_id: str) -> SeatAvailable:

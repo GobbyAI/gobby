@@ -8,7 +8,11 @@ from typing import Any, cast
 
 import psycopg
 
-from gobby.hooks.codex_seat import codex_seat_owner
+from gobby.hooks.codex_seat import (
+    CODEX_TUI_ORIGINATOR,
+    codex_seat_owner,
+    codex_thread_originator,
+)
 from gobby.hooks.envelope_dedupe import bump_stop_replay_epoch
 from gobby.hooks.events import ContextPart, HookEvent, HookResponse, require_hook_machine_id
 from gobby.hooks.grok_pending_context import clear_queued_context
@@ -138,16 +142,24 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     existing_session = None
     raw_terminal_context = input_data.get("terminal_context")
     terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
-    # /clear in a running Codex seat mints the new thread in the seat its predecessor owns.
-    cleared_seat_owner = (
-        codex_seat_owner(handler._session_manager.db, machine_id)
-        if session_source == "clear" and cli_source == "codex" and handler._session_manager
-        else None
-    )
+    seat_thread_id: str | None = external_id
+    cleared_seat_owner = None
+    if session_source == "clear" and cli_source == "codex" and handler._session_manager:
+        raw_transcript_path = input_data.get("transcript_path")
+        originator = codex_thread_originator(
+            raw_transcript_path if isinstance(raw_transcript_path, str) else None, external_id
+        )
+        if originator == CODEX_TUI_ORIGINATOR:
+            # /clear in a running seat TUI mints the new thread in that same seat.
+            cleared_seat_owner = codex_seat_owner(handler._session_manager.db, machine_id)
+        else:
+            # Another Codex client, or an unverified origin: no seat TUI may claim it,
+            # so the session is tracked without a pane.
+            seat_thread_id = None
     terminal_context = enrich_terminal_context_with_cwd(
         terminal_context,
         cwd,
-        external_id=external_id,
+        external_id=seat_thread_id,
         cleared_seat_owner=cleared_seat_owner,
         machine_id=machine_id,
     )

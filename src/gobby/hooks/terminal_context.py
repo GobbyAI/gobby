@@ -148,10 +148,13 @@ def enrich_terminal_context_with_cwd(
     """Copy terminal context and add cwd and parent-process identity.
 
     ``external_id`` is the CLI's own session handle (the Codex thread id). A hook fired
-    by a shared Codex app-server host is re-identified from that thread's seat process;
+    by a shared Codex app-server host is re-identified from that thread's seat process.
+    Without it no seat is searched, so a shared-host hook records no seat process and
+    the session stays paneless.
     ``seat_available`` widens a fresh thread's search to the one seat no session owns.
-    ``cleared_seat_owner``, given only for a /clear successor, instead confines it to the
-    one seat in the cwd that a session owns.
+    ``cleared_seat_owner``, given only for a /clear successor the caller verified came
+    from a seat TUI, instead confines it to the cwd's only seat TUI, whose owner is
+    recorded.
     ``machine_id`` is the event's machine: another machine's pids name no process here,
     so its hook records no parent-process identity rather than a local stranger's.
     """
@@ -260,11 +263,14 @@ def _replace_with_codex_seat_identity(
     """Swap the shared host's identity for the seat TUI that owns ``external_id``."""
     for key in _PROCESS_IDENTITY_KEYS:
         terminal_context.pop(key, None)
-    seat = (
-        _SEAT_INDEX.resolve(external_id, cwd, seat_available, cleared_seat_owner)
-        if external_id
-        else None
-    )
+    if not external_id:
+        logger.debug(
+            "Codex shared app-server host pid %s: no seat search for this thread; "
+            "recording no terminal identity",
+            host.pid,
+        )
+        return
+    seat = _SEAT_INDEX.resolve(external_id, cwd, seat_available, cleared_seat_owner)
     if seat is None:
         logger.warning(
             "Codex shared app-server host pid %s: no seat process resumes thread %s or "
@@ -437,32 +443,32 @@ class _CodexSeatIndex:
     def _adopt_cleared(
         self, thread_id: str, cwd: str | None, owner_of: SeatOwnerCheck
     ) -> psutil.Process | None:
-        """Adopt the seat TUI in ``cwd`` whose predecessor thread ran /clear.
+        """Adopt the seat TUI in ``cwd`` that ran /clear to mint ``thread_id``.
 
-        /clear mints the new thread in a seat that already hosted one, so only seats some
-        session owns or may own are candidates; resumed and Gobby-spawned seats count,
-        since /clear works in either. Adopt only a sole candidate with a recorded owner.
-        Any second candidate refuses: a guess could type into another pane.
+        The caller has verified from the thread's rollout that a terminal TUI minted it.
+        Every seat TUI in the cwd that started before the thread is a candidate, whoever
+        owns it; resumed and Gobby-spawned seats count, since /clear works in either.
+        Adopt only a sole candidate whose owner is recorded. Any second candidate refuses:
+        a guess could type into another pane.
         """
         minted_at = _thread_minted_at(thread_id)
         if minted_at is None or cwd is None:
             return None
-        candidates: list[tuple[psutil.Process, int, float, SeatOwner]] = []
+        candidates: list[tuple[psutil.Process, int, float]] = []
         for pid, create_time, _cmdline in self._seats:
             if create_time > minted_at:
                 continue
             try:
                 process = psutil.Process(pid)
-                if not _is_seat_tui(process, cwd):
-                    continue
+                if _is_seat_tui(process, cwd):
+                    candidates.append((process, pid, create_time))
             except _PSUTIL_ERRORS:
                 continue
-            owner = owner_of(pid, create_time)
-            if owner is not SeatOwner.NONE:
-                candidates.append((process, pid, create_time, owner))
-        if len(candidates) != 1 or candidates[0][3] is not SeatOwner.RECORDED:
+        if len(candidates) != 1:
             return None
-        process, pid, create_time, _owner = candidates[0]
+        process, pid, create_time = candidates[0]
+        if owner_of(pid, create_time) is not SeatOwner.RECORDED:
+            return None
         self._adopted[thread_id] = (pid, create_time)
         return process
 
