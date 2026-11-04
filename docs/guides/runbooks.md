@@ -19,8 +19,9 @@ $gobby admin        Codex
 
 The typing pane becomes the Orchestrator. The cold start is apply-only: it
 applies the Orchestrator definition to the calling session and never opens a
-counterpart pane. The Assistant is a spawned child, so no cold start command
-opens it. The command is re-runnable. The router calls
+counterpart pane. The Assistant is a root persona seat and is never spawned: type
+`/gobby assistant` (`$gobby assistant` in Codex) in its own pane to apply its
+definition there. The command is re-runnable. The router calls
 `gobby-agents:cold_start_admin`. Only the space forms cold start: `/gobby:admin`
 and `/gobby admin <request>` load the admin capability reference instead.
 

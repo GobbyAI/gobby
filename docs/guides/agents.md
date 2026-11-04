@@ -231,10 +231,10 @@ checks. The current bundled catalogue is:
 | `consolidator` | Proposes task bundles, stale-item retirement and epic moves to Triage for the Orchestrator; applies Orchestrator-directed folds and retirements (`superseded` or `moot` closes, with criteria merged into the survivor), and excludes protected triage and plan-expanded subtrees |
 
 These templates are global installed definitions tagged `gobby` in storage;
-their YAML `seat` tag marks the file-based catalogue. The Orchestrator declares
-only the `persona` surface, because it runs in an operator-opened root pane and is
-never spawned. The Assistant and the other standing seats declare both `spawn` and
-`persona` surfaces and share one anchored prompt between the two. Standing seats
+their YAML `seat` tag marks the file-based catalogue. The Assistant and
+Orchestrator declare only the `persona` surface, because they run in
+operator-opened root panes and are never spawned. The other standing seats declare
+both `spawn` and `persona` surfaces and share one anchored prompt between the two. Standing seats
 inherit checkout mode, take their model from the project policy's
 `agent_model_defaults` entry or from the definition when the policy names none,
 and use `execution_mode: interactive` with `timeout: 0`. Definitions never select a

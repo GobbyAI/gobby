@@ -119,6 +119,14 @@ def test_unpinned_default_declares_no_model() -> None:
     assert body.model is None
 
 
+@pytest.mark.parametrize("name", sorted(BODIES))
+def test_cold_start_seat_is_persona_only(name: str) -> None:
+    """A seat a command starts in a root pane runs there, so it never declares the spawn surface."""
+    body = BODIES[name]
+    if body.cold_start_commands:
+        assert body.surfaces == ["persona"], f"{name} starts in a root pane but declares spawn"
+
+
 @pytest.mark.parametrize("name", CONCRETE)
 def test_bundled_definition_declares_its_launch_model(name: str) -> None:
     body = BODIES[name]
