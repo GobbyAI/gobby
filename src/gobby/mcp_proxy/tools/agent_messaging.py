@@ -15,6 +15,7 @@ import logging
 from collections.abc import Callable, Coroutine, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
+from gobby.events.live_wake import NOT_LIVE_WAKE_SKIPS
 from gobby.storage.inter_session_attachments import (
     MAX_ATTACHMENT_BYTES,
     AttachmentDraft,
@@ -36,6 +37,11 @@ if TYPE_CHECKING:
 BroadcastFn = Callable[..., Coroutine[Any, Any, None]]
 
 logger = logging.getLogger(__name__)
+
+NOT_LIVE_RECIPIENT_MESSAGE = (
+    "The recipient session is not live. The message is stored and waits until that "
+    "session resumes; no live wake was delivered."
+)
 
 
 def get_context_project_id(session_manager: SessionManager) -> str | None:
@@ -161,7 +167,11 @@ def add_messaging_tools(
             "mailbox acknowledgement. Optional priority, message_type, metadata, and wake "
             "are keyword-only. For message_type='task_blocker', metadata.task_id must name "
             "the blocked assigned task. Responses are brief by default: target, recipient "
-            "count, delivery status, and message IDs. Pass brief=false for the full message, "
+            "count, delivery status, and message IDs. A direct send to a session outside the "
+            "live statuses returns delivery_status sent_recipient_not_live with that session's "
+            "recipient_status and a message: the durable message is stored and waits until the "
+            "session resumes, and no live wake is delivered. A live session whose wake is "
+            "declined returns sent_with_declined_wakes. Pass brief=false for the full message, "
             "selector, wake, and broadcast diagnostics."
         ),
     )
@@ -409,6 +419,11 @@ def add_messaging_tools(
                 for result in send_result.wake_results
                 if result.get("delivered") is not True and not result.get("decline_reason")
             ]
+            not_live_wakes = [
+                result
+                for result in send_result.wake_results
+                if result.get("decline_reason") in NOT_LIVE_WAKE_SKIPS
+            ]
             has_failures = bool(
                 send_result.failed_broadcasts or failed_ws_broadcasts or wake_failures
             )
@@ -419,6 +434,8 @@ def add_messaging_tools(
                 "delivery_status": (
                     "sent_with_failures"
                     if has_failures
+                    else "sent_recipient_not_live"
+                    if not_live_wakes
                     else "sent_with_declined_wakes"
                     if wake_declines
                     else "sent"
@@ -437,6 +454,9 @@ def add_messaging_tools(
                 brief_response["failed_ws_broadcasts"] = failed_ws_broadcasts
             if wake_failures:
                 brief_response["wake_failures"] = wake_failures
+            if not_live_wakes:
+                brief_response["recipient_status"] = not_live_wakes[0].get("session_status")
+                brief_response["message"] = NOT_LIVE_RECIPIENT_MESSAGE
             return brief_response
 
         except ValueError as e:
@@ -459,7 +479,8 @@ def add_messaging_tools(
             "database with its byte size and SHA-256 digest. A document over "
             f"{MAX_ATTACHMENT_BYTES} bytes is refused with attachment_too_large and nothing is "
             "stored. Only the sender and that message's recipient can read the document, with "
-            "get_attachment."
+            "get_attachment. Brief responses report delivery_status as send_message does, "
+            "including sent_recipient_not_live with recipient_status for an expired recipient."
         ),
     )
     async def send_attachment(
