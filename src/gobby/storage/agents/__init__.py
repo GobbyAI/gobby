@@ -5,7 +5,6 @@ from __future__ import annotations
 from ._constants import (
     ACTIVE_AGENT_RUN_STATUS_SQL,
     ACTIVE_AGENT_RUN_STATUSES,
-    DELIBERATE_STOP_TERMINAL_REASONS,
     STATUS_CANCELLED,
     STATUS_ERROR,
     STATUS_PENDING,
@@ -26,7 +25,6 @@ from ._sandbox_records import sandbox_record
 __all__ = [
     "ACTIVE_AGENT_RUN_STATUSES",
     "ACTIVE_AGENT_RUN_STATUS_SQL",
-    "DELIBERATE_STOP_TERMINAL_REASONS",
     "STATUS_CANCELLED",
     "STATUS_ERROR",
     "STATUS_PENDING",

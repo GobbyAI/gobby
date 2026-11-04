@@ -11,7 +11,6 @@ import json
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
-from contextvars import ContextVar
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -27,32 +26,23 @@ from gobby.workflows.delivery_disposition import (
     prepare_rule_definition_for_persist,
 )
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
+from gobby.workflows.rule_authority import (
+    ProtectedRuleError,
+    is_operator_rule_change,
+    protected_flag_error,
+    protected_rule_error,
+)
 
 logger = logging.getLogger(__name__)
-_operator_rule_changes: ContextVar[bool] = ContextVar("operator_rule_changes", default=False)
 
 
 class ReservedRuleMutationError(ValueError):
     """An author attempted to alter runtime-owned variable authority."""
 
 
-class ProtectedRuleError(ValueError):
-    """A seat attempted to change a rule the operator protected."""
-
-
-@contextmanager
-def operator_rule_changes() -> Iterator[None]:
-    """Used only after HTTP authentication proves an operator principal."""
-    token = _operator_rule_changes.set(True)
-    try:
-        yield
-    finally:
-        _operator_rule_changes.reset(token)
-
-
 def _reserved_writer_error(definition: dict[str, Any]) -> str | None:
     """Reject authored effects that write runtime-owned variables after normalization."""
-    if _operator_rule_changes.get():
+    if is_operator_rule_change():
         return None
     effects = definition.get("effects") or [definition.get("effect")]
     if not isinstance(effects, list):
@@ -93,15 +83,7 @@ def _reserved_rule_mutation_error(row: RuleDefinitionRow) -> str | None:
 
 def _protected_rule_error(row: RuleDefinitionRow) -> str | None:
     """Protected rules admit only the operator principal; seats cannot toggle, edit or delete them."""
-    if _operator_rule_changes.get():
-        return None
-    try:
-        body = _rule_body(row)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    if body.get("protected") is True:
-        return f"Rule '{row.name}' is protected; only the operator can change it"
-    return None
+    return protected_rule_error(row.name, row.definition_json)
 
 
 @contextmanager
@@ -134,6 +116,8 @@ def update_rule_fields(
                 body = json.loads(body)
             if error := _reserved_writer_error(body):
                 raise ReservedRuleMutationError(error)
+            if error := protected_flag_error(row.name, body):
+                raise ProtectedRuleError(error)
         preserve_bundled_tag(row.tags, fields)
         return manager.update(row.id, **fields)
 
@@ -464,6 +448,8 @@ def create_rule(
         definition = prepare_rule_definition_for_persist(name, definition)
         if reserved_error := _reserved_writer_error(definition):
             return {"success": False, "error": reserved_error}
+        if protected_error := protected_flag_error(name, definition):
+            return {"success": False, "error": protected_error}
     except ValidationError as e:
         return {"success": False, "error": f"Validation failed: {e}"}
     except DispositionAmbiguousError as e:

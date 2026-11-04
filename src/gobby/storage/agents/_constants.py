@@ -33,17 +33,6 @@ def task_closed_terminal_reason(closed_reason: str | None) -> TaskClosedTerminal
     return TaskClosedTerminalReason(f"task_closed:{reason}")
 
 
-# Terminal reasons where we ended the run on purpose, rather than the runtime
-# ending it under us. Only these, plus every ``task_closed:`` reason, say nothing
-# about the provider's health, so a retry belongs on the same candidate; every
-# other unfinished ending — a classified provider error, or one the runtime never
-# classified at all — is a reason to try somewhere else.
-DELIBERATE_STOP_TERMINAL_REASONS: tuple[AgentRunTerminalReason, ...] = (
-    "user_cancelled",
-    "daemon_stop",
-    "spawn_rollback",
-)
-
 STATUS_QUEUED: AgentRunStatus = "queued"
 STATUS_PENDING: AgentRunStatus = "pending"
 STATUS_RUNNING: AgentRunStatus = "running"

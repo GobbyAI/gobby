@@ -5,34 +5,55 @@ import pytest
 from gobby.mcp_proxy.tools.workflows._rules import (
     create_rule,
     delete_rule,
-    operator_rule_changes,
     toggle_rule,
     update_rule,
 )
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.rule_authority import operator_rule_changes
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
 PROTECTED_RULE = "synthetic-protected-rule"
+_GATE = {
+    "event": "task_close",
+    "protected": True,
+    "when": "reason == 'done'",
+    "effects": [{"type": "block", "reason": "Synthetic protected gate."}],
+}
 
 
 @pytest.fixture
 def manager(temp_db: HubDatabase) -> RuleDefinitionManager:
     manager = RuleDefinitionManager(temp_db)
-    created = create_rule(
-        manager,
-        PROTECTED_RULE,
-        {
-            "event": "task_close",
-            "protected": True,
-            "when": "reason == 'done'",
-            "effects": [{"type": "block", "reason": "Synthetic protected gate."}],
-        },
-    )
+    with operator_rule_changes():
+        created = create_rule(manager, PROTECTED_RULE, _GATE)
     assert created["success"] is True, created
     return manager
+
+
+def test_seat_cannot_author_a_protected_rule(temp_db: HubDatabase) -> None:
+    manager = RuleDefinitionManager(temp_db)
+
+    created = create_rule(manager, "seat-authored-rule", _GATE)
+
+    assert created["success"] is False
+    assert "cannot be marked protected" in created["error"]
+    assert manager.get_by_name("seat-authored-rule") is None
+
+
+def test_seat_cannot_protect_an_existing_rule(manager: RuleDefinitionManager) -> None:
+    unprotected = {key: value for key, value in _GATE.items() if key != "protected"}
+    assert create_rule(manager, "seat-ordinary-rule", unprotected)["success"] is True
+
+    updated = update_rule(manager, "seat-ordinary-rule", definition=_GATE)
+
+    assert updated["success"] is False
+    assert "cannot be marked protected" in updated["error"]
+    row = manager.get_by_name("seat-ordinary-rule")
+    assert row is not None
+    assert "protected" not in row.definition_json
 
 
 def test_bundled_task_security_rules_declare_protection(temp_db: HubDatabase) -> None:

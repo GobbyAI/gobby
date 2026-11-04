@@ -81,7 +81,7 @@ def test_update_variable_refuses_reserved_names(name: str) -> None:
 
 def test_defaults_merge_never_seeds_reserved_names(temp_db: HubDatabase) -> None:
     defaults = SessionVariableDefaultManager(temp_db)
-    defaults.create(RESERVED, "developer")
+    defaults.create(RESERVED, "synthetic-seat")
     defaults.create(RESERVED_PREFIX, True)
     defaults.create("plain_default", "kept")
 

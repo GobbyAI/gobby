@@ -14,13 +14,11 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field, ValidationError
 
 from gobby.mcp_proxy.tools.workflows._rules import (
-    ProtectedRuleError,
     ReservedRuleMutationError,
     create_rule,
     delete_rule,
     get_rule,
     list_rules,
-    operator_rule_changes,
     toggle_rule,
     update_rule_fields,
 )
@@ -32,6 +30,7 @@ from gobby.workflows.delivery_disposition import (
     prepare_rule_definition_for_persist,
 )
 from gobby.workflows.pipeline_loader import _is_bundled_template
+from gobby.workflows.rule_authority import ProtectedRuleError, operator_rule_changes
 from gobby.workflows.rule_validation import validate_rule
 
 if TYPE_CHECKING:

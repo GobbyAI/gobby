@@ -25,6 +25,7 @@ from gobby.workflows.delivery_disposition import (
 from gobby.workflows.delivery_disposition import (
     migrate_rule_delivery_dispositions as migrate_rule_delivery_dispositions,
 )
+from gobby.workflows.rule_authority import refuse_protected_rule_import
 
 logger = logging.getLogger(__name__)
 
@@ -417,6 +418,7 @@ def _sync_single_rule(
 
     if existing is not None and existing.deleted_at is not None:
         if override_bundled or _is_sync_managed_rule(existing, sync_tag, project_id):
+            _refuse_protected_import(manager, rule_name, existing, definition_json, sync_tag)
             update_fields = _build_rule_update_fields(
                 existing=existing,
                 definition_json=definition_json,
@@ -451,6 +453,7 @@ def _sync_single_rule(
                 project_id=project_id,
             )
             if update_fields:
+                _refuse_protected_import(manager, rule_name, existing, definition_json, sync_tag)
                 manager.update_from_sync(existing.id, **update_fields)
                 result["updated"] += 1
                 return
@@ -459,6 +462,7 @@ def _sync_single_rule(
         return
 
     # Create new installed rule directly
+    _refuse_protected_import(manager, rule_name, None, definition_json, sync_tag)
     manager.create(
         name=rule_name,
         definition_json=definition_json,
@@ -471,6 +475,18 @@ def _sync_single_rule(
         source="installed",
     )
     result["synced"] += 1
+
+
+def _refuse_protected_import(
+    manager: RuleDefinitionManager,
+    rule_name: str,
+    target: Any,
+    definition_json: dict[str, Any],
+    sync_tag: str,
+) -> None:
+    """Bundled sync owns protected rules; every other rule file is an import."""
+    if sync_tag != "gobby":
+        refuse_protected_rule_import(manager, rule_name, target, definition_json)
 
 
 def _is_sync_managed_rule(existing: Any, sync_tag: str, project_id: str | None) -> bool:
