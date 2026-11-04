@@ -1,7 +1,8 @@
 """Who may stop or kill another seat's agent run.
 
-One helper answers for both external termination tools. Daemon-internal paths (lifecycle
-monitor, team teardown, cancel-stale, enforcement) do not pass through it.
+One helper answers for the external termination tools: stop_agent, kill_agent, and
+cancel_stale_helpers. Daemon-internal paths (lifecycle monitor, team teardown, enforcement)
+do not pass through it.
 """
 
 from __future__ import annotations
