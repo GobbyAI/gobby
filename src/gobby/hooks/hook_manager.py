@@ -20,6 +20,7 @@ from gobby.hooks.agent_run_ingress import (
 )
 from gobby.hooks.broadcaster import schedule_hook_broadcast
 from gobby.hooks.codex_seat import codex_stored_clear_context
+from gobby.hooks.compaction_ownership import CompactionOwnership
 from gobby.hooks.dispatchers import mcp as mcp_dispatcher
 from gobby.hooks.effect_deadline import BlockingEffectDeadline, new_blocking_effect_deadline
 from gobby.hooks.events import (
@@ -191,6 +192,9 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
             inter_session_msg_manager=self._inter_session_msg_manager,
         )
 
+        # Auto-compaction hooks whose owner (parent or subagent) is unknown (#25683)
+        self._compaction_ownership = CompactionOwnership()
+
         # Session lookup service (resolves platform session IDs from CLI external IDs)
         from gobby.hooks.session_lookup import SessionLookupService
 
@@ -292,6 +296,13 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
 
     def _handle_internal(self, event: HookEvent) -> HookResponse:
         """Internal handle logic wrapped by span."""
+        for replayed in self._compaction_ownership.settle(event):
+            try:
+                self._handle_internal(replayed)
+            except Exception:
+                self.logger.exception("Replaying held %s failed", replayed.event_type.value)
+        if self._compaction_ownership.hold(event):
+            return HookResponse(decision="allow")
         # A not-ready cached status makes this gate check synchronously and, for
         # critical hooks, sleep between retries on the adapter thread (#23063).
         daemon_unavailable = ensure_daemon_ready(event, self._health_monitor, self.logger)
@@ -307,6 +318,15 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
 
     async def _handle_internal_async(self, event: HookEvent) -> HookResponse:
         """Internal async handle logic wrapped by span."""
+        if self._compaction_ownership.has_held(event.session_id):
+            settled = await asyncio.to_thread(self._compaction_ownership.settle, event)
+            for replayed in settled:
+                try:
+                    await self._handle_internal_async(replayed)
+                except Exception:
+                    self.logger.exception("Replaying held %s failed", replayed.event_type.value)
+        if self._compaction_ownership.hold(event):
+            return HookResponse(decision="allow")
         daemon_unavailable = await ensure_daemon_ready_async(
             event,
             self._health_monitor,

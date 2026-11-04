@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from gobby.hooks.compaction_ownership import CompactionOwnership
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 
@@ -40,6 +41,7 @@ async def test_async_handler_runs_on_request_loop_after_threaded_preparation(
         SimpleNamespace(
             _health_monitor=None,
             logger=logging.getLogger(__name__),
+            _compaction_ownership=CompactionOwnership(),
             _handle_after_daemon_ready=prepare,
         ),
     )
