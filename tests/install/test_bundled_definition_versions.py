@@ -24,8 +24,10 @@ from gobby.workflows.sync_variables import get_bundled_variables_path
 pytestmark = pytest.mark.unit
 
 INSTALL_SHARED = get_install_dir() / "shared"
-SEMVER = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
-REFERENCE_VERSION_LINE = re.compile(r"_Version: [0-9]+\.[0-9]+\.[0-9]+_")
+# Each component is 0 or a number without leading zeros: 01.0.0, 1.00.0 and 1.0.00 are invalid.
+SEMVER_PATTERN = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+SEMVER = re.compile(SEMVER_PATTERN)
+REFERENCE_VERSION_LINE = re.compile(rf"_Version: {SEMVER_PATTERN}_")
 REFERENCE_FOOTER = "_Last verified"
 
 
@@ -104,3 +106,38 @@ def test_every_bundled_factory_file_has_a_semver_version() -> None:
     assert not offenders, "bundled files without a MAJOR.MINOR.PATCH version:\n" + "\n".join(
         offenders
     )
+
+
+@pytest.mark.parametrize(
+    ("value", "accepted"),
+    [
+        ("1.0.0", True),
+        ("0.0.0", True),
+        ("10.20.300", True),
+        ("01.0.0", False),
+        ("1.00.0", False),
+        ("1.0.00", False),
+        ("1.0", False),
+        ("1.0.0-rc1", False),
+        (1.0, False),
+        (None, False),
+    ],
+)
+def test_semver_check_rejects_leading_zeros_and_partial_versions(
+    value: object, accepted: bool
+) -> None:
+    assert (_semver_problem(value) is None) is accepted
+
+
+@pytest.mark.parametrize(
+    ("line", "accepted"),
+    [
+        ("_Version: 1.0.0_", True),
+        ("_Version: 01.0.0_", False),
+        ("_Version: 1.00.0_", False),
+        ("_Version: 1.0.00_", False),
+        ("_Version: 1.0_", False),
+    ],
+)
+def test_reference_version_line_rejects_leading_zeros(line: str, accepted: bool) -> None:
+    assert (REFERENCE_VERSION_LINE.fullmatch(line) is not None) is accepted
