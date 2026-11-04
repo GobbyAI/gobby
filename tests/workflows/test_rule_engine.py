@@ -36,6 +36,11 @@ from gobby.workflows.engine.effects import MAX_OBSERVATIONS
 from gobby.workflows.engine.event_utils import _resolve_rule_events
 from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
+from tests.workflows.rule_arming import (
+    SYNTHETIC_ESCALATION_PREFIX,
+    SYNTHETIC_RETRY_LIMIT_RULE,
+    install_retry_limit_rule,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -2123,9 +2128,10 @@ class TestConsecutiveToolBlocks:
     async def test_short_circuit_fires_at_threshold(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
-        """At the configured threshold, engine should short-circuit without evaluating rules."""
+        """At the threshold the retry-limit rule blocks before other rules take effect."""
+        install_retry_limit_rule(db)
 
-        # Insert a rule with set_variable to prove it never runs
+        # Insert a rule with set_variable to prove its side effect never runs
         _insert_rule(
             manager,
             "block-edit-with-side-effect",
@@ -2151,20 +2157,19 @@ class TestConsecutiveToolBlocks:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert "5 times consecutively after repeated BEFORE_TOOL blocks" in response.reason
-        assert "Most recent original block reason:" in response.reason
-        assert "Rule enforced by Gobby: [block-edit]\nNo editing" in response.reason
-        assert "Recovery required:" in response.reason
-        assert "STOP retrying" not in response.reason
-        # Rule should NOT have been evaluated — no side effect
+        assert response.reason.startswith(
+            f"Rule enforced by Gobby: [{SYNTHETIC_RETRY_LIMIT_RULE}]\n"
+            f"{SYNTHETIC_ESCALATION_PREFIX}: Edit x5 | "
+            "Rule enforced by Gobby: [block-edit]\nNo editing"
+        )
         assert variables.get("rule_ran") is None
 
     @pytest.mark.asyncio
     async def test_short_circuit_fallback_when_original_reason_unavailable(
         self, db: HubDatabase
     ) -> None:
-        """Threshold block should tell agents to scroll up when stored reason is absent."""
-
+        """The threshold block still fires when no original reason was stored."""
+        install_retry_limit_rule(db)
         engine = RuleEngine(db)
         variables: dict[str, Any] = {
             "consecutive_tool_blocks": 3,
@@ -2176,10 +2181,7 @@ class TestConsecutiveToolBlocks:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert "Most recent original block reason:" not in response.reason
-        assert "The prior block reason was unavailable." in response.reason
-        assert "Scroll up and read the immediately preceding tool error" in response.reason
-        assert "Recovery required:" in response.reason
+        assert response.reason.endswith(f"{SYNTHETIC_ESCALATION_PREFIX}: Edit x5 | none")
 
     @pytest.mark.asyncio
     async def test_counter_resets_on_successful_after_tool(self, db: HubDatabase) -> None:

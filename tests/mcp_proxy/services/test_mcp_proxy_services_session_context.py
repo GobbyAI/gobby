@@ -10,6 +10,7 @@ from gobby.mcp_proxy.services.session_context import (
     resolve_tool_event_context,
     should_synthesize_direct_after_tool,
 )
+from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
 
 pytestmark = pytest.mark.unit
 
@@ -147,3 +148,32 @@ def test_resolve_tool_event_context_accepts_primary_session_workspace() -> None:
     assert cwd == "/tmp/main"
     assert project_id == "project-1"
     assert metadata["project_path"] == "/tmp/main"
+
+
+@pytest.mark.parametrize("sentinel_project_id", sorted(CHECKOUT_FREE_PROJECT_IDS))
+def test_resolve_tool_event_context_skips_checkout_free_projects(
+    sentinel_project_id: str,
+) -> None:
+    """A session in a checkout-free project has no root to resolve, so the event still builds."""
+    session = SimpleNamespace(
+        source="codex",
+        project_id=sentinel_project_id,
+        machine_id="machine-1",
+        workspace_path=None,
+        external_id="external-1",
+    )
+    session_storage = MagicMock()
+    session_storage.get.return_value = session
+    hook_manager = SimpleNamespace(_session_manager=session_storage)
+
+    with patch(
+        "gobby.utils.project_context.get_project_context",
+        return_value={"project_path": "/tmp/main", "id": "project-main"},
+    ):
+        *_unused, metadata, cwd, project_id = resolve_tool_event_context(
+            _Service(hook_manager), "session-1"
+        )
+
+    assert cwd == "/tmp/main"
+    assert project_id == "project-main"
+    assert metadata["external_id"] == "external-1"

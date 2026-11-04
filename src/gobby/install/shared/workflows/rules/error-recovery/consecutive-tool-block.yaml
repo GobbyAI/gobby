@@ -1,0 +1,29 @@
+version: "1.0.0"
+tags: [error-recovery, enforcement, gobby, default]
+
+# The engine charges each repeated denial of the same tool to
+# block_state.consecutive_tool_blocks and resets it when the agent changes tool
+# or remediates. This rule owns the threshold and the wording. As a retry_limit
+# rule it is evaluated before agent, step and rule gates; its block preempts
+# them and leaves the original block reason in place for the next escalation.
+rules:
+  consecutive-tool-block:
+    description: "Escalate when one tool keeps being blocked without the required remediation"
+    event: before_tool
+    enabled: true
+    mandatory: true
+    retry_limit: true
+    priority: 0
+    when: >
+      block_state.get('_last_blocked_tool')
+      and block_state.get('consecutive_tool_blocks', 0) + 1
+      >= variables.get('max_consecutive_blocked_tool_attempts', 5)
+    effects:
+      - type: block
+        reason: |-
+          You have attempted {{ block_state.get('_last_blocked_tool') }} {{ block_state.get('consecutive_tool_blocks', 0) + 1 }} times consecutively after repeated BEFORE_TOOL blocks.
+
+          {% set prior = (block_state.get('_last_blocked_reason') or '') | trim %}{% if prior %}Most recent original block reason:
+          {{ prior }}{% else %}The prior block reason was unavailable. Scroll up and read the immediately preceding tool error, then follow its requested remediation before retrying.{% endif %}
+
+          Recovery required: read the most recent original block reason, follow that rule's requested remediation before retrying, use a different tool only when it directly performs that remediation, and do not stop/end the turn until remediation has been attempted.
