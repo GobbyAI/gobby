@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -149,7 +149,7 @@ def _is_unowned_claude_compaction(event: HookEvent) -> bool:
     )
 
 
-def _lines_newest_first(path: Path, chunk_bytes: int) -> Iterator[bytes]:
+def _lines_newest_first(path: Path, chunk_bytes: int) -> Generator[bytes]:
     """Yield the transcript's lines last-to-first, reading ``chunk_bytes`` at a time."""
     with path.open("rb") as handle:
         position = handle.seek(0, os.SEEK_END)
