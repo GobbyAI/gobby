@@ -3664,6 +3664,7 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
         "compact-start",
         "activity-settle-loser",
         "winner-after-cache-loss",
+        "activity-before-clear-start",
     ],
 )
 def test_codex_clear_stored_outcome_governs_every_later_hook(
@@ -3675,9 +3676,10 @@ def test_codex_clear_stored_outcome_governs_every_later_hook(
     kind of seat ordinary resolution guesses for a new thread. Beside the seat that
     ran /clear it makes the clear-start refuse, and no later hook for the thread may
     guess it instead: neither its prompts nor its end, a repeated or compact start,
-    nor a hook that read the row while its origin was pending. A successor that
-    adopted its seat keeps that seat after the seat cache is lost, rather than
-    switching to the fresh one.
+    nor a hook that read the row while its origin was pending, nor a prompt replayed
+    ahead of the clear-start that registered the row first. A successor that adopted
+    its seat keeps that seat after the seat cache is lost, rather than switching to
+    the fresh one.
     """
     from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
     from gobby.hooks.terminal_context import clear_codex_seat_index
@@ -3791,6 +3793,10 @@ def test_codex_clear_stored_outcome_governs_every_later_hook(
             # No rescan throttle: every hook scans and may guess.
             patch("gobby.hooks.terminal_context._SEAT_RESCAN_INTERVAL_SECONDS", 0.0),
         ):
+            if later_hook == "activity-before-clear-start":
+                # A queued prompt replays first and registers the thread; no startup
+                # began it, so it records no seat for the clear-start to inherit.
+                assert manager.handle(prompt()).decision == "allow"
             assert manager.handle(start_event("clear")).decision == "allow"
             successor = sessions.find_by_external_id(
                 successor_thread, project.id, "codex", session_type="terminal"
@@ -3847,6 +3853,176 @@ def test_codex_clear_stored_outcome_governs_every_later_hook(
     assert bound == []
     held = sessions.db.fetchall("SELECT id FROM terminals WHERE session_id = %s", (predecessor_id,))
     assert [str(row["id"]) for row in held] == [pane_id]
+
+
+def _pending_codex_pane(manager: HookManager) -> tuple[Any, str, str]:
+    """A pending Gobby pane in the test project, with its terminal manager wired."""
+    from gobby.storage.terminals import TerminalManager
+
+    sessions = manager._session_manager
+    terminals = TerminalManager(sessions.db)
+    manager._event_handlers.terminal_manager = terminals
+    project = LocalProjectManager(sessions.db).get_by_name("test-project")
+    assert project is not None
+    pane_id = str(uuid.uuid4())
+    terminals.create_pending(
+        terminal_id=pane_id,
+        project_id=project.id,
+        backend="native",
+        ownership="gobby",
+        spawn_key=pane_id,
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    return terminals, project.id, pane_id
+
+
+def _codex_start(thread: str, source: str, cwd: Path, context: dict[str, Any]) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.SESSION_START,
+        session_id=thread,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={"source": source, "cwd": str(cwd), "terminal_context": dict(context)},
+        machine_id=LOCAL_MACHINE_ID,
+    )
+
+
+def _codex_prompt(thread: str, cwd: Path, context: dict[str, Any]) -> HookEvent:
+    from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+    event = CodexHooksAdapter().translate_to_hook_event(
+        {
+            "hook_type": "UserPromptSubmit",
+            "input_data": {
+                "session_id": thread,
+                "prompt": "Start the next task.",
+                "cwd": str(cwd),
+                "terminal_context": dict(context),
+                "machine_id": LOCAL_MACHINE_ID,
+            },
+            "source": "codex",
+        }
+    )
+    assert event is not None
+    return event
+
+
+@pytest.mark.parametrize("started", [True, False], ids=["startup-deferred", "no-startup"])
+def test_codex_first_prompt_after_a_restart_binds_only_a_started_threads_pane(
+    hook_manager_with_mocks: HookManager, temp_dir: Path, started: bool
+) -> None:
+    """#25647: the durable startup mark lets a thread's first prompt find its seat.
+
+    The startup defers its row and leaves the mark; the daemon restarts before the
+    first prompt, which still adopts the fresh seat TUI, binds its pane and consumes
+    the mark. A thread no startup began binds nothing, though the same seat is there.
+    """
+    from gobby.hooks.terminal_context import clear_codex_seat_index
+    from gobby.storage.session_startup_marks import startup_mark_exists
+
+    manager = hook_manager_with_mocks
+    sessions = manager._session_manager
+    _terminals, project_id, pane_id = _pending_codex_pane(manager)
+    minted_at = time.time()
+    thread = _uuid7_at(minted_at, 0x3333)
+    host = _codex_tui(
+        94728,
+        ["codex", "app-server", "--listen", "unix://", "--managed-daemon"],
+        50.0,
+        "",
+        temp_dir,
+    )
+    fresh = _codex_tui(52002, ["codex"], minted_at - 30, pane_id, temp_dir)
+    table = [host, fresh]
+
+    def lookup(pid: int) -> MagicMock:
+        for candidate in table:
+            if candidate.pid == pid:
+                return candidate
+        raise psutil.NoSuchProcess(pid)
+
+    host_context = {"parent_pid": host.pid, "gobby_terminal_id": str(uuid.uuid4())}
+    mark = {"machine_id": LOCAL_MACHINE_ID, "source": "codex", "external_id": thread}
+    prompt = _codex_prompt(thread, temp_dir, host_context)
+    clear_codex_seat_index()
+    try:
+        with (
+            patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
+            patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename"),
+            patch("gobby.hooks.terminal_context.psutil.Process", side_effect=lookup),
+            patch("gobby.terminal_ownership.psutil.Process", side_effect=lookup),
+            patch(
+                "gobby.hooks.terminal_context.psutil.process_iter",
+                side_effect=lambda **_: list(table),
+            ),
+        ):
+            if started:
+                start = _codex_start(thread, "startup", temp_dir, host_context)
+                assert manager.handle(start).decision == "allow"
+                assert (
+                    sessions.find_by_external_id(
+                        thread, project_id, "codex", session_type="terminal"
+                    )
+                    is None
+                )
+                assert startup_mark_exists(sessions.db, **mark)
+            # The daemon restarts: every cached seat is gone.
+            clear_codex_seat_index()
+            assert manager.handle(prompt).decision == "allow"
+    finally:
+        clear_codex_seat_index()
+
+    session = sessions.get(prompt.metadata["_platform_session_id"])
+    assert session is not None
+    assert session.external_id == thread
+    assert not startup_mark_exists(sessions.db, **mark)
+    recorded = session.terminal_context or {}
+    bound = sessions.db.fetchall("SELECT id FROM terminals WHERE session_id = %s", (session.id,))
+    if started:
+        assert recorded.get("parent_pid") == fresh.pid
+        assert recorded.get("gobby_terminal_id") == pane_id
+        assert [str(row["id"]) for row in bound] == [pane_id]
+    else:
+        assert recorded.get("parent_pid") is None
+        assert bound == []
+
+
+@pytest.mark.parametrize(
+    "start_kind",
+    ["startup", "synthetic-startup", "repeat-startup", "compact", "resume", "clear"],
+)
+def test_codex_startup_mark_is_left_only_by_a_threads_own_startup(
+    hook_manager_with_mocks: HookManager, temp_dir: Path, start_kind: str
+) -> None:
+    """#25647: only a real startup that deferred its row leaves a startup mark.
+
+    A start Gobby built from activity, a repeated startup of a registered thread, a
+    compaction, a resume and a /clear successor never do, so none can let a later
+    registration search for a seat.
+    """
+    from gobby.storage.session_startup_marks import startup_mark_exists
+
+    manager = hook_manager_with_mocks
+    sessions = manager._session_manager
+    thread = _uuid7_at(time.time(), 0x4444)
+    mark = {"machine_id": LOCAL_MACHINE_ID, "source": "codex", "external_id": thread}
+    source = start_kind.removeprefix("synthetic-").removeprefix("repeat-")
+    start = _codex_start(thread, source, temp_dir, {})
+    if start_kind == "synthetic-startup":
+        start.metadata["_synthetic_session_start"] = True
+
+    with (
+        patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
+        patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename"),
+    ):
+        if start_kind == "repeat-startup":
+            first = _codex_start(thread, "startup", temp_dir, {})
+            assert manager.handle(first).decision == "allow"
+            assert manager.handle(_codex_prompt(thread, temp_dir, {})).decision == "allow"
+            assert not startup_mark_exists(sessions.db, **mark)
+        manager.handle(start)
+
+    assert startup_mark_exists(sessions.db, **mark) is (start_kind == "startup")
 
 
 def test_session_resolution_reads_the_session_row_once(

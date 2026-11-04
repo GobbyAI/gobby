@@ -161,6 +161,7 @@ def enrich_terminal_context_with_cwd(
     seat_available: SeatAvailable | None = None,
     cleared_seat_owner: SeatOwnerCheck | None = None,
     machine_id: str | None = None,
+    startup_thread: bool = False,
 ) -> dict[str, Any] | None:
     """Copy terminal context and add cwd and parent-process identity.
 

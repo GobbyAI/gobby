@@ -267,23 +267,25 @@ def test_sessions_on_another_machine_never_own_its_seats(
     assert available(SEAT_PID, started) is True
 
 
-def test_stored_clear_context_reads_only_a_threads_clear_row(
+def test_stored_context_reads_a_threads_row_of_any_kind(
     session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:
-    """#25647: the seat index reads a thread's /clear outcome from its stored row.
+    """#25647: the seat index reads a thread's stored seat or /clear outcome from its row.
 
     The read has no project filter: a hook whose cwd resolves elsewhere still meets
-    the outcome. Rows without a /clear origin, and other machines' rows, are no answer.
+    the outcome. An ordinary row answers with the seat it stores, so a restart keeps
+    it; other machines' rows are no answer.
     """
     from gobby.hooks.codex_seat import codex_stored_clear_context
 
     refused = {"cwd": "/repo", CODEX_CLEAR_ORIGIN_KEY: "codex-tui"}
     _register(session_manager, sample_project["id"], refused, external_id=THREAD_ID)
     ordinary_thread = "01a1a561-0000-7000-8000-000000025648"
+    seat_started_at = time.time() - 300
     _register(
         session_manager,
         sample_project["id"],
-        {"cwd": "/repo", "parent_pid": SEAT_PID, "parent_create_time": time.time() - 300},
+        {"cwd": "/repo", "parent_pid": SEAT_PID, "parent_create_time": seat_started_at},
         external_id=ordinary_thread,
     )
 
@@ -294,7 +296,13 @@ def test_stored_clear_context_reads_only_a_threads_clear_row(
     assert stored is not None
     assert stored[CODEX_CLEAR_ORIGIN_KEY] == "codex-tui"
     assert "parent_pid" not in stored
-    assert local(ordinary_thread) is None
+    ordinary = local(ordinary_thread)
+    assert ordinary is not None
+    assert CODEX_CLEAR_ORIGIN_KEY not in ordinary
+    assert (ordinary["parent_pid"], ordinary["parent_create_time"]) == (
+        SEAT_PID,
+        seat_started_at,
+    )
     assert local("01a1a561-0000-7000-8000-000000025649") is None
     assert other_machine(THREAD_ID) is None
 

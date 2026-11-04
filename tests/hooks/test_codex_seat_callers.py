@@ -1,11 +1,13 @@
-"""Every caller that resolves a Codex seat honors a /clear successor's stored row (#25647).
+"""Every caller that resolves a Codex seat honors the thread's stored row (#25647).
 
 A refused /clear successor's row records a settled origin and no seat. A fresh seat
-TUI started in the cwd just before the thread was minted is what ordinary resolution
-guesses for a new thread, so each caller below meets one beside the shared app-server
-host. With the refusal stored, no caller may record that seat or leave it cached for
-the thread's next hook. Without a stored /clear row the same caller guesses it, which
-proves the caller resolves a seat at all.
+TUI started in the cwd just before the thread was minted is what a startup's search
+adopts, so each caller below meets one beside the shared app-server host. Only a
+thread a real startup began may search for it: the startup deferral check, and a
+first registration that finds the durable startup mark. Every other caller records
+no seat for a thread without a stored one, and none may leave a guess cached for the
+thread's next hook. A thread whose row stores a live seat gets that seat from every
+caller, even a seat that started long before the thread, which no search adopts.
 
 The SessionStart flow's own enrichment (``_session_start/flow.py``) is covered end to
 end in ``test_hooks_manager.py::test_codex_clear_stored_outcome_governs_every_later_hook``
@@ -44,12 +46,23 @@ MINTED_AT = 1_790_000_000.5
 THREAD = str(UUID(int=(int(MINTED_AT * 1000) << 80) | (7 << 76) | (0x2 << 62) | 0x2564_7000_0001))
 HOST_PID = 94728
 NEIGHBOR_PID = 52002
+# A seat that ran long before the thread: no search adopts it, only a stored row names it.
+STORED_PID = 45647
+STORED_STARTED_AT = MINTED_AT - 7200.0
 HOST_CONTEXT: dict[str, Any] = {"parent_pid": HOST_PID, "gobby_terminal_id": "pane-host"}
 STORED_ROWS: dict[str, dict[str, Any] | None] = {
     "refused": {"gobby_codex_clear_origin": "codex-tui", "cwd": "/repo"},
     "no-row": None,
+    "stored-seat": {
+        "cwd": "/repo",
+        "parent_pid": STORED_PID,
+        "parent_create_time": STORED_STARTED_AT,
+    },
 }
-EXPECTED_PID = {"refused": None, "no-row": NEIGHBOR_PID}
+EXPECTED_PID: dict[str, int | None] = {"refused": None, "no-row": None, "stored-seat": STORED_PID}
+# Only a thread a real startup began searches, so only it adopts the fresh seat.
+STARTUP_EXPECTED_PID = {**EXPECTED_PID, "no-row": NEIGHBOR_PID}
+_MARKS = "gobby.storage.session_startup_marks"
 _MATERIALIZE = "gobby.hooks.event_handlers._session_start.materialize"
 _LOOKUP = "gobby.hooks.session_lookup"
 _DEFERRED = "gobby.hooks.session_materialize"
@@ -80,6 +93,7 @@ def stored(request: pytest.FixtureRequest) -> Iterator[str]:
             ["codex", "app-server", "--listen", "unix://", "--managed-daemon"],
             50.0,
         ),
+        _process(STORED_PID, ["codex", "--yolo"], STORED_STARTED_AT),
         _process(NEIGHBOR_PID, ["codex", "--yolo"], MINTED_AT - 30.0),
     ]
 
@@ -123,11 +137,15 @@ def _enrichments(module: str) -> Iterator[list[tuple[str | None, dict[str, Any] 
         yield recorded
 
 
-def _assert_seat(recorded: list[tuple[str | None, dict[str, Any] | None]], stored: str) -> None:
+def _assert_seat(
+    recorded: list[tuple[str | None, dict[str, Any] | None]],
+    stored: str,
+    expected_pids: dict[str, int | None] = EXPECTED_PID,
+) -> None:
     """The caller resolved the thread's seat, and it and the next hook got the expected one."""
     assert [external_id for external_id, _context in recorded] == [THREAD] * len(recorded)
     assert recorded, "the caller resolves the thread's seat"
-    expected = EXPECTED_PID[stored]
+    expected = expected_pids[stored]
     assert [(context or {}).get("parent_pid") for _id, context in recorded] == [expected] * len(
         recorded
     )
@@ -184,6 +202,30 @@ def _row(stored: str) -> Session:
 def test_startup_deferral_check(stored: str) -> None:
     """``_session_start/materialize.py``: whether a startup may defer its row."""
     event = _event(HookEventType.SESSION_START, {"source": "startup"})
+
+    with _enrichments(_MATERIALIZE) as recorded:
+        session_start_should_defer(event, None, "startup")
+
+    _assert_seat(recorded, stored, STARTUP_EXPECTED_PID)
+
+
+@pytest.mark.parametrize("source", ["compact", "resume", "clear"])
+def test_startup_deferral_check_never_searches_for_another_start(stored: str, source: str) -> None:
+    """``_session_start/materialize.py``: only a startup source proves a startup."""
+    event = _event(HookEventType.SESSION_START, {"source": source})
+
+    with _enrichments(_MATERIALIZE) as recorded:
+        session_start_should_defer(event, None, source)
+
+    assert recorded == []
+    later = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=THREAD)
+    assert (later or {}).get("parent_pid") == EXPECTED_PID[stored]
+
+
+def test_startup_deferral_check_for_a_synthetic_start(stored: str) -> None:
+    """``_session_start/materialize.py``: a start Gobby built from activity proves nothing."""
+    event = _event(HookEventType.SESSION_START, {"source": "startup"})
+    event.metadata["_synthetic_session_start"] = True
 
     with _enrichments(_MATERIALIZE) as recorded:
         session_start_should_defer(event, None, "startup")
@@ -257,8 +299,13 @@ def test_inherited_tty_native_subagent_bind(stored: str) -> None:
     _assert_seat(recorded, stored)
 
 
-def test_uncached_registration(stored: str) -> None:
-    """``session_lookup.py``: registering a thread no row in this project matches."""
+@pytest.mark.parametrize("marked", [False, True], ids=["unmarked", "startup-marked"])
+def test_uncached_registration(stored: str, marked: bool) -> None:
+    """``session_lookup.py``: registering a thread no row in this project matches.
+
+    Only the durable mark a deferred startup left lets the registration search, and the
+    registration consumes it.
+    """
     session_manager = MagicMock()
     session_manager.get_session_id.return_value = None
     session_manager.lookup_session_id.return_value = None
@@ -269,7 +316,13 @@ def test_uncached_registration(stored: str) -> None:
     # No platform-session hint: only the thread id identifies the hook.
     event.metadata.clear()
 
-    with _enrichments(_LOOKUP) as recorded:
+    expected_pids = STARTUP_EXPECTED_PID if marked else EXPECTED_PID
+
+    with (
+        _enrichments(_LOOKUP) as recorded,
+        patch(f"{_MARKS}.startup_mark_exists", return_value=marked) as exists,
+        patch(f"{_MARKS}.delete_startup_mark") as consume,
+    ):
         assert (
             _service(session_manager)._resolve_uncached_session_id(
                 THREAD, event, machine_id=MACHINE_ID, project_id="project-1"
@@ -277,9 +330,15 @@ def test_uncached_registration(stored: str) -> None:
             == "platform-1"
         )
 
-    _assert_seat(recorded, stored)
+    _assert_seat(recorded, stored, expected_pids)
     registered = session_manager.register_session.call_args.kwargs["terminal_context"]
-    assert (registered or {}).get("parent_pid") == EXPECTED_PID[stored]
+    assert (registered or {}).get("parent_pid") == expected_pids[stored]
+    mark = {"machine_id": MACHINE_ID, "source": "codex", "external_id": THREAD}
+    exists.assert_called_once_with(session_manager.db, **mark)
+    if marked:
+        consume.assert_called_once_with(session_manager.db, **mark)
+    else:
+        consume.assert_not_called()
 
 
 def test_synthetic_session_start(stored: str) -> None:

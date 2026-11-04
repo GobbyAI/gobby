@@ -381,7 +381,9 @@ def test_fresh_seat_adopts_the_tui_created_just_before_its_thread() -> None:
     )
 
     with _process_table([_managed_host(), seat]):
-        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread, startup_thread=True
+        )
 
     assert result == _seat_context(
         71386, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT - 1.5
@@ -419,6 +421,7 @@ def test_local_fresh_seat_check_unchanged() -> None:
             "/repo",
             external_id=_uuid7(FRESH_MINTED_AT),
             machine_id=get_machine_id(),
+            startup_thread=True,
         )
 
     assert result == _seat_context(
@@ -436,7 +439,9 @@ def test_fresh_seat_prefers_the_newest_earlier_tui() -> None:
     )
 
     with _process_table([_managed_host(), newer, older]):
-        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread, startup_thread=True
+        )
 
     assert result == _seat_context(
         71386, tty="/dev/ttys002", terminal_id="pane-b", create_time=FRESH_MINTED_AT - 1.5
@@ -458,7 +463,9 @@ def test_fresh_seat_ignores_tuis_outside_the_creation_window(
         _process_table([_managed_host(), stale, later]),
         caplog.at_level(logging.WARNING, logger="gobby.hooks.terminal_context"),
     ):
-        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread, startup_thread=True
+        )
 
     assert result == {"cwd": "/repo"}
     assert thread in caplog.text
@@ -485,7 +492,9 @@ def test_fresh_seat_ignores_other_cwds_and_codex_parented_helpers() -> None:
     )
 
     with _process_table([_managed_host(), eligible, elsewhere, helper]):
-        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread, startup_thread=True
+        )
 
     assert result == _seat_context(
         71000, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT - 10.0
@@ -499,7 +508,9 @@ def test_fresh_seat_never_adopts_a_resumed_seat() -> None:
     )
 
     with _process_table([_managed_host(), resumed]):
-        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread, startup_thread=True
+        )
 
     assert result == {"cwd": "/repo"}
 
@@ -512,7 +523,9 @@ def test_fresh_seat_adoption_is_cached_without_a_rescan() -> None:
     table = [_managed_host(), seat]
 
     with _process_table(table) as process_iter:
-        first = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+        first = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread, startup_thread=True
+        )
         second = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
         assert process_iter.call_count == 1
 
@@ -547,10 +560,14 @@ def test_new_thread_adopts_the_only_unowned_seat_past_the_fresh_window() -> None
 
     with _process_table([_managed_host(), owned, slow]):
         hook_only = enrich_terminal_context_with_cwd(
-            dict(HOST_CONTEXT), "/repo", external_id=thread
+            dict(HOST_CONTEXT), "/repo", external_id=thread, startup_thread=True
         )
         adopted = enrich_terminal_context_with_cwd(
-            dict(HOST_CONTEXT), "/repo", external_id=thread, seat_available=available
+            dict(HOST_CONTEXT),
+            "/repo",
+            external_id=thread,
+            seat_available=available,
+            startup_thread=True,
         )
         later_hook = enrich_terminal_context_with_cwd(
             dict(HOST_CONTEXT), "/repo", external_id=thread
@@ -585,6 +602,7 @@ def test_new_thread_refuses_an_ambiguous_unowned_seat(
             dict(HOST_CONTEXT),
             cwd,
             external_id=thread,
+            startup_thread=True,
             seat_available=lambda pid, _: pid != second.pid or not second_seat_owned,
         )
 
@@ -607,7 +625,11 @@ def test_new_thread_never_adopts_an_owned_or_later_seat() -> None:
 
     with _process_table([_managed_host(), owned, later]):
         result = enrich_terminal_context_with_cwd(
-            dict(HOST_CONTEXT), "/repo", external_id=thread, seat_available=available
+            dict(HOST_CONTEXT),
+            "/repo",
+            external_id=thread,
+            seat_available=available,
+            startup_thread=True,
         )
 
     assert result == {"cwd": "/repo"}
@@ -630,7 +652,9 @@ def test_fresh_seat_never_adopts_a_spawned_agent_tui() -> None:
     )
 
     with _process_table([_managed_host(), reviewer]):
-        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread, startup_thread=True
+        )
 
     assert result == {"cwd": "/repo"}
 
@@ -649,7 +673,9 @@ def test_fresh_seat_adopts_the_human_tui_not_a_newer_spawned_agent_tui() -> None
     )
 
     with _process_table([_managed_host(), human, reviewer]):
-        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread, startup_thread=True
+        )
 
     assert result == _seat_context(
         70100, tty="/dev/ttys004", terminal_id="pane-human", create_time=FRESH_MINTED_AT - 10.0
@@ -670,7 +696,9 @@ def test_fresh_seat_adopts_the_human_tui_when_the_spawned_agent_tui_is_older() -
     )
 
     with _process_table([_managed_host(), reviewer, human]):
-        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread, startup_thread=True
+        )
 
     assert result == _seat_context(
         70100, tty="/dev/ttys004", terminal_id="pane-human", create_time=FRESH_MINTED_AT - 2.0
@@ -692,6 +720,7 @@ def test_new_thread_never_adopts_a_spawned_agent_tui_past_the_window() -> None:
             dict(HOST_CONTEXT),
             "/repo",
             external_id=thread,
+            startup_thread=True,
             seat_available=lambda _pid, _create_time: True,
         )
 
@@ -716,6 +745,7 @@ def test_new_thread_adopts_the_human_tui_beside_a_spawned_agent_tui_past_the_win
             dict(HOST_CONTEXT),
             "/repo",
             external_id=thread,
+            startup_thread=True,
             seat_available=lambda _pid, _create_time: True,
         )
 
@@ -743,12 +773,22 @@ STORED_CLEAR_ROWS: dict[str, dict[str, Any] | None] = {
     "other-client": {_CLEAR_ORIGIN: "codex_exec", "cwd": "/repo"},
     "stored-seat": {_CLEAR_ORIGIN: "codex-tui", **_STORED_SEAT},
     "pending-with-seat": {_CLEAR_ORIGIN: "pending", **_STORED_SEAT},
+    # An ordinary row: a thread a startup began, or one whose seat a registration stored.
+    "ordinary": {"cwd": "/repo"},
+    "ordinary-seat": dict(_STORED_SEAT),
 }
 ENRICHMENT_SHAPES: dict[str, dict[str, Any]] = {
     "ordinary": {},
     "seat-available": {"seat_available": lambda _pid, _create_time: True},
     "cleared-seat-owner": {"cleared_seat_owner": lambda _pid, _create_time: SeatOwner.RECORDED},
+    "startup": {"startup_thread": True},
+    "startup-seat-available": {
+        "startup_thread": True,
+        "seat_available": lambda _pid, _create_time: True,
+    },
 }
+# Only a thread a real startup began searches; a stored seat answers every shape.
+_STARTUP_SEARCH = {"startup": NEIGHBOR_PID, "startup-seat-available": NEIGHBOR_PID}
 
 
 @pytest.fixture
@@ -784,8 +824,10 @@ def _cleared_seat_and_neighbor() -> list[MagicMock]:
 @pytest.mark.parametrize(
     ("stored", "expected_pids"),
     [
-        # No /clear row: today's resolution. Two seat TUIs make the /clear search refuse.
-        ("no-row", {"ordinary": NEIGHBOR_PID, "seat-available": NEIGHBOR_PID}),
+        # No row: only a startup searches. Two seat TUIs make the /clear search refuse.
+        ("no-row", _STARTUP_SEARCH),
+        ("ordinary", _STARTUP_SEARCH),
+        ("ordinary-seat", dict.fromkeys(ENRICHMENT_SHAPES, CLEARED_SEAT_PID)),
         ("pending", {}),
         ("refused", {}),
         ("other-client", {}),
@@ -858,11 +900,11 @@ def test_an_unreadable_stored_row_records_no_seat() -> None:
     assert "parent_pid" not in result
 
 
-def test_a_clear_search_ignores_a_seat_guessed_before_the_clear_row(
+def test_a_hook_before_the_clear_row_leaves_no_guess_for_later_hooks(
     stored_clear_row: Callable[[str, dict[str, Any] | None], None],
 ) -> None:
-    """A guess cached before the thread was known to be a /clear successor never
-    answers its /clear search, and the stored row replaces it once written."""
+    """A hook that reaches a /clear successor before its row records no seat, so
+    neither the /clear search nor any later hook can inherit a guess."""
     from gobby.hooks.terminal_context import sync_codex_seat
 
     thread = _uuid7(FRESH_MINTED_AT)
@@ -878,11 +920,44 @@ def test_a_clear_search_ignores_a_seat_guessed_before_the_clear_row(
         sync_codex_seat(thread, STORED_CLEAR_ROWS["refused"])
         later = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
 
-    assert (guessed or {}).get("parent_pid") == NEIGHBOR_PID
+    assert guessed is not None
+    assert "parent_pid" not in guessed
     assert searched is not None
     assert "parent_pid" not in searched
     assert later is not None
     assert "parent_pid" not in later
+
+
+def test_a_startup_search_is_not_held_back_by_an_earlier_miss() -> None:
+    """A hook before the startup's own check records no seat and starts the rescan
+    throttle; the startup still searches, and later hooks reuse what it adopted."""
+    thread = _uuid7(FRESH_MINTED_AT)
+
+    with _process_table(_cleared_seat_and_neighbor()):
+        early = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+        startup = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread, startup_thread=True
+        )
+        later = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert early is not None
+    assert "parent_pid" not in early
+    assert (startup or {}).get("parent_pid") == (later or {}).get("parent_pid") == NEIGHBOR_PID
+
+
+def test_a_stored_ordinary_seat_answers_after_the_cache_is_lost(
+    stored_clear_row: Callable[[str, dict[str, Any] | None], None],
+) -> None:
+    """After a restart the index holds nothing for a registered thread; the seat its
+    ordinary row stores answers, though a fresh seat TUI started just before the thread
+    is also running in the cwd."""
+    thread = _uuid7(FRESH_MINTED_AT)
+    stored_clear_row(thread, STORED_CLEAR_ROWS["ordinary-seat"])
+
+    with _process_table(_cleared_seat_and_neighbor()):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert (result or {}).get("parent_pid") == CLEARED_SEAT_PID
 
 
 def test_syncing_a_stored_seat_answers_later_hooks_without_a_read(
