@@ -3381,21 +3381,25 @@ def _uuid7_at(seconds: float, tail: int) -> str:
 
 
 @pytest.mark.parametrize(
-    ("second_seat", "originator", "adopts"),
+    ("second_seat", "originator", "rollout_late", "adopts"),
     [
-        (None, "codex-tui", True),
-        ("login", "codex-tui", False),
-        ("recorded", "codex-tui", False),
-        ("unrecorded", "codex-tui", False),
-        (None, "codex_vscode", False),
-        (None, None, False),
+        (None, "codex-tui", False, True),
+        (None, "codex-tui", True, True),
+        ("login", "codex-tui", False, False),
+        ("recorded", "codex-tui", False, False),
+        ("unrecorded", "codex-tui", False, False),
+        (None, "codex_vscode", False, False),
+        (None, "codex_vscode", True, False),
+        (None, None, False, False),
     ],
     ids=[
         "only-seat",
+        "only-seat-rollout-after-start",
         "beside-login-seat",
         "two-owned-seats",
         "beside-unrecorded-seat",
         "ide-clear-beside-one-seat",
+        "ide-clear-rollout-after-start",
         "unreadable-rollout",
     ],
 )
@@ -3404,6 +3408,7 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
     temp_dir: Path,
     second_seat: str | None,
     originator: str | None,
+    rollout_late: bool,
     adopts: bool,
 ) -> None:
     """#25647: a /clear inside a running Codex TUI hands the pane to the new thread.
@@ -3413,7 +3418,9 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
     that TUI and holds the pane. Only a thread whose rollout says a TUI minted it
     adopts, and only the one seat TUI in the cwd, whose owner is recorded. A second
     seat TUI of any ownership refuses. A thread another Codex client minted, or one
-    whose rollout is unreadable, never takes a TUI pane but is still tracked.
+    whose rollout is unreadable, never takes a TUI pane but is still tracked. Codex
+    writes the rollout lazily, so a rollout that appears after SessionStart is
+    checked again on the thread's next activity.
     """
     from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
     from gobby.hooks.terminal_context import clear_codex_seat_index
@@ -3485,9 +3492,14 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
 
     successor_thread = _uuid7_at(minted_at, 0x2222)
     rollout = temp_dir / f"rollout-{successor_thread}.jsonl"
-    if originator is not None:
-        meta = {"id": successor_thread, "originator": originator, "cwd": str(temp_dir)}
-        rollout.write_text(json.dumps({"type": "session_meta", "payload": meta}) + "\n")
+
+    def write_rollout() -> None:
+        if originator is not None:
+            meta = {"id": successor_thread, "originator": originator, "cwd": str(temp_dir)}
+            rollout.write_text(json.dumps({"type": "session_meta", "payload": meta}) + "\n")
+
+    if not rollout_late:
+        write_rollout()
     host_context = {"parent_pid": host.pid, "gobby_terminal_id": str(uuid.uuid4())}
     start = HookEvent(
         event_type=HookEventType.SESSION_START,
@@ -3511,6 +3523,7 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
                     "session_id": thread,
                     "prompt": "Start the next task.",
                     "cwd": str(temp_dir),
+                    "transcript_path": str(temp_dir / f"rollout-{thread}.jsonl"),
                     "terminal_context": dict(host_context),
                     "machine_id": LOCAL_MACHINE_ID,
                 },
@@ -3534,6 +3547,15 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
             ),
         ):
             assert manager.handle(start).decision == "allow"
+            if rollout_late:
+                # Before its rollout exists the thread's origin is unknown: no pane yet.
+                waiting = sessions.find_by_external_id(
+                    successor_thread, project.id, "codex", session_type="terminal"
+                )
+                assert waiting is not None
+                assert waiting.status == "active"
+                assert (waiting.terminal_context or {}).get("parent_pid") is None
+                write_rollout()
             assert manager.handle(prompt).decision == "allow"
             # A late hook for the cleared thread must not revive it beside the successor.
             assert manager.handle(prompt_for(predecessor_thread)).decision == "allow"
