@@ -91,9 +91,9 @@ def _track_batch_completed(variables: dict[str, Any], tool_output: Any, session_
         logger.debug("Session %s: batch-loaded instruction tracked %s", session_id, identity)
     unavailable = page.get("unavailable")
     for item in unavailable if isinstance(unavailable, list) else []:
-        identity = item.get("identity") if isinstance(item, dict) else None
-        if isinstance(identity, str) and identity:
-            _append_unique(variables, "unavailable_instructions", identity)
+        missing = item.get("identity") if isinstance(item, dict) else None
+        if isinstance(missing, str) and missing:
+            _append_unique(variables, "unavailable_instructions", missing)
 
 
 def _append_unique(variables: dict[str, Any], key: str, value: str) -> None:
@@ -132,8 +132,8 @@ def _completed_batch_identities(page: dict[str, Any]) -> list[str]:
         identity
         for identity in completed
         if isinstance(identity, str)
-        and isinstance(delivered.get(identity), str)
-        and delivered[identity].endswith(f"<!-- end: {identity} -->\n")
+        and isinstance(content := delivered.get(identity), str)
+        and content.endswith(f"<!-- end: {identity} -->\n")
     ]
 
 
