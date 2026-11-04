@@ -119,6 +119,17 @@ fn invalid_snapshot_mode() -> Value {
     })
 }
 
+fn snapshot_reply(mode: SnapshotMode, body: SnapshotBody) -> Value {
+    json!({
+        "ok": true,
+        "mode": mode.as_wire(),
+        "text": body.text,
+        "truncated": body.truncated,
+        "dropped_bytes": body.dropped_bytes,
+        "total_bytes": body.total_bytes,
+    })
+}
+
 /// `mode` selects which representation a snapshot returns. Omitting it means
 /// plain text; anything else is refused rather than answered with the
 /// representation the caller did not ask for.
@@ -240,6 +251,11 @@ fn remove_terminal_slot(
         inner.by_host_id.remove(&slot.host_terminal_id);
         inner.reservations.remove(&slot.reservation_id);
         remove_slot_attachments(inner, &slot);
+        inner.exit_tails.record(
+            &slot.host_terminal_id,
+            super::exit_tails::final_text(&slot),
+            Instant::now(),
+        );
         if let Some(signal) = kill_signal {
             if let Err(err) = kill_group(slot.pgid, signal) {
                 tracing::debug!(%err, pgid = slot.pgid, "kill_group failed");
@@ -678,7 +694,13 @@ impl HostState {
             .unwrap_or(SNAPSHOT_DEFAULT_MAX_LINES as u64) as usize;
         let inner = self.inner.lock().await;
         let Some(identity) = inner.by_host_id.get(&host_terminal_id).cloned() else {
-            return err("not_found");
+            // A retired terminal answers from the text it printed last, in text mode.
+            return match inner.exit_tails.get(&host_terminal_id, Instant::now()) {
+                Some(text) if matches!(mode, SnapshotMode::Text) => {
+                    snapshot_reply(mode, truncate_snapshot(text, max_lines, max_bytes))
+                }
+                _ => err("not_found"),
+            };
         };
         let Some(slot) = inner.terminals.get(&identity) else {
             return err("not_found");
@@ -696,15 +718,7 @@ impl HostState {
         };
         #[cfg(not(feature = "vt-engine"))]
         let text = String::new();
-        let body = truncate_snapshot(&text, max_lines, max_bytes);
-        json!({
-            "ok": true,
-            "mode": mode.as_wire(),
-            "text": body.text,
-            "truncated": body.truncated,
-            "dropped_bytes": body.dropped_bytes,
-            "total_bytes": body.total_bytes,
-        })
+        snapshot_reply(mode, truncate_snapshot(&text, max_lines, max_bytes))
     }
 
     /// Removes a committed pane whose leader exited and emits its

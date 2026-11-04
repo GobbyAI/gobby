@@ -68,6 +68,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
             plan.agent_run_id,
             request.run_manager,
             request.cleanup_agent,
+            request.placement_releaser,
         ):
             logger.info(
                 "Codex prompt delivery scheduled for run %s terminal %s",
