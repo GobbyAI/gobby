@@ -19,7 +19,6 @@ from gobby.mcp_proxy.tools.workflows._rules import (
     delete_rule,
     get_rule,
     list_rules,
-    operator_rule_changes,
     toggle_rule,
     update_rule_fields,
 )
@@ -31,6 +30,7 @@ from gobby.workflows.delivery_disposition import (
     prepare_rule_definition_for_persist,
 )
 from gobby.workflows.pipeline_loader import _is_bundled_template
+from gobby.workflows.rule_authority import ProtectedRuleError, operator_rule_changes
 from gobby.workflows.rule_validation import validate_rule
 
 if TYPE_CHECKING:
@@ -381,7 +381,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             principal = await server.run_db(server.auth_service.request_principal, http_request)
             with operator_rule_changes() if principal is None else nullcontext():
                 updated = await server.run_db(update_rule_fields, manager, row.id, fields)
-        except ReservedRuleMutationError as e:
+        except (ReservedRuleMutationError, ProtectedRuleError) as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except DefinitionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -451,7 +451,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             error = result["error"]
             if "not found" in error.lower():
                 raise HTTPException(status_code=404, detail=error)
-            if "bundled" in error.lower() or "reserved" in error.lower():
+            if any(word in error.lower() for word in ("bundled", "reserved", "protected")):
                 raise HTTPException(status_code=403, detail=error)
             raise HTTPException(status_code=400, detail=error)
 
@@ -478,9 +478,13 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
 
         if not result["success"]:
             error = result["error"]
-            status = (
-                403 if "reserved" in error.lower() else 404 if "not found" in error.lower() else 400
-            )
+            lowered = error.lower()
+            if "reserved" in lowered or "protected" in lowered:
+                status = 403
+            elif "not found" in lowered:
+                status = 404
+            else:
+                status = 400
             raise HTTPException(status_code=status, detail=error)
 
         return {"status": "success", "rule": result["rule"]}

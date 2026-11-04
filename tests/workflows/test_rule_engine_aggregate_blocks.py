@@ -386,6 +386,47 @@ class TestAggregateBlocks:
         assert second.decision == "allow"
 
     @pytest.mark.asyncio
+    async def test_lookahead_acknowledgement_keeps_originating_row_authority(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """A lookahead gate acknowledges a reserved name only through its own trusted row."""
+        _insert_rule(
+            manager,
+            "mandatory-gate",
+            [RuleEffect(type="block", reason="Load mandatory skill")],
+            priority=10,
+            when="not variables.get('mandatory_skill_loaded')",
+        )
+        internal_body = RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            when="not variables.get('unlocked_tools')",
+            effects=[
+                RuleEffect(
+                    type="block",
+                    reason="Internal tool unlock nudge",
+                    acknowledge_variable="unlocked_tools",
+                )
+            ],
+        )
+        manager.create(
+            name="internal-ack-gate",
+            source="installed",
+            tags=["default", "gobby"],
+            definition_json=json.dumps(internal_body.model_dump(mode="json")),
+            priority=20,
+            enabled=True,
+        )
+        variables: dict[str, Any] = {}
+        engine = RuleEngine(db)
+
+        first = await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
+        variables["mandatory_skill_loaded"] = True
+        await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
+
+        assert "[internal-ack-gate]" in (first.reason or "")
+        assert variables["unlocked_tools"] is True
+
+    @pytest.mark.asyncio
     async def test_single_acknowledged_block_only_fires_once(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:

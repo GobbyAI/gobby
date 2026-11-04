@@ -454,6 +454,7 @@ async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path, in_fl
         branch_name="lane-3",
         base_branch="main",
         project_id="project",
+        task_id=None,
     )
     worktrees = MagicMock()
     worktrees.resolve_reference.return_value = lane.id
@@ -591,6 +592,7 @@ async def test_resume_cwd_and_sandbox_root_follow_the_resolved_checkout(
         branch_name="task-branch",
         base_branch="main",
         project_id="project",
+        task_id=None,
     )
     worktrees = MagicMock()
     worktrees.resolve_reference.return_value = lane.id

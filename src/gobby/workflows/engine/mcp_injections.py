@@ -265,6 +265,7 @@ class CachedMcpInjectionMixin(DeliveryFormattingMixin):
                 row=row,
                 delivery=effect.delivery,
                 staged=staged_variable_updates,
+                writer="success_variable",
             )
 
     async def _deliver_late_mcp_injections(
