@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+
 from gobby.hooks.codex_seat import (
     ClearSeatSearch,
     codex_clear_activity_search,
@@ -21,6 +23,7 @@ from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_
 from gobby.hooks.session_binding import bound_session
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.terminal_context import (
+    SeatAvailable,
     enrich_terminal_context_with_cwd,
     hook_cwd,
     is_gobby_acp_child,
@@ -30,6 +33,7 @@ from gobby.sessions.compact_identity import resolve_compact_continuation
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.terminal_binding import repair_native_terminal_binding
 from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
+from gobby.storage import session_startup_marks as startup_marks
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._constants import TERMINAL_SESSION_STATUSES
 from gobby.storage.sessions._contested_expiry import session_has_active_native_subagent
@@ -512,18 +516,42 @@ class SessionLookupService:
                 project_id=project_id,
             )
 
+    def _codex_startup_mark(
+        self, external_id: str, event: HookEvent, machine_id: str | None
+    ) -> dict[str, str] | None:
+        """The durable mark a Codex thread's deferred startup left, if still unconsumed."""
+        if event.source.value != "codex" or not machine_id:
+            return None
+        mark = {"machine_id": machine_id, "source": "codex", "external_id": external_id}
+        exists = startup_marks.startup_mark_exists(self._session_manager.db, **mark)
+        return mark if exists else None
+
+    def _startup_seat_available(
+        self, startup_thread: bool, machine_id: str | None
+    ) -> SeatAvailable | None:
+        """A startup's seat check, which may adopt a seat past the fresh window."""
+        if not startup_thread or not machine_id:
+            return None
+        return codex_seat_available(self._session_manager.db, machine_id)
+
     def _bind_inherited_tty_native_subagent(
         self,
         event: HookEvent,
         *,
         machine_id: str | None,
+        startup_thread: bool = False,
     ) -> str | None:
         """Bind child-conversation hooks to the live parent that owns this TTY."""
         cwd = hook_cwd(event.data, event.cwd)
         raw_terminal_context = event.data.get("terminal_context")
         terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
         terminal_context = enrich_terminal_context_with_cwd(
-            terminal_context, cwd, external_id=event.session_id, machine_id=event.machine_id
+            terminal_context,
+            cwd,
+            external_id=event.session_id,
+            seat_available=self._startup_seat_available(startup_thread, machine_id),
+            machine_id=event.machine_id,
+            startup_thread=startup_thread,
         )
         owner = self._session_manager.find_live_interactive_pane_owner(
             terminal_context,
@@ -662,9 +690,13 @@ class SessionLookupService:
             )
             return None
 
+        # Only a thread whose own startup deferred its row may search for a seat, and
+        # the pane check below sees the same seat the registration records.
+        startup_mark = self._codex_startup_mark(external_id, event, machine_id)
         bound_parent_id = self._bind_inherited_tty_native_subagent(
             event,
             machine_id=machine_id,
+            startup_thread=startup_mark is not None,
         )
         if bound_parent_id is not None:
             return bound_parent_id
@@ -719,17 +751,14 @@ class SessionLookupService:
         cwd = hook_cwd(event.data, event.cwd)
         raw_terminal_context = event.data.get("terminal_context")
         terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
-        # A new Codex thread may start in a seat that waited past the fresh window.
+        # A startup's seat may have waited past the fresh window.
         terminal_context = enrich_terminal_context_with_cwd(
             terminal_context,
             cwd,
             external_id=event.session_id,
-            seat_available=(
-                codex_seat_available(self._session_manager.db, machine_id)
-                if event.source.value == "codex" and machine_id
-                else None
-            ),
+            seat_available=self._startup_seat_available(startup_mark is not None, machine_id),
             machine_id=machine_id,
+            startup_thread=startup_mark is not None,
         )
         platform_session_id = self._session_manager.register_session(
             external_id=external_id,
@@ -740,6 +769,16 @@ class SessionLookupService:
             project_path=cwd,
             terminal_context=terminal_context,
         )
+        if startup_mark is not None:
+            try:
+                startup_marks.delete_startup_mark(self._session_manager.db, **startup_mark)
+            except psycopg.Error as exc:
+                # The row is stored, so an unconsumed mark only waits for the prune.
+                self._logger.warning(
+                    "Could not consume the startup mark for Codex thread %s: %s",
+                    external_id,
+                    exc,
+                )
         event.metadata["_session_just_materialized"] = True
         return platform_session_id
 

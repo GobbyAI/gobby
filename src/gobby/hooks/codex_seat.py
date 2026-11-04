@@ -113,10 +113,11 @@ def codex_clear_activity_search(
 
 
 def codex_stored_clear_context(db: HubDatabase, machine_id: str) -> StoredClearContext:
-    """Return a read of the terminal context a thread's /clear successor row stores.
+    """Return a read of the terminal context a thread's newest row stores.
 
     Any project's row counts, since a hook's cwd can resolve to another project than
-    the row's. Only rows with a /clear origin answer; the newest wins.
+    the row's. A row of any kind answers: a /clear successor carries its origin, and
+    every row carries the seat it recorded. The newest wins.
     """
 
     def stored(thread_id: str) -> Mapping[str, Any] | None:
@@ -124,11 +125,10 @@ def codex_stored_clear_context(db: HubDatabase, machine_id: str) -> StoredClearC
             """
             SELECT terminal_context FROM sessions
             WHERE external_id = %s AND source = 'codex' AND machine_id = %s
-              AND terminal_context ->> %s IS NOT NULL
             ORDER BY updated_at DESC
             LIMIT 1
             """,
-            (thread_id, machine_id, CODEX_CLEAR_ORIGIN_KEY),
+            (thread_id, machine_id),
         )
         raw = row["terminal_context"] if isinstance(row, Mapping) else None
         if isinstance(raw, Mapping):

@@ -17,17 +17,46 @@ STARTUP_MARK_MAX_AGE_HOURS = 7 * 24
 
 def record_startup_mark(db: HubDatabase, *, machine_id: str, source: str, external_id: str) -> None:
     """Record that ``external_id`` began with its CLI's own startup on ``machine_id``."""
+    db.execute(
+        """
+        INSERT INTO session_startup_marks (machine_id, source, external_id)
+        VALUES (%s, %s, %s)
+        ON CONFLICT DO NOTHING
+        """,
+        (machine_id, source, external_id),
+    )
 
 
 def startup_mark_exists(db: HubDatabase, *, machine_id: str, source: str, external_id: str) -> bool:
     """Whether a real startup began ``external_id`` and no registration consumed it."""
-    return False
+    row = db.fetchone(
+        """
+        SELECT 1 AS marked FROM session_startup_marks
+        WHERE machine_id = %s AND source = %s AND external_id = %s
+        """,
+        (machine_id, source, external_id),
+    )
+    return row is not None
 
 
 def delete_startup_mark(db: HubDatabase, *, machine_id: str, source: str, external_id: str) -> None:
     """Consume the thread's mark once its first registration stored the row."""
+    db.execute(
+        """
+        DELETE FROM session_startup_marks
+        WHERE machine_id = %s AND source = %s AND external_id = %s
+        """,
+        (machine_id, source, external_id),
+    )
 
 
 def prune_startup_marks(db: HubDatabase, *, max_age_hours: int = STARTUP_MARK_MAX_AGE_HOURS) -> int:
     """Delete marks older than ``max_age_hours`` that no registration consumed."""
-    return 0
+    cursor = db.execute(
+        """
+        DELETE FROM session_startup_marks
+        WHERE created_at < clock_timestamp() - make_interval(hours => %s)
+        """,
+        (max_age_hours,),
+    )
+    return cursor.rowcount
