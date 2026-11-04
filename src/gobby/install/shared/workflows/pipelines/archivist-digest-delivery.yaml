@@ -1,0 +1,36 @@
+name: archivist-digest-delivery
+type: pipeline
+version: "1.0.0"
+description: |
+  Delivers the daily Archivist digest to the operator channel. The digest cron runs this
+  pipeline at the project-policy cadence with no agent turn. When today's digest file exists
+  under the project's reports directory, the run sends that file as an attachment. When it does
+  not, both steps are skipped and the run completes. Every step is an MCP call.
+tags: [archivist, report]
+resume_on_restart: false
+# Lets this run's daemon-owned steps send operator attachments, limited to the reports directory.
+operator_messaging: true
+
+inputs:
+  channel:
+    type: string
+    description: "Operator channel name, supplied by the digest cron from project_policy.operator_channel"
+
+steps:
+  - id: resolve_operator
+    condition: "${{ project_file_exists('.gobby/reports/gobby-digest-' + today + '.md') }}"
+    mcp:
+      server: gobby-communications
+      tool: resolve_operator_conversation
+      arguments:
+        channel: "${{ inputs.channel }}"
+
+  - id: deliver_digest
+    condition: "${{ project_file_exists('.gobby/reports/gobby-digest-' + today + '.md') }}"
+    mcp:
+      server: gobby-communications
+      tool: send_operator_attachment
+      arguments:
+        channel: "${{ inputs.channel }}"
+        file_path: "${{ project_path }}/.gobby/reports/gobby-digest-${{ today }}.md"
+        caption: "Archivist digest"

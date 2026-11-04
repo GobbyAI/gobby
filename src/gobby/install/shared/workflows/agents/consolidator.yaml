@@ -3,7 +3,7 @@ capabilities: [accept_resume_retype, close_without_work, message_assistant]
 task_attestation_writes: [disposition]
 respect_task_protections: true
 description: Consolidator seat. Proposes backlog bundles, stale-item retirement and epic moves, and applies Orchestrator-directed folds and retirements.
-version: "2.5.0"
+version: "2.6.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: claude
@@ -111,8 +111,13 @@ step_workflow:
         Follow every page.next_cursor with only cursor until null.
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's skill tracking.
+      # Write tools serve the seat's standing-directives.md; workspace-only-write-scope
+      # keeps them inside its agent workspace folders.
       allowed_tools:
         - Bash
+        - Write
+        - Edit
+        - apply_patch
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools

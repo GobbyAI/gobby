@@ -562,6 +562,12 @@ receipt, not a live trigger outcome, acknowledges delivery. Direct tmux interrup
 Antigravity cannot be protected without positive provider or Gobby-mediated key/output
 evidence, so unconfirmed sessions remain active.
 
+A brief `send_message` or `send_attachment` response to a direct target whose session is
+not live (expired, or otherwise outside the live statuses) reports
+`delivery_status: "sent_recipient_not_live"`, with the recipient's `recipient_status` and a
+`message`. The durable message is stored and waits until that session resumes; no live wake
+is delivered. A live session whose wake is declined still reports `sent_with_declined_wakes`.
+
 For daemon restart coordination, queue the outage notice and explicitly wake after the
 daemon is back:
 

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import mimetypes
 from dataclasses import replace
@@ -10,6 +11,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.pipeline_executions import pipeline_execution_definition_json
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.session_resolution import resolve_session_reference
@@ -17,7 +19,11 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 from gobby.utils.datetime import utc_now
 from gobby.utils.project_context import get_project_context
-from gobby.utils.session_context import get_current_session_id
+from gobby.utils.session_context import (
+    current_pipeline_execution,
+    get_current_session_id,
+    is_daemon_execution,
+)
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -30,6 +36,37 @@ def _is_within(path: Path, root: Path) -> bool:
         return path.is_relative_to(root.expanduser().resolve(strict=True))
     except OSError:
         return False
+
+
+def _grants_operator_messaging(definition_json: str | None) -> bool:
+    """True when a pipeline run's definition snapshot declares operator_messaging."""
+    if not definition_json:
+        return False
+    try:
+        definition = json.loads(definition_json)
+    except ValueError:
+        return False
+    return isinstance(definition, dict) and definition.get("operator_messaging") is True
+
+
+def _report_refusal(file_path: str) -> dict[str, Any] | None:
+    """Refuse a daemon-run attachment unless it resolves inside the project's reports directory."""
+    project_context = get_project_context()
+    project_path = project_context.get("project_path") if project_context else None
+    if not isinstance(project_path, str) or not project_path:
+        return {"success": False, "code": "forbidden", "error": "Project checkout is unknown"}
+    if not Path(file_path).is_absolute():
+        return {"success": False, "code": "forbidden", "error": "Report path must be absolute"}
+    reports = Path(project_path) / ".gobby" / "reports"
+    # resolve() collapses '..' and follows symlinks, so an escape cannot pass the containment test.
+    target = Path(file_path).resolve()
+    if target == reports.resolve() or not _is_within(target, reports):
+        return {
+            "success": False,
+            "code": "forbidden",
+            "error": "Operator reports must be inside the project reports directory",
+        }
+    return None
 
 
 def create_communications_registry(
@@ -79,6 +116,14 @@ def create_communications_registry(
                 )
         return caller_id
 
+    def registered_caller(caller_id: str | None) -> Session:
+        if db is None or not caller_id:
+            raise ValueError("Operator messaging requires a registered caller")
+        caller = SessionManager(db).get(caller_id)
+        if caller is None:
+            raise ValueError("Operator messaging requires a registered caller")
+        return caller
+
     def installed_caller(caller_id: str | None) -> tuple[Session, AgentDefinitionBody]:
         if db is None or not caller_id:
             raise ValueError("Operator messaging requires a registered caller")
@@ -106,9 +151,24 @@ def create_communications_registry(
             raise ValueError("Caller is not permitted to administer communication channels")
 
     def operator_destination(channel: str, caller_id: str | None) -> str:
-        caller, body = installed_caller(caller_id)
-        if not body.operator_messaging:
-            raise ValueError("Caller is not permitted to message the operator on this channel")
+        if is_daemon_execution():
+            # A daemon-run pipeline step holds no agent grant. The execution it runs under must
+            # declare operator_messaging in its definition, and the project-bound channel below
+            # still applies. Nested runs share the session, so the execution is what is judged.
+            caller = registered_caller(caller_id)
+            execution_id = current_pipeline_execution()
+            if (
+                db is None
+                or execution_id is None
+                or not _grants_operator_messaging(
+                    pipeline_execution_definition_json(db, execution_id)
+                )
+            ):
+                raise ValueError("Caller is not permitted to message the operator on this channel")
+        else:
+            caller, body = installed_caller(caller_id)
+            if not body.operator_messaging:
+                raise ValueError("Caller is not permitted to message the operator on this channel")
         permitted_channels: list[str] = []
         for configured in communications_manager.list_channels():
             if (
@@ -138,6 +198,13 @@ def create_communications_registry(
         )
     )
     async def send_operator_message(channel: str, content: str) -> dict[str, Any]:
+        if is_daemon_execution():
+            # A daemon-run step's grant covers report attachments only, never free text.
+            return {
+                "success": False,
+                "code": "forbidden",
+                "error": "Daemon-run steps may send only operator attachments",
+            }
         try:
             caller_id = get_current_session_id()
             destination = await asyncio.to_thread(operator_destination, channel, caller_id)
@@ -180,6 +247,8 @@ def create_communications_registry(
             destination = await asyncio.to_thread(
                 operator_destination, channel, get_current_session_id()
             )
+            if is_daemon_execution() and (refusal := _report_refusal(file_path)) is not None:
+                return refusal
             return cast(
                 dict[str, Any],
                 await send_attachment(

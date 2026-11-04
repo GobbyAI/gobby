@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from gobby.events.wake import WakeDispatcher
 from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.hub.protocol import HubDatabase
@@ -91,6 +92,23 @@ def _stored_message_count(env: _Env, sender: str) -> int:
     )
     assert row is not None
     return int(row["n"])
+
+
+def _with_real_wake_dispatcher(env: _Env) -> _Env:
+    """Same tools as ``env``, but live wakes go through the real WakeDispatcher."""
+    sessions = SessionManager(env.db)
+    registry = InternalToolRegistry(name="gobby-agents", description="Agent messaging v2")
+    add_messaging_tools(
+        registry=registry,
+        message_manager=InterSessionMessageManager(env.db),
+        session_manager=sessions,
+        db=env.db,
+        wake_dispatcher=WakeDispatcher(
+            session_manager=sessions,
+            ism_manager=InterSessionMessageManager(env.db),
+        ),
+    )
+    return _Env(registry=registry, ids=env.ids, db=env.db)
 
 
 @pytest.mark.asyncio
@@ -212,3 +230,23 @@ class TestSendAttachment:
 
         assert retrieved["success"] is False
         assert "attachment" not in retrieved
+
+    async def test_expired_recipient_reports_not_live_and_keeps_the_document(
+        self, env: _Env
+    ) -> None:
+        SessionManager(env.db).update_status(env.ids["peer"], "expired")
+        live = _with_real_wake_dispatcher(env)
+        before = _stored_message_count(live, "root")
+
+        sent = await _send_document(live, wake=True)
+
+        assert sent["success"] is True
+        assert sent["delivery_status"] == "sent_recipient_not_live"
+        assert sent["recipient_status"] == "expired"
+        assert "not live" in sent["message"]
+        assert "wake_declines" not in sent
+        assert _stored_message_count(live, "root") == before + 1
+
+        read = await _call(live, "root", "get_attachment", {"message_id": sent["message_ids"][0]})
+        assert read["success"] is True
+        assert read["attachment"]["content"] == "# Review\n\nLGTM for the candidate."

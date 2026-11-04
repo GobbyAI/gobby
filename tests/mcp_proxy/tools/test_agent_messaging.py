@@ -1196,6 +1196,61 @@ class TestSendMessage:
         assert result["delivery_status"] == "sent_with_declined_wakes"
         assert "wake_declines" not in result
         assert "wake_failures" not in result
+        mock_message_manager.create_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_brief_response_reports_expired_recipient_as_not_live(
+        self,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        mock_db: MagicMock,
+    ) -> None:
+        from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+
+        registry = InternalToolRegistry(name="gobby-agents", description="Agent messaging v2")
+        wake_dispatcher = WakeDispatcher(
+            session_manager=mock_session_manager,
+            ism_manager=mock_message_manager,
+        )
+        add_messaging_tools(
+            registry=registry,
+            message_manager=mock_message_manager,
+            session_manager=mock_session_manager,
+            db=mock_db,
+            wake_dispatcher=wake_dispatcher,
+        )
+        mock_message_manager.create_message.return_value = MockMessage(id="msg-expired")
+        mock_session_manager.get.side_effect = lambda session_id: {
+            "s-from": MockSession(
+                id="s-from",
+                project_id="11111111-1111-4111-8111-111111110001",
+            ),
+            "s-to": MockSession(
+                id="s-to",
+                project_id="11111111-1111-4111-8111-111111110001",
+                status="expired",
+            ),
+        }.get(session_id)
+
+        result = await registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "session",
+                "target_id": "s-to",
+                "wake": True,
+                "content": "hello",
+            },
+        )
+
+        assert result["success"] is True
+        assert result["delivery_status"] == "sent_recipient_not_live"
+        assert result["recipient_status"] == "expired"
+        assert "not live" in result["message"]
+        assert result["message_ids"] == ["msg-expired"]
+        mock_message_manager.create_message.assert_called_once()
+        assert "wake_declines" not in result
+        assert "wake_failures" not in result
 
     @pytest.mark.asyncio
     async def test_full_response_keeps_wake_decline_reason(
