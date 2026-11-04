@@ -214,6 +214,27 @@ def test_parent_auto_compaction_replays_through_the_rules(
     assert session.variables["pre_compact_seen"] is True
 
 
+def test_parent_auto_compaction_replays_its_whole_sequence_through_the_rules(
+    session: _Session, send: Callable[[HookEvent], HookResponse]
+) -> None:
+    # The parent's own auto-compaction can also emit SessionStart(compact) and PostCompact
+    # after its boundary; all three belong to the same compaction and must all reach the rules.
+    send(session.event(HookEventType.PRE_COMPACT, trigger="auto"))
+    session.parent_boundary("boundary-1")
+    send(session.event(HookEventType.SESSION_START, source="compact"))
+    send(session.event(HookEventType.POST_COMPACT, trigger="auto"))
+    send(session.event(HookEventType.BEFORE_AGENT, prompt="continue"))
+
+    assert session.evaluated == [
+        HookEventType.PRE_COMPACT,
+        HookEventType.SESSION_START,
+        HookEventType.POST_COMPACT,
+        HookEventType.BEFORE_AGENT,
+    ]
+    assert session.variables["unlocked_tools"] == []
+    assert session.variables["pre_compact_seen"] is True
+
+
 def test_a_verified_parent_boundary_is_not_replayed_again(
     session: _Session, send: Callable[[HookEvent], HookResponse]
 ) -> None:
