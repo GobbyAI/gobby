@@ -367,7 +367,7 @@ def create_spawn_agent_registry(
             branch_name: Git branch name (auto-generated from task if not provided)
             base_branch: Base branch for worktree/clone
             clone_id: Existing clone ID to reuse
-            worktree_id: Existing worktree to reuse (full UUID or unique id prefix)
+            worktree_id: Existing worktree to reuse (full UUID, unique id prefix, or branch name)
             cleanup_isolation_on_failure: Delete freshly created isolation if boot fails
             workflow: Workflow/pipeline to use
             execution_mode: Run lifetime; session resumes default to interactive, otherwise

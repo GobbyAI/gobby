@@ -1,3 +1,4 @@
+version: "1.1.0"
 tags: [skill-discovery, context, gobby, default]
 
 rules:
@@ -6,25 +7,24 @@ rules:
     event: turn_start
     enabled: true
     priority: 9
+    # Fires on the handoff-pull turn too: the pending-pull gate holds the loads
+    # until get_handoff runs, so the pull still comes first in that turn.
     when: >
-      not variables.get('handoff_pull_pending')
-      and (
-        not skill_loaded('gobby:references/skills/loading.md')
-        or (
-          not skill_loaded('gobby:references/memory/overview.md')
-          and not has_open_tool_error(
-            "gobby-skills/get_skill_file",
-            {"name": "gobby", "path": "references/memory/overview.md"}
-          )
+      not skill_loaded('gobby:references/skills/loading.md')
+      or (
+        not skill_loaded('gobby:references/memory/overview.md')
+        and not has_open_tool_error(
+          "gobby-skills/get_skill_file",
+          {"name": "gobby", "path": "references/memory/overview.md"}
         )
-        or (
-          not variables.get('restraint_disabled')
-          and not skill_loaded('restraint')
-        )
-        or (
-          not variables.get('brevity_disabled')
-          and not skill_loaded('brevity')
-        )
+      )
+      or (
+        not variables.get('restraint_disabled')
+        and not skill_loaded('restraint')
+      )
+      or (
+        not variables.get('brevity_disabled')
+        and not skill_loaded('brevity')
       )
     effects:
       - type: load_skill

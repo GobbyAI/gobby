@@ -1,4 +1,10 @@
-"""Reverse reconciliation for unmanaged worktrees and clones."""
+"""Reverse reconciliation for unmanaged worktrees and clones.
+
+Only checkouts inside the managed roots are adopted: linked worktrees under
+``WORKTREES_ROOT`` and clones under ``CLONES_ROOT/<project>``. Adoption is
+additive. A row already registered outside a root is left alone here; retire it
+explicitly with ``gobby-worktrees:abandon_worktree``.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +24,7 @@ from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.worktrees.creation import resolve_managed_worktree_path
 from gobby.worktrees.git import WorktreeGitManager
 from gobby.worktrees.git import _status as worktree_git_status
 
@@ -133,6 +140,8 @@ async def _reconcile_project_worktrees(
             candidate_path = await asyncio.to_thread(_canonical_path, worktree.path)
             if candidate_path == primary_path:
                 continue
+            if await asyncio.to_thread(resolve_managed_worktree_path, candidate_path) is None:
+                continue
             inspected = await manager.inspect_worktree(candidate_path)
             _, created = await _run_db(
                 run_db,
@@ -162,10 +171,7 @@ async def _reconcile_project_clones(
 ) -> int:
     try:
         manager = CloneGitManager(checkout_root)
-        project_directory = await asyncio.to_thread(
-            _canonical_path,
-            clone_git.CLONES_ROOT / project.name,
-        )
+        project_directory = await asyncio.to_thread(clone_git.project_clone_directory, project.name)
         candidates = await asyncio.to_thread(_list_immediate_directories, project_directory)
     except (OSError, ValueError) as exc:
         logger.debug("Skipping clone reconciliation for %s: %s", project.name, exc)

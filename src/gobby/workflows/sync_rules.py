@@ -7,8 +7,6 @@ while user/custom rows remain protected.
 
 import json
 import logging
-import shutil
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -320,27 +318,17 @@ def _has_gobby_rule_name_collision(
 def resolve_sync_placeholders(definition_json: str) -> str:
     """Replace sync-time placeholders in a rule definition.
 
-    Currently supports:
-    - ``{{ gobby_bin }}``: resolved to the absolute path of the ``gobby``
-      binary via ``shutil.which``, falling back to
-      ``<sys.executable> -m gobby`` when the binary isn't on PATH.
-    - ``{{ rule_digest }}``: resolved to the canonical content hash of the
-      unresolved definition, so key order does not change it. A rule that
-      stores it in a session variable re-fires in live sessions exactly when
-      its synced content changes. Sync and template-hash serialization agree.
+    ``{{ rule_digest }}`` resolves to the canonical content hash of the
+    unresolved definition, so key order does not change it. A rule that
+    stores it in a session variable re-fires in live sessions exactly when
+    its synced content changes. Sync and template-hash serialization agree.
 
-    Called once per rule during sync so the DB always stores a concrete path
-    that works regardless of whether the binary is on the CLI's PATH.
+    Placeholders derive only from rule content: a binary or interpreter path
+    captured at sync time would outlive the environment that ran sync.
     """
     if "{{ rule_digest }}" in definition_json:
         digest = compute_definition_hash(definition_json)
         definition_json = definition_json.replace("{{ rule_digest }}", digest)
-    if "{{ gobby_bin }}" in definition_json:
-        gobby_bin = shutil.which("gobby")
-        if not gobby_bin:
-            gobby_bin = f"{sys.executable} -m gobby"
-        definition_json = definition_json.replace("{{ gobby_bin }}", gobby_bin)
-
     return definition_json
 
 
@@ -396,9 +384,11 @@ def _sync_single_rule(
         raise ValueError(str(exc)) from exc
     validation = validate_rule(definition_json, name=rule_name)
     validation.raise_for_errors()
-    if validation.warnings:
+    # Sync validates without runtime context, so unresolved runtime names are expected.
+    warnings = [issue for issue in validation.warnings if issue.code != "unresolved"]
+    if warnings:
         result.setdefault("warnings", []).extend(
-            f"Rule {rule_name!r} {issue.field}: {issue.message}" for issue in validation.warnings
+            f"Rule {rule_name!r} {issue.field}: {issue.message}" for issue in warnings
         )
     priority = metadata["priority"]
     description = metadata["description"]

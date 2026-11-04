@@ -649,7 +649,7 @@ class EnforcementCompletionMixin:
                     return None
                 cas_token = (str(instance.id), instance.updated_at)
 
-                # Reset consecutive-tool-block counters so failures from the
+                # Reset blocked-retry counters so failures from the
                 # previous step don't bleed into the new one
                 variables["consecutive_tool_blocks"] = 0
                 variables["_last_blocked_tool"] = ""

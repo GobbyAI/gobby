@@ -8,12 +8,15 @@ Discover `create_task`, `get_task`, `update_task`, `claim_task`, `add_label`,
 `delete_task` on `gobby-tasks`. Use lifecycle tools rather than changing storage
 or using the operator CLI. Inspect the schema before each new tool family.
 
-Every task type except `epic` requires meaningful `validation_criteria`, including
-docs, research, and planning. `category="code"` also requires
-`implementation_domain` (`backend`, `frontend`, or `fullstack`). Choose the
-schema's task type and category for the deliverable; priority defaults to 2.
-Write observable, specific, complete criteria. Use `test: path::test_symbol`
-for named tests and `file: path` for evidence artifacts. When an
+Give every task type except `epic` meaningful `validation_criteria`, including
+docs, research, and planning; selected rules decide what completion requires.
+`category="code"` also requires `implementation_domain` (`backend`, `frontend`,
+or `fullstack`). Choose the schema's task type and category for the deliverable;
+priority defaults to 2. For `validation_criteria`: Outline the evaluation criteria
+an agent will use to ensure a high-quality deliverable. Be precise. Use
+`test: path::test_symbol` for named tests and `file: path` for evidence artifacts;
+those references join the task's declared file scope when its description declares
+targets. When an
 agent-authored description rests on specific source behavior, cite it as
 [evidence](../code-index/evidence.md) describes. User-authored text needs no
 citations, and the task tools take no citation field.
@@ -122,6 +125,6 @@ requested scope. Use closing guidance for no-work dispositions.
 
 Guide: [Create and Claim](../../../../../../../../docs/guides/tasks.md#create-and-claim).
 
-_Version: 2.0.0_
+_Version: 2.0.1_
 
-_Last verified: 2026-11-01_
+_Last verified: 2026-11-03_

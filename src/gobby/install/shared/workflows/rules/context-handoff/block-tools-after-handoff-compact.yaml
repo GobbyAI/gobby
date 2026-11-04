@@ -1,5 +1,9 @@
+version: "1.1.0"
 tags: [context-handoff, handoff, compact, enforcement, gobby, default]
 
+# These gates hold the parent's own turn. A Claude subagent shares its parent's
+# session but carries agent_id in its hook payload; its tools never hold that
+# turn open, so every before_tool gate here skips subagent-issued events.
 rules:
   require-handoff-at-context-limit:
     description: "Restrict tool use to handoff prerequisites at the configured context limit"
@@ -8,6 +12,7 @@ rules:
     priority: 1
     when: >-
       source != 'pipeline'
+      and not event.data.get('agent_id')
       and variables.get('context_compact_mid_turn_pressure_band') == 'block'
       and variables.get('context_compact_block_message')
       and not variables.get('plan_mode')
@@ -68,6 +73,7 @@ rules:
     priority: 1
     when: >-
       event.metadata.get('session_type') != 'web_chat'
+      and not event.data.get('agent_id')
       and isinstance(variables.get('context_compact_handoff_result'), dict)
       and (
         variables.get('context_compact_handoff_result').get('delivery_pending') is True
@@ -87,6 +93,7 @@ rules:
     priority: 1
     when: >-
       event.metadata.get('session_type') != 'web_chat'
+      and not event.data.get('agent_id')
       and isinstance(variables.get('context_compact_handoff_result'), dict)
       and variables.get('context_compact_handoff_result').get('delivery_failed') is True
       and (

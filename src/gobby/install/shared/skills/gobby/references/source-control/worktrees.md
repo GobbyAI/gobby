@@ -25,10 +25,12 @@ task artifacts and current ownership before creating another workspace.
 4. Claim with `claim_worktree`; use `link_task_to_worktree` for an existing row.
    Release ownership with `release_worktree` when handing off. These metadata
    transitions neither merge nor delete the workspace.
-5. Reuse a prepared worktree with `spawn_agent(worktree_id=...)`; follow the
+5. Reuse a prepared worktree with `spawn_agent(worktree_id=...)`, passing its id,
+   a unique id prefix or its branch name; follow the
    [agent isolation](../agents/isolation.md) reference for spawn precedence and
    recovery. Developer reuse merges the base and preserves checkpoint SHAs; associated
    seats join the existing HEAD. Preserve a reused checkout when a merge reports conflicts.
+   A claiming spawn is refused when the worktree is bound to a different task.
 
 The Claude worktree-create hook blocks re-entry at a different selected commit.
 Continue in the preserved worktree directly or choose a new worktree name.
@@ -47,3 +49,5 @@ adopting a foreign path. Creation writes project context into the isolated check
 
 Continue with [synchronization](synchronization.md) and [cleanup](cleanup.md).
 See [worktrees](../../../../../../../../docs/guides/worktrees.md#creation).
+
+_Version: 1.1.0_

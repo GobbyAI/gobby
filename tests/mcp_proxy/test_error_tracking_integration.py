@@ -16,6 +16,11 @@ from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.session_context import (
+    RequestPrincipal,
+    reset_request_principal,
+    set_request_principal,
+)
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.mcp_proxy.named_server_test_support import attach_named_servers
 
@@ -567,12 +572,20 @@ async def test_daemon_wrapper_local_failures_do_not_track_and_delegated_failure_
         )
         assert tracking.call_count == 0
 
-        delegated = await tools.call_tool(
-            "server-a",
-            "run",
-            {},
-            session_id=session_id,
-        )
+        # The /mcp route binds the caller; the operator may delegate a session.
+        async def operator() -> RequestPrincipal:
+            return None
+
+        principal_token = set_request_principal(operator)
+        try:
+            delegated = await tools.call_tool(
+                "server-a",
+                "run",
+                {},
+                session_id=session_id,
+            )
+        finally:
+            reset_request_principal(principal_token)
 
     assert isinstance(missing_route, CallToolResult) and missing_route.is_error
     assert isinstance(malformed, CallToolResult) and malformed.is_error

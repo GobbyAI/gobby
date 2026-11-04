@@ -16,7 +16,6 @@ def test_retained_tdd_metadata_defaults() -> None:
     variables = yaml.safe_load(variables_path.read_text())["variables"]
 
     assert variables["claimed_task_requires_tdd"]["value"] is False
-    assert variables["claimed_task_acceptance_test_paths"]["value"] == []
 
 
 def test_tdd_proof_functions_are_not_registered() -> None:

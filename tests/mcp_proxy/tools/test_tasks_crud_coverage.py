@@ -271,6 +271,7 @@ class TestUpdateTaskTool:
             validation_criteria="The requested task metadata is stored.",
             implementation_domain=None,
             is_escalated=False,
+            labels=[],
         )
 
     @pytest.mark.asyncio

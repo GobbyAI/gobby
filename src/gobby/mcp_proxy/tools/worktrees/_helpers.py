@@ -7,12 +7,12 @@ from __future__ import annotations
 
 import importlib
 import logging
-import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
 from gobby.utils.project_context import ensure_project_json_for_isolation, get_project_context
+from gobby.worktrees import creation
 from gobby.worktrees.git import WorktreeGitManager
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ def get_worktree_base_dir() -> Path:
     Returns:
         Path to worktree base directory (creates if needed)
     """
-    base = Path.home() / ".gobby" / "worktrees"
+    base = creation.WORKTREES_ROOT
     base.mkdir(parents=True, exist_ok=True)
     return base
 
@@ -52,10 +52,7 @@ def generate_worktree_path(branch_name: str, project_name: str | None = None) ->
         Full path for the worktree
     """
     base = get_worktree_base_dir()
-    safe_branch = re.sub(r'[\\:*?"<>|\s/]', "-", branch_name)
-    safe_branch = re.sub(r"-{2,}", "-", safe_branch).strip("-")
-    if not safe_branch:
-        safe_branch = "unnamed-branch"
+    safe_branch = creation.checkout_dir_name(branch_name)
 
     if project_name:
         return str(base / project_name / safe_branch)

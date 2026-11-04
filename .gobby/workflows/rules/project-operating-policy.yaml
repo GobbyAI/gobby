@@ -1,4 +1,4 @@
-version: "1.2.0"
+version: "1.2.1"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -30,7 +30,7 @@ rules:
               {"epic": "#21542", "name": "Gobby 1.0", "lang": "Rust", "description": "gdaemon front door, strangler port, hub and node, including hub mode (#21575)."}
             ],
             "integration_branch": "0.5.0",
-            "deferral_labels": ["deferred-by-josh"],
+            "deferral_labels": ["deferred-by-user"],
             "security_paths": [
               "crates/gclient/src/daemon/**",
               "crates/gclient/src/app/live_loop/**",
@@ -228,7 +228,7 @@ rules:
           - Claim before editing; preserve foreign files and stage only owned task paths.
           - Follow TDD where applicable, focused validation and OCR self-review. Record truthful completion evidence and close with the commit SHA.
           - Direct integration commits require the active definition's capability and declared path coverage. Otherwise follow the configured landing workflow.
-          - The operator alone moves protected/operator-placed tasks. Preserve the deferred-by-josh label.
+          - The operator alone moves protected/operator-placed tasks. Preserve the deferred-by-user label.
           - Honor project_policy.quiet_hours; read release_guidance before crate releases.
           - Friction: work around it and file it as a task under the Friction epic #25603.
       - type: set_variable
@@ -259,7 +259,7 @@ rules:
           - Before routing/launch/handoff: get_variable(name="project_policy") for roots/role_launch_defaults/launch_defaults/workspace_layout. Reporter/Consolidator read role_guidance before work. Pass a runbook its launch_defaults entry plus its required inputs; bundles inherit, project-agnostic.
           - Integration 0.5.0. Push: the operator and sessions running the default agent definition may push. Other seats push only for the exact SHA the operator approves, and only the Orchestrator runs git push origin <sha>:refs/heads/0.5.0.
           - Critical path: the 1.0 full Rust port (#21542) in port order: runner retirement (R0-R7 under #21544), Stage 2 families, Stage 3 (#21571, #21573, #21574), then hub/node multi-machine control. #24818 carries live runbook fixes and live Python fixes such as #25272. Stage launches by load/backlog. New tasks go under their domain root; #24819 is deferred. Found work to ORCH: low unless blocking critical-path work/landing; only blockers preempt; fold findings existing work resolves.
-          - The operator alone moves/sweeps/folds/reparents #22978 Triage subtree, #22225 Annotate or operator-placed tasks. Check parent; never change deferred-by-josh.
+          - The operator alone moves/sweeps/folds/reparents #22978 Triage subtree, #22225 Annotate or operator-placed tasks. Check parent; never change deferred-by-user.
           - One task/seat includes pending candidates; read-only prep allowed. Directed reviewer-LANDed waits use project_policy.handoff_reason_template; the configured closer completes landing and closure.
           - No task rebalancing; parallel work adds developer+reviewer. Seat moves allowed.
           - One tree per DevTeam task: admit_team creates it and the team's seats join it. Planners main; reviewers developer tree.

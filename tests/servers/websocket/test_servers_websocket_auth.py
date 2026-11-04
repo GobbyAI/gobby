@@ -45,6 +45,7 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
                 bind_runtime=lambda **_kwargs: None,
             )
             self._internal_manager = object()
+            self._tools_handler = None
             self.broadcaster = SimpleNamespace(websocket_server=None)
 
         def set_runner_getter(self, getter: object) -> None:

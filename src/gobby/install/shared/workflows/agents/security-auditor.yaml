@@ -1,5 +1,5 @@
 name: security-auditor
-version: "2.3.0"
+version: "2.4.0"
 description: Audits security boundaries and independently reviews exact security candidates.
 tags:
 - gobby
@@ -34,7 +34,10 @@ prompts:
     secret handling, sandbox egress, injection and hook/proxy/daemon trust boundaries.
     Read the task and exact diff; load code-review and relevant language skills.
     Preserve the author's claim and files. Do not implement, format, commit or land.
-    Run focused isolated checks; never run the full test suite.
+    Run focused isolated checks; never run the full test suite. In a task worktree
+    run Python checks with `uv run --no-sync`: a plain `uv run` rebuilds the author's
+    package and fails on a read-only tree with "Cannot update time stamp of directory"
+    for its egg-info.
 
     Record gobby-tasks:record_attestation(kind=security-review,
     result=approved or rejected) with a bounded criteria review, rated findings,
@@ -65,7 +68,10 @@ prompts:
     secret handling, sandbox egress, injection and hook/proxy/daemon trust boundaries.
     Read the task and exact diff; load code-review and relevant language skills.
     Preserve the author's claim and files. Do not implement, format, commit or land.
-    Run focused isolated checks; never run the full test suite.
+    Run focused isolated checks; never run the full test suite. In a task worktree
+    run Python checks with `uv run --no-sync`: a plain `uv run` rebuilds the author's
+    package and fails on a read-only tree with "Cannot update time stamp of directory"
+    for its egg-info.
 
     Record gobby-tasks:record_attestation(kind=security-review,
     result=approved or rejected) with a bounded criteria review, rated findings,

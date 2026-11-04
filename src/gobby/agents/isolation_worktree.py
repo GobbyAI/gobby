@@ -19,6 +19,7 @@ from gobby.agents.isolation_models import (
 )
 from gobby.agents.isolation_repair import repair_isolation_environment
 from gobby.storage.tasks import TaskArtifactManager
+from gobby.worktrees import creation
 from gobby.worktrees.base_branch import select_worktree_base
 
 logger = logging.getLogger("gobby.agents.isolation")
@@ -311,4 +312,4 @@ class WorktreeIsolationHandler(IsolationHandler):
         """Generate a unique worktree path in ~/.gobby/worktrees/; ``dir_name`` wins if given."""
         # Sanitize branch name for use in path
         safe_branch = dir_name or branch_name.replace("/", "-").replace("\\", "-")
-        return str(Path.home() / ".gobby" / "worktrees" / project_name / safe_branch)
+        return str(creation.WORKTREES_ROOT / project_name / safe_branch)

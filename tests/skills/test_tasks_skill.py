@@ -41,9 +41,14 @@ OWNERSHIP_SCENARIO_PATH = (
 )
 
 
+def _flat(path: Path) -> str:
+    """Read guidance with line wrapping collapsed, so phrases match across breaks."""
+    return " ".join(path.read_text().split())
+
+
 def test_validation_guidance_is_provider_neutral_and_reviewable() -> None:
     implementation = (SKILL_DIR / "implementation.md").read_text()
-    closing = SKILL_PATH.read_text()
+    closing = _flat(SKILL_PATH)
     for expected in (
         "final validation after every final edit and formatting change",
         "definitive exit",
@@ -52,25 +57,24 @@ def test_validation_guidance_is_provider_neutral_and_reviewable() -> None:
     ):
         assert expected in implementation
     for expected in (
-        "exact commands and results",
-        "test-types and test-quality audits",
-        "suppression ratchet",
-        "independent reviewers",
+        "Record exact commands and results, limitations and nonapplicability truthfully",
+        "test-types and test-quality audits and the suppression ratchet",
+        "independent review",
         "acceptance criteria",
+        "There is no fixed Python checklist",
     ):
         assert expected in closing
-    assert "does not score transcripts" in closing
     for provider in ("Claude Code", "Droid", "Grok", "Codex"):
         assert provider not in implementation + closing
 
 
 def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
-    content = SKILL_PATH.read_text()
-    assert len(content) < 15_000
+    assert len(SKILL_PATH.read_text()) < 15_000
+    content = _flat(SKILL_PATH)
     steps = (
-        "1. Finish the implementation",
-        "2. Perform the validation",
-        "3. Record evidence with",
+        "1. Finish the implementation and acceptance criteria",
+        "2. Perform the validation, testing and review",
+        "3. Record evidence with `record_attestation(",
         "4. For repository work, commit owned paths",
         "5. Record any final evidence",
         "6. Resolve every policy refusal",
@@ -78,9 +82,8 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
     )
     positions = [content.index(step) for step in steps]
     assert positions == sorted(positions)
-    assert "exact commands and results" in content
+    assert "preview=true" in content
     assert "Preview leaves task state and commit links unchanged" in content
-    assert "`preview=false`" in content
     assert "review_task_memories" in content[positions[-1] :]
     overview = (SKILL_DIR / "overview.md").read_text()
     for topic in ("creation", "implementation", "closing"):
@@ -88,10 +91,11 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
 
 
 def test_close_guidance_delegates_gates_to_selected_rules() -> None:
-    content = SKILL_PATH.read_text()
-    gate_rows = [line for line in content.splitlines() if line.startswith("| `")]
+    content = _flat(SKILL_PATH)
+    gate_rows = [line for line in SKILL_PATH.read_text().splitlines() if line.startswith("| `")]
     assert gate_rows == []
-    assert "rules choose the evidence and conditions for closing" in content
+    assert "selected rules choose the evidence and conditions for closing" in content
+    assert "These are YAML policies, not task-engine assumptions" in content
     for retired in (
         "close_review_required",
         "reviewer_run_id",
@@ -211,18 +215,24 @@ def test_wait_guidance_is_event_driven_in_agent_and_task_contracts() -> None:
     assert "does not score transcripts" in closing
     assert "independent reviewers" in closing
     assert "`closed=true`" in closing
+    live_work = _flat(SKILL_DIR / "live-work.md")
+    assert "Use the applicable event-driven wait" in live_work
+    assert "do not create a wait merely to end a turn" in live_work
 
 
 def test_guides_document_deterministic_preview_then_real_close() -> None:
-    for path in (TASKS_GUIDE_PATH, SKILL_PATH):
-        content = path.read_text()
-        assert "preview=true" in content
-        assert "preview=false" in content
-        assert "closed=true" in content
-        assert "integration_ancestry" in content
+    guide = _flat(TASKS_GUIDE_PATH)
+    assert '"preview": True' in guide
+    assert "repeat with `preview=false`" in guide
+    assert "Success returns `closed=true`" in guide
+    assert "does not parse transcripts" in guide
+    closing = _flat(SKILL_PATH)
+    assert "preview=true" in closing
+    assert "expected_closure_revision" in closing
+    assert "`closed=true`" in closing
+    for content in (guide, closing):
         assert "close_review_required" not in content
         assert "reviewer_run_id" not in content
-        assert "review_task_memories" in content
 
 
 def test_lifecycle_scenario_reviews_and_integrates_before_close() -> None:
