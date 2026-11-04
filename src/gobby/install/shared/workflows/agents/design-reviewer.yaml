@@ -26,7 +26,6 @@ blocked_tools:
   - "write_file"
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
-  - "gobby-worktrees:sync_worktree"
 
 prompts:
   agent: &seat |

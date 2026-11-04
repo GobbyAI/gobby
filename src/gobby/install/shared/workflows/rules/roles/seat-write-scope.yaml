@@ -1,4 +1,4 @@
-version: "3.0.1"
+version: "4.0.0"
 tags: [roles, enforcement, gobby]
 
 # Writes with no resolvable target path fail closed: both helpers return False
@@ -9,17 +9,20 @@ rules:
     event: before_tool
     enabled: true
     priority: 15
+    # A Git-mutating MCP tool names no write path, so the workspace exception never covers it.
     when: >-
-      (event.data.get('canonical_tool_kind') == 'write'
+      git_mutating_mcp_call(event.data)
+      or ((event.data.get('canonical_tool_kind') == 'write'
        or event.data.get('canonical_repo_mutation')
        or event.data.get('canonical_git_mutation')
        or event.data.get('canonical_formatter_mutation')
        or event.data.get('canonical_unresolved_execution'))
-      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
+      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables)))
     effects:
       - type: block
         reason: >-
           This seat is read-only in the repository: reads and validation are allowed.
+          It cannot merge, sync, resolve or push a branch, from the shell or through MCP.
           Put notes in your session workspace and send needed changes to their author.
           Integrate approved work through the managed landing tool.
 

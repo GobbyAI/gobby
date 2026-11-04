@@ -26,8 +26,6 @@ blocked_tools:
   - "replace"
   - "write_file"
 # kill_agent is not blocked: the backstop sweep ends leftover seats of closed tasks only, and the procedure scopes it.
-blocked_mcp_tools:
-  - "gobby-worktrees:sync_worktree"
 
 prompts:
   agent: &seat |

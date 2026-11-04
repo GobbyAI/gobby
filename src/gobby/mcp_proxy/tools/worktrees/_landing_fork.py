@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import re
+
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.tasks.close_receipts import list_close_receipts
 from gobby.utils.git import run_to_completion
 from gobby.worktrees.git.manager import WorktreeGitManager
+
+_FULL_SHA = re.compile(r"[0-9a-f]{40}")
 
 
 async def landed_source_fork(
@@ -45,3 +51,18 @@ async def landed_source_fork(
     )
     sha = fork.stdout.strip() if fork.returncode == 0 else ""
     return sha or None
+
+
+def receipt_integration_base(db: HubDatabase, task_id: str, landed_sha: str) -> str | None:
+    """Return the target tip a landing receipt recorded before landing ``landed_sha``.
+
+    A fast-forward landing leaves no merge to read the pre-landing target from;
+    the task's landing receipt keeps it as ``integration_base``.
+    """
+    for receipt in reversed(list_close_receipts(db, task_id)):
+        if landed_sha not in (receipt.commit_sha, receipt.facts.get("landed_tip")):
+            continue
+        base = receipt.facts.get("integration_base")
+        if isinstance(base, str) and _FULL_SHA.fullmatch(base):
+            return base
+    return None
