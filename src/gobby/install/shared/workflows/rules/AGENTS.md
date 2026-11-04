@@ -15,7 +15,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `task-closure` | `task-closure/` | 36 | Selected close and landing gates: coding evidence, TDD order, commits and clean landed work; epic descendants, exact evidence and independent authors; independent review, validation after land, security approval and policy provenance; and the completion owner's no-land/no-close handoff |
 | `memory-lifecycle` | `memory-lifecycle/` | 15 | Initial-load recovery gated on MCP proxy readiness, memory surfacing at turn start, agent spawn, task claim, and handoff, post-close review, plan-memory guards, turn sequencing, and tracking reset |
 | `session-feedback` | `session-feedback/` | 3 | Bounded Gobby-experience survey through feedback, once per epoch for task closures no submission has covered |
-| `context-handoff` | `context-handoff/` | 16 | Compact/resume handoffs, pending pull enforcement, task context, user profile, and pressure nudges |
+| `context-handoff` | `context-handoff/` | 17 | Compact/resume handoffs, pending pull enforcement, task context, user profile, and pressure nudges. Parent-turn gates skip subagent-issued events (payload `agent_id`), and subagents cannot call the session's `get_handoff` or `set_handoff` |
 | `code-index` | `code-index/` | 8 | Require the code-index/overview reference, redirect broad source reads to `gcode`, and fail open when gcode cannot serve the checkout |
 | `monolith-enforcement` | `monolith-enforcement/` | 4 | Require same-session decomposition before writes, commits, task transitions, and turn end |
 | `pipeline-enforcement` | `pipeline-enforcement/` | 1 | Auto-run assigned pipeline on session start |
