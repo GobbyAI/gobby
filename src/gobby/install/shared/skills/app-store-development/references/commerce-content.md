@@ -36,3 +36,5 @@ features need their specific current Apple sources and applicable jurisdictional
 review. Identify the topic and fetch that evidence when triggered; this initial
 skill set does not certify every specialized category. Do not invent blanket
 prohibitions when a scoped requirement or supported alternative exists.
+
+_Version: 1.0.0_

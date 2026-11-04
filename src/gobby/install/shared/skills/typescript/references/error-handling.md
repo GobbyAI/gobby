@@ -139,3 +139,5 @@ logger.error("user_sync_failed", {
 ```
 
 Never log secrets, full tokens, credentials, raw cookies, or unredacted personal data.
+
+_Version: 1.0.0_

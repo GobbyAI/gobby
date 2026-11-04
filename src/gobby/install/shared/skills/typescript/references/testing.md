@@ -115,3 +115,5 @@ pnpm tsd
 ```
 
 Match the package manager and workspace tool already present in the repo.
+
+_Version: 1.0.0_

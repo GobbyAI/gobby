@@ -45,3 +45,5 @@ collections, nullability, arrays, enums, PHPDoc, or package APIs.
   security expectations.
 - Keep backward compatibility in mind for packages, framework extensions,
   migrations, serialized payloads, and event contracts.
+
+_Version: 1.0.0_

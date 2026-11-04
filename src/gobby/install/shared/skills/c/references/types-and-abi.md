@@ -48,3 +48,5 @@ symbol as something downstream code may compile against.
   and `void *` recovery paths.
 - Keep aliasing rules, alignment, and effective types intact. Avoid type punning
   through incompatible pointers.
+
+_Version: 1.0.0_

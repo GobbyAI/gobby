@@ -48,3 +48,5 @@
   architecture. Treat FFI access as native-code trust.
 - Avoid importing Neovim, LÖVE, or another framework's conventions into a generic
   Lua module unless that framework is the declared host.
+
+_Version: 1.0.0_

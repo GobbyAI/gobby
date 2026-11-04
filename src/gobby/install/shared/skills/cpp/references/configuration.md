@@ -45,3 +45,5 @@ manifests, generated files, or static-analysis settings.
 - Regenerate with the owning command instead of hand-editing generated output,
   unless the repo explicitly stores patched generated files.
 - Keep generated output deterministic across machines.
+
+_Version: 1.0.0_

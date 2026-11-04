@@ -46,3 +46,5 @@ threads, futures, locks, reactive code, caches, or shared mutable state.
   behavior is part of the change.
 - Do not mix reactive and blocking styles casually; choose the style the repo's
   runtime is built around.
+
+_Version: 1.0.0_

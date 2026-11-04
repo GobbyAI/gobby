@@ -1,3 +1,4 @@
+version: "1.0.0"
 tags: [worker-safety, enforcement, default, gobby]
 
 # Another process's argv and environment can carry credentials, so listing

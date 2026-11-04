@@ -41,3 +41,5 @@ sanitizer runs, or validation commands.
 - Scope builds and tests to touched targets where possible.
 - Use the repo wrapper or exact build invocation from CI when available.
 - Record the exact command and result before finishing.
+
+_Version: 1.0.0_

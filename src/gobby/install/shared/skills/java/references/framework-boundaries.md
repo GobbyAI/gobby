@@ -48,3 +48,5 @@ configuration.
 - Translate client/framework exceptions into domain or service-layer failures at
   the adapter edge.
 - Keep retry/backoff/circuit-breaker policy explicit and testable.
+
+_Version: 1.0.0_

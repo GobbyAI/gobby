@@ -59,3 +59,5 @@ export function parseUser(value) {
 - Keep exported APIs small and named.
 - Make nullability visible with guards and defaults near the boundary.
 - Do not hide important data shapes in comments that tooling cannot read when JSDoc or schemas would work.
+
+_Version: 1.0.0_

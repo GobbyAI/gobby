@@ -34,3 +34,5 @@
   empty objects. Consumers often treat them differently.
 - Do not convert booleans or numbers to strings unless the schema or platform
   requires stringly typed values.
+
+_Version: 1.0.0_

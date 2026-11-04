@@ -81,4 +81,6 @@ When the policy names no layout, open a new tab titled for the agent's role.
 
 Guide: [gclient workspaces](../../../../../../../../docs/guides/gclient-user-guide.md#workspaces).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-10-23_

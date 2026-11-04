@@ -39,3 +39,5 @@ dart analyze lib/path test/path_test.dart
 flutter test test/widget_test.dart
 flutter test integration_test/app_test.dart
 ```
+
+_Version: 1.0.0_

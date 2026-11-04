@@ -16,3 +16,5 @@ Reserved-name errors require the owning lifecycle operation, not CLI/HTTP bypass
 Public read/write sequences are not atomic increments. CLI get/set are operator
 local-DB commands with scalar parsing and session scope only. See
 [live mutation](../../../../../../../../docs/guides/variables.md#mutation) and [runtime ownership](../../../../../../../../docs/guides/variables.md#auto-managed-variables).
+
+_Version: 1.0.0_

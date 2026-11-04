@@ -75,3 +75,5 @@ variables, functions, positional arguments, and the working directory.
 Identify ownership for shell embedded in YAML, Make, Dockerfiles, package scripts,
 or templates. Validate both the outer format and the rendered shell. Preserve
 template delimiters and quote at the correct interpretation layer.
+
+_Version: 1.0.0_

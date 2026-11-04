@@ -32,3 +32,5 @@
 - Set explicit timeouts for calls, tasks, external IO, and retries.
 - Preserve ordering guarantees where clients rely on them.
 - Test crash/restart paths, timeout paths, and duplicate message behavior.
+
+_Version: 1.0.0_

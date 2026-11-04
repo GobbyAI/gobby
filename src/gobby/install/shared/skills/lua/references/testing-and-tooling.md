@@ -54,3 +54,5 @@ incompatible feature.
   values and error conventions exactly.
 - Use spies or mocks for interaction contracts, then retain integration coverage
   for stack, userdata, scheduler, and host lifecycle behavior.
+
+_Version: 1.0.0_

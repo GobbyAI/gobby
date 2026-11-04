@@ -45,3 +45,5 @@ have separate syntax and libraries. Run their own tools.
   annotations from repository facts.
 - Keep Luacheck/Selene allowed globals narrow. A new global should reflect a
   real host contract, not silence a typo.
+
+_Version: 1.0.0_

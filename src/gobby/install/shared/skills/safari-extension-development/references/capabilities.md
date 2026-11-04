@@ -69,3 +69,5 @@ Use [distribution documentation](https://developer.apple.com/documentation/safar
 for signing and device testing. Unsigned simulator/Mac development testing does
 not establish distribution readiness. A release audit must inspect the actual
 signed app and embedded extensions, not just the Xcode source project.
+
+_Version: 1.0.0_

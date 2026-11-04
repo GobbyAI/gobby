@@ -46,3 +46,5 @@ or generated files.
   and cache warmup behavior in sync.
 - Avoid global config changes when a local service registration or test override
   proves the behavior.
+
+_Version: 1.0.0_

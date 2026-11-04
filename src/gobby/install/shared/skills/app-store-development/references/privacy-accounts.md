@@ -54,3 +54,5 @@ solely because completion leaves the app. Verify authentication, confirmation,
 completion timing, subscription handling and token revocation where applicable.
 Do not add unnecessary support calls or email barriers. Distinguish deletion of
 local drafts from deletion of an account; local tools need no invented account flow.
+
+_Version: 1.0.0_

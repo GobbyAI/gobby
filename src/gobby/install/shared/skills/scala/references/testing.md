@@ -42,3 +42,5 @@ scala-cli test src --test-only com.acme.OrderSpec
 Run formatter/static analysis and the focused compile target with the test. Add
 cross-version or platform runs when the changed source is shared. Use broad
 aggregates only when the affected integration surface requires them.
+
+_Version: 1.0.0_

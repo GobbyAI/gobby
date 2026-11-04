@@ -243,7 +243,7 @@ class TestBlockedMcpSemanticSeverity:
 
 
 def _iter_bundled(pattern: str) -> list[Path]:
-    paths = sorted(BUNDLED_WORKFLOWS_ROOT.glob(pattern))
+    paths = sorted(BUNDLED_WORKFLOWS_ROOT.rglob(pattern))
     assert paths, f"no bundled templates matched {pattern}"
     return paths
 
@@ -254,7 +254,7 @@ class TestBundledTemplateDriftCanary:
     @pytest.mark.parametrize("path", _iter_bundled("*.yaml"), ids=lambda p: p.name)
     def test_bundled_workflow_gates_clean(self, path: Path) -> None:
         data = yaml.safe_load(path.read_text())
-        if not isinstance(data, dict) or data.get("type") == "pipeline":
+        if not isinstance(data, dict) or "steps" not in data or data.get("type") == "pipeline":
             return
         data.setdefault("name", path.stem)
         definition = WorkflowDefinition.model_validate(data)

@@ -61,3 +61,5 @@ Product can afford things brand surfaces can't.
 - Standard navigation patterns: top bar + side nav, breadcrumbs, tabs, command palettes.
 - Density. Tables with many rows, panels with many labels, dense information when users need it.
 - Consistency over surprise. The same visual vocabulary screen to screen is a virtue; delight is saved for moments, not pages.
+
+_Version: 1.0.0_

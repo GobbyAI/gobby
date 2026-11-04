@@ -73,4 +73,6 @@ targeted. Retry the blocked raw command rather than repeating the failing call.
 
 Guide: [Recovery and maintenance](../../../../../../../../docs/guides/gcode-user-guide.md#project-management).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-14_

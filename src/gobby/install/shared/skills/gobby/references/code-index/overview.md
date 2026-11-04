@@ -58,4 +58,6 @@ operator maintenance. Test mutations against isolated fixtures.
 
 Guide: [Code index](../../../../../../../../docs/guides/code-index.md).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-10-26_

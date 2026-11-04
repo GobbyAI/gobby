@@ -35,4 +35,6 @@ authorized agent path in isolated state when changing policy.
 Guides: [Evaluation](../../../../../../../../docs/guides/rules.md#evaluation-rules) and
 [recovery](../../../../../../../../docs/guides/workflow-rules.md#hard-coded-engine-behaviors).
 
+_Version: 1.0.0_
+
 _Last verified: 2026-09-12_

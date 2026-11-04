@@ -49,3 +49,5 @@ optionals, Codable contracts, or module boundaries.
   boundaries when typed models are available.
 - Keep Codable compatibility changes deliberate: defaults, renamed fields,
   migration paths, and failure behavior need tests.
+
+_Version: 1.0.0_

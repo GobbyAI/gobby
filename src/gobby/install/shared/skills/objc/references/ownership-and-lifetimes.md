@@ -50,3 +50,5 @@
 - Verify the object that owns cleanup remains alive until cleanup completes.
 - Exercise deallocation in tests or Instruments when the change can introduce a
   cycle, leak, dangling reference, or premature teardown.
+
+_Version: 1.0.0_

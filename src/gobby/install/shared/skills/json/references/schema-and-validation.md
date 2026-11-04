@@ -33,3 +33,5 @@
   types, and accepted values.
 - Avoid suppressing unknown-key errors unless the consumer really supports
   extension fields.
+
+_Version: 1.0.0_

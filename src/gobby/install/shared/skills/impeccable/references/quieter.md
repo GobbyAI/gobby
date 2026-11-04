@@ -99,3 +99,5 @@ Ensure refinement maintains quality:
 - **Restrained, not absent**: Does the POV survive the cuts?
 
 When the result feels right, hand off to the `polish` steering command (load via `get_skill_file(name="impeccable", path="references/polish.md")` on `gobby-skills`) for the final pass.
+
+_Version: 1.0.0_

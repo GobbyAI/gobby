@@ -51,3 +51,5 @@ Reserve thrown errors for exceptional failures, programming mistakes, or process
 - Register unhandled rejection and uncaught exception behavior intentionally in CLIs and daemons.
 - Log structured context at top-level boundaries, not inside tight loops.
 - Do not log raw tokens, secrets, cookies, authorization headers, or full user payloads.
+
+_Version: 1.0.0_

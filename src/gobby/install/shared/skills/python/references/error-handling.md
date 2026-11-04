@@ -132,3 +132,5 @@ Do not swallow `CancelledError`; clean up and re-raise.
 ## Logging
 
 Log once at the boundary that owns the failure. Include stable fields such as IDs, operation names, and dependency names. Never log secrets, raw tokens, cookies, or full credentials.
+
+_Version: 1.0.0_

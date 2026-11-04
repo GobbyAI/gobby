@@ -107,3 +107,5 @@ Sources in priority order: `.impeccable.md`'s visual-system fields; CSS custom p
 `event.freeformPrompt` is the user's ceiling on direction: all variants honor it while exploring different interpretations within the Phase B mode. Default mode: the prompt narrows the axes, not the identity ("more confident" → one variant amplifies hierarchy, one commits the accent color, one tightens density). Departure mode: the prompt narrows the lanes, not the families ("newspaper front page" → broadsheet vs tabloid vs trade journal, then run the family pass). When the prompt conflicts with a binding brand commitment or `.impeccable.md` invariant, preserve the invariant unless the user explicitly revokes it.
 
 After planning and applying the prompt, call `get_skill_file(name="impeccable", path="references/live-variants.md")` to deliver variants, declare parameters, and signal completion.
+
+_Version: 1.0.0_

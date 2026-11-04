@@ -46,3 +46,5 @@ iterators, cleanup paths, or code that can hit undefined behavior.
   uninitialized reads.
 - Use sanitizers and focused tests for risky memory or lifetime changes.
 - Do not paper over UB with casts or warning suppressions.
+
+_Version: 1.0.0_
