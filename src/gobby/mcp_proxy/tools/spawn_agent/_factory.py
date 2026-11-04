@@ -24,6 +24,7 @@ from gobby.workflows.agent_resolver import AgentResolutionError
 from gobby.workflows.definitions import AgentDefinitionBody
 
 from ._implementation import spawn_agent_impl
+from ._launch_settings import agent_provider_for_spawn, load_model_defaults
 from ._network_override import apply_network_override, validate_network_override
 from ._provider_resolution import (
     concrete_provider,
@@ -693,9 +694,10 @@ def create_spawn_agent_registry(
                     "error": "A run on another machine needs a parent session and a project",
                 }
             try:
+                model_defaults = await asyncio.to_thread(load_model_defaults, db, project_id)
                 run_provider = resolve_spawn_provider(
                     explicit_provider=provider,
-                    agent_provider=agent_body.provider if agent_body is not None else None,
+                    agent_provider=agent_provider_for_spawn(agent_body, model, model_defaults),
                     default_provider=default_provider,
                 )
             except ValueError as exc:
@@ -709,6 +711,7 @@ def create_spawn_agent_registry(
                 daemon_config=config_resolver() if config_resolver is not None else None,
                 placement=placement,
                 completion_registry=completion_registry,
+                model_defaults=model_defaults,
                 request=remote_spawn.RemoteSpawnRequest(
                     parent_session_id=resolved_parent_session_id,
                     project_id=project_id,

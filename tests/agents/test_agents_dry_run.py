@@ -28,12 +28,14 @@ def _create_agent(
     pipeline: str | None = None,
     base_branch: str = "main",
     project_id: str | None = None,
+    model: str | None = "claude-sonnet-5",
 ) -> None:
-    """Create an agent definition in the typed table."""
+    """Create an agent definition in the typed table. A launch needs a model to resolve."""
     body = make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         provider=provider,
+        model=model,
         checkout_mode=checkout_mode,
         base_branch=base_branch,
         workflows=make_agent_workflows(pipeline=pipeline),

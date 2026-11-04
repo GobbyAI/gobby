@@ -7,12 +7,20 @@ and identifying misconfigurations before any resources are allocated.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.model_defaults import ModelDefaults
+from gobby.mcp_proxy.tools.spawn_agent._launch_settings import (
+    LaunchRefused,
+    agent_provider_for_spawn,
+    load_model_defaults,
+    resolve_launch_model,
+)
 from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
     SpawnArgumentError,
     concrete_provider,
@@ -175,15 +183,30 @@ async def evaluate_spawn(
 
     result.agent_found = True
 
+    # The same project policy the real spawn resolves with. An unreadable policy refuses.
+    model_defaults = ModelDefaults()
+    try:
+        model_defaults = await asyncio.to_thread(load_model_defaults, db, workflow_project_id)
+    except ValueError as exc:
+        result.can_spawn = False
+        result.items.append(
+            EvaluationItem(
+                layer="model",
+                level="error",
+                code="PROJECT_POLICY_UNREADABLE",
+                message=str(exc),
+            )
+        )
+
     # Resolve effective values. A supplied model already required an explicit
-    # provider above; otherwise use explicit > agent definition > session default.
+    # provider above; otherwise use explicit > policy entry > agent definition > session default.
     if model is not None and model.strip() and model.strip().lower() != "inherit":
         eff_provider = explicit_provider
     else:
         try:
             eff_provider = resolve_spawn_provider(
                 explicit_provider=provider,
-                agent_provider=agent_body.provider,
+                agent_provider=agent_provider_for_spawn(agent_body, model, model_defaults),
                 default_provider=spawning_session_provider(
                     session_manager,
                     caller_session_id=None,
@@ -220,6 +243,49 @@ async def evaluate_spawn(
             },
         )
     )
+
+    # The launch model, resolved as the real spawn resolves it: a refusal here is a refusal there.
+    if eff_provider is not None:
+        try:
+            launch = await resolve_launch_model(
+                provider=eff_provider,
+                model=model,
+                agent_body=agent_body,
+                reasoning_effort=None,
+                reasoning_required=None,
+                model_defaults=model_defaults,
+            )
+        except LaunchRefused as exc:
+            result.can_spawn = False
+            result.items.append(
+                EvaluationItem(
+                    layer="model",
+                    level="error",
+                    code="MODEL_UNRESOLVED",
+                    message=str(exc.response.get("error", exc)),
+                )
+            )
+        else:
+            result.items.append(
+                EvaluationItem(
+                    layer="model",
+                    level="info",
+                    code="MODEL_RESOLVED",
+                    message=f"Model resolved to {launch.model!r} for provider {eff_provider}",
+                    detail={
+                        "model": launch.model,
+                        "reasoning_effort": launch.reasoning_effort,
+                        "fallbacks": [
+                            {
+                                "provider": choice.provider,
+                                "model": choice.model,
+                                "reasoning_effort": choice.reasoning_effort,
+                            }
+                            for choice in launch.model_chain[1:]
+                        ],
+                    },
+                )
+            )
 
     # ---- Layer 2: Workflow Resolution ----
     effective_workflow = workflow or agent_body.workflows.pipeline

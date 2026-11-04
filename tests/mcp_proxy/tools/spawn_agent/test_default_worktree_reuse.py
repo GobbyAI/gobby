@@ -82,7 +82,7 @@ async def test_default_body_binds_reused_worktree_and_defers_its_base(
         prompt="continue",
         runner=runner,
         agent_body=make_agent_definition(
-            name="default",
+            name="seat",
             prompts=AgentPromptBlocks(agent="Continue development"),
             model="gpt-5.4",
             task_attestation_writes=[],

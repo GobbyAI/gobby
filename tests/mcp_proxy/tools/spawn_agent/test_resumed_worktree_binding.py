@@ -97,7 +97,7 @@ async def test_claiming_resume_refuses_a_tree_bound_to_another_task(
         prompt="continue",
         runner=runner,
         agent_body=make_agent_definition(
-            name="default",
+            name="seat",
             prompts=AgentPromptBlocks(agent="Continue development"),
             model="gpt-5.4",
             task_attestation_writes=[],

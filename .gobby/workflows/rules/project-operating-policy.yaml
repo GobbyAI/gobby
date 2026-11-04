@@ -1,4 +1,4 @@
-version: "1.2.2"
+version: "1.3.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -101,123 +101,32 @@ rules:
               "planning": "Each planning run's writer opens a tab titled 'Team Planning - #<task>'; the other planning seats split that tab.",
               "research": "Each research run opens one tab titled 'Research - #<task>' holding its Researcher and Research Reviewer."
             },
-            "launch_defaults": {
-              "dev-team": {
-                "developer_provider": "claude",
-                "developer_model": "claude-haiku-5-5",
-                "developer_reasoning_effort": "xhigh",
-                "reviewer_provider": "codex",
-                "reviewer_model": "gpt-6.1-sol",
-                "reviewer_reasoning_effort": "medium",
-                "lead_provider": "claude",
-                "lead_model": "claude-haiku-5-5",
-                "lead_reasoning_effort": "xhigh"
-              },
-              "support": {
-                "release_manager_provider": "codex",
-                "release_manager_model": "gpt-6.1-sol",
-                "release_manager_reasoning_effort": "medium",
-                "triage_provider": "claude",
-                "triage_model": "claude-sonnet-5-5",
-                "triage_reasoning_effort": "medium",
-                "archivist_provider": "claude",
-                "archivist_model": "claude-opus-5-5",
-                "archivist_reasoning_effort": "medium",
-                "security_auditor_provider": "codex",
-                "security_auditor_model": "gpt-6.1-sol",
-                "security_auditor_reasoning_effort": "xhigh",
-                "recovery_steward_provider": "codex",
-                "recovery_steward_model": "gpt-6.1-terra",
-                "recovery_steward_reasoning_effort": "medium",
-                "consolidator_provider": "claude",
-                "consolidator_model": "claude-opus-5-5",
-                "consolidator_reasoning_effort": "medium"
-              },
-              "research": {
-                "researcher_provider": "codex",
-                "researcher_model": "gpt-6.1-sol",
-                "researcher_reasoning_effort": "medium",
-                "research_reviewer_provider": "claude",
-                "research_reviewer_model": "claude-opus-5-5",
-                "research_reviewer_reasoning_effort": "xhigh"
-              },
-              "team-planning": {
-                "plan_writer_provider": "claude",
-                "plan_writer_model": "claude-opus-5-5",
-                "plan_writer_reasoning_effort": "xhigh",
-                "plan_adversary_provider": "codex",
-                "plan_adversary_model": "gpt-6.1-sol",
-                "plan_adversary_reasoning_effort": "medium",
-                "plan_enhancer_provider": "codex",
-                "plan_enhancer_model": "gpt-5.6-sol",
-                "plan_enhancer_reasoning_effort": "xhigh"
-              }
+            "agent_model_defaults": {
+              "assistant": {"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-sol"}]},
+              "orchestrator": {"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-sol"}]},
+              "developer": {"provider": "claude", "model": "claude-haiku-5-5", "reasoning_effort": "xhigh", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-terra", "reasoning_effort": "xhigh"}]},
+              "dev-team-lead": {"provider": "claude", "model": "claude-haiku-5-5", "reasoning_effort": "xhigh", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-terra", "reasoning_effort": "xhigh"}]},
+              "code-reviewer": {"provider": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium", "fallbacks": [{"provider": "claude", "model": "claude-opus-5-5"}]},
+              "security-auditor": {"provider": "grok", "model": "grok-4.7", "reasoning_effort": "high", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "xhigh"}, {"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "xhigh"}]},
+              "design-reviewer": {"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-sol"}]},
+              "docs-writer": {"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-sol"}]},
+              "docs-reviewer": {"provider": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium", "fallbacks": [{"provider": "claude", "model": "claude-opus-5-5"}]},
+              "plan-writer": {"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "xhigh", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-sol"}]},
+              "plan-team-lead": {"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "xhigh", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-sol"}]},
+              "plan-advocate": {"provider": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "xhigh", "fallbacks": [{"provider": "claude", "model": "claude-opus-5-5"}]},
+              "plan-adversary": {"provider": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "xhigh", "fallbacks": [{"provider": "claude", "model": "claude-opus-5-5"}]},
+              "researcher": {"provider": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium", "fallbacks": [{"provider": "claude", "model": "claude-opus-5-5"}]},
+              "research-reviewer": {"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-sol"}]},
+              "research-team-lead": {"provider": "claude", "model": "claude-haiku-5-5", "reasoning_effort": "xhigh", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-terra", "reasoning_effort": "xhigh"}]},
+              "triage": {"provider": "claude", "model": "claude-sonnet-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-terra", "reasoning_effort": "xhigh"}]},
+              "recovery-steward": {"provider": "claude", "model": "claude-sonnet-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-terra", "reasoning_effort": "xhigh"}]},
+              "archivist": {"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-sol"}]},
+              "consolidator": {"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-sol"}]},
+              "release-manager": {"provider": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium", "fallbacks": [{"provider": "claude", "model": "claude-opus-5-5"}]},
+              "expansion-qa": {"provider": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium", "fallbacks": [{"provider": "claude", "model": "claude-opus-5-5"}]},
+              "feedback-reviewer": {"provider": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium", "fallbacks": [{"provider": "claude", "model": "claude-opus-5-5"}]}
             },
-            "role_launch_defaults": {
-              "epic-reviewer": {
-                "provider": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "xhigh"
-              },
-              "expansion-qa": {
-                "model": "gpt-6-luna"
-              },
-              "feedback-reviewer": {
-                "provider": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "medium"
-              },
-              "log-monitor": {
-                "provider": "claude",
-                "model": "claude-sonnet-5-5",
-                "reasoning_effort": "medium"
-              },
-              "memory-curator": {
-                "provider": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "xhigh"
-              },
-              "metrics-monitor": {
-                "provider": "claude",
-                "model": "claude-sonnet-5-5",
-                "reasoning_effort": "medium"
-              },
-              "plan-adversary": {
-                "provider": "codex",
-                "model": "gpt-6.1-sol",
-                "reasoning_effort": "xhigh"
-              },
-              "plan-enhancer": {
-                "provider": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "xhigh"
-              },
-              "plan-writer": {
-                "provider": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "medium"
-              },
-              "research-reviewer": {
-                "provider": "claude",
-                "model": "claude-opus-5-5",
-                "reasoning_effort": "xhigh"
-              },
-              "researcher": {
-                "provider": "codex",
-                "model": "gpt-6.1-sol",
-                "reasoning_effort": "medium"
-              },
-              "security-auditor": {
-                "provider": "codex",
-                "model": "gpt-6.1-sol",
-                "reasoning_effort": "xhigh"
-              },
-              "tech-writer": {
-                "provider": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "xhigh"
-              }
-            }
+            "default_model_denylist": ["fable", "astra", "argon", "carbon"]
           }
       - type: inject_context
         delivery: on_receipt
@@ -255,7 +164,7 @@ rules:
         template: |
           ## Project Operating Policy
           - Operator: resolve_operator_conversation(channel="gobby-telegram"); no hardcoded IDs.
-          - Before routing/launch/handoff: get_variable(name="project_policy") for roots/role_launch_defaults/launch_defaults/workspace_layout. Reporter/Consolidator read role_guidance before work. Pass a runbook its launch_defaults entry plus its required inputs; bundles inherit, project-agnostic.
+          - Before routing/launch/handoff: get_variable(name="project_policy") for roots/agent_model_defaults/default_model_denylist/workspace_layout. Consolidator reads role_guidance before work. A spawn that names no model takes its agent_model_defaults entry; pass model= only to override it. Runbooks pass their required inputs only; bundles inherit, project-agnostic.
           - Integration 0.5.0. Push: the operator and sessions running the default agent definition may push. Other seats push only for the exact SHA the operator approves, and only the Orchestrator runs git push origin <sha>:refs/heads/0.5.0.
           - Critical path: the 1.0 full Rust port (#21542) in port order: runner retirement (R0-R7 under #21544), Stage 2 families, Stage 3 (#21571, #21573, #21574), then hub/node multi-machine control. #24818 carries live runbook fixes and live Python fixes such as #25272. Stage launches by load/backlog. New tasks go under their domain root; #24819 is deferred. Found work to ORCH: low unless blocking critical-path work/landing; only blockers preempt; fold findings existing work resolves.
           - The operator alone moves/sweeps/folds/reparents #22978 Triage subtree, #22225 Annotate or operator-placed tasks. Check parent; never change deferred-by-user.

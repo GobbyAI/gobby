@@ -56,7 +56,7 @@ async def test_launch_assignment_overrides_definition_variables() -> None:
     from tests.fixtures.agent_definitions import make_agent_workflows
 
     body = make_agent_definition(
-        name="default",
+        name="seat",
         prompts={"agent": "Work."},
         workflows=make_agent_workflows(variables={"seat_context": {"worktree": "default"}}),
     )
@@ -88,7 +88,7 @@ async def test_single_spawn_network_is_launch_local(network: str | None) -> None
     from gobby.mcp_proxy.tools.spawn_agent import _factory
 
     body = make_agent_definition(
-        name="default", provider="claude", network="trusted", prompts={"agent": "Work."}
+        name="seat", provider="claude", network="trusted", prompts={"agent": "Work."}
     )
     launch = AsyncMock(return_value={"success": True, "run_id": "network-launch"})
     registry = _factory.create_spawn_agent_registry(MagicMock())
@@ -228,7 +228,7 @@ async def test_network_unreadable_seed_refuses_before_allocations() -> None:
     from gobby.mcp_proxy.tools.spawn_agent import _factory, _implementation
 
     body = make_agent_definition(
-        name="default", provider="claude", model="claude-sonnet-5", prompts={"agent": "Work."}
+        name="seat", provider="claude", model="claude-sonnet-5", prompts={"agent": "Work."}
     )
     registry = _factory.create_spawn_agent_registry(MagicMock())
     project = {"id": "11111111-1111-4111-8111-111111110123", "project_path": "/test"}
@@ -339,7 +339,7 @@ class TestSpawnAgentDefaults:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
         )
@@ -404,7 +404,7 @@ class TestSpawnAgentDefaults:
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
                 return_value=make_agent_definition(
                     prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-                    name="default",
+                    name="seat",
                     provider="claude",
                     model="claude-sonnet-5",
                 ),
@@ -445,7 +445,7 @@ class TestSpawnAgentDefaults:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
         )
@@ -497,7 +497,7 @@ class TestSpawnAgentDefaults:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
         )
@@ -750,7 +750,7 @@ class TestSpawnAgentDefaults:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
         )
@@ -828,7 +828,7 @@ class TestSpawnAgentParamOverrides:
         expected_ttl: int | None,
     ) -> None:
         body = make_agent_definition(
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
             prompts={"agent": "Run the assigned task."},
@@ -863,7 +863,7 @@ class TestSpawnAgentParamOverrides:
         expected: str,
     ) -> None:
         body = make_agent_definition(
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
             prompts={"agent": "Run the assigned task."},
@@ -986,7 +986,7 @@ class TestSpawnAgentParamOverrides:
 
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
-            name="default",
+            name="seat",
             provider="claude",
             model="claude-sonnet-5",
         )
