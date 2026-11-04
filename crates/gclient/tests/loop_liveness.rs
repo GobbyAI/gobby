@@ -33,7 +33,9 @@ use base64::Engine;
 use crossterm::event::{KeyCode, KeyModifiers, MouseEvent, MouseEventKind};
 use gobby_client::app::run_loop::RENDER_TICK;
 use gobby_client::app::{run_live_loop, spawn_job, JobKey, JobLedger, JobResult, PaneId};
-use gobby_client::daemon::{Daemon, Generation, LiveDaemon, REQUEST_DEADLINE};
+use gobby_client::daemon::{
+    Daemon, Generation, LiveDaemon, CONTROL_REQUEST_DEADLINE, REQUEST_DEADLINE,
+};
 use gobby_client::frame_source::{FrameError, PaneFrameSource, ScriptedFrameSource, Transport};
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::hit::{hit_test, Hit};
@@ -1011,6 +1013,71 @@ async fn a_host_grant_survives_a_daemon_take_refusal_that_lands_after_it() {
     );
     result.expect("live loop exits cleanly");
     assert!(written(&mock, "terminal-b").is_empty());
+    mock.shutdown().await;
+}
+
+/// A host grant the pane already holds survives a daemon take that gives up
+/// with an error. The take is never answered, so it times out past
+/// `CONTROL_REQUEST_DEADLINE`; a key typed afterwards still rides the original
+/// host grant, without a second grant request or a daemon detach for the pane.
+#[tokio::test]
+async fn a_host_grant_survives_a_daemon_take_timeout_after_it() {
+    let mock = MockDaemon::start("local-token").await;
+    let mut host = StallingHost::start().await;
+    let grants = host.serve_grants(json!({"ok": true, "granted": true}));
+    let (mut workspace, _home) = two_pane_workspace(&mock, Some(&host)).await;
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(1);
+    // Never released: the take gives up with an error after its deadline.
+    let _unanswered = mock.hold_ws("terminal_take_control", for_terminal("terminal-b"));
+
+    let driver = async {
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        probe.key(KeyCode::Char('x'), KeyModifiers::NONE).await;
+        host.wait_for_input(b"x").await;
+        assert_eq!(grants.lock().expect("grant log").len(), 1);
+        tokio::time::sleep(CONTROL_REQUEST_DEADLINE + Duration::from_millis(500)).await;
+        assert!(
+            websocket_requests(&mock, "terminal_detach")
+                .iter()
+                .all(|body| body.get("terminal_id") != Some(&json!("terminal-b"))),
+            "the timed-out take tore down the host-granted pane"
+        );
+        probe.key(KeyCode::Char('y'), KeyModifiers::NONE).await;
+        let typed = std::time::Instant::now();
+        host.wait_for_input(b"y").await;
+        assert!(
+            typed.elapsed() < KEY_BOUND,
+            "y waited {:?} behind the timed-out take",
+            typed.elapsed()
+        );
+        assert_eq!(
+            grants.lock().expect("grant log").len(),
+            1,
+            "the host grant the pane already held was requested again"
+        );
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(
+        written(&mock, "terminal-b").is_empty(),
+        "the keys rode the host stream, not the daemon"
+    );
     mock.shutdown().await;
 }
 
