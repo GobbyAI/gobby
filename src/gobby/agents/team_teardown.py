@@ -40,6 +40,10 @@ TEARDOWN_KEY = "teardown"
 TEARDOWN_GRACE = timedelta(seconds=30)
 # The refusal code for a seat whose run cannot be ended; teardown reports it and keeps the tree.
 SEAT_NOT_ENDED = "seat_not_ended"
+# Last (code, reason) logged per tree this process. A retained tree is retried every pass, so a
+# refusal logs at WARNING once and again only when its code or reason changes; later passes log at
+# DEBUG. In-process memory only: nothing here files a task or writes database state.
+_last_refusals: dict[tuple[str, str | None], tuple[str, str]] = {}
 
 
 class TeamSeatNotEndedError(RuntimeError):
@@ -663,7 +667,11 @@ def _refuse(binding: TeamBinding, result: WorktreeDeletionResult) -> dict[str, A
         "uncommitted_changes" if result.uncommitted_changes else "deletion_refused"
     )
     reason = result.error or result.message or code
-    logger.warning(
+    key = (binding.team_id, binding.worktree_id)
+    repeated = _last_refusals.get(key) == (code, reason)
+    _last_refusals[key] = (code, reason)
+    logger.log(
+        logging.DEBUG if repeated else logging.WARNING,
         "Team %s teardown refused for tree %s (%s): %s",
         binding.team_id,
         binding.worktree_path,

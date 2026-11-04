@@ -194,12 +194,10 @@ def project_task_ids(world: TeamWorld) -> set[str]:
     return {task.id for task in tasks}
 
 
-def refusal_codes(caplog: pytest.LogCaptureFixture) -> list[str]:
-    """The codes of the teardown refusals logged as structured WARNING records."""
+def refusal_codes(caplog: pytest.LogCaptureFixture, level: int = logging.WARNING) -> list[str]:
+    """The codes of the teardown refusals logged as structured records at `level`."""
     return [
         str(record.__dict__["code"])
         for record in caplog.records
-        if record.name == TEARDOWN_LOGGER
-        and record.levelno == logging.WARNING
-        and "code" in record.__dict__
+        if record.name == TEARDOWN_LOGGER and record.levelno == level and "code" in record.__dict__
     ]

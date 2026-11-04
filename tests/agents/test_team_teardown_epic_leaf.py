@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from gobby.agents.team_admission_records import TeamBinding
 from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.storage.agents import LocalAgentRunManager
@@ -22,6 +23,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.worktrees.deletion import WorktreeDeletionResult
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.team_case import TeamWorld, git_in, make_team_world
 from tests.fixtures.team_teardown_case import (
@@ -241,6 +243,55 @@ async def test_leaf_teardown_keeps_a_dirty_or_unmerged_sub_tree_and_logs_it(
     ]
     assert (dirty.path / "README.md").read_text() == "edited after the merge\n"
     assert tree.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_refused_leaf_tree_logs_once_per_reason_and_retries_every_pass(
+    world: TeamWorld, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#25656: a retained sub-tree is retried each pass; its refusal logs once per reason."""
+    db = world.case.db
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await seated_team(world, epic, world.child(epic))
+    tree = team_tree(team)
+    sub = sub_tree(world, team, leaf)
+    git_in(tree, "merge", "--no-ff", sub.branch, "-m", "Merge leaf into epic main")
+    closed = close_leaf(world, leaf, sub.sha)
+    refusals = [
+        WorktreeDeletionResult(
+            success=False, error_code="uncommitted_changes", error="README.md modified"
+        ),
+        WorktreeDeletionResult(
+            success=False, error_code="uncommitted_changes", error="README.md modified"
+        ),
+        WorktreeDeletionResult(
+            success=False, error_code="uncommitted_changes", error="index.lock held"
+        ),
+        WorktreeDeletionResult(success=False, error_code="worktree_in_use", error="tree in use"),
+        WorktreeDeletionResult(success=False, error_code="worktree_in_use", error="tree in use"),
+    ]
+    calls: list[str | None] = []
+
+    async def refuse(binding: TeamBinding) -> WorktreeDeletionResult:
+        calls.append(binding.worktree_id)
+        return refusals[len(calls) - 1]
+
+    first_pass = closed_at(closed) + TEARDOWN_GRACE
+    with caplog.at_level(logging.DEBUG, logger=TEARDOWN_LOGGER):
+        for minutes in range(len(refusals)):
+            await teardown_pass(
+                db, daemon(db), first_pass + timedelta(minutes=minutes), delete=refuse
+            )
+
+    assert len(calls) == len(refusals)
+    assert refusal_codes(caplog) == [
+        "uncommitted_changes",
+        "uncommitted_changes",
+        "worktree_in_use",
+    ]
+    assert refusal_codes(caplog, logging.DEBUG) == ["uncommitted_changes", "worktree_in_use"]
+    assert sub.path.is_dir()
 
 
 def manager_stops(db: HubDatabase, manager: str) -> None:
