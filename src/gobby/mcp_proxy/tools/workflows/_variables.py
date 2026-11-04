@@ -201,7 +201,11 @@ def get_variable(
     if not session_id:
         return {
             "success": False,
-            "error": "session_id is required. Pass the session ID explicitly to prevent cross-session variable bleed.",
+            "error": (
+                "session_id is required: pass it as get_variable's own top-level parameter, "
+                "get_variable(session_id='<your Gobby Session ID>', name=...). "
+                "It is never inferred, so one session cannot read another's variables."
+            ),
         }
 
     # Resolve session_id to UUID (accepts #N, N, UUID, or prefix)
