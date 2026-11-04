@@ -25,13 +25,13 @@ from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     discover_and_bind_external_terminal,
 )
 from gobby.hooks.terminal_context import (
-    CODEX_CLEAR_ORIGIN_KEY,
     SeatOwner,
     enrich_terminal_context_with_cwd,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
+from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX
 
 pytestmark = pytest.mark.integration

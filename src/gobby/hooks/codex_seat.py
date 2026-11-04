@@ -12,13 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from gobby.hooks.terminal_context import (
-    CODEX_CLEAR_ORIGIN_KEY,
-    CODEX_CLEAR_ORIGIN_PENDING,
     SeatAvailable,
     SeatOwner,
     SeatOwnerCheck,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY, CODEX_CLEAR_ORIGIN_PENDING
 
 # Same tolerance as terminal_ownership.recorded_process_is_alive.
 _CREATE_TIME_TOLERANCE_SECONDS = 1.0

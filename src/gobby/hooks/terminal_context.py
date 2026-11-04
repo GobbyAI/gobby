@@ -13,6 +13,7 @@ from uuid import UUID
 import psutil
 
 from gobby.sessions.tmux_context import parse_tmux_socket_path, query_tmux_identity
+from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY
 from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
@@ -47,12 +48,6 @@ class SeatOwner(Enum):
 # a running seat supplies it: the predecessor thread owns that seat, so the successor
 # adopts the cwd's only seat TUI when its owner is recorded.
 SeatOwnerCheck = Callable[[int, float], SeatOwner]
-
-# The daemon records a Codex /clear successor's rollout originator under this key. While
-# the rollout is unwritten it holds the pending marker, and later activity checks again.
-# Only the daemon writes it: hook payloads never carry it through.
-CODEX_CLEAR_ORIGIN_KEY = "gobby_codex_clear_origin"
-CODEX_CLEAR_ORIGIN_PENDING = "pending"
 
 # Every key ghook derives from its own process and environment. Under a shared Codex
 # app-server host those values describe the host, never the seat that fired the hook.

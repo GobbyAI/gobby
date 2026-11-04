@@ -21,8 +21,6 @@ from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_
 from gobby.hooks.session_binding import bound_session
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.terminal_context import (
-    CODEX_CLEAR_ORIGIN_KEY,
-    CODEX_CLEAR_ORIGIN_PENDING,
     enrich_terminal_context_with_cwd,
     hook_cwd,
     is_gobby_acp_child,
@@ -37,6 +35,7 @@ from gobby.storage.sessions._contested_expiry import session_has_active_native_s
 from gobby.storage.sessions._registration_cache import session_matches_registration
 from gobby.storage.terminals import TerminalManager
 from gobby.tasks.state_semantics import serialize_task_state
+from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY, CODEX_CLEAR_ORIGIN_PENDING
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -15,7 +15,6 @@ from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.hooks.session_binding import bound_session
 from gobby.hooks.terminal_context import (
-    CODEX_CLEAR_ORIGIN_KEY,
     enrich_terminal_context_with_cwd,
     hook_cwd,
     hook_sandbox_enabled,
@@ -26,6 +25,7 @@ from gobby.storage.session_activity import (
     reconcile_compact_session_activity,
 )
 from gobby.storage.sessions._update_sentinel import UNSET
+from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY
 
 from .agents import _seed_parent_turn_seq
 from .claims import rehydrate_found_work_gate_arm

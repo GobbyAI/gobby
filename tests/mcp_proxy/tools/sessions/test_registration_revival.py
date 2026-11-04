@@ -84,9 +84,7 @@ def _assert_freshly_active(manager: SessionManager, session_id: str) -> None:
 async def test_mcp_registration_reactivates_an_expired_session(
     session_manager: SessionManager, sample_project: dict[str, Any], source: str
 ) -> None:
-    session = _expired_past_horizon(
-        session_manager, sample_project["id"], LOCAL_MACHINE_ID, source
-    )
+    session = _expired_past_horizon(session_manager, sample_project["id"], LOCAL_MACHINE_ID, source)
     registry = create_session_messages_registry(session_manager=session_manager)
 
     with session_context_for_test(session.id):
@@ -104,9 +102,7 @@ async def test_mcp_registration_reactivates_an_expired_session(
 def test_rest_registration_reactivates_an_expired_session(
     session_manager: SessionManager, sample_project: dict[str, Any], tmp_path: Path, source: str
 ) -> None:
-    session = _expired_past_horizon(
-        session_manager, sample_project["id"], LOCAL_MACHINE_ID, source
-    )
+    session = _expired_past_horizon(session_manager, sample_project["id"], LOCAL_MACHINE_ID, source)
 
     response = _client(session_manager, tmp_path).post(
         "/api/sessions/register",
