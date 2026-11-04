@@ -92,9 +92,7 @@ from gobby.hooks._normalization_shell import (
     strip_output_redirections,
 )
 from gobby.hooks._normalization_shell_stdin import shell_stdin_arguments
-from gobby.hooks._path_scope import (
-    resolve_tool_path,
-)
+from gobby.hooks._path_scope import READ_OPERAND_PATHS, resolve_tool_path
 from gobby.hooks._sed_expansion import sed_literal_bindings
 from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.code_navigation import (
@@ -326,7 +324,7 @@ def _classify_shell_command(
             if segment_start <= position < segment_end
         ]
         assignment_bindings = (
-            _literal_assignment_bindings(tuple(raw_parts), source_parts)
+            _literal_assignment_bindings(tuple(raw_parts), source_parts, literal_values)
             if leading_assignments
             and segment.separator_before in {None, "&&", ";", "\n"}
             and next_separator not in {"|", "&"}
@@ -337,7 +335,7 @@ def _classify_shell_command(
         segment_values: Mapping[str, str] = MappingProxyType({})
         if assignment_bindings is not None:
             for name, value in (
-                _literal_assignment_values(tuple(raw_parts), source_parts) or {}
+                _literal_assignment_values(tuple(raw_parts), source_parts, literal_values) or {}
             ).items():
                 if value is not None and _loop_binding_variable_is_stable(name):
                     literal_values[name] = value
@@ -395,11 +393,13 @@ def _classify_shell_command(
             directory.mark_unproven()
         # Substitution and heredoc metadata precede the owning segment's entry.
         segment_metadata_positions.append(len(metadata))
-        if not parts:
+        # ``export`` and option-only ``set`` setup bind like bare assignments, unproven read-only.
+        if not parts or assignment_bindings is not None:
             metadata.append(
                 _ShellSegmentMetadata(
                     "execute",
                     neutral_setup=True,
+                    read_only=False if parts else None,
                     assignment_bindings=assignment_bindings or (),
                     shell_words=tuple(raw_parts),
                     shell_raw_words=source_parts,
@@ -722,6 +722,9 @@ def _classify_shell_segment_impl(
         base_write_paths = list(base_metadata.write_paths)
         if extra.get("_canonical_patch_input_paths"):
             extra["_canonical_repo_mutation_scope_unknown"] = True
+        if not base_metadata.repo_mutation:
+            # Published read operands never widen or obscure the redirect's write scope.
+            extra[READ_OPERAND_PATHS] = [p for p in base_paths if p not in redirection_paths]
         return _ShellSegmentMetadata(
             "write",
             paths=tuple(

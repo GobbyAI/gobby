@@ -347,6 +347,16 @@ def git_mutation_cwd(parts: list[str], cwd: str | None, base_cwd: Path | None) -
     return git_cwd
 
 
+def _git_apply_word_may_become_option(word: str) -> bool:
+    """Whether a word's expansion may yield an option such as ``--apply``.
+
+    Any expansion may word-split or carry a leading dash; a glob or brace can only
+    produce one when it leads the word, so ``p*.diff`` and ``--include=src/*`` stay
+    proven while ``*`` and ``{a,--apply}`` do not.
+    """
+    return _contains_unexpanded_shell_reference(word) or word[:1] in {"*", "?", "[", "{"}
+
+
 def _git_apply_flags(arguments: list[str]) -> set[str] | None:
     """Prove apply options without treating their values or operands as flags."""
     value_options = {
@@ -393,19 +403,16 @@ def _git_apply_flags(arguments: list[str]) -> set[str] | None:
         "-q",
         "-h",
     }
-    if any(
-        _contains_unexpanded_shell_reference(argument)
-        or any(character in argument for character in "*?[{}")
-        for argument in arguments
-    ):
-        return None
     flags: set[str] = set()
     index = 0
     while index < len(arguments):
         argument = arguments[index]
         index += 1
         if argument == "--":
+            # Operands after ``--`` cannot become options, however they expand.
             break
+        if _git_apply_word_may_become_option(argument):
+            return None
         if not argument.startswith("-") or argument == "-":
             continue
         if argument.startswith("--"):
@@ -416,6 +423,8 @@ def _git_apply_flags(arguments: list[str]) -> set[str] | None:
                         return None
                     value = arguments[index]
                     index += 1
+                    if _git_apply_word_may_become_option(value):
+                        return None
                 if not value:
                     return None
             elif option not in switches or separator:
