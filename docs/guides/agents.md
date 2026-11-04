@@ -637,9 +637,10 @@ or close the task. If a release error includes a commit, inspect it before retry
 
 ## Workspace Backups
 
-The daemon commits agent workspace notes on handoff, compaction, and session end.
-The `gobby:agent-workspaces` system cron catches missed changes nightly at 03:30
-local time (`30 3 * * *`). Upgrades migrate the old five-minute schedule while
+The `gobby:agent-workspaces` system cron commits agent workspace notes nightly at
+03:30 local time (`30 3 * * *`). It is the only backup trigger: handoff,
+compaction, session start or end, and team teardown never commit the workspace.
+Upgrades migrate the old five-minute schedule while
 preserving disabled jobs and parked jobs. A parked job stays enabled but has no
 next scheduled run until it is explicitly woken.
 

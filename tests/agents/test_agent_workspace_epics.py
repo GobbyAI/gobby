@@ -13,7 +13,6 @@ import pytest
 
 from gobby.agents.agent_workspaces import (
     bind_epic_workspace,
-    drain_workspace_commits,
     workspace_git_dir,
 )
 from gobby.agents.team_admission_records import TeamBinding
@@ -194,10 +193,6 @@ async def test_epic_close_commit_and_lock(
     )
     closed = closed_at(tasks.get_task(epic.id))
     await teardown_pass(db, daemon(db), closed + TEARDOWN_GRACE)
-
-    marker = f"epic-{epic.seq_num}"
-    await drain_workspace_commits()
-    assert any(marker in subject for subject in _subjects(world.case.project_id))
 
     # The folder is locked: no seat keeps the epic folder, and a rebind finds no live team.
     for seat in seats:
