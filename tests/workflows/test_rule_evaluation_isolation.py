@@ -148,6 +148,22 @@ def test_rejected_variable_target_does_not_render_value(temp_db: HubDatabase) ->
     assert calls == []
 
 
+def test_a_literal_container_value_is_written_as_a_fresh_copy(temp_db: HubDatabase) -> None:
+    engine = RuleEngine(temp_db)
+    effect = RuleEffect(type="set_variable", variable="items", value=[])
+    variables = _variables()
+
+    # One parsed effect resets the same session twice, e.g. on consecutive turn starts.
+    first = engine._apply_set_variable(effect, variables, {"variables": variables})
+    variables["items"].append("written this turn")
+    second = engine._apply_set_variable(effect, variables, {"variables": variables})
+
+    assert (first, second) == (True, True)
+    assert variables["items"] == []
+    assert effect.value == []
+    assert variables["items"] is not effect.value
+
+
 @pytest.mark.parametrize("site", ["condition", "value"])
 @pytest.mark.parametrize("mutation", MUTATIONS)
 def test_rule_expressions_cannot_mutate_inputs(

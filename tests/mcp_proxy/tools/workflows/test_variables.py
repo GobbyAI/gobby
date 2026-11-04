@@ -337,6 +337,19 @@ class TestSetVariableScoped:
 class TestGetVariableScoped:
     """Tests for get_variable with session/step scoping."""
 
+    def test_missing_session_names_the_top_level_parameter(self) -> None:
+        """The refusal says the session goes on get_variable's own session_id (#25580 item 12)."""
+        from gobby.mcp_proxy.tools.workflows._variables import get_variable
+
+        mocks = _make_mocks()
+
+        result = get_variable(mocks["session_manager"], mocks["db"], name="flag", session_id="")
+
+        assert result["success"] is False
+        assert "get_variable(session_id=" in result["error"]
+        assert "top-level" in result["error"]
+        mocks["session_manager"].resolve_session_reference.assert_not_called()
+
     def test_get_variable_with_step_scope_reads_from_instance(self) -> None:
         from gobby.mcp_proxy.tools.workflows._variables import get_variable
 

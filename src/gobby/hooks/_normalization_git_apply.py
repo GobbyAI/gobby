@@ -88,14 +88,25 @@ _MAX_PATCH_BYTES = 16 * 1024 * 1024
 _NAMED_LINES = ("rename from ", "rename to ", "copy from ", "copy to ")
 
 
+def _may_become_option(word: str) -> bool:
+    """Whether a word's expansion may yield an option such as ``--apply``.
+
+    Any expansion may word-split or carry a leading dash; a glob or brace can only
+    produce one when it leads the word, so ``p*.diff`` and ``--include=src/*`` stay
+    proven while ``*`` and ``{a,--apply}`` do not.
+    """
+    return _contains_unexpanded_shell_reference(word) or word[:1] in {"*", "?", "[", "{"}
+
+
+def _is_literal(word: str) -> bool:
+    """Whether a word names exactly itself, with no expansion or pattern."""
+    return not _contains_unexpanded_shell_reference(word) and not any(
+        character in word for character in "*?[{}"
+    )
+
+
 def _git_apply_options(arguments: list[str]) -> tuple[set[str], list[str]] | None:
     """Prove apply options and collect patch operands without treating values as flags."""
-    if any(
-        _contains_unexpanded_shell_reference(argument)
-        or any(character in argument for character in "*?[{}")
-        for argument in arguments
-    ):
-        return None
     flags: set[str] = set()
     operands: list[str] = []
     index = 0
@@ -103,8 +114,11 @@ def _git_apply_options(arguments: list[str]) -> tuple[set[str], list[str]] | Non
         argument = arguments[index]
         index += 1
         if argument == "--":
+            # Operands after ``--`` cannot become options, however they expand.
             operands.extend(arguments[index:])
             break
+        if _may_become_option(argument):
+            return None
         if not argument.startswith("-") or argument == "-":
             operands.append(argument)
             continue
@@ -116,6 +130,8 @@ def _git_apply_options(arguments: list[str]) -> tuple[set[str], list[str]] | Non
                         return None
                     value = arguments[index]
                     index += 1
+                    if _may_become_option(value):
+                        return None
                 if not value:
                     return None
             elif option not in _SWITCHES or separator:
@@ -176,7 +192,10 @@ def _literal_patch_write(
         or checkout_reads.node_origin()
         or not flags <= _TARGET_PRESERVING
         or not operands
-        or any(operand == "-" or operand.startswith("~") for operand in operands)
+        or any(
+            operand == "-" or operand.startswith("~") or not _is_literal(operand)
+            for operand in operands
+        )
     ):
         return None
     patches = [Path(_rebase_shell_path(operand, git_cwd)) for operand in operands]

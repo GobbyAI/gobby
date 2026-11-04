@@ -1976,6 +1976,29 @@ class TestBeforeToolBlockTracking:
         assert variables.get("tool_block_pending") is None
 
     @pytest.mark.asyncio
+    async def test_subagent_block_records_in_its_own_context(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """A subagent's blocked call never becomes the parent's last blocked tool."""
+
+        _insert_rule(
+            manager,
+            "block-edit",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="block", reason="No editing", tools=["Edit"])],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit", "agent_id": "a1"})
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+
+        assert variables.get("_last_blocked_tool") is None
+        assert variables["_last_blocked_scopes"]["a1"]["_last_blocked_tool"] == "Edit"
+
+    @pytest.mark.asyncio
     async def test_tool_block_pending_not_set_on_stop_block(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
@@ -2062,6 +2085,46 @@ class TestBeforeToolBlockTracking:
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["tool_block_pending"] is True
+
+    @pytest.mark.asyncio
+    async def test_subagent_tool_outcome_stays_in_its_own_context(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """A subagent's failure never holds the parent's stop, and its success never clears it."""
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        failed = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit", "agent_id": "a1"})
+        failed.metadata["is_failure"] = True
+        await engine.evaluate(failed, session_id=SESSION_ID, variables=variables)
+
+        assert variables.get("tool_block_pending") is None
+        assert variables["_last_blocked_scopes"]["a1"]["tool_block_pending"] is True
+
+        variables["tool_block_pending"] = True
+        succeeded = _make_event(
+            HookEventType.AFTER_TOOL, data={"tool_name": "Edit", "agent_id": "a2"}
+        )
+        await engine.evaluate(succeeded, session_id=SESSION_ID, variables=variables)
+
+        assert variables["tool_block_pending"] is True
+
+    @pytest.mark.asyncio
+    async def test_success_keeps_edit_state_while_another_context_failed(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """A parallel success elsewhere never clears edit state a subagent's failure left."""
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {
+            "edit_write_pending": True,
+            "_last_blocked_scopes": {"a1": {"tool_block_pending": True}},
+        }
+        event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+
+        assert variables["edit_write_pending"] is True
+        assert variables["_last_blocked_scopes"]["a1"]["tool_block_pending"] is True
 
     @pytest.mark.parametrize(
         "payload,expected_pending",

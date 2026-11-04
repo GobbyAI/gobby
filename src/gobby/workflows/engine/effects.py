@@ -5,6 +5,7 @@ mcp_call, rewrite_input, load_skill, run_command, and block matching.
 """
 
 import asyncio
+import copy
 import json
 import logging
 from collections.abc import Callable
@@ -111,8 +112,9 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                 )
                 # Per-turn injections (brevity, memory, task context) stay un-tagged.
                 # Handoff markdown is pull-only via get_handoff; see
-                # docs/contracts/session-boundary.md.
-                context_parts.append((f"rule:{row.name}", template_text))
+                # docs/contracts/session-boundary.md. A blank render injects nothing.
+                if template_text and template_text.strip():
+                    context_parts.append((f"rule:{row.name}", template_text))
 
         elif effect.type == "set_display_content":
             display_content = await offload(
@@ -492,6 +494,10 @@ class EffectsMixin(RunCommandEffectsMixin, CachedMcpInjectionMixin):
                     "Failed to evaluate set_variable expression '%s': %s", effect.value, e
                 )
                 return False
+        else:
+            # A literal belongs to the parsed rule, shared by every write of it; the
+            # session gets its own copy so in-place edits never reach the definition.
+            value = copy.deepcopy(value)
 
         return write_rule_variable(
             variables,

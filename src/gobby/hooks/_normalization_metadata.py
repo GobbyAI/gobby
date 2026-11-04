@@ -13,6 +13,7 @@ from gobby.hooks._normalization_bindings import (
 )
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import _contains_unexpanded_shell_reference
+from gobby.hooks._path_scope import READ_OPERAND_PATHS
 from gobby.hooks._sed_program import sed_write_paths
 from gobby.hooks.code_navigation import source_read_navigation_metadata
 
@@ -267,6 +268,9 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
 
     paths: list[str] = []
     mutation_paths: list[str] = []
+    # Published read operands of mutating segments, kept out of scope unless also a target.
+    read_operand_paths: list[str] = []
+    target_paths: list[str] = []
     edit_paths: list[str] = []
     dirty_edit_paths: list[str] = []
     write_paths: list[str] = []
@@ -380,8 +384,13 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                             paths.append(resolved_path)
                 else:
                     navigation_scope_unknown = True
+        item_reads = frozenset(item.extra.get(READ_OPERAND_PATHS, ())) if item.extra else ()
         unresolved_mutation_paths = (
-            [path for path in item.paths if _path_is_unresolved(path, item.literal_path_root)]
+            [
+                path
+                for path in item.paths
+                if _path_is_unresolved(path, item.literal_path_root) and path not in item_reads
+            ]
             if item.repo_mutation
             else []
         )
@@ -434,6 +443,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         for path in resolvable:
             if path not in paths:
                 paths.append(path)
+            if item.repo_mutation:
+                (read_operand_paths if path in item_reads else target_paths).append(path)
             if item.repo_mutation and path not in mutation_paths:
                 mutation_paths.append(path)
             if (
@@ -531,6 +542,9 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         extra["canonical_script_bodies"] = sorted(script_bodies)
     if mutation_scope_unknown and kind == "write":
         extra["_canonical_repo_mutation_scope_unknown"] = True
+    extra.pop(READ_OPERAND_PATHS, None)
+    if kind == "write" and (reads := [p for p in read_operand_paths if p not in target_paths]):
+        extra[READ_OPERAND_PATHS] = list(dict.fromkeys(reads))
     if any(item.unverified_write_scope for item in active):
         extra["_canonical_repo_mutation_scope_unverified"] = True
     if saw_unexpanded_mutation_path and mutation_scope_resolved_by_loop_binding:

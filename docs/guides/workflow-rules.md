@@ -189,9 +189,10 @@ that closes each assistant response with a tool-batch event (Claude Code's
 denials, because none of those siblings could act on the first denial; the
 boundary event re-arms counting for the next response. A provider without that
 boundary counts every denial. When a hook payload names the issuing agent
-(`agent_id`), that context's counter and `_block_reasons_shown` live in its own
-`_last_blocked_scopes` slot, so concurrent subagents sharing one session id
-never spend each other's budget.
+(`agent_id`), that context's counter, `_last_blocked_tool`, `tool_block_pending`
+and `_block_reasons_shown` live in its own `_last_blocked_scopes` slot, so
+concurrent subagents sharing one session id never spend each other's budget,
+and a subagent's failed call never holds the parent's turn end.
 
 On the first turn where `servers_listed` is false, the engine also queues the
 hard-coded auto-discovery MCP call that seeds available Gobby MCP servers.

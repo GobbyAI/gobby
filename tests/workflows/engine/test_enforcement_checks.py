@@ -97,4 +97,56 @@ def test_self_owned_claim_task_is_not_a_counted_denial() -> None:
 
     assert response is None
     assert _DENIAL_COUNTS_VARIABLE not in instance.variables
-    assert harness.audit_reasons == ["claim_task targets the task already owned by this session"]
+    assert harness.audit_reasons == ["claim_task targets this run's own task"]
+
+
+def _claim_in_skill_loading_step(claimed_by: str | None) -> tuple[_EnforcementHarness, Any]:
+    step = WorkflowStep.model_validate(
+        {
+            "name": "load_required_skills",
+            "allowed_tools": ["mcp__gobby__call_tool"],
+            "allowed_mcp_tools": ["gobby-skills:get_skill"],
+        }
+    )
+    instance = MagicMock(spec=AgentStepInstance)
+    instance.agent_name = "synthetic-seat"
+    instance.variables = {}
+    harness = _EnforcementHarness(step, instance)
+    harness._task_manager.get_task.return_value.claimed_by_session_id = claimed_by
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "claim_task",
+                "arguments": {"task_id": "#21710"},
+            },
+        },
+    )
+    return harness, event
+
+
+def test_initial_claim_of_the_bound_task_passes_the_skill_loading_step() -> None:
+    """A seat's first claim of its run's unclaimed task is not ordered behind skill loads."""
+    harness, event = _claim_in_skill_loading_step(claimed_by=None)
+
+    response = harness._check_step_tool_enforcement_locked(event, SESSION_ID, {})
+
+    assert response is None
+    assert harness.audit_reasons == ["claim_task targets this run's own task"]
+
+
+def test_claim_of_a_task_another_session_holds_is_not_exempt() -> None:
+    harness, event = _claim_in_skill_loading_step(claimed_by="33333333-3333-4333-8333-333333333333")
+
+    exempt = harness._is_self_owned_claim_task(
+        session_id=SESSION_ID,
+        mcp_key="gobby-tasks:claim_task",
+        tool_input=event.data["tool_input"],
+    )
+
+    assert exempt is False

@@ -40,6 +40,7 @@ from gobby.hooks.session_activation import reconcile_session_activation
 from gobby.hooks.session_materialize import activate_deferred_session, has_deferred_help_activation
 from gobby.hooks.session_summary_wiring import build_session_summary_dispatcher
 from gobby.hooks.session_types import HookSessionManager
+from gobby.hooks.subagent_boundary import subagent_boundary_signal
 from gobby.hooks.terminal_context import configure_codex_seat_index
 from gobby.storage.hub.read_scope import hub_read_scope
 from gobby.telemetry.tracing import create_span
@@ -327,6 +328,11 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
         """Run hook preparation, returning async handlers to the calling loop."""
         if blocking_deadline is None:
             blocking_deadline = new_blocking_effect_deadline()
+        # A subagent's own compaction is not the parent's context loss: skip it
+        # before any session lookup, handler or rule can reset the parent.
+        if signal := subagent_boundary_signal(event):
+            self.logger.info("Ignoring %s from a subagent (%s)", event.event_type.value, signal)
+            return HookResponse(decision="allow")
         # SESSION_START is special: the handler establishes the canonical
         # platform session first (including pre-created web-chat rows). Doing a
         # generic lookup here can auto-register a stray duplicate before the

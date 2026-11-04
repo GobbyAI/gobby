@@ -96,7 +96,8 @@ def _shell_loop_binding_disqualifications(words: tuple[str, ...]) -> frozenset[s
         # pass replaces or drops; only command-scoped prefixes disqualify.
         return frozenset(disqualified) if words[:1] == ("env",) else frozenset()
     command = parts[0].rsplit("/", 1)[-1]
-    declares_attributes = command in {"readonly", "export"}
+    # Exporting never changes how a value expands, like ``declare -x`` below.
+    declares_attributes = command == "readonly"
     if command in {"declare", "local", "typeset"}:
         option_letters = "".join(part[1:] for part in parts[1:] if part.startswith("-"))
         declares_attributes = any(flag in option_letters for flag in "inr")
@@ -113,32 +114,83 @@ def _shell_loop_binding_disqualifications(words: tuple[str, ...]) -> frozenset[s
 def _literal_assignment_bindings(
     words: tuple[str, ...],
     raw_words: tuple[str, ...],
+    bound: Mapping[str, str] | None = None,
 ) -> tuple[tuple[str, str], ...] | None:
     """Return absolute literal bindings of a bare-assignment segment, else ``None``."""
-    values = _literal_assignment_values(words, raw_words)
+    values = _literal_assignment_values(words, raw_words, bound)
     if values is None:
         return None
     return tuple((name, value) for name, value in values.items() if value and value.startswith("/"))
 
 
+# ``set`` options that change neither expansion nor the environment children inherit.
+_SET_OPTION_LETTERS = frozenset("eEuxvT")
+_SET_OPTION_NAMES = frozenset(
+    {"errexit", "errtrace", "functrace", "nounset", "pipefail", "verbose", "xtrace"}
+)
+# ``"$D/x"``, ``$D/x`` or ``${D}/x``: an assignment value neither splits nor globs.
+_BOUND_ASSIGNMENT_VALUE = re.compile(
+    r'(?P<q>"?)\$(?:\{(?P<braced>[A-Za-z_]\w*)\}|(?P<bare>[A-Za-z_]\w*))'
+    r"(?P<suffix>[A-Za-z0-9_./:@%+,=-]*)(?P=q)"
+)
+
+
+def _shell_option_setup(words: tuple[str, ...], raw_words: tuple[str, ...]) -> bool:
+    """Whether a segment is only ``set`` toggling expansion-neutral shell options."""
+    if words[:1] != ("set",) or len(words) < 2 or words != raw_words:
+        return False
+    expect_name = False
+    for word in words[1:]:
+        if expect_name:
+            if word not in _SET_OPTION_NAMES:
+                return False
+            expect_name = False
+            continue
+        if len(word) < 2 or word[0] not in "-+":
+            return False
+        letters = word[1:-1] if word.endswith("o") else word[1:]
+        expect_name = word.endswith("o")
+        if not set(letters) <= _SET_OPTION_LETTERS:
+            return False
+    return not expect_name
+
+
 def _literal_assignment_values(
     words: tuple[str, ...],
     raw_words: tuple[str, ...],
+    bound: Mapping[str, str] | None = None,
 ) -> dict[str, str | None] | None:
     """Map each name a bare-assignment segment assigns to its literal value or ``None``.
 
-    ``None`` overall means the segment is not all bare assignments.
+    ``None`` overall means the segment is not all bare assignments. A plain ``export``
+    prefix still assigns in this shell, an option-only ``set`` assigns nothing, and a
+    value that is one expansion of an already ``bound`` literal plus a literal suffix
+    resolves to that literal.
     """
+    if _shell_option_setup(words, raw_words):
+        return {}
+    if words[:1] == ("export",) and raw_words[:1] == ("export",):
+        words, raw_words = words[1:], raw_words[1:]
     if not words or len(words) != len(raw_words):
         return None
+    known = dict(bound or {})
     values: dict[str, str | None] = {}
     for word, raw in zip(words, raw_words, strict=True):
         name, _, value = word.partition("=")
         if not _is_env_assignment(word) or not raw.startswith(f"{name}="):
             return None
         raw_value = raw[len(name) + 1 :]
-        literal = "~" not in raw_value and _raw_shell_word_is_literal(raw_value)
-        values[name] = value if literal else None
+        resolved: str | None = None
+        if "~" not in raw_value and _raw_shell_word_is_literal(raw_value):
+            resolved = value
+        elif match := _BOUND_ASSIGNMENT_VALUE.fullmatch(raw_value):
+            base = known.get(match.group("braced") or match.group("bare") or "")
+            resolved = None if base is None else base + match.group("suffix")
+        values[name] = resolved
+        if resolved is not None and _loop_binding_variable_is_stable(name):
+            known[name] = resolved
+        else:
+            known.pop(name, None)
     return values
 
 

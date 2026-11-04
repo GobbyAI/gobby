@@ -12,6 +12,8 @@ from gobby.paths import get_gobby_home
 from gobby.providers import provider_metadata
 from gobby.utils.project_context import find_project_root
 
+# Published read operands of a shell write, e.g. ``cat a > b``; never part of its scope.
+READ_OPERAND_PATHS = "_canonical_read_operand_paths"
 _SCRATCHPAD_MARKERS = frozenset(
     {
         "agent-scratchpad",
@@ -55,6 +57,8 @@ def apply_path_scope_metadata(
 
     if metadata.get("canonical_tool_kind") == "write":
         metadata.pop("_canonical_sed_bsd_program", None)
+        read_operands = set(metadata.pop(READ_OPERAND_PATHS, ()))
+        targets = [path for path in paths if path not in read_operands]
         scope_resolved_by_loop_binding = bool(
             metadata.pop("_canonical_repo_mutation_scope_resolved_by_loop_binding", False)
         )
@@ -66,19 +70,19 @@ def apply_path_scope_metadata(
                 bool(metadata.pop("_canonical_repo_mutation_scope_unknown", False))
                 and not scope_resolved_by_loop_binding
             )
-            or (metadata.get("canonical_structured_mutation") is not True and not paths)
+            or (metadata.get("canonical_structured_mutation") is not True and not targets)
             or any(
                 isinstance(raw_path, str)
                 and raw_path.startswith("~")
                 and resolve_tool_path(raw_path, cwd) is None
-                for raw_path in paths
+                for raw_path in targets
             )
             or (
                 unverified
                 and not all(
                     (path := resolve_tool_path(raw_path, cwd)) is not None
                     and _is_project_managed_path(path, project_root)
-                    for raw_path in paths
+                    for raw_path in targets
                 )
             )
         )
@@ -89,7 +93,7 @@ def apply_path_scope_metadata(
             # literal, attributable write from one whose target is opaque.
             metadata["canonical_repo_mutation_scope_unknown"] = True
         metadata["canonical_repo_mutation"] = scope_unknown or paths_may_touch_project(
-            paths, cwd=cwd, project_root=project_root
+            targets, cwd=cwd, project_root=project_root
         )
 
     if metadata.get("canonical_code_navigation_action"):

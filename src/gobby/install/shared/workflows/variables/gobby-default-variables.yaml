@@ -89,6 +89,9 @@ variables:
   loaded_skill_references:
     value: []
     description: "Exact skill:references/path.md identities completely fetched in the current context"
+  unavailable_instructions:
+    value: []
+    description: "Skill and reference identities a get_skill(names) batch reported unavailable in the current context; the instruction bootstrap stops requesting them"
   code_index_navigation_used_this_turn:
     value: false
     description: "True after successful gcode navigation in the current turn"

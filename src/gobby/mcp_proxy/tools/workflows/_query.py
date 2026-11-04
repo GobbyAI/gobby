@@ -19,7 +19,12 @@ def get_step_status(
         return {
             "success": False,
             "has_workflow": False,
-            "error": "session_id is required. Pass the session ID explicitly to prevent cross-session variable bleed.",
+            "error": (
+                "session_id is required: pass it on the outer call_tool call, "
+                "call_tool(server_name='gobby-workflows', tool_name='get_step_status', "
+                "session_id='<your Gobby Session ID>'). "
+                "It is never guessed, so one session cannot read another's variables."
+            ),
         }
 
     try:

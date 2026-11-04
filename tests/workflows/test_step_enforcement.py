@@ -390,11 +390,10 @@ _REQUIRED_SKILLS = [
     "restraint",
     "gobby:references/tasks/overview.md",
 ]
-# Bare call forms, in required order, that a load_required_skills denial leads with.
+# The one bare call, in required order, that a load_required_skills denial leads with.
 _REQUIRED_SKILL_CALLS = (
-    'get_skill_file(name="gobby", path="references/development/obligations.md")',
-    'get_skill(name="restraint")',
-    'get_skill_file(name="gobby", path="references/tasks/overview.md")',
+    'get_skill(names=["gobby:references/development/obligations.md", "restraint", '
+    '"gobby:references/tasks/overview.md"])',
 )
 # Mirrors the bundled backend-developer load_required_skills step.
 _REQUIRED_SKILLS_WORKFLOW: dict[str, Any] = {

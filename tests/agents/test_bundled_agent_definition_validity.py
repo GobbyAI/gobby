@@ -32,12 +32,15 @@ from gobby.workflows.condition_helpers_git_tools import GIT_MUTATING_MCP_TOOLS
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
     RuleDefinitionBody,
+    WorkflowStep,
     split_rule_definition_data,
 )
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.engine.enforcement_checks import EnforcementCheckMixin
 from gobby.workflows.pipeline_models import PipelineDefinition
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.selectors import resolve_rules_for_agent
+from gobby.workflows.step_instances import AgentStepInstance
 from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
 from gobby.workflows.sync_rules import get_bundled_rules_path
 
@@ -239,6 +242,77 @@ def test_review_stage_seat_loads_the_holistic_epic_review_for_epic_targets() -> 
     for duty in EPIC_REVIEW_DUTIES:
         assert duty in reference, duty
     assert re.search(r"^_Version: \d+\.\d+\.\d+_$", raw, re.MULTILINE)
+
+
+# A seat told to create and claim its own task does so first; a skill-loading
+# first step must not refuse that claim (#25580 items 9 and 31).
+SELF_CLAIM_DIRECTIVE = re.compile(r"create_task\W.{0,120}claim=true")
+SELF_CLAIMING_STEP_SEATS = sorted(
+    name
+    for name, data in BUNDLED_DEFINITIONS.items()
+    if data.get("step_workflow")
+    and any(
+        SELF_CLAIM_DIRECTIVE.search(" ".join(str(text).split()))
+        for text in (data.get("prompts") or {}).values()
+    )
+)
+
+
+class _FirstStepHarness(EnforcementCheckMixin):
+    """The engine's step check on a definition's first step, with no bound run."""
+
+    def __init__(self, step: WorkflowStep, agent_name: str) -> None:
+        self._step = step
+        self._instance = MagicMock(spec=AgentStepInstance)
+        self._instance.agent_name = agent_name
+        self._instance.variables = {}
+        self.instance_manager = MagicMock()
+
+    def _get_step_for_session(
+        self, session_id: str
+    ) -> tuple[WorkflowStep | None, AgentStepInstance | None]:
+        del session_id
+        return self._step, self._instance
+
+    def _active_agent_run(self, session_id: str) -> tuple[Any, Any] | None:
+        del session_id
+        return None
+
+    def _audit_step_tool_call(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+
+def test_self_claiming_step_seats_are_discovered() -> None:
+    assert SELF_CLAIMING_STEP_SEATS
+
+
+@pytest.mark.parametrize("name", SELF_CLAIMING_STEP_SEATS)
+def test_first_step_admits_the_seats_own_task_claim(name: str) -> None:
+    data = dict(BUNDLED_DEFINITIONS[name], name=name)
+    workflow = AgentDefinitionBody.model_validate(data).step_workflow
+    assert workflow is not None
+    harness = _FirstStepHarness(workflow.steps[0], name)
+    session_id = "11111111-1111-4111-8111-111111111111"
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=session_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "create_task",
+                "arguments": {"title": "Own task", "claim": True},
+            },
+        },
+        # Stop after the step's own allow-list; handlers are not under test.
+        metadata={"_mcp_proxy_duplicate_before_tool": True},
+    )
+
+    response = harness._check_step_tool_enforcement_locked(event, session_id, {})
+
+    assert response is None, response.reason if response else None
 
 
 SHELL_GIT_MUTATION_FIELD = "canonical_git_mutation"

@@ -5,7 +5,11 @@ from __future__ import annotations
 import re
 
 from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
-from gobby.skills.instruction_requirements import instruction_call_form, instruction_is_loaded
+from gobby.skills.instruction_requirements import (
+    instruction_batch_call_form,
+    instruction_call_form,
+    instruction_is_loaded,
+)
 from gobby.workflows.definitions import WorkflowStep
 
 _SKILL_LOAD_TARGET_PATTERN = re.compile(r"tool_input\.name\s*==\s*['\"]([^'\"]+)['\"]")
@@ -49,13 +53,18 @@ def skill_load_call_lead(
     if not _is_skill_load_step(step):
         return ""
     targets, _ = _skill_load_targets(step, variables or {})
-    calls: list[str] = []
+    valid: list[str] = []
     for target in targets:
         try:
-            calls.append(instruction_call_form(target))
+            instruction_call_form(target)
         except ValueError:
             continue  # skill_load_block_guidance reports the invalid requirement
-    return f"{'; '.join(calls)}\n" if calls else ""
+        valid.append(target)
+    if not valid:
+        return ""
+    if len(valid) == 1:
+        return f"{instruction_call_form(valid[0])}\n"
+    return f"{instruction_batch_call_form(valid)}\n"
 
 
 def _is_skill_load_step(step: WorkflowStep) -> bool:

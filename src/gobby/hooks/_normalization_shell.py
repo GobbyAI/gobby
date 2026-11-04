@@ -48,11 +48,12 @@ _HEREDOC_OPERATORS = frozenset({"<<", "<<-"})
 # it is *not* followed by digits or ``-``; those forms scan as fd duplication.
 _SHELL_OUTPUT_REDIRECTION_TOKENS = frozenset(
     {">", ">>", "1>", "1>>", "2>", "2>>", "&>", "&>>", ">&"}
+    | {">|", ">>|", "&>|", "&>>|", ">&|", ">>&", ">>&|"}
 )
 _SHELL_CONTROL_TOKENS = (
     _SHELL_CHAIN_TOKENS | _SHELL_INPUT_REDIRECTION_TOKENS | _SHELL_OUTPUT_REDIRECTION_TOKENS
 )
-_FD_OUTPUT_REDIRECTION_RE = re.compile(r"^\d+>>?$")
+_FD_OUTPUT_REDIRECTION_RE = re.compile(r"^\d+>>?\|?$")
 # Fd duplication (``2>&1``, ``>&2``, ``0<&3``, ``2>&-``) rebinds descriptors without
 # opening files, so it is neither a mutating redirection nor a segment separator.
 _FD_DUP_TOKEN_RE = re.compile(r"^\d*[<>]&(?:\d+|-)$")
