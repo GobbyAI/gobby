@@ -185,6 +185,9 @@ async def test_parent_turn_start_keeps_subagent_failed_write_held_at_its_own_sto
 
     await engine.evaluate(_turn_start(), SESSION_ID, variables)
 
+    assert _held_by_tool_recovery(
+        await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
+    )
     assert _held_by_edit_recovery(
         await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
     )
@@ -230,6 +233,24 @@ async def test_subagent_tool_failure_block_is_self_clearing(temp_db: HubDatabase
         await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
     )
     assert not _held_by_tool_recovery(
+        await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
+    )
+
+
+@pytest.mark.asyncio
+async def test_parent_turn_start_keeps_subagent_tool_failure_held_at_its_own_stop(
+    temp_db: HubDatabase,
+) -> None:
+    engine = RuleEngine(temp_db)
+    variables: dict[str, Any] = {}
+    await engine.evaluate(_tool(HookEventType.BEFORE_TOOL, READ, SUBAGENT), SESSION_ID, variables)
+    await engine.evaluate(
+        _tool(HookEventType.AFTER_TOOL, READ, SUBAGENT, failed=True), SESSION_ID, variables
+    )
+
+    await engine.evaluate(_turn_start(), SESSION_ID, variables)
+
+    assert _held_by_tool_recovery(
         await engine.evaluate(_subagent_stop(SUBAGENT), SESSION_ID, variables)
     )
 

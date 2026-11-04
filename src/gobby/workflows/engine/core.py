@@ -49,7 +49,6 @@ from gobby.workflows.enforcement.blocking import is_unblockable_discovery_tool
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.block_batching import (
     agent_context_key,
-    clear_block_scopes,
     close_response_batch,
     drop_block_scope,
     register_blocked_attempt,
@@ -455,7 +454,6 @@ class RuleEngine(
                     blocked_turn_feedback = variables.pop("_blocked_turn_end_pending", False)
                     variables["consecutive_tool_blocks"] = 0
                     clear_blocked_tool_recovery_state(variables)
-                    clear_block_scopes(variables)
                     variables["tool_block_pending"] = False
                     if not blocked_turn_feedback:
                         variables["stop_attempts"] = 0

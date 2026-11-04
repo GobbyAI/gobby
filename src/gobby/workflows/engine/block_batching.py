@@ -32,10 +32,6 @@ BLOCK_SCOPES_VARIABLE = "_last_blocked_scopes"
 #: Scope key marking the current response batch as already counted.
 BATCH_COUNTED_KEY = "_last_blocked_batch_counted"
 
-#: Prefix of edit/write recovery keys (see reserved_variables.py). They survive a turn
-#: boundary inside a subagent's scope.
-EDIT_WRITE_STATE_PREFIX = "edit_write_"
-
 #: Scope key holding the consecutive blocked-attempt count.
 BLOCK_COUNT_KEY = "consecutive_tool_blocks"
 
@@ -95,27 +91,6 @@ def failure_pending_in_any_context(variables: dict[str, Any]) -> bool:
     scopes = variables.get(BLOCK_SCOPES_VARIABLE)
     contexts = [variables, *(scopes.values() if isinstance(scopes, dict) else ())]
     return any(isinstance(scope, dict) and scope.get("tool_block_pending") for scope in contexts)
-
-
-def clear_block_scopes(variables: dict[str, Any]) -> None:
-    """Drop each subagent's blocked-tool state at a turn boundary.
-
-    Edit/write recovery state survives: a write still in flight or failed when the
-    parent starts a turn is still recovered at its own context's stop.
-    """
-    kept: dict[str, dict[str, Any]] = {}
-    scopes = variables.get(BLOCK_SCOPES_VARIABLE)
-    if isinstance(scopes, dict):
-        for context, scope in scopes.items():
-            if isinstance(scope, dict):
-                edit_state = {
-                    key: value
-                    for key, value in scope.items()
-                    if key.startswith(EDIT_WRITE_STATE_PREFIX)
-                }
-                if edit_state:
-                    kept[context] = edit_state
-    variables[BLOCK_SCOPES_VARIABLE] = kept
 
 
 def drop_block_scope(variables: dict[str, Any], context: str) -> None:
