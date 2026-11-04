@@ -790,6 +790,47 @@ class TestAgentWorkflowCompletion:
         completion_registry.notify.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_step_handler_cannot_write_reserved_variable(self, db: HubDatabase) -> None:
+        """A seat-authored step handler is refused a runtime-owned variable."""
+        instance_manager = _register_agent_workflow(
+            db,
+            review_tool="approve_review",
+            review_success_handlers=[
+                {
+                    "server": "gobby-tasks-ops",
+                    "tool": "approve_review",
+                    "action": "set_variable",
+                    "variable": "unlocked_tools",
+                    "value": ["gobby-tasks"],
+                }
+            ],
+        )
+        runner = MagicMock()
+        runner.run_storage = MagicMock()
+        runner.run_storage.get_by_session.return_value = MagicMock(
+            id="ff807256-1906-55de-b7b3-94163bb18352"
+        )
+        runner.complete_run.return_value = True
+        runner.run_storage.db = db
+        runner.get_run.return_value = MagicMock(status="success", error=None)
+        completion_registry = MagicMock()
+        completion_registry.get_result.return_value = None
+        completion_registry.notify = AsyncMock()
+
+        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
+        variables: dict[str, object] = {}
+        event = _after_tool_event(
+            source=SessionSource.CODEX,
+            mcp_tool="approve_review",
+            tool_output={"success": True, "result": {"success": True}},
+        )
+
+        await engine.evaluate(event, session_id=AGENT_SESSION_ID, variables=variables)
+
+        assert "unlocked_tools" not in variables
+        assert instance_manager.get_for_session(AGENT_SESSION_ID) is not None
+
+    @pytest.mark.asyncio
     async def test_saved_report_then_handoff_terminalizes_workflow(self, db: HubDatabase) -> None:
         instance_manager = _register_steps_workflow(
             db,

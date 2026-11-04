@@ -30,6 +30,7 @@ from gobby.storage.hub.operation_deadline import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager, system_session_id
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -56,7 +57,7 @@ def marker_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_notice_is_a_system_global_that_wakes_every_live_session(
+async def test_notice_is_a_system_global_that_wakes_active_seats(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -69,7 +70,7 @@ async def test_notice_is_a_system_global_that_wakes_every_live_session(
             project_id=sample_project["id"],
             title=name,
         ).id
-        for name in ("idle-seat", "waiting-seat")
+        for name in ("active-seat", "second-active-seat")
     ]
     dispatcher = RecordingWakeDispatcher()
     runner = _runner(database=temp_db, session_manager=session_manager, wake_dispatcher=dispatcher)
@@ -90,6 +91,69 @@ async def test_notice_is_a_system_global_that_wakes_every_live_session(
         if isinstance(metadata, str):
             metadata = json.loads(metadata)
         assert metadata["wake_requested"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("notice", [HOLD_NOTICE, BACK_NOTICE], ids=["hold", "back"])
+async def test_restart_notices_wake_active_seats_and_seats_holding_a_task_only(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    notice: str,
+) -> None:
+    project_id = sample_project["id"]
+    active = session_manager.register(
+        external_id="active-seat",
+        machine_id=None,
+        source="codex",
+        project_id=project_id,
+        title="active-seat",
+    ).id
+    parked: list[str] = []
+    for name, status in (
+        ("idle-seat", "idle"),
+        ("paused-seat", "paused"),
+        ("waiting-seat", "waiting"),
+    ):
+        seat = session_manager.register(
+            external_id=name,
+            machine_id=None,
+            source="codex",
+            project_id=project_id,
+            title=name,
+        ).id
+        session_manager.update_status(seat, status)
+        parked.append(seat)
+    claimed = session_manager.register(
+        external_id="claimed-idle-seat",
+        machine_id=None,
+        source="codex",
+        project_id=project_id,
+        title="claimed-idle-seat",
+    ).id
+    session_manager.update_status(claimed, "idle")
+    LocalTaskManager(temp_db).create_task(
+        project_id=project_id,
+        title="Held through the restart",
+        claimed_by_session_id=claimed,
+        category="code",
+        validation_criteria="The restart notice still wakes the claimed seat.",
+        implementation_domain="backend",
+    )
+    dispatcher = RecordingWakeDispatcher()
+    runner = _runner(database=temp_db, session_manager=session_manager, wake_dispatcher=dispatcher)
+
+    await send_daemon_notice(runner, notice)
+
+    assert sorted(dispatcher.calls) == sorted([active, claimed])
+    rows = temp_db.fetchall("SELECT to_session, content, metadata_json FROM inter_session_messages")
+    assert sorted(row["to_session"] for row in rows) == sorted([active, claimed, *parked])
+    for row in rows:
+        assert row["content"] == notice
+        metadata = row["metadata_json"]
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+        assert metadata["wake_requested"] is (row["to_session"] in {active, claimed})
 
 
 @pytest.mark.asyncio
