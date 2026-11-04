@@ -1,11 +1,11 @@
-version: "3.0.0"
+version: "3.0.1"
 tags: [roles, enforcement, gobby]
 
 # Writes with no resolvable target path fail closed: both helpers return False
 # for an empty path set.
 rules:
   reviewer-write-scope:
-    description: Keep independent review read-only while permitting workspace notes and audits.
+    description: Keep read-only seats read-only while permitting workspace notes and audits.
     event: before_tool
     enabled: true
     priority: 15
@@ -19,8 +19,8 @@ rules:
     effects:
       - type: block
         reason: >-
-          Independent review permits repository reads and validation. Put notes in
-          your session workspace and send implementation findings to the author.
+          This seat is read-only in the repository: reads and validation are allowed.
+          Put notes in your session workspace and send needed changes to their author.
           Integrate approved work through the managed landing tool.
 
   submitted-candidate-write-scope:
