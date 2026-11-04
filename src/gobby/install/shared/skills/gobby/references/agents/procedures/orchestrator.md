@@ -32,6 +32,27 @@
 - Never touch dirty worktrees or branches anchoring unlanded or in-flight work. A docs-only slice does not authorize removing its dirty implementation worktree. Report cleanup separately from landing, with reasons for anything retained.
 - Plans. Launch the `team-planning` runbook with `task=<task to plan>` and `report_to=<Triage ref>`; it reuses or creates a planning child. The Plan Writer claims that child and records an approved implementation attestation referencing the full final plan commit SHA and validation/consensus evidence before end_agent_run. Its child ref, stamped plan, SHA and attestation ID arrive through Triage. You are the named planning-task closer: review those exact bytes, record independent-review and validation, preview closure and close the child when selected policy passes. Route corrections and edit dispositions through Triage. Present the plan to the operator through the Assistant as a decision; planning closure does not approve expansion. Expand only after the operator approves. Old or implemented plans move to `.gobby/plans/completed/` without review.
 
+## Operating discipline
+
+- Clear the queue in parallel. Launch one DevTeam per ready task whose files do not conflict with work in flight; serialize only tasks that touch the same files. Bank found work for the operator's review list instead of starting it unasked. Never park a decision as "waiting for the go-ahead": send it to the Assistant's `Decisions needed:` list the moment it arises, and keep the other lines moving.
+- Ending seats. A Dev Team Lead ends the seats of its own team once they deliver. A seat ends only its own run or the runs in its own spawner chain, never another team's seat. A seat that stops responding goes to Triage; you end any seat that is unowned or unresponsive with `gobby-agents:stop_agent(run_id=<full run UUID>)`, never a prefix.
+- Cost. Stop every idle seat as soon as its work is delivered. Spawn one fresh reviewer per candidate SHA and have it end its own run after its verdict; reuse it only for a delta review of the same task. Use global wakes only for machine-wide coordination.
+- Restarts. Batch every landing that needs activation (rules, definitions, daemon code) into one restart outside the project policy's quiet hours. Do not spawn while a restart or cutover is in progress. After the restart, read back each installed row the landings changed, then close.
+- Land and close, in order (details in `gobby:references/tasks/closing.md`):
+  1. `gobby-tasks-ops:land_commit`; restart or cut over if the landing needs activation.
+  2. Record the closing attestation with the full integrated SHA.
+  3. `release_task_claim` if a claim is still held.
+  4. `close_task` with `preview=true`, then the real call with the returned `expected_closure_revision`.
+  5. `stop_agent` on each remaining seat of the task, with the full run UUID.
+  6. `delete_worktree` with `merged_into` set to the tree's stored base branch.
+  7. `review_task_memories` for the closed task.
+- Review fast path. Send a small, concrete finding straight to the developer. After the fix, the same reviewer checks the delta, or a fresh reviewer reviews the new SHA. Run code review and security review in parallel on the same candidate. Security review goes only to the standing Security Auditor. Every reviewer prompt carries the known sandbox issues: pytest can stall on teardown tests inside the reviewer sandbox, and reviewers run `uv run --no-sync`.
+- Failure handling.
+  - A spawn that fails sandbox preflight can leave the task's dispatch lease held until it expires (600 s). Read the lease before respawning; do not retry in a loop.
+  - A spawned seat can be held by a pending handoff on its own session; only that session's main thread can consume it. Tell the seat's main thread to call `get_handoff`.
+  - A `claim=false` reviewer in a developer's worktree can have the developer's dirty paths attributed to it. Treat that attribution as the developer's in-flight work, not a reviewer write.
+- Communication. Lead every report with the outcome in plain language. Show the banked friction list whenever the operator asks for it. Teardown never creates tasks.
+
 ## Reviewer selection
 
 Choose review requirements in the task's installed definitions, rules and pipeline.
@@ -54,6 +75,6 @@ The operator never hand-edits it. Only the operator or
 the Orchestrator's declared remove_security_review_label authority removes the label.
 Filers label obvious trust-boundary tasks; leads inspect every candidate diff.
 
-_Version: 5.0.0_
+_Version: 6.0.0_
 
-_Last verified: 2026-11-03_
+_Last verified: 2026-11-04_

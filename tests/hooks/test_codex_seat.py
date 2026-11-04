@@ -2,23 +2,37 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import time
 import uuid
 from collections.abc import Iterator
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
-from gobby.hooks.codex_seat import codex_seat_available
+from gobby.hooks.codex_seat import (
+    codex_clear_activity_search,
+    codex_seat_available,
+    codex_seat_owner,
+    codex_thread_originator,
+)
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     discover_and_bind_external_terminal,
+)
+from gobby.hooks.terminal_context import (
+    SeatOwner,
+    enrich_terminal_context_with_cwd,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
+from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX
 
 pytestmark = pytest.mark.integration
@@ -100,6 +114,138 @@ def test_an_unbound_thread_since_the_seat_started_makes_it_ambiguous(
     assert available(SEAT_PID, time.time() - seat_started_ago) is expected
 
 
+def test_a_recorded_owner_outranks_an_unbound_thread(
+    session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    """#25647: a clear successor adopts only a seat whose owner is recorded."""
+    started = time.time() - 300
+    owner_of = codex_seat_owner(session_manager.db, LOCAL_MACHINE_ID)
+    assert owner_of(SEAT_PID, started) is SeatOwner.NONE
+
+    _register(session_manager, sample_project["id"], {"cwd": "/repo"})
+    assert owner_of(SEAT_PID, started) is SeatOwner.POSSIBLE
+
+    _register(
+        session_manager,
+        sample_project["id"],
+        {"cwd": "/repo", "parent_pid": SEAT_PID, "parent_create_time": started},
+        external_id="01a0e8d5-0000-7000-8000-000000000002",
+    )
+    assert owner_of(SEAT_PID, started) is SeatOwner.RECORDED
+
+
+THREAD_ID = "01a1a561-0000-7000-8000-000000025647"
+
+
+@pytest.mark.parametrize(
+    ("first_line", "expected"),
+    [
+        (
+            {"type": "session_meta", "payload": {"id": THREAD_ID, "originator": "codex-tui"}},
+            "codex-tui",
+        ),
+        (
+            {
+                "type": "session_meta",
+                "payload": {"id": "another-thread", "originator": "codex-tui"},
+            },
+            None,
+        ),
+        ({"type": "session_meta", "payload": {"id": THREAD_ID}}, None),
+        ({"type": "turn_context", "payload": {"id": THREAD_ID, "originator": "codex-tui"}}, None),
+        ("not json", None),
+    ],
+    ids=["tui", "other-thread", "no-originator", "not-session-meta", "malformed"],
+)
+def test_thread_originator_reads_only_its_own_rollout_header(
+    tmp_path: Path, first_line: dict[str, Any] | str, expected: str | None
+) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    text = first_line if isinstance(first_line, str) else json.dumps(first_line)
+    rollout.write_text(text + "\n")
+
+    assert codex_thread_originator(str(rollout), THREAD_ID) == expected
+
+
+def test_thread_originator_is_unknown_without_a_readable_rollout(tmp_path: Path) -> None:
+    assert codex_thread_originator(None, THREAD_ID) is None
+    assert codex_thread_originator(str(tmp_path / "missing.jsonl"), THREAD_ID) is None
+    assert codex_thread_originator(str(tmp_path), THREAD_ID) is None
+
+
+@pytest.mark.parametrize(
+    ("recorded", "rollout_originator", "expected"),
+    [
+        ({}, "codex-tui", None),
+        ({CODEX_CLEAR_ORIGIN_KEY: "codex-tui"}, "codex-tui", None),
+        ({CODEX_CLEAR_ORIGIN_KEY: "codex_vscode"}, "codex-tui", (False, False, "codex_vscode")),
+        ({CODEX_CLEAR_ORIGIN_KEY: "pending", "parent_pid": SEAT_PID}, "codex-tui", None),
+        ({CODEX_CLEAR_ORIGIN_KEY: "pending"}, None, (False, False, "pending")),
+        ({CODEX_CLEAR_ORIGIN_KEY: "pending"}, "codex_vscode", (False, False, "codex_vscode")),
+        ({CODEX_CLEAR_ORIGIN_KEY: "pending"}, "codex-tui", (True, True, "codex-tui")),
+    ],
+    ids=[
+        "no-clear",
+        "tui-settled",
+        "other-client-settled",
+        "pending-with-seat",
+        "pending-no-rollout",
+        "pending-other-client",
+        "pending-tui",
+    ],
+)
+def test_clear_activity_search_rechecks_only_a_pending_origin(
+    session_manager: SessionManager,
+    tmp_path: Path,
+    recorded: dict[str, Any],
+    rollout_originator: str | None,
+    expected: tuple[bool, bool, str] | None,
+) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    if rollout_originator is not None:
+        meta = {"id": THREAD_ID, "originator": rollout_originator}
+        rollout.write_text(json.dumps({"type": "session_meta", "payload": meta}) + "\n")
+
+    search = codex_clear_activity_search(
+        session_manager.db, LOCAL_MACHINE_ID, recorded, str(rollout), THREAD_ID
+    )
+
+    if expected is None:
+        assert search is None
+        return
+    assert search is not None
+    searches, has_owner, origin = expected
+    assert (search.thread_id == THREAD_ID) is searches
+    assert (search.thread_id is None) is not searches
+    assert (search.owner is not None) is has_owner
+    assert search.origin == origin
+
+
+def test_hook_payload_cannot_carry_a_clear_origin() -> None:
+    enriched = enrich_terminal_context_with_cwd(
+        {CODEX_CLEAR_ORIGIN_KEY: "pending", "tty": "/dev/ttys004"}, "/repo"
+    )
+    assert enriched == {"tty": "/dev/ttys004", "cwd": "/repo"}
+
+
+@pytest.mark.timeout(10)
+def test_thread_originator_never_waits_on_a_pipe(tmp_path: Path) -> None:
+    pipe = tmp_path / "rollout.jsonl"
+    os.mkfifo(pipe)
+    assert codex_thread_originator(str(pipe), THREAD_ID) is None
+
+
+def test_thread_originator_never_follows_a_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "elsewhere.jsonl"
+    meta = {"id": THREAD_ID, "originator": "codex-tui"}
+    target.write_text(json.dumps({"type": "session_meta", "payload": meta}) + "\n")
+    link = tmp_path / "rollout.jsonl"
+    link.symlink_to(target)
+
+    assert codex_thread_originator(str(target), THREAD_ID) == "codex-tui"
+    assert codex_thread_originator(str(link), THREAD_ID) is None
+
+
 def test_sessions_on_another_machine_never_own_its_seats(
     session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:
@@ -119,6 +265,77 @@ def test_sessions_on_another_machine_never_own_its_seats(
     available = codex_seat_available(session_manager.db, OTHER_MACHINE_ID)
 
     assert available(SEAT_PID, started) is True
+
+
+def test_stored_context_reads_a_threads_row_of_any_kind(
+    session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    """#25647: the seat index reads a thread's stored seat or /clear outcome from its row.
+
+    The read has no project filter: a hook whose cwd resolves elsewhere still meets
+    the outcome. An ordinary row answers with the seat it stores, so a restart keeps
+    it; other machines' rows are no answer.
+    """
+    from gobby.hooks.codex_seat import codex_stored_clear_context
+
+    refused = {"cwd": "/repo", CODEX_CLEAR_ORIGIN_KEY: "codex-tui"}
+    _register(session_manager, sample_project["id"], refused, external_id=THREAD_ID)
+    ordinary_thread = "01a1a561-0000-7000-8000-000000025648"
+    seat_started_at = time.time() - 300
+    _register(
+        session_manager,
+        sample_project["id"],
+        {"cwd": "/repo", "parent_pid": SEAT_PID, "parent_create_time": seat_started_at},
+        external_id=ordinary_thread,
+    )
+
+    local = codex_stored_clear_context(session_manager.db, LOCAL_MACHINE_ID)
+    other_machine = codex_stored_clear_context(session_manager.db, OTHER_MACHINE_ID)
+
+    stored = local(THREAD_ID)
+    assert stored is not None
+    assert stored[CODEX_CLEAR_ORIGIN_KEY] == "codex-tui"
+    assert "parent_pid" not in stored
+    ordinary = local(ordinary_thread)
+    assert ordinary is not None
+    assert CODEX_CLEAR_ORIGIN_KEY not in ordinary
+    assert (ordinary["parent_pid"], ordinary["parent_create_time"]) == (
+        SEAT_PID,
+        seat_started_at,
+    )
+    assert local("01a1a561-0000-7000-8000-000000025649") is None
+    assert other_machine(THREAD_ID) is None
+
+
+def test_stored_clear_context_reads_the_newest_clear_row(
+    session_manager: SessionManager, sample_project: dict[str, Any], tmp_path: Path
+) -> None:
+    """A thread with clear rows in two projects answers with the one written last."""
+    from gobby.hooks.codex_seat import codex_stored_clear_context
+
+    elsewhere = install_isolated_checkout_project(
+        session_manager.db,
+        tmp_path / "elsewhere",
+        name="elsewhere",
+        machine_id=LOCAL_MACHINE_ID,
+    ).project
+    _register(
+        session_manager,
+        sample_project["id"],
+        {"cwd": "/repo", CODEX_CLEAR_ORIGIN_KEY: "pending"},
+        external_id=THREAD_ID,
+    )
+    _register(
+        session_manager,
+        elsewhere.id,
+        {"cwd": "/repo", CODEX_CLEAR_ORIGIN_KEY: "codex-tui"},
+        external_id=THREAD_ID,
+    )
+
+    stored = codex_stored_clear_context(session_manager.db, LOCAL_MACHINE_ID)(THREAD_ID)
+
+    assert stored is not None
+    assert stored[CODEX_CLEAR_ORIGIN_KEY] == "codex-tui"
 
 
 def test_a_new_human_codex_thread_binds_the_gterm_pane_it_names(

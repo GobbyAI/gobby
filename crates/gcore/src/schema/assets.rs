@@ -470,6 +470,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/488_reply_waits_skip_daemon_receipts.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 489,
+        filename: "489_session_startup_marks.sql",
+        checksum: "fe7e5507c77bffaa5724bc2a47466f79d2476a4d4e4d87e71724d18beb032ace",
+        sql: include_str!("../../assets/schema/migrations/489_session_startup_marks.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

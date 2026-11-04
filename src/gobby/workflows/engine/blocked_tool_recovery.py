@@ -289,7 +289,7 @@ async def escalate_retry_limit(
     if not gates:
         return None
     if _is_write_like_event_data(evaluation.event.data):
-        _clear_edit_write_state(evaluation.variables)
+        _clear_edit_write_state(evaluation.block_state)
     response = engine._assemble_response(
         evaluation, override_decision=None, override_reason=None, block_gates=gates
     )

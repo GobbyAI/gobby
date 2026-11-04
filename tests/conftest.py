@@ -169,6 +169,16 @@ def _allow_worktree_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _unconfigured_codex_seat_index() -> Iterator[None]:
+    """Leave no test's stored /clear row read behind: each HookManager configures one,
+    over a database the next test no longer has."""
+    from gobby.hooks.terminal_context import configure_codex_seat_index
+
+    yield
+    configure_codex_seat_index(None)
+
+
+@pytest.fixture(autouse=True)
 def _clear_service_launch_marker(monkeypatch: pytest.MonkeyPatch) -> None:
     """Start every test outside the service-admission branch.
 

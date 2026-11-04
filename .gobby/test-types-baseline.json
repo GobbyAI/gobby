@@ -1431,16 +1431,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/hooks/test_hooks_manager.py::::mypy:func-returns-value",
-      "issue_code": "mypy:func-returns-value",
-      "line": 2380,
-      "message": "\"_dispatch_webhooks_async\" of \"HookManagerDispatchMixin\" does not return a value (it only ever returns None)",
-      "occurrences": 2,
-      "path": "tests/hooks/test_hooks_manager.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/hooks/test_mcp_dispatch_async.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 426,

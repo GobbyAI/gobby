@@ -3585,6 +3585,22 @@
       "definition": "text|text|NO||NEVER"
     },
     {
+      "name": "session_startup_marks.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|clock_timestamp()|NEVER"
+    },
+    {
+      "name": "session_startup_marks.external_id",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_startup_marks.machine_id",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_startup_marks.source",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
       "name": "session_stop_signals.acknowledged_at",
       "definition": "timestamp with time zone|timestamptz|YES||NEVER"
     },
@@ -6847,6 +6863,10 @@
       "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
     },
     {
+      "name": "session_startup_marks.session_startup_marks_pkey",
+      "definition": "PRIMARY KEY (machine_id, source, external_id)"
+    },
+    {
       "name": "session_stop_signals.session_stop_signals_pkey",
       "definition": "PRIMARY KEY (session_id)"
     },
@@ -9273,6 +9293,14 @@
     {
       "name": "session_skills_pkey",
       "definition": "CREATE UNIQUE INDEX session_skills_pkey ON $schema.session_skills USING btree (id)"
+    },
+    {
+      "name": "session_startup_marks_created_at",
+      "definition": "CREATE INDEX session_startup_marks_created_at ON $schema.session_startup_marks USING btree (created_at)"
+    },
+    {
+      "name": "session_startup_marks_pkey",
+      "definition": "CREATE UNIQUE INDEX session_startup_marks_pkey ON $schema.session_startup_marks USING btree (machine_id, source, external_id)"
     },
     {
       "name": "session_stop_signals_pkey",

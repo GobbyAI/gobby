@@ -297,15 +297,62 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
                 """,
                 (json.dumps(incoming), utc_now(), session_id),
             )
-        updated = self.get(session_id)
+        updated, tmux_target_added = _publish_terminal_context(self, session_id, had_tmux_target)
         if updated is None:
             return current, False
+        return updated, tmux_target_added
 
-        self._notify_session_change("session_updated", session_id)
+    def settle_terminal_context(
+        self: _ManagerState,
+        session_id: str,
+        terminal_context: dict[str, Any],
+        *,
+        marker_key: str,
+        pending: str,
+    ) -> tuple[Session | None, bool]:
+        """Merge a context that settles a pending marker, in one conditional statement.
 
-        with self._session_metadata_lock:
-            metadata = self._session_metadata.setdefault(session_id, {})
-            metadata["terminal_context"] = updated.terminal_context
+        The merge applies only while the stored ``marker_key`` still reads ``pending`` and
+        no process is recorded. Returns ``(None, False)`` when another writer settled it
+        first, so that writer's stored result stands. Otherwise returns the updated
+        session plus whether a tmux pane became available.
+        """
+        current = self.get(session_id)
+        if current is None:
+            return None, False
+        incoming = {key: value for key, value in terminal_context.items() if value is not None}
+        had_tmux_target = terminal_context_has_tmux_target(current.terminal_context or {})
+        with self.db.transaction() as conn:
+            won = conn.execute(
+                """
+                UPDATE sessions
+                SET terminal_context = COALESCE(terminal_context, '{}'::jsonb) || %s::jsonb,
+                    updated_at = %s
+                WHERE id = %s
+                  AND terminal_context ->> %s = %s
+                  AND terminal_context ->> 'parent_pid' IS NULL
+                RETURNING id
+                """,
+                (json.dumps(incoming), utc_now(), session_id, marker_key, pending),
+            ).fetchone()
+        if won is None:
+            return None, False
+        return _publish_terminal_context(self, session_id, had_tmux_target)
 
-        has_tmux_target = terminal_context_has_tmux_target(updated.terminal_context)
-        return updated, has_tmux_target and not had_tmux_target
+
+def _publish_terminal_context(
+    state: _ManagerState, session_id: str, had_tmux_target: bool
+) -> tuple[Session | None, bool]:
+    """Announce a merged terminal context and refresh its cached copy."""
+    updated = state.get(session_id)
+    if updated is None:
+        return None, False
+
+    state._notify_session_change("session_updated", session_id)
+
+    with state._session_metadata_lock:
+        metadata = state._session_metadata.setdefault(session_id, {})
+        metadata["terminal_context"] = updated.terminal_context
+
+    has_tmux_target = terminal_context_has_tmux_target(updated.terminal_context)
+    return updated, has_tmux_target and not had_tmux_target

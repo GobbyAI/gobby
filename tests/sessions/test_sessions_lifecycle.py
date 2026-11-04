@@ -257,6 +257,32 @@ class TestSessionLifecycleManager:
         assert retire.call_args.args[0] is manager.session_manager.db
 
     @pytest.mark.asyncio
+    async def test_expire_stale_sessions_prunes_unconsumed_startup_marks(
+        self, manager: SessionLifecycleManager
+    ) -> None:
+        """#25647: a deferred startup whose thread never ran leaves a mark to age out."""
+        manager.session_manager.idle_inactive_active_sessions.return_value = 0
+        manager.session_manager.expire_orphaned_handoff_sessions.return_value = 0
+        manager.session_manager.expire_stale_sessions.return_value = 0
+        manager.session_manager.expire_empty_sessions.return_value = 0
+        manager.session_manager.prune_empty_sessions.return_value = 0
+        manager.session_manager.prune_stale_compact_workflow_instances.return_value = 0
+        manager.session_manager.cleanup_expired_session_state.return_value = None
+
+        assert callable(getattr(lifecycle_mod, "prune_startup_marks", None))
+        with (
+            patch.object(lifecycle_mod, "retire_expired_session_hook_effects"),
+            patch.object(lifecycle_mod, "prune_startup_marks", return_value=2) as prune,
+        ):
+            count = await manager._expire_stale_sessions(
+                manager._capture_active().session_lifecycle
+            )
+
+        prune.assert_called_once_with(manager.session_manager.db)
+        # Marks are not sessions, so the expiry count leaves them out.
+        assert count == 0
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "error",
         [ValueError("bad stats"), psycopg.OperationalError("db unavailable")],

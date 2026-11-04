@@ -10,7 +10,11 @@ from typing import Protocol, cast
 from gobby.storage.hub.protocol import Transaction
 from gobby.storage.session_models import Session
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
-from gobby.terminal_context import parse_terminal_context_value
+from gobby.terminal_context import (
+    CODEX_CLEAR_ORIGIN_KEY,
+    CODEX_CLEAR_ORIGIN_PENDING,
+    parse_terminal_context_value,
+)
 
 from ._title_update import apply_title_mutation
 from ._update_sentinel import UNSET, UnsetType, is_set
@@ -66,6 +70,7 @@ def update_existing_session(
         return existing
 
     incoming_terminal_context = parse_terminal_context_value(terminal_context_json)
+    clear_origin = (incoming_terminal_context or {}).get(CODEX_CLEAR_ORIGIN_KEY)
     terminal_context_update_json = (
         json.dumps(
             {key: value for key, value in incoming_terminal_context.items() if value is not None}
@@ -83,6 +88,16 @@ def update_existing_session(
             parent_session_id = CASE WHEN %s THEN %s ELSE parent_session_id END,
             terminal_context = CASE
                 WHEN %s::jsonb IS NULL THEN terminal_context
+                -- A clear-start proposes its origin with the seat it found. It applies
+                -- only over no origin, or a pending one on a row with no recorded
+                -- process; against a settled origin it writes nothing at all.
+                WHEN %s::text IS NOT NULL
+                    AND terminal_context ->> %s::text IS NOT NULL
+                    AND NOT (
+                        terminal_context @> %s::jsonb
+                        AND terminal_context ->> 'parent_pid' IS NULL
+                    )
+                THEN terminal_context
                 ELSE COALESCE(terminal_context, '{}'::jsonb) || %s::jsonb
             END,
             workflow_name = COALESCE(%s, workflow_name),
@@ -119,6 +134,9 @@ def update_existing_session(
             is_set(parent_session_id),
             parent_session_id if is_set(parent_session_id) else None,
             terminal_context_update_json,
+            None if clear_origin is None else str(clear_origin),
+            CODEX_CLEAR_ORIGIN_KEY,
+            json.dumps({CODEX_CLEAR_ORIGIN_KEY: CODEX_CLEAR_ORIGIN_PENDING}),
             terminal_context_update_json,
             workflow_name,
             is_local is not None,
