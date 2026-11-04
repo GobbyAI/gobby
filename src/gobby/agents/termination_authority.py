@@ -68,12 +68,24 @@ def _on_spawner_chain(db: HubDatabase, caller_session_id: str, spawner_session_i
 
 def not_owned_refusal(run_id: str) -> dict[str, Any]:
     """The typed refusal both termination tools return for a run the caller does not own."""
+    return _not_owned(f"Agent run {run_id}", run_id=run_id)
+
+
+def helpers_not_owned_refusal(parent_session_id: str) -> dict[str, Any]:
+    """Typed refusal from cancel_stale_helpers for a parent's helpers the caller does not own."""
+    return _not_owned(
+        f"Helper runs of parent session {parent_session_id}",
+        parent_session_id=parent_session_id,
+    )
+
+
+def _not_owned(subject: str, **target: str) -> dict[str, Any]:
     return {
         "success": False,
         "error_code": NOT_OWNED_ERROR,
-        "run_id": run_id,
+        **target,
         "error": (
-            f"Agent run {run_id} can only be stopped by its spawner chain "
+            f"{subject} can only be stopped by its spawner chain "
             f"or a seat whose definition declares {STOP_ANY_SEAT}."
         ),
     }

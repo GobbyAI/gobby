@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from contextlib import nullcontext
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -22,6 +23,7 @@ from gobby.agents.termination_authority import (
     not_owned_refusal,
 )
 from gobby.mcp_proxy.tools.agents import create_agents_registry
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -301,6 +303,7 @@ def _run(child: str | None, spawner: str) -> SimpleNamespace:
     return SimpleNamespace(
         id=RUN_ID,
         status="running",
+        agent_name=SEAT_ROLE,
         child_session_id=child,
         parent_session_id=spawner,
         terminal_id=None,
@@ -413,3 +416,74 @@ async def test_self_termination_is_admitted_through_the_self_path(
     assert result["success"] is True
     delegates.complete_self.assert_awaited_once()
     delegates.terminate.assert_not_awaited()
+
+
+async def _cancel_helpers(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    helper: SimpleNamespace,
+    caller: str | None,
+    parent: str,
+) -> dict[str, Any]:
+    """Run cancel_stale_helpers for ``parent`` as ``caller``; ``None`` is a sessionless call."""
+    runner = MagicMock()
+    runner.get_run.return_value = helper
+    registry = create_agents_registry(runner, session_manager=session_manager, db=db)
+    scope = nullcontext() if caller is None else session_context_for_test(caller)
+    with scope, patch.object(LocalAgentRunManager, "list_by_parent", return_value=[helper]):
+        result: dict[str, Any] = await registry._tools["cancel_stale_helpers"].func(
+            parent_session_id=parent,
+            agent_name=SEAT_ROLE,
+        )
+    return result
+
+
+@pytest.mark.asyncio
+async def test_sibling_cannot_cancel_another_parents_helpers(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    tree: _Tree,
+    delegates: _Delegates,
+) -> None:
+    helper = _run(child=tree.worker, spawner=tree.lead)
+
+    result = await _cancel_helpers(temp_db, session_manager, helper, tree.sibling, tree.lead)
+
+    assert result["success"] is False
+    assert result["error_code"] == NOT_OWNED_ERROR
+    assert result["parent_session_id"] == tree.lead
+    assert STOP_ANY_SEAT in result["error"]
+    delegates.stop_run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("caller_name", ["lead", "holder"])
+async def test_spawner_or_declared_capability_may_cancel_helpers(
+    caller_name: str,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    tree: _Tree,
+    delegates: _Delegates,
+) -> None:
+    helper = _run(child=tree.worker, spawner=tree.lead)
+    caller = getattr(tree, caller_name)
+
+    result = await _cancel_helpers(temp_db, session_manager, helper, caller, tree.lead)
+
+    assert result == {"success": True, "cancelled": [RUN_ID], "errors": [], "count": 1}
+    delegates.stop_run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sessionless_rule_injection_call_is_admitted(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    tree: _Tree,
+    delegates: _Delegates,
+) -> None:
+    helper = _run(child=tree.worker, spawner=tree.lead)
+
+    result = await _cancel_helpers(temp_db, session_manager, helper, None, tree.lead)
+
+    assert result == {"success": True, "cancelled": [RUN_ID], "errors": [], "count": 1}
+    delegates.stop_run.assert_awaited_once()

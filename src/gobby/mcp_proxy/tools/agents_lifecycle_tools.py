@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Literal, cast
 
-from gobby.agents.termination_authority import caller_may_terminate, not_owned_refusal
+from gobby.agents.termination_authority import (
+    caller_may_terminate,
+    helpers_not_owned_refusal,
+    not_owned_refusal,
+)
 from gobby.mcp_proxy.tools.agent_cancellation import (
     stop_agent_run,
     terminate_agent_run,
@@ -69,7 +73,9 @@ def register_agent_lifecycle_tools(
         name="cancel_stale_helpers",
         description=(
             "Cancel all still-running runs of an agent spawned by a parent session. "
-            "Used by freshness rules before parent turn delivery."
+            "Used by freshness rules before parent turn delivery. Allowed for the parent's "
+            "spawner chain or a seat whose definition declares stop_any_seat; any other caller "
+            "gets agent_stop_not_owned and nothing is cancelled."
         ),
     )
     async def cancel_stale_helpers(
@@ -85,6 +91,12 @@ def register_agent_lifecycle_tools(
             resolved_parent = ctx.resolve_session_id(parent_session_id)
         except ValueError as e:
             return {"success": False, "error": str(e)}
+        if not _caller_may_terminate_run(
+            ctx,
+            spawner_session_id=resolved_parent,
+            run_session_id=None,
+        ):
+            return helpers_not_owned_refusal(resolved_parent)
         stale = [
             run
             for run in ctx.agent_run_manager.list_by_parent(resolved_parent)
