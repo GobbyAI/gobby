@@ -234,6 +234,17 @@ def test_thread_originator_never_waits_on_a_pipe(tmp_path: Path) -> None:
     assert codex_thread_originator(str(pipe), THREAD_ID) is None
 
 
+def test_thread_originator_never_follows_a_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "elsewhere.jsonl"
+    meta = {"id": THREAD_ID, "originator": "codex-tui"}
+    target.write_text(json.dumps({"type": "session_meta", "payload": meta}) + "\n")
+    link = tmp_path / "rollout.jsonl"
+    link.symlink_to(target)
+
+    assert codex_thread_originator(str(target), THREAD_ID) == "codex-tui"
+    assert codex_thread_originator(str(link), THREAD_ID) is None
+
+
 def test_sessions_on_another_machine_never_own_its_seats(
     session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:

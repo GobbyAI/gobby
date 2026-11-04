@@ -3557,6 +3557,17 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
                 assert (waiting.terminal_context or {}).get("parent_pid") is None
                 write_rollout()
             assert manager.handle(prompt).decision == "allow"
+            if rollout_late:
+                # Hooks that read the pending row before this prompt settled the origin
+                # finish after it. One that read the rollout too loses the settle.
+                rival = prompt_for(successor_thread)
+                manager._session_lookup._backfill_terminal_context(waiting.id, rival, waiting)
+                # One that read it before the rollout existed must not undo the settle.
+                stale = prompt_for(successor_thread)
+                stale.data["transcript_path"] = str(temp_dir / "not-yet-written.jsonl")
+                # It carries other news, so the merge cannot skip as a no-op.
+                stale.data["cwd"] = str(temp_dir / "subdir")
+                manager._session_lookup._backfill_terminal_context(waiting.id, stale, waiting)
             # A late hook for the cleared thread must not revive it beside the successor.
             assert manager.handle(prompt_for(predecessor_thread)).decision == "allow"
     finally:
@@ -3568,6 +3579,8 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
     bound = sessions.db.fetchall("SELECT id FROM terminals WHERE session_id = %s", (successor.id,))
     predecessor = sessions.get(predecessor_id)
     assert predecessor is not None
+    recorded_origin = (successor.terminal_context or {}).get("gobby_codex_clear_origin")
+    assert recorded_origin == (originator or "pending")
     if not adopts:
         # No verified seat minted the thread: it is tracked without a pane.
         assert successor.status == "active"

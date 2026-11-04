@@ -103,6 +103,7 @@ def test_rest_registration_reactivates_an_expired_session(
     response = _client(session_manager, tmp_path).post(
         "/api/sessions/register",
         json={"external_id": EXTERNAL_ID, "source": "codex", "project_id": sample_project["id"]},
+        headers={"X-Gobby-Session-Id": session.id},
     )
 
     assert response.status_code == 200, response.text
@@ -110,6 +111,66 @@ def test_rest_registration_reactivates_an_expired_session(
     assert body["id"] == session.id
     assert body["session_status"] == "active"
     _assert_freshly_active(session_manager, session.id)
+
+
+def _assert_still_expired(manager: SessionManager, session_id: str) -> None:
+    row = manager.get(session_id)
+    assert row is not None
+    assert row.status == "expired"
+
+
+@pytest.mark.parametrize("caller", [None, "claude"], ids=["no-caller-session", "other-source"])
+async def test_mcp_registration_by_another_caller_leaves_the_session_expired(
+    session_manager: SessionManager, sample_project: dict[str, Any], caller: str | None
+) -> None:
+    session = _expired_past_horizon(session_manager, sample_project["id"], LOCAL_MACHINE_ID)
+    registry = create_session_messages_registry(session_manager=session_manager)
+    request = {"external_id": EXTERNAL_ID, "source": "codex", "project_id": sample_project["id"]}
+
+    if caller is None:
+        result = await registry.call("register_session", request)
+    else:
+        other = session_manager.register(
+            external_id=str(uuid.uuid4()),
+            machine_id=LOCAL_MACHINE_ID,
+            source=caller,
+            project_id=sample_project["id"],
+        )
+        with session_context_for_test(other.id):
+            result = await registry.call("register_session", request)
+
+    assert result["session_id"] == session.id, result
+    assert result["status"] == "expired"
+    _assert_still_expired(session_manager, session.id)
+
+
+@pytest.mark.parametrize("caller", [None, "other"], ids=["no-caller-header", "other-session"])
+def test_rest_registration_by_another_caller_leaves_the_session_expired(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    caller: str | None,
+) -> None:
+    session = _expired_past_horizon(session_manager, sample_project["id"], LOCAL_MACHINE_ID)
+    headers: dict[str, str] = {}
+    if caller is not None:
+        other = session_manager.register(
+            external_id=str(uuid.uuid4()),
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        headers["X-Gobby-Session-Id"] = other.id
+
+    response = _client(session_manager, tmp_path).post(
+        "/api/sessions/register",
+        json={"external_id": EXTERNAL_ID, "source": "codex", "project_id": sample_project["id"]},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["session_status"] == "expired"
+    _assert_still_expired(session_manager, session.id)
 
 
 async def test_registration_refuses_another_machines_session(
