@@ -1,6 +1,6 @@
 name: research
 type: pipeline
-version: "2.0.0"
+version: "2.0.1"
 description: |
   Research runbook: admits a treeless team for the task and launches a Researcher and a Research
   Reviewer into one 'Research - #<task>' tab in the shared checkout. The seats work in the main
@@ -42,7 +42,7 @@ inputs:
   report_to:
     type: string
     required: true
-    description: "Triage's live session ref for readiness, blockers, verdicts and unassigned waits"
+    description: "Live session ref of the seat this run reports readiness, blockers, verdicts and unassigned waits to"
   researcher_provider:
     type: string
     default: null

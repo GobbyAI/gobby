@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.workflows.sync_rules import resolve_sync_placeholders
 from gobby.workflows.sync_variables import sync_bundled_variables
 
 pytestmark = pytest.mark.unit
@@ -74,28 +73,6 @@ class TestSyncBundledVariables:
         assert result["success"] is True
         assert result["orphaned"] == 0
         mgr.delete.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# resolve_sync_placeholders
-# ---------------------------------------------------------------------------
-
-
-class TestResolveSyncPlaceholders:
-    def test_falls_back_to_sys_executable(self) -> None:
-        with (
-            patch("gobby.workflows.sync_rules.shutil.which", return_value=None),
-            patch("gobby.workflows.sync_rules.sys.executable", "/home/user/.venv/bin/python3"),
-        ):
-            result = resolve_sync_placeholders('{"cmd": "{{ gobby_bin }} compress"}')
-        assert result == '{"cmd": "/home/user/.venv/bin/python3 -m gobby compress"}'
-
-    def test_multiple_occurrences_replaced(self) -> None:
-        with patch("gobby.workflows.sync_rules.shutil.which", return_value="/bin/gobby"):
-            result = resolve_sync_placeholders(
-                '{"a": "{{ gobby_bin }} x", "b": "{{ gobby_bin }} y"}'
-            )
-        assert result == '{"a": "/bin/gobby x", "b": "/bin/gobby y"}'
 
 
 # ---------------------------------------------------------------------------
