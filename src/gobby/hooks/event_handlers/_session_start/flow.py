@@ -450,6 +450,11 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             agent_depth=agent_depth_val,
             sandbox_enabled=sandbox_enabled_val,
         )
+        if clear_origin is not None and session_id:
+            # A clear-start that lost to a settled origin wrote nothing: bind from the row.
+            registered = handler._session_manager.get(session_id)
+            if registered is not None:
+                terminal_context = registered.terminal_context or {}
 
     if handler._session_manager and session_source == "compact":
         if not session_id:

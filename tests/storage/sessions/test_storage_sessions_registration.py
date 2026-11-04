@@ -290,11 +290,10 @@ def _session_update_bound_values(conn: _CaptureConnection) -> dict[str, object]:
         "parent_session_id_set",
         "parent_session_id",
         "terminal_context_guard",
-        "terminal_context",
-        "clear_origin_guard",
+        "clear_origin",
         "clear_origin_key",
         "clear_origin_pending",
-        "clear_origin",
+        "terminal_context",
         "workflow_name",
         "is_local_provided",
         "is_local",
@@ -427,11 +426,14 @@ def test_update_existing_session_merges_terminal_context_in_sql() -> None:
         now=datetime.fromisoformat("2026-05-22T00:00:01+00:00"),
     )
 
-    sql, params = conn.calls[0]
+    sql, _params = conn.calls[0]
+    bound = _session_update_bound_values(conn)
 
     assert "COALESCE(terminal_context, '{}'::jsonb) || %s::jsonb" in sql
-    assert json.loads(str(params[7])) == {"cwd": "/work/gobby"}
-    assert params[7] == params[8]
+    assert json.loads(str(bound["terminal_context"])) == {"cwd": "/work/gobby"}
+    assert bound["terminal_context_guard"] == bound["terminal_context"]
+    # No clear origin is proposed, so nothing guards the merge.
+    assert bound["clear_origin"] is None
 
 
 class TestSessionManagerRegistration:
