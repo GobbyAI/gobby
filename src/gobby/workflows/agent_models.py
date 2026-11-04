@@ -230,6 +230,10 @@ class AgentDefinitionBody(BaseModel):
         default_factory=list,
         description="Bare Gobby command aliases that start this interactive definition.",
     )
+    cold_start_counterpart: StrictStr | None = Field(
+        default=None,
+        description="Optional enabled definition to reuse or open beside this cold-started pane.",
+    )
     capabilities: list[StrictStr] = Field(
         default_factory=list,
         description="Permissions granted to this definition, independent of its name.",

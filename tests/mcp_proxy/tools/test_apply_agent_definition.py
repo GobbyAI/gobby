@@ -241,7 +241,7 @@ async def test_activation_arms_the_seat_reading_gates(
 
     result = await apply_definition()(agent="seat", db=temp_db, session_id=session_id)
 
-    # Cold start activates the Orchestrator and Assistant this way, never through a spawn,
+    # Cold start activates a seat this way, never through a spawn,
     # so activation must arm the same required-reading gates a spawned seat gets.
     assert result["success"] is True
     variables = SessionVariableManager(temp_db).get_variables(session_id)

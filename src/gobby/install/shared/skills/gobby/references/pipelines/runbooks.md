@@ -15,10 +15,8 @@ project-specific value as an input. Seat models come from the project policy's
 only to override one.
 
 Cold start is separate from runbooks. Bare commands declared in an installed
-definition's `cold_start_commands` apply that definition to the calling session
-and open no counterpart pane. A rerun on the same session returns `unchanged`; a
-session already bound to another definition is refused with
-`role_change_requires_relaunch`. The bundled example uses `admin`.
+definition's `cold_start_commands` activate it and reuse or open its declared
+`cold_start_counterpart`. The bundled examples use `admin` and `assistant`.
 
 | Runbook | Seats | Required inputs |
 | --- | --- | --- |
@@ -119,6 +117,6 @@ not reach seats once the pipeline child has ended.
 Guides: [runbooks](../../../../../../../../docs/guides/runbooks.md) and
 [pipelines](../../../../../../../../docs/guides/pipelines.md#runbooks).
 
-_Version: 4.0.0_
+_Version: 4.1.0_
 
 _Last verified: 2026-11-04_

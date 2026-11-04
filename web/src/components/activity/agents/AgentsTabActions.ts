@@ -120,6 +120,7 @@ const CREATE_REFUSED_KEYS = new Set([
   "task_claim_scope",
   "capabilities",
   "cold_start_commands",
+  "cold_start_counterpart",
   "direct_integration_commit_paths",
   "direct_integration_commit_steps",
   "message_sender_capabilities",

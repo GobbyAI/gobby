@@ -1639,6 +1639,7 @@ class TestUpdateDefinitionNestedFields:
             "api_token",
             "capabilities",
             "cold_start_commands",
+            "cold_start_counterpart",
             "communications_admin",
             "execution_mode",
             "idle_ttl_seconds",
