@@ -817,13 +817,6 @@ def _build_registry() -> ConfigRegistry:
     pattern_specs = tuple(
         _pattern_from_mapping(mappings[source_path], pattern)
         for source_path, pattern in _MAPPING_PATTERNS.items()
-    ) + (
-        ConfigPatternSpec(
-            "launch_defaults.{project_id}",
-            dict[str, object],
-            default=(),
-            description="Per-project native launch defaults.",
-        ),
     )
     return ConfigRegistry(
         (*key_specs, *_supplemental_key_specs()),

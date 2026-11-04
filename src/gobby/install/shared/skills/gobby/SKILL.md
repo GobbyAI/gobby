@@ -1,7 +1,7 @@
 ---
 name: gobby
 description: "Router contract for provider-aware Gobby help and installed skill dispatch."
-version: "3.2.0"
+version: "4.0.0"
 category: core
 triggers: help
 metadata:
@@ -50,7 +50,7 @@ reference requirement. Tool schemas remain authoritative for parameters.
 
 | Request after the trigger | Action |
 | --- | --- |
-| A bare alias declared in an enabled definition's `cold_start_commands` | Cold start this pane with that definition and reuse or open its declared counterpart once |
+| A bare alias declared in an enabled definition's `cold_start_commands` | Apply that definition to this pane (apply-only; no counterpart pane is opened or reused) |
 | `<capability>` | Load its catalog overview |
 | `<capability> references` | Show topic descriptions, loading conditions and exact `<trigger> <capability> references <topic>` examples |
 | `<capability> references <topic>` | Load exactly that topic |
@@ -60,8 +60,8 @@ reference requirement. Tool schemas remain authoritative for parameters.
 | Unknown name or topic | Show available choices; perform no operation |
 
 Only bare space forms cold start; colon forms and commands with trailing
-requests use ordinary capability/skill routing. The bundled aliases include
-`admin` and `assistant`; installed declarations determine available commands. Otherwise
+requests use ordinary capability/skill routing. The bundled alias is
+`admin`; installed declarations determine available commands. Otherwise
 capability names take precedence. Singular `skill` escapes to standalone
 resolution; plural `skills` is the skill-management capability. Honor project
 overrides and existing skill-name resolution. These provider forms are supported:

@@ -26,6 +26,7 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.tasks.closure_snapshot import installed_project_policy
 
 if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.session_models import Session
     from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -87,7 +88,8 @@ async def resolve_launch_model(
     the entry names ``provider``; the definition's model as declared; otherwise a refusal. A
     model that ``provider`` does not serve is refused, never substituted. A denylisted policy or
     definition model is refused, while an explicit spawn model is not checked. ``model_chain``
-    is the primary choice, then the entry's fallbacks.
+    is the primary choice, then the fallbacks of whichever source supplied the primary: the
+    policy entry, else the definition. An explicit spawn model takes no fallbacks.
     """
     agent_name = agent_body.name if agent_body is not None else None
     owner = f"agent {agent_name!r}" if agent_body else "this spawn"
@@ -167,7 +169,18 @@ async def resolve_launch_model(
                 "reasoning": reasoning.to_dict(),
             }
         )
-    fallbacks = policy_entry.fallbacks if policy_entry is not None else ()
+    fallbacks: tuple[ModelChoice, ...] = ()
+    if explicit_model is None and policy_entry is not None:
+        fallbacks = policy_entry.fallbacks
+    elif explicit_model is None and agent_body is not None:
+        fallbacks = tuple(
+            ModelChoice(
+                provider=fallback.provider,
+                model=fallback.model,
+                reasoning_effort=fallback.reasoning_effort,
+            )
+            for fallback in agent_body.fallbacks
+        )
     if model_defaults is not None:
         for fallback in fallbacks:
             if is_denylisted(fallback.model, model_defaults.denylist):
@@ -219,7 +232,7 @@ def agent_provider_for_spawn(
     return agent_body.provider
 
 
-def load_model_defaults(db: Any | None, project_id: str | None) -> ModelDefaults:
+def load_model_defaults(db: HubDatabase | None, project_id: str | None) -> ModelDefaults:
     """The project's model policy, read from its installed ``project_policy``.
 
     A policy that cannot be read (conflicting or malformed installed writers) raises

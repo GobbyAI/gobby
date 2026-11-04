@@ -1,10 +1,10 @@
 ---
-name: tech-writer
+name: docs-writer
 description: How to author, audit, and refresh Gobby technical documentation. Use when writing or rewriting a guide, validating an existing doc against the codebase, generating Mermaid diagrams, or explaining a technical concept to docs readers.
 category: engineering
-version: "1.0.0"
+version: "2.0.0"
 triggers:
-  - tech writer
+  - docs writer
   - technical writing
   - write documentation
   - audit documentation
@@ -21,7 +21,7 @@ metadata:
     depth: 0
 ---
 
-# Tech Writer
+# Docs Writer
 
 Methodology for authoring, auditing, and maintaining Gobby's technical
 documentation. Covers `docs/guides/`, in-repo READMEs, architecture notes, and
@@ -186,4 +186,4 @@ auditor has.
   `impeccable` skill's `teach` mode.
 - Do not rely on memory for tool signatures. Fetch the schema, then write.
 
-_Last verified: 2026-05-04_
+_Last verified: 2026-11-04_

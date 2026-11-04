@@ -1,4 +1,4 @@
-version: "1.0.0"
+version: "2.0.0"
 tags: [review-learning, enforcement, gobby, default]
 
 rules:
@@ -9,7 +9,7 @@ rules:
     priority: 20
     when: >
       tool_input.get('source_kind') == 'qa_rejection'
-      and tool_input.get('source') == 'epic-reviewer'
+      and tool_input.get('source') == 'code-reviewer'
       and (
         not all(
           str((tool_input.get('finding') or {}).get(field) or '').strip()

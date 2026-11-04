@@ -70,8 +70,7 @@ def model_defaults_from_policy(policy: Mapping[str, Any]) -> ModelDefaults:
     """Parse the map and denylist from a ``project_policy`` value. Raises ``ValueError``.
 
     A malformed entry is refused, never skipped: a skipped entry would quietly send that agent
-    to its definition's model. Other policy keys, including the retired ``launch_defaults`` and
-    ``role_launch_defaults``, are not read.
+    to its definition's model. Other policy keys are not read.
     """
     raw_entries = policy.get("agent_model_defaults", {})
     if not isinstance(raw_entries, Mapping):

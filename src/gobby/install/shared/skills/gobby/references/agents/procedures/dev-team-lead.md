@@ -20,6 +20,16 @@ validation and closing, never implementation. Each kind declares allowed_results
 and guidance. Use approved or rejected. Validation evidence carries stage and a
 per-criterion list [{criterion, met, how}] against task.validation_criteria.
 
+## Seats and lifecycle
+
+You spawn only developer, code-reviewer, docs-writer, docs-reviewer and design-reviewer.
+Code tasks keep the developer and code-reviewer pair. A docs-category task goes to
+docs-writer, and docs-reviewer reviews its output. UI and design review goes to
+design-reviewer. Code-reviewer, docs-writer, docs-reviewer and design-reviewer are
+ephemeral: each ends its own run with `end_agent_run` once its verdict or artifact is
+delivered. A developer keeps its seat for the next leaf of its epic. A lingering or
+dead seat goes to Triage, which hands it to the Orchestrator. You never kill or stop a seat.
+
 ## Security, landing and closure
 
 Inspect the diff and attestations before integration. The filer labels obvious
@@ -83,6 +93,6 @@ with the same target. If any proof fails, preserve the tree and report the block
 Report task, SHA, checks and cleanup to report_to. Route genuine blockers
 through report_to, preserving holds and dependencies.
 
-_Version: 3.1.1_
+_Version: 4.0.0_
 
-_Last verified: 2026-11-02_
+_Last verified: 2026-11-04_

@@ -10,18 +10,22 @@ Launch from an operator surface (CLI, web, gclient), an authorized cron
 launches. The selected launch rules cover `run_pipeline`, exposed
 `pipeline:<name>` tools and shell `gobby pipelines run`; a refused seat sends
 the request to its authorized coordinator. Pass every
-project-specific value as an input, plus the runbook's entry under the project
-policy's `launch_defaults`.
+project-specific value as an input. Seat models come from the project policy's
+`agent_model_defaults` map and the definitions, so pass a `<seat>_model` input
+only to override one.
 
 Cold start is separate from runbooks. Bare commands declared in an installed
-definition's `cold_start_commands` activate it and reuse or open its declared
-`cold_start_counterpart`. The bundled examples use `admin` and `assistant`.
+definition's `cold_start_commands` apply that definition to the calling session
+and open no counterpart pane. A rerun on the same session returns `unchanged`; a
+session already bound to another definition is refused with
+`role_change_requires_relaunch`. The bundled example uses `admin`.
 
 | Runbook | Seats | Required inputs |
 | --- | --- | --- |
 | `support` | release-manager, triage, archivist, recovery-steward, consolidator, security-auditor | `workspace`, `project_path`, `report_to` |
 | `dev-team` | developer, code-reviewer, dev-team-lead | `task`, `workspace`, `report_to` |
-| `team-planning` | plan-writer, plan-adversary, plan-enhancer | `task`, `workspace`, `project_path`, `report_to` |
+| `plan-team` | plan-writer, plan-adversary, plan-advocate | `task`, `workspace`, `project_path`, `report_to` |
+| `research-team` | researcher, research-reviewer | `task`, `workspace`, `project_path`, `report_to` |
 
 ## Support
 
@@ -30,13 +34,13 @@ example Triage definition declares. Launch it first: `seats=triage` with
 `report_to=<Orchestrator ref>`. Once Triage reports
 its ref, run `support` again with `report_to=<Triage ref>`. Its guard skips each
 seat whose agent already runs live in the project on this machine, so a re-run
-launches only the missing seats into the one Support tab. The Orchestrator
-spawns the monitors on the operator's go; neither runbook launches them.
+launches only the missing seats into the one Support tab.
 
 ## DevTeam
 
-Run the single dev-team pipeline for either a task or epic with task, workspace,
-report_to and project_policy.launch_defaults['dev-team']. It launches developer,
+Run the single dev-team pipeline for either a task or epic with task, workspace
+and report_to. Seat models come from the project policy's `agent_model_defaults`
+map, or from each definition, unless a `<seat>_model` input overrides them. It launches developer,
 code-reviewer and dev-team-lead in Dev Team - #N. The pair uses the registered
 task tree; the lead stays in main. admit_team chooses single-task or epic mode.
 The bundled file is dev-team.yaml; there is no separate epic pipeline.
@@ -72,10 +76,18 @@ team. Report through the configured report target and use durable waits.
 
 ## Planning
 
-The Orchestrator launches `team-planning` with `task` and `report_to=<Triage ref>`; it opens
-the `Team Planning - #<task>` tab, and `seat_pane` adds seats to an existing pane. The operator
-launches `team-planning` directly:
-`gobby pipelines run team-planning -i workspace=<name> -i task=<#N> -i project_path=<path> -i report_to=<ref> -i seats=<names>`.
+The Orchestrator launches `plan-team` with `task` and `report_to=<Triage ref>`; it opens
+the `Plan Team - #<task>` tab, and `seat_pane` adds seats to an existing pane. The operator
+launches `plan-team` directly:
+`gobby pipelines run plan-team -i workspace=<name> -i task=<#N> -i project_path=<path> -i report_to=<ref> -i seats=<names>`.
+
+## Research
+
+The Orchestrator launches `research-team` with `task` and `report_to=<Triage ref>`; it opens
+the `Research - #<task>` tab, and `seat_pane` adds seats to an existing pane. The team is treeless:
+its seats work in the main checkout with no branch or worktree. The operator launches
+`research-team` directly:
+`gobby pipelines run research-team -i workspace=<name> -i task=<#N> -i project_path=<path> -i report_to=<ref> -i seats=<names>`.
 
 ## Guard, restart and stop
 
@@ -107,6 +119,6 @@ not reach seats once the pipeline child has ended.
 Guides: [runbooks](../../../../../../../../docs/guides/runbooks.md) and
 [pipelines](../../../../../../../../docs/guides/pipelines.md#runbooks).
 
-_Version: 3.0.0_
+_Version: 4.0.0_
 
-_Last verified: 2026-11-02_
+_Last verified: 2026-11-04_

@@ -1,4 +1,4 @@
-version: "1.3.0"
+version: "1.4.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -98,8 +98,8 @@ rules:
               "admin": "The operator's tab holds the Assistant and Orchestrator panes only. Never place another seat in it.",
               "support": "One tab titled Support holds the support runbook's seats.",
               "dev-team": "Each DevTeam has one tab titled 'Dev Team - #<task>', holding its seats. Each pane is titled with its seat's agent definition name only.",
-              "planning": "Each planning run's writer opens a tab titled 'Team Planning - #<task>'; the other planning seats split that tab.",
-              "research": "Each research run opens one tab titled 'Research - #<task>' holding its Researcher and Research Reviewer."
+              "planning": "Each plan-team run's writer opens a tab titled 'Plan Team - #<task>'; the other plan-team seats split that tab.",
+              "research": "Each research-team run opens one tab titled 'Research Team - #<task>' holding its Researcher and Research Reviewer."
             },
             "agent_model_defaults": {
               "assistant": {"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-sol"}]},
@@ -120,10 +120,9 @@ rules:
               "research-team-lead": {"provider": "claude", "model": "claude-haiku-5-5", "reasoning_effort": "xhigh", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-terra", "reasoning_effort": "xhigh"}]},
               "triage": {"provider": "claude", "model": "claude-sonnet-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-terra", "reasoning_effort": "xhigh"}]},
               "recovery-steward": {"provider": "claude", "model": "claude-sonnet-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-terra", "reasoning_effort": "xhigh"}]},
-              "archivist": {"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-sol"}]},
+              "archivist": {"provider": "claude", "model": "claude-haiku-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-terra", "reasoning_effort": "xhigh"}]},
               "consolidator": {"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "medium", "fallbacks": [{"provider": "codex", "model": "gpt-6.1-sol"}]},
               "release-manager": {"provider": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium", "fallbacks": [{"provider": "claude", "model": "claude-opus-5-5"}]},
-              "expansion-qa": {"provider": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium", "fallbacks": [{"provider": "claude", "model": "claude-opus-5-5"}]},
               "feedback-reviewer": {"provider": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium", "fallbacks": [{"provider": "claude", "model": "claude-opus-5-5"}]}
             },
             "default_model_denylist": ["fable", "astra", "argon", "carbon"]

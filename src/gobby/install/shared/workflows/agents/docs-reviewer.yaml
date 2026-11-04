@@ -1,10 +1,17 @@
 name: docs-reviewer
-version: "3.0.0"
+version: "3.1.0"
 description: Independently reviews task evidence and may land and close approved work.
 tags: [gobby, seat]
 capabilities: [accept_resume_retype, land_tasks]
 surfaces: [spawn, persona]
-provider: inherit
+provider: codex
+model: gpt-6.1-sol
+reasoning_effort: medium
+fallbacks:
+  - provider: claude
+    model: claude-opus-5-5
+reviews:
+  - docs-writer
 execution_mode: interactive
 checkout_mode: inherit
 timeout: 0

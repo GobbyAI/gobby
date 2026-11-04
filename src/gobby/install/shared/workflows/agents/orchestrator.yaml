@@ -1,7 +1,6 @@
 name: orchestrator
 spawnable_agents: ["*"]
 cold_start_commands: [admin]
-cold_start_counterpart: assistant
 capabilities: [message_restricted_seats, follow_relaunch, coordinate_tasks, manage_task_claims, land_tasks, close_without_work, override_spawn_network, write_session_variables, approve_report_review, send_keys, merge_base_commits, direct_integration_commit, remove_security_review_label, manage_rule_enforcement, spawn_any_definition]
 direct_integration_commit_paths: ["src/gobby/install/shared/workflows/agents/*.yaml", ".gobby/project.json"]
 message_sender_capabilities: [message_restricted_seats]
@@ -9,11 +8,16 @@ description: |
   Orchestrator seat. Sets priority and owners, rules on contracts, launches the
   Support and DevTeam runbooks, and runs restarts and cutovers with notices
   before and after.
-version: "4.0.0"
+version: "5.0.0"
 tags: [gobby, seat]
 # Root pane only: spawned agents are always sandboxed, and this seat must not be.
 surfaces: [persona]
-provider: inherit
+provider: claude
+model: claude-opus-5-5
+reasoning_effort: medium
+fallbacks:
+  - provider: codex
+    model: gpt-6.1-sol
 execution_mode: interactive
 checkout_mode: inherit
 persistent_workspace: true

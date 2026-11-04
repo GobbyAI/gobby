@@ -6297,17 +6297,6 @@
     {
       "activation": "live",
       "default": [],
-      "description": "Per-project native launch defaults.",
-      "machineExport": false,
-      "namespace": "launch_defaults",
-      "pattern": "launch_defaults.{project_id}",
-      "secrecy": "none",
-      "type": "object",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": [],
       "description": "Map of tool names to specific timeouts in seconds",
       "machineExport": false,
       "namespace": "mcp_client_proxy",

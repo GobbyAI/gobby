@@ -36,11 +36,12 @@ their definition fixed at spawn and refuse activation with
 
 To cold start an operator pane, inspect enabled persona definitions declaring
 `cold_start_commands`, then call `gobby-agents:cold_start_admin` with `role` set
-to the selected definition's name. It applies that definition to the caller's
-session and reuses its live declared `cold_start_counterpart`, or opens one in
-the caller's tab. A new counterpart starts with its declared command and the same provider
-CLI. Re-running reuses the live seat; it never spawns a worker. A definition may
-omit a counterpart. Report the seat refs actually returned.
+to the selected definition's name. The call is apply-only: it applies that
+definition to the caller's session and returns. It opens no counterpart pane and
+reuses none. A rerun on the same session returns `unchanged`. A seated session
+already bound to another definition is refused with
+`role_change_requires_relaunch`; relaunch the pane with the requested definition.
+Never substitute a spawned worker. Report the receipt actually returned.
 
 If resolution fails or the definition lacks the persona surface, report the
 error and list eligible choices. Do not substitute a spawned worker. Check the
@@ -48,4 +49,5 @@ installed definition's scope and source filter when a name is unavailable.
 
 Guide: [Usage surfaces](../../../../../../../../docs/guides/agents.md#usage-surfaces).
 
-_Last verified: 2026-10-23_
+_Version: 2.0.0_
+_Last verified: 2026-11-04_

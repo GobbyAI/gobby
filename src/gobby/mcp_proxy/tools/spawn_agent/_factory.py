@@ -579,9 +579,12 @@ def create_spawn_agent_registry(
                     classifier=StallClassifier(detection_registry),
                 )
 
+                # Each provider here is the one its launch takes, through the same policy-map
+                # lookup spawn_agent_impl uses, so a chain never picks a provider it will not run.
+                model_defaults = await asyncio.to_thread(load_model_defaults, db, project_id)
                 agent_provider = resolve_spawn_provider(
                     explicit_provider=None,
-                    agent_provider=agent_body.provider,
+                    agent_provider=agent_provider_for_spawn(agent_body, model, model_defaults),
                     default_provider=default_provider,
                 )
 
@@ -618,7 +621,9 @@ def create_spawn_agent_registry(
                             break
                         candidate_provider = resolve_spawn_provider(
                             explicit_provider=None,
-                            agent_provider=candidate.provider,
+                            agent_provider=agent_provider_for_spawn(
+                                candidate, model, model_defaults
+                            ),
                             default_provider=default_provider,
                         )
                         if candidate_provider not in failed_providers:

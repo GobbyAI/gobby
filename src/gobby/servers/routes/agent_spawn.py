@@ -123,14 +123,6 @@ class BatchSpawnResponse(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-_BUILT_IN_DEFAULTS: dict[str, Any] = {
-    "agent_name": "default",
-    "checkout_mode": "inherit",
-    "model": None,
-    "reasoning_effort": None,
-    "reasoning_required": False,
-}
-
 # Semaphore to cap concurrent batch spawns
 _BATCH_SEMAPHORE = asyncio.Semaphore(5)
 
@@ -597,25 +589,6 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             succeeded=succeeded,
             failed=failed,
         ).model_dump(exclude_none=True)
-
-    # -----------------------------------------------------------------------
-    # GET /api/agents/launch-defaults
-    # -----------------------------------------------------------------------
-    @router.get("/launch-defaults")
-    async def get_launch_defaults(
-        project_id: str = Query(..., description="Project ID"),
-    ) -> dict[str, Any]:
-        """Get per-category launch defaults for the project."""
-        try:
-            key = f"launch_defaults.{project_id}"
-            saved = require_config_snapshot(server).active_values.get(key) or {}
-            # Merge with built-in defaults for any missing categories
-            return {"status": "success", "defaults": saved, "built_in": _BUILT_IN_DEFAULTS}
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception("Error fetching launch defaults: %s", e)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------------
     # POST /api/agents/spawn/prompt-preview

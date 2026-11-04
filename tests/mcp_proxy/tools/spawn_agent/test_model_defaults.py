@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -31,9 +31,18 @@ from gobby.providers.capabilities.models import (
     ReasoningSupport,
 )
 from gobby.providers.capabilities.resolve import CapabilityResolver
-from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.definitions import AgentDefinitionBody, MCPStepConfig, PipelineStep
+from gobby.workflows.pipeline.renderer import StepRenderer
+from gobby.workflows.templates import TemplateEngine
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
+
+# The loader only hands the database to RuleDefinitionManager, which these tests replace, so the
+# value is never read. A typed sentinel keeps the loader's signature honest for every test.
+_NO_DATABASE = cast("HubDatabase", object())
 
 _MODEL = "claude-sonnet-5"
 _MAP_MODEL = "claude-opus-5-5"
@@ -318,6 +327,78 @@ async def test_denylisted_fallback_refuses_the_chain(
 
 
 @pytest.mark.asyncio
+async def test_definition_fallbacks_form_the_chain_when_no_map_entry(
+    claude_reasoning: None, build_agent_body: Callable[..., AgentDefinitionBody]
+) -> None:
+    body = build_agent_body(
+        name="seat-alpha",
+        provider="claude",
+        model=_DEF_MODEL,
+        reasoning_effort="high",
+        fallbacks=[{"provider": "codex", "model": "gpt-6.1-terra", "reasoning_effort": "xhigh"}],
+    )
+
+    launch = await _resolve(body, defaults=_policy({}))
+
+    assert [(c.provider, c.model, c.reasoning_effort) for c in launch.model_chain] == [
+        ("claude", _DEF_MODEL, "high"),
+        ("codex", "gpt-6.1-terra", "xhigh"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_map_entry_fallbacks_replace_definition_fallbacks(
+    claude_reasoning: None, build_agent_body: Callable[..., AgentDefinitionBody]
+) -> None:
+    body = build_agent_body(
+        name="seat-alpha",
+        provider="claude",
+        model=_DEF_MODEL,
+        fallbacks=[{"provider": "codex", "model": "gpt-6.1-terra"}],
+    )
+    defaults = _policy(
+        {"seat-alpha": _entry(_MAP_MODEL, fallbacks=[{"provider": "claude", "model": _FALLBACK}])}
+    )
+
+    launch = await _resolve(body, defaults=defaults)
+
+    assert [c.model for c in launch.model_chain] == [_MAP_MODEL, _FALLBACK]
+
+
+@pytest.mark.asyncio
+async def test_denylisted_definition_fallback_refuses_the_chain(
+    claude_reasoning: None, build_agent_body: Callable[..., AgentDefinitionBody]
+) -> None:
+    body = build_agent_body(
+        name="seat-alpha",
+        provider="claude",
+        model=_DEF_MODEL,
+        fallbacks=[{"provider": "codex", "model": "gpt-6.1-fable"}],
+    )
+
+    with pytest.raises(LaunchRefused) as excinfo:
+        await _resolve(body, defaults=_policy({}, denylist=["fable"]))
+
+    assert "denylist" in str(excinfo.value.response["error"])
+
+
+@pytest.mark.asyncio
+async def test_launch_arg_model_takes_no_definition_fallbacks(
+    claude_reasoning: None, build_agent_body: Callable[..., AgentDefinitionBody]
+) -> None:
+    body = build_agent_body(
+        name="seat-alpha",
+        provider="claude",
+        model=_DEF_MODEL,
+        fallbacks=[{"provider": "codex", "model": "gpt-6.1-terra"}],
+    )
+
+    launch = await _resolve(body, model=_MODEL, defaults=_policy({}))
+
+    assert [c.model for c in launch.model_chain] == [_MODEL]
+
+
+@pytest.mark.asyncio
 async def test_default_agent_without_model_refuses_with_guidance(
     claude_reasoning: None, build_agent_body: Callable[..., AgentDefinitionBody]
 ) -> None:
@@ -343,6 +424,65 @@ async def test_default_agent_with_explicit_model_launches(
     launch = await _resolve(body, model=_MODEL, defaults=_policy({}))
 
     assert launch.model == _MODEL
+
+
+@pytest.mark.asyncio
+async def test_null_pipeline_model_input_resolves_to_the_definition_model(
+    claude_reasoning: None, build_agent_body: Callable[..., AgentDefinitionBody]
+) -> None:
+    """A pipeline spawn step's *_model input is null when the run names no model. It must reach
+    the resolver as absent, so the definition's model runs; it must not arrive as the text None."""
+    body = build_agent_body(name="seat-alpha", provider="claude", model=_DEF_MODEL)
+    step = PipelineStep(
+        id="seat-spawn",
+        mcp=MCPStepConfig(
+            server="gobby-agents",
+            tool="spawn_agent",
+            arguments={
+                "agent": "seat-alpha",
+                "provider": "${{ inputs.seat_provider }}",
+                "model": "${{ inputs.seat_model }}",
+            },
+        ),
+    )
+    context = {
+        "inputs": {"seat_provider": None, "seat_model": None},
+        "_string_inputs": ["seat_provider", "seat_model"],
+        "steps": {},
+    }
+
+    rendered = StepRenderer(TemplateEngine()).render_step(step, context)
+    model = rendered.mcp.arguments.get("model")
+    launch = await _resolve(body, model=model)
+
+    assert model is None
+    assert launch.model == _DEF_MODEL
+
+
+@pytest.mark.asyncio
+async def test_supplied_pipeline_model_input_is_the_launch_model(
+    claude_reasoning: None, build_agent_body: Callable[..., AgentDefinitionBody]
+) -> None:
+    """A pipeline's *_model input that names a model is the launch model, ahead of the definition."""
+    body = build_agent_body(name="seat-alpha", provider="claude", model=_DEF_MODEL)
+    step = PipelineStep(
+        id="seat-spawn",
+        mcp=MCPStepConfig(
+            server="gobby-agents",
+            tool="spawn_agent",
+            arguments={"agent": "seat-alpha", "model": "${{ inputs.seat_model }}"},
+        ),
+    )
+    context = {
+        "inputs": {"seat_model": _MAP_MODEL},
+        "_string_inputs": ["seat_model"],
+        "steps": {},
+    }
+
+    rendered = StepRenderer(TemplateEngine()).render_step(step, context)
+    launch = await _resolve(body, model=rendered.mcp.arguments.get("model"))
+
+    assert launch.model == _MAP_MODEL
 
 
 def test_policy_parses_map_and_denylist() -> None:
@@ -472,7 +612,7 @@ def test_loader_reads_the_installed_policy_map(monkeypatch: pytest.MonkeyPatch) 
     )
     monkeypatch.setattr(_launch_settings, "RuleDefinitionManager", lambda db: _RuleStore([rule]))
 
-    defaults = load_model_defaults(object(), "project-1")
+    defaults = load_model_defaults(_NO_DATABASE, "project-1")
 
     assert defaults.entries["seat-alpha"].model == _MAP_MODEL
     assert defaults.denylist == ("fable",)
@@ -486,7 +626,7 @@ def test_loader_refuses_conflicting_installed_policies(monkeypatch: pytest.Monke
     monkeypatch.setattr(_launch_settings, "RuleDefinitionManager", lambda db: _RuleStore(rules))
 
     with pytest.raises(ValueError):
-        load_model_defaults(object(), "project-1")
+        load_model_defaults(_NO_DATABASE, "project-1")
 
 
 def test_loader_refuses_a_malformed_map(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -494,7 +634,7 @@ def test_loader_refuses_a_malformed_map(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(_launch_settings, "RuleDefinitionManager", lambda db: _RuleStore([rule]))
 
     with pytest.raises(ValueError):
-        load_model_defaults(object(), "project-1")
+        load_model_defaults(_NO_DATABASE, "project-1")
 
 
 def test_loader_without_a_database_is_empty() -> None:

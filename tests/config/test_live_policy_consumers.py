@@ -136,12 +136,9 @@ async def test_rules_use_runtime_snapshot(temp_db: HubDatabase) -> None:
     assert runtime.snapshot_reads == 1
 
 
-def test_approval_and_launch_defaults_are_registered() -> None:
+def test_approval_rules_are_registered() -> None:
     assert CONFIG_REGISTRY.resolve("tool_approvals.global_rules").key == (
         "tool_approvals.global_rules"
-    )
-    assert CONFIG_REGISTRY.resolve("launch_defaults.project-id").key == (
-        "launch_defaults.{project_id}"
     )
     snapshot = _snapshot(
         values={"tool_approvals.global_rules": [" Bash(*) ", "mcp__gobby__call_tool"]}
@@ -170,7 +167,7 @@ def test_only_specialized_setting_writers_are_removed() -> None:
     assert ("/api/rules", "PUT") not in rule_methods
     assert ("/api/rules/{name}", "PUT") in rule_methods
     assert ("/api/rules/{name}", "DELETE") in rule_methods
-    assert ("/api/agents/launch-defaults", "GET") in launch_methods
+    assert ("/api/agents/launch-defaults", "GET") not in launch_methods
     assert ("/api/agents/launch-defaults", "PUT") not in launch_methods
 
 

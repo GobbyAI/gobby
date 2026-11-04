@@ -183,11 +183,14 @@ async def evaluate_spawn(
 
     result.agent_found = True
 
-    # The same project policy the real spawn resolves with. An unreadable policy refuses.
+    # The same project policy the real spawn resolves with. An unreadable policy refuses the spawn
+    # before any launch model is chosen, so no model is reported as resolved here either.
     model_defaults = ModelDefaults()
+    policy_readable = True
     try:
         model_defaults = await asyncio.to_thread(load_model_defaults, db, workflow_project_id)
     except ValueError as exc:
+        policy_readable = False
         result.can_spawn = False
         result.items.append(
             EvaluationItem(
@@ -245,7 +248,7 @@ async def evaluate_spawn(
     )
 
     # The launch model, resolved as the real spawn resolves it: a refusal here is a refusal there.
-    if eff_provider is not None:
+    if eff_provider is not None and policy_readable:
         try:
             launch = await resolve_launch_model(
                 provider=eff_provider,
