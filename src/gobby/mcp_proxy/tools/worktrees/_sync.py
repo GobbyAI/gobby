@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
+from gobby.mcp_proxy.tools.worktrees._landing_fork import landed_source_fork
 from gobby.mcp_proxy.tools.worktrees._merge_fallback import (
     _non_gobby_dirty_paths,
     _non_gobby_status_lines,
@@ -293,7 +294,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         async def _source_changed_schema_identity() -> bool:
             if not source_is_reconciled:
                 revisions = [f"{target_ref}...{source_ref}"]
+            elif fork := await landed_source_fork(
+                resolved_git_mgr, repo_path, source_ref, target_ref
+            ):
+                revisions = [fork, source_ref]
             else:
+                # A fast-forward landing left no merge; fall back to the recorded fork.
                 task_id = worktree.task_id
                 if (
                     effective_source != worktree.branch_name
