@@ -18,11 +18,14 @@ must supply project scope. Preserve the returned message IDs and inspect partial
 broadcast/wake failures before retrying.
 
 Content never implies wake. Omitting `wake` requests immediate processing for direct
-`session`, `parent`, and `agent` targets and for `global` fanout. `project` fanout
-stays queued without live wakes unless `wake=true` is explicit. Set `wake=false`
-to queue any target without a live wake. The daemon sends restart and cutover
-notices itself as waking system globals: a hold before it stops and DAEMON BACK
-once healthy. Never compose them by hand. A requested wake may steer active work;
+`session`, `parent`, and `agent` targets. Fanout (`global`, and `project` with
+`wake=true`) live-wakes only active recipients and recipients holding a claimed task;
+an idle, paused, or waiting recipient with no claimed task keeps its message queued
+for its next turn, so send it a direct message to wake it. Otherwise `project` fanout
+stays queued without live wakes, and `wake=false` queues any target without a live
+wake. The daemon sends restart and cutover notices itself as system globals: a hold
+before it stops and DAEMON BACK once healthy. Active seats and seats holding a claimed
+task wake on them. Never compose them by hand. A requested wake may steer active work;
 interrupted or input/approval/handoff-waiting sessions retain the message without
 unsafe daemon input. A successful send is durable queuing, not evidence that the
 recipient read or acted on it. Use `get_inter_session_message` for a message ID
@@ -110,5 +113,5 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Version: 2.0.0_
-_Last verified: 2026-11-03_
+_Version: 2.1.0_
+_Last verified: 2026-11-04_

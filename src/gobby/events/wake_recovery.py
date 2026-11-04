@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Any, Protocol
 
+from gobby.sessions.fanout_wake import is_fanout_metadata, parked_without_claim_session_ids
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
@@ -37,6 +38,7 @@ class WakeReplayCoordinator:
         run_db: RunDb,
     ) -> None:
         self._message_manager = message_manager
+        self._session_manager = session_manager
         self._dispatcher = dispatcher
         self._run_db = run_db
         self._owner_loop: asyncio.AbstractEventLoop | None = None
@@ -135,6 +137,14 @@ class WakeReplayCoordinator:
             session_id,
         )
         if not messages:
+            return None
+        if all(is_fanout_metadata(message.metadata_json) for message in messages) and (
+            await self._run_db(
+                parked_without_claim_session_ids, self._session_manager.db, [session_id]
+            )
+        ):
+            # Fanout rows owe no live wake to a seat parked with no claimed task; they
+            # stay queued for its next natural turn.
             return None
         with self._state_lock:
             if self._closed:

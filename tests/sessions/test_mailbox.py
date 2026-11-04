@@ -26,6 +26,7 @@ from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager, ensure_system_session, system_session_id
+from gobby.storage.tasks import LocalTaskManager
 from tests._timing import drain_asyncio_tasks
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, insert_isolated_machine
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
@@ -281,6 +282,17 @@ class TestMailboxDirectSend:
             _register_session(session_manager, sample_project["id"], f"recipient-{index}").id
             for index in range(3 if fanout else 1)
         ]
+        if fanout:
+            # A fanout wake reaches a parked seat only while it holds a claimed task.
+            for recipient in recipients:
+                LocalTaskManager(temp_db).create_task(
+                    project_id=sample_project["id"],
+                    title=f"Work held by {recipient}",
+                    claimed_by_session_id=recipient,
+                    category="code",
+                    validation_criteria="Claim keeps the fanout wake live.",
+                    implementation_domain="backend",
+                )
         terminals = MemoryTerminalStore()
         terminal_ids: list[str] = []
         for recipient in recipients:
@@ -1063,11 +1075,14 @@ class TestMailboxBroadcast:
             priority="urgent",
         )
 
+        # child-paused is parked with no claimed task: its durable row owes no live wake.
+        assert ids["child-paused"] in result.recipient_session_ids
+        assert ids["child-paused"] not in result.wake_session_ids
         assert dispatcher.calls == []
-        assert dispatcher.batch_calls == [(result.recipient_session_ids, "urgent")]
+        assert dispatcher.batch_calls == [(result.wake_session_ids, "urgent")]
         assert dispatcher.durable_seen is True
         assert len(result.message_ids) == len(result.recipient_session_ids)
-        assert [item["session_id"] for item in result.wake_results] == result.recipient_session_ids
+        assert [item["session_id"] for item in result.wake_results] == result.wake_session_ids
         assert {item["error_code"] for item in result.wake_results} == {"wake_dispatch_failed"}
 
     @pytest.mark.asyncio
@@ -1256,6 +1271,7 @@ class TestMailboxBroadcast:
                 "machine_id": sender.machine_id,
                 "project_id": None,
             },
+            "parked_recipients": 1,
             "recipient_states": [
                 {"session_id": active.id, "status": "active"},
                 {"session_id": paused.id, "status": "paused"},
